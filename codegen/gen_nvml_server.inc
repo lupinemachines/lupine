@@ -266,7 +266,7 @@ int handle_nvmlDeviceGetHandleByUUID(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &uuid_len, sizeof(unsigned int)) < 0)
     goto ERROR_0;
-  uuid = (const char *)malloc(uuid_len);
+  uuid = uuid_len == 0 ? nullptr : (const char *)malloc(uuid_len);
   if ((uuid_len != 0 && uuid == nullptr) ||
       rpc_read(conn, (void *)uuid, uuid_len) < 0 || false)
     goto ERROR_0;
@@ -301,7 +301,7 @@ int handle_nvmlDeviceGetHandleByPciBusId_v2(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &pciBusId_len, sizeof(unsigned int)) < 0)
     goto ERROR_0;
-  pciBusId = (const char *)malloc(pciBusId_len);
+  pciBusId = pciBusId_len == 0 ? nullptr : (const char *)malloc(pciBusId_len);
   if ((pciBusId_len != 0 && pciBusId == nullptr) ||
       rpc_read(conn, (void *)pciBusId, pciBusId_len) < 0 || false)
     goto ERROR_0;

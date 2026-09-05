@@ -109,7 +109,7 @@ int main() {
       &blocks, (const void *)scale_and_add, 256, 0));
   EXPECT(blocks > 0);
 
-  // cudaMemcpyDefault has the shim ask the server which side is its memory.
+  // cudaMemcpyDefault shares the driver's host/device pointer classification.
   std::vector<int> readback(kCount, 0);
   CHECK(cudaMemcpy(readback.data(), output, kCount * sizeof(int),
                    cudaMemcpyDefault));

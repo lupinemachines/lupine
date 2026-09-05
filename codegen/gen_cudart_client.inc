@@ -155,19 +155,6 @@ extern "C" cudaError_t cudaChooseDevice(int *device,
 }
 
 static cudaError_t
-lupine_rpc_cudaCreateChannelDesc(conn_t *conn, int x, int y, int z, int w,
-                                 enum cudaChannelFormatKind f) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaCreateChannelDesc) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t
 lupine_rpc_cudaCreateSurfaceObject(conn_t *conn,
                                    cudaSurfaceObject_t *pSurfObject,
                                    const struct cudaResourceDesc *pResDesc) {
@@ -458,7 +445,10 @@ static cudaError_t lupine_rpc_cudaDeviceGetByPCIBusId(conn_t *conn, int *device,
                                                       const char *pciBusId) {
   cudaError_t return_value = rpc_error();
   std::size_t pciBusId_len =
-      static_cast<std::size_t>(std::strlen(pciBusId) + 1);
+      pciBusId == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(pciBusId)) + 1);
   if (rpc_write_start_request(conn, RPC_cudaDeviceGetByPCIBusId) < 0 ||
       rpc_write(conn, &pciBusId_len, sizeof(std::size_t)) < 0 ||
       rpc_write(conn, pciBusId, pciBusId_len) < 0 ||
@@ -586,20 +576,6 @@ extern "C" cudaError_t cudaDeviceGetExecutionCtx(cudaExecutionContext_t *ctx,
 }
 
 #endif
-
-static cudaError_t
-lupine_rpc_cudaDeviceGetGraphMemAttribute(conn_t *conn, int device,
-                                          enum cudaGraphMemAttributeType attr,
-                                          void *value) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaDeviceGetGraphMemAttribute) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
 
 #if CUDART_VERSION >= 13000
 static cudaError_t lupine_rpc_cudaDeviceGetHostAtomicCapabilities(
@@ -892,20 +868,6 @@ cudaDeviceSetCacheConfig(enum cudaFuncCache cacheConfig) {
   return record(lupine_rpc_cudaDeviceSetCacheConfig(conn, cacheConfig));
 }
 
-static cudaError_t
-lupine_rpc_cudaDeviceSetGraphMemAttribute(conn_t *conn, int device,
-                                          enum cudaGraphMemAttributeType attr,
-                                          void *value) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaDeviceSetGraphMemAttribute) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
 static cudaError_t lupine_rpc_cudaDeviceSetLimit(conn_t *conn,
                                                  enum cudaLimit limit,
                                                  size_t value) {
@@ -944,23 +906,6 @@ static cudaError_t lupine_rpc_cudaDeviceSetMemPool(conn_t *conn, int device,
 extern "C" cudaError_t cudaDeviceSetMemPool(int device, cudaMemPool_t memPool) {
   conn_t *conn = lupine_rpc_conn_for_device(&device);
   return record(lupine_rpc_cudaDeviceSetMemPool(conn, device, memPool));
-}
-
-static cudaError_t lupine_rpc_cudaDeviceSynchronize(conn_t *conn) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaDeviceSynchronize) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-extern "C" cudaError_t cudaDeviceSynchronize() {
-  int route_device = current_device;
-  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return record(lupine_rpc_cudaDeviceSynchronize(conn));
 }
 
 static cudaError_t lupine_rpc_cudaDriverGetVersion(conn_t *conn,
@@ -1039,26 +984,6 @@ extern "C" cudaError_t cudaEventCreateWithFlags(cudaEvent_t *event,
   return return_value;
 }
 
-static cudaError_t lupine_rpc_cudaEventDestroy(conn_t *conn,
-                                               cudaEvent_t event) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaEventDestroy) < 0 ||
-      rpc_write(conn, &event, sizeof(cudaEvent_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-extern "C" cudaError_t cudaEventDestroy(cudaEvent_t event) {
-  int route_device = current_device;
-  conn_t *conn = event == nullptr ? lupine_rpc_conn_for_device(&route_device)
-                                  : lupine_rpc_conn_for_event(event);
-  return record(lupine_rpc_cudaEventDestroy(conn, event));
-}
-
 static cudaError_t lupine_rpc_cudaEventElapsedTime(conn_t *conn, float *ms,
                                                    cudaEvent_t start,
                                                    cudaEvent_t end) {
@@ -1084,93 +1009,6 @@ extern "C" cudaError_t cudaEventElapsedTime(float *ms, cudaEvent_t start,
   conn_t *conn = start == nullptr ? lupine_rpc_conn_for_device(&route_device)
                                   : lupine_rpc_conn_for_event(start);
   return record(lupine_rpc_cudaEventElapsedTime(conn, ms, start, end));
-}
-
-static cudaError_t lupine_rpc_cudaEventQuery(conn_t *conn, cudaEvent_t event) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaEventQuery) < 0 ||
-      rpc_write(conn, &event, sizeof(cudaEvent_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-extern "C" cudaError_t cudaEventQuery(cudaEvent_t event) {
-  int route_device = current_device;
-  conn_t *conn = event == nullptr ? lupine_rpc_conn_for_device(&route_device)
-                                  : lupine_rpc_conn_for_event(event);
-  return record(lupine_rpc_cudaEventQuery(conn, event));
-}
-
-static cudaError_t lupine_rpc_cudaEventRecord(conn_t *conn, cudaEvent_t event,
-                                              cudaStream_t stream) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaEventRecord) < 0 ||
-      rpc_write(conn, &event, sizeof(cudaEvent_t)) < 0 ||
-      rpc_write(conn, &stream, sizeof(cudaStream_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-extern "C" cudaError_t cudaEventRecord(cudaEvent_t event, cudaStream_t stream) {
-  int route_device = current_device;
-  conn_t *conn = event == nullptr ? lupine_rpc_conn_for_device(&route_device)
-                                  : lupine_rpc_conn_for_event(event);
-  return record(lupine_rpc_cudaEventRecord(conn, event, stream));
-}
-
-static cudaError_t lupine_rpc_cudaEventRecordWithFlags(conn_t *conn,
-                                                       cudaEvent_t event,
-                                                       cudaStream_t stream,
-                                                       unsigned int flags) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaEventRecordWithFlags) < 0 ||
-      rpc_write(conn, &event, sizeof(cudaEvent_t)) < 0 ||
-      rpc_write(conn, &stream, sizeof(cudaStream_t)) < 0 ||
-      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-extern "C" cudaError_t cudaEventRecordWithFlags(cudaEvent_t event,
-                                                cudaStream_t stream,
-                                                unsigned int flags) {
-  int route_device = current_device;
-  conn_t *conn = event == nullptr ? lupine_rpc_conn_for_device(&route_device)
-                                  : lupine_rpc_conn_for_event(event);
-  return record(
-      lupine_rpc_cudaEventRecordWithFlags(conn, event, stream, flags));
-}
-
-static cudaError_t lupine_rpc_cudaEventSynchronize(conn_t *conn,
-                                                   cudaEvent_t event) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaEventSynchronize) < 0 ||
-      rpc_write(conn, &event, sizeof(cudaEvent_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-extern "C" cudaError_t cudaEventSynchronize(cudaEvent_t event) {
-  int route_device = current_device;
-  conn_t *conn = event == nullptr ? lupine_rpc_conn_for_device(&route_device)
-                                  : lupine_rpc_conn_for_event(event);
-  return record(lupine_rpc_cudaEventSynchronize(conn, event));
 }
 
 #if CUDART_VERSION >= 13000
@@ -1469,9 +1307,13 @@ static cudaError_t lupine_rpc_cudaFree(conn_t *conn, void *devPtr) {
 }
 
 extern "C" cudaError_t cudaFree(void *devPtr) {
-  int route_device = current_device;
-  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return record(lupine_rpc_cudaFree(conn, devPtr));
+  conn_t *conn =
+      lupine_rpc_conn_for_deviceptr(reinterpret_cast<CUdeviceptr>(devPtr));
+  cudaError_t return_value = record(lupine_rpc_cudaFree(conn, devPtr));
+  if (return_value == cudaSuccess) {
+    lupine_rpc_forget_allocation(devPtr);
+  }
+  return return_value;
 }
 
 static cudaError_t lupine_rpc_cudaFreeArray(conn_t *conn, cudaArray_t array) {
@@ -1507,10 +1349,14 @@ static cudaError_t lupine_rpc_cudaFreeAsync(conn_t *conn, void *devPtr,
 }
 
 extern "C" cudaError_t cudaFreeAsync(void *devPtr, cudaStream_t hStream) {
-  int route_device = current_device;
-  conn_t *conn = hStream == nullptr ? lupine_rpc_conn_for_device(&route_device)
-                                    : lupine_rpc_conn_for_stream(hStream);
-  return record(lupine_rpc_cudaFreeAsync(conn, devPtr, hStream));
+  conn_t *conn =
+      lupine_rpc_conn_for_deviceptr(reinterpret_cast<CUdeviceptr>(devPtr));
+  cudaError_t return_value =
+      record(lupine_rpc_cudaFreeAsync(conn, devPtr, hStream));
+  if (return_value == cudaSuccess) {
+    lupine_rpc_forget_allocation(devPtr);
+  }
+  return return_value;
 }
 
 static cudaError_t
@@ -1558,21 +1404,6 @@ extern "C" cudaError_t cudaFuncGetAttributes(struct cudaFuncAttributes *attr,
   conn_t *conn = lupine_rpc_conn_for_device(&route_device);
   return record(lupine_rpc_cudaFuncGetAttributes(conn, attr, func));
 }
-
-#if CUDART_VERSION >= 12000
-static cudaError_t lupine_rpc_cudaFuncGetName(conn_t *conn, const char **name,
-                                              const void *func) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaFuncGetName) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-#endif
 
 #if CUDART_VERSION >= 13000
 static cudaError_t lupine_rpc_cudaFuncGetParamCount(conn_t *conn,
@@ -1777,30 +1608,6 @@ extern "C" cudaError_t cudaGetDeviceProperties(struct cudaDeviceProp *prop,
   return record(lupine_rpc_cudaGetDeviceProperties(conn, prop, device));
 }
 
-static cudaError_t lupine_rpc_cudaGetErrorName(conn_t *conn,
-                                               cudaError_t error) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaGetErrorName) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t lupine_rpc_cudaGetErrorString(conn_t *conn,
-                                                 cudaError_t error) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaGetErrorString) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
 #if CUDART_VERSION >= 13000
 static cudaError_t lupine_rpc_cudaGetFuncBySymbol(conn_t *conn,
                                                   cudaFunction_t *functionPtr,
@@ -1939,15 +1746,6 @@ static cudaError_t lupine_rpc_cudaGetSymbolAddress(conn_t *conn, void **devPtr,
     return rpc_error();
   }
   return return_value;
-}
-
-extern "C" cudaError_t cudaGetSymbolAddress(void **devPtr, const void *symbol) {
-  if (devPtr == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  int route_device = current_device;
-  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return record(lupine_rpc_cudaGetSymbolAddress(conn, devPtr, symbol));
 }
 
 static cudaError_t lupine_rpc_cudaGetSymbolSize(conn_t *conn, size_t *size,
@@ -2263,54 +2061,17 @@ extern "C" cudaError_t cudaKernelSetAttributeForDevice(
 
 #endif
 
-static cudaError_t
-lupine_rpc_cudaLaunchCooperativeKernel(conn_t *conn, const void *func,
-                                       dim3 gridDim, dim3 blockDim, void **args,
-                                       size_t sharedMem, cudaStream_t stream) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaLaunchCooperativeKernel) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t lupine_rpc_cudaLaunchKernel(conn_t *conn, const void *func,
-                                               dim3 gridDim, dim3 blockDim,
-                                               void **args, size_t sharedMem,
-                                               cudaStream_t stream) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaLaunchKernel) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t
-lupine_rpc_cudaLaunchKernelExC(conn_t *conn, const cudaLaunchConfig_t *config,
-                               const void *func, void **args) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaLaunchKernelExC) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
 #if CUDART_VERSION >= 13000
 static cudaError_t lupine_rpc_cudaLibraryGetGlobal(conn_t *conn, void **dptr,
                                                    size_t *bytes,
                                                    cudaLibrary_t library,
                                                    const char *name) {
   cudaError_t return_value = rpc_error();
-  std::size_t name_len = static_cast<std::size_t>(std::strlen(name) + 1);
+  std::size_t name_len =
+      name == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(name)) + 1);
   if (rpc_write_start_request(conn, RPC_cudaLibraryGetGlobal) < 0 ||
       rpc_write(conn, &library, sizeof(cudaLibrary_t)) < 0 ||
       rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||
@@ -2372,7 +2133,11 @@ static cudaError_t lupine_rpc_cudaLibraryGetManaged(conn_t *conn, void **dptr,
                                                     cudaLibrary_t library,
                                                     const char *name) {
   cudaError_t return_value = rpc_error();
-  std::size_t name_len = static_cast<std::size_t>(std::strlen(name) + 1);
+  std::size_t name_len =
+      name == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(name)) + 1);
   if (rpc_write_start_request(conn, RPC_cudaLibraryGetManaged) < 0 ||
       rpc_write(conn, &library, sizeof(cudaLibrary_t)) < 0 ||
       rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||
@@ -2457,7 +2222,10 @@ static cudaError_t lupine_rpc_cudaLogsDumpToFile(conn_t *conn,
                                                  unsigned int flags) {
   cudaError_t return_value = rpc_error();
   std::size_t pathToFile_len =
-      static_cast<std::size_t>(std::strlen(pathToFile) + 1);
+      pathToFile == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(pathToFile)) + 1);
   if (rpc_write_start_request(conn, RPC_cudaLogsDumpToFile) < 0 ||
       rpc_write(conn, iterator, sizeof(cudaLogIterator)) < 0 ||
       rpc_write(conn, &pathToFile_len, sizeof(std::size_t)) < 0 ||
@@ -2571,7 +2339,11 @@ extern "C" cudaError_t cudaMalloc(void **devPtr, size_t size) {
   }
   int route_device = current_device;
   conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return record(lupine_rpc_cudaMalloc(conn, devPtr, size));
+  cudaError_t return_value = record(lupine_rpc_cudaMalloc(conn, devPtr, size));
+  if (return_value == cudaSuccess) {
+    lupine_rpc_note_allocation(conn, *devPtr, size);
+  }
+  return return_value;
 }
 
 static cudaError_t lupine_rpc_cudaMalloc3D(conn_t *conn,
@@ -2596,7 +2368,14 @@ extern "C" cudaError_t cudaMalloc3D(struct cudaPitchedPtr *pitchedDevPtr,
   }
   int route_device = current_device;
   conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return record(lupine_rpc_cudaMalloc3D(conn, pitchedDevPtr, extent));
+  cudaError_t return_value =
+      record(lupine_rpc_cudaMalloc3D(conn, pitchedDevPtr, extent));
+  if (return_value == cudaSuccess) {
+    lupine_rpc_note_allocation(conn, pitchedDevPtr->ptr,
+                               pitchedDevPtr->pitch * extent.height *
+                                   extent.depth);
+  }
+  return return_value;
 }
 
 static cudaError_t
@@ -2684,7 +2463,12 @@ extern "C" cudaError_t cudaMallocAsync(void **devPtr, size_t size,
   int route_device = current_device;
   conn_t *conn = hStream == nullptr ? lupine_rpc_conn_for_device(&route_device)
                                     : lupine_rpc_conn_for_stream(hStream);
-  return record(lupine_rpc_cudaMallocAsync(conn, devPtr, size, hStream));
+  cudaError_t return_value =
+      record(lupine_rpc_cudaMallocAsync(conn, devPtr, size, hStream));
+  if (return_value == cudaSuccess) {
+    lupine_rpc_note_allocation(conn, *devPtr, size);
+  }
+  return return_value;
 }
 
 static cudaError_t lupine_rpc_cudaMallocFromPoolAsync(conn_t *conn, void **ptr,
@@ -2714,8 +2498,12 @@ extern "C" cudaError_t cudaMallocFromPoolAsync(void **ptr, size_t size,
   int route_device = current_device;
   conn_t *conn = stream == nullptr ? lupine_rpc_conn_for_device(&route_device)
                                    : lupine_rpc_conn_for_stream(stream);
-  return record(
+  cudaError_t return_value = record(
       lupine_rpc_cudaMallocFromPoolAsync(conn, ptr, size, memPool, stream));
+  if (return_value == cudaSuccess) {
+    lupine_rpc_note_allocation(conn, *ptr, size);
+  }
+  return return_value;
 }
 
 static cudaError_t lupine_rpc_cudaMallocManaged(conn_t *conn, void **devPtr,
@@ -2741,7 +2529,12 @@ extern "C" cudaError_t cudaMallocManaged(void **devPtr, size_t size,
   }
   int route_device = current_device;
   conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return record(lupine_rpc_cudaMallocManaged(conn, devPtr, size, flags));
+  cudaError_t return_value =
+      record(lupine_rpc_cudaMallocManaged(conn, devPtr, size, flags));
+  if (return_value == cudaSuccess) {
+    lupine_rpc_note_allocation(conn, *devPtr, size);
+  }
+  return return_value;
 }
 
 static cudaError_t lupine_rpc_cudaMallocMipmappedArray(
@@ -2801,7 +2594,12 @@ extern "C" cudaError_t cudaMallocPitch(void **devPtr, size_t *pitch,
   }
   int route_device = current_device;
   conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return record(lupine_rpc_cudaMallocPitch(conn, devPtr, pitch, width, height));
+  cudaError_t return_value =
+      record(lupine_rpc_cudaMallocPitch(conn, devPtr, pitch, width, height));
+  if (return_value == cudaSuccess) {
+    lupine_rpc_note_allocation(conn, *devPtr, *pitch * height);
+  }
+  return return_value;
 }
 
 #if CUDART_VERSION >= 13000
@@ -3020,20 +2818,6 @@ extern "C" cudaError_t cudaMemPoolGetAccess(enum cudaMemAccessFlags *flags,
       lupine_rpc_cudaMemPoolGetAccess(conn, flags, memPool, location));
 }
 
-static cudaError_t lupine_rpc_cudaMemPoolGetAttribute(conn_t *conn,
-                                                      cudaMemPool_t memPool,
-                                                      enum cudaMemPoolAttr attr,
-                                                      void *value) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaMemPoolGetAttribute) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
 static cudaError_t lupine_rpc_cudaMemPoolImportPointer(
     conn_t *conn, void **ptr, cudaMemPool_t memPool,
     struct cudaMemPoolPtrExportData *exportData) {
@@ -3095,20 +2879,6 @@ cudaMemPoolSetAccess(cudaMemPool_t memPool,
   conn_t *conn = lupine_rpc_conn_for_device(&route_device);
   return record(
       lupine_rpc_cudaMemPoolSetAccess(conn, memPool, descList, count));
-}
-
-static cudaError_t lupine_rpc_cudaMemPoolSetAttribute(conn_t *conn,
-                                                      cudaMemPool_t memPool,
-                                                      enum cudaMemPoolAttr attr,
-                                                      void *value) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaMemPoolSetAttribute) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
 }
 
 static cudaError_t lupine_rpc_cudaMemPoolTrimTo(conn_t *conn,
@@ -3228,158 +2998,6 @@ extern "C" cudaError_t cudaMemSetMemPool(struct cudaMemLocation *location,
 }
 
 #endif
-
-static cudaError_t lupine_rpc_cudaMemcpy(conn_t *conn, void *dst,
-                                         const void *src, size_t count,
-                                         enum cudaMemcpyKind kind) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaMemcpy) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t lupine_rpc_cudaMemcpy2D(conn_t *conn, void *dst,
-                                           size_t dpitch, const void *src,
-                                           size_t spitch, size_t width,
-                                           size_t height,
-                                           enum cudaMemcpyKind kind) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaMemcpy2D) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t lupine_rpc_cudaMemcpy2DAsync(conn_t *conn, void *dst,
-                                                size_t dpitch, const void *src,
-                                                size_t spitch, size_t width,
-                                                size_t height,
-                                                enum cudaMemcpyKind kind,
-                                                cudaStream_t stream) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaMemcpy2DAsync) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t lupine_rpc_cudaMemcpyAsync(conn_t *conn, void *dst,
-                                              const void *src, size_t count,
-                                              enum cudaMemcpyKind kind,
-                                              cudaStream_t stream) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaMemcpyAsync) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t lupine_rpc_cudaMemcpyFromSymbol(conn_t *conn, void *dst,
-                                                   const void *symbol,
-                                                   size_t count, size_t offset,
-                                                   enum cudaMemcpyKind kind) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaMemcpyFromSymbol) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t lupine_rpc_cudaMemcpyFromSymbolAsync(
-    conn_t *conn, void *dst, const void *symbol, size_t count, size_t offset,
-    enum cudaMemcpyKind kind, cudaStream_t stream) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaMemcpyFromSymbolAsync) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t lupine_rpc_cudaMemcpyPeer(conn_t *conn, void *dst,
-                                             int dstDevice, const void *src,
-                                             int srcDevice, size_t count) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaMemcpyPeer) < 0 ||
-      rpc_write(conn, &dst, sizeof(void *)) < 0 ||
-      rpc_write(conn, &dstDevice, sizeof(int)) < 0 ||
-      rpc_write(conn, &src, sizeof(const void *)) < 0 ||
-      rpc_write(conn, &srcDevice, sizeof(int)) < 0 ||
-      rpc_write(conn, &count, sizeof(size_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t lupine_rpc_cudaMemcpyPeerAsync(conn_t *conn, void *dst,
-                                                  int dstDevice,
-                                                  const void *src,
-                                                  int srcDevice, size_t count,
-                                                  cudaStream_t stream) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaMemcpyPeerAsync) < 0 ||
-      rpc_write(conn, &dst, sizeof(void *)) < 0 ||
-      rpc_write(conn, &dstDevice, sizeof(int)) < 0 ||
-      rpc_write(conn, &src, sizeof(const void *)) < 0 ||
-      rpc_write(conn, &srcDevice, sizeof(int)) < 0 ||
-      rpc_write(conn, &count, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &stream, sizeof(cudaStream_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t lupine_rpc_cudaMemcpyToSymbol(conn_t *conn,
-                                                 const void *symbol,
-                                                 const void *src, size_t count,
-                                                 size_t offset,
-                                                 enum cudaMemcpyKind kind) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaMemcpyToSymbol) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t lupine_rpc_cudaMemcpyToSymbolAsync(
-    conn_t *conn, const void *symbol, const void *src, size_t count,
-    size_t offset, enum cudaMemcpyKind kind, cudaStream_t stream) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaMemcpyToSymbolAsync) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
 
 static cudaError_t lupine_rpc_cudaMemset(conn_t *conn, void *devPtr, int value,
                                          size_t count) {
@@ -3683,33 +3301,6 @@ extern "C" cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
   return record(
       lupine_rpc_cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
           conn, numBlocks, func, blockSize, dynamicSMemSize, flags));
-}
-
-static cudaError_t lupine_rpc_cudaOccupancyMaxActiveClusters(
-    conn_t *conn, int *numClusters, const void *func,
-    const cudaLaunchConfig_t *launchConfig) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaOccupancyMaxActiveClusters) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-static cudaError_t lupine_rpc_cudaOccupancyMaxPotentialClusterSize(
-    conn_t *conn, int *clusterSize, const void *func,
-    const cudaLaunchConfig_t *launchConfig) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaOccupancyMaxPotentialClusterSize) <
-          0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
 }
 
 static cudaError_t lupine_rpc_cudaPeekAtLastError(conn_t *conn) {
@@ -4321,26 +3912,6 @@ cudaStreamIsCapturing(cudaStream_t stream,
   return record(lupine_rpc_cudaStreamIsCapturing(conn, stream, pCaptureStatus));
 }
 
-static cudaError_t lupine_rpc_cudaStreamQuery(conn_t *conn,
-                                              cudaStream_t stream) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaStreamQuery) < 0 ||
-      rpc_write(conn, &stream, sizeof(cudaStream_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-extern "C" cudaError_t cudaStreamQuery(cudaStream_t stream) {
-  int route_device = current_device;
-  conn_t *conn = stream == nullptr ? lupine_rpc_conn_for_device(&route_device)
-                                   : lupine_rpc_conn_for_stream(stream);
-  return record(lupine_rpc_cudaStreamQuery(conn, stream));
-}
-
 static cudaError_t
 lupine_rpc_cudaStreamSetAttribute(conn_t *conn, cudaStream_t hStream,
                                   cudaLaunchAttributeID attr,
@@ -4368,26 +3939,6 @@ cudaStreamSetAttribute(cudaStream_t hStream, cudaLaunchAttributeID attr,
   conn_t *conn = hStream == nullptr ? lupine_rpc_conn_for_device(&route_device)
                                     : lupine_rpc_conn_for_stream(hStream);
   return record(lupine_rpc_cudaStreamSetAttribute(conn, hStream, attr, value));
-}
-
-static cudaError_t lupine_rpc_cudaStreamSynchronize(conn_t *conn,
-                                                    cudaStream_t stream) {
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaStreamSynchronize) < 0 ||
-      rpc_write(conn, &stream, sizeof(cudaStream_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-extern "C" cudaError_t cudaStreamSynchronize(cudaStream_t stream) {
-  int route_device = current_device;
-  conn_t *conn = stream == nullptr ? lupine_rpc_conn_for_device(&route_device)
-                                   : lupine_rpc_conn_for_stream(stream);
-  return record(lupine_rpc_cudaStreamSynchronize(conn, stream));
 }
 
 #if CUDART_VERSION >= 13000
@@ -5001,7 +4552,11 @@ static cudaError_t lupine_rpc_cudaGraphDebugDotPrint(conn_t *conn,
                                                      const char *path,
                                                      unsigned int flags) {
   cudaError_t return_value = rpc_error();
-  std::size_t path_len = static_cast<std::size_t>(std::strlen(path) + 1);
+  std::size_t path_len =
+      path == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(path)) + 1);
   if (rpc_write_start_request(conn, RPC_cudaGraphDebugDotPrint) < 0 ||
       rpc_write(conn, &graph, sizeof(cudaGraph_t)) < 0 ||
       rpc_write(conn, &path_len, sizeof(std::size_t)) < 0 ||
@@ -6416,6 +5971,323 @@ cudaGraphicsUnregisterResource(cudaGraphicsResource_t resource) {
   conn_t *conn = lupine_rpc_conn_for_device(&route_device);
   return record(lupine_rpc_cudaGraphicsUnregisterResource(conn, resource));
 }
+
+static cudaError_t lupine_rpc___cudaRegisterFunction(
+    conn_t *conn, void **fatCubinHandle, const char *hostFun, char *deviceFun,
+    const char *deviceName, int thread_limit, uint3 *tid, uint3 *bid,
+    dim3 *bDim, dim3 *gDim, int *wSize) {
+  cudaError_t return_value = rpc_error();
+  std::size_t deviceFun_len =
+      deviceFun == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(deviceFun)) + 1);
+  std::size_t deviceName_len =
+      deviceName == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(deviceName)) + 1);
+  if (rpc_write_start_request(conn, RPC___cudaRegisterFunction) < 0 ||
+      rpc_write(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_write(conn, &hostFun, sizeof(const char *)) < 0 ||
+      rpc_write(conn, &deviceFun_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, deviceFun, deviceFun_len) < 0 ||
+      rpc_write(conn, &deviceName_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, deviceName, deviceName_len) < 0 ||
+      rpc_write(conn, &thread_limit, sizeof(int)) < 0 ||
+      rpc_write(conn, &tid, sizeof(uint3 *)) < 0 ||
+      (tid != nullptr && rpc_write(conn, tid, sizeof(uint3)) < 0) ||
+      rpc_write(conn, &bid, sizeof(uint3 *)) < 0 ||
+      (bid != nullptr && rpc_write(conn, bid, sizeof(uint3)) < 0) ||
+      rpc_write(conn, &bDim, sizeof(dim3 *)) < 0 ||
+      (bDim != nullptr && rpc_write(conn, bDim, sizeof(dim3)) < 0) ||
+      rpc_write(conn, &gDim, sizeof(dim3 *)) < 0 ||
+      (gDim != nullptr && rpc_write(conn, gDim, sizeof(dim3)) < 0) ||
+      rpc_write(conn, &wSize, sizeof(int *)) < 0 ||
+      (wSize != nullptr && rpc_write(conn, wSize, sizeof(int)) < 0) ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+static cudaError_t
+lupine_rpc___cudaRegisterVar(conn_t *conn, void **fatCubinHandle, char *hostVar,
+                             char *deviceAddress, const char *deviceName,
+                             int ext, size_t size, int constant, int global) {
+  cudaError_t return_value = rpc_error();
+  std::size_t deviceAddress_len =
+      deviceAddress == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(deviceAddress)) + 1);
+  std::size_t deviceName_len =
+      deviceName == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(deviceName)) + 1);
+  if (rpc_write_start_request(conn, RPC___cudaRegisterVar) < 0 ||
+      rpc_write(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_write(conn, &hostVar, sizeof(char *)) < 0 ||
+      rpc_write(conn, &deviceAddress_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, deviceAddress, deviceAddress_len) < 0 ||
+      rpc_write(conn, &deviceName_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, deviceName, deviceName_len) < 0 ||
+      rpc_write(conn, &ext, sizeof(int)) < 0 ||
+      rpc_write(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &constant, sizeof(int)) < 0 ||
+      rpc_write(conn, &global, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+static cudaError_t lupine_rpc___cudaRegisterManagedVar(
+    conn_t *conn, void **fatCubinHandle, void **hostVarPtrAddress,
+    char *deviceAddress, const char *deviceName, int ext, size_t size,
+    int constant, int global) {
+  cudaError_t return_value = rpc_error();
+  std::size_t deviceAddress_len =
+      deviceAddress == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(deviceAddress)) + 1);
+  std::size_t deviceName_len =
+      deviceName == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(deviceName)) + 1);
+  if (rpc_write_start_request(conn, RPC___cudaRegisterManagedVar) < 0 ||
+      rpc_write(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_write(conn, &hostVarPtrAddress, sizeof(void **)) < 0 ||
+      rpc_write(conn, &deviceAddress_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, deviceAddress, deviceAddress_len) < 0 ||
+      rpc_write(conn, &deviceName_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, deviceName, deviceName_len) < 0 ||
+      rpc_write(conn, &ext, sizeof(int)) < 0 ||
+      rpc_write(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &constant, sizeof(int)) < 0 ||
+      rpc_write(conn, &global, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+static cudaError_t lupine_rpc___cudaRegisterTexture(
+    conn_t *conn, void **fatCubinHandle, const void *hostVar,
+    const void **deviceAddress, const char *deviceName, int dim, int norm,
+    int ext) {
+  cudaError_t return_value = rpc_error();
+  std::size_t deviceAddress_len =
+      deviceAddress == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(deviceAddress)) + 1);
+  std::size_t deviceName_len =
+      deviceName == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(deviceName)) + 1);
+  if (rpc_write_start_request(conn, RPC___cudaRegisterTexture) < 0 ||
+      rpc_write(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_write(conn, &hostVar, sizeof(const void *)) < 0 ||
+      rpc_write(conn, &deviceAddress_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, deviceAddress, deviceAddress_len) < 0 ||
+      rpc_write(conn, &deviceName_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, deviceName, deviceName_len) < 0 ||
+      rpc_write(conn, &dim, sizeof(int)) < 0 ||
+      rpc_write(conn, &norm, sizeof(int)) < 0 ||
+      rpc_write(conn, &ext, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+static cudaError_t lupine_rpc___cudaRegisterSurface(
+    conn_t *conn, void **fatCubinHandle, const void *hostVar,
+    const void **deviceAddress, const char *deviceName, int dim, int ext) {
+  cudaError_t return_value = rpc_error();
+  std::size_t deviceAddress_len =
+      deviceAddress == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(deviceAddress)) + 1);
+  std::size_t deviceName_len =
+      deviceName == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(deviceName)) + 1);
+  if (rpc_write_start_request(conn, RPC___cudaRegisterSurface) < 0 ||
+      rpc_write(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_write(conn, &hostVar, sizeof(const void *)) < 0 ||
+      rpc_write(conn, &deviceAddress_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, deviceAddress, deviceAddress_len) < 0 ||
+      rpc_write(conn, &deviceName_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, deviceName, deviceName_len) < 0 ||
+      rpc_write(conn, &dim, sizeof(int)) < 0 ||
+      rpc_write(conn, &ext, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+static cudaError_t lupine_rpc___cudaRegisterHostVar(conn_t *conn,
+                                                    void **fatCubinHandle,
+                                                    const char *deviceName,
+                                                    char *hostVar,
+                                                    size_t size) {
+  cudaError_t return_value = rpc_error();
+  std::size_t deviceName_len =
+      deviceName == nullptr
+          ? 0
+          : static_cast<std::size_t>(
+                std::strlen(reinterpret_cast<const char *>(deviceName)) + 1);
+  if (rpc_write_start_request(conn, RPC___cudaRegisterHostVar) < 0 ||
+      rpc_write(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_write(conn, &deviceName_len, sizeof(std::size_t)) < 0 ||
+      rpc_write(conn, deviceName, deviceName_len) < 0 ||
+      rpc_write(conn, &hostVar, sizeof(char *)) < 0 ||
+      rpc_write(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+static unsigned lupine_rpc___cudaPushCallConfiguration(
+    conn_t *conn, dim3 gridDim, dim3 blockDim, size_t sharedMem, void *stream) {
+  unsigned return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC___cudaPushCallConfiguration) < 0 ||
+      rpc_write(conn, &gridDim, sizeof(dim3)) < 0 ||
+      rpc_write(conn, &blockDim, sizeof(dim3)) < 0 ||
+      rpc_write(conn, &sharedMem, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &stream, sizeof(void *)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" unsigned __cudaPushCallConfiguration(dim3 gridDim, dim3 blockDim,
+                                                size_t sharedMem,
+                                                void *stream) {
+  int route_device = 0;
+  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
+  return record(static_cast<cudaError_t>(lupine_rpc___cudaPushCallConfiguration(
+      conn, gridDim, blockDim, sharedMem, stream)));
+}
+
+static cudaError_t lupine_rpc___cudaPopCallConfiguration(conn_t *conn,
+                                                         dim3 *gridDim,
+                                                         dim3 *blockDim,
+                                                         size_t *sharedMem,
+                                                         void *stream) {
+  cudaError_t return_value = rpc_error();
+  dim3 *gridDim_null_check = nullptr;
+  dim3 *blockDim_null_check = nullptr;
+  size_t *sharedMem_null_check = nullptr;
+  void *stream_null_check = nullptr;
+  if (rpc_write_start_request(conn, RPC___cudaPopCallConfiguration) < 0 ||
+      rpc_write(conn, &gridDim, sizeof(dim3 *)) < 0 ||
+      rpc_write(conn, &blockDim, sizeof(dim3 *)) < 0 ||
+      rpc_write(conn, &sharedMem, sizeof(size_t *)) < 0 ||
+      rpc_write(conn, &stream, sizeof(void *)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &gridDim_null_check, sizeof(dim3 *)) < 0 ||
+      (gridDim_null_check && rpc_read(conn, gridDim, sizeof(dim3)) < 0) ||
+      rpc_read(conn, &blockDim_null_check, sizeof(dim3 *)) < 0 ||
+      (blockDim_null_check && rpc_read(conn, blockDim, sizeof(dim3)) < 0) ||
+      rpc_read(conn, &sharedMem_null_check, sizeof(size_t *)) < 0 ||
+      (sharedMem_null_check && rpc_read(conn, sharedMem, sizeof(size_t)) < 0) ||
+      rpc_read(conn, &stream_null_check, sizeof(void *)) < 0 ||
+      (stream_null_check && rpc_read(conn, stream, sizeof(void *)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
+                                                  size_t *sharedMem,
+                                                  void *stream) {
+  int route_device = 0;
+  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
+  return record(lupine_rpc___cudaPopCallConfiguration(conn, gridDim, blockDim,
+                                                      sharedMem, stream));
+}
+
+static cudaError_t
+lupine_rpc___cudaRegisterFatBinaryEnd(conn_t *conn, void **fatCubinHandle) {
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC___cudaRegisterFatBinaryEnd) < 0 ||
+      rpc_write(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+static cudaError_t lupine_rpc___cudaUnregisterFatBinary(conn_t *conn,
+                                                        void **fatCubinHandle) {
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC___cudaUnregisterFatBinary) < 0 ||
+      rpc_write(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+#if CUDART_VERSION >= 13000
+static cudaError_t lupine_rpc___cudaGetKernel(conn_t *conn,
+                                              cudaKernel_t *kernel,
+                                              const void *entryFuncAddr) {
+  cudaError_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC___cudaGetKernel) < 0 ||
+      rpc_write(conn, &entryFuncAddr, sizeof(const void *)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, kernel, sizeof(cudaKernel_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t __cudaGetKernel(cudaKernel_t *kernel,
+                                       const void *entryFuncAddr) {
+  if (kernel == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  int route_device = current_device;
+  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
+  return record(lupine_rpc___cudaGetKernel(conn, kernel, entryFuncAddr));
+}
+
+#endif
 
 #if CUDART_VERSION >= 13000
 // Not annotated for this backend, so not supported.

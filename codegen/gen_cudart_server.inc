@@ -522,7 +522,7 @@ int handle_cudaDeviceGetByPCIBusId(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &pciBusId_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  pciBusId = (const char *)malloc(pciBusId_len);
+  pciBusId = pciBusId_len == 0 ? nullptr : (const char *)malloc(pciBusId_len);
   if ((pciBusId_len != 0 && pciBusId == nullptr) ||
       rpc_read(conn, (void *)pciBusId, pciBusId_len) < 0 || false)
     goto ERROR_0;
@@ -1103,30 +1103,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cudaDeviceSynchronize(conn_t *conn) {
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)();
-  fn_t fn = nullptr;
-  if (false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaDeviceSynchronize));
-  return_value = fn == nullptr ? function_not_found() : fn();
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cudaDriverGetVersion(conn_t *conn) {
   int driverVersion;
   driverVersion = {};
@@ -1209,31 +1185,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cudaEventDestroy(conn_t *conn) {
-  cudaEvent_t event;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaEvent_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &event, sizeof(cudaEvent_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaEventDestroy));
-  return_value = fn == nullptr ? function_not_found() : fn(event);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cudaEventElapsedTime(conn_t *conn) {
   float ms;
   ms = {};
@@ -1256,113 +1207,6 @@ int handle_cudaEventElapsedTime(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &ms, sizeof(float)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaEventQuery(conn_t *conn) {
-  cudaEvent_t event;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaEvent_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &event, sizeof(cudaEvent_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaEventQuery));
-  return_value = fn == nullptr ? function_not_found() : fn(event);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaEventRecord(conn_t *conn) {
-  cudaEvent_t event;
-  cudaStream_t stream;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaEvent_t, cudaStream_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &event, sizeof(cudaEvent_t)) < 0 ||
-      rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaEventRecord));
-  return_value = fn == nullptr ? function_not_found() : fn(event, stream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaEventRecordWithFlags(conn_t *conn) {
-  cudaEvent_t event;
-  cudaStream_t stream;
-  unsigned int flags;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaEvent_t, cudaStream_t, unsigned int);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &event, sizeof(cudaEvent_t)) < 0 ||
-      rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 ||
-      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaEventRecordWithFlags));
-  return_value =
-      fn == nullptr ? function_not_found() : fn(event, stream, flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaEventSynchronize(conn_t *conn) {
-  cudaEvent_t event;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaEvent_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &event, sizeof(cudaEvent_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaEventSynchronize));
-  return_value = fn == nullptr ? function_not_found() : fn(event);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -2642,7 +2486,7 @@ int handle_cudaLibraryGetGlobal(conn_t *conn) {
   if (rpc_read(conn, &library, sizeof(cudaLibrary_t)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  name = (const char *)malloc(name_len);
+  name = name_len == 0 ? nullptr : (const char *)malloc(name_len);
   if ((name_len != 0 && name == nullptr) ||
       rpc_read(conn, (void *)name, name_len) < 0 || false)
     goto ERROR_0;
@@ -2717,7 +2561,7 @@ int handle_cudaLibraryGetManaged(conn_t *conn) {
   if (rpc_read(conn, &library, sizeof(cudaLibrary_t)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  name = (const char *)malloc(name_len);
+  name = name_len == 0 ? nullptr : (const char *)malloc(name_len);
   if ((name_len != 0 && name == nullptr) ||
       rpc_read(conn, (void *)name, name_len) < 0 || false)
     goto ERROR_0;
@@ -2818,7 +2662,8 @@ int handle_cudaLogsDumpToFile(conn_t *conn) {
   if (rpc_read(conn, &iterator, sizeof(cudaLogIterator)) < 0 ||
       rpc_read(conn, &pathToFile_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  pathToFile = (const char *)malloc(pathToFile_len);
+  pathToFile =
+      pathToFile_len == 0 ? nullptr : (const char *)malloc(pathToFile_len);
   if ((pathToFile_len != 0 && pathToFile == nullptr) ||
       rpc_read(conn, (void *)pathToFile, pathToFile_len) < 0 ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
@@ -3696,78 +3541,6 @@ ERROR_0:
 }
 
 #endif
-
-int handle_cudaMemcpyPeer(conn_t *conn) {
-  void *dst;
-  int dstDevice;
-  const void *src;
-  int srcDevice;
-  size_t count;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(void *, int, const void *, int, size_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &dst, sizeof(void *)) < 0 ||
-      rpc_read(conn, &dstDevice, sizeof(int)) < 0 ||
-      rpc_read(conn, &src, sizeof(const void *)) < 0 ||
-      rpc_read(conn, &srcDevice, sizeof(int)) < 0 ||
-      rpc_read(conn, &count, sizeof(size_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaMemcpyPeer));
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(dst, dstDevice, src, srcDevice, count);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaMemcpyPeerAsync(conn_t *conn) {
-  void *dst;
-  int dstDevice;
-  const void *src;
-  int srcDevice;
-  size_t count;
-  cudaStream_t stream;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t =
-      cudaError_t (*)(void *, int, const void *, int, size_t, cudaStream_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &dst, sizeof(void *)) < 0 ||
-      rpc_read(conn, &dstDevice, sizeof(int)) < 0 ||
-      rpc_read(conn, &src, sizeof(const void *)) < 0 ||
-      rpc_read(conn, &srcDevice, sizeof(int)) < 0 ||
-      rpc_read(conn, &count, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaMemcpyPeerAsync));
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(dst, dstDevice, src, srcDevice, count, stream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
 
 int handle_cudaMemset(conn_t *conn) {
   void *devPtr;
@@ -4882,31 +4655,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cudaStreamQuery(conn_t *conn) {
-  cudaStream_t stream;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaStream_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaStreamQuery));
-  return_value = fn == nullptr ? function_not_found() : fn(stream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cudaStreamSetAttribute(conn_t *conn) {
   cudaStream_t hStream;
   cudaLaunchAttributeID attr;
@@ -4929,31 +4677,6 @@ int handle_cudaStreamSetAttribute(conn_t *conn) {
   fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaStreamSetAttribute));
   return_value =
       fn == nullptr ? function_not_found() : fn(hStream, attr, &value);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaStreamSynchronize(conn_t *conn) {
-  cudaStream_t stream;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaStream_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(cudaStreamSynchronize));
-  return_value = fn == nullptr ? function_not_found() : fn(stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
@@ -5761,7 +5484,7 @@ int handle_cudaGraphDebugDotPrint(conn_t *conn) {
   if (rpc_read(conn, &graph, sizeof(cudaGraph_t)) < 0 ||
       rpc_read(conn, &path_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  path = (const char *)malloc(path_len);
+  path = path_len == 0 ? nullptr : (const char *)malloc(path_len);
   if ((path_len != 0 && path == nullptr) ||
       rpc_read(conn, (void *)path, path_len) < 0 ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
@@ -7493,3 +7216,482 @@ int handle_cudaGraphicsUnregisterResource(conn_t *conn) {
 ERROR_0:
   return -1;
 }
+
+int handle___cudaRegisterFunction(conn_t *conn) {
+  void **fatCubinHandle;
+  const char *hostFun;
+  char *deviceFun = nullptr;
+  std::size_t deviceFun_len;
+  const char *deviceName = nullptr;
+  std::size_t deviceName_len;
+  int thread_limit;
+  uint3 *tid_null_check;
+  uint3 tid;
+  uint3 *bid_null_check;
+  uint3 bid;
+  dim3 *bDim_null_check;
+  dim3 bDim;
+  dim3 *gDim_null_check;
+  dim3 gDim;
+  int *wSize_null_check;
+  int wSize;
+  int request_id;
+  cudaError_t return_value;
+  if (rpc_read(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_read(conn, &hostFun, sizeof(const char *)) < 0 ||
+      rpc_read(conn, &deviceFun_len, sizeof(std::size_t)) < 0)
+    goto ERROR_0;
+  deviceFun = deviceFun_len == 0 ? nullptr : (char *)malloc(deviceFun_len);
+  if ((deviceFun_len != 0 && deviceFun == nullptr) ||
+      rpc_read(conn, (void *)deviceFun, deviceFun_len) < 0 ||
+      rpc_read(conn, &deviceName_len, sizeof(std::size_t)) < 0)
+    goto ERROR_0;
+  deviceName =
+      deviceName_len == 0 ? nullptr : (const char *)malloc(deviceName_len);
+  if ((deviceName_len != 0 && deviceName == nullptr) ||
+      rpc_read(conn, (void *)deviceName, deviceName_len) < 0 ||
+      rpc_read(conn, &thread_limit, sizeof(int)) < 0 ||
+      rpc_read(conn, &tid_null_check, sizeof(uint3 *)) < 0 ||
+      (tid_null_check && rpc_read(conn, &tid, sizeof(uint3)) < 0) ||
+      rpc_read(conn, &bid_null_check, sizeof(uint3 *)) < 0 ||
+      (bid_null_check && rpc_read(conn, &bid, sizeof(uint3)) < 0) ||
+      rpc_read(conn, &bDim_null_check, sizeof(dim3 *)) < 0 ||
+      (bDim_null_check && rpc_read(conn, &bDim, sizeof(dim3)) < 0) ||
+      rpc_read(conn, &gDim_null_check, sizeof(dim3 *)) < 0 ||
+      (gDim_null_check && rpc_read(conn, &gDim, sizeof(dim3)) < 0) ||
+      rpc_read(conn, &wSize_null_check, sizeof(int *)) < 0 ||
+      (wSize_null_check && rpc_read(conn, &wSize, sizeof(int)) < 0) || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = register_function(
+      fatCubinHandle, hostFun, deviceFun, deviceName, thread_limit,
+      tid_null_check ? &tid : nullptr, bid_null_check ? &bid : nullptr,
+      bDim_null_check ? &bDim : nullptr, gDim_null_check ? &gDim : nullptr,
+      wSize_null_check ? &wSize : nullptr);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)deviceName);
+  free((void *)deviceFun);
+  return 0;
+ERROR_0:
+  free((void *)deviceName);
+  free((void *)deviceFun);
+  return -1;
+}
+
+int handle___cudaRegisterVar(conn_t *conn) {
+  void **fatCubinHandle;
+  char *hostVar;
+  char *deviceAddress = nullptr;
+  std::size_t deviceAddress_len;
+  const char *deviceName = nullptr;
+  std::size_t deviceName_len;
+  int ext;
+  size_t size;
+  int constant;
+  int global;
+  int request_id;
+  cudaError_t return_value;
+  if (rpc_read(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_read(conn, &hostVar, sizeof(char *)) < 0 ||
+      rpc_read(conn, &deviceAddress_len, sizeof(std::size_t)) < 0)
+    goto ERROR_0;
+  deviceAddress =
+      deviceAddress_len == 0 ? nullptr : (char *)malloc(deviceAddress_len);
+  if ((deviceAddress_len != 0 && deviceAddress == nullptr) ||
+      rpc_read(conn, (void *)deviceAddress, deviceAddress_len) < 0 ||
+      rpc_read(conn, &deviceName_len, sizeof(std::size_t)) < 0)
+    goto ERROR_0;
+  deviceName =
+      deviceName_len == 0 ? nullptr : (const char *)malloc(deviceName_len);
+  if ((deviceName_len != 0 && deviceName == nullptr) ||
+      rpc_read(conn, (void *)deviceName, deviceName_len) < 0 ||
+      rpc_read(conn, &ext, sizeof(int)) < 0 ||
+      rpc_read(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &constant, sizeof(int)) < 0 ||
+      rpc_read(conn, &global, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = register_var(fatCubinHandle, hostVar, deviceAddress,
+                              deviceName, ext, size, constant, global);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)deviceName);
+  free((void *)deviceAddress);
+  return 0;
+ERROR_0:
+  free((void *)deviceName);
+  free((void *)deviceAddress);
+  return -1;
+}
+
+int handle___cudaRegisterManagedVar(conn_t *conn) {
+  void **fatCubinHandle;
+  void **hostVarPtrAddress;
+  char *deviceAddress = nullptr;
+  std::size_t deviceAddress_len;
+  const char *deviceName = nullptr;
+  std::size_t deviceName_len;
+  int ext;
+  size_t size;
+  int constant;
+  int global;
+  int request_id;
+  cudaError_t return_value;
+  if (rpc_read(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_read(conn, &hostVarPtrAddress, sizeof(void **)) < 0 ||
+      rpc_read(conn, &deviceAddress_len, sizeof(std::size_t)) < 0)
+    goto ERROR_0;
+  deviceAddress =
+      deviceAddress_len == 0 ? nullptr : (char *)malloc(deviceAddress_len);
+  if ((deviceAddress_len != 0 && deviceAddress == nullptr) ||
+      rpc_read(conn, (void *)deviceAddress, deviceAddress_len) < 0 ||
+      rpc_read(conn, &deviceName_len, sizeof(std::size_t)) < 0)
+    goto ERROR_0;
+  deviceName =
+      deviceName_len == 0 ? nullptr : (const char *)malloc(deviceName_len);
+  if ((deviceName_len != 0 && deviceName == nullptr) ||
+      rpc_read(conn, (void *)deviceName, deviceName_len) < 0 ||
+      rpc_read(conn, &ext, sizeof(int)) < 0 ||
+      rpc_read(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &constant, sizeof(int)) < 0 ||
+      rpc_read(conn, &global, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value =
+      register_managed_var(fatCubinHandle, hostVarPtrAddress, deviceAddress,
+                           deviceName, ext, size, constant, global);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)deviceName);
+  free((void *)deviceAddress);
+  return 0;
+ERROR_0:
+  free((void *)deviceName);
+  free((void *)deviceAddress);
+  return -1;
+}
+
+int handle___cudaRegisterTexture(conn_t *conn) {
+  void **fatCubinHandle;
+  const void *hostVar;
+  const void **deviceAddress = nullptr;
+  std::size_t deviceAddress_len;
+  const char *deviceName = nullptr;
+  std::size_t deviceName_len;
+  int dim;
+  int norm;
+  int ext;
+  int request_id;
+  cudaError_t return_value;
+  if (rpc_read(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_read(conn, &hostVar, sizeof(const void *)) < 0 ||
+      rpc_read(conn, &deviceAddress_len, sizeof(std::size_t)) < 0)
+    goto ERROR_0;
+  deviceAddress = deviceAddress_len == 0
+                      ? nullptr
+                      : (const void **)malloc(deviceAddress_len);
+  if ((deviceAddress_len != 0 && deviceAddress == nullptr) ||
+      rpc_read(conn, (void *)deviceAddress, deviceAddress_len) < 0 ||
+      rpc_read(conn, &deviceName_len, sizeof(std::size_t)) < 0)
+    goto ERROR_0;
+  deviceName =
+      deviceName_len == 0 ? nullptr : (const char *)malloc(deviceName_len);
+  if ((deviceName_len != 0 && deviceName == nullptr) ||
+      rpc_read(conn, (void *)deviceName, deviceName_len) < 0 ||
+      rpc_read(conn, &dim, sizeof(int)) < 0 ||
+      rpc_read(conn, &norm, sizeof(int)) < 0 ||
+      rpc_read(conn, &ext, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = register_texture(fatCubinHandle, hostVar, deviceAddress,
+                                  deviceName, dim, norm, ext);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)deviceName);
+  free((void *)deviceAddress);
+  return 0;
+ERROR_0:
+  free((void *)deviceName);
+  free((void *)deviceAddress);
+  return -1;
+}
+
+int handle___cudaRegisterSurface(conn_t *conn) {
+  void **fatCubinHandle;
+  const void *hostVar;
+  const void **deviceAddress = nullptr;
+  std::size_t deviceAddress_len;
+  const char *deviceName = nullptr;
+  std::size_t deviceName_len;
+  int dim;
+  int ext;
+  int request_id;
+  cudaError_t return_value;
+  if (rpc_read(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_read(conn, &hostVar, sizeof(const void *)) < 0 ||
+      rpc_read(conn, &deviceAddress_len, sizeof(std::size_t)) < 0)
+    goto ERROR_0;
+  deviceAddress = deviceAddress_len == 0
+                      ? nullptr
+                      : (const void **)malloc(deviceAddress_len);
+  if ((deviceAddress_len != 0 && deviceAddress == nullptr) ||
+      rpc_read(conn, (void *)deviceAddress, deviceAddress_len) < 0 ||
+      rpc_read(conn, &deviceName_len, sizeof(std::size_t)) < 0)
+    goto ERROR_0;
+  deviceName =
+      deviceName_len == 0 ? nullptr : (const char *)malloc(deviceName_len);
+  if ((deviceName_len != 0 && deviceName == nullptr) ||
+      rpc_read(conn, (void *)deviceName, deviceName_len) < 0 ||
+      rpc_read(conn, &dim, sizeof(int)) < 0 ||
+      rpc_read(conn, &ext, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = register_surface(fatCubinHandle, hostVar, deviceAddress,
+                                  deviceName, dim, ext);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)deviceName);
+  free((void *)deviceAddress);
+  return 0;
+ERROR_0:
+  free((void *)deviceName);
+  free((void *)deviceAddress);
+  return -1;
+}
+
+int handle___cudaRegisterHostVar(conn_t *conn) {
+  void **fatCubinHandle;
+  const char *deviceName = nullptr;
+  std::size_t deviceName_len;
+  char *hostVar;
+  size_t size;
+  int request_id;
+  cudaError_t return_value;
+  if (rpc_read(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
+      rpc_read(conn, &deviceName_len, sizeof(std::size_t)) < 0)
+    goto ERROR_0;
+  deviceName =
+      deviceName_len == 0 ? nullptr : (const char *)malloc(deviceName_len);
+  if ((deviceName_len != 0 && deviceName == nullptr) ||
+      rpc_read(conn, (void *)deviceName, deviceName_len) < 0 ||
+      rpc_read(conn, &hostVar, sizeof(char *)) < 0 ||
+      rpc_read(conn, &size, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = register_host_var(fatCubinHandle, deviceName, hostVar, size);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)deviceName);
+  return 0;
+ERROR_0:
+  free((void *)deviceName);
+  return -1;
+}
+
+int handle___cudaPushCallConfiguration(conn_t *conn) {
+  dim3 gridDim;
+  dim3 blockDim;
+  size_t sharedMem;
+  void *stream;
+  int request_id;
+  unsigned return_value;
+  using fn_t = unsigned (*)(dim3, dim3, size_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &gridDim, sizeof(dim3)) < 0 ||
+      rpc_read(conn, &blockDim, sizeof(dim3)) < 0 ||
+      rpc_read(conn, &sharedMem, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &stream, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(__cudaPushCallConfiguration));
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(gridDim, blockDim, sharedMem, stream);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(unsigned)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle___cudaPopCallConfiguration(conn_t *conn) {
+  dim3 *gridDim_null_check;
+  dim3 gridDim;
+  gridDim = {};
+  dim3 *blockDim_null_check;
+  dim3 blockDim;
+  blockDim = {};
+  size_t *sharedMem_null_check;
+  size_t sharedMem;
+  sharedMem = {};
+  void *stream_null_check;
+  void *stream;
+  stream = {};
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = cudaError_t (*)(dim3 *, dim3 *, size_t *, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &gridDim_null_check, sizeof(dim3 *)) < 0 ||
+      rpc_read(conn, &blockDim_null_check, sizeof(dim3 *)) < 0 ||
+      rpc_read(conn, &sharedMem_null_check, sizeof(size_t *)) < 0 ||
+      rpc_read(conn, &stream_null_check, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(__cudaPopCallConfiguration));
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(gridDim_null_check ? &gridDim : nullptr,
+                                    blockDim_null_check ? &blockDim : nullptr,
+                                    sharedMem_null_check ? &sharedMem : nullptr,
+                                    stream_null_check ? &stream : nullptr);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &gridDim_null_check, sizeof(dim3 *)) < 0 ||
+      (gridDim_null_check && rpc_write(conn, &gridDim, sizeof(dim3)) < 0) ||
+      rpc_write(conn, &blockDim_null_check, sizeof(dim3 *)) < 0 ||
+      (blockDim_null_check && rpc_write(conn, &blockDim, sizeof(dim3)) < 0) ||
+      rpc_write(conn, &sharedMem_null_check, sizeof(size_t *)) < 0 ||
+      (sharedMem_null_check &&
+       rpc_write(conn, &sharedMem, sizeof(size_t)) < 0) ||
+      rpc_write(conn, &stream_null_check, sizeof(void *)) < 0 ||
+      (stream_null_check && rpc_write(conn, &stream, sizeof(void *)) < 0) ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle___cudaRegisterFatBinaryEnd(conn_t *conn) {
+  void **fatCubinHandle;
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = void (*)(void **);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &fatCubinHandle, sizeof(void **)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(__cudaRegisterFatBinaryEnd));
+  return_value = fn == nullptr ? function_not_found() : cudaSuccess;
+  if (fn != nullptr)
+    fn(fatCubinHandle);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle___cudaUnregisterFatBinary(conn_t *conn) {
+  void **fatCubinHandle;
+  int request_id;
+  cudaError_t return_value;
+  if (rpc_read(conn, &fatCubinHandle, sizeof(void **)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = unregister_fat_binary(fatCubinHandle);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#if CUDART_VERSION >= 13000
+int handle___cudaGetKernel(conn_t *conn) {
+  cudaKernel_t kernel;
+  kernel = {};
+  const void *entryFuncAddr;
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = cudaError_t (*)(cudaKernel_t *, const void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &entryFuncAddr, sizeof(const void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>(LUPINE_SYMBOL_NAME(__cudaGetKernel));
+  return_value =
+      fn == nullptr ? function_not_found() : fn(&kernel, entryFuncAddr);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &kernel, sizeof(cudaKernel_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif

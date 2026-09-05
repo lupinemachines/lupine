@@ -340,7 +340,7 @@ def parse_server_binding(
     guard = None
     for directive in annotation_directives(annotation):
         parts = directive.split()
-        if parts[0] == "@disabled" and parts[1:2] != ["client"]:
+        if parts[0] == "@disabled" and parts[1:2] not in (["client"], ["local"]):
             if handler is not None:
                 raise RuntimeError(f"Duplicate @disabled for {name}")
             rest = parts[2:] if parts[1:2] == ["server"] else parts[1:]
@@ -503,7 +503,8 @@ def parse_annotation(
         return metadata
     for line in annotation.split("\n"):
         # @disabled client / @disabled server skip one generated side; bare
-        # @disabled (optionally naming the server handler) skips both.
+        # @disabled skips both and registers a manual server handler.
+        # @disabled local skips both without registering a server handler.
         if "@disabled" in line:
             if metadata.disabled_client or metadata.disabled_server:
                 raise RuntimeError("Duplicate @disabled")
@@ -546,6 +547,12 @@ def parse_annotation(
             if not guard or metadata.guard is not None:
                 raise RuntimeError("Invalid @guard annotation")
             metadata.guard = guard
+            continue
+        if line.strip().startswith("@servercall"):
+            parts = line.split()
+            if len(parts) != 2 or metadata.server_call is not None:
+                raise RuntimeError("@servercall requires one adapter name")
+            metadata.server_call = parts[1]
             continue
         if line.startswith("@routingkey"):
             parts = line.split()
@@ -1766,6 +1773,16 @@ def main():
         (HIP, hip_functions_with_annotations),
         (CUDART, cudart_functions_with_annotations),
     ]
+    for backend, functions in forwarding_backends:
+        templates = collect_client_call_templates(
+            ANNOTATION_FILES[backend.name],
+            {
+                function.name.format(): function.return_type.format()
+                for function, _, _, _ in functions if function.has_body
+            },
+        )
+        for function, _, _, metadata in functions:
+            attach_client_call_template(function, metadata, templates)
     sdk_functions_for = {
         backend.name: parse_file(
             find_header_file(sdk_header(ANNOTATION_FILES[backend.name])),

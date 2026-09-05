@@ -8522,6 +8522,16 @@ extern "C" void lupine_rpc_note_event_owner(conn_t *conn, CUevent event) {
   lupine_note_event_owner(event, conn);
 }
 
+extern "C" void lupine_rpc_note_allocation(conn_t *conn, const void *ptr,
+                                           size_t size) {
+  lupine_note_deviceptr_allocation(reinterpret_cast<CUdeviceptr>(ptr), size,
+                                   conn);
+}
+
+extern "C" void lupine_rpc_forget_allocation(const void *ptr) {
+  lupine_forget_deviceptr_owner(reinterpret_cast<CUdeviceptr>(ptr));
+}
+
 int rpc_open() {
   if (pthread_once(&lupine_rpc_lifecycle_once,
                    lupine_install_rpc_lifecycle_hooks) != 0) {

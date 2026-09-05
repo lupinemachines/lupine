@@ -1,15 +1,16 @@
 // CUDA runtime API (libcudart) on the LUPINE client.
 //
-// Every call is an RPC the server answers with its own libcudart, sent on the
+// Most calls are RPCs the server answers with its own libcudart, sent on the
 // CUDA driver shim's connections: the same server child owns the driver state
 // and the runtime state, and one lane per client thread keeps the two APIs
-// ordered. Most of the surface is generated. The calls in this file carry
-// something the generated marshalling cannot: the host side of a copy, the
+// ordered. Most of the surface is generated. This file handles the
 // image nvcc embedded in the caller, kernel arguments whose sizes only the
 // server knows, or a value whose width the attribute decides. What cannot be
 // forwarded at all -- memory or a function pointer inside the server, a
 // callback into the client -- is a generated stub that returns
 // cudaErrorNotSupported.
+// Copies and their completion paths call the driver shim, sharing its routing,
+// staging and deferred host-copy handling.
 
 #include <cuda.h>
 #include <cuda_runtime_api.h>
@@ -240,272 +241,318 @@ cudaCreateChannelDesc(int x, int y, int z, int w,
 
 namespace {
 
-// The server can tell its own device memory from a pointer it has never seen,
-// so a cudaMemcpyDefault copy asks it about each side to pick a direction.
-bool server_memory(conn_t *conn, const void *pointer) {
-  cudaPointerAttributes attributes = {};
-  if (lupine_rpc_cudaPointerGetAttributes(conn, &attributes, pointer) !=
-      cudaSuccess) {
-    return false;
-  }
-  return attributes.type == cudaMemoryTypeDevice ||
-         attributes.type == cudaMemoryTypeManaged;
+// Most driver and runtime error values agree. A deinitialized driver is not
+// cudaErrorCudartUnloading (the runtime's historical value at the same number).
+cudaError_t record(CUresult error) {
+  return record(error == CUDA_ERROR_DEINITIALIZED
+                    ? cudaErrorDeviceUninitialized
+                    : static_cast<cudaError_t>(error));
 }
 
-cudaMemcpyKind resolve_kind(conn_t *conn, const void *dst, const void *src,
-                            cudaMemcpyKind kind) {
-  if (kind != cudaMemcpyDefault) {
-    return kind;
+cudaError_t copy_2d(void *dst, size_t dpitch, const void *src, size_t spitch,
+                    size_t width, size_t height, cudaMemcpyKind kind,
+                    const cudaStream_t *stream) {
+  if (kind < cudaMemcpyHostToHost || kind > cudaMemcpyDefault) {
+    return record(cudaErrorInvalidMemcpyDirection);
   }
-  const bool dst_device = server_memory(conn, dst);
-  const bool src_device = server_memory(conn, src);
-  if (dst_device) {
-    return src_device ? cudaMemcpyDeviceToDevice : cudaMemcpyHostToDevice;
+  if (width > dpitch || width > spitch) {
+    return record(cudaErrorInvalidPitchValue);
   }
-  return src_device ? cudaMemcpyDeviceToHost : cudaMemcpyHostToHost;
-}
-
-// The host side of a copy, if there is one, travels as a payload after the
-// parameters; the server answers with the result and, for a device-to-host
-// copy, the bytes. Both ends are client memory only for host-to-host, which
-// the server never sees.
-cudaError_t copy(conn_t *conn, int op, void *dst, const void *src, size_t count,
-                 cudaMemcpyKind kind, const cudaStream_t *stream) {
-  if (conn == nullptr) {
-    return record(rpc_error());
-  }
-  kind = resolve_kind(conn, dst, src, kind);
-  if (kind == cudaMemcpyHostToHost) {
-    memmove(dst, src, count);
+  if (width == 0 || height == 0) {
     return cudaSuccess;
   }
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, op) < 0 ||
-      rpc_write(conn, &dst, sizeof(dst)) < 0 ||
-      rpc_write(conn, &src, sizeof(src)) < 0 ||
-      rpc_write(conn, &count, sizeof(count)) < 0 ||
-      rpc_write(conn, &kind, sizeof(kind)) < 0 ||
-      (stream != nullptr && rpc_write(conn, stream, sizeof(*stream)) < 0) ||
-      (kind == cudaMemcpyHostToDevice && count != 0 &&
-       rpc_write(conn, src, count) < 0) ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      (kind == cudaMemcpyDeviceToHost && return_value == cudaSuccess &&
-       count != 0 && rpc_read(conn, dst, count) < 0) ||
-      rpc_read_end(conn) < 0) {
-    return record(rpc_error());
+  if (dst == nullptr || src == nullptr) {
+    return record(cudaErrorInvalidValue);
   }
-  return record(return_value);
+  // A depth-one volume accepts arbitrary device pitches; cuMemcpy2D can
+  // reject pitches that did not come from cuMemAllocPitch.
+  CUDA_MEMCPY3D copy = {};
+  switch (kind) {
+  case cudaMemcpyHostToHost:
+    copy.srcMemoryType = copy.dstMemoryType = CU_MEMORYTYPE_HOST;
+    break;
+  case cudaMemcpyHostToDevice:
+    copy.srcMemoryType = CU_MEMORYTYPE_HOST;
+    copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+    break;
+  case cudaMemcpyDeviceToHost:
+    copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+    copy.dstMemoryType = CU_MEMORYTYPE_HOST;
+    break;
+  case cudaMemcpyDeviceToDevice:
+    copy.srcMemoryType = copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+    break;
+  case cudaMemcpyDefault:
+    copy.srcMemoryType = copy.dstMemoryType = CU_MEMORYTYPE_UNIFIED;
+    break;
+  }
+  copy.srcHost = src;
+  copy.srcDevice = reinterpret_cast<CUdeviceptr>(src);
+  copy.srcPitch = spitch;
+  copy.srcHeight = height;
+  copy.dstHost = dst;
+  copy.dstDevice = reinterpret_cast<CUdeviceptr>(dst);
+  copy.dstPitch = dpitch;
+  copy.dstHeight = height;
+  copy.WidthInBytes = width;
+  copy.Height = height;
+  copy.Depth = 1;
+  return record(stream == nullptr ? cuMemcpy3D(&copy)
+                                  : cuMemcpy3DAsync(&copy, *stream));
 }
 
-// A pitched copy travels packed: `height` rows of `width` bytes.
-cudaError_t copy_2d(conn_t *conn, int op, void *dst, size_t dpitch,
-                    const void *src, size_t spitch, size_t width, size_t height,
-                    cudaMemcpyKind kind, const cudaStream_t *stream) {
-  if (conn == nullptr) {
-    return record(rpc_error());
+// The runtime resolves nvcc's host symbol key. Only the copy itself is mapped
+// to the driver; retain the symbol bounds and owning route for interior
+// pointers.
+cudaError_t symbol_address(conn_t *conn, void **address, const void *symbol,
+                           size_t offset, size_t count) {
+  if (address == nullptr) {
+    return record(cudaErrorInvalidValue);
   }
-  kind = resolve_kind(conn, dst, src, kind);
-  if (kind == cudaMemcpyHostToHost) {
-    for (size_t row = 0; row < height; ++row) {
-      memmove(static_cast<char *>(dst) + row * dpitch,
-              static_cast<const char *>(src) + row * spitch, width);
-    }
-    return cudaSuccess;
+  void *base = nullptr;
+  size_t size = 0;
+  cudaError_t result = lupine_rpc_cudaGetSymbolAddress(conn, &base, symbol);
+  if (result == cudaSuccess) {
+    result = lupine_rpc_cudaGetSymbolSize(conn, &size, symbol);
   }
-  std::vector<unsigned char> packed;
-  if (kind == cudaMemcpyHostToDevice) {
-    packed.resize(width * height);
-    for (size_t row = 0; row < height; ++row) {
-      memcpy(packed.data() + row * width,
-             static_cast<const char *>(src) + row * spitch, width);
-    }
+  if (result != cudaSuccess) {
+    return record(result);
   }
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, op) < 0 ||
-      rpc_write(conn, &dst, sizeof(dst)) < 0 ||
-      rpc_write(conn, &dpitch, sizeof(dpitch)) < 0 ||
-      rpc_write(conn, &src, sizeof(src)) < 0 ||
-      rpc_write(conn, &spitch, sizeof(spitch)) < 0 ||
-      rpc_write(conn, &width, sizeof(width)) < 0 ||
-      rpc_write(conn, &height, sizeof(height)) < 0 ||
-      rpc_write(conn, &kind, sizeof(kind)) < 0 ||
-      (stream != nullptr && rpc_write(conn, stream, sizeof(*stream)) < 0) ||
-      (!packed.empty() && rpc_write(conn, packed.data(), packed.size()) < 0) ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0) {
-    return record(rpc_error());
+  if (offset > size || count > size - offset) {
+    return record(cudaErrorInvalidValue);
   }
-  if (kind == cudaMemcpyDeviceToHost && return_value == cudaSuccess &&
-      width * height != 0) {
-    packed.resize(width * height);
-    if (rpc_read(conn, packed.data(), packed.size()) < 0) {
-      return record(rpc_error());
-    }
-    for (size_t row = 0; row < height; ++row) {
-      memcpy(static_cast<char *>(dst) + row * dpitch,
-             packed.data() + row * width, width);
-    }
-  }
-  return rpc_read_end(conn) < 0 ? rpc_error() : return_value;
+  lupine_rpc_note_allocation(conn, base, size);
+  *address =
+      reinterpret_cast<void *>(reinterpret_cast<CUdeviceptr>(base) + offset);
+  return cudaSuccess;
 }
 
-// A symbol copy names the device side by the host entry point nvcc
-// registered; only the other side can be client memory.
-cudaError_t copy_symbol(conn_t *conn, int op, const void *symbol, void *other,
-                        size_t count, size_t offset, cudaMemcpyKind kind,
-                        const cudaStream_t *stream, bool to_symbol) {
-  if (conn == nullptr) {
-    return record(rpc_error());
+cudaError_t copy_peer(void *dst, int dstDevice, const void *src, int srcDevice,
+                      size_t count, const cudaStream_t *stream) {
+  CUcontext dstContext = nullptr, srcContext = nullptr;
+  CUresult result = cuDevicePrimaryCtxRetain(&dstContext, dstDevice);
+  if (result != CUDA_SUCCESS) {
+    return record(result);
   }
-  if (kind == cudaMemcpyDefault) {
-    const bool device = server_memory(conn, other);
-    kind = device      ? cudaMemcpyDeviceToDevice
-           : to_symbol ? cudaMemcpyHostToDevice
-                       : cudaMemcpyDeviceToHost;
+  result = cuDevicePrimaryCtxRetain(&srcContext, srcDevice);
+  if (result == CUDA_SUCCESS) {
+    result =
+        stream == nullptr
+            ? cuMemcpyPeer(reinterpret_cast<CUdeviceptr>(dst), dstContext,
+                           reinterpret_cast<CUdeviceptr>(src), srcContext,
+                           count)
+            : cuMemcpyPeerAsync(reinterpret_cast<CUdeviceptr>(dst), dstContext,
+                                reinterpret_cast<CUdeviceptr>(src), srcContext,
+                                count, *stream);
+    (void)cuDevicePrimaryCtxRelease(srcDevice);
   }
-  const bool send = to_symbol && kind == cudaMemcpyHostToDevice;
-  const bool receive = !to_symbol && kind == cudaMemcpyDeviceToHost;
-  cudaError_t return_value = rpc_error();
-  if (rpc_write_start_request(conn, op) < 0 ||
-      rpc_write(conn, &symbol, sizeof(symbol)) < 0 ||
-      rpc_write(conn, &other, sizeof(other)) < 0 ||
-      rpc_write(conn, &count, sizeof(count)) < 0 ||
-      rpc_write(conn, &offset, sizeof(offset)) < 0 ||
-      rpc_write(conn, &kind, sizeof(kind)) < 0 ||
-      (stream != nullptr && rpc_write(conn, stream, sizeof(*stream)) < 0) ||
-      (send && count != 0 && rpc_write(conn, other, count) < 0) ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      (receive && return_value == cudaSuccess && count != 0 &&
-       rpc_read(conn, other, count) < 0) ||
-      rpc_read_end(conn) < 0) {
-    return record(rpc_error());
-  }
-  return record(return_value);
+  (void)cuDevicePrimaryCtxRelease(dstDevice);
+  return record(result);
 }
 
 } // namespace
 
 extern "C" cudaError_t cudaMemcpy(void *dst, const void *src, size_t count,
-                                  enum cudaMemcpyKind kind) {
-  int route_device = current_device;
-  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return copy(conn, RPC_cudaMemcpy, dst, src, count, kind, nullptr);
+                                  cudaMemcpyKind kind) {
+  if (kind < cudaMemcpyHostToHost || kind > cudaMemcpyDefault) {
+    return record(cudaErrorInvalidMemcpyDirection);
+  }
+  if (count == 0) {
+    return cudaSuccess;
+  }
+  if (dst == nullptr || src == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  switch (kind) {
+  case cudaMemcpyHostToHost:
+    std::memmove(dst, src, count);
+    return cudaSuccess;
+  case cudaMemcpyHostToDevice:
+    return record(cuMemcpyHtoD(reinterpret_cast<CUdeviceptr>(dst), src, count));
+  case cudaMemcpyDeviceToHost:
+    return record(cuMemcpyDtoH(dst, reinterpret_cast<CUdeviceptr>(src), count));
+  case cudaMemcpyDeviceToDevice:
+    return record(cuMemcpyDtoD(reinterpret_cast<CUdeviceptr>(dst),
+                               reinterpret_cast<CUdeviceptr>(src), count));
+  case cudaMemcpyDefault:
+    return record(cuMemcpy(reinterpret_cast<CUdeviceptr>(dst),
+                           reinterpret_cast<CUdeviceptr>(src), count));
+  }
+  return record(cudaErrorInvalidMemcpyDirection);
 }
 
 extern "C" cudaError_t cudaMemcpyAsync(void *dst, const void *src, size_t count,
-                                       enum cudaMemcpyKind kind,
+                                       cudaMemcpyKind kind,
                                        cudaStream_t stream) {
-  int route_device = current_device;
-  conn_t *conn = stream == nullptr ? lupine_rpc_conn_for_device(&route_device)
-                                   : lupine_rpc_conn_for_stream(stream);
-  return copy(conn, RPC_cudaMemcpyAsync, dst, src, count, kind, &stream);
+  if (kind < cudaMemcpyHostToHost || kind > cudaMemcpyDefault) {
+    return record(cudaErrorInvalidMemcpyDirection);
+  }
+  if (count == 0) {
+    return cudaSuccess;
+  }
+  if (dst == nullptr || src == nullptr) {
+    return record(cudaErrorInvalidValue);
+  }
+  switch (kind) {
+  case cudaMemcpyHostToHost:
+    std::memmove(dst, src, count);
+    return cudaSuccess;
+  case cudaMemcpyHostToDevice:
+    return record(cuMemcpyHtoDAsync(reinterpret_cast<CUdeviceptr>(dst), src,
+                                    count, stream));
+  case cudaMemcpyDeviceToHost:
+    return record(cuMemcpyDtoHAsync(dst, reinterpret_cast<CUdeviceptr>(src),
+                                    count, stream));
+  case cudaMemcpyDeviceToDevice:
+    return record(cuMemcpyDtoDAsync(reinterpret_cast<CUdeviceptr>(dst),
+                                    reinterpret_cast<CUdeviceptr>(src), count,
+                                    stream));
+  case cudaMemcpyDefault:
+    return record(cuMemcpyAsync(reinterpret_cast<CUdeviceptr>(dst),
+                                reinterpret_cast<CUdeviceptr>(src), count,
+                                stream));
+  }
+  return record(cudaErrorInvalidMemcpyDirection);
 }
 
 extern "C" cudaError_t cudaMemcpy2D(void *dst, size_t dpitch, const void *src,
                                     size_t spitch, size_t width, size_t height,
-                                    enum cudaMemcpyKind kind) {
-  int route_device = current_device;
-  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return copy_2d(conn, RPC_cudaMemcpy2D, dst, dpitch, src, spitch, width,
-                 height, kind, nullptr);
+                                    cudaMemcpyKind kind) {
+  return copy_2d(dst, dpitch, src, spitch, width, height, kind, nullptr);
 }
 
 extern "C" cudaError_t cudaMemcpy2DAsync(void *dst, size_t dpitch,
                                          const void *src, size_t spitch,
                                          size_t width, size_t height,
-                                         enum cudaMemcpyKind kind,
+                                         cudaMemcpyKind kind,
                                          cudaStream_t stream) {
+  return copy_2d(dst, dpitch, src, spitch, width, height, kind, &stream);
+}
+
+extern "C" cudaError_t cudaGetSymbolAddress(void **devPtr, const void *symbol) {
   int route_device = current_device;
-  conn_t *conn = stream == nullptr ? lupine_rpc_conn_for_device(&route_device)
-                                   : lupine_rpc_conn_for_stream(stream);
-  return copy_2d(conn, RPC_cudaMemcpy2DAsync, dst, dpitch, src, spitch, width,
-                 height, kind, &stream);
+  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
+  return symbol_address(conn, devPtr, symbol, 0, 0);
 }
 
 extern "C" cudaError_t cudaMemcpyToSymbol(const void *symbol, const void *src,
                                           size_t count, size_t offset,
-                                          enum cudaMemcpyKind kind) {
+                                          cudaMemcpyKind kind) {
+  if (kind != cudaMemcpyHostToDevice && kind != cudaMemcpyDeviceToDevice &&
+      kind != cudaMemcpyDefault) {
+    return record(cudaErrorInvalidMemcpyDirection);
+  }
   int route_device = current_device;
   conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return copy_symbol(conn, RPC_cudaMemcpyToSymbol, symbol,
-                     const_cast<void *>(src), count, offset, kind, nullptr,
-                     true);
+  void *address = nullptr;
+  cudaError_t result = symbol_address(conn, &address, symbol, offset, count);
+  if (result != cudaSuccess) {
+    return result;
+  }
+  return cudaMemcpy(address, src, count, kind);
 }
 
 extern "C" cudaError_t cudaMemcpyFromSymbol(void *dst, const void *symbol,
                                             size_t count, size_t offset,
-                                            enum cudaMemcpyKind kind) {
+                                            cudaMemcpyKind kind) {
+  if (kind != cudaMemcpyDeviceToHost && kind != cudaMemcpyDeviceToDevice &&
+      kind != cudaMemcpyDefault) {
+    return record(cudaErrorInvalidMemcpyDirection);
+  }
   int route_device = current_device;
   conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  return copy_symbol(conn, RPC_cudaMemcpyFromSymbol, symbol, dst, count, offset,
-                     kind, nullptr, false);
+  void *address = nullptr;
+  cudaError_t result = symbol_address(conn, &address, symbol, offset, count);
+  if (result != cudaSuccess) {
+    return result;
+  }
+  return cudaMemcpy(dst, address, count, kind);
 }
 
 extern "C" cudaError_t cudaMemcpyToSymbolAsync(const void *symbol,
                                                const void *src, size_t count,
                                                size_t offset,
-                                               enum cudaMemcpyKind kind,
+                                               cudaMemcpyKind kind,
                                                cudaStream_t stream) {
+  if (kind != cudaMemcpyHostToDevice && kind != cudaMemcpyDeviceToDevice &&
+      kind != cudaMemcpyDefault) {
+    return record(cudaErrorInvalidMemcpyDirection);
+  }
   int route_device = current_device;
   conn_t *conn = stream == nullptr ? lupine_rpc_conn_for_device(&route_device)
                                    : lupine_rpc_conn_for_stream(stream);
-  return copy_symbol(conn, RPC_cudaMemcpyToSymbolAsync, symbol,
-                     const_cast<void *>(src), count, offset, kind, &stream,
-                     true);
+  void *address = nullptr;
+  cudaError_t result = symbol_address(conn, &address, symbol, offset, count);
+  if (result != cudaSuccess) {
+    return result;
+  }
+  return cudaMemcpyAsync(address, src, count, kind, stream);
 }
 
 extern "C" cudaError_t cudaMemcpyFromSymbolAsync(void *dst, const void *symbol,
                                                  size_t count, size_t offset,
-                                                 enum cudaMemcpyKind kind,
+                                                 cudaMemcpyKind kind,
                                                  cudaStream_t stream) {
+  if (kind != cudaMemcpyDeviceToHost && kind != cudaMemcpyDeviceToDevice &&
+      kind != cudaMemcpyDefault) {
+    return record(cudaErrorInvalidMemcpyDirection);
+  }
   int route_device = current_device;
   conn_t *conn = stream == nullptr ? lupine_rpc_conn_for_device(&route_device)
                                    : lupine_rpc_conn_for_stream(stream);
-  return copy_symbol(conn, RPC_cudaMemcpyFromSymbolAsync, symbol, dst, count,
-                     offset, kind, &stream, false);
-}
-
-namespace {
-
-// A peer copy names two virtual ordinals; both have to sit behind one server.
-cudaError_t peer_connection(int *dstDevice, int *srcDevice, conn_t **conn) {
-  conn_t *dst_conn = lupine_rpc_conn_for_device(dstDevice);
-  conn_t *src_conn = lupine_rpc_conn_for_device(srcDevice);
-  if (dst_conn == nullptr || src_conn == nullptr) {
-    return cudaErrorInvalidDevice;
+  void *address = nullptr;
+  cudaError_t result = symbol_address(conn, &address, symbol, offset, count);
+  if (result != cudaSuccess) {
+    return result;
   }
-  if (dst_conn != src_conn) {
-    return cudaErrorNotSupported;
-  }
-  *conn = dst_conn;
-  return cudaSuccess;
+  return cudaMemcpyAsync(dst, address, count, kind, stream);
 }
-
-} // namespace
 
 extern "C" cudaError_t cudaMemcpyPeer(void *dst, int dstDevice, const void *src,
                                       int srcDevice, size_t count) {
-  conn_t *conn = nullptr;
-  cudaError_t routed = peer_connection(&dstDevice, &srcDevice, &conn);
-  if (routed != cudaSuccess) {
-    return record(routed);
-  }
-  return record(
-      lupine_rpc_cudaMemcpyPeer(conn, dst, dstDevice, src, srcDevice, count));
+  return copy_peer(dst, dstDevice, src, srcDevice, count, nullptr);
 }
 
 extern "C" cudaError_t cudaMemcpyPeerAsync(void *dst, int dstDevice,
                                            const void *src, int srcDevice,
                                            size_t count, cudaStream_t stream) {
-  conn_t *conn = nullptr;
-  cudaError_t routed = peer_connection(&dstDevice, &srcDevice, &conn);
-  if (routed != cudaSuccess) {
-    return record(routed);
-  }
-  return record(lupine_rpc_cudaMemcpyPeerAsync(conn, dst, dstDevice, src,
-                                               srcDevice, count, stream));
+  return copy_peer(dst, dstDevice, src, srcDevice, count, &stream);
+}
+
+// Driver copies may defer host results until synchronization. Use the same
+// completion path to collect those bytes before returning to runtime callers.
+extern "C" cudaError_t cudaDeviceSynchronize() {
+  return record(cuCtxSynchronize());
+}
+
+extern "C" cudaError_t cudaStreamSynchronize(cudaStream_t stream) {
+  return record(cuStreamSynchronize(stream));
+}
+
+extern "C" cudaError_t cudaStreamQuery(cudaStream_t stream) {
+  return record(cuStreamQuery(stream));
+}
+
+extern "C" cudaError_t cudaEventSynchronize(cudaEvent_t event) {
+  return record(cuEventSynchronize(event));
+}
+
+extern "C" cudaError_t cudaEventQuery(cudaEvent_t event) {
+  return record(cuEventQuery(event));
+}
+
+extern "C" cudaError_t cudaEventRecord(cudaEvent_t event, cudaStream_t stream) {
+  return record(cuEventRecord(event, stream));
+}
+
+extern "C" cudaError_t cudaEventRecordWithFlags(cudaEvent_t event,
+                                                cudaStream_t stream,
+                                                unsigned int flags) {
+  return record(cuEventRecordWithFlags(event, stream, flags));
+}
+
+extern "C" cudaError_t cudaEventDestroy(cudaEvent_t event) {
+  return record(cuEventDestroy(event));
 }
 
 // ---------------------------------------------------------------------------
@@ -636,35 +683,18 @@ size_t fatbin_size(const void *image) {
   return header->header_size + header->files_size;
 }
 
-// Sends the same registration to every server that holds the fatbin.
-// Byte strings carry a uint64_t length followed by that many bytes. The length
-// storage must live until rpc_wait_for_response sends the queued writes.
-template <typename Write>
-void register_on_each(void **fatCubinHandle, int op, Write write) {
+// Registration is replicated, but each request uses the generated marshaller.
+template <typename Register, typename... Args>
+void register_on_each(void **fatCubinHandle, Register call, Args... args) {
   std::lock_guard<std::mutex> lock(registry_mutex());
   auto entry = fatbins().find(fatCubinHandle);
   if (entry == fatbins().end()) {
     return;
   }
   for (const auto &[conn, handle] : entry->second.handles) {
-    int ack = 0;
-    if (rpc_write_start_request(conn, op) < 0 ||
-        rpc_write(conn, &handle, sizeof(handle)) < 0 || write(conn) < 0 ||
-        rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, &ack, sizeof(ack)) < 0 || rpc_read_end(conn) < 0) {
-      record(rpc_error());
-    }
+    record(call(conn, handle, args...));
   }
 }
-
-struct call_configuration {
-  dim3 grid;
-  dim3 block;
-  size_t shared;
-  cudaStream_t stream;
-};
-
-thread_local std::vector<call_configuration> call_configurations;
 
 } // namespace
 
@@ -704,13 +734,11 @@ extern "C" void **__cudaRegisterFatBinary(void *fatCubin) {
 }
 
 extern "C" void __cudaRegisterFatBinaryEnd(void **fatCubinHandle) {
-  register_on_each(fatCubinHandle, RPC___cudaRegisterFatBinaryEnd,
-                   [](conn_t *) { return 0; });
+  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterFatBinaryEnd);
 }
 
 extern "C" void __cudaUnregisterFatBinary(void **fatCubinHandle) {
-  register_on_each(fatCubinHandle, RPC___cudaUnregisterFatBinary,
-                   [](conn_t *) { return 0; });
+  register_on_each(fatCubinHandle, lupine_rpc___cudaUnregisterFatBinary);
   std::lock_guard<std::mutex> lock(registry_mutex());
   if (fatbins().erase(fatCubinHandle) != 0) {
     delete[] fatCubinHandle;
@@ -722,109 +750,40 @@ extern "C" char __cudaInitModule(void **fatCubinHandle) {
   return 1;
 }
 
-namespace {
-
-// An optional launch-bound value: a presence flag, then the value.
-template <typename T>
-int write_optional(conn_t *conn, const uint8_t &present, const T *value) {
-  if (rpc_write(conn, &present, sizeof(present)) < 0) {
-    return -1;
-  }
-  return present ? rpc_write(conn, value, sizeof(*value)) : 0;
-}
-
-} // namespace
-
 extern "C" void __cudaRegisterFunction(void **fatCubinHandle,
                                        const char *hostFun, char *deviceFun,
                                        const char *deviceName, int thread_limit,
                                        uint3 *tid, uint3 *bid, dim3 *bDim,
                                        dim3 *gDim, int *wSize) {
-  const uint64_t device_fun_len = deviceFun == nullptr ? 0 : strlen(deviceFun);
-  const uint64_t device_name_len = deviceName == nullptr ? 0 : strlen(deviceName);
-  const uint8_t present[5] = {tid != nullptr, bid != nullptr, bDim != nullptr,
-                              gDim != nullptr, wSize != nullptr};
-  register_on_each(fatCubinHandle, RPC___cudaRegisterFunction, [&](conn_t *c) {
-    return rpc_write(c, &hostFun, sizeof(hostFun)) < 0 ||
-                   rpc_write(c, &device_fun_len, sizeof(device_fun_len)) < 0 ||
-                   rpc_write(c, deviceFun, device_fun_len) < 0 ||
-                   rpc_write(c, &device_name_len, sizeof(device_name_len)) < 0 ||
-                   rpc_write(c, deviceName, device_name_len) < 0 ||
-                   rpc_write(c, &thread_limit, sizeof(thread_limit)) < 0 ||
-                   write_optional(c, present[0], tid) < 0 ||
-                   write_optional(c, present[1], bid) < 0 ||
-                   write_optional(c, present[2], bDim) < 0 ||
-                   write_optional(c, present[3], gDim) < 0 ||
-                   write_optional(c, present[4], wSize) < 0
-               ? -1
-               : 0;
-  });
+  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterFunction, hostFun,
+                   deviceFun, deviceName, thread_limit, tid, bid, bDim, gDim,
+                   wSize);
 }
 
 extern "C" void __cudaRegisterVar(void **fatCubinHandle, char *hostVar,
                                   char *deviceAddress, const char *deviceName,
                                   int ext, size_t size, int constant,
                                   int global) {
-  const uint64_t device_address_len =
-      deviceAddress == nullptr ? 0 : strlen(deviceAddress);
-  const uint64_t device_name_len = deviceName == nullptr ? 0 : strlen(deviceName);
-  register_on_each(fatCubinHandle, RPC___cudaRegisterVar, [&](conn_t *c) {
-    return rpc_write(c, &hostVar, sizeof(hostVar)) < 0 ||
-                   rpc_write(c, &device_address_len,
-                             sizeof(device_address_len)) < 0 ||
-                   rpc_write(c, deviceAddress, device_address_len) < 0 ||
-                   rpc_write(c, &device_name_len, sizeof(device_name_len)) < 0 ||
-                   rpc_write(c, deviceName, device_name_len) < 0 ||
-                   rpc_write(c, &ext, sizeof(ext)) < 0 ||
-                   rpc_write(c, &size, sizeof(size)) < 0 ||
-                   rpc_write(c, &constant, sizeof(constant)) < 0 ||
-                   rpc_write(c, &global, sizeof(global)) < 0
-               ? -1
-               : 0;
-  });
+  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterVar, hostVar,
+                   deviceAddress, deviceName, ext, size, constant, global);
 }
 
-// The runtime fills the managed pointer in on the server, so the client's
-// slot stays empty: the variable is reachable by symbol, not by host access.
 extern "C" void
 __cudaRegisterManagedVar(void **fatCubinHandle, void **hostVarPtrAddress,
                          char *deviceAddress, const char *deviceName, int ext,
                          size_t size, int constant, int global) {
-  const uint64_t device_address_len =
-      deviceAddress == nullptr ? 0 : strlen(deviceAddress);
-  const uint64_t device_name_len = deviceName == nullptr ? 0 : strlen(deviceName);
-  register_on_each(
-      fatCubinHandle, RPC___cudaRegisterManagedVar, [&](conn_t *c) {
-        return rpc_write(c, &hostVarPtrAddress, sizeof(hostVarPtrAddress)) <
-                           0 ||
-                       rpc_write(c, &device_address_len,
-                                 sizeof(device_address_len)) < 0 ||
-                       rpc_write(c, deviceAddress, device_address_len) < 0 ||
-                       rpc_write(c, &device_name_len, sizeof(device_name_len)) < 0 ||
-                       rpc_write(c, deviceName, device_name_len) < 0 ||
-                       rpc_write(c, &ext, sizeof(ext)) < 0 ||
-                       rpc_write(c, &size, sizeof(size)) < 0 ||
-                       rpc_write(c, &constant, sizeof(constant)) < 0 ||
-                       rpc_write(c, &global, sizeof(global)) < 0
-                   ? -1
-                   : 0;
-      });
+  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterManagedVar,
+                   hostVarPtrAddress, deviceAddress, deviceName, ext, size,
+                   constant, global);
 }
 
-// Texture and surface references were removed from the device API; only the
-// objects are supported, and those carry no host-side registration.
 extern "C" void __cudaRegisterTexture(void **fatCubinHandle,
                                       const void *hostVar,
                                       const void **deviceAddress,
                                       const char *deviceName, int dim, int norm,
                                       int ext) {
-  (void)fatCubinHandle;
-  (void)hostVar;
-  (void)deviceAddress;
-  (void)deviceName;
-  (void)dim;
-  (void)norm;
-  (void)ext;
+  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterTexture, hostVar,
+                   deviceAddress, deviceName, dim, norm, ext);
 }
 
 extern "C" void __cudaRegisterSurface(void **fatCubinHandle,
@@ -832,58 +791,22 @@ extern "C" void __cudaRegisterSurface(void **fatCubinHandle,
                                       const void **deviceAddress,
                                       const char *deviceName, int dim,
                                       int ext) {
-  (void)fatCubinHandle;
-  (void)hostVar;
-  (void)deviceAddress;
-  (void)deviceName;
-  (void)dim;
-  (void)ext;
+  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterSurface, hostVar,
+                   deviceAddress, deviceName, dim, ext);
 }
 
-// Host variables carry no device storage, so registering one only has to be
-// accepted. The same is true of the unified-addressing table nvcc hands over.
 extern "C" void __cudaRegisterHostVar(void **fatCubinHandle,
                                       const char *deviceName, char *hostVar,
                                       size_t size) {
-  (void)fatCubinHandle;
-  (void)deviceName;
-  (void)hostVar;
-  (void)size;
+  register_on_each(fatCubinHandle, lupine_rpc___cudaRegisterHostVar, deviceName,
+                   hostVar, size);
 }
 
-extern "C" void __cudaRegisterUnifiedTable(void *table) { (void)table; }
-
-// The <<<>>> lowering pushes the configuration and pops it inside the host
-// stub on the same thread, right before cudaLaunchKernel carries it over.
-extern "C" unsigned __cudaPushCallConfiguration(dim3 gridDim, dim3 blockDim,
-                                                size_t sharedMem,
-                                                void *stream) {
-  call_configurations.push_back(
-      {gridDim, blockDim, sharedMem, static_cast<cudaStream_t>(stream)});
-  return 0;
-}
-
-extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
-                                                  size_t *sharedMem,
-                                                  void *stream) {
-  if (call_configurations.empty()) {
-    return cudaErrorInvalidConfiguration;
-  }
-  const call_configuration configuration = call_configurations.back();
-  call_configurations.pop_back();
-  if (gridDim != nullptr) {
-    *gridDim = configuration.grid;
-  }
-  if (blockDim != nullptr) {
-    *blockDim = configuration.block;
-  }
-  if (sharedMem != nullptr) {
-    *sharedMem = configuration.shared;
-  }
-  if (stream != nullptr) {
-    *static_cast<cudaStream_t *>(stream) = configuration.stream;
-  }
-  return cudaSuccess;
+// The private table layout and pointer fixups are not described by the SDK.
+// A client address is not a server handle, so this cannot be forwarded.
+extern "C" void __cudaRegisterUnifiedTable(void *table) {
+  (void)table;
+  record(cudaErrorNotSupported);
 }
 
 // ---------------------------------------------------------------------------
@@ -1095,29 +1018,6 @@ cudaOccupancyMaxActiveClusters(int *numClusters, const void *func,
 }
 
 #if CUDART_VERSION >= 13000
-// nvcc's launch lowering resolves the host entry point once per launch site
-// and passes the handle back on every launch. The handle is the server's, so
-// it is only good for the device the resolving thread had current.
-extern "C" cudaError_t __cudaGetKernel(cudaKernel_t *kernel,
-                                       const void *entryFuncAddr) {
-  if (kernel == nullptr) {
-    return record(cudaErrorInvalidValue);
-  }
-  int route_device = current_device;
-  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
-  cudaError_t return_value = rpc_error();
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC___cudaGetKernel) < 0 ||
-      rpc_write(conn, &entryFuncAddr, sizeof(entryFuncAddr)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, kernel, sizeof(*kernel)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return record(rpc_error());
-  }
-  return record(return_value);
-}
-
 extern "C" cudaError_t __cudaLaunchKernel(cudaKernel_t kernel, dim3 gridDim,
                                           dim3 blockDim, void **args,
                                           size_t sharedMem,

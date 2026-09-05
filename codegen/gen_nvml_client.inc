@@ -179,7 +179,11 @@ static nvmlReturn_t lupine_rpc_nvmlDeviceGetHandleByUUID(conn_t *conn,
                                                          const char *uuid,
                                                          nvmlDevice_t *device) {
   nvmlReturn_t return_value = rpc_error();
-  unsigned int uuid_len = static_cast<unsigned int>(std::strlen(uuid) + 1);
+  unsigned int uuid_len =
+      uuid == nullptr
+          ? 0
+          : static_cast<unsigned int>(
+                std::strlen(reinterpret_cast<const char *>(uuid)) + 1);
   if (rpc_write_start_request(conn, RPC_nvmlDeviceGetHandleByUUID) < 0 ||
       rpc_write(conn, &uuid_len, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, uuid, uuid_len) < 0 || rpc_wait_for_response(conn) < 0 ||
@@ -207,7 +211,10 @@ lupine_rpc_nvmlDeviceGetHandleByPciBusId_v2(conn_t *conn, const char *pciBusId,
                                             nvmlDevice_t *device) {
   nvmlReturn_t return_value = rpc_error();
   unsigned int pciBusId_len =
-      static_cast<unsigned int>(std::strlen(pciBusId) + 1);
+      pciBusId == nullptr
+          ? 0
+          : static_cast<unsigned int>(
+                std::strlen(reinterpret_cast<const char *>(pciBusId)) + 1);
   if (rpc_write_start_request(conn, RPC_nvmlDeviceGetHandleByPciBusId_v2) < 0 ||
       rpc_write(conn, &pciBusId_len, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, pciBusId, pciBusId_len) < 0 ||

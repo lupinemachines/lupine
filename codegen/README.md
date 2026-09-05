@@ -47,6 +47,16 @@ remain part of the generated client function map.
 For forwarding backends, it keeps the `lupine_rpc_<call>` request builder so the
 manual entry point can reuse it without an additional annotation.
 
+`@disabled local` omits both generated sides and server registration: the
+manual client implements the call locally or delegates to another shim.
+`@servercall <adapter>` keeps generated marshalling but calls a typed adapter
+instead of looking up the vendor symbol. The adapter returns the wire result
+(the backend status for a void API). Runtime registration adapters use this to
+retain strings and managed slots for the fatbin's lifetime.
+`@routingkey THREAD` anchors runtime per-thread state to the first server's
+lane, independent of device changes. Push/pop configuration therefore use the
+server runtime's stack even when evaluating launch arguments changes devices.
+
 Every forwarding backend gets a generated per-thread `local_error` and
 `record(result)` helper. Generated entry points record errors automatically;
 manual entry points use the same helper. Successful calls preserve the previous
@@ -77,7 +87,13 @@ handler calls CUDA.
 
 Functions that need custom client-side code around the generated call may be
 written as definitions instead of declarations. The body must contain one
-explicitly typed generated-call placeholder and end by returning its result:
+explicitly typed generated-call placeholder and end by returning its result.
+
+This also works for forwarding backends. Their bodies can use the selected
+`conn`; CUDA driver bodies use `route`. Runtime allocation/free definitions
+use the shared driver allocation bridge so subsequent copies route by pointer.
+
+For example:
 
 ```cpp
 CUresult cuExample(CUdeviceptr ptr) {
