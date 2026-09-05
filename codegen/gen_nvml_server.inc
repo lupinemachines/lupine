@@ -16,7 +16,7 @@ int handle_nvmlInit_v2(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -41,7 +41,7 @@ int handle_nvmlInitWithFlags(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -65,7 +65,7 @@ int handle_nvmlShutdown(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -98,7 +98,7 @@ int handle_nvmlSystemGetDriverVersion(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, version, length * sizeof(char)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)version);
@@ -133,7 +133,7 @@ int handle_nvmlSystemGetNVMLVersion(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, version, length * sizeof(char)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)version);
@@ -162,7 +162,7 @@ int handle_nvmlSystemGetCudaDriverVersion(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &cudaDriverVersion, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -189,7 +189,7 @@ int handle_nvmlSystemGetCudaDriverVersion_v2(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &cudaDriverVersion, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -216,7 +216,7 @@ int handle_nvmlDeviceGetCount_v2(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &deviceCount, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -244,7 +244,7 @@ int handle_nvmlDeviceGetHandleByIndex_v2(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -277,7 +277,7 @@ int handle_nvmlDeviceGetHandleByUUID(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)uuid);
@@ -312,7 +312,7 @@ int handle_nvmlDeviceGetHandleByPciBusId_v2(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)pciBusId);
@@ -349,7 +349,7 @@ int handle_nvmlDeviceGetName(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, name, length * sizeof(char)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)name);
@@ -386,7 +386,7 @@ int handle_nvmlDeviceGetUUID(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, uuid, length * sizeof(char)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)uuid);
@@ -416,7 +416,7 @@ int handle_nvmlDeviceGetIndex(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &index, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -445,7 +445,7 @@ int handle_nvmlDeviceGetMinorNumber(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &minorNumber, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -473,7 +473,7 @@ int handle_nvmlDeviceGetPciInfo_v3(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pci, sizeof(nvmlPciInfo_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -501,7 +501,7 @@ int handle_nvmlDeviceGetMemoryInfo(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &memory, sizeof(nvmlMemory_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -530,7 +530,7 @@ int handle_nvmlDeviceGetUtilizationRates(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &utilization, sizeof(nvmlUtilization_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -563,7 +563,7 @@ int handle_nvmlDeviceGetTemperature(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &temp, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -591,7 +591,7 @@ int handle_nvmlDeviceGetPowerUsage(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &power, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -619,7 +619,7 @@ int handle_nvmlDeviceGetPowerManagementLimit(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &limit, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -650,7 +650,7 @@ int handle_nvmlDeviceGetClockInfo(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &clock, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -681,7 +681,7 @@ int handle_nvmlDeviceGetMaxClockInfo(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &clock, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -709,7 +709,7 @@ int handle_nvmlDeviceGetPerformanceState(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pState, sizeof(nvmlPstates_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -737,7 +737,7 @@ int handle_nvmlDeviceGetComputeMode(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mode, sizeof(nvmlComputeMode_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -765,7 +765,7 @@ int handle_nvmlDeviceGetPersistenceMode(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mode, sizeof(nvmlEnableState_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -793,7 +793,7 @@ int handle_nvmlDeviceGetFanSpeed(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &speed, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -821,7 +821,7 @@ int handle_nvmlDeviceGetBrand(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &type, sizeof(nvmlBrandType_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -857,7 +857,7 @@ int handle_nvmlDeviceGetVbiosVersion(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, version, length * sizeof(char)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)version);
@@ -894,7 +894,7 @@ int handle_nvmlDeviceGetSerial(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, serial, length * sizeof(char)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)serial);
@@ -932,7 +932,7 @@ int handle_nvmlDeviceGetBoardPartNumber(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, partNumber, length * sizeof(char)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)partNumber);
@@ -962,7 +962,7 @@ int handle_nvmlDeviceGetDisplayMode(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &display, sizeof(nvmlEnableState_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -990,7 +990,7 @@ int handle_nvmlDeviceGetDisplayActive(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &isActive, sizeof(nvmlEnableState_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1019,7 +1019,7 @@ int handle_nvmlDeviceGetCurrPcieLinkGeneration(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &currLinkGen, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1048,7 +1048,7 @@ int handle_nvmlDeviceGetCurrPcieLinkWidth(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &currLinkWidth, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1076,7 +1076,7 @@ int handle_nvmlDeviceGetMaxPcieLinkGeneration(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &maxLinkGen, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1105,7 +1105,7 @@ int handle_nvmlDeviceGetMaxPcieLinkWidth(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &maxLinkWidth, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1137,7 +1137,7 @@ int handle_nvmlDeviceGetPcieThroughput(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &value, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1165,7 +1165,7 @@ int handle_nvmlDeviceGetPcieReplayCounter(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &value, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1192,7 +1192,7 @@ int handle_nvmlEventSetCreate(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &set, sizeof(nvmlEventSet_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1217,7 +1217,7 @@ int handle_nvmlEventSetFree(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(set);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1249,7 +1249,7 @@ int handle_nvmlEventSetWait_v2(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &data, sizeof(nvmlEventData_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1280,7 +1280,7 @@ int handle_nvmlDeviceRegisterEvents(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(device, eventTypes, set);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1308,7 +1308,7 @@ int handle_nvmlDeviceGetMaxMigDeviceCount(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1342,7 +1342,7 @@ int handle_nvmlDeviceGetTotalEccErrors(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &eccCounts, sizeof(unsigned long long)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1376,7 +1376,7 @@ int handle_nvmlDeviceGetDetailedEccErrors(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &eccCounts, sizeof(nvmlEccErrorCounts_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1414,7 +1414,7 @@ int handle_nvmlDeviceGetMemoryErrorCounter(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned long long)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1447,7 +1447,7 @@ int handle_nvmlDeviceGetEccMode(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &current, sizeof(nvmlEnableState_t)) < 0 ||
       rpc_write(conn, &pending, sizeof(nvmlEnableState_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1477,7 +1477,7 @@ int handle_nvmlDeviceGetTemperatureV(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &temperature, sizeof(lupine_nvmlTemperature_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1505,7 +1505,7 @@ int handle_nvmlDeviceGetEnforcedPowerLimit(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &limit, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1533,7 +1533,7 @@ int handle_nvmlDeviceGetMemoryInfo_v2(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &memory, sizeof(nvmlMemory_v2_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1565,7 +1565,7 @@ int handle_nvmlDeviceGetMigMode(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &currentMode, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &pendingMode, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1594,7 +1594,7 @@ int handle_nvmlDeviceGetVirtualizationMode(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pVirtualMode, sizeof(nvmlGpuVirtualizationMode_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1623,7 +1623,7 @@ int handle_nvmlDeviceIsMigDeviceHandle(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &isMigDevice, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1656,7 +1656,7 @@ int handle_nvmlDeviceGetNvLinkRemoteDeviceType(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pNvLinkDeviceType, sizeof(nvmlIntNvLinkDeviceType_t)) <
           0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1686,7 +1686,7 @@ int handle_nvmlDeviceGetNvLinkRemotePciInfo_v2(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pci, sizeof(nvmlPciInfo_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -1718,7 +1718,7 @@ int handle_nvmlDeviceGetCudaComputeCapability(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &major, sizeof(int)) < 0 ||
       rpc_write(conn, &minor, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;

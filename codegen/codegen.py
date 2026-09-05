@@ -374,6 +374,15 @@ def collect_server_bindings(path: str) -> dict[str, ServerBinding]:
 
 # One annotation file per shim target. A declaration belongs to the target
 # whose file it lives in, so no API-name prefix is needed to tell them apart.
+CUDA = Backend(
+    result="CUresult",
+    invalid_argument="CUDA_ERROR_INVALID_VALUE",
+    device_routing_kind="DEVICE",
+    # The driver shim links against libcuda, so its handlers call the entry
+    # point directly instead of resolving it by name.
+    symbol_lookup="",
+)
+
 NVML = Backend(
     result="nvmlReturn_t",
     invalid_argument="NVML_ERROR_INVALID_ARGUMENT",
@@ -956,12 +965,6 @@ def result_code(return_type: str, result: str = "unavailable") -> str:
     return getattr(codes, result) or codes.unavailable
 
 
-def server_call_name(function_name: str) -> str:
-    if function_name == "cuEventElapsedTime_v2":
-        return "cuEventElapsedTime"
-    return function_name
-
-
 def collect_backend_functions(
     annotations: ParsedData,
     names=None,
@@ -1174,12 +1177,10 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
         for function, _, _, _ in legacy_abi_functions:
             name = function.name.format()
             f.write(f"#ifdef {name}\n#undef {name}\n#endif\n")
+            params = ", ".join(format_function_params(function))
             f.write(
-                'extern "C" {return_type} CUDAAPI {name}({params});\n\n'.format(
-                    return_type=function.return_type.format(),
-                    name=name,
-                    params=", ".join(format_function_params(function)),
-                )
+                f'extern "C" {function.return_type.format()} CUDAAPI '
+                f"{name}({params});\n\n"
             )
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled
@@ -1511,133 +1512,15 @@ def write_cuda_server(
         for function, _, _, _ in annotation_only_functions:
             name = function.name.format()
             f.write(f"#ifdef {name}\n#undef {name}\n#endif\n")
+            params = ", ".join(format_function_params(function))
             f.write(
-                'extern "C" {return_type} CUDAAPI {name}({params});\n\n'.format(
-                    return_type=function.return_type.format(),
-                    name=name,
-                    params=", ".join(format_function_params(function)),
-                )
+                f'extern "C" {function.return_type.format()} CUDAAPI '
+                f"{name}({params});\n\n"
             )
-        for (
-            function,
-            annotation,
-            operations,
-            metadata,
-        ) in server_functions_with_annotations:
-            if (
-                metadata.disabled_server
-                or function.name.format() in server_bindings
-            ):
+        for function, _, operations, metadata in server_functions_with_annotations:
+            if metadata.disabled_server or function.name.format() in server_bindings:
                 continue
-
-            if metadata.guard is not None:
-                f.write(f"#if {metadata.guard}\n")
-
-            # parse the annotation doxygen
-            f.write(f"int handle_{function.name.format()}(conn_t *conn)\n")
-            f.write("{\n")
-
-            owned_buffers = []
-
-            for operation in operations:
-                f.write(operation.server_declaration)
-
-            if metadata.async_fire_forget:
-                f.write("    uint64_t async_sequence = 0;\n")
-            f.write("    int request_id;\n")
-
-            # we only generate return from non-void types
-            if metadata.async_fire_forget:
-                pass
-            elif function.return_type.format() != "void":
-                f.write(f"    {function.return_type.format()} lupine_intercept_result;\n")
-            else:
-                f.write("    void* lupine_intercept_result;\n")
-
-            f.write("    if (\n")
-            if metadata.async_fire_forget:
-                f.write(
-                    "        rpc_read(conn, &async_sequence, "
-                    "sizeof(async_sequence)) < 0 ||\n"
-                )
-            for operation in operations:
-                if owned_buffer := operation.server_rpc_read(f):
-                    owned_buffers.append(owned_buffer)
-            f.write("        false)\n")
-            f.write("        goto ERROR_0;\n")
-
-            f.write("\n")
-
-            f.write("    request_id = rpc_read_end(conn);\n")
-            f.write("    if (request_id < 0)\n")
-            f.write("        goto ERROR_0;\n")
-
-            if metadata.graph_exec_node is not None:
-                graph_exec = metadata.graph_exec_node.graph_exec.name
-                node = metadata.graph_exec_node.node.name
-                f.write(
-                    f"    {node} = lupine_htod_graph_exec_node({graph_exec}, {node});\n"
-                )
-
-            if metadata.async_fire_forget:
-                f.write(
-                    "    if (rpc_async_sequence_begin(conn, async_sequence) < 0)\n"
-                    "        goto ERROR_0;\n\n"
-                )
-
-            params: list[str] = []
-            # these need to be in function param order, not operation order.
-            for param in function.parameters:
-                for op in operations:
-                    if op.parameter.name == param.name:
-                        params.append(op.server_reference)
-
-            if metadata.async_fire_forget or function.return_type.format() == "void":
-                f.write(
-                    "    {name}({params});\n\n".format(
-                        name=server_call_name(function.name.format()),
-                        params=", ".join(params),
-                    )
-                )
-                if metadata.async_fire_forget:
-                    f.write("    rpc_async_sequence_end(conn);\n\n")
-            else:
-                f.write(
-                    "    lupine_intercept_result = {name}({params});\n\n".format(
-                        name=server_call_name(function.name.format()),
-                        params=", ".join(params),
-                    )
-                )
-
-            if metadata.async_fire_forget:
-                write_server_buffer_cleanup(f, owned_buffers, "    ")
-                f.write("    return 0;\n")
-                f.write("ERROR_0:\n")
-                write_server_buffer_cleanup(f, owned_buffers, "    ")
-                f.write("    return -1;\n")
-                f.write("}\n\n")
-                if metadata.guard is not None:
-                    f.write("#endif\n\n")
-                continue
-
-            f.write("    if (rpc_write_start_response(conn, request_id) < 0 ||\n")
-
-            for operation in operations:
-                operation.server_rpc_write(f)
-
-            f.write(f"        rpc_write(conn, &lupine_intercept_result, sizeof({function.return_type.format()})) < 0 ||\n")
-            f.write("        rpc_write_end(conn) < 0)\n")
-            f.write("        goto ERROR_0;\n")
-            f.write("\n")
-            write_server_buffer_cleanup(f, owned_buffers, "    ")
-            f.write("    return 0;\n")
-
-            f.write("ERROR_0:\n")
-            write_server_buffer_cleanup(f, owned_buffers, "    ")
-            f.write("    return -1;\n")
-            f.write("}\n\n")
-            if metadata.guard is not None:
-                f.write("#endif\n\n")
+            write_server_handler(f, CUDA, function, operations, metadata)
 
 
 def write_registry(registry_entries, guarded_declarations, guarded_handlers):

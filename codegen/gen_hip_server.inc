@@ -17,7 +17,7 @@ int handle_hipInit(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn(flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -44,7 +44,7 @@ int handle_hipGetDeviceCount(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &count, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -72,7 +72,7 @@ int handle_hipDeviceGet(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &device, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -103,7 +103,7 @@ int handle_hipGetDevicePropertiesR0600(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &prop, sizeof(hipDeviceProp_tR0600)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -137,7 +137,7 @@ int handle_hipDeviceGetName(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, name, len * sizeof(char)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   free((void *)name);
@@ -167,7 +167,7 @@ int handle_hipDeviceTotalMem(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &bytes, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -197,7 +197,7 @@ int handle_hipDeviceGetAttribute(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pi, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -224,7 +224,7 @@ int handle_hipDriverGetVersion(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &driverVersion, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
@@ -251,7 +251,7 @@ int handle_hipRuntimeGetVersion(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &runtimeVersion, sizeof(int)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
   return 0;
