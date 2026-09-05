@@ -87,7 +87,7 @@ def write_client_validation(f, backend: Backend, operations):
             checks.append(f"{name} == nullptr")
         elif isinstance(operation, DereferenceOperation):
             checks.append(f"{name} == nullptr")
-        elif isinstance(operation, ArrayOperation):
+        elif isinstance(operation, ArrayOperation) and not operation.nullable:
             checks.append(
                 f"({operation.transfer_size_expr()} != 0 && {name} == nullptr)"
             )
@@ -111,10 +111,14 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
         f.write(f", {params}")
     f.write(") {\n")
     for operation in operations:
-        if isinstance(
-            operation,
-            (InOutCountOperation, NullableArrayOperation, ScalarOperation),
-        ) or (isinstance(operation, NullTerminatedOperation) and operation.recv):
+        if (
+            isinstance(
+                operation,
+                (InOutCountOperation, NullableArrayOperation, ScalarOperation),
+            )
+            or (isinstance(operation, ArrayOperation) and operation.nullable)
+            or (isinstance(operation, NullTerminatedOperation) and operation.recv)
+        ):
             f.write(operation.client_declaration())
     # Reject invalid send buffers before the request is framed, so a bad
     # argument returns cleanly instead of desyncing the RPC stream.

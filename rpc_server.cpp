@@ -9,6 +9,7 @@ bool rpc_server_validate(const rpc_handler_registry &handlers) {
     case rpc_backend::cuda:
     case rpc_backend::cudart:
     case rpc_backend::cublas:
+    case rpc_backend::cufft:
     case rpc_backend::nvml:
     case rpc_backend::hip:
       break;

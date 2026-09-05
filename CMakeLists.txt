@@ -522,6 +522,68 @@ if(LUPINE_BUILD_CUBLAS)
     add_custom_target(lupine_cublas DEPENDS lupine_cublas_client)
 endif()
 
+if(LUPINE_BUILD_CUDA)
+    # The cuFFT shim needs the library's own headers, which the runtime header
+    # wheels the native client builds use do not carry; without them it is left
+    # out of the build.
+    find_path(LUPINE_CUFFT_INCLUDE_DIR cufftXt.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
+    if(LUPINE_CUFFT_INCLUDE_DIR)
+        file(STRINGS ${LUPINE_CUFFT_INCLUDE_DIR}/cufft.h
+             LUPINE_CUFFT_MAJOR_LINE REGEX "^#define CUFFT_VER_MAJOR ")
+        string(REGEX REPLACE "^#define CUFFT_VER_MAJOR ([0-9]+).*" "\\1"
+               LUPINE_CUFFT_SOVERSION "${LUPINE_CUFFT_MAJOR_LINE}")
+        set(LUPINE_BUILD_CUFFT ON)
+    endif()
+endif()
+
+if(LUPINE_BUILD_CUFFT)
+    # Named like NVIDIA's (libcufft.so.12, cufft64_12.dll) with the matching
+    # ELF version node. It runs on the runtime shim's current device, so it
+    # links both sibling shims.
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cufft.exports.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/cufft.exports @ONLY)
+
+    add_library(lupine_cufft_client SHARED
+        ${CMAKE_CURRENT_SOURCE_DIR}/cufft_client.cpp)
+    if(NOT LUPINE_CUDA_CRT_INCLUDE_DIR)
+        target_include_directories(lupine_cufft_client BEFORE PRIVATE
+            ${CMAKE_CURRENT_BINARY_DIR}/cudart_stubs)
+    endif()
+    target_include_directories(lupine_cufft_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen
+        ${CUDAToolkit_INCLUDE_DIRS})
+    target_link_libraries(lupine_cufft_client PRIVATE
+        lupine_cuda_client lupine_cudart_client)
+    set_target_properties(lupine_cufft_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+    if(WIN32)
+        target_compile_options(lupine_cufft_client PRIVATE /wd4996)
+        set_target_properties(lupine_cufft_client PROPERTIES
+            OUTPUT_NAME cufft64_${LUPINE_CUFFT_SOVERSION}
+            PREFIX ""
+            WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        target_compile_options(lupine_cufft_client PRIVATE
+            -Wno-deprecated-declarations)
+        set_target_properties(lupine_cufft_client PROPERTIES
+            OUTPUT_NAME cufft)
+        if(APPLE)
+            set_target_properties(lupine_cufft_client PROPERTIES
+                BUILD_RPATH "@loader_path")
+        else()
+            target_link_options(lupine_cufft_client PRIVATE
+                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/cufft.exports")
+            set_target_properties(lupine_cufft_client PROPERTIES
+                BUILD_RPATH "$ORIGIN"
+                VERSION ${LUPINE_CUFFT_SOVERSION}
+                SOVERSION ${LUPINE_CUFFT_SOVERSION})
+        endif()
+    endif()
+    add_custom_target(lupine_cufft DEPENDS lupine_cufft_client)
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -622,6 +684,16 @@ if(LUPINE_BUILD_SERVER)
             target_include_directories(lupine_cublas_server PRIVATE
                 ${CUDAToolkit_INCLUDE_DIRS})
             target_link_libraries(lupine_cublas_server PRIVATE
+                lupine_server_core ${CMAKE_DL_LIBS})
+        endif()
+
+        if(LUPINE_BUILD_CUFFT)
+            add_library(lupine_cufft_server STATIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/cufft_server.cpp)
+            lupine_internal_target(lupine_cufft_server)
+            target_include_directories(lupine_cufft_server PRIVATE
+                ${CUDAToolkit_INCLUDE_DIRS})
+            target_link_libraries(lupine_cufft_server PRIVATE
                 lupine_server_core ${CMAKE_DL_LIBS})
         endif()
     endif()
@@ -726,6 +798,12 @@ if(LUPINE_BUILD_SERVER)
                 LUPINE_BUILD_CUBLAS_BACKEND)
             target_link_libraries(lupine_driver_server PRIVATE
                 lupine_cublas_server)
+        endif()
+        if(LUPINE_BUILD_CUFFT)
+            target_compile_definitions(lupine_driver_server PRIVATE
+                LUPINE_BUILD_CUFFT_BACKEND)
+            target_link_libraries(lupine_driver_server PRIVATE
+                lupine_cufft_server)
         endif()
     endif()
     if(LUPINE_BUILD_NVML)
@@ -880,6 +958,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSgemm_v2 && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasGemmEx && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSetMatrix && nm -D \"$<TARGET_FILE:lupine_cudart_client>\" | grep -q lupine_cudart_connection")
     endif()
 
+    if(TARGET lupine_cufft_client)
+        add_test(NAME cufft_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_cufft_client>\" | grep -q cufftPlanMany && nm -D \"$<TARGET_FILE:lupine_cufft_client>\" | grep -q cufftExecC2C && nm -D \"$<TARGET_FILE:lupine_cufft_client>\" | grep -q cufftXtMemcpy")
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -899,6 +983,10 @@ endif()
 if(TARGET lupine_cublas_client)
     message(STATUS
         "Building cuBLAS client: lupine_cublas_client (libcublas.so.${LUPINE_CUBLAS_SOVERSION})")
+endif()
+if(TARGET lupine_cufft_client)
+    message(STATUS
+        "Building cuFFT client: lupine_cufft_client (libcufft.so.${LUPINE_CUFFT_SOVERSION})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS
