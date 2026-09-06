@@ -20,6 +20,11 @@ SSH_COMMAND_TIMEOUT="${SSH_COMMAND_TIMEOUT:-45}"
 SERVER_LOCAL_BIN="${SERVER_LOCAL_BIN:-$repo_root/build/lupine_driver_server}"
 SERVER_REMOTE_BIN="${SERVER_REMOTE_BIN:-/tmp/lupine-custom-server-$$}"
 SERVER_UPLOAD="${SERVER_UPLOAD:-1}"
+# Set to 1 to use an existing server on SERVER_PORT_BASE for every test.
+SERVER_MANAGED_EXTERNALLY="${SERVER_MANAGED_EXTERNALLY:-0}"
+if [[ "$SERVER_MANAGED_EXTERNALLY" == "1" ]]; then
+  SERVER_UPLOAD=0
+fi
 SERVER_LD_LIBRARY_PATH="${SERVER_LD_LIBRARY_PATH:-}"
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
 LUPINE_LIB_DIR="$(cd "$(dirname "$LUPINE_LIB")" && pwd)"
@@ -44,6 +49,7 @@ ssh_with_timeout() {
 }
 
 stop_remote_server() {
+  [[ "$SERVER_MANAGED_EXTERNALLY" == "1" ]] && return 0
   local pidfile="$1"
   local server_log="$2"
 
@@ -64,6 +70,7 @@ stop_remote_server() {
 }
 
 start_remote_server() {
+  [[ "$SERVER_MANAGED_EXTERNALLY" == "1" ]] && return 0
   local pidfile="$1"
   local server_log="$2"
   local port="$3"

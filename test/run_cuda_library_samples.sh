@@ -32,6 +32,11 @@ SSH_OPTS="${SSH_OPTS:-}"
 SSH_ARGS=($SSH_OPTS)
 SSH_COMMAND_TIMEOUT="${SSH_COMMAND_TIMEOUT:-45}"
 SERVER_UPLOAD="${SERVER_UPLOAD:-1}"
+# Set to 1 to use an existing server on SERVER_PORT_BASE for every test.
+SERVER_MANAGED_EXTERNALLY="${SERVER_MANAGED_EXTERNALLY:-0}"
+if [[ "$SERVER_MANAGED_EXTERNALLY" == "1" ]]; then
+  SERVER_UPLOAD=0
+fi
 SERVER_LOCAL_BIN="${SERVER_LOCAL_BIN:-$repo_root/build/lupine_driver_server}"
 SERVER_REMOTE_BIN="${SERVER_REMOTE_BIN:-/tmp/lupine-driver-server-libsamples-${USER:-lupine}-$$}"
 SERVER_REMOTE_CLEANUP="${SERVER_REMOTE_CLEANUP:-1}"
@@ -227,6 +232,7 @@ cleanup_remote_bin() {
 trap cleanup_remote_bin EXIT
 
 stop_remote_server() {
+  [[ "$SERVER_MANAGED_EXTERNALLY" == "1" ]] && return 0
   local pidfile="$1"
   local server_log="$2"
 
@@ -273,6 +279,9 @@ echo "CUDALibrarySamples $LIBRARY_SAMPLES_REF, ${#SAMPLES[@]} samples, ${#UNITS[
 for i in "${!UNITS[@]}"; do
   unit="${UNITS[$i]}"
   port=$((SERVER_PORT_BASE + i))
+  if [[ "$SERVER_MANAGED_EXTERNALLY" == "1" ]]; then
+    port="$SERVER_PORT_BASE"
+  fi
   log="$RESULTS_DIR/${unit//\//_}.log"
   server_log="/tmp/lupine-libsamples-$port.log"
   pidfile="/tmp/lupine-libsamples-$port.pid"
@@ -309,8 +318,10 @@ for i in "${!UNITS[@]}"; do
   exe="$LIBRARY_SAMPLES_BUILD_DIR/$unit"
 
   stop_remote_server "$pidfile" "$server_log"
-  ssh_with_timeout \
-    "rm -f '$server_log' '$pidfile'; $server_environment nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"
+  if [[ "$SERVER_MANAGED_EXTERNALLY" != "1" ]]; then
+    ssh_with_timeout \
+      "rm -f '$server_log' '$pidfile'; $server_environment nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"
+  fi
 
   set +e
   (

@@ -96,6 +96,8 @@ jobs:
       # cascades in otherwise passing cuBLAS and PyTorch tests.
       CUDA_SAMPLE_JOBS: 8
       SSH_COMMAND_TIMEOUT: 120
+      SERVER_PORT: 14833
+      SERVER_REMOTE_BIN: /tmp/lupine-driver-server-${{ matrix.label }}-${{ github.run_id }}-${{ github.run_attempt }}
       CUDA_COMPAT_DEB_URL: ${{ matrix.cuda_compat_deb_url }}
       CUDA_COMPAT_DEB_SHA256: ${{ matrix.cuda_compat_deb_sha256 }}
       SERVER_LD_LIBRARY_PATH: ${{ matrix.server_ld_library_path }}
@@ -112,6 +114,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Free runner disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/local/.ghcup /usr/share/swift
+          df -h /
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
@@ -122,7 +130,7 @@ jobs:
       # google-github-actions/auth writes its generated ADC file into the
       # workspace. Move it before Docker packages the pull request checkout so
       # fork-controlled .dockerignore changes cannot add the credential file to
-      # the remote build context.
+      # the build context.
       - name: Move Google Cloud credentials outside the build context
         run: |
           set -euo pipefail
@@ -206,7 +214,7 @@ jobs:
             "$FIREWALL_ALLOW_RULE" \
             ALLOW \
             800 \
-            tcp:22 \
+            "tcp:22,tcp:$SERVER_PORT" \
             "$RUNNER_IP/32"
 
           create_firewall_rule \
@@ -225,7 +233,7 @@ jobs:
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl docker.io libnghttp2-14
+          apt-get install -y --no-install-recommends ca-certificates curl libnghttp2-14
           SCRIPT
 
           if [[ -n "$CUDA_COMPAT_DEB_URL" ]]; then
@@ -420,9 +428,7 @@ jobs:
             done
 
             deadline=$((SECONDS + 300))
-            until command -v docker >/dev/null 2>&1 &&
-              sudo docker info >/dev/null 2>&1 &&
-              test -f /var/lib/lupine-startup-complete; do
+            until test -f /var/lib/lupine-startup-complete; do
               if [ "$SECONDS" -ge "$deadline" ]; then
                 echo "VM startup did not become ready before the timeout" >&2
                 sudo systemctl status --no-pager google-startup-scripts.service || true
@@ -432,7 +438,6 @@ jobs:
               fi
               sleep 5
             done
-            sudo usermod -aG docker gha
           '
 
           arch="$("${ssh_base[@]}" 'nvidia-smi --query-gpu=compute_cap --format=csv,noheader' \
@@ -443,18 +448,6 @@ jobs:
       - name: Restore integration binary cache from GCS
         run: |
           set -euo pipefail
-          ssh_base=(
-            ssh
-            -i "$SSH_DIR/id_ed25519"
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
-            -o ConnectTimeout=15
-            -o ServerAliveInterval=15
-            -o ServerAliveCountMax=4
-            "gha@$VM_IP"
-          )
-
           dockerfile_sha="$(
             sha256sum "$RUNNER_TEMP/gpu-integration.Dockerfile" | cut -d' ' -f1
           )"
@@ -470,11 +463,9 @@ jobs:
           )"
           cache_hit=false
           cache_uri=""
-          remote_cache_dir="/home/gha/lupine-integration-binaries-${{ matrix.label }}"
-          remote_cache_archive="${remote_cache_dir}.tar.gz"
-
-          "${ssh_base[@]}" \
-            "rm -rf '$remote_cache_dir' '$remote_cache_archive'; mkdir -p '$remote_cache_dir'"
+          cache_dir="$RUNNER_TEMP/lupine-integration-binaries-${{ matrix.label }}"
+          cache_archive="${cache_dir}.tar.gz"
+          mkdir -p "$cache_dir"
 
           cache_prefix="gpu-integration/binaries/$INTEGRATION_BINARY_CACHE_VERSION/cuda-${{ matrix.cuda_version }}/sm-$CUDA_SAMPLES_ARCH"
           cache_uri="gs://$GCP_BUILD_CACHE_BUCKET/$cache_prefix/inputs-$cache_inputs.tar.gz"
@@ -485,20 +476,11 @@ jobs:
           )"
 
           if [[ -n "$expected_sha" ]] && \
-            gcloud storage cp "$cache_uri" - | \
-              "${ssh_base[@]}" "cat > '$remote_cache_archive'"; then
-            actual_sha="$(
-              "${ssh_base[@]}" \
-                "sha256sum '$remote_cache_archive' | cut -d' ' -f1"
-            )"
-            if [[ "$actual_sha" == "$expected_sha" ]] && \
-              "${ssh_base[@]}" "
-                set -euo pipefail
-                tar -xzf '$remote_cache_archive' -C '$remote_cache_dir'
-                rm -f '$remote_cache_archive'
-                test -d '$remote_cache_dir/cuda-samples-src'
-                test -d '$remote_cache_dir/cuda-library-samples'
-              "; then
+            gcloud storage cp "$cache_uri" "$cache_archive"; then
+            actual_sha="$(sha256sum "$cache_archive" | cut -d' ' -f1)"
+            if [[ "$actual_sha" == "$expected_sha" ]] &&
+              tar -xzf "$cache_archive" -C "$cache_dir" &&
+              [[ -d "$cache_dir/cuda-samples-src" && -d "$cache_dir/cuda-library-samples" ]]; then
               cache_hit=true
               gcloud storage objects update "$cache_uri" \
                 --custom-time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -508,39 +490,23 @@ jobs:
 
           if [[ "$cache_hit" != "true" ]]; then
             echo "No valid integration binary cache found at $cache_uri"
-            "${ssh_base[@]}" \
-              "rm -rf '$remote_cache_dir' '$remote_cache_archive'; mkdir -p '$remote_cache_dir'"
+            rm -rf "$cache_dir"
+            mkdir -p "$cache_dir"
           fi
+          rm -f "$cache_archive"
 
           {
             echo "INTEGRATION_BINARY_CACHE_HIT=$cache_hit"
-            echo "INTEGRATION_BINARY_CACHE_REMOTE_ARCHIVE=$remote_cache_archive"
-            echo "INTEGRATION_BINARY_CACHE_REMOTE_DIR=$remote_cache_dir"
+            echo "INTEGRATION_BINARY_CACHE_ARCHIVE=$cache_archive"
+            echo "INTEGRATION_BINARY_CACHE_DIR=$cache_dir"
             echo "INTEGRATION_BINARY_CACHE_URI=$cache_uri"
           } >> "$GITHUB_ENV"
 
-      - name: Build ${{ matrix.name }} client image on L4 VM
+      - name: Build ${{ matrix.name }} client image on GitHub runner
         run: |
           set -euo pipefail
-          # The docker CLI reaches the VM daemon over SSH and ships only the
-          # build context, so the multi-GB image never crosses the wire. It
-          # takes SSH options from ~/.ssh/config only.
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          cat >> ~/.ssh/config <<EOF
-          Host lupine-gpu-vm
-            HostName $VM_IP
-            User gha
-            IdentityFile $SSH_DIR/id_ed25519
-            IdentitiesOnly yes
-            StrictHostKeyChecking yes
-            UserKnownHostsFile $SSH_DIR/known_hosts
-            ServerAliveInterval 15
-            ServerAliveCountMax 4
-          EOF
-
           start=$SECONDS
-          DOCKER_HOST=ssh://lupine-gpu-vm docker build \
+          docker build \
             --progress=plain \
             --file "${RUNNER_TEMP}/gpu-integration.Dockerfile" \
             --tag "$CLIENT_IMAGE" \
@@ -548,9 +514,9 @@ jobs:
             --build-arg "CUDA_SAMPLES_ARCH=$CUDA_SAMPLES_ARCH" \
             --build-arg "INTEGRATION_BINARY_CACHE_HIT=$INTEGRATION_BINARY_CACHE_HIT" \
             .
-          echo "Built $CLIENT_IMAGE on L4 VM in $((SECONDS - start))s"
+          echo "Built $CLIENT_IMAGE on GitHub runner in $((SECONDS - start))s"
 
-      - name: Run ${{ matrix.name }} client inside L4 VM
+      - name: Run ${{ matrix.name }} client on GitHub runner
         run: |
           set -euo pipefail
 
@@ -563,151 +529,159 @@ jobs:
             exit 1
           fi
 
-          ssh_base=(
-            ssh
-            -i "$SSH_DIR/id_ed25519"
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
-            -o ConnectTimeout=15
-            -o ServerAliveInterval=15
-            -o ServerAliveCountMax=4
-            "gha@$VM_IP"
-          )
-          scp_base=(
-            scp
-            -i "$SSH_DIR/id_ed25519"
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
-          )
-
-          remote_ssh="/home/gha/lupine-ssh"
-          remote_results="/home/gha/lupine-results-${{ matrix.label }}"
-          "${ssh_base[@]}" "rm -rf '$remote_results' '$remote_ssh'; mkdir -p '$remote_results' '$remote_ssh'"
-          "${scp_base[@]}" "$SSH_DIR/id_ed25519" "$SSH_DIR/known_hosts" "gha@$VM_IP:$remote_ssh/"
-          "${ssh_base[@]}" "chmod 700 '$remote_ssh'; chmod 600 '$remote_ssh/id_ed25519'"
-
-          remote_status=0
-          "${ssh_base[@]}" \
-            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' SERVER_LD_LIBRARY_PATH='$SERVER_LD_LIBRARY_PATH' INTEGRATION_BINARY_CACHE_HIT='$INTEGRATION_BINARY_CACHE_HIT' INTEGRATION_BINARY_CACHE_REMOTE_DIR='$INTEGRATION_BINARY_CACHE_REMOTE_DIR' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
-          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/test/integration/results"
           cache_mounts=()
           if [[ "$INTEGRATION_BINARY_CACHE_HIT" == "true" ]]; then
             cache_mounts+=(
-              -v "$INTEGRATION_BINARY_CACHE_REMOTE_DIR/cuda-samples-src:/opt/cuda-samples-src"
-              -v "$INTEGRATION_BINARY_CACHE_REMOTE_DIR/cuda-library-samples:/opt/cuda-library-samples"
+              -v "$INTEGRATION_BINARY_CACHE_DIR/cuda-samples-src:/opt/cuda-samples-src"
+              -v "$INTEGRATION_BINARY_CACHE_DIR/cuda-library-samples:/opt/cuda-library-samples"
             )
-            if [[ -d "$INTEGRATION_BINARY_CACHE_REMOTE_DIR/cuda-samples-build" ]]; then
+            if [[ -d "$INTEGRATION_BINARY_CACHE_DIR/cuda-samples-build" ]]; then
               cache_mounts+=(
-                -v "$INTEGRATION_BINARY_CACHE_REMOTE_DIR/cuda-samples-build:/opt/cuda-samples-build"
+                -v "$INTEGRATION_BINARY_CACHE_DIR/cuda-samples-build:/opt/cuda-samples-build"
               )
             fi
           fi
-          sudo docker run --rm \
-            --add-host=host.docker.internal:host-gateway \
+          docker run --rm -i \
             -e CUDA_SAMPLE_JOBS="$CUDA_SAMPLE_JOBS" \
             -e CUDA_SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT" \
             -e CUDA_LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT" \
             -e SSH_COMMAND_TIMEOUT="$SSH_COMMAND_TIMEOUT" \
             -e COMPLIANCE_TIMEOUT="$COMPLIANCE_TIMEOUT" \
-            -e PYTORCH_INDEX_URL="$PYTORCH_INDEX_URL" \
+            -e PIP_NO_CACHE_DIR=1 \
+            -e PYTORCH_INDEX_URL="${{ matrix.pytorch_index_url }}" \
             -e SERVER_LD_LIBRARY_PATH="$SERVER_LD_LIBRARY_PATH" \
-            -e SERVER_HOST=host.docker.internal \
+            -e SERVER_HOST="$VM_IP" \
             -e SERVER_USER=gha \
-            -e SERVER_SSH_TARGET=gha@host.docker.internal \
-            -e MATRIX_LABEL="$MATRIX_LABEL" \
-            -e GITHUB_RUN_ID="$GITHUB_RUN_ID" \
-            -e GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
-            -v /home/gha/lupine-ssh:/ssh:ro \
-            -v /home/gha/lupine-results-"$MATRIX_LABEL":/results \
+            -e SERVER_SSH_TARGET="gha@$VM_IP" \
+            -e SERVER_REMOTE_BIN \
+            -e SERVER_PORT_BASE="$SERVER_PORT" \
+            -e SERVER_MANAGED_EXTERNALLY=1 \
+            -v "$SSH_DIR:/ssh:ro" \
+            -v "$GITHUB_WORKSPACE/test/integration/results:/results" \
             "${cache_mounts[@]}" \
             "$CLIENT_IMAGE" \
-            bash -lc '
-              set -euo pipefail
-              if [[ -e /dev/nvidiactl || -e /dev/nvidia0 ]]; then
-                echo "NVIDIA device is visible inside the client container; client/server separation is invalid" >&2
-                exit 1
-              fi
-              if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
-                echo "NVIDIA GPU is visible inside the client container; client/server separation is invalid" >&2
-                exit 1
-              fi
-
-              mkdir -p /tmp/lupine-ssh
-              cp /ssh/id_ed25519 /tmp/lupine-ssh/id_ed25519
-              cp /ssh/known_hosts /tmp/lupine-ssh/known_hosts
-              chmod 700 /tmp/lupine-ssh
-              chmod 600 /tmp/lupine-ssh/id_ed25519
-
-              export CUDA_HOME=/usr/local/cuda
-              export CUDA_LIB_DIR=/usr/local/cuda/lib64
-              export PATH=/usr/local/cuda/bin:$PATH
-              export REPO_ROOT=/src
-              export LUPINE_BUILD_DIR=/tmp/lupine-build
-              export CCACHE_DIR=/tmp/lupine-ccache
-              mkdir -p "$LUPINE_BUILD_DIR" "$CCACHE_DIR"
-              export CCACHE_BASEDIR=/src
-              export CCACHE_COMPILERCHECK=content
-              export CCACHE_COMPRESS=true
-              export LUPINE_LIB="$LUPINE_BUILD_DIR/libcuda.so.1"
-              export LUPINE_DISABLE_LOCAL=1
-              export SERVER_LOCAL_BIN="$LUPINE_BUILD_DIR/lupine_driver_server"
-              export SERVER_REMOTE_BIN="/tmp/lupine-driver-server-${MATRIX_LABEL}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-              export SSH_OPTS="-i /tmp/lupine-ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
-              export SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT"
-              export LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT"
-              export CUDA_SAMPLES_DIR=/opt/cuda-samples-src
-              export CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build
-              export CUDA_PYTHON_DIR=/tmp/cuda-python
-              export LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples
-
-              python3 -m venv /tmp/venv-pytorch
-              /tmp/venv-pytorch/bin/pip install --upgrade pip >/dev/null
-              /tmp/venv-pytorch/bin/pip install numpy >/dev/null
-              /tmp/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch >/dev/null
-              export PYTHON_BIN=/tmp/venv-pytorch/bin/python
-
-              cmake -S /src -B "$LUPINE_BUILD_DIR" \
-                -G Ninja \
-                -DCMAKE_BUILD_TYPE=Release \
-                -DCUDAToolkit_ROOT="$CUDA_HOME" \
-                -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs" \
-                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-                -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
-              cmake --build "$LUPINE_BUILD_DIR" --parallel \
-                --target lupine_cuda_client lupine_nvml_client lupine_driver_server
-              ln -sf libcuda.so.1 "$LUPINE_BUILD_DIR/libcuda.so"
-              ln -sf libnvidia-ml.so.1 "$LUPINE_BUILD_DIR/libnvidia-ml.so"
-
-              # shellcheck disable=SC2206
-              ssh_args=($SSH_OPTS)
-              timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
-                scp -q "${ssh_args[@]}" "$SERVER_LOCAL_BIN" \
-                  "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
-
-              # This sample hard-codes GPUs {0, 1}, while the GCE lane exposes
-              # one L4. Keep it enabled for two-GPU runs outside this workflow.
-              export LIBRARY_SAMPLES_SKIP_LIST="cuFFT/3d_mgpu_c2c/bin/3d_mgpu_c2c_example"
-              export INTEGRATION_RESULTS_DIR="/results/test/integration/results/$(date +%Y%m%d-%H%M%S)"
-              mkdir -p "$INTEGRATION_RESULTS_DIR"
-              cmake -S /src/test/integration -B /tmp/lupine-integration-ctest
-              timeout --kill-after=30s "$COMPLIANCE_TIMEOUT" \
-                ctest --test-dir /tmp/lupine-integration-ctest \
-                  --parallel "$CUDA_SAMPLE_JOBS" \
-                  --output-on-failure \
-                  --output-log "$INTEGRATION_RESULTS_DIR/ctest.log" \
-                  --output-junit "$INTEGRATION_RESULTS_DIR/junit.xml"
-            '
-          REMOTE
-
-          results_tgz="$RUNNER_TEMP/gpu-results-${{ matrix.label }}.tgz"
-          "${ssh_base[@]}" "cd '$remote_results' && [ -d test ] && tar -czf - test || true" > "$results_tgz"
-          if [[ -s "$results_tgz" ]]; then
-            tar -xzf "$results_tgz"
+            bash -s <<'CLIENT'
+          set -euo pipefail
+          if [[ -e /dev/nvidiactl || -e /dev/nvidia0 ]]; then
+            echo "NVIDIA device is visible inside the client container; client/server separation is invalid" >&2
+            exit 1
+          fi
+          if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+            echo "NVIDIA GPU is visible inside the client container; client/server separation is invalid" >&2
+            exit 1
           fi
 
-          exit "$remote_status"
+          export CUDA_HOME=/usr/local/cuda
+          export CUDA_LIB_DIR=/usr/local/cuda/lib64
+          export PATH=/usr/local/cuda/bin:$PATH
+          export REPO_ROOT=/src
+          export LUPINE_BUILD_DIR=/tmp/lupine-build
+          export CCACHE_DIR=/tmp/lupine-ccache
+          mkdir -p "$LUPINE_BUILD_DIR" "$CCACHE_DIR"
+          export CCACHE_BASEDIR=/src
+          export CCACHE_COMPILERCHECK=content
+          export CCACHE_COMPRESS=true
+          export LUPINE_LIB="$LUPINE_BUILD_DIR/libcuda.so.1"
+          export LUPINE_DISABLE_LOCAL=1
+          export SERVER_LOCAL_BIN="$LUPINE_BUILD_DIR/lupine_driver_server"
+          export SSH_OPTS="-i /ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/ssh/known_hosts -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+          export SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT"
+          export LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT"
+          export CUDA_SAMPLES_DIR=/opt/cuda-samples-src
+          export CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build
+          export CUDA_PYTHON_DIR=/tmp/cuda-python
+          export LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples
+
+          python3 -m venv /tmp/venv-pytorch
+          /tmp/venv-pytorch/bin/pip install --upgrade pip >/dev/null
+          /tmp/venv-pytorch/bin/pip install numpy >/dev/null
+          /tmp/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch >/dev/null
+          export PYTHON_BIN=/tmp/venv-pytorch/bin/python
+
+          cmake -S /src -B "$LUPINE_BUILD_DIR" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCUDAToolkit_ROOT="$CUDA_HOME" \
+            -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
+          cmake --build "$LUPINE_BUILD_DIR" --parallel \
+            --target lupine_cuda_client lupine_nvml_client lupine_driver_server
+          ln -sf libcuda.so.1 "$LUPINE_BUILD_DIR/libcuda.so"
+          ln -sf libnvidia-ml.so.1 "$LUPINE_BUILD_DIR/libnvidia-ml.so"
+
+          # shellcheck disable=SC2206
+          ssh_args=($SSH_OPTS)
+          timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+            scp -q "${ssh_args[@]}" "$SERVER_LOCAL_BIN" \
+              "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
+
+          timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+            ssh -n "${ssh_args[@]}" "$SERVER_SSH_TARGET" \
+              "LD_LIBRARY_PATH='$SERVER_LD_LIBRARY_PATH' LUPINE_PORT='$SERVER_PORT_BASE' nohup '$SERVER_REMOTE_BIN' >'$SERVER_REMOTE_BIN.log' 2>&1 < /dev/null & echo \$! >'$SERVER_REMOTE_BIN.pid'"
+
+          # Check the same network path that the clients will use.
+          python3 - <<'PYTHON'
+          import os
+          import socket
+          import time
+
+          endpoint = (os.environ["SERVER_HOST"], int(os.environ["SERVER_PORT_BASE"]))
+          deadline = time.monotonic() + 60
+          while True:
+              try:
+                  with socket.create_connection(endpoint, timeout=5):
+                      break
+              except OSError:
+                  if time.monotonic() >= deadline:
+                      raise
+                  time.sleep(1)
+          PYTHON
+
+          # This sample hard-codes GPUs {0, 1}, while the GCE lane exposes
+          # one L4. Keep it enabled for two-GPU runs outside this workflow.
+          export LIBRARY_SAMPLES_SKIP_LIST="cuFFT/3d_mgpu_c2c/bin/3d_mgpu_c2c_example"
+          INTEGRATION_RESULTS_DIR="/results/$(date +%Y%m%d-%H%M%S)"
+          export INTEGRATION_RESULTS_DIR
+          mkdir -p "$INTEGRATION_RESULTS_DIR"
+          cmake -S /src/test/integration -B /tmp/lupine-integration-ctest
+          timeout --kill-after=30s "$COMPLIANCE_TIMEOUT" \
+            ctest --test-dir /tmp/lupine-integration-ctest \
+              --parallel "$CUDA_SAMPLE_JOBS" \
+              --output-on-failure \
+              --output-log "$INTEGRATION_RESULTS_DIR/ctest.log" \
+              --output-junit "$INTEGRATION_RESULTS_DIR/junit.xml"
+          CLIENT
+
+      - name: Stop shared server and collect its log
+        if: always() && env.VM_IP != ''
+        run: |
+          set -euo pipefail
+          mkdir -p test/integration/results/server
+          timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+            ssh -i "$SSH_DIR/id_ed25519" \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$SSH_DIR/known_hosts" \
+              -o ConnectTimeout=15 \
+              -o ServerAliveInterval=15 \
+              -o ServerAliveCountMax=4 \
+              "gha@$VM_IP" "
+                if [ -f '$SERVER_REMOTE_BIN.pid' ]; then
+                  pid=\$(cat '$SERVER_REMOTE_BIN.pid')
+                  kill \"\$pid\" 2>/dev/null || true
+                  for _ in \$(seq 1 50); do
+                    kill -0 \"\$pid\" 2>/dev/null || break
+                    sleep 0.1
+                  done
+                  kill -9 \"\$pid\" 2>/dev/null || true
+                fi
+                if [ -f '$SERVER_REMOTE_BIN.log' ]; then
+                  cat '$SERVER_REMOTE_BIN.log'
+                fi
+                rm -f '$SERVER_REMOTE_BIN' '$SERVER_REMOTE_BIN.pid' '$SERVER_REMOTE_BIN.log'
+              " > test/integration/results/server/server.log
 
       - name: Refresh Google Cloud credentials for cache upload
         if: github.event_name != 'pull_request' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
@@ -721,47 +695,22 @@ jobs:
         if: github.event_name != 'pull_request' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
         run: |
           set -euo pipefail
-          ssh_base=(
-            ssh
-            -i "$SSH_DIR/id_ed25519"
-            -o IdentitiesOnly=yes
-            -o StrictHostKeyChecking=yes
-            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
-            -o ConnectTimeout=15
-            -o ServerAliveInterval=15
-            -o ServerAliveCountMax=4
-            "gha@$VM_IP"
-          )
-
-          "${ssh_base[@]}" \
-            "CLIENT_IMAGE='$CLIENT_IMAGE' CACHE_ARCHIVE='$INTEGRATION_BINARY_CACHE_REMOTE_ARCHIVE' bash -s" <<'REMOTE'
-          set -euo pipefail
-          sudo docker run --rm --entrypoint bash "$CLIENT_IMAGE" -lc '
+          docker run --rm --entrypoint bash "$CLIENT_IMAGE" -lc '
             set -euo pipefail
             cache_paths=(cuda-samples-src cuda-library-samples)
             if [[ -d /opt/cuda-samples-build ]]; then
               cache_paths+=(cuda-samples-build)
             fi
             tar -C /opt -cf - "${cache_paths[@]}" | gzip -1
-          ' > "$CACHE_ARCHIVE"
-          test -s "$CACHE_ARCHIVE"
-          REMOTE
+          ' > "$INTEGRATION_BINARY_CACHE_ARCHIVE"
+          test -s "$INTEGRATION_BINARY_CACHE_ARCHIVE"
 
-          archive_sha="$(
-            "${ssh_base[@]}" \
-              "sha256sum '$INTEGRATION_BINARY_CACHE_REMOTE_ARCHIVE' | cut -d' ' -f1"
-          )"
-          upload_status=0
-          "${ssh_base[@]}" "cat '$INTEGRATION_BINARY_CACHE_REMOTE_ARCHIVE'" | \
-            gcloud storage cp - "$INTEGRATION_BINARY_CACHE_URI" \
-              --content-type=application/gzip \
-              --custom-metadata="sha256=$archive_sha" \
-              --custom-time="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            || upload_status=$?
-          "${ssh_base[@]}" "rm -f '$INTEGRATION_BINARY_CACHE_REMOTE_ARCHIVE'"
-          if [[ "$upload_status" -ne 0 ]]; then
-            exit "$upload_status"
-          fi
+          archive_sha="$(sha256sum "$INTEGRATION_BINARY_CACHE_ARCHIVE" | cut -d' ' -f1)"
+          gcloud storage cp "$INTEGRATION_BINARY_CACHE_ARCHIVE" "$INTEGRATION_BINARY_CACHE_URI" \
+            --content-type=application/gzip \
+            --custom-metadata="sha256=$archive_sha" \
+            --custom-time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          rm -f "$INTEGRATION_BINARY_CACHE_ARCHIVE"
           echo "Saved integration binaries to $INTEGRATION_BINARY_CACHE_URI"
 
       - name: Publish integration test results

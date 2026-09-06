@@ -30,6 +30,11 @@ SSH_ARGS=($SSH_OPTS)
 SSH_COMMAND_TIMEOUT="${SSH_COMMAND_TIMEOUT:-45}"
 CUDA_SAMPLE_SKIP_LIST="${CUDA_SAMPLE_SKIP_LIST:-}"
 SERVER_UPLOAD="${SERVER_UPLOAD:-1}"
+# Set to 1 to use an existing server on SERVER_PORT_BASE for every test.
+SERVER_MANAGED_EXTERNALLY="${SERVER_MANAGED_EXTERNALLY:-0}"
+if [[ "$SERVER_MANAGED_EXTERNALLY" == "1" ]]; then
+  SERVER_UPLOAD=0
+fi
 SERVER_LOCAL_BIN="${SERVER_LOCAL_BIN:-$repo_root/build/lupine_driver_server}"
 SERVER_REMOTE_BIN="${SERVER_REMOTE_BIN:-/tmp/lupine-driver-server-lupine-$$}"
 SERVER_REMOTE_CLEANUP="${SERVER_REMOTE_CLEANUP:-1}"
@@ -649,6 +654,7 @@ cleanup_remote_bin() {
 trap cleanup_remote_bin EXIT
 
 stop_remote_server() {
+  [[ "$SERVER_MANAGED_EXTERNALLY" == "1" ]] && return 0
   local pidfile="$1"
   local server_log="$2"
 
@@ -669,6 +675,7 @@ stop_remote_server() {
 }
 
 start_remote_server() {
+  [[ "$SERVER_MANAGED_EXTERNALLY" == "1" ]] && return 0
   local pidfile="$1"
   local server_log="$2"
   local port="$3"
@@ -738,6 +745,9 @@ run_sample() {
   local result_file="$2"
   local sample="${samples[$i]}"
   local port=$((SERVER_PORT_BASE + i))
+  if [[ "$SERVER_MANAGED_EXTERNALLY" == "1" ]]; then
+    port="$SERVER_PORT_BASE"
+  fi
   local log="$RESULTS_DIR/$sample.log"
   local server_log="/tmp/lupine-samples-$port.log"
   local pidfile="/tmp/lupine-samples-$port.pid"
