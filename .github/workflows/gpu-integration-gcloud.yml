@@ -29,50 +29,28 @@ permissions:
   id-token: write
 
 jobs:
-  gpu-integration:
-    name: ${{ matrix.name }} GPU integration on GCE L4
+  provision:
+    name: Provision shared ${{ matrix.name }} L4 VM
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 150
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          - label: cuda13-3
-            name: CUDA 13.3
-            cuda_version: 13.3.1
-            client_image: nvidia/cuda:13.3.1-devel-ubuntu24.04
-            samples_ref: v13.3
-            pytorch_index_url: https://download.pytorch.org/whl/cu132
-            cuda_compat_deb_url: >-
-              https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-compat-13-3_610.57.04-1ubuntu1_amd64.deb
-            cuda_compat_deb_sha256: 5150dbbe6376c29a53ec01730aa1b335f192d5965e95be71a448a719f10044a4
-            server_ld_library_path: /usr/local/cuda-13.3/compat
-          - label: cuda12-4
-            name: CUDA 12.4
-            cuda_version: 12.4.1
-            client_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
-            samples_ref: v12.4.1
-            pytorch_index_url: https://download.pytorch.org/whl/cu124
-            cuda_compat_deb_url: ""
-            cuda_compat_deb_sha256: ""
-            server_ld_library_path: ""
-          - label: cuda11-8
-            name: CUDA 11.8
-            cuda_version: 11.8.0
-            client_image: nvidia/cuda:11.8.0-devel-ubuntu22.04
-            samples_ref: v11.8
-            pytorch_index_url: https://download.pytorch.org/whl/cu118
-            cuda_compat_deb_url: ""
-            cuda_compat_deb_sha256: ""
-            server_ld_library_path: ""
+          - os: linux
+            name: Linux
+            image_project: ml-images
+            image_family: common-cu129-ubuntu-2404-nvidia-580
+          - os: windows
+            name: Windows
+            image_project: windows-cloud
+            image_family: windows-2022
 
     env:
       GCP_PROJECT_ID: kevmo314
       GCP_WORKLOAD_IDENTITY_PROVIDER: projects/272419586516/locations/global/workloadIdentityPools/lupine-github/providers/github
       GCP_SERVICE_ACCOUNT: lupine-gpu-ci@kevmo314.iam.gserviceaccount.com
-      GCP_BUILD_CACHE_BUCKET: kevmo314-lupine-gpu-integration-cache
-      INTEGRATION_BINARY_CACHE_VERSION: v1
       GCP_ZONE: us-central1-a
       GCP_FALLBACK_ZONES: >-
         us-central1-c us-central1-b
@@ -85,25 +63,323 @@ jobs:
         europe-west1-b europe-west1-c
       GCP_NETWORK: default
       MACHINE_TYPE: g2-standard-8
-      VM_IMAGE_PROJECT: ml-images
-      VM_IMAGE_FAMILY: common-cu129-ubuntu-2404-nvidia-580
-      VM_MAX_RUN_DURATION: 260m
+      VM_MAX_RUN_DURATION: 350m
+      VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}
+      VM_TAG: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}
+      FIREWALL_DENY_RULE: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}-deny
+      BOOTSTRAP_FIREWALL_RULE: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}-bootstrap
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Prepare shared SSH key and runner allowlist
+        run: |
+          set -euo pipefail
+          mkdir -p ssh
+          ssh-keygen -t ed25519 -N '' \
+            -C "gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.os }}" \
+            -f ssh/id_ed25519
+          chmod 700 ssh
+          chmod 600 ssh/id_ed25519
+          runner_ip="$(curl -fsS https://api.ipify.org)"
+          test -n "$runner_ip"
+          echo "RUNNER_IP=$runner_ip" >> "$GITHUB_ENV"
+
+      - name: Create bootstrap firewall rules
+        run: |
+          set -euo pipefail
+          gcloud compute firewall-rules create "$BOOTSTRAP_FIREWALL_RULE" \
+            --project="$GCP_PROJECT_ID" \
+            --network="$GCP_NETWORK" \
+            --direction=INGRESS \
+            --priority=800 \
+            --action=ALLOW \
+            --rules=tcp:22 \
+            --source-ranges="$RUNNER_IP/32" \
+            --target-tags="$VM_TAG"
+          gcloud compute firewall-rules create "$FIREWALL_DENY_RULE" \
+            --project="$GCP_PROJECT_ID" \
+            --network="$GCP_NETWORK" \
+            --direction=INGRESS \
+            --priority=900 \
+            --action=DENY \
+            --rules=tcp:1-65535,udp:1-65535,icmp,esp,ah,sctp \
+            --source-ranges=0.0.0.0/0 \
+            --target-tags="$VM_TAG"
+
+      - name: Write VM startup script
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.os }}" == linux ]]; then
+            cat > "$RUNNER_TEMP/startup.sh" <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl docker.io libnghttp2-14
+          curl -fsSL \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-compat-13-3_610.57.04-1ubuntu1_amd64.deb \
+            -o /tmp/cuda-compat.deb
+          echo '5150dbbe6376c29a53ec01730aa1b335f192d5965e95be71a448a719f10044a4  /tmp/cuda-compat.deb' \
+            | sha256sum -c -
+          dpkg -i /tmp/cuda-compat.deb
+          rm -f /tmp/cuda-compat.deb
+          rm -rf /var/lib/apt/lists/*
+          usermod -aG docker gha
+          touch /var/lib/lupine-startup-complete
+          SCRIPT
+          else
+            cat > "$RUNNER_TEMP/startup.ps1" <<'SCRIPT'
+          $ErrorActionPreference = 'Stop'
+          Set-ExecutionPolicy Bypass -Scope LocalMachine -Force
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          if (-not (Get-Command choco.exe -ErrorAction SilentlyContinue)) {
+            Invoke-Expression ((New-Object Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          }
+          choco install -y --no-progress git cmake ninja powershell-core python312 visualstudio2022buildtools visualstudio2022-workload-vctools
+          if ($LASTEXITCODE -notin @(0, 3010)) { throw "Chocolatey exited with $LASTEXITCODE" }
+          $env:Path = "C:\Program Files\Git\cmd;C:\Program Files\CMake\bin;C:\ProgramData\chocolatey\bin;$env:Path"
+          if (-not (Test-Path C:\vcpkg\vcpkg.exe)) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg.git C:\vcpkg
+            if ($LASTEXITCODE -ne 0) { throw "git clone vcpkg exited with $LASTEXITCODE" }
+            & C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+            if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap exited with $LASTEXITCODE" }
+          }
+          & C:\vcpkg\vcpkg.exe install nghttp2:x64-windows-static openssl:x64-windows-static
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install exited with $LASTEXITCODE" }
+          $toolkits = @(
+            @{ Version = '13.3.1'; Short = '13.3' },
+            @{ Version = '12.4.1'; Short = '12.4' },
+            @{ Version = '11.8.0'; Short = '11.8' }
+          )
+          foreach ($toolkit in $toolkits) {
+            $root = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v$($toolkit.Short)"
+            if (Test-Path "$root\bin\nvcc.exe") { continue }
+            $installer = "C:\cuda-$($toolkit.Version)-network.exe"
+            $url = "https://developer.download.nvidia.com/compute/cuda/$($toolkit.Version)/network_installers/cuda_$($toolkit.Version)_windows_network.exe"
+            Invoke-WebRequest $url -OutFile $installer
+            $suffix = $toolkit.Short
+            $components = @(
+              "nvcc_$suffix", "cudart_$suffix", "cudart_dev_$suffix",
+              "cublas_$suffix", "cublas_dev_$suffix", "cufft_$suffix", "cufft_dev_$suffix",
+              "curand_$suffix", "curand_dev_$suffix", "cusolver_$suffix", "cusolver_dev_$suffix",
+              "cusparse_$suffix", "cusparse_dev_$suffix", "npp_$suffix", "npp_dev_$suffix",
+              "nvjpeg_$suffix", "nvjpeg_dev_$suffix", "nvrtc_$suffix", "nvrtc_dev_$suffix",
+              "nvml_dev_$suffix", "visual_studio_integration_$suffix"
+            )
+            if ($toolkit.Short -eq '13.3') {
+              $components += "crt_$suffix", "nvvm_$suffix"
+            }
+            $process = Start-Process $installer -ArgumentList (@('-s') + $components) -Wait -PassThru
+            if ($process.ExitCode -notin @(0, 3010) -or -not (Test-Path "$root\bin\nvcc.exe")) {
+              throw "CUDA $($toolkit.Version) installation failed with exit code $($process.ExitCode)"
+            }
+            Remove-Item $installer -Force
+          }
+          New-Item -ItemType File -Force C:\lupine-startup-complete | Out-Null
+          SCRIPT
+          fi
+
+      - name: Create shared L4 VM
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2206
+          fallback_zones=($GCP_FALLBACK_ZONES)
+          candidate_zones=("$GCP_ZONE" "${fallback_zones[@]}")
+          selected_zone=""
+          vm_ip=""
+          for zone in "${candidate_zones[@]}"; do
+            instance_metadata="block-project-ssh-keys=TRUE,enable-oslogin=FALSE,ssh-keys=gha:$(cat ssh/id_ed25519.pub)"
+            if [[ "${{ matrix.os }}" == windows ]]; then
+              instance_metadata+=",enable-windows-ssh=TRUE,sysprep-specialize-script-cmd=googet -noconfirm=true install google-compute-engine-ssh,sysprep-specialize-script-url=https://github.com/GoogleCloudPlatform/compute-gpu-installation/raw/main/windows/install_gpu_driver.ps1"
+            fi
+            create_args=(
+              "$VM_NAME"
+              "--project=$GCP_PROJECT_ID"
+              "--zone=$zone"
+              "--machine-type=$MACHINE_TYPE"
+              "--network=$GCP_NETWORK"
+              "--tags=$VM_TAG"
+              "--image-family=${{ matrix.image_family }}"
+              "--image-project=${{ matrix.image_project }}"
+              "--boot-disk-size=250GB"
+              "--boot-disk-type=pd-balanced"
+              "--maintenance-policy=TERMINATE"
+              "--max-run-duration=$VM_MAX_RUN_DURATION"
+              "--instance-termination-action=DELETE"
+              "--no-service-account"
+              "--no-scopes"
+              "--metadata=$instance_metadata"
+              "--shielded-vtpm"
+              "--shielded-integrity-monitoring"
+              "--no-shielded-secure-boot"
+            )
+            if [[ "${{ matrix.os }}" == linux ]]; then
+              create_args+=("--metadata-from-file=startup-script=$RUNNER_TEMP/startup.sh")
+            else
+              create_args+=(
+                "--metadata-from-file=windows-startup-script-ps1=$RUNNER_TEMP/startup.ps1"
+              )
+            fi
+            if vm_ip="$(gcloud compute instances create "${create_args[@]}" \
+              --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"; then
+              selected_zone="$zone"
+              break
+            fi
+            gcloud compute instances delete "$VM_NAME" \
+              --project="$GCP_PROJECT_ID" --zone="$zone" --quiet >/dev/null 2>&1 || true
+          done
+          test -n "$selected_zone"
+          test -n "$vm_ip"
+          {
+            echo "GCP_ZONE=$selected_zone"
+            echo "VM_IP=$vm_ip"
+          } >> "$GITHUB_ENV"
+
+      - name: Wait for shared VM
+        run: |
+          set -euo pipefail
+          ssh_base=(
+            ssh -i ssh/id_ed25519 -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=accept-new
+            -o UserKnownHostsFile=ssh/known_hosts
+            -o ConnectTimeout=10 "gha@$VM_IP"
+          )
+          ready=false
+          for _ in $(seq 1 720); do
+            if [[ "${{ matrix.os }}" == linux ]]; then
+              probe='test -f /var/lib/lupine-startup-complete && sudo docker info >/dev/null && nvidia-smi -L'
+            else
+              probe='powershell.exe -NoProfile -NonInteractive -Command "if (-not (Test-Path C:\lupine-startup-complete)) { exit 1 }; nvidia-smi -L"'
+            fi
+            if "${ssh_base[@]}" "$probe"; then
+              ready=true
+              break
+            fi
+            sleep 10
+          done
+          if [[ "$ready" != true ]]; then
+            echo "${{ matrix.name }} VM did not finish provisioning before the timeout" >&2
+            exit 1
+          fi
+
+      - name: Remove bootstrap firewall rule
+        if: always()
+        run: >-
+          gcloud compute firewall-rules delete "$BOOTSTRAP_FIREWALL_RULE"
+          --project="$GCP_PROJECT_ID" --quiet || true
+
+      - name: Upload shared SSH credentials
+        uses: actions/upload-artifact@v7
+        with:
+          name: gpu-integration-ssh-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ssh/
+          if-no-files-found: error
+          retention-days: 1
+
+  gpu-integration:
+    name: ${{ matrix.name }} ${{ matrix.os_name }} GPU integration on GCE L4
+    needs: provision
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: cuda13-3
+            name: CUDA 13.3
+            os: linux
+            os_name: Linux
+            server_port_base: 10000
+            cuda_version: 13.3.1
+            cuda_short_version: "13.3"
+            client_image: nvidia/cuda:13.3.1-devel-ubuntu24.04
+            samples_ref: v13.3
+            pytorch_index_url: https://download.pytorch.org/whl/cu132
+            server_ld_library_path: /usr/local/cuda-13.3/compat
+          - label: cuda12-4
+            name: CUDA 12.4
+            os: linux
+            os_name: Linux
+            server_port_base: 28000
+            cuda_version: 12.4.1
+            cuda_short_version: "12.4"
+            client_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
+            samples_ref: v12.4.1
+            pytorch_index_url: https://download.pytorch.org/whl/cu124
+            server_ld_library_path: ""
+          - label: cuda11-8
+            name: CUDA 11.8
+            os: linux
+            os_name: Linux
+            server_port_base: 46000
+            cuda_version: 11.8.0
+            cuda_short_version: "11.8"
+            client_image: nvidia/cuda:11.8.0-devel-ubuntu22.04
+            samples_ref: v11.8
+            pytorch_index_url: https://download.pytorch.org/whl/cu118
+            server_ld_library_path: ""
+          - label: cuda13-3
+            name: CUDA 13.3
+            os: windows
+            os_name: Windows
+            server_port_base: 10000
+            cuda_version: 13.3.1
+            cuda_short_version: "13.3"
+            samples_ref: v13.3
+            pytorch_index_url: https://download.pytorch.org/whl/cu132
+            cuda_flags: ""
+            host_defines: ""
+          - label: cuda12-4
+            name: CUDA 12.4
+            os: windows
+            os_name: Windows
+            server_port_base: 28000
+            cuda_version: 12.4.1
+            cuda_short_version: "12.4"
+            samples_ref: v12.4.1
+            pytorch_index_url: https://download.pytorch.org/whl/cu124
+            cuda_flags: ""
+            host_defines: ""
+          - label: cuda11-8
+            name: CUDA 11.8
+            os: windows
+            os_name: Windows
+            server_port_base: 46000
+            cuda_version: 11.8.0
+            cuda_short_version: "11.8"
+            samples_ref: v11.8
+            pytorch_index_url: https://download.pytorch.org/whl/cu118
+            cuda_flags: -allow-unsupported-compiler
+            host_defines: /D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
+
+    env:
+      GCP_PROJECT_ID: kevmo314
+      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/272419586516/locations/global/workloadIdentityPools/lupine-github/providers/github
+      GCP_SERVICE_ACCOUNT: lupine-gpu-ci@kevmo314.iam.gserviceaccount.com
+      GCP_BUILD_CACHE_BUCKET: kevmo314-lupine-gpu-integration-cache
+      INTEGRATION_BINARY_CACHE_VERSION: v1
+      GCP_NETWORK: default
       COMPLIANCE_TIMEOUT: 240m
       CUDA_SAMPLE_TIMEOUT: 120
       CUDA_LONG_SAMPLE_TIMEOUT: 600
-      # Match the eight vCPUs on g2-standard-8. Higher fan-out runs too many
-      # independent CUDA contexts on one L4 and causes device-unavailable
-      # cascades in otherwise passing cuBLAS and PyTorch tests.
+      # Keep each lane's complete suite moving while the three CUDA lanes
+      # intentionally share the same VM and GPU.
       CUDA_SAMPLE_JOBS: 8
       SSH_COMMAND_TIMEOUT: 120
-      CUDA_COMPAT_DEB_URL: ${{ matrix.cuda_compat_deb_url }}
-      CUDA_COMPAT_DEB_SHA256: ${{ matrix.cuda_compat_deb_sha256 }}
       SERVER_LD_LIBRARY_PATH: ${{ matrix.server_ld_library_path }}
-      USE_SPOT: "false"
-      VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
-      VM_TAG: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
-      FIREWALL_ALLOW_RULE: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}-allow
-      FIREWALL_DENY_RULE: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}-deny
+      VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}
+      VM_TAG: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}
+      FIREWALL_ALLOW_RULE: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.os }}-${{ matrix.label }}-allow
       CLIENT_IMAGE: lupine-gpu-integration:${{ matrix.label }}-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
@@ -141,7 +417,7 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Configure GCS build cache lifecycle
-        if: github.event_name != 'pull_request' && matrix.label == 'cuda13-3'
+        if: github.event_name != 'pull_request' && matrix.os == 'linux' && matrix.label == 'cuda13-3'
         run: |
           set -euo pipefail
           bucket_name="${GCP_BUILD_CACHE_BUCKET#gs://}"
@@ -163,142 +439,50 @@ jobs:
           gcloud storage buckets update "gs://$bucket_name" \
             --lifecycle-file="$lifecycle_file"
 
-      - name: Prepare SSH key and runner allowlist
+      - name: Download shared SSH credentials
+        uses: actions/download-artifact@v8
+        with:
+          name: gpu-integration-ssh-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gce-ssh
+
+      - name: Locate shared VM and prepare runner allowlist
         run: |
           set -euo pipefail
-          ssh_dir="$RUNNER_TEMP/gce-ssh"
-          mkdir -p "$ssh_dir"
-          ssh-keygen -t ed25519 -N '' -C "gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" -f "$ssh_dir/id_ed25519"
-          chmod 700 "$ssh_dir"
-          chmod 600 "$ssh_dir/id_ed25519"
-
+          chmod 700 "$RUNNER_TEMP/gce-ssh"
+          chmod 600 "$RUNNER_TEMP/gce-ssh/id_ed25519"
           runner_ip="$(curl -fsS https://api.ipify.org)"
           test -n "$runner_ip"
-
-          {
-            echo "SSH_DIR=$ssh_dir"
-            echo "RUNNER_IP=$runner_ip"
-          } >> "$GITHUB_ENV"
-
-      - name: Create locked-down firewall rules
-        run: |
-          set -euo pipefail
-
-          create_firewall_rule() {
-            local name="$1"
-            local action="$2"
-            local priority="$3"
-            local rules="$4"
-            local source_ranges="$5"
-
-            gcloud compute firewall-rules create "$name" \
+          instance="$({
+            gcloud compute instances list \
               --project="$GCP_PROJECT_ID" \
-              --network="$GCP_NETWORK" \
-              --direction=INGRESS \
-              --priority="$priority" \
-              --action="$action" \
-              --rules="$rules" \
-              --source-ranges="$source_ranges" \
-              --target-tags="$VM_TAG"
-          }
-
-          create_firewall_rule \
-            "$FIREWALL_ALLOW_RULE" \
-            ALLOW \
-            800 \
-            tcp:22 \
-            "$RUNNER_IP/32"
-
-          create_firewall_rule \
-            "$FIREWALL_DENY_RULE" \
-            DENY \
-            900 \
-            tcp:1-65535,udp:1-65535,icmp,esp,ah,sctp \
-            0.0.0.0/0
-
-      - name: Create L4 server VM
-        run: |
-          set -euo pipefail
-          startup_script="$RUNNER_TEMP/gce-startup.sh"
-          cat > "$startup_script" <<'SCRIPT'
-          #!/usr/bin/env bash
-          set -euxo pipefail
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl docker.io libnghttp2-14
-          SCRIPT
-
-          if [[ -n "$CUDA_COMPAT_DEB_URL" ]]; then
-            printf 'curl --fail --location --retry 5 --output /tmp/cuda-compat.deb %q\n' \
-              "$CUDA_COMPAT_DEB_URL" >> "$startup_script"
-            printf 'printf "%%s  /tmp/cuda-compat.deb\\n" %q | sha256sum --check\n' \
-              "$CUDA_COMPAT_DEB_SHA256" >> "$startup_script"
-            printf '%s\n' \
-              'apt-get install -y --no-install-recommends /tmp/cuda-compat.deb' \
-              'rm -f /tmp/cuda-compat.deb' >> "$startup_script"
-          fi
-
-          cat >> "$startup_script" <<'SCRIPT'
-          rm -rf /var/lib/apt/lists/*
-          touch /var/lib/lupine-startup-complete
-          SCRIPT
-
-          # shellcheck disable=SC2206
-          fallback_zones=($GCP_FALLBACK_ZONES)
-          candidate_zones=("$GCP_ZONE" "${fallback_zones[@]}")
-
-          vm_ip=""
-          selected_zone=""
-          for zone in "${candidate_zones[@]}"; do
-            echo "Creating $MACHINE_TYPE in $zone"
-            create_args=(
-              "$VM_NAME"
-              "--project=$GCP_PROJECT_ID"
-              "--zone=$zone"
-              "--machine-type=$MACHINE_TYPE"
-              "--network=$GCP_NETWORK"
-              "--tags=$VM_TAG"
-              "--image-family=$VM_IMAGE_FAMILY"
-              "--image-project=$VM_IMAGE_PROJECT"
-              "--boot-disk-size=100GB"
-              "--boot-disk-type=pd-balanced"
-              "--maintenance-policy=TERMINATE"
-              "--max-run-duration=$VM_MAX_RUN_DURATION"
-              "--instance-termination-action=DELETE"
-              "--no-service-account"
-              "--no-scopes"
-              "--metadata=block-project-ssh-keys=TRUE,enable-oslogin=FALSE,ssh-keys=gha:$(cat "$SSH_DIR/id_ed25519.pub")"
-              "--metadata-from-file=startup-script=$startup_script"
-              "--shielded-vtpm"
-              "--shielded-integrity-monitoring"
-              "--no-shielded-secure-boot"
-            )
-
-            if [[ "$USE_SPOT" == "true" ]]; then
-              create_args+=("--provisioning-model=SPOT")
-            fi
-
-            if vm_ip="$(gcloud compute instances create "${create_args[@]}" \
-              --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"; then
-              selected_zone="$zone"
-              break
-            fi
-
-            echo "Could not create $MACHINE_TYPE in $zone; trying next candidate zone" >&2
-            gcloud compute instances delete "$VM_NAME" \
-              --project="$GCP_PROJECT_ID" \
-              --zone="$zone" \
-              --quiet >/dev/null 2>&1 || true
-          done
-
+              --filter="name=('$VM_NAME') AND status=RUNNING" \
+              --format='csv[no-heading](zone.basename(),networkInterfaces[0].accessConfigs[0].natIP)'
+          } | head -n1)"
+          IFS=, read -r zone vm_ip <<< "$instance"
+          test -n "$zone"
           test -n "$vm_ip"
-          test -n "$selected_zone"
           {
+            echo "SSH_DIR=$RUNNER_TEMP/gce-ssh"
+            echo "RUNNER_IP=$runner_ip"
+            echo "GCP_ZONE=$zone"
             echo "VM_IP=$vm_ip"
-            echo "GCP_ZONE=$selected_zone"
           } >> "$GITHUB_ENV"
+
+      - name: Allow this lane to reach the shared VM
+        run: |
+          set -euo pipefail
+          gcloud compute firewall-rules create "$FIREWALL_ALLOW_RULE" \
+            --project="$GCP_PROJECT_ID" \
+            --network="$GCP_NETWORK" \
+            --direction=INGRESS \
+            --priority=800 \
+            --action=ALLOW \
+            --rules=tcp:22 \
+            --source-ranges="$RUNNER_IP/32" \
+            --target-tags="$VM_TAG"
 
       - name: Write inline client image Dockerfile
+        if: matrix.os == 'linux'
         run: |
           cat > "${RUNNER_TEMP}/gpu-integration.Dockerfile" <<'EOF'
           # syntax=docker/dockerfile:1.7
@@ -390,6 +574,7 @@ jobs:
           EOF
 
       - name: Wait for SSH and NVIDIA driver
+        if: matrix.os == 'linux'
         run: |
           set -euo pipefail
           ssh_base=(
@@ -409,6 +594,7 @@ jobs:
             sleep 5
           done
 
+          # shellcheck disable=SC2016
           "${ssh_base[@]}" '
             deadline=$((SECONDS + 1200))
             until command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L; do
@@ -441,6 +627,7 @@ jobs:
           echo "CUDA_SAMPLES_ARCH=$arch" >> "$GITHUB_ENV"
 
       - name: Restore integration binary cache from GCS
+        if: matrix.os == 'linux'
         run: |
           set -euo pipefail
           ssh_base=(
@@ -520,6 +707,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Build ${{ matrix.name }} client image on L4 VM
+        if: matrix.os == 'linux'
         run: |
           set -euo pipefail
           # The docker CLI reaches the VM daemon over SSH and ships only the
@@ -551,6 +739,7 @@ jobs:
           echo "Built $CLIENT_IMAGE on L4 VM in $((SECONDS - start))s"
 
       - name: Run ${{ matrix.name }} client inside L4 VM
+        if: matrix.os == 'linux'
         run: |
           set -euo pipefail
 
@@ -582,7 +771,7 @@ jobs:
             -o UserKnownHostsFile="$SSH_DIR/known_hosts"
           )
 
-          remote_ssh="/home/gha/lupine-ssh"
+          remote_ssh="/home/gha/lupine-ssh-${{ matrix.label }}"
           remote_results="/home/gha/lupine-results-${{ matrix.label }}"
           "${ssh_base[@]}" "rm -rf '$remote_results' '$remote_ssh'; mkdir -p '$remote_results' '$remote_ssh'"
           "${scp_base[@]}" "$SSH_DIR/id_ed25519" "$SSH_DIR/known_hosts" "gha@$VM_IP:$remote_ssh/"
@@ -590,7 +779,7 @@ jobs:
 
           remote_status=0
           "${ssh_base[@]}" \
-            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' SERVER_LD_LIBRARY_PATH='$SERVER_LD_LIBRARY_PATH' INTEGRATION_BINARY_CACHE_HIT='$INTEGRATION_BINARY_CACHE_HIT' INTEGRATION_BINARY_CACHE_REMOTE_DIR='$INTEGRATION_BINARY_CACHE_REMOTE_DIR' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
+            "CLIENT_IMAGE='$CLIENT_IMAGE' CUDA_SAMPLE_JOBS='$CUDA_SAMPLE_JOBS' CUDA_SAMPLE_TIMEOUT='$CUDA_SAMPLE_TIMEOUT' CUDA_LONG_SAMPLE_TIMEOUT='$CUDA_LONG_SAMPLE_TIMEOUT' SSH_COMMAND_TIMEOUT='$SSH_COMMAND_TIMEOUT' COMPLIANCE_TIMEOUT='$COMPLIANCE_TIMEOUT' PYTORCH_INDEX_URL='${{ matrix.pytorch_index_url }}' SERVER_LD_LIBRARY_PATH='$SERVER_LD_LIBRARY_PATH' SERVER_PORT_BASE='${{ matrix.server_port_base }}' INTEGRATION_BINARY_CACHE_HIT='$INTEGRATION_BINARY_CACHE_HIT' INTEGRATION_BINARY_CACHE_REMOTE_DIR='$INTEGRATION_BINARY_CACHE_REMOTE_DIR' MATRIX_LABEL='${{ matrix.label }}' GITHUB_RUN_ID='${GITHUB_RUN_ID:-local}' GITHUB_RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT:-1}' bash -s" <<'REMOTE' || remote_status=$?
           set -euo pipefail
           cache_mounts=()
           if [[ "$INTEGRATION_BINARY_CACHE_HIT" == "true" ]]; then
@@ -613,13 +802,14 @@ jobs:
             -e COMPLIANCE_TIMEOUT="$COMPLIANCE_TIMEOUT" \
             -e PYTORCH_INDEX_URL="$PYTORCH_INDEX_URL" \
             -e SERVER_LD_LIBRARY_PATH="$SERVER_LD_LIBRARY_PATH" \
+            -e SERVER_PORT_BASE="$SERVER_PORT_BASE" \
             -e SERVER_HOST=host.docker.internal \
             -e SERVER_USER=gha \
             -e SERVER_SSH_TARGET=gha@host.docker.internal \
             -e MATRIX_LABEL="$MATRIX_LABEL" \
             -e GITHUB_RUN_ID="$GITHUB_RUN_ID" \
             -e GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
-            -v /home/gha/lupine-ssh:/ssh:ro \
+            -v /home/gha/lupine-ssh-"$MATRIX_LABEL":/ssh:ro \
             -v /home/gha/lupine-results-"$MATRIX_LABEL":/results \
             "${cache_mounts[@]}" \
             "$CLIENT_IMAGE" \
@@ -709,8 +899,99 @@ jobs:
 
           exit "$remote_status"
 
+      - name: Run ${{ matrix.name }} native Windows integration suite
+        if: matrix.os == 'windows'
+        run: |
+          set -euo pipefail
+          ssh_base=(
+            ssh
+            -i "$SSH_DIR/id_ed25519"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=accept-new
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=4
+            "gha@$VM_IP"
+          )
+          scp_base=(
+            scp
+            -i "$SSH_DIR/id_ed25519"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$SSH_DIR/known_hosts"
+          )
+          run_powershell() {
+            local source="$1"
+            local encoded
+            encoded="$(printf '%s' "$source" | iconv -f utf-8 -t utf-16le | base64 -w0)"
+            "${ssh_base[@]}" \
+              '"C:\Program Files\PowerShell\7\pwsh.exe"' \
+              "-NoProfile -NonInteractive -EncodedCommand $encoded"
+          }
+
+          source_archive="$RUNNER_TEMP/lupine-source-${{ matrix.label }}.zip"
+          git archive --format=zip --output="$source_archive" HEAD
+          "${scp_base[@]}" "$source_archive" \
+            "gha@$VM_IP:source-${{ matrix.label }}.zip"
+
+          setup_script="$(cat <<'POWERSHELL'
+          $ErrorActionPreference = 'Stop'
+          $source = 'C:\lupine\${{ matrix.label }}'
+          $archive = Join-Path $env:USERPROFILE 'source-${{ matrix.label }}.zip'
+          Remove-Item $source -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $source | Out-Null
+          Expand-Archive -Path $archive -DestinationPath $source -Force
+          POWERSHELL
+          )"
+          run_powershell "$setup_script"
+
+          test_script="$(cat <<'POWERSHELL'
+          $ErrorActionPreference = 'Stop'
+          $source = 'C:\lupine\${{ matrix.label }}'
+          $results = 'C:\lupine-results\${{ matrix.label }}'
+          New-Item -ItemType Directory -Force $results | Out-Null
+          Start-Transcript -Path (Join-Path $results 'run.log') -Force
+          try {
+            & (Join-Path $source 'test\run_windows_integration.ps1') `
+              -CudaVersion '${{ matrix.cuda_version }}' `
+              -CudaShortVersion '${{ matrix.cuda_short_version }}' `
+              -CudaSamplesRef '${{ matrix.samples_ref }}' `
+              -PytorchIndexUrl '${{ matrix.pytorch_index_url }}' `
+              -ServerPortBase ${{ matrix.server_port_base }} `
+              -ResultsDirectory $results `
+              -CudaFlags '${{ matrix.cuda_flags }}' `
+              -HostDefines '${{ matrix.host_defines }}'
+          } finally {
+            Stop-Transcript
+          }
+          POWERSHELL
+          )"
+          remote_status=0
+          run_powershell "$test_script" || remote_status=$?
+
+          collect_script="$(cat <<'POWERSHELL'
+          $ErrorActionPreference = 'Stop'
+          $results = 'C:\lupine-results\${{ matrix.label }}'
+          $archive = Join-Path $env:USERPROFILE 'results-${{ matrix.label }}.zip'
+          Remove-Item $archive -Force -ErrorAction SilentlyContinue
+          if (Test-Path $results) {
+            Compress-Archive -Path "$results\*" -DestinationPath $archive -Force
+          }
+          POWERSHELL
+          )"
+          run_powershell "$collect_script" || true
+          local_results="test/integration/results/${{ matrix.label }}"
+          mkdir -p "$local_results"
+          if "${scp_base[@]}" "gha@$VM_IP:results-${{ matrix.label }}.zip" \
+            "$RUNNER_TEMP/results-${{ matrix.label }}.zip"; then
+            unzip -q "$RUNNER_TEMP/results-${{ matrix.label }}.zip" -d "$local_results"
+          fi
+
+          exit "$remote_status"
+
       - name: Refresh Google Cloud credentials for cache upload
-        if: github.event_name != 'pull_request' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
+        if: matrix.os == 'linux' && github.event_name != 'pull_request' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
@@ -718,7 +999,7 @@ jobs:
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
       - name: Save integration binary cache to GCS
-        if: github.event_name != 'pull_request' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
+        if: matrix.os == 'linux' && github.event_name != 'pull_request' && env.INTEGRATION_BINARY_CACHE_HIT != 'true'
         run: |
           set -euo pipefail
           ssh_base=(
@@ -768,7 +1049,7 @@ jobs:
         if: always()
         uses: dorny/test-reporter@v3
         with:
-          name: GPU integration (${{ matrix.label }})
+          name: GPU integration (${{ matrix.os }}-${{ matrix.label }})
           path: test/integration/results/*/junit.xml
           reporter: java-junit
           fail-on-empty: false
@@ -777,70 +1058,88 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: gpu-integration-results-${{ matrix.label }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: gpu-integration-results-${{ matrix.os }}-${{ matrix.label }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: test/integration/results/
           if-no-files-found: ignore
 
-      - name: Refresh Google Cloud credentials for cleanup
+      - name: Remove lane firewall rule
         if: always()
+        run: |
+          set -euo pipefail
+          gcloud compute firewall-rules delete "$FIREWALL_ALLOW_RULE" \
+            --project="$GCP_PROJECT_ID" --quiet || true
+
+      - name: Remove relocated Google Cloud credentials
+        if: always()
+        run: rm -f -- "$LUPINE_GCP_CREDS_PATH"
+
+  cleanup:
+    name: Tear down shared GPU VMs
+    needs: [provision, gpu-integration]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GCP_PROJECT_ID: kevmo314
+      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/272419586516/locations/global/workloadIdentityPools/lupine-github/providers/github
+      GCP_SERVICE_ACCOUNT: lupine-gpu-ci@kevmo314.iam.gserviceaccount.com
+      RESOURCE_PREFIX: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
           project_id: ${{ env.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
-      - name: Tear down GCE resources
-        if: always()
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Delete VMs and firewall rules
         run: |
           set -euo pipefail
-
-          # shellcheck disable=SC2206
-          fallback_zones=($GCP_FALLBACK_ZONES)
-          candidate_zones=("$GCP_ZONE" "${fallback_zones[@]}")
-
           delete_pids=()
-          for zone in "${candidate_zones[@]}"; do
-            gcloud compute instances delete "$VM_NAME" \
-              --project="$GCP_PROJECT_ID" \
-              --zone="$zone" \
-              --quiet &
+          while IFS=, read -r name zone; do
+            [[ -n "$name" && -n "$zone" ]] || continue
+            gcloud compute instances delete "$name" \
+              --project="$GCP_PROJECT_ID" --zone="$zone" --quiet &
             delete_pids+=("$!")
-          done
-
-          for rule in "$FIREWALL_ALLOW_RULE" "$FIREWALL_DENY_RULE"; do
+          done < <(
+            gcloud compute instances list \
+              --project="$GCP_PROJECT_ID" \
+              --filter="name~'^${RESOURCE_PREFIX}-(linux|windows)$'" \
+              --format='csv[no-heading](name,zone.basename())'
+          )
+          while IFS= read -r rule; do
+            [[ -n "$rule" ]] || continue
             gcloud compute firewall-rules delete "$rule" \
-              --project="$GCP_PROJECT_ID" \
-              --quiet &
+              --project="$GCP_PROJECT_ID" --quiet &
             delete_pids+=("$!")
-          done
-
+          done < <(
+            gcloud compute firewall-rules list \
+              --project="$GCP_PROJECT_ID" \
+              --filter="name~'^${RESOURCE_PREFIX}-'" \
+              --format='value(name)'
+          )
           for pid in "${delete_pids[@]}"; do
             wait "$pid" || true
           done
 
-          leftovers=0
-          check_pids=()
-          for zone in "${candidate_zones[@]}"; do
-            (! gcloud compute instances describe "$VM_NAME" \
+          leftover_vms="$(
+            gcloud compute instances list \
               --project="$GCP_PROJECT_ID" \
-              --zone="$zone" >/dev/null 2>&1) &
-            check_pids+=("$!")
-          done
-
-          for rule in "$FIREWALL_ALLOW_RULE" "$FIREWALL_DENY_RULE"; do
-            (! gcloud compute firewall-rules describe "$rule" \
-              --project="$GCP_PROJECT_ID" >/dev/null 2>&1) &
-            check_pids+=("$!")
-          done
-
-          for pid in "${check_pids[@]}"; do
-            if ! wait "$pid"; then
-              leftovers=1
-            fi
-          done
-
-          exit "$leftovers"
-
-      - name: Remove relocated Google Cloud credentials
-        if: always()
-        run: rm -f -- "$LUPINE_GCP_CREDS_PATH"
+              --filter="name~'^${RESOURCE_PREFIX}-(linux|windows)$'" \
+              --format='value(name)'
+          )"
+          leftover_rules="$(
+            gcloud compute firewall-rules list \
+              --project="$GCP_PROJECT_ID" \
+              --filter="name~'^${RESOURCE_PREFIX}-'" \
+              --format='value(name)'
+          )"
+          if [[ -n "$leftover_vms$leftover_rules" ]]; then
+            echo "GCE cleanup left resources behind:" >&2
+            printf '%s\n%s\n' "$leftover_vms" "$leftover_rules" >&2
+            exit 1
+          fi

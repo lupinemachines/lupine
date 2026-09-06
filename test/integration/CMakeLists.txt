@@ -2,7 +2,12 @@ cmake_minimum_required(VERSION 3.21)
 project(LupineIntegrationTests NONE)
 enable_testing()
 
-set(port 14900)
+set(port "$ENV{SERVER_PORT_BASE}")
+if(port STREQUAL "")
+    set(port 14900)
+elseif(NOT port MATCHES "^[0-9]+$" OR port LESS 1 OR port GREATER 61000)
+    message(FATAL_ERROR "SERVER_PORT_BASE must be between 1 and 61000")
+endif()
 
 function(add_suite suite script)
     set(list_env ${ARGN})
