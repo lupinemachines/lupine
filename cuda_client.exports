@@ -3,6 +3,7 @@
     cu*;
     dlsym;
     lupine_checkpoint_*;
+    lupine_rpc_*;
   local:
     *;
 };

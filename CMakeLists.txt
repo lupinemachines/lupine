@@ -363,6 +363,7 @@ if(LUPINE_BUILD_CUDA)
     add_library(lupine_cuda_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client_rpc.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/events.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client_memcpy.cpp
