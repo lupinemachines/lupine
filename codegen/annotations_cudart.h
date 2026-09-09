@@ -2769,7 +2769,6 @@ cudaError_t cudaGraphicsUnregisterResource(cudaGraphicsResource_t resource);
 
 // Compiler registration entry points are forwarded to the same runtime API.
 /**
- * @broadcast FATBIN fatCubinHandle
  * @param fatCubinHandle SEND_ONLY
  * @param hostFun SEND_ONLY
  * @param deviceFun SEND_ONLY
@@ -2786,7 +2785,6 @@ void __cudaRegisterFunction(void **fatCubinHandle, const char *hostFun,
                             int thread_limit, uint3 *tid, uint3 *bid,
                             dim3 *bDim, dim3 *gDim, int *wSize);
 /**
- * @broadcast FATBIN fatCubinHandle
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
  * @param deviceAddress SEND_ONLY NULL_TERMINATED
@@ -2800,7 +2798,6 @@ void __cudaRegisterVar(void **fatCubinHandle, char *hostVar,
                        char *deviceAddress, const char *deviceName, int ext,
                        size_t size, int constant, int global);
 /**
- * @broadcast FATBIN fatCubinHandle
  * @param fatCubinHandle SEND_ONLY
  * @param hostVarPtrAddress SEND_ONLY
  * @param deviceAddress SEND_ONLY NULL_TERMINATED
@@ -2814,7 +2811,6 @@ void __cudaRegisterManagedVar(void **fatCubinHandle, void **hostVarPtrAddress,
                               char *deviceAddress, const char *deviceName,
                               int ext, size_t size, int constant, int global);
 /**
- * @broadcast FATBIN fatCubinHandle
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
  * @param deviceAddress SEND_ONLY NULL_TERMINATED
@@ -2827,7 +2823,6 @@ void __cudaRegisterTexture(void **fatCubinHandle, const void *hostVar,
                            const void **deviceAddress, const char *deviceName,
                            int dim, int norm, int ext);
 /**
- * @broadcast FATBIN fatCubinHandle
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
  * @param deviceAddress SEND_ONLY NULL_TERMINATED
@@ -2839,7 +2834,6 @@ void __cudaRegisterSurface(void **fatCubinHandle, const void *hostVar,
                            const void **deviceAddress, const char *deviceName,
                            int dim, int ext);
 /**
- * @broadcast FATBIN fatCubinHandle
  * @param fatCubinHandle SEND_ONLY
  * @param deviceName SEND_ONLY NULL_TERMINATED
  * @param hostVar SEND_ONLY
@@ -2854,7 +2848,6 @@ void __cudaRegisterHostVar(void **fatCubinHandle, const char *deviceName,
 // inaccessible after registration. Copying a window changes its canonical
 // addresses and breaks calls through host-originated function pointers.
 /**
- * @broadcast FATBIN fatCubinHandle
  * @param fatCubinHandle SEND_ONLY
  * @param functionTable SEND_ONLY
  * @param functionWindowSize SEND_ONLY
@@ -2892,12 +2885,10 @@ cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
                                        size_t *sharedMem, void *stream);
 
 /**
- * @broadcast FATBIN fatCubinHandle
  * @param fatCubinHandle SEND_ONLY
  */
 void __cudaRegisterFatBinaryEnd(void **fatCubinHandle);
 /**
- * @broadcast FATBIN fatCubinHandle
  * @release FATBIN fatCubinHandle
  * @disabled server - releases the fatbin image owned by the manual load handler
  * @param fatCubinHandle SEND_ONLY

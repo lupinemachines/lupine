@@ -1,4 +1,3 @@
-import re
 import textwrap
 from pathlib import Path
 
@@ -16,13 +15,11 @@ def _template_section(source: str) -> str:
 
 
 def _definition_body(source: str, path: str, name: str, return_type: str) -> str:
-    signatures = list(re.finditer(
-        rf"\b{re.escape(return_type)}\s+{re.escape(name)}\(", source
-    ))
-    if len(signatures) != 1:
+    signature = f"{return_type} {name}("
+    if source.count(signature) != 1:
         raise RuntimeError(f"{name}: could not locate definition in {path}")
 
-    signature_start = signatures[0].start()
+    signature_start = source.index(signature)
     body_start = source.index("{", signature_start) + 1
     body_end = source.index("\n}", body_start)
     return source[body_start:body_end]

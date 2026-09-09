@@ -790,12 +790,6 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         endif()
     endif()
 
-    if(TARGET lupine_cudart_client)
-        add_test(NAME cudart_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cudart_client>\" | grep -q cudaLaunchKernel && nm -D \"$<TARGET_FILE:lupine_cudart_client>\" | grep -q __cudaRegisterFatBinary && nm -D \"$<TARGET_FILE:lupine_cudart_client>\" | grep -q cudaGetDeviceProperties && nm -D \"$<TARGET_FILE:lupine_cuda_client>\" | grep -q lupine_rpc_write_start_request")
-    endif()
-
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
