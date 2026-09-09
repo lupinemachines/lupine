@@ -112,6 +112,9 @@ cudaError_t cudaDestroyTextureObject(cudaTextureObject_t texObject);
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
+ * @param nbResources SEND_ONLY
+ * @param resources SEND_ONLY LENGTH:nbResources
+ * @param phDesc RECV_ONLY
  */
 cudaError_t cudaDevResourceGenerateDesc(cudaDevResourceDesc_t *phDesc,
                                         cudaDevResource *resources,
@@ -120,6 +123,12 @@ cudaError_t cudaDevResourceGenerateDesc(cudaDevResourceDesc_t *phDesc,
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
+ * @param nbGroups SEND_ONLY
+ * @param result RECV_ONLY NULLABLE LENGTH:nbGroups
+ * @param input SEND_ONLY DEREF
+ * @param remainder RECV_ONLY NULLABLE
+ * @param flags SEND_ONLY
+ * @param groupParams SEND_RECV LENGTH:nbGroups
  */
 cudaError_t cudaDevSmResourceSplit(cudaDevResource *result,
                                    unsigned int nbGroups,
@@ -131,6 +140,12 @@ cudaError_t cudaDevSmResourceSplit(cudaDevResource *result,
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
+ * @param nbGroups SEND_RECV
+ * @param result RECV_ONLY NULLABLE LENGTH:nbGroups
+ * @param input SEND_ONLY DEREF
+ * @param remaining RECV_ONLY NULLABLE
+ * @param flags SEND_ONLY
+ * @param minCount SEND_ONLY
  */
 cudaError_t cudaDevSmResourceSplitByCount(cudaDevResource *result,
                                           unsigned int *nbGroups,
