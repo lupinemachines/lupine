@@ -20,8 +20,7 @@ static-runtime executables must be rebuilt once with that setting; they cannot
 exercise runtime interposition merely by changing `LD_LIBRARY_PATH`.
 Ports, results, and nvJPEG-generated assets are separate. The two runs of a
 sample cannot execute concurrently because some samples write in their shared
-working directory. Set `SERVER_PORT_BASE` when configuring to use a different
-port range on a shared GPU host (the default starts at 14900).
+working directory.
 
 The GCE workflow builds once and runs both variants in the same container and
 CTest invocation. It also uploads the lane's NVIDIA runtime for the server,
@@ -29,9 +28,3 @@ independently of which client variant is running. Use
 `ctest --test-dir <build> -L driver-only` or
 `-L driver-runtime` to select a variant; the required custom-build fixtures run
 automatically.
-
-Each variant first runs `test_cudart_loader`, which checks the libraries that
-actually provide the executable's driver and runtime entry points. A wrong
-library fails this setup fixture and blocks the variant's tests, including
-when selecting just one suite. This catches SONAME mismatches such as CUDA
-11's `libcudart.so.11.0` silently falling back to NVIDIA's runtime.

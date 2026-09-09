@@ -15,17 +15,6 @@
 // sticky error: calls it answers itself set it, and cudaGetLastError never
 // has to ask the server.
 
-// These entry points live in companion headers, not cuda_runtime_api.h.
-cudaError_t cudaProfilerStart(void);
-cudaError_t cudaProfilerStop(void);
-// GL object names refer to client graphics state and cannot be forwarded.
-cudaError_t cudaGraphicsGLRegisterBuffer(struct cudaGraphicsResource **resource,
-                                         unsigned int buffer,
-                                         unsigned int flags);
-cudaError_t cudaGraphicsGLRegisterImage(struct cudaGraphicsResource **resource,
-                                        unsigned int image, unsigned int target,
-                                        unsigned int flags);
-
 /**
  * @param desc RECV_ONLY
  * @param extent RECV_ONLY
@@ -507,9 +496,6 @@ cudaError_t cudaExternalMemoryGetMappedMipmappedArray(
  * @param devPtr SEND_ONLY
  */
 cudaError_t cudaFree(void *devPtr) {
-  if (lupine_is_managed_host_alias(reinterpret_cast<CUdeviceptr>(devPtr))) {
-    return record(cuMemFree(reinterpret_cast<CUdeviceptr>(devPtr)));
-  }
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
     lupine_rpc_forget_allocation(devPtr);
@@ -533,7 +519,7 @@ cudaError_t cudaFreeAsync(void *devPtr, cudaStream_t hStream) {
   return return_value;
 }
 /**
- * @clientcall cuMemFreeHost
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaFreeHost(void *ptr);
 /**
@@ -622,7 +608,7 @@ cudaError_t cudaGetDeviceFlags(unsigned int *flags);
 cudaError_t cudaGetDeviceProperties(struct cudaDeviceProp *prop, int device);
 #if CUDART_VERSION < 12000
 /**
- * @disabled local - manual client resolves the client's driver entry point
+ * the result is a function pointer into the server's driver
  * @guard CUDART_VERSION < 12000
  */
 cudaError_t cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
@@ -630,7 +616,7 @@ cudaError_t cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
 #endif
 #if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
- * @disabled local - manual client resolves the client's driver entry point
+ * the result is a function pointer into the server's driver
  * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
  */
 cudaError_t
@@ -640,7 +626,7 @@ cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
 #endif
 #if CUDART_VERSION >= 13000
 /**
- * @disabled local - manual client resolves the client's driver entry point
+ * the result is a function pointer into the server's driver
  * @guard CUDART_VERSION >= 13000
  */
 cudaError_t
@@ -650,7 +636,7 @@ cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
 #endif
 #if CUDART_VERSION >= 13000
 /**
- * @disabled local - manual client resolves the client's driver entry point
+ * the result is a function pointer into the server's driver
  * @guard CUDART_VERSION >= 13000
  */
 cudaError_t cudaGetDriverEntryPointByVersion(
@@ -772,25 +758,24 @@ cudaError_t cudaGreenCtxCreate(cudaExecutionContext_t *phCtx,
                                unsigned int flags);
 #endif
 /**
- * @disabled local - manual client shares the driver's mapped host allocations
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaHostAlloc(void **pHost, size_t size, unsigned int flags);
 /**
- * @disabled local - manual client translates the driver's device-pointer result
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaHostGetDevicePointer(void **pDevice, void *pHost,
                                      unsigned int flags);
 /**
- * @clientcall cuMemHostGetFlags
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaHostGetFlags(unsigned int *pFlags, void *pHost);
 /**
- * @disabled local - manual client shares the driver's registered host
- * allocations
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaHostRegister(void *ptr, size_t size, unsigned int flags);
 /**
- * @clientcall cuMemHostUnregister
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaHostUnregister(void *ptr);
 cudaError_t cudaImportExternalMemory(
@@ -867,7 +852,7 @@ cudaError_t cudaLaunchCooperativeKernel(const void *func, dim3 gridDim,
                                         dim3 blockDim, void **args,
                                         size_t sharedMem, cudaStream_t stream);
 /**
- * @clientcall cuLaunchHostFunc
+ * the callback is a client function
  */
 cudaError_t cudaLaunchHostFunc(cudaStream_t stream, cudaHostFn_t fn,
                                void *userData);
@@ -1091,13 +1076,21 @@ cudaError_t cudaMallocFromPoolAsync(void **ptr, size_t size,
   return return_value;
 }
 /**
- * @disabled local - manual client shares cudaHostAlloc
+ * host memory the server allocated is not addressable from the client
  */
 cudaError_t cudaMallocHost(void **ptr, size_t size);
 /**
- * @disabled local - manual client shares the driver's managed-memory mappings
+ * @param devPtr RECV_ONLY
+ * @param size SEND_ONLY
+ * @param flags SEND_ONLY
  */
-cudaError_t cudaMallocManaged(void **devPtr, size_t size, unsigned int flags);
+cudaError_t cudaMallocManaged(void **devPtr, size_t size, unsigned int flags) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_rpc_note_allocation(conn, *devPtr, size);
+  }
+  return return_value;
+}
 /**
  * @param mipmappedArray RECV_ONLY
  * @param desc SEND_ONLY DEREF
@@ -1482,7 +1475,6 @@ cudaError_t cudaMemset(void *devPtr, int value, size_t count);
 cudaError_t cudaMemset2D(void *devPtr, size_t pitch, int value, size_t width,
                          size_t height);
 /**
- * @async
  * @param devPtr SEND_ONLY
  * @param pitch SEND_ONLY
  * @param value SEND_ONLY
@@ -1500,7 +1492,6 @@ cudaError_t cudaMemset2DAsync(void *devPtr, size_t pitch, int value,
 cudaError_t cudaMemset3D(struct cudaPitchedPtr pitchedDevPtr, int value,
                          struct cudaExtent extent);
 /**
- * @async
  * @param pitchedDevPtr SEND_ONLY
  * @param value SEND_ONLY
  * @param extent SEND_ONLY
@@ -1509,7 +1500,6 @@ cudaError_t cudaMemset3D(struct cudaPitchedPtr pitchedDevPtr, int value,
 cudaError_t cudaMemset3DAsync(struct cudaPitchedPtr pitchedDevPtr, int value,
                               struct cudaExtent extent, cudaStream_t stream);
 /**
- * @async
  * @param devPtr SEND_ONLY
  * @param value SEND_ONLY
  * @param count SEND_ONLY
@@ -1628,9 +1618,7 @@ cudaError_t cudaSetDeviceFlags(unsigned int flags);
  * @param len SEND_ONLY
  */
 cudaError_t cudaSetValidDevices(int *device_arr, int len);
-#if CUDART_VERSION >= 13000
 /**
- * @guard CUDART_VERSION >= 13000
  * @param extSemArray SEND_ONLY LENGTH:numExtSems
  * @param paramsArray SEND_ONLY LENGTH:numExtSems
  * @param numExtSems SEND_ONLY
@@ -1640,19 +1628,6 @@ cudaError_t cudaSignalExternalSemaphoresAsync(
     const cudaExternalSemaphore_t *extSemArray,
     const struct cudaExternalSemaphoreSignalParams *paramsArray,
     unsigned int numExtSems, cudaStream_t stream);
-#else
-/**
- * @guard CUDART_VERSION < 13000
- * @param extSemArray SEND_ONLY LENGTH:numExtSems
- * @param paramsArray SEND_ONLY LENGTH:numExtSems
- * @param numExtSems SEND_ONLY
- * @param stream SEND_ONLY
- */
-cudaError_t cudaSignalExternalSemaphoresAsync(
-    const cudaExternalSemaphore_t *extSemArray,
-    const struct cudaExternalSemaphoreSignalParams_v1 *paramsArray,
-    unsigned int numExtSems, cudaStream_t stream);
-#endif
 #if CUDART_VERSION < 13000
 /**
  * @guard CUDART_VERSION < 13000
@@ -1680,7 +1655,7 @@ cudaError_t cudaSignalExternalSemaphoresAsync_v2(
     unsigned int numExtSems, cudaStream_t stream);
 #endif
 /**
- * @disabled local - manual client adapts the callback's result type for libcuda
+ * the callback is a client function
  */
 cudaError_t cudaStreamAddCallback(cudaStream_t stream,
                                   cudaStreamCallback_t callback, void *userData,
@@ -1694,7 +1669,6 @@ cudaError_t cudaStreamAddCallback(cudaStream_t stream,
 cudaError_t cudaStreamAttachMemAsync(cudaStream_t stream, void *devPtr,
                                      size_t length, unsigned int flags);
 /**
- * @disabled local - manual client adapts the capture-mode enum
  * @param stream SEND_ONLY
  * @param mode SEND_ONLY
  */
@@ -1753,7 +1727,6 @@ cudaError_t cudaStreamCreateWithPriority(cudaStream_t *pStream,
  */
 cudaError_t cudaStreamDestroy(cudaStream_t stream);
 /**
- * @clientcall cuStreamEndCapture
  * @param stream SEND_ONLY
  * @param pGraph RECV_ONLY
  */
@@ -1765,14 +1738,23 @@ cudaError_t cudaStreamEndCapture(cudaStream_t stream, cudaGraph_t *pGraph);
  */
 cudaError_t cudaStreamGetAttribute(cudaStream_t hStream, cudaStreamAttrID attr,
                                    cudaStreamAttrValue *value_out);
-#if CUDART_VERSION < 13000
+#if CUDART_VERSION < 12000
 /**
- * @guard CUDART_VERSION < 13000
+ * @guard CUDART_VERSION < 12000
  */
 cudaError_t
 cudaStreamGetCaptureInfo(cudaStream_t stream,
                          enum cudaStreamCaptureStatus *pCaptureStatus,
                          unsigned long long *pId);
+#endif
+#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+/**
+ * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ */
+cudaError_t cudaStreamGetCaptureInfo(
+    cudaStream_t stream, enum cudaStreamCaptureStatus *captureStatus_out,
+    unsigned long long *id_out, cudaGraph_t *graph_out,
+    const cudaGraphNode_t **dependencies_out, size_t *numDependencies_out);
 #endif
 #if CUDART_VERSION >= 13000
 /**
@@ -1954,9 +1936,7 @@ cudaError_t cudaUserObjectRelease(cudaUserObject_t object, unsigned int count);
  * @param count SEND_ONLY
  */
 cudaError_t cudaUserObjectRetain(cudaUserObject_t object, unsigned int count);
-#if CUDART_VERSION >= 13000
 /**
- * @guard CUDART_VERSION >= 13000
  * @param extSemArray SEND_ONLY LENGTH:numExtSems
  * @param paramsArray SEND_ONLY LENGTH:numExtSems
  * @param numExtSems SEND_ONLY
@@ -1966,19 +1946,6 @@ cudaError_t cudaWaitExternalSemaphoresAsync(
     const cudaExternalSemaphore_t *extSemArray,
     const struct cudaExternalSemaphoreWaitParams *paramsArray,
     unsigned int numExtSems, cudaStream_t stream);
-#else
-/**
- * @guard CUDART_VERSION < 13000
- * @param extSemArray SEND_ONLY LENGTH:numExtSems
- * @param paramsArray SEND_ONLY LENGTH:numExtSems
- * @param numExtSems SEND_ONLY
- * @param stream SEND_ONLY
- */
-cudaError_t cudaWaitExternalSemaphoresAsync(
-    const cudaExternalSemaphore_t *extSemArray,
-    const struct cudaExternalSemaphoreWaitParams_v1 *paramsArray,
-    unsigned int numExtSems, cudaStream_t stream);
-#endif
 #if CUDART_VERSION < 13000
 /**
  * @guard CUDART_VERSION < 13000
@@ -2218,7 +2185,6 @@ cudaError_t cudaGraphCreate(cudaGraph_t *pGraph, unsigned int flags);
 cudaError_t cudaGraphDebugDotPrint(cudaGraph_t graph, const char *path,
                                    unsigned int flags);
 /**
- * @clientcall cuGraphDestroy
  * @param graph SEND_ONLY
  */
 cudaError_t cudaGraphDestroy(cudaGraph_t graph);
@@ -2259,7 +2225,6 @@ cudaError_t cudaGraphExecChildGraphNodeSetParams(cudaGraphExec_t hGraphExec,
                                                  cudaGraphNode_t node,
                                                  cudaGraph_t childGraph);
 /**
- * @clientcall cuGraphExecDestroy
  * @param graphExec SEND_ONLY
  */
 cudaError_t cudaGraphExecDestroy(cudaGraphExec_t graphExec);
@@ -2429,7 +2394,6 @@ cudaGraphHostNodeSetParams(cudaGraphNode_t node,
 #if CUDART_VERSION < 12000
 /**
  * @guard CUDART_VERSION < 12000
- * @clientcall cuGraphInstantiate
  * @param pGraphExec RECV_ONLY
  * @param graph SEND_ONLY
  * @param pErrorNode RECV_ONLY
@@ -2443,7 +2407,6 @@ cudaError_t cudaGraphInstantiate(cudaGraphExec_t *pGraphExec, cudaGraph_t graph,
 #if CUDART_VERSION >= 12000
 /**
  * @guard CUDART_VERSION >= 12000
- * @clientcall cuGraphInstantiateWithFlags
  * @param pGraphExec RECV_ONLY
  * @param graph SEND_ONLY
  * @param flags SEND_ONLY
@@ -2452,7 +2415,6 @@ cudaError_t cudaGraphInstantiate(cudaGraphExec_t *pGraphExec, cudaGraph_t graph,
                                  unsigned long long flags);
 #endif
 /**
- * @clientcall cuGraphInstantiateWithFlags
  * @param pGraphExec RECV_ONLY
  * @param graph SEND_ONLY
  * @param flags SEND_ONLY
@@ -2513,7 +2475,6 @@ cudaError_t
 cudaGraphKernelNodeSetParams(cudaGraphNode_t node,
                              const struct cudaKernelNodeParams *pNodeParams);
 /**
- * @clientcall cuGraphLaunch
  * @param graphExec SEND_ONLY
  * @param stream SEND_ONLY
  */
@@ -2745,7 +2706,6 @@ cudaError_t cudaGraphRetainUserObject(cudaGraph_t graph,
                                       cudaUserObject_t object,
                                       unsigned int count, unsigned int flags);
 /**
- * @clientcall cuGraphUpload
  * @param graphExec SEND_ONLY
  * @param stream SEND_ONLY
  */

@@ -71,7 +71,6 @@ static thread_local int operation, server;
 static thread_local bool fail_request;
 static thread_local bool async_request;
 static int response_waits, launches;
-static int device_lookups;
 struct queued_launch {
   conn_t *conn;
   int operation;
@@ -89,8 +88,6 @@ static int module_inits[2];
 static char module_result = static_cast<char>(0xa5);
 static bool missing_init_module;
 static bool missing_channel_desc;
-static bool missing_param_info;
-static int driver_param_queries, async_memsets;
 #if CUDART_VERSION >= 12000
 static int init_device, init_server, init_calls;
 static cudaError_t init_result = cudaSuccess;
@@ -124,15 +121,10 @@ static const cudaLaunchAttribute *client_attributes;
 static std::string launch_call;
 
 extern "C" int lupine_rpc_device_count(int *count) {
-  ++device_lookups;
   *count = 3; // Devices 0 and 2 share a server and one fatbin registration.
   return 0;
 }
-extern "C" conn_t *lupine_rpc_conn_for_index(unsigned int index) {
-  return index < 2 ? servers[index] : nullptr;
-}
-extern "C" conn_t *lupine_rpc_conn_for_runtime_device(int *device) {
-  ++device_lookups;
+extern "C" conn_t *lupine_rpc_conn_for_device(int *device) {
   if (*device < 0 || *device >= 3)
     return nullptr;
   conn_t *conn = servers[*device == 1];
@@ -240,7 +232,6 @@ static void dispatch_request(conn_t *conn) {
     DISPATCH(cudaMallocAsync);
     DISPATCH(cudaMallocPitch);
     DISPATCH(cudaFree);
-    DISPATCH(cudaMemsetAsync);
     DISPATCH(cudaGetSymbolAddress);
     DISPATCH(cudaGetSymbolSize);
     DISPATCH(cudaMemPoolGetAttribute);
@@ -536,26 +527,6 @@ static cudaError_t vendor_param_info(const void *func, size_t index,
   *size = index == 0 ? sizeof(int) : sizeof(uint64_t);
   return cudaSuccess;
 }
-static cudaError_t vendor_get_function(CUfunction *function,
-                                       const void *symbol) {
-  assert(symbol == expected_entry);
-  *function = reinterpret_cast<CUfunction>(const_cast<void *>(symbol));
-  return cudaSuccess;
-}
-extern "C" CUresult cuFuncGetParamInfo(CUfunction function, size_t index,
-                                       size_t *offset, size_t *size) {
-  ++driver_param_queries;
-  return static_cast<CUresult>(
-      vendor_param_info(function, index, offset, size));
-}
-static cudaError_t vendor_memset_async(void *ptr, int value, size_t count,
-                                       cudaStream_t stream) {
-  assert(ptr == reinterpret_cast<void *>(0x1234) && value == 7 && count == 64);
-  assert(stream == nullptr);
-  assert(pthread_mutex_trylock(&servers[server]->async_mutex) == EBUSY);
-  ++async_memsets;
-  return cudaSuccess;
-}
 static cudaError_t vendor_launch(const void *func, dim3 grid, dim3 block,
                                  void **args, size_t shared,
                                  cudaStream_t stream) {
@@ -655,11 +626,7 @@ extern "C" void *__wrap_dlsym(void *, const char *name) {
   SYMBOL(cudaMemPoolSetAttribute, vendor_pool_set);
   SYMBOL(cudaDeviceGetGraphMemAttribute, vendor_graph_get);
   SYMBOL(cudaDeviceSetGraphMemAttribute, vendor_graph_set);
-  if (std::strcmp(name, "cudaFuncGetParamInfo") == 0)
-    return missing_param_info ? nullptr
-                              : reinterpret_cast<void *>(&vendor_param_info);
-  SYMBOL(cudaGetFuncBySymbol, vendor_get_function);
-  SYMBOL(cudaMemsetAsync, vendor_memset_async);
+  SYMBOL(cudaFuncGetParamInfo, vendor_param_info);
   SYMBOL(cudaLaunchKernel, vendor_launch);
   SYMBOL(cudaLaunchCooperativeKernel, vendor_cooperative);
   SYMBOL(cudaLaunchKernelExC, vendor_launch_ex);
@@ -795,7 +762,6 @@ int main() {
   image.header_size = sizeof(image);
   void **handle = __cudaRegisterFatBinary(&image);
   assert(handle && registrations == 2);
-  assert(device_lookups == 0); // Static registration must not discover devices.
   // Unmapped address identities must reach every server unchanged. Attempting
   // to serialize window bytes would fault, and allocating copies would change
   // the addresses used by host-originated unified pointers.
@@ -1171,22 +1137,6 @@ int main() {
   assert(servers[1]->issued_async_sequence ==
          servers[1]->serving_async_sequence);
   assert(cudaGetLastError() == cudaErrorDevicesUnavailable);
-
-  missing_param_info = true;
-  expected_entry = reinterpret_cast<const void *>(0xfeed);
-  expected_launch_server = 0;
-  assert(cudaLaunchKernel(expected_entry, dim3(2, 3, 4), dim3(5, 6, 7), args,
-                          8192, nullptr) == cudaSuccess);
-  assert(driver_param_queries == 3); // Two parameters, then INVALID_VALUE.
-  waits = response_waits;
-  assert(cudaMemsetAsync(reinterpret_cast<void *>(0x1234), 7, 64, nullptr) ==
-         cudaSuccess);
-  assert(response_waits == waits && async_memsets == 0);
-  drain_launches();
-  assert(async_memsets == 1);
-  assert(servers[0]->issued_async_sequence ==
-         servers[0]->serving_async_sequence);
-  missing_param_info = false;
 
   auto event = reinterpret_cast<cudaEvent_t>(0x123);
   for (CUresult result :

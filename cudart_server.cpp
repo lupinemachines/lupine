@@ -3,11 +3,6 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 
-// Resolve each ABI by its own name, including the legacy CUDA 11/12 symbols.
-#undef cudaSignalExternalSemaphoresAsync
-#undef cudaWaitExternalSemaphoresAsync
-#undef cudaStreamGetCaptureInfo
-
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -24,7 +19,6 @@
 #endif
 
 #include "codegen/gen_rpc_ids.h"
-#include "cuda_compat.h"
 #include "lupine_fatbin.h"
 #include "rpc.h"
 
@@ -36,14 +30,11 @@ cudaError_t function_not_found() { return cudaErrorNotSupported; }
 // struct layouts, so an older or newer runtime on the machine is not a match.
 void *cudart_library() {
   static void *library = []() -> void * {
+    const std::string major = std::to_string(CUDART_VERSION / 1000);
 #ifdef _WIN32
-    const std::string major =
-        CUDART_VERSION < 12000 ? "110" : std::to_string(CUDART_VERSION / 1000);
     const std::string name = "cudart64_" + major + ".dll";
     return reinterpret_cast<void *>(LoadLibraryA(name.c_str()));
 #else
-    const std::string major =
-        CUDART_VERSION < 12000 ? "11.0" : std::to_string(CUDART_VERSION / 1000);
     const std::string name = "libcudart.so." + major;
     return dlopen(name.c_str(), RTLD_LAZY | RTLD_LOCAL);
 #endif
@@ -388,8 +379,7 @@ cudaError_t register_host_var(void **handle, const char *deviceName,
 namespace {
 
 // The argument sizes of an entry point, in order; the client packs the
-// values by them. Older runtimes expose the driver function instead of its
-// parameter layout; use the same driver query as the driver launch path.
+// values by them. Only a runtime that can report the layout can launch.
 int handle_param_layout(conn_t *conn) {
   const void *func = nullptr;
   if (rpc_read(conn, &func, sizeof(func)) < 0) {
@@ -403,20 +393,13 @@ int handle_param_layout(conn_t *conn) {
   cudaError_t result = cudaSuccess;
   using fn_t = cudaError_t (*)(const void *, size_t, size_t *, size_t *);
   fn_t fn = cudart_symbol<fn_t>("cudaFuncGetParamInfo");
-  CUfunction driver_function = nullptr;
   if (fn == nullptr) {
-    using get_function_t = cudaError_t (*)(CUfunction *, const void *);
-    auto get_function = cudart_symbol<get_function_t>("cudaGetFuncBySymbol");
-    result = get_function == nullptr ? cudaErrorNotSupported
-                                     : get_function(&driver_function, func);
+    result = cudaErrorNotSupported;
   }
-  for (size_t index = 0; result == cudaSuccess; ++index) {
+  for (size_t index = 0; fn != nullptr; ++index) {
     size_t offset = 0;
     size_t size = 0;
-    cudaError_t status = fn != nullptr
-                             ? fn(func, index, &offset, &size)
-                             : static_cast<cudaError_t>(cuFuncGetParamInfo(
-                                   driver_function, index, &offset, &size));
+    cudaError_t status = fn(func, index, &offset, &size);
     if (status == cudaErrorInvalidValue) {
       break;
     }
