@@ -1515,6 +1515,8 @@ cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessor(
 cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
     int *numBlocks, const void *func, int blockSize, size_t dynamicSMemSize,
     unsigned int flags);
+// Keep return types and names together for the existing body-template parser.
+// clang-format off
 /**
  * @param numClusters RECV_ONLY
  * @param func SEND_ONLY
@@ -1551,6 +1553,7 @@ cudaError_t cudaOccupancyMaxPotentialClusterSize(
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   return return_value;
 }
+// clang-format on
 /**
  * @disabled client - the sticky error is kept on the client
  */
