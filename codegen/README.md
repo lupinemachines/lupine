@@ -33,6 +33,9 @@ the routing key is not the first matching parameter.
 Forwarding backends also accept `@routingkey EVENT <param>`. Their client must
 provide `connection_for_event(event)`, which selects the connection without
 changing the event handle sent to the server.
+Likewise, `@routingkey STREAM <param>` uses `connection_for_stream(stream)`.
+The backend helper handles default streams; the stream argument is sent
+unchanged.
 
 NVML wrappers use the same mechanism. A by-value `nvmlDevice_t` parameter
 infers `NVML_DEVICE` routing: the generated client resolves its owning server
