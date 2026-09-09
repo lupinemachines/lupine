@@ -1747,7 +1747,8 @@ def main():
         client_call_templates=client_call_templates_by_target["hip"],
     )
     cudart_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["cudart"]
+        annotations_by_target["cudart"],
+        client_call_templates=client_call_templates_by_target["cudart"],
     )
 
     annotated_names = sorted(

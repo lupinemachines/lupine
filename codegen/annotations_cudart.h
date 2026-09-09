@@ -500,10 +500,13 @@ cudaError_t cudaExternalMemoryGetMappedMipmappedArray(
     cudaMipmappedArray_t *mipmap, cudaExternalMemory_t extMem,
     const struct cudaExternalMemoryMipmappedArrayDesc *mipmapDesc);
 /**
- * @routingkey DEVICEPTR devPtr
  * @param devPtr SEND_ONLY
  */
 cudaError_t cudaFree(void *devPtr) {
+  if (devPtr != nullptr) {
+    conn = lupine_rpc_conn_for_deviceptr(
+        reinterpret_cast<unsigned long long>(devPtr));
+  }
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
     lupine_rpc_forget_allocation(devPtr);
@@ -515,7 +518,7 @@ cudaError_t cudaFree(void *devPtr) {
  */
 cudaError_t cudaFreeArray(cudaArray_t array);
 /**
- * @routingkey DEVICEPTR devPtr
+ * @routingkey STREAM hStream
  * @param devPtr SEND_ONLY
  * @param hStream SEND_ONLY
  */
@@ -1060,6 +1063,7 @@ cudaError_t cudaMallocArray(cudaArray_t *array,
                             const struct cudaChannelFormatDesc *desc,
                             size_t width, size_t height, unsigned int flags);
 /**
+ * @routingkey STREAM hStream
  * @param devPtr RECV_ONLY
  * @param size SEND_ONLY
  * @param hStream SEND_ONLY
@@ -1072,6 +1076,7 @@ cudaError_t cudaMallocAsync(void **devPtr, size_t size, cudaStream_t hStream) {
   return return_value;
 }
 /**
+ * @routingkey STREAM stream
  * @param ptr RECV_ONLY
  * @param size SEND_ONLY
  * @param memPool SEND_ONLY
@@ -1516,9 +1521,8 @@ cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
  * @param launchConfig SEND_ONLY
  * @deeparray launchConfig attrs numAttrs
  */
-cudaError_t
-cudaOccupancyMaxActiveClusters(int *numClusters, const void *func,
-                               const cudaLaunchConfig_t *launchConfig) {
+cudaError_t cudaOccupancyMaxActiveClusters(
+    int *numClusters, const void *func, const cudaLaunchConfig_t *launchConfig) {
   if (launchConfig == nullptr ||
       (launchConfig->numAttrs != 0 && launchConfig->attrs == nullptr)) {
     return record(cudaErrorInvalidValue);
@@ -1535,9 +1539,8 @@ cudaOccupancyMaxActiveClusters(int *numClusters, const void *func,
  * @param launchConfig SEND_ONLY
  * @deeparray launchConfig attrs numAttrs
  */
-cudaError_t
-cudaOccupancyMaxPotentialClusterSize(int *clusterSize, const void *func,
-                                     const cudaLaunchConfig_t *launchConfig) {
+cudaError_t cudaOccupancyMaxPotentialClusterSize(
+    int *clusterSize, const void *func, const cudaLaunchConfig_t *launchConfig) {
   if (launchConfig == nullptr ||
       (launchConfig->numAttrs != 0 && launchConfig->attrs == nullptr)) {
     return record(cudaErrorInvalidValue);
