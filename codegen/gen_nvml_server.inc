@@ -144,7 +144,7 @@ ERROR_0:
 }
 
 int handle_nvmlSystemGetCudaDriverVersion(conn_t *conn) {
-  int cudaDriverVersion;
+  int cudaDriverVersion{};
   cudaDriverVersion = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -171,7 +171,7 @@ ERROR_0:
 }
 
 int handle_nvmlSystemGetCudaDriverVersion_v2(conn_t *conn) {
-  int cudaDriverVersion;
+  int cudaDriverVersion{};
   cudaDriverVersion = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -198,7 +198,7 @@ ERROR_0:
 }
 
 int handle_nvmlDeviceGetCount_v2(conn_t *conn) {
-  unsigned int deviceCount;
+  unsigned int deviceCount{};
   deviceCount = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -226,7 +226,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetHandleByIndex_v2(conn_t *conn) {
   unsigned int index;
-  nvmlDevice_t device;
+  nvmlDevice_t device{};
   device = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -255,7 +255,7 @@ ERROR_0:
 int handle_nvmlDeviceGetHandleByUUID(conn_t *conn) {
   const char *uuid = nullptr;
   unsigned int uuid_len;
-  nvmlDevice_t device;
+  nvmlDevice_t device{};
   device = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -290,7 +290,7 @@ ERROR_0:
 int handle_nvmlDeviceGetHandleByPciBusId_v2(conn_t *conn) {
   const char *pciBusId = nullptr;
   unsigned int pciBusId_len;
-  nvmlDevice_t device;
+  nvmlDevice_t device{};
   device = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -398,7 +398,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetIndex(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int index;
+  unsigned int index{};
   index = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -426,7 +426,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetMinorNumber(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int minorNumber;
+  unsigned int minorNumber{};
   minorNumber = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -455,7 +455,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetPciInfo_v3(conn_t *conn) {
   nvmlDevice_t device;
-  nvmlPciInfo_t pci;
+  nvmlPciInfo_t pci{};
   pci = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -483,7 +483,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetMemoryInfo(conn_t *conn) {
   nvmlDevice_t device;
-  nvmlMemory_t memory;
+  nvmlMemory_t memory{};
   memory = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -511,7 +511,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetUtilizationRates(conn_t *conn) {
   nvmlDevice_t device;
-  nvmlUtilization_t utilization;
+  nvmlUtilization_t utilization{};
   utilization = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -541,7 +541,7 @@ ERROR_0:
 int handle_nvmlDeviceGetTemperature(conn_t *conn) {
   nvmlDevice_t device;
   nvmlTemperatureSensors_t sensorType;
-  unsigned int temp;
+  unsigned int temp{};
   temp = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -573,7 +573,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetPowerUsage(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int power;
+  unsigned int power{};
   power = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -601,7 +601,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetPowerManagementLimit(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int limit;
+  unsigned int limit{};
   limit = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -630,7 +630,7 @@ ERROR_0:
 int handle_nvmlDeviceGetClockInfo(conn_t *conn) {
   nvmlDevice_t device;
   nvmlClockType_t type;
-  unsigned int clock;
+  unsigned int clock{};
   clock = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -661,7 +661,7 @@ ERROR_0:
 int handle_nvmlDeviceGetMaxClockInfo(conn_t *conn) {
   nvmlDevice_t device;
   nvmlClockType_t type;
-  unsigned int clock;
+  unsigned int clock{};
   clock = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -691,7 +691,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetPerformanceState(conn_t *conn) {
   nvmlDevice_t device;
-  nvmlPstates_t pState;
+  nvmlPstates_t pState{};
   pState = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -719,7 +719,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetComputeMode(conn_t *conn) {
   nvmlDevice_t device;
-  nvmlComputeMode_t mode;
+  nvmlComputeMode_t mode{};
   mode = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -747,7 +747,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetPersistenceMode(conn_t *conn) {
   nvmlDevice_t device;
-  nvmlEnableState_t mode;
+  nvmlEnableState_t mode{};
   mode = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -775,7 +775,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetFanSpeed(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int speed;
+  unsigned int speed{};
   speed = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -803,7 +803,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetBrand(conn_t *conn) {
   nvmlDevice_t device;
-  nvmlBrandType_t type;
+  nvmlBrandType_t type{};
   type = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -944,7 +944,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetDisplayMode(conn_t *conn) {
   nvmlDevice_t device;
-  nvmlEnableState_t display;
+  nvmlEnableState_t display{};
   display = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -972,7 +972,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetDisplayActive(conn_t *conn) {
   nvmlDevice_t device;
-  nvmlEnableState_t isActive;
+  nvmlEnableState_t isActive{};
   isActive = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1000,7 +1000,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetCurrPcieLinkGeneration(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int currLinkGen;
+  unsigned int currLinkGen{};
   currLinkGen = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1029,7 +1029,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetCurrPcieLinkWidth(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int currLinkWidth;
+  unsigned int currLinkWidth{};
   currLinkWidth = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1058,7 +1058,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetMaxPcieLinkGeneration(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int maxLinkGen;
+  unsigned int maxLinkGen{};
   maxLinkGen = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1086,7 +1086,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetMaxPcieLinkWidth(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int maxLinkWidth;
+  unsigned int maxLinkWidth{};
   maxLinkWidth = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1116,7 +1116,7 @@ ERROR_0:
 int handle_nvmlDeviceGetPcieThroughput(conn_t *conn) {
   nvmlDevice_t device;
   nvmlPcieUtilCounter_t counter;
-  unsigned int value;
+  unsigned int value{};
   value = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1147,7 +1147,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetPcieReplayCounter(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int value;
+  unsigned int value{};
   value = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1174,7 +1174,7 @@ ERROR_0:
 }
 
 int handle_nvmlEventSetCreate(conn_t *conn) {
-  nvmlEventSet_t set;
+  nvmlEventSet_t set{};
   set = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1227,7 +1227,7 @@ ERROR_0:
 
 int handle_nvmlEventSetWait_v2(conn_t *conn) {
   nvmlEventSet_t set;
-  nvmlEventData_t data;
+  nvmlEventData_t data{};
   data = {};
   unsigned int timeoutms;
   int request_id;
@@ -1290,7 +1290,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetMaxMigDeviceCount(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int count;
+  unsigned int count{};
   count = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1320,7 +1320,7 @@ int handle_nvmlDeviceGetTotalEccErrors(conn_t *conn) {
   nvmlDevice_t device;
   nvmlMemoryErrorType_t errorType;
   nvmlEccCounterType_t counterType;
-  unsigned long long eccCounts;
+  unsigned long long eccCounts{};
   eccCounts = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1354,7 +1354,7 @@ int handle_nvmlDeviceGetDetailedEccErrors(conn_t *conn) {
   nvmlDevice_t device;
   nvmlMemoryErrorType_t errorType;
   nvmlEccCounterType_t counterType;
-  nvmlEccErrorCounts_t eccCounts;
+  nvmlEccErrorCounts_t eccCounts{};
   eccCounts = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1389,7 +1389,7 @@ int handle_nvmlDeviceGetMemoryErrorCounter(conn_t *conn) {
   nvmlMemoryErrorType_t errorType;
   nvmlEccCounterType_t counterType;
   nvmlMemoryLocation_t locationType;
-  unsigned long long count;
+  unsigned long long count{};
   count = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1424,9 +1424,9 @@ ERROR_0:
 
 int handle_nvmlDeviceGetEccMode(conn_t *conn) {
   nvmlDevice_t device;
-  nvmlEnableState_t current;
+  nvmlEnableState_t current{};
   current = {};
-  nvmlEnableState_t pending;
+  nvmlEnableState_t pending{};
   pending = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1457,7 +1457,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetTemperatureV(conn_t *conn) {
   nvmlDevice_t device;
-  lupine_nvmlTemperature_t temperature;
+  lupine_nvmlTemperature_t temperature{};
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, lupine_nvmlTemperature_t *);
@@ -1487,7 +1487,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetEnforcedPowerLimit(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int limit;
+  unsigned int limit{};
   limit = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1515,7 +1515,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetMemoryInfo_v2(conn_t *conn) {
   nvmlDevice_t device;
-  nvmlMemory_v2_t memory;
+  nvmlMemory_v2_t memory{};
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_v2_t *);
@@ -1543,9 +1543,9 @@ ERROR_0:
 
 int handle_nvmlDeviceGetMigMode(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int currentMode;
+  unsigned int currentMode{};
   currentMode = {};
-  unsigned int pendingMode;
+  unsigned int pendingMode{};
   pendingMode = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1575,7 +1575,7 @@ ERROR_0:
 
 int handle_nvmlDeviceGetVirtualizationMode(conn_t *conn) {
   nvmlDevice_t device;
-  nvmlGpuVirtualizationMode_t pVirtualMode;
+  nvmlGpuVirtualizationMode_t pVirtualMode{};
   pVirtualMode = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1604,7 +1604,7 @@ ERROR_0:
 
 int handle_nvmlDeviceIsMigDeviceHandle(conn_t *conn) {
   nvmlDevice_t device;
-  unsigned int isMigDevice;
+  unsigned int isMigDevice{};
   isMigDevice = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1634,7 +1634,7 @@ ERROR_0:
 int handle_nvmlDeviceGetNvLinkRemoteDeviceType(conn_t *conn) {
   nvmlDevice_t device;
   unsigned int link;
-  nvmlIntNvLinkDeviceType_t pNvLinkDeviceType;
+  nvmlIntNvLinkDeviceType_t pNvLinkDeviceType{};
   pNvLinkDeviceType = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1667,7 +1667,7 @@ ERROR_0:
 int handle_nvmlDeviceGetNvLinkRemotePciInfo_v2(conn_t *conn) {
   nvmlDevice_t device;
   unsigned int link;
-  nvmlPciInfo_t pci;
+  nvmlPciInfo_t pci{};
   pci = {};
   int request_id;
   nvmlReturn_t return_value;
@@ -1696,9 +1696,9 @@ ERROR_0:
 
 int handle_nvmlDeviceGetCudaComputeCapability(conn_t *conn) {
   nvmlDevice_t device;
-  int major;
+  int major{};
   major = {};
-  int minor;
+  int minor{};
   minor = {};
   int request_id;
   nvmlReturn_t return_value;

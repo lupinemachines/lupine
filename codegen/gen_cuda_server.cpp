@@ -65,7 +65,7 @@ ERROR_0:
 }
 
 int handle_cuDriverGetVersion(conn_t *conn) {
-  int driverVersion;
+  int driverVersion{};
   driverVersion = {};
   int request_id;
   CUresult return_value;
@@ -89,7 +89,7 @@ ERROR_0:
 }
 
 int handle_cuDeviceGet(conn_t *conn) {
-  CUdevice device;
+  CUdevice device{};
   device = {};
   int ordinal;
   int request_id;
@@ -114,7 +114,7 @@ ERROR_0:
 }
 
 int handle_cuDeviceGetCount(conn_t *conn) {
-  int count;
+  int count{};
   count = {};
   int request_id;
   CUresult return_value;
@@ -201,7 +201,7 @@ ERROR_0:
 
 int handle_cuDeviceGetLuid(conn_t *conn) {
   char *luid = nullptr;
-  unsigned int deviceNodeMask;
+  unsigned int deviceNodeMask{};
   deviceNodeMask = {};
   CUdevice dev;
   int request_id;
@@ -233,7 +233,7 @@ ERROR_0:
 }
 
 int handle_cuDeviceTotalMem_v2(conn_t *conn) {
-  size_t bytes;
+  size_t bytes{};
   bytes = {};
   CUdevice dev;
   int request_id;
@@ -258,7 +258,7 @@ ERROR_0:
 }
 
 int handle_cuDeviceGetTexture1DLinearMaxWidth(conn_t *conn) {
-  size_t maxWidthInElements;
+  size_t maxWidthInElements{};
   maxWidthInElements = {};
   CUarray_format format;
   unsigned numChannels;
@@ -288,7 +288,7 @@ ERROR_0:
 }
 
 int handle_cuDeviceGetAttribute(conn_t *conn) {
-  int pi;
+  int pi{};
   pi = {};
   CUdevice_attribute attrib;
   CUdevice dev;
@@ -339,7 +339,7 @@ ERROR_0:
 }
 
 int handle_cuDeviceGetMemPool(conn_t *conn) {
-  CUmemoryPool pool;
+  CUmemoryPool pool{};
   pool = {};
   CUdevice dev;
   int request_id;
@@ -364,7 +364,7 @@ ERROR_0:
 }
 
 int handle_cuDeviceGetDefaultMemPool(conn_t *conn) {
-  CUmemoryPool pool_out;
+  CUmemoryPool pool_out{};
   pool_out = {};
   CUdevice dev;
   int request_id;
@@ -389,7 +389,7 @@ ERROR_0:
 }
 
 int handle_cuDeviceGetExecAffinitySupport(conn_t *conn) {
-  int pi;
+  int pi{};
   pi = {};
   CUexecAffinityType type;
   CUdevice dev;
@@ -441,7 +441,7 @@ ERROR_0:
 }
 
 int handle_cuDeviceGetProperties(conn_t *conn) {
-  CUdevprop prop;
+  CUdevprop prop{};
   prop = {};
   CUdevice dev;
   int request_id;
@@ -466,9 +466,9 @@ ERROR_0:
 }
 
 int handle_cuDeviceComputeCapability(conn_t *conn) {
-  int major;
+  int major{};
   major = {};
-  int minor;
+  int minor{};
   minor = {};
   CUdevice dev;
   int request_id;
@@ -519,9 +519,9 @@ ERROR_0:
 
 int handle_cuDevicePrimaryCtxGetState(conn_t *conn) {
   CUdevice dev;
-  unsigned int flags;
+  unsigned int flags{};
   flags = {};
-  int active;
+  int active{};
   active = {};
   int request_id;
   CUresult return_value;
@@ -568,7 +568,7 @@ ERROR_0:
 }
 
 int handle_cuCtxPopCurrent_v2(conn_t *conn) {
-  CUcontext pctx;
+  CUcontext pctx{};
   pctx = {};
   int request_id;
   CUresult return_value;
@@ -614,7 +614,7 @@ ERROR_0:
 }
 
 int handle_cuCtxGetCurrent(conn_t *conn) {
-  CUcontext pctx;
+  CUcontext pctx{};
   pctx = {};
   int request_id;
   CUresult return_value;
@@ -638,7 +638,7 @@ ERROR_0:
 }
 
 int handle_cuCtxGetDevice(conn_t *conn) {
-  CUdevice device;
+  CUdevice device{};
   device = {};
   int request_id;
   CUresult return_value;
@@ -663,7 +663,7 @@ ERROR_0:
 
 #if CUDA_VERSION >= 13000
 int handle_cuCtxGetDevice_v2(conn_t *conn) {
-  CUdevice device;
+  CUdevice device{};
   device = {};
   CUcontext ctx;
   int request_id;
@@ -690,7 +690,7 @@ ERROR_0:
 #endif
 
 int handle_cuCtxGetFlags(conn_t *conn) {
-  unsigned int flags;
+  unsigned int flags{};
   flags = {};
   int request_id;
   CUresult return_value;
@@ -715,7 +715,7 @@ ERROR_0:
 
 int handle_cuCtxGetId(conn_t *conn) {
   CUcontext ctx;
-  unsigned long long ctxId;
+  unsigned long long ctxId{};
   ctxId = {};
   int request_id;
   CUresult return_value;
@@ -763,7 +763,7 @@ ERROR_0:
 }
 
 int handle_cuCtxGetLimit(conn_t *conn) {
-  size_t pvalue;
+  size_t pvalue{};
   pvalue = {};
   CUlimit limit;
   int request_id;
@@ -788,7 +788,7 @@ ERROR_0:
 }
 
 int handle_cuCtxGetCacheConfig(conn_t *conn) {
-  CUfunc_cache pconfig;
+  CUfunc_cache pconfig{};
   pconfig = {};
   int request_id;
   CUresult return_value;
@@ -835,7 +835,7 @@ ERROR_0:
 
 int handle_cuCtxGetApiVersion(conn_t *conn) {
   CUcontext ctx;
-  unsigned int version;
+  unsigned int version{};
   version = {};
   int request_id;
   CUresult return_value;
@@ -859,9 +859,9 @@ ERROR_0:
 }
 
 int handle_cuCtxGetStreamPriorityRange(conn_t *conn) {
-  int leastPriority;
+  int leastPriority{};
   leastPriority = {};
-  int greatestPriority;
+  int greatestPriority{};
   greatestPriority = {};
   int request_id;
   CUresult return_value;
@@ -907,7 +907,7 @@ ERROR_0:
 }
 
 int handle_cuCtxGetExecAffinity(conn_t *conn) {
-  CUexecAffinityParam pExecAffinity;
+  CUexecAffinityParam pExecAffinity{};
   pExecAffinity = {};
   CUexecAffinityType type;
   int request_id;
@@ -986,7 +986,7 @@ ERROR_0:
 #endif
 
 int handle_cuCtxGetSharedMemConfig(conn_t *conn) {
-  CUsharedconfig pConfig;
+  CUsharedconfig pConfig{};
   pConfig = {};
   int request_id;
   CUresult return_value;
@@ -1054,7 +1054,7 @@ ERROR_0:
 }
 
 int handle_cuModuleGetLoadingMode(conn_t *conn) {
-  CUmoduleLoadingMode mode;
+  CUmoduleLoadingMode mode{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &mode, sizeof(CUmoduleLoadingMode)) < 0 || false)
@@ -1077,7 +1077,7 @@ ERROR_0:
 }
 
 int handle_cuModuleGetFunction(conn_t *conn) {
-  CUfunction hfunc;
+  CUfunction hfunc{};
   hfunc = {};
   CUmodule hmod;
   const char *name = nullptr;
@@ -1111,7 +1111,7 @@ ERROR_0:
 }
 
 int handle_cuModuleGetTexRef(conn_t *conn) {
-  CUtexref pTexRef;
+  CUtexref pTexRef{};
   pTexRef = {};
   CUmodule hmod;
   const char *name = nullptr;
@@ -1145,7 +1145,7 @@ ERROR_0:
 }
 
 int handle_cuModuleGetSurfRef(conn_t *conn) {
-  CUsurfref pSurfRef;
+  CUsurfref pSurfRef{};
   pSurfRef = {};
   CUmodule hmod;
   const char *name = nullptr;
@@ -1179,7 +1179,7 @@ ERROR_0:
 }
 
 int handle_cuLibraryLoadFromFile(conn_t *conn) {
-  CUlibrary library;
+  CUlibrary library{};
   library = {};
   const char *fileName = nullptr;
   std::size_t fileName_len;
@@ -1270,7 +1270,7 @@ ERROR_0:
 }
 
 int handle_cuLibraryGetKernel(conn_t *conn) {
-  CUkernel pKernel;
+  CUkernel pKernel{};
   pKernel = {};
   CUlibrary library;
   const char *name = nullptr;
@@ -1304,7 +1304,7 @@ ERROR_0:
 }
 
 int handle_cuKernelGetFunction(conn_t *conn) {
-  CUfunction pFunc;
+  CUfunction pFunc{};
   pFunc = {};
   CUkernel kernel;
   int request_id;
@@ -1329,7 +1329,7 @@ ERROR_0:
 }
 
 int handle_cuKernelGetLibrary(conn_t *conn) {
-  CUlibrary pLib;
+  CUlibrary pLib{};
   pLib = {};
   CUkernel kernel;
   int request_id;
@@ -1440,7 +1440,7 @@ ERROR_0:
 }
 
 int handle_cuLibraryGetUnifiedFunction(conn_t *conn) {
-  void *fptr;
+  void *fptr{};
   fptr = {};
   CUlibrary library;
   const char *symbol = nullptr;
@@ -1474,7 +1474,7 @@ ERROR_0:
 }
 
 int handle_cuKernelGetAttribute(conn_t *conn) {
-  int pi;
+  int pi{};
   CUfunction_attribute attrib;
   CUkernel kernel;
   CUdevice dev;
@@ -1593,9 +1593,9 @@ ERROR_0:
 int handle_cuKernelGetParamInfo(conn_t *conn) {
   CUkernel kernel;
   size_t paramIndex;
-  size_t paramOffset;
+  size_t paramOffset{};
   paramOffset = {};
-  size_t paramSize;
+  size_t paramSize{};
   paramSize = {};
   int request_id;
   CUresult return_value;
@@ -1622,8 +1622,8 @@ ERROR_0:
 }
 
 int handle_cuMemGetInfo_v2(conn_t *conn) {
-  size_t free;
-  size_t total;
+  size_t free{};
+  size_t total{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &free, sizeof(size_t)) < 0 ||
@@ -1648,7 +1648,7 @@ ERROR_0:
 }
 
 int handle_cuMemAlloc_v2(conn_t *conn) {
-  CUdeviceptr dptr;
+  CUdeviceptr dptr{};
   size_t bytesize;
   int request_id;
   CUresult return_value;
@@ -1673,8 +1673,8 @@ ERROR_0:
 }
 
 int handle_cuMemAllocPitch_v2(conn_t *conn) {
-  CUdeviceptr dptr;
-  size_t pPitch;
+  CUdeviceptr dptr{};
+  size_t pPitch{};
   size_t WidthInBytes;
   size_t Height;
   unsigned int ElementSizeBytes;
@@ -1706,8 +1706,8 @@ ERROR_0:
 }
 
 int handle_cuMemGetAddressRange_v2(conn_t *conn) {
-  CUdeviceptr pbase;
-  size_t psize;
+  CUdeviceptr pbase{};
+  size_t psize{};
   CUdeviceptr dptr;
   int request_id;
   CUresult return_value;
@@ -1734,7 +1734,7 @@ ERROR_0:
 }
 
 int handle_cuMemAllocHost_v2(conn_t *conn) {
-  void *pp;
+  void *pp{};
   size_t bytesize;
   int request_id;
   CUresult return_value;
@@ -1759,7 +1759,7 @@ ERROR_0:
 }
 
 int handle_cuMemHostGetDevicePointer_v2(conn_t *conn) {
-  CUdeviceptr pdptr;
+  CUdeviceptr pdptr{};
   void *p;
   unsigned int Flags;
   int request_id;
@@ -1853,7 +1853,7 @@ ERROR_0:
 }
 
 int handle_cuIpcGetEventHandle(conn_t *conn) {
-  CUipcEventHandle pHandle;
+  CUipcEventHandle pHandle{};
   CUevent event;
   int request_id;
   CUresult return_value;
@@ -1878,7 +1878,7 @@ ERROR_0:
 }
 
 int handle_cuIpcOpenEventHandle(conn_t *conn) {
-  CUevent phEvent;
+  CUevent phEvent{};
   CUipcEventHandle handle;
   int request_id;
   CUresult return_value;
@@ -1903,7 +1903,7 @@ ERROR_0:
 }
 
 int handle_cuIpcGetMemHandle(conn_t *conn) {
-  CUipcMemHandle pHandle;
+  CUipcMemHandle pHandle{};
   CUdeviceptr dptr;
   int request_id;
   CUresult return_value;
@@ -1928,7 +1928,7 @@ ERROR_0:
 }
 
 int handle_cuIpcOpenMemHandle_v2(conn_t *conn) {
-  CUdeviceptr pdptr;
+  CUdeviceptr pdptr{};
   CUipcMemHandle handle;
   unsigned int Flags;
   int request_id;
@@ -2570,8 +2570,8 @@ ERROR_0:
 }
 
 int handle_cuArrayCreate_v2(conn_t *conn) {
-  CUarray pHandle;
-  CUDA_ARRAY_DESCRIPTOR pAllocateArray;
+  CUarray pHandle{};
+  CUDA_ARRAY_DESCRIPTOR pAllocateArray{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &pHandle, sizeof(CUarray)) < 0 ||
@@ -2597,7 +2597,7 @@ ERROR_0:
 }
 
 int handle_cuArrayGetDescriptor_v2(conn_t *conn) {
-  CUDA_ARRAY_DESCRIPTOR pArrayDescriptor;
+  CUDA_ARRAY_DESCRIPTOR pArrayDescriptor{};
   CUarray hArray;
   int request_id;
   CUresult return_value;
@@ -2622,7 +2622,7 @@ ERROR_0:
 }
 
 int handle_cuArrayGetSparseProperties(conn_t *conn) {
-  CUDA_ARRAY_SPARSE_PROPERTIES sparseProperties;
+  CUDA_ARRAY_SPARSE_PROPERTIES sparseProperties{};
   CUarray array;
   int request_id;
   CUresult return_value;
@@ -2649,7 +2649,7 @@ ERROR_0:
 }
 
 int handle_cuMipmappedArrayGetSparseProperties(conn_t *conn) {
-  CUDA_ARRAY_SPARSE_PROPERTIES sparseProperties;
+  CUDA_ARRAY_SPARSE_PROPERTIES sparseProperties{};
   CUmipmappedArray mipmap;
   int request_id;
   CUresult return_value;
@@ -2676,7 +2676,7 @@ ERROR_0:
 }
 
 int handle_cuArrayGetMemoryRequirements(conn_t *conn) {
-  CUDA_ARRAY_MEMORY_REQUIREMENTS memoryRequirements;
+  CUDA_ARRAY_MEMORY_REQUIREMENTS memoryRequirements{};
   CUarray array;
   CUdevice device;
   int request_id;
@@ -2706,7 +2706,7 @@ ERROR_0:
 }
 
 int handle_cuMipmappedArrayGetMemoryRequirements(conn_t *conn) {
-  CUDA_ARRAY_MEMORY_REQUIREMENTS memoryRequirements;
+  CUDA_ARRAY_MEMORY_REQUIREMENTS memoryRequirements{};
   CUmipmappedArray mipmap;
   CUdevice device;
   int request_id;
@@ -2736,7 +2736,7 @@ ERROR_0:
 }
 
 int handle_cuArrayGetPlane(conn_t *conn) {
-  CUarray pPlaneArray;
+  CUarray pPlaneArray{};
   CUarray hArray;
   unsigned int planeIdx;
   int request_id;
@@ -2785,8 +2785,8 @@ ERROR_0:
 }
 
 int handle_cuArray3DCreate_v2(conn_t *conn) {
-  CUarray pHandle;
-  CUDA_ARRAY3D_DESCRIPTOR pAllocateArray;
+  CUarray pHandle{};
+  CUDA_ARRAY3D_DESCRIPTOR pAllocateArray{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &pHandle, sizeof(CUarray)) < 0 ||
@@ -2812,7 +2812,7 @@ ERROR_0:
 }
 
 int handle_cuArray3DGetDescriptor_v2(conn_t *conn) {
-  CUDA_ARRAY3D_DESCRIPTOR pArrayDescriptor;
+  CUDA_ARRAY3D_DESCRIPTOR pArrayDescriptor{};
   CUarray hArray;
   int request_id;
   CUresult return_value;
@@ -2837,8 +2837,8 @@ ERROR_0:
 }
 
 int handle_cuMipmappedArrayCreate(conn_t *conn) {
-  CUmipmappedArray pHandle;
-  CUDA_ARRAY3D_DESCRIPTOR pMipmappedArrayDesc;
+  CUmipmappedArray pHandle{};
+  CUDA_ARRAY3D_DESCRIPTOR pMipmappedArrayDesc{};
   unsigned int numMipmapLevels;
   int request_id;
   CUresult return_value;
@@ -2866,7 +2866,7 @@ ERROR_0:
 }
 
 int handle_cuMipmappedArrayGetLevel(conn_t *conn) {
-  CUarray pLevelArray;
+  CUarray pLevelArray{};
   CUmipmappedArray hMipmappedArray;
   unsigned int level;
   int request_id;
@@ -2915,7 +2915,7 @@ ERROR_0:
 }
 
 int handle_cuMemAddressReserve(conn_t *conn) {
-  CUdeviceptr ptr;
+  CUdeviceptr ptr{};
   size_t size;
   size_t alignment;
   CUdeviceptr addr;
@@ -2970,10 +2970,10 @@ ERROR_0:
 }
 
 int handle_cuMemCreate(conn_t *conn) {
-  CUmemGenericAllocationHandle handle;
+  CUmemGenericAllocationHandle handle{};
   handle = {};
   size_t size;
-  CUmemAllocationProp prop;
+  CUmemAllocationProp prop{};
   unsigned long long flags;
   int request_id;
   CUresult return_value;
@@ -3052,7 +3052,7 @@ ERROR_0:
 }
 
 int handle_cuMemMapArrayAsync(conn_t *conn) {
-  CUarrayMapInfo mapInfoList;
+  CUarrayMapInfo mapInfoList{};
   unsigned int count;
   CUstream hStream;
   int request_id;
@@ -3141,9 +3141,9 @@ ERROR_0:
 }
 
 int handle_cuMemGetAccess(conn_t *conn) {
-  unsigned long long flags;
+  unsigned long long flags{};
   flags = {};
-  CUmemLocation location;
+  CUmemLocation location{};
   CUdeviceptr ptr;
   int request_id;
   CUresult return_value;
@@ -3168,9 +3168,9 @@ ERROR_0:
 }
 
 int handle_cuMemGetAllocationGranularity(conn_t *conn) {
-  size_t granularity;
+  size_t granularity{};
   granularity = {};
-  CUmemAllocationProp prop;
+  CUmemAllocationProp prop{};
   CUmemAllocationGranularity_flags option;
   int request_id;
   CUresult return_value;
@@ -3196,7 +3196,7 @@ ERROR_0:
 }
 
 int handle_cuMemGetAllocationPropertiesFromHandle(conn_t *conn) {
-  CUmemAllocationProp prop;
+  CUmemAllocationProp prop{};
   CUmemGenericAllocationHandle handle;
   int request_id;
   CUresult return_value;
@@ -3246,7 +3246,7 @@ ERROR_0:
 }
 
 int handle_cuMemAllocAsync(conn_t *conn) {
-  CUdeviceptr dptr;
+  CUdeviceptr dptr{};
   size_t bytesize;
   CUstream hStream;
   int request_id;
@@ -3333,9 +3333,9 @@ ERROR_0:
 }
 
 int handle_cuMemPoolGetAccess(conn_t *conn) {
-  CUmemAccess_flags flags;
+  CUmemAccess_flags flags{};
   CUmemoryPool memPool;
-  CUmemLocation location;
+  CUmemLocation location{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &flags, sizeof(CUmemAccess_flags)) < 0 ||
@@ -3361,8 +3361,8 @@ ERROR_0:
 }
 
 int handle_cuMemPoolCreate(conn_t *conn) {
-  CUmemoryPool pool;
-  CUmemPoolProps poolProps;
+  CUmemoryPool pool{};
+  CUmemPoolProps poolProps{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
@@ -3408,7 +3408,7 @@ ERROR_0:
 }
 
 int handle_cuMemAllocFromPoolAsync(conn_t *conn) {
-  CUdeviceptr dptr;
+  CUdeviceptr dptr{};
   size_t bytesize;
   CUmemoryPool pool;
   CUstream hStream;
@@ -3437,7 +3437,7 @@ ERROR_0:
 }
 
 int handle_cuMemPoolExportPointer(conn_t *conn) {
-  CUmemPoolPtrExportData shareData_out;
+  CUmemPoolPtrExportData shareData_out{};
   CUdeviceptr ptr;
   int request_id;
   CUresult return_value;
@@ -3462,9 +3462,9 @@ ERROR_0:
 }
 
 int handle_cuMemPoolImportPointer(conn_t *conn) {
-  CUdeviceptr ptr_out;
+  CUdeviceptr ptr_out{};
   CUmemoryPool pool;
-  CUmemPoolPtrExportData shareData;
+  CUmemPoolPtrExportData shareData{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &ptr_out, sizeof(CUdeviceptr)) < 0 ||
@@ -3590,7 +3590,7 @@ ERROR_0:
 }
 
 int handle_cuStreamCreate(conn_t *conn) {
-  CUstream phStream;
+  CUstream phStream{};
   unsigned int Flags;
   int request_id;
   CUresult return_value;
@@ -3615,7 +3615,7 @@ ERROR_0:
 }
 
 int handle_cuStreamCreateWithPriority(conn_t *conn) {
-  CUstream phStream;
+  CUstream phStream{};
   unsigned int flags;
   int priority;
   int request_id;
@@ -3643,7 +3643,7 @@ ERROR_0:
 
 int handle_cuStreamGetPriority(conn_t *conn) {
   CUstream hStream;
-  int priority;
+  int priority{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -3668,7 +3668,7 @@ ERROR_0:
 
 int handle_cuStreamGetFlags(conn_t *conn) {
   CUstream hStream;
-  unsigned int flags;
+  unsigned int flags{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -3693,7 +3693,7 @@ ERROR_0:
 
 int handle_cuStreamGetId(conn_t *conn) {
   CUstream hStream;
-  unsigned long long streamId;
+  unsigned long long streamId{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -3718,7 +3718,7 @@ ERROR_0:
 
 int handle_cuStreamGetCtx(conn_t *conn) {
   CUstream hStream;
-  CUcontext pctx;
+  CUcontext pctx{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -3742,7 +3742,7 @@ ERROR_0:
 }
 
 int handle_cuThreadExchangeStreamCaptureMode(conn_t *conn) {
-  CUstreamCaptureMode mode;
+  CUstreamCaptureMode mode{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &mode, sizeof(CUstreamCaptureMode)) < 0 || false)
@@ -3766,7 +3766,7 @@ ERROR_0:
 
 int handle_cuStreamIsCapturing(conn_t *conn) {
   CUstream hStream;
-  CUstreamCaptureStatus captureStatus;
+  CUstreamCaptureStatus captureStatus{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -3889,7 +3889,7 @@ ERROR_0:
 int handle_cuStreamGetAttribute(conn_t *conn) {
   CUstream hStream;
   CUstreamAttrID attr;
-  CUstreamAttrValue value_out;
+  CUstreamAttrValue value_out{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -3916,7 +3916,7 @@ ERROR_0:
 int handle_cuStreamSetAttribute(conn_t *conn) {
   CUstream hStream;
   CUstreamAttrID attr;
-  CUstreamAttrValue value;
+  CUstreamAttrValue value{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -3940,7 +3940,7 @@ ERROR_0:
 }
 
 int handle_cuEventCreate(conn_t *conn) {
-  CUevent phEvent;
+  CUevent phEvent{};
   unsigned int Flags;
   int request_id;
   CUresult return_value;
@@ -3965,7 +3965,7 @@ ERROR_0:
 }
 
 int handle_cuEventElapsedTime_v2(conn_t *conn) {
-  float pMilliseconds;
+  float pMilliseconds{};
   CUevent hStart;
   CUevent hEnd;
   int request_id;
@@ -3992,8 +3992,8 @@ ERROR_0:
 }
 
 int handle_cuImportExternalMemory(conn_t *conn) {
-  CUexternalMemory extMem_out;
-  CUDA_EXTERNAL_MEMORY_HANDLE_DESC memHandleDesc;
+  CUexternalMemory extMem_out{};
+  CUDA_EXTERNAL_MEMORY_HANDLE_DESC memHandleDesc{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &extMem_out, sizeof(CUexternalMemory)) < 0 ||
@@ -4019,9 +4019,9 @@ ERROR_0:
 }
 
 int handle_cuExternalMemoryGetMappedBuffer(conn_t *conn) {
-  CUdeviceptr devPtr;
+  CUdeviceptr devPtr{};
   CUexternalMemory extMem;
-  CUDA_EXTERNAL_MEMORY_BUFFER_DESC bufferDesc;
+  CUDA_EXTERNAL_MEMORY_BUFFER_DESC bufferDesc{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
@@ -4048,9 +4048,9 @@ ERROR_0:
 }
 
 int handle_cuExternalMemoryGetMappedMipmappedArray(conn_t *conn) {
-  CUmipmappedArray mipmap;
+  CUmipmappedArray mipmap{};
   CUexternalMemory extMem;
-  CUDA_EXTERNAL_MEMORY_MIPMAPPED_ARRAY_DESC mipmapDesc;
+  CUDA_EXTERNAL_MEMORY_MIPMAPPED_ARRAY_DESC mipmapDesc{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &mipmap, sizeof(CUmipmappedArray)) < 0 ||
@@ -4100,8 +4100,8 @@ ERROR_0:
 }
 
 int handle_cuImportExternalSemaphore(conn_t *conn) {
-  CUexternalSemaphore extSem_out;
-  CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC semHandleDesc;
+  CUexternalSemaphore extSem_out{};
+  CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC semHandleDesc{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &extSem_out, sizeof(CUexternalSemaphore)) < 0 ||
@@ -4372,7 +4372,7 @@ ERROR_0:
 int handle_cuStreamBatchMemOp_v2(conn_t *conn) {
   CUstream stream;
   unsigned int count;
-  CUstreamBatchMemOpParams paramArray;
+  CUstreamBatchMemOpParams paramArray{};
   unsigned int flags;
   int request_id;
   CUresult return_value;
@@ -4399,7 +4399,7 @@ ERROR_0:
 }
 
 int handle_cuFuncGetAttribute(conn_t *conn) {
-  int pi;
+  int pi{};
   CUfunction_attribute attrib;
   CUfunction hfunc;
   int request_id;
@@ -4476,7 +4476,7 @@ ERROR_0:
 }
 
 int handle_cuFuncGetModule(conn_t *conn) {
-  CUmodule hmod;
+  CUmodule hmod{};
   CUfunction hfunc;
   int request_id;
   CUresult return_value;
@@ -4535,9 +4535,9 @@ ERROR_0:
 int handle_cuFuncGetParamInfo(conn_t *conn) {
   CUfunction func;
   size_t paramIndex;
-  size_t paramOffset;
+  size_t paramOffset{};
   paramOffset = {};
-  size_t paramSize;
+  size_t paramSize{};
   paramSize = {};
   int request_id;
   CUresult return_value;
@@ -4767,7 +4767,7 @@ ERROR_0:
 }
 
 int handle_cuLaunchCooperativeKernelMultiDevice(conn_t *conn) {
-  CUDA_LAUNCH_PARAMS launchParamsList;
+  CUDA_LAUNCH_PARAMS launchParamsList{};
   unsigned int numDevices;
   unsigned int flags;
   int request_id;
@@ -4845,7 +4845,7 @@ ERROR_0:
 }
 
 int handle_cuGraphCreate(conn_t *conn) {
-  CUgraph phGraph;
+  CUgraph phGraph{};
   unsigned int flags;
   int request_id;
   CUresult return_value;
@@ -4871,7 +4871,7 @@ ERROR_0:
 
 int handle_cuGraphMemcpyNodeGetParams(conn_t *conn) {
   CUgraphNode hNode;
-  CUDA_MEMCPY3D nodeParams;
+  CUDA_MEMCPY3D nodeParams{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -4896,7 +4896,7 @@ ERROR_0:
 
 int handle_cuGraphMemcpyNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
-  CUDA_MEMCPY3D nodeParams;
+  CUDA_MEMCPY3D nodeParams{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -4920,7 +4920,7 @@ ERROR_0:
 
 int handle_cuGraphMemsetNodeGetParams(conn_t *conn) {
   CUgraphNode hNode;
-  CUDA_MEMSET_NODE_PARAMS nodeParams;
+  CUDA_MEMSET_NODE_PARAMS nodeParams{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -4945,7 +4945,7 @@ ERROR_0:
 
 int handle_cuGraphMemsetNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
-  CUDA_MEMSET_NODE_PARAMS nodeParams;
+  CUDA_MEMSET_NODE_PARAMS nodeParams{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -4969,7 +4969,7 @@ ERROR_0:
 }
 
 int handle_cuGraphAddChildGraphNode(conn_t *conn) {
-  CUgraphNode phGraphNode;
+  CUgraphNode phGraphNode{};
   CUgraph hGraph;
   size_t numDependencies;
   CUgraphNode *dependencies = nullptr;
@@ -5014,7 +5014,7 @@ ERROR_0:
 
 int handle_cuGraphChildGraphNodeGetGraph(conn_t *conn) {
   CUgraphNode hNode;
-  CUgraph phGraph;
+  CUgraph phGraph{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -5038,7 +5038,7 @@ ERROR_0:
 }
 
 int handle_cuGraphAddEmptyNode(conn_t *conn) {
-  CUgraphNode phGraphNode;
+  CUgraphNode phGraphNode{};
   CUgraph hGraph;
   size_t numDependencies;
   CUgraphNode *dependencies = nullptr;
@@ -5081,7 +5081,7 @@ ERROR_0:
 }
 
 int handle_cuGraphAddEventRecordNode(conn_t *conn) {
-  CUgraphNode phGraphNode;
+  CUgraphNode phGraphNode{};
   CUgraph hGraph;
   size_t numDependencies;
   CUgraphNode *dependencies = nullptr;
@@ -5126,7 +5126,7 @@ ERROR_0:
 
 int handle_cuGraphEventRecordNodeGetEvent(conn_t *conn) {
   CUgraphNode hNode;
-  CUevent event_out;
+  CUevent event_out{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -5174,7 +5174,7 @@ ERROR_0:
 }
 
 int handle_cuGraphAddEventWaitNode(conn_t *conn) {
-  CUgraphNode phGraphNode;
+  CUgraphNode phGraphNode{};
   CUgraph hGraph;
   size_t numDependencies;
   CUgraphNode *dependencies = nullptr;
@@ -5219,7 +5219,7 @@ ERROR_0:
 
 int handle_cuGraphEventWaitNodeGetEvent(conn_t *conn) {
   CUgraphNode hNode;
-  CUevent event_out;
+  CUevent event_out{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -5267,7 +5267,7 @@ ERROR_0:
 }
 
 int handle_cuGraphAddExternalSemaphoresSignalNode(conn_t *conn) {
-  CUgraphNode phGraphNode;
+  CUgraphNode phGraphNode{};
   CUgraph hGraph;
   size_t numDependencies;
   CUgraphNode *dependencies = nullptr;
@@ -5407,7 +5407,7 @@ ERROR_0:
 }
 
 int handle_cuGraphAddExternalSemaphoresWaitNode(conn_t *conn) {
-  CUgraphNode phGraphNode;
+  CUgraphNode phGraphNode{};
   CUgraph hGraph;
   size_t numDependencies;
   CUgraphNode *dependencies = nullptr;
@@ -5545,7 +5545,7 @@ ERROR_0:
 }
 
 int handle_cuGraphAddBatchMemOpNode(conn_t *conn) {
-  CUgraphNode phGraphNode;
+  CUgraphNode phGraphNode{};
   CUgraph hGraph;
   size_t numDependencies;
   CUgraphNode *dependencies = nullptr;
@@ -5701,12 +5701,12 @@ ERROR_0:
 }
 
 int handle_cuGraphAddMemAllocNode(conn_t *conn) {
-  CUgraphNode phGraphNode;
+  CUgraphNode phGraphNode{};
   CUgraph hGraph;
   size_t numDependencies;
   CUgraphNode *dependencies = nullptr;
   size_t dependencies_size;
-  CUDA_MEM_ALLOC_NODE_PARAMS nodeParams;
+  CUDA_MEM_ALLOC_NODE_PARAMS nodeParams{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
@@ -5748,7 +5748,7 @@ ERROR_0:
 
 int handle_cuGraphMemAllocNodeGetParams(conn_t *conn) {
   CUgraphNode hNode;
-  CUDA_MEM_ALLOC_NODE_PARAMS params_out;
+  CUDA_MEM_ALLOC_NODE_PARAMS params_out{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -5773,7 +5773,7 @@ ERROR_0:
 }
 
 int handle_cuGraphAddMemFreeNode(conn_t *conn) {
-  CUgraphNode phGraphNode;
+  CUgraphNode phGraphNode{};
   CUgraph hGraph;
   size_t numDependencies;
   CUgraphNode *dependencies = nullptr;
@@ -5818,7 +5818,7 @@ ERROR_0:
 
 int handle_cuGraphMemFreeNodeGetParams(conn_t *conn) {
   CUgraphNode hNode;
-  CUdeviceptr dptr_out;
+  CUdeviceptr dptr_out{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -5864,7 +5864,7 @@ ERROR_0:
 }
 
 int handle_cuGraphNodeFindInClone(conn_t *conn) {
-  CUgraphNode phNode;
+  CUgraphNode phNode{};
   CUgraphNode hOriginalNode;
   CUgraph hClonedGraph;
   int request_id;
@@ -5892,7 +5892,7 @@ ERROR_0:
 
 int handle_cuGraphNodeGetType(conn_t *conn) {
   CUgraphNode hNode;
-  CUgraphNodeType type;
+  CUgraphNodeType type{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -5918,7 +5918,7 @@ ERROR_0:
 #if CUDA_VERSION >= 13010
 int handle_cuGraphNodeGetContainingGraph(conn_t *conn) {
   CUgraphNode hNode;
-  CUgraph phGraph;
+  CUgraph phGraph{};
   phGraph = {};
   int request_id;
   CUresult return_value;
@@ -5946,7 +5946,7 @@ ERROR_0:
 #if CUDA_VERSION >= 13010
 int handle_cuGraphNodeGetLocalId(conn_t *conn) {
   CUgraphNode hNode;
-  unsigned int nodeId;
+  unsigned int nodeId{};
   nodeId = {};
   int request_id;
   CUresult return_value;
@@ -5974,7 +5974,7 @@ ERROR_0:
 #if CUDA_VERSION >= 13010
 int handle_cuGraphNodeGetToolsId(conn_t *conn) {
   CUgraphNode hNode;
-  unsigned long long toolsNodeId;
+  unsigned long long toolsNodeId{};
   toolsNodeId = {};
   int request_id;
   CUresult return_value;
@@ -6002,7 +6002,7 @@ ERROR_0:
 #if CUDA_VERSION >= 13010
 int handle_cuGraphGetId(conn_t *conn) {
   CUgraph hGraph;
-  unsigned int graphId;
+  unsigned int graphId{};
   graphId = {};
   int request_id;
   CUresult return_value;
@@ -6030,7 +6030,7 @@ ERROR_0:
 #if CUDA_VERSION >= 13010
 int handle_cuGraphExecGetId(conn_t *conn) {
   CUgraphExec hGraphExec;
-  unsigned int graphId;
+  unsigned int graphId{};
   graphId = {};
   int request_id;
   CUresult return_value;
@@ -6386,7 +6386,7 @@ ERROR_0:
 
 int handle_cuGraphExecGetFlags(conn_t *conn) {
   CUgraphExec hGraphExec;
-  cuuint64_t flags;
+  cuuint64_t flags{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
@@ -6412,7 +6412,7 @@ ERROR_0:
 int handle_cuGraphExecMemcpyNodeSetParams(conn_t *conn) {
   CUgraphExec hGraphExec;
   CUgraphNode hNode;
-  CUDA_MEMCPY3D copyParams;
+  CUDA_MEMCPY3D copyParams{};
   CUcontext ctx;
   int request_id;
   CUresult return_value;
@@ -6442,7 +6442,7 @@ ERROR_0:
 int handle_cuGraphExecMemsetNodeSetParams(conn_t *conn) {
   CUgraphExec hGraphExec;
   CUgraphNode hNode;
-  CUDA_MEMSET_NODE_PARAMS memsetParams;
+  CUDA_MEMSET_NODE_PARAMS memsetParams{};
   CUcontext ctx;
   int request_id;
   CUresult return_value;
@@ -6680,7 +6680,7 @@ ERROR_0:
 int handle_cuGraphNodeGetEnabled(conn_t *conn) {
   CUgraphExec hGraphExec;
   CUgraphNode hNode;
-  unsigned int isEnabled;
+  unsigned int isEnabled{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
@@ -6732,7 +6732,7 @@ ERROR_0:
 int handle_cuGraphExecUpdate_v2(conn_t *conn) {
   CUgraphExec hGraphExec;
   CUgraph hGraph;
-  CUgraphExecUpdateResultInfo resultInfo;
+  CUgraphExecUpdateResultInfo resultInfo{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
@@ -6784,7 +6784,7 @@ ERROR_0:
 int handle_cuGraphKernelNodeGetAttribute(conn_t *conn) {
   CUgraphNode hNode;
   CUkernelNodeAttrID attr;
-  CUkernelNodeAttrValue value_out;
+  CUkernelNodeAttrValue value_out{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -6811,7 +6811,7 @@ ERROR_0:
 int handle_cuGraphKernelNodeSetAttribute(conn_t *conn) {
   CUgraphNode hNode;
   CUkernelNodeAttrID attr;
-  CUkernelNodeAttrValue value;
+  CUkernelNodeAttrValue value{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -6972,7 +6972,7 @@ ERROR_0:
 #if CUDA_VERSION >= 12020
 int handle_cuGraphNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
-  CUgraphNodeParams nodeParams;
+  CUgraphNodeParams nodeParams{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -7000,7 +7000,7 @@ ERROR_0:
 int handle_cuGraphExecNodeSetParams(conn_t *conn) {
   CUgraphExec hGraphExec;
   CUgraphNode hNode;
-  CUgraphNodeParams nodeParams;
+  CUgraphNodeParams nodeParams{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
@@ -7026,7 +7026,7 @@ ERROR_0:
 #endif
 
 int handle_cuOccupancyMaxActiveBlocksPerMultiprocessor(conn_t *conn) {
-  int numBlocks;
+  int numBlocks{};
   CUfunction func;
   int blockSize;
   size_t dynamicSMemSize;
@@ -7056,7 +7056,7 @@ ERROR_0:
 }
 
 int handle_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(conn_t *conn) {
-  int numBlocks;
+  int numBlocks{};
   CUfunction func;
   int blockSize;
   size_t dynamicSMemSize;
@@ -7088,7 +7088,7 @@ ERROR_0:
 }
 
 int handle_cuOccupancyAvailableDynamicSMemPerBlock(conn_t *conn) {
-  size_t dynamicSmemSize;
+  size_t dynamicSmemSize{};
   CUfunction func;
   int numBlocks;
   int blockSize;
@@ -7118,7 +7118,7 @@ ERROR_0:
 }
 
 int handle_cuOccupancyMaxPotentialClusterSize(conn_t *conn) {
-  int clusterSize;
+  int clusterSize{};
   CUfunction func;
   CUlaunchConfig config = {};
   std::vector<unsigned char> config_attrs_buf;
@@ -7154,7 +7154,7 @@ ERROR_0:
 }
 
 int handle_cuOccupancyMaxActiveClusters(conn_t *conn) {
-  int numClusters;
+  int numClusters{};
   CUfunction func;
   CUlaunchConfig config = {};
   std::vector<unsigned char> config_attrs_buf;
@@ -7241,7 +7241,7 @@ ERROR_0:
 }
 
 int handle_cuTexRefSetAddress_v2(conn_t *conn) {
-  size_t ByteOffset;
+  size_t ByteOffset{};
   CUtexref hTexRef;
   CUdeviceptr dptr;
   size_t bytes;
@@ -7271,7 +7271,7 @@ ERROR_0:
 
 int handle_cuTexRefSetAddress2D_v3(conn_t *conn) {
   CUtexref hTexRef;
-  CUDA_ARRAY_DESCRIPTOR desc;
+  CUDA_ARRAY_DESCRIPTOR desc{};
   CUdeviceptr dptr;
   size_t Pitch;
   int request_id;
@@ -7474,7 +7474,7 @@ ERROR_0:
 
 int handle_cuTexRefSetBorderColor(conn_t *conn) {
   CUtexref hTexRef;
-  float pBorderColor;
+  float pBorderColor{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
@@ -7522,7 +7522,7 @@ ERROR_0:
 }
 
 int handle_cuTexRefGetAddress_v2(conn_t *conn) {
-  CUdeviceptr pdptr;
+  CUdeviceptr pdptr{};
   CUtexref hTexRef;
   int request_id;
   CUresult return_value;
@@ -7547,7 +7547,7 @@ ERROR_0:
 }
 
 int handle_cuTexRefGetArray(conn_t *conn) {
-  CUarray phArray;
+  CUarray phArray{};
   CUtexref hTexRef;
   int request_id;
   CUresult return_value;
@@ -7572,7 +7572,7 @@ ERROR_0:
 }
 
 int handle_cuTexRefGetMipmappedArray(conn_t *conn) {
-  CUmipmappedArray phMipmappedArray;
+  CUmipmappedArray phMipmappedArray{};
   CUtexref hTexRef;
   int request_id;
   CUresult return_value;
@@ -7597,7 +7597,7 @@ ERROR_0:
 }
 
 int handle_cuTexRefGetAddressMode(conn_t *conn) {
-  CUaddress_mode pam;
+  CUaddress_mode pam{};
   CUtexref hTexRef;
   int dim;
   int request_id;
@@ -7624,7 +7624,7 @@ ERROR_0:
 }
 
 int handle_cuTexRefGetFilterMode(conn_t *conn) {
-  CUfilter_mode pfm;
+  CUfilter_mode pfm{};
   CUtexref hTexRef;
   int request_id;
   CUresult return_value;
@@ -7649,8 +7649,8 @@ ERROR_0:
 }
 
 int handle_cuTexRefGetFormat(conn_t *conn) {
-  CUarray_format pFormat;
-  int pNumChannels;
+  CUarray_format pFormat{};
+  int pNumChannels{};
   CUtexref hTexRef;
   int request_id;
   CUresult return_value;
@@ -7677,7 +7677,7 @@ ERROR_0:
 }
 
 int handle_cuTexRefGetMipmapFilterMode(conn_t *conn) {
-  CUfilter_mode pfm;
+  CUfilter_mode pfm{};
   CUtexref hTexRef;
   int request_id;
   CUresult return_value;
@@ -7702,7 +7702,7 @@ ERROR_0:
 }
 
 int handle_cuTexRefGetMipmapLevelBias(conn_t *conn) {
-  float pbias;
+  float pbias{};
   CUtexref hTexRef;
   int request_id;
   CUresult return_value;
@@ -7727,8 +7727,8 @@ ERROR_0:
 }
 
 int handle_cuTexRefGetMipmapLevelClamp(conn_t *conn) {
-  float pminMipmapLevelClamp;
-  float pmaxMipmapLevelClamp;
+  float pminMipmapLevelClamp{};
+  float pmaxMipmapLevelClamp{};
   CUtexref hTexRef;
   int request_id;
   CUresult return_value;
@@ -7756,7 +7756,7 @@ ERROR_0:
 }
 
 int handle_cuTexRefGetMaxAnisotropy(conn_t *conn) {
-  int pmaxAniso;
+  int pmaxAniso{};
   CUtexref hTexRef;
   int request_id;
   CUresult return_value;
@@ -7781,7 +7781,7 @@ ERROR_0:
 }
 
 int handle_cuTexRefGetBorderColor(conn_t *conn) {
-  float pBorderColor;
+  float pBorderColor{};
   CUtexref hTexRef;
   int request_id;
   CUresult return_value;
@@ -7806,7 +7806,7 @@ ERROR_0:
 }
 
 int handle_cuTexRefGetFlags(conn_t *conn) {
-  unsigned int pFlags;
+  unsigned int pFlags{};
   CUtexref hTexRef;
   int request_id;
   CUresult return_value;
@@ -7831,7 +7831,7 @@ ERROR_0:
 }
 
 int handle_cuTexRefCreate(conn_t *conn) {
-  CUtexref pTexRef;
+  CUtexref pTexRef{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &pTexRef, sizeof(CUtexref)) < 0 || false)
@@ -7902,7 +7902,7 @@ ERROR_0:
 }
 
 int handle_cuSurfRefGetArray(conn_t *conn) {
-  CUarray phArray;
+  CUarray phArray{};
   CUsurfref hSurfRef;
   int request_id;
   CUresult return_value;
@@ -7927,8 +7927,8 @@ ERROR_0:
 }
 
 int handle_cuTexObjectCreate(conn_t *conn) {
-  CUtexObject pTexObject;
-  CUDA_RESOURCE_DESC pResDesc;
+  CUtexObject pTexObject{};
+  CUDA_RESOURCE_DESC pResDesc{};
   CUDA_TEXTURE_DESC *pTexDesc_null_check;
   CUDA_TEXTURE_DESC pTexDesc;
   CUDA_RESOURCE_VIEW_DESC *pResViewDesc_null_check;
@@ -7990,7 +7990,7 @@ ERROR_0:
 }
 
 int handle_cuTexObjectGetResourceDesc(conn_t *conn) {
-  CUDA_RESOURCE_DESC pResDesc;
+  CUDA_RESOURCE_DESC pResDesc{};
   CUtexObject texObject;
   int request_id;
   CUresult return_value;
@@ -8015,7 +8015,7 @@ ERROR_0:
 }
 
 int handle_cuTexObjectGetTextureDesc(conn_t *conn) {
-  CUDA_TEXTURE_DESC pTexDesc;
+  CUDA_TEXTURE_DESC pTexDesc{};
   CUtexObject texObject;
   int request_id;
   CUresult return_value;
@@ -8040,7 +8040,7 @@ ERROR_0:
 }
 
 int handle_cuTexObjectGetResourceViewDesc(conn_t *conn) {
-  CUDA_RESOURCE_VIEW_DESC pResViewDesc;
+  CUDA_RESOURCE_VIEW_DESC pResViewDesc{};
   CUtexObject texObject;
   int request_id;
   CUresult return_value;
@@ -8065,8 +8065,8 @@ ERROR_0:
 }
 
 int handle_cuSurfObjectCreate(conn_t *conn) {
-  CUsurfObject pSurfObject;
-  CUDA_RESOURCE_DESC pResDesc;
+  CUsurfObject pSurfObject{};
+  CUDA_RESOURCE_DESC pResDesc{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &pSurfObject, sizeof(CUsurfObject)) < 0 ||
@@ -8112,7 +8112,7 @@ ERROR_0:
 }
 
 int handle_cuSurfObjectGetResourceDesc(conn_t *conn) {
-  CUDA_RESOURCE_DESC pResDesc;
+  CUDA_RESOURCE_DESC pResDesc{};
   CUsurfObject surfObject;
   int request_id;
   CUresult return_value;
@@ -8137,7 +8137,7 @@ ERROR_0:
 }
 
 int handle_cuDeviceCanAccessPeer(conn_t *conn) {
-  int canAccessPeer;
+  int canAccessPeer{};
   CUdevice dev;
   CUdevice peerDev;
   int request_id;
@@ -8210,7 +8210,7 @@ ERROR_0:
 }
 
 int handle_cuDeviceGetP2PAttribute(conn_t *conn) {
-  int value;
+  int value{};
   CUdevice_P2PAttribute attrib;
   CUdevice srcDevice;
   CUdevice dstDevice;
@@ -8261,7 +8261,7 @@ ERROR_0:
 }
 
 int handle_cuGraphicsSubResourceGetMappedArray(conn_t *conn) {
-  CUarray pArray;
+  CUarray pArray{};
   CUgraphicsResource resource;
   unsigned int arrayIndex;
   unsigned int mipLevel;
@@ -8291,7 +8291,7 @@ ERROR_0:
 }
 
 int handle_cuGraphicsResourceGetMappedMipmappedArray(conn_t *conn) {
-  CUmipmappedArray pMipmappedArray;
+  CUmipmappedArray pMipmappedArray{};
   CUgraphicsResource resource;
   int request_id;
   CUresult return_value;
@@ -8317,8 +8317,8 @@ ERROR_0:
 }
 
 int handle_cuGraphicsResourceGetMappedPointer_v2(conn_t *conn) {
-  CUdeviceptr pDevPtr;
-  size_t pSize;
+  CUdeviceptr pDevPtr{};
+  size_t pSize{};
   CUgraphicsResource resource;
   int request_id;
   CUresult return_value;
@@ -8444,7 +8444,7 @@ ERROR_0:
 #if CUDA_VERSION >= 12010
 int handle_cuCoredumpGetAttributeGlobal(conn_t *conn) {
   CUcoredumpSettings attrib;
-  size_t size;
+  size_t size{};
   void *value = nullptr;
   int request_id;
   CUresult return_value;
@@ -8480,7 +8480,7 @@ ERROR_0:
 #if CUDA_VERSION >= 12010
 int handle_cuCoredumpSetAttributeGlobal(conn_t *conn) {
   CUcoredumpSettings attrib;
-  size_t size;
+  size_t size{};
   void *value = nullptr;
   size_t value_size;
   int request_id;
@@ -8518,7 +8518,7 @@ ERROR_0:
 
 #if CUDA_VERSION >= 12040
 int handle_cuGreenCtxCreate(conn_t *conn) {
-  CUgreenCtx phCtx;
+  CUgreenCtx phCtx{};
   phCtx = {};
   CUdevResourceDesc desc;
   CUdevice dev;
@@ -8575,7 +8575,7 @@ ERROR_0:
 
 #if CUDA_VERSION >= 12040
 int handle_cuCtxFromGreenCtx(conn_t *conn) {
-  CUcontext pContext;
+  CUcontext pContext{};
   pContext = {};
   CUgreenCtx hCtx;
   int request_id;
@@ -8604,7 +8604,7 @@ ERROR_0:
 #if CUDA_VERSION >= 12040
 int handle_cuDeviceGetDevResource(conn_t *conn) {
   CUdevice device;
-  CUdevResource resource;
+  CUdevResource resource{};
   resource = {};
   CUdevResourceType type;
   int request_id;
@@ -8634,7 +8634,7 @@ ERROR_0:
 #if CUDA_VERSION >= 12040
 int handle_cuCtxGetDevResource(conn_t *conn) {
   CUcontext hCtx;
-  CUdevResource resource;
+  CUdevResource resource{};
   resource = {};
   CUdevResourceType type;
   int request_id;
@@ -8664,7 +8664,7 @@ ERROR_0:
 #if CUDA_VERSION >= 12040
 int handle_cuGreenCtxGetDevResource(conn_t *conn) {
   CUgreenCtx hCtx;
-  CUdevResource resource;
+  CUdevResource resource{};
   resource = {};
   CUdevResourceType type;
   int request_id;
@@ -8697,7 +8697,7 @@ int handle_cuDevSmResourceSplitByCount(conn_t *conn) {
   unsigned int nbGroups_requested = 0;
   CUdevResource *result = nullptr;
   uint8_t result_null = 0;
-  CUdevResource input;
+  CUdevResource input{};
   CUdevResource *remainder_null_check;
   CUdevResource remainder;
   unsigned int flags;
@@ -8756,7 +8756,7 @@ int handle_cuDevSmResourceSplit(conn_t *conn) {
   unsigned int nbGroups;
   CUdevResource *result = nullptr;
   uint8_t result_null = 0;
-  CUdevResource input;
+  CUdevResource input{};
   CUdevResource *remainder_null_check;
   CUdevResource remainder;
   unsigned int flags;
@@ -8823,7 +8823,7 @@ int handle_cuDevResourceGenerateDesc(conn_t *conn) {
   unsigned int nbResources;
   CUdevResource *resources = nullptr;
   size_t resources_size;
-  CUdevResourceDesc phDesc;
+  CUdevResourceDesc phDesc{};
   phDesc = {};
   int request_id;
   CUresult return_value;
@@ -8916,7 +8916,7 @@ ERROR_0:
 #if CUDA_VERSION >= 12040
 int handle_cuStreamGetGreenCtx(conn_t *conn) {
   CUstream hStream;
-  CUgreenCtx phCtx;
+  CUgreenCtx phCtx{};
   phCtx = {};
   int request_id;
   CUresult return_value;
@@ -8943,7 +8943,7 @@ ERROR_0:
 
 #if CUDA_VERSION >= 12050
 int handle_cuGreenCtxStreamCreate(conn_t *conn) {
-  CUstream phStream;
+  CUstream phStream{};
   phStream = {};
   CUgreenCtx greenCtx;
   unsigned int flags;
@@ -8976,7 +8976,7 @@ ERROR_0:
 #if CUDA_VERSION >= 13000
 int handle_cuGreenCtxGetId(conn_t *conn) {
   CUgreenCtx greenCtx;
-  unsigned long long greenCtxId;
+  unsigned long long greenCtxId{};
   greenCtxId = {};
   int request_id;
   CUresult return_value;
@@ -9004,7 +9004,7 @@ ERROR_0:
 #if CUDA_VERSION >= 13010
 int handle_cuStreamGetDevResource(conn_t *conn) {
   CUstream hStream;
-  CUdevResource resource;
+  CUdevResource resource{};
   resource = {};
   CUdevResourceType type;
   int request_id;

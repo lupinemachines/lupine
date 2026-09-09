@@ -26,7 +26,7 @@ ERROR_0:
 }
 
 int handle_hipGetDeviceCount(conn_t *conn) {
-  int count;
+  int count{};
   count = {};
   int request_id;
   hipError_t return_value;
@@ -53,7 +53,7 @@ ERROR_0:
 }
 
 int handle_hipDeviceGet(conn_t *conn) {
-  int device;
+  int device{};
   device = {};
   int ordinal;
   int request_id;
@@ -81,7 +81,7 @@ ERROR_0:
 }
 
 int handle_hipGetDevicePropertiesR0600(conn_t *conn) {
-  hipDeviceProp_tR0600 prop;
+  hipDeviceProp_tR0600 prop{};
   std::memset(&prop, 0, sizeof(prop));
   int deviceId;
   int request_id;
@@ -148,7 +148,7 @@ ERROR_0:
 }
 
 int handle_hipDeviceTotalMem(conn_t *conn) {
-  size_t bytes;
+  size_t bytes{};
   bytes = {};
   int deviceId;
   int request_id;
@@ -176,7 +176,7 @@ ERROR_0:
 }
 
 int handle_hipDeviceGetAttribute(conn_t *conn) {
-  int pi;
+  int pi{};
   pi = {};
   hipDeviceAttribute_t attr;
   int deviceId;
@@ -206,7 +206,7 @@ ERROR_0:
 }
 
 int handle_hipDriverGetVersion(conn_t *conn) {
-  int driverVersion;
+  int driverVersion{};
   driverVersion = {};
   int request_id;
   hipError_t return_value;
@@ -233,7 +233,7 @@ ERROR_0:
 }
 
 int handle_hipRuntimeGetVersion(conn_t *conn) {
-  int runtimeVersion;
+  int runtimeVersion{};
   runtimeVersion = {};
   int request_id;
   hipError_t return_value;
