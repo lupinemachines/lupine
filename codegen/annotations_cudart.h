@@ -2889,7 +2889,6 @@ cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
  */
 void __cudaRegisterFatBinaryEnd(void **fatCubinHandle);
 /**
- * @release FATBIN fatCubinHandle
  * @disabled server - releases the fatbin image owned by the manual load handler
  * @param fatCubinHandle SEND_ONLY
  */
