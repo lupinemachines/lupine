@@ -134,10 +134,12 @@ lupine_route lupine_route_from_identity(int route_id) {
   return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
 }
 
-static CUresult lupine_remote_cuDeviceGetCount(conn_t *conn, int *count) {
+static CUresult lupine_remote_device_count(conn_t *conn, int *count,
+                                           bool runtime) {
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (count == nullptr || lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetCount) < 0 ||
+      rpc_write_start_request(conn, runtime ? RPC_cudaGetDeviceCount
+                                            : RPC_cuDeviceGetCount) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, count, sizeof(*count)) < 0 ||
       rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
@@ -160,7 +162,7 @@ static CUresult lupine_remote_cuDeviceGet(conn_t *conn, CUdevice *device,
   return result;
 }
 
-static CUresult lupine_ensure_device_table() {
+static CUresult lupine_ensure_device_table(bool runtime = false) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   if (lupine_device_table_ready()) {
     return CUDA_SUCCESS;
@@ -192,7 +194,10 @@ static CUresult lupine_ensure_device_table() {
     for (int i = 0; i < connection_count; ++i) {
       conn_t *conn = rpc_client_get_connection(static_cast<unsigned int>(i));
       int remote_count = 0;
-      CUresult result = lupine_remote_cuDeviceGetCount(conn, &remote_count);
+      // The vendor runtime owns initialization. Driver-only discovery must
+      // still return NOT_INITIALIZED until the caller has called cuInit.
+      CUresult result =
+          lupine_remote_device_count(conn, &remote_count, runtime);
       if (result != CUDA_SUCCESS) {
         devices.clear();
         return result;
@@ -220,11 +225,11 @@ static CUresult lupine_ensure_device_table() {
   return CUDA_SUCCESS;
 }
 
-CUresult lupine_virtual_device_count(int *count) {
+CUresult lupine_virtual_device_count(int *count, bool runtime) {
   if (count == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  CUresult result = lupine_ensure_device_table();
+  CUresult result = lupine_ensure_device_table(runtime);
   if (result != CUDA_SUCCESS) {
     return result;
   }

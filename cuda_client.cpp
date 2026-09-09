@@ -8493,7 +8493,25 @@ close_connection:
 }
 
 extern "C" int lupine_rpc_device_count(int *count) {
-  return lupine_virtual_device_count(count) == CUDA_SUCCESS ? 0 : -1;
+  if (lupine_virtual_device_count(count, true) != CUDA_SUCCESS) {
+    return -1;
+  }
+  // Runtime discovery initialized the server's driver, so client-answered
+  // driver APIs must observe the same state without issuing another cuInit.
+  lupine_cuda_initialized.store(true, std::memory_order_release);
+  return 0;
+}
+
+extern "C" conn_t *lupine_rpc_conn_for_index(unsigned int index) {
+  return rpc_client_get_connection(index);
+}
+
+extern "C" conn_t *lupine_rpc_conn_for_runtime_device(int *device) {
+  int count = 0;
+  if (device == nullptr || lupine_rpc_device_count(&count) < 0) {
+    return nullptr;
+  }
+  return lupine_rpc_conn_for_device(device);
 }
 
 extern "C" int lupine_rpc_write_start_request(conn_t *conn, int op) {

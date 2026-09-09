@@ -396,6 +396,7 @@ if(LUPINE_BUILD_CUDA)
             target_link_options(lupine_cuda_client PRIVATE
                 "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.exports")
             set_target_properties(lupine_cuda_client PROPERTIES
+                LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.exports"
                 VERSION 1
                 SOVERSION 1)
         endif()
@@ -410,6 +411,11 @@ if(LUPINE_BUILD_CUDA)
         math(EXPR LUPINE_CUDART_SOVERSION "${LUPINE_CUDA_HEADER_VERSION} / 1000")
     else()
         set(LUPINE_CUDART_SOVERSION ${CUDAToolkit_VERSION_MAJOR})
+    endif()
+    set(LUPINE_CUDART_DLL_VERSION ${LUPINE_CUDART_SOVERSION})
+    if(LUPINE_CUDART_SOVERSION EQUAL 11)
+        set(LUPINE_CUDART_SOVERSION 11.0)
+        set(LUPINE_CUDART_DLL_VERSION 110)
     endif()
     configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cudart.exports.in
                    ${CMAKE_CURRENT_BINARY_DIR}/cudart.exports @ONLY)
@@ -437,7 +443,7 @@ if(LUPINE_BUILD_CUDA)
     if(WIN32)
         target_compile_options(lupine_cudart_client PRIVATE /wd4996)
         set_target_properties(lupine_cudart_client PROPERTIES
-            OUTPUT_NAME cudart64_${LUPINE_CUDART_SOVERSION}
+            OUTPUT_NAME cudart64_${LUPINE_CUDART_DLL_VERSION}
             PREFIX ""
             WINDOWS_EXPORT_ALL_SYMBOLS ON)
     else()
@@ -791,6 +797,17 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
 
     if(TARGET lupine_cudart_client)
+        add_executable(cudart_routing_test
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_cudart_routing.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp)
+        target_include_directories(cudart_routing_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CUDAToolkit_INCLUDE_DIRS})
+        target_compile_options(cudart_routing_test PRIVATE
+            -ffunction-sections -fdata-sections)
+        target_link_options(cudart_routing_test PRIVATE LINKER:--gc-sections)
+        target_link_libraries(cudart_routing_test PRIVATE Threads::Threads)
+        add_test(NAME cudart_routing_test COMMAND cudart_routing_test)
+        set_tests_properties(cudart_routing_test PROPERTIES TIMEOUT 10)
         if(TARGET lupine_cudart_server)
             add_executable(cudart_forwarding_test
                 ${CMAKE_CURRENT_SOURCE_DIR}/test/test_cudart_forwarding.cpp)

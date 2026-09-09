@@ -26,7 +26,7 @@ lupine_route lupine_remote_route_for_conn(conn_t *conn);
 int lupine_route_identity(lupine_route route);
 lupine_route lupine_route_from_identity(int route_id);
 conn_t *lupine_thread_conn_by_index(unsigned int index);
-CUresult lupine_virtual_device_count(int *count);
+CUresult lupine_virtual_device_count(int *count, bool runtime = false);
 CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal);
 CUresult lupine_set_current_context_on_route(lupine_route route, CUcontext ctx);
 bool lupine_local_cuda_available();

@@ -3,6 +3,7 @@
 // kernel launch names the host entry point the server registered, and the
 // copies, symbols, streams, and events run against the remote device.
 #include <cuda_runtime.h>
+#include <cuda.h>
 
 #include <cstdio>
 #include <cstring>
@@ -40,6 +41,15 @@ int main() {
   int count = 0;
   CHECK(cudaGetDeviceCount(&count));
   EXPECT(count > 0);
+
+  // Driver lookups must return callable client shim entry points, not pointers
+  // into the server process (or an unsupported placeholder).
+  void *entry = nullptr;
+  CHECK(cudaGetDriverEntryPoint("cuDeviceGetCount", &entry, cudaEnableDefault));
+  EXPECT(entry != nullptr);
+  int driver_count = 0;
+  EXPECT(reinterpret_cast<CUresult (*)(int *)>(entry)(&driver_count) == CUDA_SUCCESS);
+  EXPECT(driver_count == count);
 
   cudaDeviceProp properties;
   CHECK(cudaGetDeviceProperties(&properties, 0));

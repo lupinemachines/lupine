@@ -16,6 +16,10 @@ extern "C" {
 typedef struct conn_t conn_t;
 
 int lupine_rpc_device_count(int *count);
+// Connection enumeration does not discover devices or initialize CUDA. Fatbin
+// registration runs before main and must reach the server runtime as-is.
+conn_t *lupine_rpc_conn_for_index(unsigned int index);
+conn_t *lupine_rpc_conn_for_runtime_device(int *device);
 // Maps a virtual device ordinal to its connection and rewrites it to the
 // server's ordinal.
 conn_t *lupine_rpc_conn_for_device(int *device);

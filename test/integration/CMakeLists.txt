@@ -16,6 +16,10 @@ endif()
 # Both variants use the same build. Only the libraries visible to the loader
 # differ: never put the full build directory on the driver-only search path.
 set(variants driver-only driver-runtime)
+set(cuda_lib_dir "$ENV{CUDA_LIB_DIR}")
+if(NOT cuda_lib_dir)
+    set(cuda_lib_dir "/usr/local/cuda/lib64")
+endif()
 foreach(variant IN LISTS variants)
     set(lib_dir "${CMAKE_CURRENT_BINARY_DIR}/${variant}/lib")
     file(MAKE_DIRECTORY "${lib_dir}")
@@ -35,7 +39,10 @@ if(NOT results_dir)
 endif()
 set(custom_build_dir "${CMAKE_CURRENT_BINARY_DIR}/custom-bin")
 file(MAKE_DIRECTORY "${custom_build_dir}")
-set(port 14900)
+set(port "$ENV{SERVER_PORT_BASE}")
+if(NOT port)
+    set(port 14900)
+endif()
 
 function(add_suite suite script)
     set(list_env ${ARGN})
@@ -60,10 +67,15 @@ function(add_suite suite script)
         foreach(variant IN LISTS variants)
             set(test "${variant}.${suite}.${name}")
             set(lib_dir "${CMAKE_CURRENT_BINARY_DIR}/${variant}/lib")
+            set(expected_runtime "${cuda_lib_dir}/libcudart.so")
+            if(variant STREQUAL "driver-runtime")
+                set(expected_runtime "${lib_dir}/libcudart.so")
+            endif()
             set(test_env
                 "SERVER_PORT_BASE=${port}" "SERVER_UPLOAD=0"
                 "RESULTS_DIR=${results_dir}/cases/${variant}/${suite}/${name}"
                 "LUPINE_LIB=${lib_dir}/libcuda.so.1"
+                "LUPINE_EXPECTED_CUDART=${expected_runtime}"
                 "LD_LIBRARY_PATH=${lib_dir}" "LD_PRELOAD="
                 "NVJPEG_ASSETS_DIR=${results_dir}/assets/${variant}"
                 ${ARGN})
@@ -77,6 +89,11 @@ function(add_suite suite script)
                 set_property(TEST "${test}" APPEND PROPERTY ENVIRONMENT
                     "BUILD_TESTS=0" "BUILD_ONLY=0" "BUILD_DIR=${custom_build_dir}")
                 set_property(TEST "${test}" PROPERTY FIXTURES_REQUIRED "build.custom.${name}")
+            endif()
+            if(suite STREQUAL "custom" AND name STREQUAL "test_cudart_loader")
+                set_property(TEST "${test}" PROPERTY FIXTURES_SETUP "loader.${variant}")
+            else()
+                set_property(TEST "${test}" APPEND PROPERTY FIXTURES_REQUIRED "loader.${variant}")
             endif()
             math(EXPR port "${port} + 10")
         endforeach()

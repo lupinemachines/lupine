@@ -1086,15 +1086,17 @@ def sdk_header(path: str) -> str:
 
 
 def validate_async_annotation(
-    function: Function, metadata: FunctionAnnotationMetadata
+    function: Function,
+    metadata: FunctionAnnotationMetadata,
+    result_type: str = "CUresult",
 ) -> None:
     if not metadata.async_fire_forget:
         return
     name = function.name.format()
     return_type = function.return_type.format()
-    if return_type != "CUresult":
+    if return_type != result_type:
         raise RuntimeError(
-            f"{name}: @async requires a CUresult return type, got {return_type}"
+            f"{name}: @async requires a {result_type} return type, got {return_type}"
         )
     for operation in metadata.operations:
         # NullableArrayOperation is an out-parameter with no send/recv flags.
@@ -1793,6 +1795,30 @@ def main():
     cudart_functions_with_annotations = collect_backend_functions(
         annotations_by_target["cudart"]
     )
+    # The pinned SDK preprocesses away older ABI declarations. Parse those
+    # branches from the annotations themselves; no old SDK types need to be
+    # defined to parse a declaration. @guard still controls C++ compilation.
+    with open(ANNOTATION_FILES["cudart"], encoding="utf-8") as f:
+        runtime_source = re.sub(r"^#include[^\n]*", "", f.read(), flags=re.MULTILINE)
+    runtime_variants = {
+        (function.name.format(), metadata.guard)
+        for function, _, _, metadata in cudart_functions_with_annotations
+    }
+    for version in (11080, 12040):
+        legacy = parse_string(
+            runtime_source,
+            options=ParserOptions(
+                preprocessor=make_gcc_preprocessor(
+                    defines=[f"CUDART_VERSION={version}", "CUDARTAPI_CDECL="]
+                )
+            ),
+        )
+        for entry in collect_backend_functions(legacy):
+            function, _, _, metadata = entry
+            key = (function.name.format(), metadata.guard)
+            if key not in runtime_variants:
+                cudart_functions_with_annotations.append(entry)
+                runtime_variants.add(key)
     # The SDK's own declarations, so a call an annotation file leaves out still
     # gets a symbol.
     forwarding_backends = [
@@ -1809,6 +1835,7 @@ def main():
         )
         for function, _, _, metadata in functions:
             attach_client_call_template(function, metadata, templates)
+            validate_async_annotation(function, metadata, backend.result)
     sdk_functions_for = {
         backend.name: parse_file(
             find_header_file(sdk_header(ANNOTATION_FILES[backend.name])),
@@ -1884,7 +1911,10 @@ def main():
     operations_by_id = {}
     for binding in bindings:
         operation = zlib.crc32(binding.name.encode("utf-8")) & 0x7FFFFFFF
-        if operation in operations_by_id:
+        if (
+            operation in operations_by_id
+            and operations_by_id[operation] != binding.name
+        ):
             raise RuntimeError(
                 f"Duplicate RPC operation for {operations_by_id[operation]} "
                 f"and {binding.name}"

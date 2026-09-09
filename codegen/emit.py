@@ -119,7 +119,8 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
     for operation in operations:
         if isinstance(operation, ArrayOperation):
             operation.client_preflight(f, backend.invalid_argument)
-    f.write(f"  {backend.result} return_value = rpc_error();\n")
+    if not metadata.async_fire_forget:
+        f.write(f"  {backend.result} return_value = rpc_error();\n")
     for operation in operations:
         if isinstance(operation, NullTerminatedOperation) and operation.recv:
             continue
@@ -132,9 +133,19 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
                 f"  {operation.ptr.format()} {operation.parameter.name}_null_check = nullptr;\n"
             )
 
-    f.write(f"  if (rpc_write_start_request(conn, RPC_{name}) < 0 ||\n")
+    if metadata.async_fire_forget:
+        f.write("  uint64_t async_sequence = 0;\n")
+        f.write(f"  if (rpc_write_start_async_request(conn, RPC_{name}, &async_sequence) < 0 ||\n")
+        f.write("      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||\n")
+    else:
+        f.write(f"  if (rpc_write_start_request(conn, RPC_{name}) < 0 ||\n")
     for operation in operations:
         operation.client_rpc_write(f)
+    if metadata.async_fire_forget:
+        f.write("      rpc_write_end(conn) < 0) {\n")
+        f.write("    return rpc_error();\n  }\n")
+        f.write(f"  return {backend.success};\n}}\n\n")
+        return
     f.write("      rpc_wait_for_response(conn) < 0 ||\n")
     for operation in operations:
         operation.client_rpc_read(f)
@@ -210,7 +221,7 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
         # evaluation changes the current device between push and pop.
         device = "0" if metadata.routing_kind == "THREAD" else "current_device"
         f.write(f"  int route_device = {device};\n")
-        default_connection = "lupine_rpc_conn_for_device(&route_device)"
+        default_connection = "lupine_rpc_conn_for_runtime_device(&route_device)"
     if metadata.routing_kind is None or (
         driver_connections and metadata.routing_kind == "THREAD"
     ):
@@ -228,7 +239,10 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
         elif driver_connections and metadata.routing_kind == "DEVICEPTR":
             argument = f"reinterpret_cast<CUdeviceptr>({argument})"
         prefix = "lupine_rpc_conn_for" if driver_connections else "connection_for"
-        connection = f"{prefix}_{metadata.routing_kind.lower()}({argument})"
+        kind = metadata.routing_kind.lower()
+        if driver_connections and metadata.routing_kind == "DEVICE":
+            kind = "runtime_device"
+        connection = f"{prefix}_{kind}({argument})"
         if driver_connections and metadata.routing_kind in ("STREAM", "EVENT"):
             connection = f"{argument} == nullptr ? {default_connection} : {connection}"
     f.write(f"  conn_t *conn = {connection};\n")
@@ -365,14 +379,17 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     if metadata.server_call is not None:
         # Adapters report the backend status, including for void registration
         # APIs whose ABI has no way to return an error to the caller.
-        f.write(f"  return_value = {metadata.server_call}({args});\n\n")
+        assignment = "" if metadata.async_fire_forget else "return_value = "
+        f.write(f"  {assignment}{metadata.server_call}({args});\n\n")
     elif backend.symbol_lookup and result == "void":
         f.write(f"  fn = {backend.symbol_lookup}<fn_t>(LUPINE_SYMBOL_NAME({name}));\n")
         f.write(f"  return_value = fn == nullptr ? function_not_found() : {backend.success};\n")
         f.write(f"  if (fn != nullptr) fn({args});\n\n")
     elif backend.symbol_lookup:
         f.write(f"  fn = {backend.symbol_lookup}<fn_t>(LUPINE_SYMBOL_NAME({name}));\n")
-        if value_result:
+        if metadata.async_fire_forget:
+            f.write(f"  if (fn != nullptr) fn({args});\n\n")
+        elif value_result:
             f.write("  if (fn == nullptr) rpc_status = function_not_found();\n")
             f.write(f"  else return_value = fn({args});\n\n")
         else:

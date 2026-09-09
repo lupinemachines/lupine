@@ -81,9 +81,17 @@ start_remote_server() {
     if ssh_with_timeout "
       rm -f '$server_log' '$pidfile'
       $server_environment nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null &
-      echo \$! >'$pidfile'
-      sleep 0.5
-      test -s '$pidfile'
+      pid=\$!
+      echo \$pid >'$pidfile'
+      for attempt in \$(seq 1 100); do
+        kill -0 \$pid 2>/dev/null || break
+        if ss -ltnp 'sport = :$port' | grep -q \"pid=\$pid,\"; then
+          exit 0
+        fi
+        sleep 0.1
+      done
+      cat '$server_log' >&2
+      exit 1
     "; then
       return 0
     fi
@@ -107,7 +115,11 @@ pidfile="/tmp/lupine-custom-$port.pid"
 server_log="/tmp/lupine-custom-$port.log"
 
 cleanup() {
+  local status=$?
   if [[ "${BUILD_ONLY:-0}" != "1" ]]; then
+    if [[ "$status" != "0" ]]; then
+      ssh_with_timeout "tail -n 40 '$server_log'" >&2 || true
+    fi
     stop_remote_server "$pidfile" "$server_log"
     [[ "$SERVER_UPLOAD" == "1" ]] && ssh_with_timeout "rm -f '$SERVER_REMOTE_BIN'" >/dev/null 2>&1 || true
   fi
@@ -121,7 +133,7 @@ if [[ "${BUILD_TESTS:-1}" == "1" ]]; then
   arch_arg="-arch=all"
   [[ -n "$CUDA_SAMPLES_ARCH" ]] && arch_arg="-arch=sm_$CUDA_SAMPLES_ARCH"
   "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$arch_arg" \
-    "$src" -o "$exe" -lcuda -lcublas -L"$CUDA_HOME/lib64/stubs"
+    "$src" -o "$exe" -lcuda -lcublas -ldl -L"$CUDA_HOME/lib64/stubs"
 fi
 [[ -x "$exe" ]] || { echo "missing test executable: $exe" >&2; exit 1; }
 if [[ "${BUILD_ONLY:-0}" == "1" ]]; then
