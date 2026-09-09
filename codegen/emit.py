@@ -171,13 +171,18 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
             "  conn_t *conn = connection_for_device("
             f"&{metadata.routing_parameter.name});\n"
         )
-    elif metadata.routing_kind in ("EVENT", "STREAM"):
+    elif metadata.routing_kind == "EVENT":
         if metadata.routing_parameter is None:
-            raise RuntimeError(
-                f"{name}: {metadata.routing_kind} routing requires a parameter"
-            )
+            raise RuntimeError(f"{name}: EVENT routing requires a parameter")
         f.write(
-            f"  conn_t *conn = connection_for_{metadata.routing_kind.lower()}("
+            "  conn_t *conn = connection_for_event("
+            f"{metadata.routing_parameter.name});\n"
+        )
+    elif metadata.routing_kind == "STREAM":
+        if metadata.routing_parameter is None:
+            raise RuntimeError(f"{name}: STREAM routing requires a parameter")
+        f.write(
+            "  conn_t *conn = connection_for_stream("
             f"{metadata.routing_parameter.name});\n"
         )
     elif metadata.routing_kind is None:
