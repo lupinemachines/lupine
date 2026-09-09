@@ -351,6 +351,9 @@ cudaError_t cudaDeviceSynchronize(void);
 #if CUDART_VERSION >= 12000
 /**
  * @guard CUDART_VERSION >= 12000
+ * @routingkey DEVICE device
+ * @param device SEND_ONLY
+ * @param callback SEND_ONLY
  */
 cudaError_t
 cudaDeviceUnregisterAsyncNotification(int device,
@@ -903,6 +906,9 @@ cudaError_t cudaLibraryGetGlobal(void **dptr, size_t *bytes,
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
+ * @param pKernel RECV_ONLY
+ * @param library SEND_ONLY
+ * @param name SEND_ONLY NULL_TERMINATED
  */
 cudaError_t cudaLibraryGetKernel(cudaKernel_t *pKernel, cudaLibrary_t library,
                                  const char *name);
@@ -1352,23 +1358,9 @@ cudaError_t cudaMemSetMemPool(struct cudaMemLocation *location,
                               enum cudaMemAllocationType type,
                               cudaMemPool_t memPool);
 #endif
-/**
- * @disabled local - reuse the driver's copy and completion machinery
- */
-cudaError_t cudaMemcpy(void *dst, const void *src, size_t count,
-                       enum cudaMemcpyKind kind);
-/**
- * @disabled local - reuse the driver's copy and completion machinery
- */
-cudaError_t cudaMemcpy2D(void *dst, size_t dpitch, const void *src,
-                         size_t spitch, size_t width, size_t height,
-                         enum cudaMemcpyKind kind);
-/**
- * @disabled local - reuse the driver's copy and completion machinery
- */
-cudaError_t cudaMemcpy2DAsync(void *dst, size_t dpitch, const void *src,
-                              size_t spitch, size_t width, size_t height,
-                              enum cudaMemcpyKind kind, cudaStream_t stream);
+// cudaMemcpy, cudaMemcpy2D, and cudaMemcpy2DAsync are manual client exports in
+// cudart_client.cpp. They delegate to the driver's copy machinery and have no
+// CUDART RPC handlers to generate.
 /**
  * the copy parameters carry host pointers
  */
@@ -1404,11 +1396,7 @@ cudaError_t cudaMemcpy3DWithAttributesAsync(struct cudaMemcpy3DBatchOp *op,
                                             unsigned long long flags,
                                             cudaStream_t stream);
 #endif
-/**
- * @disabled local - reuse the driver's copy and completion machinery
- */
-cudaError_t cudaMemcpyAsync(void *dst, const void *src, size_t count,
-                            enum cudaMemcpyKind kind, cudaStream_t stream);
+// cudaMemcpyAsync is another manual client export using the driver's copy path.
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
@@ -1419,42 +1407,8 @@ cudaError_t cudaMemcpyBatchAsync(void *const *dsts, const void *const *srcs,
                                  size_t *attrsIdxs, size_t numAttrs,
                                  cudaStream_t stream);
 #endif
-/**
- * @disabled local - reuse the driver's copy and completion machinery
- */
-cudaError_t cudaMemcpyFromSymbol(void *dst, const void *symbol, size_t count,
-                                 size_t offset, enum cudaMemcpyKind kind);
-/**
- * @disabled local - reuse the driver's copy and completion machinery
- */
-cudaError_t cudaMemcpyFromSymbolAsync(void *dst, const void *symbol,
-                                      size_t count, size_t offset,
-                                      enum cudaMemcpyKind kind,
-                                      cudaStream_t stream);
-/**
- * @disabled local - reuse the driver's copy and completion machinery
- */
-cudaError_t cudaMemcpyPeer(void *dst, int dstDevice, const void *src,
-                           int srcDevice, size_t count);
-/**
- * @disabled local - reuse the driver's copy and completion machinery
- */
-cudaError_t cudaMemcpyPeerAsync(void *dst, int dstDevice, const void *src,
-                                int srcDevice, size_t count,
-                                cudaStream_t stream);
-/**
- * @disabled local - reuse the driver's copy and completion machinery
- */
-cudaError_t cudaMemcpyToSymbol(const void *symbol, const void *src,
-                               size_t count, size_t offset,
-                               enum cudaMemcpyKind kind);
-/**
- * @disabled local - reuse the driver's copy and completion machinery
- */
-cudaError_t cudaMemcpyToSymbolAsync(const void *symbol, const void *src,
-                                    size_t count, size_t offset,
-                                    enum cudaMemcpyKind kind,
-                                    cudaStream_t stream);
+// cudaMemcpyFromSymbol[Async], cudaMemcpyToSymbol[Async], and
+// cudaMemcpyPeer[Async] are manual client exports in cudart_client.cpp as well.
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
@@ -2813,7 +2767,7 @@ void __cudaRegisterManagedVar(void **fatCubinHandle, void **hostVarPtrAddress,
 /**
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
- * @param deviceAddress SEND_ONLY NULL_TERMINATED
+ * @param deviceAddress SEND_ONLY
  * @param deviceName SEND_ONLY NULL_TERMINATED
  * @param dim SEND_ONLY
  * @param norm SEND_ONLY
@@ -2825,7 +2779,7 @@ void __cudaRegisterTexture(void **fatCubinHandle, const void *hostVar,
 /**
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
- * @param deviceAddress SEND_ONLY NULL_TERMINATED
+ * @param deviceAddress SEND_ONLY
  * @param deviceName SEND_ONLY NULL_TERMINATED
  * @param dim SEND_ONLY
  * @param ext SEND_ONLY
@@ -2859,27 +2813,18 @@ void __cudaRegisterUnifiedTable(void **fatCubinHandle, void *functionTable,
                                 size_t dataWindowSize);
 
 /**
- * @routingkey THREAD
  * @param gridDim SEND_ONLY
  * @param blockDim SEND_ONLY
  * @param sharedMem SEND_ONLY
  * @param stream SEND_ONLY
  */
 unsigned __cudaPushCallConfiguration(dim3 gridDim, dim3 blockDim,
-                                     size_t sharedMem, void *stream) {
-  unsigned return_value = LUPINE_GENERATED_CALL();
-  if (rpc_status != cudaSuccess) {
-    return_value = static_cast<unsigned>(rpc_status);
-  }
-  record(static_cast<cudaError_t>(return_value));
-  return return_value;
-}
+                                     size_t sharedMem, void *stream);
 /**
- * @routingkey THREAD
  * @param gridDim RECV_ONLY NULLABLE
  * @param blockDim RECV_ONLY NULLABLE
  * @param sharedMem RECV_ONLY NULLABLE
- * @param stream RECV_ONLY NULLABLE
+ * @param stream RECV_ONLY SIZE:8
  */
 cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
                                        size_t *sharedMem, void *stream);
@@ -2889,7 +2834,6 @@ cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
  */
 void __cudaRegisterFatBinaryEnd(void **fatCubinHandle);
 /**
- * @release FATBIN fatCubinHandle
  * @disabled server - releases the fatbin image owned by the manual load handler
  * @param fatCubinHandle SEND_ONLY
  */
