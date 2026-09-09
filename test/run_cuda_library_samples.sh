@@ -42,7 +42,7 @@ CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-180}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-library-samples/results/$(date +%Y%m%d-%H%M%S)}"
-nvjpeg_assets="${TMPDIR:-/tmp}/lupine-nvjpeg-assets"
+nvjpeg_assets="${NVJPEG_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg-assets}"
 
 usage() {
   cat <<EOF
@@ -123,6 +123,7 @@ build_sample() {
      CPATH="$CUDA_HOME/include${CPATH:+:$CPATH}" \
       cmake -S "$LIBRARY_SAMPLES_DIR/$sample" -B "$build" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared \
         -DCMAKE_CUDA_ARCHITECTURES="$LIBRARY_SAMPLES_ARCH" \
         -DCUDAToolkit_ROOT="$CUDA_HOME" \
         $LIBRARY_SAMPLES_CMAKE_ARGS >"$log" 2>&1 \

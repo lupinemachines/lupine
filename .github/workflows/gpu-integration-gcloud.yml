@@ -368,10 +368,12 @@ jobs:
           if [[ -f "$CUDA_SAMPLES_DIR/CMakeLists.txt" && ( -d "$CUDA_SAMPLES_DIR/cpp" || -d "$CUDA_SAMPLES_DIR/Samples" ) ]]; then
             cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" \
               -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared \
               -DENABLE_CUDA_C_LINKING_SAMPLE=1
             cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$(nproc)"
           else
-            make -C "$CUDA_SAMPLES_DIR" -j"$(nproc)" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"}
+            make -C "$CUDA_SAMPLES_DIR" -j"$(nproc)" \
+              EXTRA_NVCCFLAGS="--cudart shared" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"}
           fi
           SCRIPT
 
@@ -676,7 +678,7 @@ jobs:
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
               cmake --build "$LUPINE_BUILD_DIR" --parallel \
-                --target lupine_cuda_client lupine_nvml_client lupine_driver_server
+                --target lupine_cuda_client lupine_cudart_client lupine_nvml_client lupine_driver_server
               ln -sf libcuda.so.1 "$LUPINE_BUILD_DIR/libcuda.so"
               ln -sf libnvidia-ml.so.1 "$LUPINE_BUILD_DIR/libnvidia-ml.so"
 
@@ -685,6 +687,16 @@ jobs:
               timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
                 scp -q "${ssh_args[@]}" "$SERVER_LOCAL_BIN" \
                   "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
+
+              # The VM toolkit may differ from this lane. Runtime RPC handlers
+              # need the NVIDIA libcudart matching the headers we built with.
+              server_runtime_dir="${SERVER_REMOTE_BIN}-runtime"
+              timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+                ssh "${ssh_args[@]}" "$SERVER_SSH_TARGET" "mkdir -p $server_runtime_dir"
+              timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+                scp -q "${ssh_args[@]}" "$CUDA_LIB_DIR"/libcudart.so* \
+                  "$SERVER_SSH_TARGET:$server_runtime_dir/"
+              export SERVER_LD_LIBRARY_PATH="${SERVER_LD_LIBRARY_PATH:+$SERVER_LD_LIBRARY_PATH:}$server_runtime_dir"
 
               # This sample hard-codes GPUs {0, 1}, while the GCE lane exposes
               # one L4. Keep it enabled for two-GPU runs outside this workflow.

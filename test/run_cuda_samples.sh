@@ -555,6 +555,7 @@ if [[ "$needs_build" == "1" ]]; then
         if [[ ! -f "$sample_build_dir/CMakeCache.txt" ]]; then
           # shellcheck disable=SC2086
           cmake -S "$configure_srcdir" -B "$sample_build_dir" -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared \
             "${extra_cmake_args[@]}" $CUDA_SAMPLES_CMAKE_ARGS >>"$build_log" 2>&1
         fi
         if [[ -n "$group_dir" ]]; then
@@ -569,6 +570,7 @@ if [[ "$needs_build" == "1" ]]; then
       if [[ ! -f "$CUDA_SAMPLES_BUILD_DIR/CMakeCache.txt" ]]; then
         # shellcheck disable=SC2086
         cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared \
           -DENABLE_CUDA_C_LINKING_SAMPLE=1 $CUDA_SAMPLES_CMAKE_ARGS
       fi
       cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$JOBS"
@@ -587,10 +589,10 @@ if [[ "$needs_build" == "1" ]]; then
           echo "missing sample Makefile: $sample" >&2
           continue
         fi
-        make -C "$build_srcdir" -j"$JOBS" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"} || echo "sample build failed: $sample" >&2
+        make -C "$build_srcdir" -j"$JOBS" EXTRA_NVCCFLAGS="${EXTRA_NVCCFLAGS:-} --cudart shared" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"} || echo "sample build failed: $sample" >&2
       done
     else
-      make -C "$CUDA_SAMPLES_DIR" -j"$JOBS" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"}
+      make -C "$CUDA_SAMPLES_DIR" -j"$JOBS" EXTRA_NVCCFLAGS="${EXTRA_NVCCFLAGS:-} --cudart shared" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"}
     fi
   fi
 fi
@@ -799,7 +801,7 @@ run_sample() {
   (
     cd "$sample_cwd"
     timeout --kill-after=5s "$timeout_seconds" env \
-      LD_LIBRARY_PATH="$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
+      LD_LIBRARY_PATH="$(dirname "$LUPINE_LIB"):$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
       LUPINE_SERVER="$SERVER_HOST:$port" \
       LD_PRELOAD="$LUPINE_LIB" \
       "$sample_exe" "${sample_argv[@]}"

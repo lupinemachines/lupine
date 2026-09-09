@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build and run one custom driver-API test through the lupine client shim.
+# Build and run one custom CUDA test through the lupine client shim.
+# BUILD_ONLY=1 prepares an executable in BUILD_DIR; BUILD_TESTS=0 reuses it.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -92,7 +93,7 @@ start_remote_server() {
   return 1
 }
 
-if [[ "$SERVER_UPLOAD" == "1" ]]; then
+if [[ "$SERVER_UPLOAD" == "1" && "${BUILD_ONLY:-0}" != "1" ]]; then
   timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
     scp -q "${SSH_ARGS[@]}" "$SERVER_LOCAL_BIN" "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
 fi
@@ -106,16 +107,26 @@ pidfile="/tmp/lupine-custom-$port.pid"
 server_log="/tmp/lupine-custom-$port.log"
 
 cleanup() {
-  stop_remote_server "$pidfile" "$server_log"
-  [[ "$SERVER_UPLOAD" == "1" ]] && ssh_with_timeout "rm -f '$SERVER_REMOTE_BIN'" >/dev/null 2>&1 || true
-  [[ "$owns_build_dir" == "1" ]] && rm -rf "$BUILD_DIR"
+  if [[ "${BUILD_ONLY:-0}" != "1" ]]; then
+    stop_remote_server "$pidfile" "$server_log"
+    [[ "$SERVER_UPLOAD" == "1" ]] && ssh_with_timeout "rm -f '$SERVER_REMOTE_BIN'" >/dev/null 2>&1 || true
+  fi
+  if [[ "$owns_build_dir" == "1" ]]; then
+    rm -rf "$BUILD_DIR"
+  fi
 }
 trap cleanup EXIT
 
-arch_arg="-arch=all"
-[[ -n "$CUDA_SAMPLES_ARCH" ]] && arch_arg="-arch=sm_$CUDA_SAMPLES_ARCH"
-"$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$arch_arg" \
-  "$src" -o "$exe" -lcuda -lcublas -L"$CUDA_HOME/lib64/stubs"
+if [[ "${BUILD_TESTS:-1}" == "1" ]]; then
+  arch_arg="-arch=all"
+  [[ -n "$CUDA_SAMPLES_ARCH" ]] && arch_arg="-arch=sm_$CUDA_SAMPLES_ARCH"
+  "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$arch_arg" \
+    "$src" -o "$exe" -lcuda -lcublas -L"$CUDA_HOME/lib64/stubs"
+fi
+[[ -x "$exe" ]] || { echo "missing test executable: $exe" >&2; exit 1; }
+if [[ "${BUILD_ONLY:-0}" == "1" ]]; then
+  exit 0
+fi
 
 start_remote_server "$pidfile" "$server_log" "$port"
 env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
