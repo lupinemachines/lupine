@@ -2,7 +2,7 @@ Codegen works via a human-in-the-loop system. It's quite challenging to build a 
 infer what parameters should be sent and received so we instead have a two-step process.
 
 First, `annotationgen.py` reads an SDK header such as `cuda.h` or `nvml.h` and copies its function signatures
-into that target's annotation file (`annotations_cuda.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per
+into that target's annotation file (`annotations_cuda.h`, `annotations_cudart.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per
 shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
 have significant meanings.
 

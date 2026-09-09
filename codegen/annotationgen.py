@@ -14,6 +14,7 @@ from codegen import ANNOTATION_FILES, find_header_file
 # The SDK header whose declarations seed each target's annotation file.
 TARGET_HEADERS = {
     "cuda": "cuda.h",
+    "cudart": "cuda_runtime_api.h",
     "nvml": "nvml.h",
     "hip": "hip_runtime_api.h",
 }
