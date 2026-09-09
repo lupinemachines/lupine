@@ -390,6 +390,7 @@
   HANDLER(RPC_cudaLaunchCooperativeKernel, handle_cudaLaunchCooperativeKernel, rpc_backend::cudart) \
   HANDLER(RPC_cudaLaunchKernel, handle_cudaLaunchKernel, rpc_backend::cudart) \
   HANDLER(RPC_cudaLaunchKernelExC, handle_cudaLaunchKernelExC, rpc_backend::cudart) \
+  HANDLER(RPC___cudaUnregisterFatBinary, handle___cudaUnregisterFatBinary, rpc_backend::cudart) \
   HANDLER(RPC___cudaRegisterFatBinary, handle___cudaRegisterFatBinary, rpc_backend::cudart) \
   HANDLER(RPC_lupineCudartFuncParamLayout, handle_lupineCudartFuncParamLayout, rpc_backend::cudart) \
   HANDLER(RPC_cudaArrayGetInfo, handle_cudaArrayGetInfo, rpc_backend::cudart) \
@@ -426,10 +427,16 @@
   HANDLER(RPC_cudaDeviceSetGraphMemAttribute, handle_cudaDeviceSetGraphMemAttribute, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceSetLimit, handle_cudaDeviceSetLimit, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceSetMemPool, handle_cudaDeviceSetMemPool, rpc_backend::cudart) \
+  HANDLER(RPC_cudaDeviceSynchronize, handle_cudaDeviceSynchronize, rpc_backend::cudart) \
   HANDLER(RPC_cudaDriverGetVersion, handle_cudaDriverGetVersion, rpc_backend::cudart) \
   HANDLER(RPC_cudaEventCreate, handle_cudaEventCreate, rpc_backend::cudart) \
   HANDLER(RPC_cudaEventCreateWithFlags, handle_cudaEventCreateWithFlags, rpc_backend::cudart) \
+  HANDLER(RPC_cudaEventDestroy, handle_cudaEventDestroy, rpc_backend::cudart) \
   HANDLER(RPC_cudaEventElapsedTime, handle_cudaEventElapsedTime, rpc_backend::cudart) \
+  HANDLER(RPC_cudaEventQuery, handle_cudaEventQuery, rpc_backend::cudart) \
+  HANDLER(RPC_cudaEventRecord, handle_cudaEventRecord, rpc_backend::cudart) \
+  HANDLER(RPC_cudaEventRecordWithFlags, handle_cudaEventRecordWithFlags, rpc_backend::cudart) \
+  HANDLER(RPC_cudaEventSynchronize, handle_cudaEventSynchronize, rpc_backend::cudart) \
   HANDLER(RPC_cudaExternalMemoryGetMappedBuffer, handle_cudaExternalMemoryGetMappedBuffer, rpc_backend::cudart) \
   HANDLER(RPC_cudaExternalMemoryGetMappedMipmappedArray, handle_cudaExternalMemoryGetMappedMipmappedArray, rpc_backend::cudart) \
   HANDLER(RPC_cudaFree, handle_cudaFree, rpc_backend::cudart) \
@@ -509,7 +516,9 @@
   HANDLER(RPC_cudaStreamGetFlags, handle_cudaStreamGetFlags, rpc_backend::cudart) \
   HANDLER(RPC_cudaStreamGetPriority, handle_cudaStreamGetPriority, rpc_backend::cudart) \
   HANDLER(RPC_cudaStreamIsCapturing, handle_cudaStreamIsCapturing, rpc_backend::cudart) \
+  HANDLER(RPC_cudaStreamQuery, handle_cudaStreamQuery, rpc_backend::cudart) \
   HANDLER(RPC_cudaStreamSetAttribute, handle_cudaStreamSetAttribute, rpc_backend::cudart) \
+  HANDLER(RPC_cudaStreamSynchronize, handle_cudaStreamSynchronize, rpc_backend::cudart) \
   HANDLER(RPC_cudaStreamWaitEvent, handle_cudaStreamWaitEvent, rpc_backend::cudart) \
   HANDLER(RPC_cudaThreadExchangeStreamCaptureMode, handle_cudaThreadExchangeStreamCaptureMode, rpc_backend::cudart) \
   HANDLER(RPC_cudaUserObjectRelease, handle_cudaUserObjectRelease, rpc_backend::cudart) \
@@ -569,7 +578,6 @@
   HANDLER(RPC___cudaPushCallConfiguration, handle___cudaPushCallConfiguration, rpc_backend::cudart) \
   HANDLER(RPC___cudaPopCallConfiguration, handle___cudaPopCallConfiguration, rpc_backend::cudart) \
   HANDLER(RPC___cudaRegisterFatBinaryEnd, handle___cudaRegisterFatBinaryEnd, rpc_backend::cudart) \
-  HANDLER(RPC___cudaUnregisterFatBinary, handle___cudaUnregisterFatBinary, rpc_backend::cudart) \
   HANDLER(RPC___cudaInitModule, handle___cudaInitModule, rpc_backend::cudart)
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \

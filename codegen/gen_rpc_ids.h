@@ -528,10 +528,16 @@
 #define RPC_cudaDeviceSetGraphMemAttribute 523316384
 #define RPC_cudaDeviceSetLimit 18590164
 #define RPC_cudaDeviceSetMemPool 1627644637
+#define RPC_cudaDeviceSynchronize 1867931365
 #define RPC_cudaDriverGetVersion 82381294
 #define RPC_cudaEventCreate 967043004
 #define RPC_cudaEventCreateWithFlags 1032577866
+#define RPC_cudaEventDestroy 340010831
 #define RPC_cudaEventElapsedTime 1994332623
+#define RPC_cudaEventQuery 932696020
+#define RPC_cudaEventRecord 759273686
+#define RPC_cudaEventRecordWithFlags 231644415
+#define RPC_cudaEventSynchronize 1247409063
 #define RPC_cudaExecutionCtxDestroy 1022982386
 #define RPC_cudaExecutionCtxGetDevResource 8201334
 #define RPC_cudaExecutionCtxGetDevice 1361185941
@@ -643,7 +649,9 @@
 #define RPC_cudaStreamGetId 140374925
 #define RPC_cudaStreamGetPriority 2111881543
 #define RPC_cudaStreamIsCapturing 1320463841
+#define RPC_cudaStreamQuery 1974766742
 #define RPC_cudaStreamSetAttribute 952704573
+#define RPC_cudaStreamSynchronize 1443046183
 #define RPC_cudaStreamUpdateCaptureDependencies 634516084
 #define RPC_cudaStreamWaitEvent 589034173
 #define RPC_cudaThreadExchangeStreamCaptureMode 1752720635

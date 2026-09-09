@@ -88,18 +88,13 @@ int rpc_read_end(conn_t *conn) { return lupine_rpc_read_end(conn); }
 // binding on the caller's lane.
 thread_local int current_device = 0;
 
-// Every server that holds a virtual device, once each.
+// Registration must reach every configured server before device discovery.
 std::vector<conn_t *> all_connections() {
   std::vector<conn_t *> connections;
-  int count = 0;
-  if (lupine_rpc_device_count(&count) < 0) {
-    return connections;
-  }
-  for (int device = 0; device < count; ++device) {
-    int remote_device = device;
-    conn_t *conn = lupine_rpc_conn_for_device(&remote_device);
-    if (conn != nullptr && std::find(connections.begin(), connections.end(),
-                                     conn) == connections.end()) {
+  const int count = lupine_rpc_connection_count();
+  for (int index = 0; index < count; ++index) {
+    conn_t *conn = lupine_rpc_conn_for_index(static_cast<unsigned int>(index));
+    if (conn != nullptr) {
       connections.push_back(conn);
     }
   }
@@ -153,14 +148,36 @@ extern "C" cudaError_t cudaGetDeviceCount(int *count) {
   if (count == nullptr) {
     return record(cudaErrorInvalidValue);
   }
-  return lupine_rpc_device_count(count) < 0 ? record(rpc_error()) : cudaSuccess;
+  const auto connections = all_connections();
+  if (connections.empty()) {
+    return record(rpc_error());
+  }
+  int total = 0;
+  for (conn_t *conn : connections) {
+    int remote_count = 0;
+    cudaError_t result = lupine_rpc_cudaGetDeviceCount(conn, &remote_count);
+    if (result != cudaSuccess) {
+      return record(result);
+    }
+    total += remote_count;
+  }
+  *count = total;
+  lupine_rpc_note_runtime_initialized();
+  return cudaSuccess;
 }
 
 extern "C" cudaError_t cudaGetDevice(int *device) {
   if (device == nullptr) {
     return record(cudaErrorInvalidValue);
   }
-  *device = current_device;
+  int route_device = current_device;
+  conn_t *conn = lupine_rpc_conn_for_device(&route_device);
+  int remote_device = 0;
+  cudaError_t result = lupine_rpc_cudaGetDevice(conn, &remote_device);
+  if (result != cudaSuccess) {
+    return record(result);
+  }
+  *device = current_device - route_device + remote_device;
   return cudaSuccess;
 }
 
@@ -175,11 +192,6 @@ extern "C" cudaError_t cudaSetDevice(int device) {
     return record(result);
   }
   current_device = device;
-  // Keep driver calls mixed with runtime calls on the same context and route.
-  CUcontext context = nullptr;
-  if (cuDevicePrimaryCtxRetain(&context, device) == CUDA_SUCCESS) {
-    (void)cuCtxSetCurrent(context);
-  }
   return cudaSuccess;
 }
 

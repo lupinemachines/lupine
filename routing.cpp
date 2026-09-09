@@ -6,10 +6,12 @@
 #include <vector>
 
 #include <cuda.h>
+#include <cuda_runtime_api.h>
 
 #include "cache.h"
 #include "client_routing.h"
 #include "codegen/gen_rpc_ids.h"
+#include "cuda_client_rpc.h"
 #include "events.h"
 
 extern int rpc_open();
@@ -329,8 +331,37 @@ lupine_lookup_device_on_all_routes_impl(CUdevice *device, void *context,
   return first_error;
 }
 
+static cudaError_t lupine_remote_cudaGetDeviceCount(conn_t *conn, int *count) {
+  cudaError_t result = cudaErrorDevicesUnavailable;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cudaGetDeviceCount) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, count, sizeof(*count)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return cudaErrorDevicesUnavailable;
+  }
+  return result;
+}
+
 extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device) {
-  return lupine_route_remote_conn(lupine_route_for_device(device));
+  if (device == nullptr || *device < 0 || rpc_open() != 0) {
+    return nullptr;
+  }
+  int ordinal = *device;
+  for (int index = 0; index < rpc_size(); ++index) {
+    conn_t *conn = rpc_client_get_connection(static_cast<unsigned int>(index));
+    int count = 0;
+    if (lupine_remote_cudaGetDeviceCount(conn, &count) != cudaSuccess) {
+      return nullptr;
+    }
+    lupine_rpc_note_runtime_initialized();
+    if (ordinal < count) {
+      *device = ordinal;
+      return conn;
+    }
+    ordinal -= count;
+  }
+  return nullptr;
 }
 
 extern "C" lupine_route lupine_route_for_device(CUdevice *device) {

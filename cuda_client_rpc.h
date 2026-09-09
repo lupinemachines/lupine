@@ -15,9 +15,12 @@ extern "C" {
 
 typedef struct conn_t conn_t;
 
-int lupine_rpc_device_count(int *count);
+// Configured transports are available before CUDA device discovery.
+int lupine_rpc_connection_count();
+conn_t *lupine_rpc_conn_for_index(unsigned int index);
+void lupine_rpc_note_runtime_initialized();
 // Maps a virtual device ordinal to its connection and rewrites it to the
-// server's ordinal.
+// server's ordinal. Runtime routes discover devices using cudaGetDeviceCount.
 conn_t *lupine_rpc_conn_for_device(int *device);
 // The connection a handle was created on. Handles created through a sibling
 // shim are registered with the note calls below, so both shims route by the

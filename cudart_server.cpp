@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <deque>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -134,17 +133,10 @@ int handle_cudaFuncGetName(conn_t *conn) {
 
 namespace {
 
-// The runtime keeps pointers into what nvcc's startup code hands it, for as
-// long as the fatbin stays registered: the wrapper, the image, and the
-// symbol names. So does this.
+// The manual fatbin loader owns the wrapper and image until unregistration.
 struct fatbin_registration {
   lupine_fatbin_wrapper wrapper = {};
   std::vector<unsigned char> image;
-  std::deque<std::string> strings;
-  std::deque<void *> managed_slots;
-  std::deque<uint3> indices;
-  std::deque<dim3> dimensions;
-  std::deque<int> warp_sizes;
 };
 
 std::mutex &registry_mutex() {
@@ -157,44 +149,8 @@ std::unordered_map<void **, fatbin_registration *> &registrations() {
   return *map;
 }
 
-// registry_mutex() must be held.
-fatbin_registration *registration_for(void **handle) {
-  auto entry = registrations().find(handle);
-  return entry == registrations().end() ? nullptr : entry->second;
-}
-
-// Keeps a string for the registration's lifetime and hands out its address.
-char *retain(fatbin_registration *registration, const char *text) {
-  if (registration == nullptr || text == nullptr) {
-    return nullptr;
-  }
-  registration->strings.emplace_back(text);
-  return &registration->strings.back()[0];
-}
-
 typedef void **(*register_fat_binary_fn)(void *);
-typedef void (*register_fat_binary_end_fn)(void **);
 typedef void (*unregister_fat_binary_fn)(void **);
-typedef void (*register_function_fn)(void **, const char *, char *,
-                                     const char *, int, uint3 *, uint3 *,
-                                     dim3 *, dim3 *, int *);
-typedef void (*register_var_fn)(void **, char *, char *, const char *, int,
-                                size_t, int, int);
-typedef void (*register_managed_var_fn)(void **, void **, char *, const char *,
-                                        int, size_t, int, int);
-typedef void (*register_texture_fn)(void **, const void *, const void **,
-                                    const char *, int, int, int);
-typedef void (*register_surface_fn)(void **, const void *, const void **,
-                                    const char *, int, int);
-typedef void (*register_host_var_fn)(void **, const char *, char *, size_t);
-
-template <typename T> T *retain(std::deque<T> &values, const T *value) {
-  if (value == nullptr) {
-    return nullptr;
-  }
-  values.push_back(*value);
-  return &values.back();
-}
 
 } // namespace
 
@@ -235,142 +191,30 @@ int handle___cudaRegisterFatBinary(conn_t *conn) {
   return 0;
 }
 
-namespace {
-
-// The generated handlers own transport. These adapters keep storage that the
-// runtime retains after a registration RPC returns.
-cudaError_t unregister_fat_binary(void **handle) {
-  auto fn =
-      cudart_symbol<unregister_fat_binary_fn>("__cudaUnregisterFatBinary");
+int handle___cudaUnregisterFatBinary(conn_t *conn) {
+  void **handle = nullptr;
+  if (rpc_read(conn, &handle, sizeof(handle)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  auto fn = cudart_symbol<unregister_fat_binary_fn>("__cudaUnregisterFatBinary");
   if (fn == nullptr) {
-    return function_not_found();
+    return write_result(conn, request_id, function_not_found());
   }
   fn(handle);
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto entry = registrations().find(handle);
-  if (entry != registrations().end()) {
-    delete entry->second;
-    registrations().erase(entry);
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex());
+    auto entry = registrations().find(handle);
+    if (entry != registrations().end()) {
+      delete entry->second;
+      registrations().erase(entry);
+    }
   }
-  return cudaSuccess;
+  return write_result(conn, request_id, cudaSuccess);
 }
-
-cudaError_t register_function(void **handle, const char *hostFun,
-                              char *deviceFun, const char *deviceName,
-                              int thread_limit, uint3 *tid, uint3 *bid,
-                              dim3 *bDim, dim3 *gDim, int *wSize) {
-  auto fn = cudart_symbol<register_function_fn>("__cudaRegisterFunction");
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto *registration = registration_for(handle);
-  if (fn == nullptr) {
-    return function_not_found();
-  }
-  if (registration == nullptr) {
-    return cudaErrorInvalidValue;
-  }
-  fn(handle, hostFun, retain(registration, deviceFun),
-     retain(registration, deviceName), thread_limit,
-     retain(registration->indices, tid), retain(registration->indices, bid),
-     retain(registration->dimensions, bDim),
-     retain(registration->dimensions, gDim),
-     retain(registration->warp_sizes, wSize));
-  return cudaSuccess;
-}
-
-cudaError_t register_var(void **handle, char *hostVar, char *deviceAddress,
-                         const char *deviceName, int ext, size_t size,
-                         int constant, int global) {
-  auto fn = cudart_symbol<register_var_fn>("__cudaRegisterVar");
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto *registration = registration_for(handle);
-  if (fn == nullptr) {
-    return function_not_found();
-  }
-  if (registration == nullptr) {
-    return cudaErrorInvalidValue;
-  }
-  fn(handle, hostVar, retain(registration, deviceAddress),
-     retain(registration, deviceName), ext, size, constant, global);
-  return cudaSuccess;
-}
-
-// The runtime writes to this slot, so it must remain server-owned. This does
-// not make managed globals directly host-addressable on the client.
-cudaError_t register_managed_var(void **handle, void **hostVarPtrAddress,
-                                 char *deviceAddress, const char *deviceName,
-                                 int ext, size_t size, int constant,
-                                 int global) {
-  (void)hostVarPtrAddress;
-  auto fn = cudart_symbol<register_managed_var_fn>("__cudaRegisterManagedVar");
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto *registration = registration_for(handle);
-  if (fn == nullptr) {
-    return function_not_found();
-  }
-  if (registration == nullptr) {
-    return cudaErrorInvalidValue;
-  }
-  registration->managed_slots.push_back(nullptr);
-  fn(handle, &registration->managed_slots.back(),
-     retain(registration, deviceAddress), retain(registration, deviceName), ext,
-     size, constant, global);
-  return cudaSuccess;
-}
-
-cudaError_t register_texture(void **handle, const void *hostVar,
-                             const void **deviceAddress, const char *deviceName,
-                             int dim, int norm, int ext) {
-  auto fn = cudart_symbol<register_texture_fn>("__cudaRegisterTexture");
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto *registration = registration_for(handle);
-  if (fn == nullptr) {
-    return function_not_found();
-  }
-  if (registration == nullptr) {
-    return cudaErrorInvalidValue;
-  }
-  fn(handle, hostVar,
-     reinterpret_cast<const void **>(
-         retain(registration, reinterpret_cast<const char *>(deviceAddress))),
-     retain(registration, deviceName), dim, norm, ext);
-  return cudaSuccess;
-}
-
-cudaError_t register_surface(void **handle, const void *hostVar,
-                             const void **deviceAddress, const char *deviceName,
-                             int dim, int ext) {
-  auto fn = cudart_symbol<register_surface_fn>("__cudaRegisterSurface");
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto *registration = registration_for(handle);
-  if (fn == nullptr) {
-    return function_not_found();
-  }
-  if (registration == nullptr) {
-    return cudaErrorInvalidValue;
-  }
-  fn(handle, hostVar,
-     reinterpret_cast<const void **>(
-         retain(registration, reinterpret_cast<const char *>(deviceAddress))),
-     retain(registration, deviceName), dim, ext);
-  return cudaSuccess;
-}
-
-cudaError_t register_host_var(void **handle, const char *deviceName,
-                              char *hostVar, size_t size) {
-  auto fn = cudart_symbol<register_host_var_fn>("__cudaRegisterHostVar");
-  std::lock_guard<std::mutex> lock(registry_mutex());
-  auto *registration = registration_for(handle);
-  if (fn == nullptr) {
-    return function_not_found();
-  }
-  if (registration == nullptr) {
-    return cudaErrorInvalidValue;
-  }
-  fn(handle, retain(registration, deviceName), hostVar, size);
-  return cudaSuccess;
-}
-
-} // namespace
 
 // ---------------------------------------------------------------------------
 // Kernel launches

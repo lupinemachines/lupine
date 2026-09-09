@@ -5548,7 +5548,7 @@ static CUresult lupine_graph_mem_attribute_rpc(CUdevice device,
     return CUDA_ERROR_INVALID_VALUE;
   }
 
-  conn_t *conn = lupine_rpc_conn_for_device(&device);
+  conn_t *conn = lupine_route_remote_conn(lupine_route_for_device(&device));
   CUresult result = CUDA_ERROR_UNKNOWN;
   int op =
       set ? RPC_cuDeviceSetGraphMemAttribute : RPC_cuDeviceGetGraphMemAttribute;
@@ -8492,8 +8492,18 @@ close_connection:
   return nullptr;
 }
 
-extern "C" int lupine_rpc_device_count(int *count) {
-  return lupine_virtual_device_count(count) == CUDA_SUCCESS ? 0 : -1;
+extern "C" int lupine_rpc_connection_count() {
+  return rpc_open() == 0 ? rpc_size() : -1;
+}
+
+extern "C" conn_t *lupine_rpc_conn_for_index(unsigned int index) {
+  return rpc_client_get_connection(index);
+}
+
+extern "C" void lupine_rpc_note_runtime_initialized() {
+  // Mirror initialization performed by the real server runtime for driver
+  // entry points answered locally. Do not issue another initialization call.
+  lupine_cuda_initialized.store(true, std::memory_order_release);
 }
 
 extern "C" int lupine_rpc_write_start_request(conn_t *conn, int op) {
