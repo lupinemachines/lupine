@@ -962,6 +962,7 @@ def collect_backend_functions(
     names=None,
     server_bindings: dict[str, ServerBinding] = {},
     string_length_type: str = None,
+    client_call_templates: dict[str, ClientCallTemplate] = None,
 ):
     """Calls in the order named, or every call the annotation file declares."""
     by_name = {
@@ -976,6 +977,8 @@ def collect_backend_functions(
         if function is None:
             raise RuntimeError(f"Annotation for {name} not found")
         metadata = parse_annotation(function.doxygen, function.parameters)
+        if client_call_templates is not None:
+            attach_client_call_template(function, metadata, client_call_templates)
         if string_length_type is not None:
             for operation in metadata.operations:
                 if isinstance(operation, NullTerminatedOperation):
@@ -1564,14 +1567,18 @@ def main():
             ]
         )
     )
-    definition_return_types = {
-        function.name.format(): function.return_type.format()
-        for function in cuda_annotations.namespace.functions
-        if function.has_body
+    client_call_templates_by_target = {
+        target: collect_client_call_templates(
+            ANNOTATION_FILES[target],
+            {
+                function.name.format(): function.return_type.format()
+                for function in parsed.namespace.functions
+                if function.has_body
+            },
+        )
+        for target, parsed in annotations_by_target.items()
     }
-    client_call_templates = collect_client_call_templates(
-        ANNOTATION_FILES["cuda"], definition_return_types
-    )
+    client_call_templates = client_call_templates_by_target["cuda"]
     server_bindings = {}
     # A handler belongs to the backend whose annotation file declares it.
     for target, path in ANNOTATION_FILES.items():
@@ -1698,9 +1705,11 @@ def main():
         server_bindings,
         # NVML's protocol predates the size_t string lengths CUDA RPC uses.
         string_length_type="unsigned int",
+        client_call_templates=client_call_templates_by_target["nvml"],
     )
     hip_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["hip"]
+        annotations_by_target["hip"],
+        client_call_templates=client_call_templates_by_target["hip"],
     )
 
     annotated_names = sorted(

@@ -6,12 +6,15 @@ nothing here asks which one it is writing.
 """
 
 from dataclasses import dataclass
+import textwrap
 
 from cxxheaderparser.types import Function, Parameter, Pointer
 
 from ops import (
     ArrayOperation,
     DereferenceOperation,
+    InOutCountOperation,
+    NullableArrayOperation,
     NullableOperation,
     NullTerminatedOperation,
 )
@@ -111,7 +114,9 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
         initial_value = "rpc_error()" if result == backend.result else "{}"
         f.write(f"  {result} return_value = {initial_value};\n")
     for operation in operations:
-        if isinstance(operation, NullTerminatedOperation):
+        if isinstance(operation, (InOutCountOperation, NullableArrayOperation)):
+            f.write(operation.client_declaration())
+        elif isinstance(operation, NullTerminatedOperation):
             f.write(
                 f"  {operation.length_type} {operation.parameter.name}_len = static_cast<{operation.length_type}>(std::strlen({operation.parameter.name}) + 1);\n"
             )
@@ -155,6 +160,8 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
     write_client_validation(f, backend, function, operations)
 
     call_args = format_call_args(function)
+    suffix = f", {', '.join(call_args)}" if call_args else ""
+    call = f"lupine_rpc_{name}(conn{suffix})"
     if metadata.routing_kind == "ALL" and backend.lookup_on_all_connections:
         owners = [
             owner
@@ -170,16 +177,13 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
         lambda_args = [
             "remote_device" if arg == output_name else arg for arg in call_args
         ]
-        f.write(
-            f"  return lookup_device_on_all_connections({output_name},\n"
+        call = (
+            f"lookup_device_on_all_connections({output_name},\n"
             "      [&](conn_t *conn, nvmlDevice_t *remote_device) {\n"
             f"        return lupine_rpc_{name}(conn, {', '.join(lambda_args)});\n"
-            "      });\n"
+            "      })"
         )
-        f.write("}\n\n")
-        return
-
-    if metadata.routing_kind == backend.device_routing_kind:
+    elif metadata.routing_kind == backend.device_routing_kind:
         if metadata.routing_parameter is None:
             raise RuntimeError(
                 f"{name}: {metadata.routing_kind} routing requires a parameter"
@@ -206,8 +210,14 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
         f.write("  conn_t *conn = connection();\n")
     else:
         raise RuntimeError(f"{name}: unsupported routing key {metadata.routing_kind}")
-    suffix = f", {', '.join(call_args)}" if call_args else ""
-    f.write(f"  return lupine_rpc_{name}(conn{suffix});\n")
+    template = metadata.client_call_template
+    if template is not None:
+        f.write(textwrap.indent(template.before_call, "  "))
+        f.write(f"  {result} return_value = {call};\n")
+        f.write(textwrap.indent(template.after_call, "  "))
+        f.write("  return return_value;\n")
+    else:
+        f.write(f"  return {call};\n")
     f.write("}\n\n")
 
 
