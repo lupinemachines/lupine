@@ -1537,11 +1537,23 @@ static CUresult lupine_enqueue_client_htod_copy(lupine_staging_state &state,
 static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
                                                   bool blocking,
                                                   lupine_htod_copy copy) {
+  // CUDA allows the copy stream to belong to a different context from the
+  // caller's current one. The staging stream and its ordering events must be
+  // created in that stream's context, then leave the caller's binding intact.
+  CUcontext stream_context = nullptr;
+  CUresult result = cuStreamGetCtx(stream, &stream_context);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  result = cuCtxPushCurrent_v2(stream_context);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+
   lupine_staging_state *state = nullptr;
   CUcontext context = nullptr;
   CUdevice device = 0;
-  CUresult result =
-      lupine_current_htod_context(conn, &state, &context, &device);
+  result = lupine_current_htod_context(conn, &state, &context, &device);
   lupine_staging_operation operation(result == CUDA_SUCCESS ? state : nullptr,
                                      context, device);
   if (result == CUDA_SUCCESS && !operation.acquired()) {
@@ -1552,7 +1564,9 @@ static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
     result = lupine_enqueue_client_htod_copy(*state, std::move(copy), context,
                                              stream, blocking);
   }
-  return result;
+  CUcontext popped = nullptr;
+  CUresult restore = cuCtxPopCurrent_v2(&popped);
+  return result == CUDA_SUCCESS ? restore : result;
 }
 
 static lupine_htod_copy lupine_make_linear_htod_copy(CUdeviceptr destination,
