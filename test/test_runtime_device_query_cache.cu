@@ -1,13 +1,14 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
 
 #ifndef _WIN32
-#include "../cuda_client_rpc.h"
 #include <dlfcn.h>
+struct conn_t;
 #endif
 
 static void require(bool condition, const char *message) {
