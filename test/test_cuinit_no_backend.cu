@@ -2,8 +2,16 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 int main() {
+  const char *variant = std::getenv("LUPINE_TEST_VARIANT");
+  if (variant != nullptr && std::strcmp(variant, "driver-runtime") == 0) {
+    std::printf("SKIP: the runtime shim opens the configured backend before "
+                "main\n");
+    return 0;
+  }
+
   unsetenv("LUPINE_SERVER");
   CUresult result = cuInit(0);
 
