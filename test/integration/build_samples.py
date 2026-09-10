@@ -2,6 +2,7 @@
 """Build the pinned multi-GPU samples inside the native CUDA build container."""
 
 from pathlib import Path
+import platform
 import shutil
 import subprocess
 
@@ -9,6 +10,9 @@ from validate_specs import SAMPLE_SPEC, SAMPLES
 
 
 def main():
+    if platform.machine() not in SAMPLE_SPEC["architectures"]:
+        print("No upstream multi-GPU samples supported on this architecture")
+        return
     source = Path("/cuda-samples")
     subprocess.run(["git", "clone", "--filter=blob:none", "--no-checkout", "--depth=1", "--branch=v12.4.1",
                     "https://github.com/NVIDIA/cuda-samples.git", str(source)], check=True)

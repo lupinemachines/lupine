@@ -1,6 +1,9 @@
 # Pinned CUDA 12.4.1 samples. They run through the driver shim with the upstream
 # CUDA runtime, exactly as the existing driver-only compliance suite does.
 revision: 5f97d7d0dff880bc6567faa4c5e62e389a6d6999
+# This pinned set's upstream Makefiles waive SBSA/ARM builds. ARM clients run
+# the portable driver workloads; reject unsupported sample selections early.
+architectures: [x86_64]
 samples:
   simpleP2P:
     source: 0_Introduction/simpleP2P

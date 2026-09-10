@@ -68,8 +68,13 @@ def load_specs(topologies=ROOT / "topologies.yaml", runs=ROOT / "runs.yaml"):
                 raise ValueError(f"{name}: unknown topology {topology}")
             if not modes or len(modes) != len(set(modes)) or any(mode not in WORKLOADS for mode in modes):
                 raise ValueError(f"{name}/{topology}: select nonempty, unique workload modes from {WORKLOADS}")
-            if any(mode.startswith("sample:") for mode in modes) and len(matrix["topologies"][topology]["expect_devices"]) < 2:
-                raise ValueError(f"{name}/{topology}: multi-GPU samples need at least two devices")
+            if any(mode.startswith("sample:") for mode in modes):
+                layout = matrix["topologies"][topology]
+                if len(layout["expect_devices"]) < 2:
+                    raise ValueError(f"{name}/{topology}: multi-GPU samples need at least two devices")
+                client_platform = selections["platforms"][run["hosts"][layout["client"]["host"]]]
+                if client_platform["arch"] not in SAMPLE_SPEC["architectures"]:
+                    raise ValueError(f"{name}/{topology}: upstream sample builds do not support this architecture")
     return matrix, selections
 
 

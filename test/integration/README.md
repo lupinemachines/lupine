@@ -95,6 +95,9 @@ and timeouts. Select a sample with, for example, `sample:simpleMultiGPU` in
 one-server, split-server and mixed local/remote two-GPU layouts. Each has native
 controls on both GPU hosts. These run the unmodified upstream CUDA runtime
 samples over Lupine's driver shim; they do not test the separate CUDART proxy.
+The pinned multi-GPU sample set is enabled on x86_64; its upstream Makefiles
+waive ARM/SBSA builds. ARM clients retain the portable driver kernel smoke cases,
+and unsupported sample/architecture selections fail validation.
 
 Samples get a UUID preflight under the same environment and the driver guard
 runs inside the actual sample executable. The two direct-peer samples may exit

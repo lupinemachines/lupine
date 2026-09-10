@@ -81,6 +81,10 @@ class SelectionTests(unittest.TestCase):
             lambda spec: spec["runs"]["regression"]["cases"].update({"remote-single": []}),
             lambda spec: spec["runs"]["regression"]["hosts"].update({"a": "ubuntu-2404-arm64"}),
             lambda spec: spec["platforms"]["ubuntu-2404-x86_64"].update({"os": "windows"}),
+            lambda spec: spec["runs"]["arm64-client"]["cases"].update(
+                {"remote-two-servers-different-hosts": ["sample:simpleP2P"]}),
+            lambda spec: spec["runs"]["regression"]["cases"].update(
+                {"remote-single": ["sample:simpleP2P"]}),
         ]
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "runs.yaml"

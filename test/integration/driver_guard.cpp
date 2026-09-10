@@ -9,8 +9,8 @@
 #include <cstdlib>
 
 static bool same_file(const char *left, const char *right) {
-  struct stat a {
-  }, b{};
+  struct stat a {};
+  struct stat b {};
   return left && right && stat(left, &a) == 0 && stat(right, &b) == 0 &&
          a.st_dev == b.st_dev && a.st_ino == b.st_ino;
 }
