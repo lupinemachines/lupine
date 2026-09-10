@@ -762,21 +762,10 @@ extern "C" void lupine_remember_loaded_module_for_rpc(CUmodule module) {
   lupine_remember_loaded_module(module);
 }
 
-static bool lupine_env_enabled(const char *name) {
-  const char *value = getenv(name);
-  if (value == nullptr || strcmp(value, "0") == 0) {
-    return false;
-  }
-  return strcasecmp(value, "false") != 0 && strcasecmp(value, "no") != 0;
-}
-
 static void *lupine_local_libcuda_handle() {
   static std::once_flag once;
   static void *handle = nullptr;
   std::call_once(once, []() {
-    if (lupine_env_enabled("LUPINE_DISABLE_LOCAL")) {
-      return;
-    }
     const char *override_path = getenv("LUPINE_REAL_LIBCUDA");
 #if defined(_WIN32)
     if (override_path != nullptr && override_path[0] != '\0') {

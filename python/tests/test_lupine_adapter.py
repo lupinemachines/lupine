@@ -121,26 +121,17 @@ def test_load_missing_ok_without_libs(monkeypatch, tmp_path):
         _native.load(missing_ok=False)
 
 
-def test_load_does_not_set_disable_local(monkeypatch, tmp_path):
+def test_loads_native_libraries(monkeypatch, tmp_path):
     libdir = tmp_path / "libs"
     libdir.mkdir()
     for name in _native._LIBS[sys.platform]:
         (libdir / name).write_bytes(b"")
 
-    seen_env = []
-
-    class FakeCDLL:
-        def __init__(self, path, mode=None):
-            seen_env.append(os.environ.get("LUPINE_DISABLE_LOCAL"))
-
     monkeypatch.setenv("LUPINE_LIBDIR", str(libdir))
-    monkeypatch.delenv("LUPINE_DISABLE_LOCAL", raising=False)
     monkeypatch.delenv("TRITON_LIBCUDA_PATH", raising=False)
-    monkeypatch.setattr(_native.ctypes, "CDLL", FakeCDLL)
+    monkeypatch.setattr(_native.ctypes, "CDLL", lambda path, mode=None: None)
     result = _native.load(missing_ok=False)
     assert len(result) == len(_native._LIBS[sys.platform])
-    assert seen_env == [None] * len(_native._LIBS[sys.platform])
-    assert "LUPINE_DISABLE_LOCAL" not in os.environ
     if sys.platform in ("linux", "darwin"):
         assert os.environ["TRITON_LIBCUDA_PATH"] == str(libdir)
     # Idempotent: second call loads nothing new.
@@ -150,24 +141,6 @@ def test_load_does_not_set_disable_local(monkeypatch, tmp_path):
         lambda *a, **k: pytest.fail("should not load again"),
     )
     assert _native.load() == result
-
-
-def test_load_respects_existing_disable_local(monkeypatch, tmp_path):
-    libdir = tmp_path / "libs"
-    libdir.mkdir()
-    for name in _native._LIBS[sys.platform]:
-        (libdir / name).write_bytes(b"")
-
-    class FakeCDLL:
-        def __init__(self, path, mode=None):
-            assert os.environ.get("LUPINE_DISABLE_LOCAL") == "0"
-
-    monkeypatch.setenv("LUPINE_LIBDIR", str(libdir))
-    monkeypatch.setenv("LUPINE_DISABLE_LOCAL", "0")
-    monkeypatch.setattr(_native.ctypes, "CDLL", FakeCDLL)
-    _native.load()
-    assert os.environ.get("LUPINE_DISABLE_LOCAL") == "0"
-
 
 def test_load_respects_existing_triton_libcuda_path(monkeypatch, tmp_path):
     libdir = tmp_path / "libs"
