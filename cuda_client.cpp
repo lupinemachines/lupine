@@ -1263,6 +1263,10 @@ extern "C" CUresult cuModuleGetFunction(CUfunction *function, CUmodule module,
   return result;
 }
 
+static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
+                                                      lupine_route route,
+                                                      CUlibrary *library);
+
 static CUresult lupine_load_recorded_module_on_route(CUmodule source_module,
                                                      lupine_route route,
                                                      CUmodule *module) {
@@ -1276,27 +1280,49 @@ static CUresult lupine_load_recorded_module_on_route(CUmodule source_module,
   }
 
   lupine_module_image_record record;
+  CUlibrary parent_library = nullptr;
   {
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
     auto it = lupine_module_images().find(source_module);
     if (it == lupine_module_images().end()) {
-      // No recorded image, so the module cannot be replicated elsewhere. It is
-      // still valid on the route that already owns it (cuModuleLoad, for one,
-      // never records an image), so hand that handle back untouched and only
-      // fail when a genuinely different route is asked for.
       if (lupine_route_identity(lupine_route_for_module(source_module)) ==
           route_id) {
         *module = source_module;
         return CUDA_SUCCESS;
       }
-      return CUDA_ERROR_NOT_FOUND;
+      auto library = lupine_library_modules().find(source_module);
+      if (library == lupine_library_modules().end()) {
+        // No recorded image or parent library means the module cannot be
+        // reconstructed on another route (cuModuleLoad, for one, records
+        // neither).
+        return CUDA_ERROR_NOT_FOUND;
+      }
+      parent_library = library->second;
+    } else {
+      auto cached = it->second.modules_by_route.find(route_id);
+      if (cached != it->second.modules_by_route.end()) {
+        *module = cached->second;
+        return CUDA_SUCCESS;
+      }
+      record = it->second;
     }
-    auto cached = it->second.modules_by_route.find(route_id);
-    if (cached != it->second.modules_by_route.end()) {
-      *module = cached->second;
-      return CUDA_SUCCESS;
+  }
+
+  if (parent_library != nullptr) {
+    CUlibrary library = nullptr;
+    CUresult result =
+        lupine_load_recorded_library_on_route(parent_library, route, &library);
+    if (result != CUDA_SUCCESS || library == nullptr) {
+      return result;
     }
-    record = it->second;
+
+    CUmodule loaded = nullptr;
+    result = cuLibraryGetModule(&loaded, library);
+    if (result != CUDA_SUCCESS || loaded == nullptr) {
+      return result;
+    }
+    *module = loaded;
+    return CUDA_SUCCESS;
   }
 
   CUmodule loaded = nullptr;
@@ -5077,9 +5103,15 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
 
   lupine_route route = lupine_route_for_current_context();
   if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn(
+    CUresult result = lupine_call_real_cuda_fn(
         "cuLibraryLoadData", library, code, jitOptions, jitOptionsValues,
         numJitOptions, libraryOptions, libraryOptionValues, numLibraryOptions);
+    if (result == CUDA_SUCCESS) {
+      lupine_note_library_owner_route(*library, route);
+      lupine_record_library_image(*library, route, kind, image_bytes.data(),
+                                  image_bytes.size(), code);
+    }
+    return result;
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
