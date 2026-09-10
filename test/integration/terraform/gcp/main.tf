@@ -75,7 +75,7 @@ resource "google_compute_instance" "host" {
 
   scheduling {
     provisioning_model          = "STANDARD"
-    on_host_maintenance         = "TERMINATE"
+    on_host_maintenance         = each.value.gpu_count == 0 ? "MIGRATE" : "TERMINATE"
     automatic_restart           = false
     instance_termination_action = "DELETE"
     max_run_duration {
