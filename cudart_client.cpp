@@ -306,22 +306,6 @@ extern "C" cudaError_t cudaEventQuery(cudaEvent_t event) {
   return read_completion(conn, false);
 }
 
-extern "C" cudaError_t cudaEventDestroy(cudaEvent_t event) {
-  std::unique_lock<std::shared_mutex> lock(lupine_event_lifecycle_mutex());
-  conn_t *conn = connection_for_event(event);
-  cudaError_t result = rpc_error();
-  if (rpc_write_start_request(conn, RPC_cudaEventDestroy) < 0 ||
-      rpc_write(conn, &event, sizeof(event)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  if (result == cudaSuccess) {
-    lupine_forget_event_owner(event);
-  }
-  return result;
-}
-
 namespace {
 
 // The server's runtime owns the message strings, so they are fetched once and

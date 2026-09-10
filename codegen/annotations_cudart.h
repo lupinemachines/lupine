@@ -400,11 +400,18 @@ cudaError_t cudaEventCreateWithFlags(cudaEvent_t *event, unsigned int flags) {
   return return_value;
 }
 /**
- * @disabled - coordinates shared event completion state
+ * @disabled server - removes shared event completion markers
  * @routingkey EVENT event
  * @param event SEND_ONLY
  */
-cudaError_t cudaEventDestroy(cudaEvent_t event);
+cudaError_t cudaEventDestroy(cudaEvent_t event) {
+  std::unique_lock<std::shared_mutex> lock(lupine_event_lifecycle_mutex());
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_forget_event_owner(event);
+  }
+  return return_value;
+}
 /**
  * @routingkey EVENT start
  * @param ms RECV_ONLY

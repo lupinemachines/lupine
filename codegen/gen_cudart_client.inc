@@ -1252,6 +1252,30 @@ extern "C" cudaError_t cudaEventCreateWithFlags(cudaEvent_t *event,
   return return_value;
 }
 
+static cudaError_t lupine_rpc_cudaEventDestroy(conn_t *conn,
+                                               cudaEvent_t event) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaEventDestroy) < 0 ||
+      rpc_write(conn, &event, sizeof(cudaEvent_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaEventDestroy(cudaEvent_t event) {
+  conn_t *conn = connection_for_event(event);
+  std::unique_lock<std::shared_mutex> lock(lupine_event_lifecycle_mutex());
+  cudaError_t return_value = lupine_rpc_cudaEventDestroy(conn, event);
+  if (return_value == cudaSuccess) {
+    lupine_forget_event_owner(event);
+  }
+  return return_value;
+}
+
 static cudaError_t lupine_rpc_cudaEventElapsedTime(conn_t *conn, float *ms,
                                                    cudaEvent_t start,
                                                    cudaEvent_t end) {
