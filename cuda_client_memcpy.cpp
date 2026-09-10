@@ -3033,10 +3033,10 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
       LUPINE_LOG_ERROR("Cross-route DtoD source transport failed");
       return -1;
     }
-    bool read_failed = rpc_read(source->conn, &result, sizeof(result)) < 0;
-    if (!read_failed && result == CUDA_SUCCESS) {
-      read_failed = rpc_read(source->conn, source->storage.data(), chunk) < 0;
-    }
+    bool read_failed =
+        rpc_read(source->conn, &result, sizeof(result)) < 0 ||
+        (result == CUDA_SUCCESS &&
+         rpc_read(source->conn, source->storage.data(), chunk) < 0);
     if (rpc_read_end(source->conn) < 0 || read_failed) {
       source->remaining = 0;
       LUPINE_LOG_ERROR("Cross-route DtoD source transport failed");
@@ -3053,14 +3053,9 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
     return 1;
   };
   rpc_write_cursor cursor(refill_source, &source_cursor);
-  int write_result = rpc_write_start_response(destination_conn, request_id);
-  if (write_result == 0) {
-    write_result = rpc_write_cursors(destination_conn, &cursor, 1);
-  }
-  if (write_result == 0) {
-    write_result = rpc_write_end(destination_conn) < 0 ? -1 : 0;
-  }
-  if (write_result < 0) {
+  if (rpc_write_start_response(destination_conn, request_id) < 0 ||
+      rpc_write_cursors(destination_conn, &cursor, 1) < 0 ||
+      rpc_write_end(destination_conn) < 0) {
     rpc_write_cursor discard;
     while (source_cursor.remaining != 0 &&
            refill_source(&source_cursor, &discard) > 0) {
