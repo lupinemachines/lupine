@@ -9,7 +9,6 @@ import pytest
 def test_activate_uses_explicit_gateway_for_existing_session(monkeypatch):
     monkeypatch.delenv("LUPINE_AUTO", raising=False)
     monkeypatch.setenv("LUPINE_SERVER", "https://gw-east.lupine.sh:9443")
-    monkeypatch.delenv("LUPINE_DISABLE_LOCAL", raising=False)
     monkeypatch.setenv("LUPINE_SESSION", "lease-test")
     calls = []
     monkeypatch.setattr(
@@ -21,7 +20,6 @@ def test_activate_uses_explicit_gateway_for_existing_session(monkeypatch):
     assert lupine_auto.activate() == {"libcuda": "/shim"}
     assert lupine_auto.DEFAULT_SERVER == "https://api.lupine.sh"
     assert os.environ["LUPINE_SERVER"] == "https://gw-east.lupine.sh:9443"
-    assert "LUPINE_DISABLE_LOCAL" not in os.environ
     assert calls == [False]
 
 
@@ -89,21 +87,18 @@ def test_install_defers_activation_until_cuda_import(monkeypatch):
     assert calls == [True]
 
 
-def test_activate_respects_explicit_server_and_local_policy(monkeypatch):
+def test_activate_respects_explicit_server(monkeypatch):
     monkeypatch.delenv("LUPINE_AUTO", raising=False)
     monkeypatch.setenv("LUPINE_SERVER", "gpu.example:7443")
-    monkeypatch.setenv("LUPINE_DISABLE_LOCAL", "caller-value")
 
     def load_native(*, missing_ok):
         assert missing_ok is False
-        assert os.environ["LUPINE_DISABLE_LOCAL"] == "caller-value"
         return {}
 
     monkeypatch.setattr(lupine, "load_native", load_native)
     lupine_auto.activate()
 
     assert os.environ["LUPINE_SERVER"] == "gpu.example:7443"
-    assert os.environ["LUPINE_DISABLE_LOCAL"] == "caller-value"
 
 
 def test_activate_can_be_disabled(monkeypatch):

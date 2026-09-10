@@ -651,7 +651,6 @@ jobs:
               export CCACHE_COMPILERCHECK=content
               export CCACHE_COMPRESS=true
               export LUPINE_LIB="$LUPINE_BUILD_DIR/libcuda.so.1"
-              export LUPINE_DISABLE_LOCAL=1
               export SERVER_LOCAL_BIN="$LUPINE_BUILD_DIR/lupine_driver_server"
               export SERVER_REMOTE_BIN="/tmp/lupine-driver-server-${MATRIX_LABEL}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
               export SSH_OPTS="-i /tmp/lupine-ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
