@@ -7,13 +7,7 @@ hosts:
   a: {gpus: 2}
   b: {gpus: 2}
 
-# Workload groups executed by run_topologies.py; see README.md.
-tests:
-  - enumeration
-  - allocation-and-copy
-  - all-device-pairs
-  - streams-and-events
-  - kernel-launch
+# Workloads and client/server platforms are selected separately in runs.yaml.
 
 topologies:
   remote-single:

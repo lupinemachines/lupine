@@ -222,6 +222,8 @@ int main(int argc, char **argv) {
     } else {
       // Reverse order after creating contexts to exercise context switching.
       for (int i = count - 1; i >= 0; --i) {
+        std::cout << "Running " << mode << " on device " << i << " ("
+                  << uuid(devices[i]) << ")" << std::endl;
         CUDA(cuCtxSetCurrent(contexts[i]));
         CUdevice current = -1;
         CUDA(cuCtxGetDevice(&current));

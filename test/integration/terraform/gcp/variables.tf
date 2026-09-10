@@ -24,21 +24,26 @@ variable "network" {
   default     = "default"
 }
 
-variable "cpu_image" {
-  description = "Pinned CPU image resource: projects/PROJECT/global/images/IMAGE. Must provide SSH and the test prerequisites."
-  type        = string
+variable "host_platforms" {
+  description = "OS, architecture and pinned image per host, resolved from runs.yaml. GPU images must include L4 drivers."
+  type = map(object({
+    os           = string
+    version      = string
+    arch         = string
+    machine_type = string
+    image        = string
+  }))
   validation {
-    condition     = can(regex("^projects/[^/]+/global/images/[^/]+$", var.cpu_image))
-    error_message = "Use a concrete image resource, not an image family."
-  }
-}
-
-variable "gpu_image" {
-  description = "Pinned G2-compatible image resource with NVIDIA L4 drivers and test prerequisites installed."
-  type        = string
-  validation {
-    condition     = can(regex("^projects/[^/]+/global/images/[^/]+$", var.gpu_image))
-    error_message = "Use a concrete image resource, not an image family."
+    condition = toset(keys(var.host_platforms)) == toset(["client", "a", "b"]) && alltrue([
+      for role, platform in var.host_platforms :
+      platform.os == "ubuntu" && contains(["22.04", "24.04"], platform.version) &&
+      contains(["x86_64", "arm64"], platform.arch) &&
+      can(regex("^projects/[^/]+/global/images/[^/]+$", platform.image)) &&
+      (role == "client" ?
+        platform.machine_type == lookup({ arm64 = "t2a-standard-4", x86_64 = "e2-standard-4" }, platform.arch, "") :
+      platform.arch == "x86_64" && platform.machine_type == "g2-standard-24")
+    ])
+    error_message = "Assign supported Ubuntu platforms and concrete images to client, a and b; GPU hosts must remain x86_64 G2 L4 VMs."
   }
 }
 

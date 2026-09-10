@@ -1,11 +1,9 @@
 locals {
   region  = join("-", slice(split("-", var.zone), 0, length(split("-", var.zone)) - 1))
   network = "projects/${var.project_id}/global/networks/${var.network}"
-  hosts = {
-    client = { machine_type = "e2-standard-4", gpu_count = 0 }
-    a      = { machine_type = "g2-standard-24", gpu_count = 2 }
-    b      = { machine_type = "g2-standard-24", gpu_count = 2 }
-  }
+  hosts = { for role, platform in var.host_platforms : role => merge(platform, {
+    gpu_count = role == "client" ? 0 : 2
+  }) }
 }
 
 resource "google_compute_firewall" "ssh" {
@@ -53,15 +51,17 @@ resource "google_compute_instance" "host" {
 
   boot_disk {
     auto_delete = true
+    interface   = each.value.arch == "arm64" ? "NVME" : "SCSI"
     initialize_params {
-      image = each.value.gpu_count == 0 ? var.cpu_image : var.gpu_image
+      image = each.value.image
       size  = 100
       type  = "pd-balanced"
     }
   }
 
   network_interface {
-    network = local.network
+    network  = local.network
+    nic_type = each.value.arch == "arm64" ? "GVNIC" : "VIRTIO_NET"
     # SSH uses this address; Lupine uses network_ip within the test VPC.
     access_config {}
   }

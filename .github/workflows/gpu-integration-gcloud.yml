@@ -29,14 +29,62 @@ permissions:
   id-token: write
 
 jobs:
+  topology-plan:
+    name: Validate topology coverage
+    runs-on: ubuntu-24.04
+    outputs:
+      builds: ${{ steps.matrix.outputs.builds }}
+      runs: ${{ steps.matrix.outputs.runs }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - id: matrix
+        run: |
+          python3 -m pip install -r test/integration/requirements.txt
+          python3 test/integration/validate_specs.py --github-matrix >> "$GITHUB_OUTPUT"
+          python3 -m unittest discover -s test/integration -p 'test_*.py'
+
+  topology-build:
+    name: Topology binaries / Linux ${{ matrix.arch }}
+    needs: topology-plan
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.topology-plan.outputs.builds) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      # Build on native architecture runners, before any GCP authentication.
+      - name: Build topology workloads and Lupine
+        run: |
+          docker buildx build -f test/integration/Dockerfile \
+            --output "type=local,dest=$RUNNER_TEMP/topology-build" .
+          mkdir -p "$RUNNER_TEMP/topology-artifacts"
+          tar czf "$RUNNER_TEMP/topology-artifacts/linux-${{ matrix.arch }}.tar.gz" \
+            -C "$RUNNER_TEMP/topology-build" .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: topology-binaries-linux-${{ matrix.arch }}
+          path: ${{ runner.temp }}/topology-artifacts/
+          if-no-files-found: error
+
   gpu-topologies:
-    name: L4 topology integration
+    name: L4 topology integration / ${{ matrix.run }}
+    needs: [topology-plan, topology-build]
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      # Reuse quota across platform runs; one fleet at a time.
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.topology-plan.outputs.runs) }}
     env:
       GCP_PROJECT_ID: kevmo314
       GCP_STATE_BUCKET: kevmo314-lupine-gpu-integration-cache
-      TOPOLOGY_RUN_ID: l4-topo-${{ github.run_id }}-${{ github.run_attempt }}
+      TOPOLOGY_RUN_ID: l4-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.run }}
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
       TF_DIR: test/integration/terraform/gcp
@@ -52,13 +100,15 @@ jobs:
           python3 test/integration/validate_specs.py
           mkdir -p "$RESULTS"
 
-      # Build before authentication so the Docker context cannot contain ADC.
-      - name: Build topology workloads and Lupine
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: topology-binaries-linux-*
+          path: ${{ runner.temp }}/topology-artifacts
+          merge-multiple: true
+
+      - name: Record build provenance
         run: |
-          docker buildx build -f test/integration/Dockerfile \
-            --output "type=local,dest=$RUNNER_TEMP/topology-build" .
-          tar czf "$RUNNER_TEMP/topology-artifacts.tar.gz" -C "$RUNNER_TEMP/topology-build" .
-          sha256sum "$RUNNER_TEMP/topology-artifacts.tar.gz" > "$RESULTS/build.sha256"
+          sha256sum "$RUNNER_TEMP"/topology-artifacts/*.tar.gz > "$RESULTS/build.sha256"
           git rev-parse HEAD > "$RESULTS/revision.txt"
 
       - name: Authenticate to Google Cloud
@@ -79,26 +129,11 @@ jobs:
         run: |
           set -euo pipefail
           ssh-keygen -t ed25519 -N '' -f "$RUNNER_TEMP/topology-key"
-          export TOPOLOGY_RUNNER_IP="$(curl --fail --silent --show-error --retry 3 https://api.ipify.org)"
-          export TOPOLOGY_CPU_IMAGE="$(gcloud compute images describe-from-family ubuntu-2404-lts-amd64 \
-            --project=ubuntu-os-cloud --format='value(name)')"
-          export TOPOLOGY_GPU_IMAGE="$(gcloud compute images describe-from-family common-cu129-ubuntu-2404-nvidia-580 \
-            --project=ml-images --format='value(name)')"
-          python3 - <<'PY'
-          import ipaddress, json, os
-          from pathlib import Path
-          runner_ip = str(ipaddress.IPv4Address(os.environ['TOPOLOGY_RUNNER_IP']))
-          config = {
-              'project_id': os.environ['GCP_PROJECT_ID'],
-              'run_id': os.environ['TOPOLOGY_RUN_ID'],
-              'cpu_image': 'projects/ubuntu-os-cloud/global/images/' + os.environ['TOPOLOGY_CPU_IMAGE'],
-              'gpu_image': 'projects/ml-images/global/images/' + os.environ['TOPOLOGY_GPU_IMAGE'],
-              'ssh_public_key': (Path(os.environ['RUNNER_TEMP']) / 'topology-key.pub').read_text(),
-              'ssh_source_ranges': [runner_ip + '/32'],
-              'max_run_seconds': 7200,
-          }
-          (Path(os.environ['TF_DIR']) / 'run.tfvars.json').write_text(json.dumps(config))
-          PY
+          topology_runner_ip="$(curl --fail --silent --show-error --retry 3 https://api.ipify.org)"
+          python3 test/integration/configure_fleet.py --run '${{ matrix.run }}' \
+            --project "$GCP_PROJECT_ID" --run-id "$TOPOLOGY_RUN_ID" \
+            --public-key "$RUNNER_TEMP/topology-key.pub" --runner-ip "$topology_runner_ip" \
+            --output "$TF_DIR/run.tfvars.json" > "$RUNNER_TEMP/topology-zones"
 
       - name: Initialize Terraform state
         id: topology-init
@@ -112,7 +147,8 @@ jobs:
       - name: Provision L4 fleet
         run: |
           set -euo pipefail
-          for zone in us-central1-a us-central1-b us-central1-c us-west1-a us-west1-b; do
+          read -r -a topology_zones < "$RUNNER_TEMP/topology-zones"
+          for zone in "${topology_zones[@]}"; do
             python3 - "$TF_DIR/run.tfvars.json" "$zone" <<'PY'
           import json, sys
           from pathlib import Path
@@ -135,9 +171,10 @@ jobs:
       - name: Run native baselines and Lupine topologies
         run: |
           python3 test/integration/run_topologies.py \
+            --run '${{ matrix.run }}' \
             --inventory "$RESULTS/inventory.json" \
             --ssh-key "$RUNNER_TEMP/topology-key" \
-            --artifacts "$RUNNER_TEMP/topology-artifacts.tar.gz" \
+            --artifacts "$RUNNER_TEMP/topology-artifacts" \
             --results "$RESULTS"
 
       - name: Destroy topology fleet
@@ -150,7 +187,7 @@ jobs:
         if: always() && hashFiles('test/integration/results/junit.xml') != ''
         uses: dorny/test-reporter@v3
         with:
-          name: L4 topology results
+          name: L4 topology results / ${{ matrix.run }}
           path: test/integration/results/junit.xml
           reporter: java-junit
           fail-on-error: "false"
@@ -159,7 +196,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: l4-topologies-${{ github.run_id }}-${{ github.run_attempt }}
+          name: l4-topologies-${{ matrix.run }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: test/integration/results/
           if-no-files-found: warn
 

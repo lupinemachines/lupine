@@ -12,6 +12,9 @@ output "inventory" {
         ssh_user           = var.ssh_user
         rpc_host           = host.network_interface[0].network_ip
         machine_type       = local.hosts[role].machine_type
+        os                 = local.hosts[role].os
+        version            = local.hosts[role].version
+        arch               = local.hosts[role].arch
         expected_gpu_count = local.hosts[role].gpu_count
         expected_gpu_model = local.hosts[role].gpu_count == 0 ? "" : "L4"
         image              = host.boot_disk[0].initialize_params[0].image

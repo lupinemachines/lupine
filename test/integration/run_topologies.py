@@ -10,9 +10,7 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 
-import yaml
-
-from validate_specs import check_topology
+from validate_specs import MODES, load_specs
 
 
 class Runner:
@@ -75,7 +73,19 @@ class Runner:
                     raise RuntimeError(f"{role}: VM startup did not finish: {result.stdout}")
                 time.sleep(5)
             self.ssh(role, shlex.join(["mkdir", "-p", self.remote]))
-            subprocess.run(["scp", *self.options, str(self.artifacts),
+            # Verify what actually booted, independently of the image name and
+            # requested machine type, before selecting the architecture's build.
+            probe = self.command(role, ["python3", "-c",
+                "import json,platform; release=platform.freedesktop_os_release(); "
+                "print(json.dumps(dict(os=release['ID'],version=release['VERSION_ID'],"
+                "arch={'aarch64':'arm64'}.get(platform.machine(),platform.machine()))))"])
+            actual = json.loads(probe.stdout)
+            expected = {key: self.hosts[role][key] for key in ("os", "version", "arch")}
+            if actual != expected:
+                raise RuntimeError(f"{role}: platform mismatch: got {actual}, expected {expected}")
+            self.hosts[role]["observed_platform"] = actual
+            artifact = self.artifacts / f"linux-{actual['arch']}.tar.gz"
+            subprocess.run(["scp", *self.options, str(artifact),
                             f"{self.target(role)}:{self.remote}/artifacts.tar.gz"],
                            check=True, timeout=120)
             self.command(role, ["tar", "xzf", "artifacts.tar.gz"])
@@ -142,19 +152,17 @@ class Runner:
         result = self.command(role, args, env, check=False)
         self.record(name, result, time.monotonic() - start)
 
-    def workloads(self, name, role, devices, owners, env):
-        modes = {"enumeration": "enumeration", "allocation-and-copy": "memory",
-                 "streams-and-events": "streams", "kernel-launch": "kernel"}
-        for test in self.tests:
-            if test != "all-device-pairs":
-                mode = modes[test]
+    def workloads(self, name, role, devices, owners, env, tests):
+        for mode in tests:
+            if not mode.startswith("peer-"):
                 self.test(f"{name}.{mode}", role, mode, devices, env)
-        if "all-device-pairs" not in self.tests:
+        pair_modes = [mode for mode in tests if mode.startswith("peer-")]
+        if not pair_modes:
             return
         for src, dst in itertools.permutations(range(len(devices)), 2):
             peer = self.native_peer(devices[src], devices[dst]) if owners[src] == owners[dst] else 0
             label = f"{devices[src]}-to-{devices[dst]}"
-            for mode in ("peer-access", "peer-copy", "peer-copy-async"):
+            for mode in pair_modes:
                 self.test(f"{name}.{mode}.{label}", role, mode, devices, env,
                           (src, dst), peer if mode == "peer-access" else None)
 
@@ -163,9 +171,9 @@ class Runner:
             devices = [f"{role}/{i}" for i in range(len(self.native[role]["slots"]))]
             visible = ",".join(self.gpu(device) for device in devices)
             self.workloads(f"native-{role}", role, devices, ["native"] * len(devices),
-                           {"CUDA_VISIBLE_DEVICES": visible})
+                           {"CUDA_VISIBLE_DEVICES": visible}, self.tests)
 
-    def topology(self, name, spec):
+    def topology(self, name, spec, tests):
         servers = []
         endpoints = {}
         client = spec["client"]
@@ -195,6 +203,7 @@ class Runner:
                 owners.extend([server] * len(spec["servers"][server]["gpus"]))
             self.inventory.setdefault("topologies", {})[name] = {
                 "spec": spec, "environment": env, "owners": owners,
+                "tests": tests,
                 "uuids": [self.gpu(device) for device in spec["expect_devices"]]}
             self.save_manifest()
             # Check reachability from the actual client VM, not from the SSH runner.
@@ -204,7 +213,7 @@ class Runner:
                 if time.monotonic() > deadline:
                     raise RuntimeError("servers did not become reachable from the client")
                 time.sleep(1)
-            self.workloads(name, client["host"], spec["expect_devices"], owners, env)
+            self.workloads(name, client["host"], spec["expect_devices"], owners, env, tests)
         except Exception as error:
             self.record(f"{name}.setup", subprocess.CompletedProcess([], 1, str(error)))
         finally:
@@ -239,22 +248,32 @@ def main():
     parser.add_argument("--artifacts", type=Path, required=True)
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--spec", type=Path, default=Path(__file__).with_name("topologies.yaml"))
+    parser.add_argument("--runs-spec", type=Path, default=Path(__file__).with_name("runs.yaml"))
+    parser.add_argument("--run", default="regression")
     args = parser.parse_args()
-    matrix = yaml.safe_load(args.spec.read_text())
-    for spec in matrix["topologies"].values():
-        check_topology(matrix["hosts"], spec)
+    matrix, selections = load_specs(args.spec, args.runs_spec)
+    selection = selections["runs"][args.run]
     inventory = json.loads(args.inventory.read_text())
     if set(inventory["hosts"]) != set(matrix["hosts"]):
         raise ValueError("inventory host roles differ from the topology matrix")
     if len({host["instance_id"] for host in inventory["hosts"].values()}) != len(matrix["hosts"]):
         raise ValueError("machine roles must resolve to distinct instances")
+    for role, name in selection["hosts"].items():
+        platform = selections["platforms"][name]
+        if any(inventory["hosts"][role][key] != platform[key] for key in ("os", "version", "arch")):
+            raise ValueError(f"{role}: inventory platform differs from selected run")
+        if inventory["hosts"][role]["expected_gpu_count"] != matrix["hosts"][role]["gpus"]:
+            raise ValueError(f"{role}: inventory GPU count differs from topology spec")
+    inventory["selection"] = {"name": args.run, **selection}
     args.results.mkdir(parents=True, exist_ok=True)
-    runner = Runner(inventory, args.ssh_key, args.artifacts, args.results, matrix["tests"])
+    # Native controls cover the union of selected modes, once per GPU host.
+    tests = [mode for mode in MODES if any(mode in modes for modes in selection["cases"].values())]
+    runner = Runner(inventory, args.ssh_key, args.artifacts, args.results, tests)
     try:
         runner.deploy()
         runner.baseline()
-        for name, spec in matrix["topologies"].items():
-            runner.topology(name, spec)
+        for name, modes in selection["cases"].items():
+            runner.topology(name, matrix["topologies"][name], modes)
     except Exception as error:
         runner.record("fleet.setup", subprocess.CompletedProcess([], 1, str(error)))
     return 1 if runner.report() else 0

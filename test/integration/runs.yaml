@@ -1,0 +1,68 @@
+version: 1
+
+# Platform choices apply independently to each physical host. GPU models remain
+# homogeneous L4s; G2 servers are x86_64, while CPU clients can also use arm64.
+platforms:
+  ubuntu-2404-x86_64:
+    os: ubuntu
+    version: "24.04"
+    arch: x86_64
+    cpu_machine: e2-standard-4
+    cpu_image: {project: ubuntu-os-cloud, family: ubuntu-2404-lts-amd64}
+    gpu_image: {project: ml-images, family: common-cu129-ubuntu-2404-nvidia-580}
+  ubuntu-2204-x86_64:
+    os: ubuntu
+    version: "22.04"
+    arch: x86_64
+    cpu_machine: e2-standard-4
+    cpu_image: {project: ubuntu-os-cloud, family: ubuntu-2204-lts}
+    gpu_image: {project: ml-images, family: common-cu129-ubuntu-2204-nvidia-580}
+  ubuntu-2404-arm64:
+    os: ubuntu
+    version: "24.04"
+    arch: arm64
+    cpu_machine: t2a-standard-4
+    cpu_image: {project: ubuntu-os-cloud, family: ubuntu-2404-lts-arm64}
+
+# Explicit cases, not a Cartesian product. A case chooses exactly which workload
+# modes to run on a reusable topology. kernel includes allocation, launch and
+# readback on every visible device, making it a useful single-test smoke check.
+runs:
+  regression:
+    hosts:
+      client: ubuntu-2404-x86_64
+      a: ubuntu-2404-x86_64
+      b: ubuntu-2404-x86_64
+    zones: [us-central1-a, us-central1-b, us-central1-c, us-west1-a, us-west1-b]
+    cases:
+      remote-single: &all [enumeration, memory, streams, kernel, peer-access, peer-copy, peer-copy-async]
+      remote-two-one-server: *all
+      remote-two-servers-same-host: *all
+      remote-two-servers-different-hosts: *all
+      remote-2-plus-1: *all
+      remote-2-plus-2: *all
+      mixed-local-remote: *all
+      mixed-local-remote-same-host: *all
+      reversed-endpoints: *all
+      reversed-gpus: *all
+      nonzero-physical-gpu: *all
+  linux-versions:
+    hosts:
+      client: ubuntu-2204-x86_64
+      a: ubuntu-2404-x86_64
+      b: ubuntu-2204-x86_64
+    zones: [us-central1-a, us-central1-b, us-central1-c, us-west1-a, us-west1-b]
+    cases:
+      remote-two-servers-different-hosts: [kernel]
+      mixed-local-remote: [kernel]
+      reversed-endpoints: [kernel]
+  arm64-client:
+    hosts:
+      client: ubuntu-2404-arm64
+      a: ubuntu-2404-x86_64
+      b: ubuntu-2204-x86_64
+    zones: [us-central1-a, us-central1-b]
+    cases:
+      remote-single: [kernel]
+      remote-two-servers-different-hosts: [kernel]
+      reversed-endpoints: [kernel]
