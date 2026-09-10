@@ -85,6 +85,70 @@ if [[ "$BUILD_SAMPLES" != "0" ]]; then
     git -C "$LIBRARY_SAMPLES_DIR" fetch --quiet origin
     git -C "$LIBRARY_SAMPLES_DIR" checkout --quiet "$LIBRARY_SAMPLES_REF"
   fi
+  # The multi-GPU cuFFT samples read the result back before the plan's stream
+  # has finished, which returns stale chunks on a busy GPU. Fix proposed in
+  # NVIDIA/CUDALibrarySamples#367; drop this once LIBRARY_SAMPLES_REF includes it.
+  patch_file="$(mktemp)"
+  cat >"$patch_file" <<'PATCH'
+--- a/cuFFT/1d_mgpu_c2c/1d_mgpu_c2c_example.cpp
++++ b/cuFFT/1d_mgpu_c2c/1d_mgpu_c2c_example.cpp
+@@ -105,6 +105,11 @@
+     // Execute the plan
+     CUFFT_CALL(cufftXtExecDescriptor(plan, indesc, indesc, CUFFT_FORWARD));
+ 
++#if CUFFT_VERSION >= 10400
++    // The transform runs on the plan's stream; wait for it before reading back
++    CUDA_RT_CALL(cudaStreamSynchronize(stream));
++#endif
++
+     // Copy output data to CPU
+     CUFFT_CALL(cufftXtMemcpy(plan, reinterpret_cast<void *>(h_data_out.data()),
+                              reinterpret_cast<void *>(indesc), CUFFT_COPY_DEVICE_TO_HOST));
+--- a/cuFFT/3d_mgpu_c2c/3d_mgpu_c2c_example.cpp
++++ b/cuFFT/3d_mgpu_c2c/3d_mgpu_c2c_example.cpp
+@@ -105,6 +105,11 @@
+     // Execute the plan
+     CUFFT_CALL(cufftXtExecDescriptor(plan, indesc, indesc, CUFFT_FORWARD));
+ 
++#if CUFFT_VERSION >= 10400
++    // The transform runs on the plan's stream; wait for it before reading back
++    CUDA_RT_CALL(cudaStreamSynchronize(stream));
++#endif
++
+     // Copy output data to CPU
+     CUFFT_CALL(cufftXtMemcpy(plan, reinterpret_cast<void *>(h_data_out.data()),
+                              reinterpret_cast<void *>(indesc), CUFFT_COPY_DEVICE_TO_HOST));
+--- a/cuFFT/3d_mgpu_r2c_c2r/3d_mgpu_r2c_c2r_example.cpp
++++ b/cuFFT/3d_mgpu_r2c_c2r/3d_mgpu_r2c_c2r_example.cpp
+@@ -155,6 +155,11 @@
+     // Execute the plan_r2c
+     CUFFT_CALL(cufftXtExecDescriptor(plan_r2c, indesc, indesc, CUFFT_FORWARD));
+ 
++#if CUFFT_VERSION >= 10400
++    // The transform runs on the plan's stream; wait for it before reading back
++    CUDA_RT_CALL(cudaStreamSynchronize(stream));
++#endif
++
+     // Scale complex results
+     float scale{2.f};
+     scaleComplex(indesc, scale, h_data_out.size(), gpus.size());
+@@ -162,6 +167,11 @@
+     // Execute the plan_c2r
+     CUFFT_CALL(cufftXtExecDescriptor(plan_c2r, indesc, indesc, CUFFT_INVERSE));
+ 
++#if CUFFT_VERSION >= 10400
++    // The transform runs on the plan's stream; wait for it before reading back
++    CUDA_RT_CALL(cudaStreamSynchronize(stream));
++#endif
++
+     // Copy output data to CPU
+     CUFFT_CALL(cufftXtMemcpy(plan_c2r, (void *)h_data_out.data(), (void *)indesc,
+                              CUFFT_COPY_DEVICE_TO_HOST));
+PATCH
+  if ! git -C "$LIBRARY_SAMPLES_DIR" apply --reverse --check "$patch_file" 2>/dev/null; then
+    git -C "$LIBRARY_SAMPLES_DIR" apply "$patch_file"
+  fi
+  rm -f "$patch_file"
 fi
 
 # A sample is a directory with a CMakeLists.txt and no CMake project beneath
