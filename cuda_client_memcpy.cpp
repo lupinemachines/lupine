@@ -1593,6 +1593,9 @@ extern "C" void lupine_materialize_host_allocations() {
 }
 
 extern "C" CUresult lupine_sync_mapped_device_to_host() {
+  if (lupine_active_stream_captures.load(std::memory_order_relaxed) != 0) {
+    return CUDA_SUCCESS;
+  }
   if (__atomic_exchange_n(&lupine_device_work_pending, 0, __ATOMIC_ACQ_REL) ==
       0) {
     return CUDA_SUCCESS;

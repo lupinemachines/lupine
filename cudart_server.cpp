@@ -95,6 +95,35 @@ int handle_error_text(conn_t *conn, const char *symbol) {
 
 } // namespace
 
+#if CUDART_VERSION < 12000
+int handle_cudaGetDriverEntryPoint(conn_t *conn) {
+  size_t length = 0;
+  unsigned long long flags = 0;
+  void *function = nullptr;
+  if (rpc_read(conn, &length, sizeof(length)) < 0 || length == 0) {
+    return -1;
+  }
+  std::vector<char> symbol(length);
+  if (rpc_read(conn, symbol.data(), length) < 0 || symbol.back() != '\0' ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaError_t result =
+      LUPINE_CUDART_CALL(cudaGetDriverEntryPoint, function_not_found(),
+                         symbol.data(), &function, flags);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &function, sizeof(function)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+#endif
+
 int handle_cudaGetErrorName(conn_t *conn) {
   return handle_error_text(conn, "cudaGetErrorName");
 }

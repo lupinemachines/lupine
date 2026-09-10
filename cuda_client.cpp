@@ -3416,6 +3416,11 @@ CUresult lupine_refresh_runtime_context() {
     lupine_lane_context_cache_store(
         lupine_route_identity(lupine_remote_route_for_conn(conn)), context);
   }
+  // Registration alone need not initialize CUDA. There is no context to
+  // cache yet, but pre-init calls such as cuDriverGetVersion must still route.
+  if (result == CUDA_ERROR_NOT_INITIALIZED) {
+    return CUDA_SUCCESS;
+  }
   return result;
 }
 
@@ -8758,7 +8763,8 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
     return CUDA_SUCCESS;
   }
   if (strcmp(symbol, "cuGetProcAddress") == 0) {
-    *pfn = (void *)&cuGetProcAddress;
+    *pfn = cudaVersion >= 12000 ? (void *)&cuGetProcAddress_v2
+                                : (void *)&cuGetProcAddress;
     if (symbolStatus != nullptr) {
       *symbolStatus = CU_GET_PROC_ADDRESS_SUCCESS;
     }

@@ -31,9 +31,25 @@
 #include "ipc.h"
 #include "lupine_fatbin.h"
 
+#ifdef cuGetProcAddress
+#undef cuGetProcAddress
+#endif
+extern "C" CUresult cuGetProcAddress(const char *symbol, void **pfn,
+                                     int cudaVersion, cuuint64_t flags);
+
 namespace {
 
 cudaError_t rpc_error() { return cudaErrorDevicesUnavailable; }
+
+// The native runtime validates the requested API on the server. Its function
+// address is meaningful only there; return the existing client wrapper for it.
+cudaError_t driver_entry_point(const char *symbol, void **function,
+                               unsigned int version, unsigned long long flags) {
+  *function = nullptr;
+  CUresult result = cuGetProcAddress(symbol, function, version, flags);
+  return result == CUDA_SUCCESS && *function != nullptr ? cudaSuccess
+                                                        : cudaErrorNotSupported;
+}
 
 struct conditional_graphs {
   cudaGraph_t parent;
@@ -586,6 +602,32 @@ cudaGraphExecUpdate(cudaGraphExec_t exec, cudaGraph_t graph,
 }
 #endif
 
+#if CUDART_VERSION < 12000
+extern "C" cudaError_t cudaGetDriverEntryPoint(const char *symbol,
+                                               void **funcPtr,
+                                               unsigned long long flags) {
+  if (symbol == nullptr || funcPtr == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  conn_t *conn = connection();
+  const size_t length = strlen(symbol) + 1;
+  cudaError_t result = rpc_error();
+  if (rpc_write_start_request(conn, RPC_cudaGetDriverEntryPoint) < 0 ||
+      rpc_write(conn, &length, sizeof(length)) < 0 ||
+      rpc_write(conn, symbol, length) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, funcPtr, sizeof(*funcPtr)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  if (result == cudaSuccess && *funcPtr != nullptr) {
+    return driver_entry_point(symbol, funcPtr, CUDART_VERSION, flags);
+  }
+  return result;
+}
+#endif
+
 #if CUDART_VERSION < 13000
 extern "C" cudaError_t
 cudaStreamUpdateCaptureDependencies(cudaStream_t stream,
@@ -652,9 +694,13 @@ extern "C" cudaError_t cudaStreamBeginCaptureToGraph(
   }
   // NVIDIA defines omitted edge data as a zero-initialized array.
   std::vector<cudaGraphEdgeData> defaults(edges == nullptr ? count : 0);
-  return lupine_rpc_cudaStreamBeginCaptureToGraph(
+  lupine_materialize_host_allocations();
+  lupine_capture_begin_guard capture_guard;
+  cudaError_t result = lupine_rpc_cudaStreamBeginCaptureToGraph(
       connection_for_stream(stream), stream, graph, dependencies,
       edges == nullptr ? defaults.data() : edges, count, mode);
+  capture_guard.complete(static_cast<CUresult>(result));
+  return result;
 }
 
 #if CUDART_VERSION >= 13000
@@ -1658,7 +1704,7 @@ cudaError_t launch(conn_t *conn, int op, const void *func, dim3 gridDim,
     return rpc_error();
   }
   lupine_invalidate_runtime_context(conn);
-  return cudaSuccess;
+  return runtime_error(lupine_sync_mapped_device_to_host());
 }
 
 } // namespace
@@ -1901,7 +1947,7 @@ extern "C" cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
     return rpc_error();
   }
   lupine_invalidate_runtime_context(conn);
-  return cudaSuccess;
+  return runtime_error(lupine_sync_mapped_device_to_host());
 }
 
 #if CUDART_VERSION >= 13000

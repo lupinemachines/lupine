@@ -5,13 +5,25 @@ lupine_rpc_cudaArrayGetInfo(conn_t *conn, struct cudaChannelFormatDesc *desc,
                             struct cudaExtent *extent, unsigned int *flags,
                             cudaArray_t array) {
   cudaError_t return_value = rpc_error();
+  struct cudaChannelFormatDesc *desc_null_check = nullptr;
+  struct cudaExtent *extent_null_check = nullptr;
+  unsigned int *flags_null_check = nullptr;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cudaArrayGetInfo) < 0 ||
+      rpc_write(conn, &desc, sizeof(struct cudaChannelFormatDesc *)) < 0 ||
+      rpc_write(conn, &extent, sizeof(struct cudaExtent *)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int *)) < 0 ||
       rpc_write(conn, &array, sizeof(cudaArray_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, desc, sizeof(struct cudaChannelFormatDesc)) < 0 ||
-      rpc_read(conn, extent, sizeof(struct cudaExtent)) < 0 ||
-      rpc_read(conn, flags, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, &desc_null_check, sizeof(struct cudaChannelFormatDesc *)) <
+          0 ||
+      (desc_null_check &&
+       rpc_read(conn, desc, sizeof(struct cudaChannelFormatDesc)) < 0) ||
+      rpc_read(conn, &extent_null_check, sizeof(struct cudaExtent *)) < 0 ||
+      (extent_null_check &&
+       rpc_read(conn, extent, sizeof(struct cudaExtent)) < 0) ||
+      rpc_read(conn, &flags_null_check, sizeof(unsigned int *)) < 0 ||
+      (flags_null_check && rpc_read(conn, flags, sizeof(unsigned int)) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -23,9 +35,6 @@ extern "C" cudaError_t cudaArrayGetInfo(struct cudaChannelFormatDesc *desc,
                                         struct cudaExtent *extent,
                                         unsigned int *flags,
                                         cudaArray_t array) {
-  if (desc == nullptr || extent == nullptr || flags == nullptr) {
-    return cudaErrorInvalidValue;
-  }
   conn_t *conn = connection();
   return lupine_rpc_cudaArrayGetInfo(conn, desc, extent, flags, array);
 }
@@ -2048,7 +2057,7 @@ extern "C" cudaError_t cudaGetDeviceProperties(struct cudaDeviceProp *prop,
   return return_value;
 }
 
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 12000
 static cudaError_t lupine_rpc_cudaGetDriverEntryPoint(
     conn_t *conn, const char *symbol, void **funcPtr, unsigned long long flags,
     enum cudaDriverEntryPointQueryResult *driverStatus) {
@@ -2084,8 +2093,12 @@ cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
     return cudaErrorInvalidValue;
   }
   conn_t *conn = connection();
-  return lupine_rpc_cudaGetDriverEntryPoint(conn, symbol, funcPtr, flags,
-                                            driverStatus);
+  cudaError_t return_value = lupine_rpc_cudaGetDriverEntryPoint(
+      conn, symbol, funcPtr, flags, driverStatus);
+  if (return_value == cudaSuccess && *funcPtr != nullptr) {
+    return driver_entry_point(symbol, funcPtr, CUDART_VERSION, flags);
+  }
+  return return_value;
 }
 
 #endif
@@ -2128,8 +2141,12 @@ extern "C" cudaError_t cudaGetDriverEntryPointByVersion(
     return cudaErrorInvalidValue;
   }
   conn_t *conn = connection();
-  return lupine_rpc_cudaGetDriverEntryPointByVersion(
+  cudaError_t return_value = lupine_rpc_cudaGetDriverEntryPointByVersion(
       conn, symbol, funcPtr, cudaVersion, flags, driverStatus);
+  if (return_value == cudaSuccess && *funcPtr != nullptr) {
+    return driver_entry_point(symbol, funcPtr, cudaVersion, flags);
+  }
+  return return_value;
 }
 
 #endif

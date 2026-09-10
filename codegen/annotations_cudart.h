@@ -10,9 +10,9 @@
 // @disabled marks the client or server implementations that remain manual.
 
 /**
- * @param desc RECV_ONLY
- * @param extent RECV_ONLY
- * @param flags RECV_ONLY
+ * @param desc RECV_ONLY NULLABLE
+ * @param extent RECV_ONLY NULLABLE
+ * @param flags RECV_ONLY NULLABLE
  * @param array SEND_ONLY
  */
 cudaError_t cudaArrayGetInfo(struct cudaChannelFormatDesc *desc,
@@ -717,8 +717,7 @@ cudaError_t cudaGetDeviceProperties(struct cudaDeviceProp *prop, int device) {
 }
 #if CUDART_VERSION < 12000
 /**
- * the result is a function pointer into the server's driver
- * @guard CUDART_VERSION < 12000
+ * @disabled - legacy three-argument ABI; native server query, client symbol lookup
  * @param symbol SEND_ONLY NULL_TERMINATED
  * @param funcPtr RECV_ONLY
  * @param flags SEND_ONLY
@@ -726,10 +725,9 @@ cudaError_t cudaGetDeviceProperties(struct cudaDeviceProp *prop, int device) {
 cudaError_t cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
                                     unsigned long long flags);
 #endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+#if CUDART_VERSION >= 12000
 /**
- * the result is a function pointer into the server's driver
- * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @guard CUDART_VERSION >= 12000
  * @param symbol SEND_ONLY NULL_TERMINATED
  * @param funcPtr RECV_ONLY
  * @param flags SEND_ONLY
@@ -738,21 +736,13 @@ cudaError_t cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
 cudaError_t
 cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
                         unsigned long long flags,
-                        enum cudaDriverEntryPointQueryResult *driverStatus);
-#endif
-#if CUDART_VERSION >= 13000
-/**
- * the result is a function pointer into the server's driver
- * @guard CUDART_VERSION >= 13000
- * @param symbol SEND_ONLY NULL_TERMINATED
- * @param funcPtr RECV_ONLY
- * @param flags SEND_ONLY
- * @param driverStatus RECV_ONLY NULLABLE
- */
-cudaError_t
-cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
-                        unsigned long long flags,
-                        enum cudaDriverEntryPointQueryResult *driverStatus);
+                        enum cudaDriverEntryPointQueryResult *driverStatus) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess && *funcPtr != nullptr) {
+    return driver_entry_point(symbol, funcPtr, CUDART_VERSION, flags);
+  }
+  return return_value;
+}
 #endif
 #if CUDART_VERSION >= 13000
 /**
@@ -767,7 +757,13 @@ cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
 cudaError_t cudaGetDriverEntryPointByVersion(
     const char *symbol, void **funcPtr, unsigned int cudaVersion,
     unsigned long long flags,
-    enum cudaDriverEntryPointQueryResult *driverStatus);
+    enum cudaDriverEntryPointQueryResult *driverStatus) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess && *funcPtr != nullptr) {
+    return driver_entry_point(symbol, funcPtr, cudaVersion, flags);
+  }
+  return return_value;
+}
 #endif
 /**
  * @disabled - the runtime returns a static string of unknown length, which the

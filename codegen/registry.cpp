@@ -395,6 +395,7 @@
   HANDLER(RPC_cudaEventSynchronize, handle_cudaEventSynchronize, rpc_backend::cudart) \
   HANDLER(RPC_cudaFree, handle_cudaFree, rpc_backend::cudart) \
   HANDLER(RPC_cudaFreeHost, handle_cudaFreeHost, rpc_backend::cudart) \
+  HANDLER(RPC_cudaGetDriverEntryPoint, handle_cudaGetDriverEntryPoint, rpc_backend::cudart) \
   HANDLER(RPC_cudaGetErrorName, handle_cudaGetErrorName, rpc_backend::cudart) \
   HANDLER(RPC_cudaGetErrorString, handle_cudaGetErrorString, rpc_backend::cudart) \
   HANDLER(RPC_cudaHostAlloc, handle_cudaHostAlloc, rpc_backend::cudart) \
@@ -978,10 +979,6 @@ LUPINE_DECLARE_HANDLER(RPC_cudaFuncGetParamInfo, handle_cudaFuncGetParamInfo,
                        rpc_backend::cudart)
 #endif
 #if CUDART_VERSION >= 13000
-LUPINE_DECLARE_HANDLER(RPC_cudaGetDriverEntryPoint,
-                       handle_cudaGetDriverEntryPoint, rpc_backend::cudart)
-#endif
-#if CUDART_VERSION >= 13000
 LUPINE_DECLARE_HANDLER(RPC_cudaGetDriverEntryPointByVersion,
                        handle_cudaGetDriverEntryPointByVersion,
                        rpc_backend::cudart)
@@ -1432,9 +1429,6 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #if CUDART_VERSION >= 12000
       LUPINE_REGISTER_HANDLER(RPC_cudaFuncGetParamInfo, handle_cudaFuncGetParamInfo, rpc_backend::cudart)
-#endif
-#if CUDART_VERSION >= 13000
-      LUPINE_REGISTER_HANDLER(RPC_cudaGetDriverEntryPoint, handle_cudaGetDriverEntryPoint, rpc_backend::cudart)
 #endif
 #if CUDART_VERSION >= 13000
       LUPINE_REGISTER_HANDLER(RPC_cudaGetDriverEntryPointByVersion, handle_cudaGetDriverEntryPointByVersion, rpc_backend::cudart)
