@@ -20,3 +20,10 @@ cuBLASLt/LtHSHgemmGroupedSimple/sample_cublasLt_LtHSHgemmGroupedSimple
 cuSOLVER/gesv/cusolver_irs_expert
 cuSOLVER/gesv/cusolver_irs_lapack
 cuFFT/3d_mgpu_r2c_c2r/bin/3d_mgpu_r2c_c2r_example
+
+# Races natively: the sample runs a two-"GPU" plan on one device ({0, 0}) and
+# cufftXtMemcpy reads the result back on the plan's per-GPU streams without
+# waiting for the compute streams, so a busy GPU returns stale chunks (L2
+# error 0.12 / 0.88). Natively on an RTX 4090 with eight concurrent instances
+# it fails 65 of 310 runs; the shared CI L4 runs eight units at once.
+cuFFT/1d_mgpu_c2c/bin/1d_mgpu_c2c_example
