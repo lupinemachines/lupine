@@ -1704,7 +1704,7 @@ cudaError_t launch(conn_t *conn, int op, const void *func, dim3 gridDim,
     return rpc_error();
   }
   lupine_invalidate_runtime_context(conn);
-  return runtime_error(lupine_sync_mapped_device_to_host());
+  return runtime_error(lupine_invalidate_managed_allocations());
 }
 
 } // namespace
@@ -1947,7 +1947,7 @@ extern "C" cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
     return rpc_error();
   }
   lupine_invalidate_runtime_context(conn);
-  return runtime_error(lupine_sync_mapped_device_to_host());
+  return runtime_error(lupine_invalidate_managed_allocations());
 }
 
 #if CUDART_VERSION >= 13000

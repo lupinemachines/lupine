@@ -1592,12 +1592,16 @@ extern "C" void lupine_materialize_host_allocations() {
   }
 }
 
-extern "C" CUresult lupine_sync_mapped_device_to_host() {
+static CUresult lupine_sync_mapped_device_to_host(bool managed_only) {
   if (lupine_active_stream_captures.load(std::memory_order_relaxed) != 0) {
     return CUDA_SUCCESS;
   }
-  if (__atomic_exchange_n(&lupine_device_work_pending, 0, __ATOMIC_ACQ_REL) ==
-      0) {
+  const bool pending =
+      managed_only
+          ? __atomic_load_n(&lupine_device_work_pending, __ATOMIC_ACQUIRE)
+          : __atomic_exchange_n(&lupine_device_work_pending, 0,
+                                __ATOMIC_ACQ_REL);
+  if (!pending) {
     return CUDA_SUCCESS;
   }
 
@@ -1605,7 +1609,7 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
     // Managed memory can be reached through nested pointers, so synchronize it
     // conservatively. Pinned host memory remains host-authoritative until its
     // device mapping is exposed through a launch or an explicit pointer query.
-    if (mapping.data_bytes == 0 ||
+    if (mapping.data_bytes == 0 || (managed_only && !mapping.managed) ||
         (!mapping.managed && !mapping.device_pointer_exposed)) {
       continue;
     }
@@ -1699,6 +1703,17 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
     }
   }
   return CUDA_SUCCESS;
+}
+
+extern "C" CUresult lupine_sync_mapped_device_to_host() {
+  return lupine_sync_mapped_device_to_host(false);
+}
+
+extern "C" CUresult lupine_invalidate_managed_allocations() {
+  // A mapped host allocation may contain a CPU-written latch that running GPU
+  // work is waiting for. Only managed pages migrate on launch; mapped host
+  // pages remain writable until the caller synchronizes.
+  return lupine_sync_mapped_device_to_host(true);
 }
 
 static lupine_host_allocation_map::iterator

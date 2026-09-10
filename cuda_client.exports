@@ -18,6 +18,7 @@
     lupine_read_deferred_dtoh_copies;
     lupine_forward_remote_stdout;
     lupine_sync_mapped_device_to_host;
+    lupine_invalidate_managed_allocations;
     lupine_adopt_host_allocation;
     lupine_free_host_allocation;
     lupine_materialize_host_allocations;
