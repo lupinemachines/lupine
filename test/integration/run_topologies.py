@@ -135,7 +135,7 @@ class Runner:
         (self.results / "resolved.json").write_text(json.dumps(data, indent=2) + "\n")
 
     def record(self, name, result, elapsed=0, skip_reason=None):
-        logfile = name.replace("/", "_") + ".log"
+        logfile = name.replace("/", "_").replace(":", "_") + ".log"
         (self.results / logfile).write_text(result.stdout)
         self.cases.append({"name": name, "returncode": result.returncode,
                            "seconds": elapsed, "log": logfile, "skip_reason": skip_reason})
