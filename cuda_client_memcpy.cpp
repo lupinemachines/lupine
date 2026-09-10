@@ -3295,6 +3295,7 @@ extern "C" CUresult cuMemcpyAtoH(void *dstHost, CUarray srcArray,
 
 extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                                          size_t ByteCount, CUstream hStream) {
+  lupine_route route = lupine_route_for_deviceptr(srcDevice);
   // "API synchronization behavior" lets the driver make this copy synchronous
   // when the destination is pageable, and every driver does. Callers rely on it
   // instead of synchronizing: cuSPARSE reads its scalar results (nnz counts,
@@ -3306,7 +3307,6 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
   if (ByteCount != 0 && !lupine_host_ptr_is_page_locked(dstHost) &&
       lupine_active_stream_captures.load(std::memory_order_relaxed) == 0) {
 
-    lupine_route route = lupine_route_for_deviceptr(srcDevice);
     CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
     if (lupine_route_is_local(route)) {
       return lupine_call_real_cuda_fn("cuMemcpyDtoH_v2", dstHost, srcDevice,
@@ -3352,7 +3352,11 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
     return return_value;
   }
 
-  conn_t *conn = lupine_rpc_conn_for_deviceptr(srcDevice);
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn("cuMemcpyDtoHAsync_v2", dstHost, srcDevice,
+                                    ByteCount, hStream);
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_async_request(conn, RPC_cuMemcpyDtoHAsync_v2,
