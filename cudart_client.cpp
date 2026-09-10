@@ -23,6 +23,7 @@
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_client_memcpy.h"
 #include "cuda_client_rpc.h"
+#include "ipc.h"
 #include "lupine_fatbin.h"
 
 namespace {
@@ -79,7 +80,13 @@ int rpc_wait_for_response(conn_t *conn) {
 int rpc_read(conn_t *conn, void *data, size_t size) {
   return lupine_rpc_read(conn, data, size);
 }
-int rpc_read_end(conn_t *conn) { return lupine_rpc_read_end(conn); }
+int rpc_read_end(conn_t *conn) {
+  int result = lupine_rpc_read_end(conn);
+  if (result >= 0) {
+    lupine_invalidate_runtime_context(conn);
+  }
+  return result;
+}
 
 // ---------------------------------------------------------------------------
 // Device state
@@ -231,6 +238,63 @@ extern "C" cudaError_t cudaHostRegister(void *ptr, size_t bytes,
 // ---------------------------------------------------------------------------
 // Device management
 // ---------------------------------------------------------------------------
+
+extern "C" cudaError_t
+cudaMemPoolExportToShareableHandle(void *handle_out, cudaMemPool_t pool,
+                                   cudaMemAllocationHandleType handle_type,
+                                   unsigned int flags) {
+  if (handle_out == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  conn_t *conn = connection();
+  lupine_ipc_token token{};
+  cudaError_t result = rpc_error();
+  if (rpc_write_start_request(conn, RPC_cudaMemPoolExportToShareableHandle) <
+          0 ||
+      rpc_write(conn, &pool, sizeof(pool)) < 0 ||
+      rpc_write(conn, &handle_type, sizeof(handle_type)) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &token, sizeof(token)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  if (result == cudaSuccess &&
+      lupine_ipc_create_proxy_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL, &token,
+                                 static_cast<int *>(handle_out)) < 0) {
+    return cudaErrorUnknown;
+  }
+  return result;
+}
+
+extern "C" cudaError_t
+cudaMemPoolImportFromShareableHandle(cudaMemPool_t *pool, void *handle,
+                                     cudaMemAllocationHandleType handle_type,
+                                     unsigned int flags) {
+  if (pool == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  conn_t *conn = connection();
+  lupine_ipc_token token{};
+  uint32_t kind = 0;
+  int fd = static_cast<int>(reinterpret_cast<uintptr_t>(handle));
+  if (lupine_ipc_read_proxy_fd(fd, &kind, &token) < 0 ||
+      kind != LUPINE_IPC_FD_KIND_MEMORY_POOL) {
+    return cudaErrorInvalidValue;
+  }
+  cudaError_t result = rpc_error();
+  if (rpc_write_start_request(conn, RPC_cudaMemPoolImportFromShareableHandle) <
+          0 ||
+      rpc_write(conn, &token, sizeof(token)) < 0 ||
+      rpc_write(conn, &handle_type, sizeof(handle_type)) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, pool, sizeof(*pool)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return result;
+}
 
 extern "C" cudaError_t cudaGetDeviceCount(int *count) {
   if (count == nullptr) {
@@ -428,11 +492,178 @@ extern "C" const char *cudaGetErrorString(cudaError_t error) {
   return error_text(RPC_cudaGetErrorString, error, false);
 }
 
+#if CUDART_VERSION < 12000
+extern "C" cudaError_t cudaGraphInstantiate(cudaGraphExec_t *exec,
+                                            cudaGraph_t graph,
+                                            cudaGraphNode_t *error_node,
+                                            char *log, size_t log_size) {
+  conn_t *conn = connection();
+  cudaError_t result = rpc_error();
+  bool has_error_node = error_node != nullptr;
+  bool has_log = log != nullptr;
+  bool log_has_data = false;
+  if (exec == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  if (rpc_write_start_request(conn, RPC_cudaGraphInstantiate) < 0 ||
+      rpc_write(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_write(conn, &has_error_node, sizeof(has_error_node)) < 0 ||
+      rpc_write(conn, &log_size, sizeof(log_size)) < 0 ||
+      rpc_write(conn, &has_log, sizeof(has_log)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, exec, sizeof(*exec)) < 0 ||
+      (has_error_node && rpc_read(conn, error_node, sizeof(*error_node)) < 0) ||
+      rpc_read(conn, &log_has_data, sizeof(log_has_data)) < 0 ||
+      (log_has_data && rpc_read(conn, log, log_size) < 0) ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return result;
+}
+
+extern "C" cudaError_t
+cudaGraphExecUpdate(cudaGraphExec_t exec, cudaGraph_t graph,
+                    cudaGraphNode_t *error_node,
+                    cudaGraphExecUpdateResult *update_result) {
+  conn_t *conn = connection();
+  cudaError_t result = rpc_error();
+  bool has_error_node = error_node != nullptr;
+  bool has_update_result = update_result != nullptr;
+  if (rpc_write_start_request(conn, RPC_cudaGraphExecUpdate) < 0 ||
+      rpc_write(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_write(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_write(conn, &has_error_node, sizeof(has_error_node)) < 0 ||
+      rpc_write(conn, &has_update_result, sizeof(has_update_result)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (has_error_node && rpc_read(conn, error_node, sizeof(*error_node)) < 0) ||
+      (has_update_result &&
+       rpc_read(conn, update_result, sizeof(*update_result)) < 0) ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return result;
+}
+#endif
+
+#if CUDART_VERSION < 13000
+extern "C" cudaError_t cudaMemAdvise(const void *devPtr, size_t count,
+                                     cudaMemoryAdvise advice, int device) {
+  conn_t *conn = connection();
+  cudaError_t result = rpc_error();
+  if (rpc_write_start_request(conn, RPC_cudaMemAdvise) < 0 ||
+      rpc_write(conn, &devPtr, sizeof(devPtr)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_write(conn, &advice, sizeof(advice)) < 0 ||
+      rpc_write(conn, &device, sizeof(device)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return result;
+}
+
+extern "C" cudaError_t cudaMemPrefetchAsync(const void *devPtr, size_t count,
+                                            int dstDevice,
+                                            cudaStream_t stream) {
+  conn_t *conn = connection_for_stream(stream);
+  cudaError_t result = rpc_error();
+  if (rpc_write_start_request(conn, RPC_cudaMemPrefetchAsync) < 0 ||
+      rpc_write(conn, &devPtr, sizeof(devPtr)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
+      rpc_write(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return result;
+}
+#endif
+
 // ---------------------------------------------------------------------------
 // Copies
 // ---------------------------------------------------------------------------
 
 namespace {
+
+cudaError_t copy_memory_types(cudaMemcpyKind kind, CUmemorytype *source,
+                              CUmemorytype *destination) {
+  if (kind < cudaMemcpyHostToHost || kind > cudaMemcpyDefault) {
+    return cudaErrorInvalidMemcpyDirection;
+  }
+  constexpr CUmemorytype types[][2] = {
+      {CU_MEMORYTYPE_HOST, CU_MEMORYTYPE_HOST},
+      {CU_MEMORYTYPE_HOST, CU_MEMORYTYPE_DEVICE},
+      {CU_MEMORYTYPE_DEVICE, CU_MEMORYTYPE_HOST},
+      {CU_MEMORYTYPE_DEVICE, CU_MEMORYTYPE_DEVICE},
+      {CU_MEMORYTYPE_UNIFIED, CU_MEMORYTYPE_UNIFIED}};
+  *source = types[kind][0];
+  *destination = types[kind][1];
+  return cudaSuccess;
+}
+
+cudaError_t copy_descriptor(const cudaMemcpy3DParms *params,
+                            CUDA_MEMCPY3D *copy) {
+  if (params == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  cudaError_t result = copy_memory_types(params->kind, &copy->srcMemoryType,
+                                         &copy->dstMemoryType);
+  if (result != cudaSuccess) {
+    return result;
+  }
+  if ((params->srcArray != nullptr && params->srcPtr.ptr != nullptr) ||
+      (params->dstArray != nullptr && params->dstPtr.ptr != nullptr)) {
+    return cudaErrorInvalidValue;
+  }
+  size_t element_bytes = 0;
+  for (cudaArray_t array : {params->srcArray, params->dstArray}) {
+    if (array == nullptr) {
+      continue;
+    }
+    cudaChannelFormatDesc format{};
+    result = cudaGetChannelDesc(&format, array);
+    if (result != cudaSuccess) {
+      return result;
+    }
+    size_t bytes = (format.x + format.y + format.z + format.w) / 8;
+    if (bytes == 0 || (element_bytes != 0 && bytes != element_bytes)) {
+      return cudaErrorInvalidValue;
+    }
+    element_bytes = bytes;
+  }
+  if (element_bytes == 0) {
+    element_bytes = 1;
+  }
+  copy->srcHost = params->srcPtr.ptr;
+  copy->srcDevice = reinterpret_cast<CUdeviceptr>(params->srcPtr.ptr);
+  copy->srcPitch = params->srcPtr.pitch;
+  copy->srcHeight = params->srcPtr.ysize;
+  copy->srcXInBytes = params->srcPos.x;
+  copy->srcY = params->srcPos.y;
+  copy->srcZ = params->srcPos.z;
+  if (params->srcArray != nullptr) {
+    copy->srcMemoryType = CU_MEMORYTYPE_ARRAY;
+    copy->srcArray = reinterpret_cast<CUarray>(params->srcArray);
+    copy->srcXInBytes *= element_bytes;
+  }
+  copy->dstHost = params->dstPtr.ptr;
+  copy->dstDevice = reinterpret_cast<CUdeviceptr>(params->dstPtr.ptr);
+  copy->dstPitch = params->dstPtr.pitch;
+  copy->dstHeight = params->dstPtr.ysize;
+  copy->dstXInBytes = params->dstPos.x;
+  copy->dstY = params->dstPos.y;
+  copy->dstZ = params->dstPos.z;
+  if (params->dstArray != nullptr) {
+    copy->dstMemoryType = CU_MEMORYTYPE_ARRAY;
+    copy->dstArray = reinterpret_cast<CUarray>(params->dstArray);
+    copy->dstXInBytes *= element_bytes;
+  }
+  copy->WidthInBytes = params->extent.width * element_bytes;
+  copy->Height = params->extent.height;
+  copy->Depth = params->extent.depth;
+  return cudaSuccess;
+}
 
 cudaError_t copy_2d(void *dst, size_t dpitch, const void *src, size_t spitch,
                     size_t width, size_t height, cudaMemcpyKind kind,
@@ -452,25 +683,7 @@ cudaError_t copy_2d(void *dst, size_t dpitch, const void *src, size_t spitch,
   // A depth-one volume accepts arbitrary device pitches; cuMemcpy2D can
   // reject pitches that did not come from cuMemAllocPitch.
   CUDA_MEMCPY3D copy = {};
-  switch (kind) {
-  case cudaMemcpyHostToHost:
-    copy.srcMemoryType = copy.dstMemoryType = CU_MEMORYTYPE_HOST;
-    break;
-  case cudaMemcpyHostToDevice:
-    copy.srcMemoryType = CU_MEMORYTYPE_HOST;
-    copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-    break;
-  case cudaMemcpyDeviceToHost:
-    copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-    copy.dstMemoryType = CU_MEMORYTYPE_HOST;
-    break;
-  case cudaMemcpyDeviceToDevice:
-    copy.srcMemoryType = copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
-    break;
-  case cudaMemcpyDefault:
-    copy.srcMemoryType = copy.dstMemoryType = CU_MEMORYTYPE_UNIFIED;
-    break;
-  }
+  copy_memory_types(kind, &copy.srcMemoryType, &copy.dstMemoryType);
   copy.srcHost = src;
   copy.srcDevice = reinterpret_cast<CUdeviceptr>(src);
   copy.srcPitch = spitch;
@@ -616,6 +829,236 @@ extern "C" cudaError_t cudaMemcpy2DAsync(void *dst, size_t dpitch,
                                          cudaMemcpyKind kind,
                                          cudaStream_t stream) {
   return copy_2d(dst, dpitch, src, spitch, width, height, kind, &stream);
+}
+
+extern "C" cudaError_t cudaMemcpy3D(const cudaMemcpy3DParms *params) {
+  CUDA_MEMCPY3D copy{};
+  cudaError_t result = copy_descriptor(params, &copy);
+  return result == cudaSuccess ? runtime_error(cuMemcpy3D(&copy)) : result;
+}
+
+extern "C" cudaError_t cudaMemcpy3DAsync(const cudaMemcpy3DParms *params,
+                                         cudaStream_t stream) {
+  CUDA_MEMCPY3D copy{};
+  cudaError_t result = copy_descriptor(params, &copy);
+  return result == cudaSuccess ? runtime_error(cuMemcpy3DAsync(&copy, stream))
+                               : result;
+}
+
+extern "C" cudaError_t
+cudaGraphAddMemcpyNode(cudaGraphNode_t *node, cudaGraph_t graph,
+                       const cudaGraphNode_t *dependencies,
+                       size_t dependency_count,
+                       const cudaMemcpy3DParms *params) {
+  CUDA_MEMCPY3D copy{};
+  cudaError_t result = copy_descriptor(params, &copy);
+  if (result != cudaSuccess) {
+    return result;
+  }
+  conn_t *conn = connection();
+  CUcontext context = nullptr;
+  CUresult status = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (rpc_write_start_request(conn, RPC_cuCtxGetCurrent) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &context, sizeof(context)) < 0 ||
+      rpc_read(conn, &status, sizeof(status)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  if (status != CUDA_SUCCESS) {
+    return runtime_error(status);
+  }
+  return runtime_error(cuGraphAddMemcpyNode(node, graph, dependencies,
+                                            dependency_count, &copy, context));
+}
+
+extern "C" cudaError_t
+cudaGraphAddMemcpyNode1D(cudaGraphNode_t *node, cudaGraph_t graph,
+                         const cudaGraphNode_t *dependencies,
+                         size_t dependency_count, void *dst, const void *src,
+                         size_t count, cudaMemcpyKind kind) {
+  cudaMemcpy3DParms params{};
+  params.srcPtr = {const_cast<void *>(src), count, count, 1};
+  params.dstPtr = {dst, count, count, 1};
+  params.extent = {count, 1, 1};
+  params.kind = kind;
+  return cudaGraphAddMemcpyNode(node, graph, dependencies, dependency_count,
+                                &params);
+}
+
+namespace {
+
+cudaError_t copy_array_2d(CUDA_MEMCPY3D *copy, size_t width, size_t height,
+                          cudaMemcpyKind kind, const cudaStream_t *stream) {
+  cudaError_t result =
+      copy_memory_types(kind, &copy->srcMemoryType, &copy->dstMemoryType);
+  if (result != cudaSuccess) {
+    return result;
+  }
+  if (copy->srcArray != nullptr) {
+    copy->srcMemoryType = CU_MEMORYTYPE_ARRAY;
+  }
+  if (copy->dstArray != nullptr) {
+    copy->dstMemoryType = CU_MEMORYTYPE_ARRAY;
+  }
+  copy->WidthInBytes = width;
+  copy->Height = height;
+  copy->Depth = 1;
+  copy->srcHeight = copy->dstHeight = height;
+  return runtime_error(stream == nullptr ? cuMemcpy3D(copy)
+                                         : cuMemcpy3DAsync(copy, *stream));
+}
+
+cudaError_t copy_array_linear(CUDA_MEMCPY3D copy, size_t bytes,
+                              cudaMemcpyKind kind, const cudaStream_t *stream) {
+  cudaArray_t array = reinterpret_cast<cudaArray_t>(
+      copy.srcArray != nullptr ? copy.srcArray : copy.dstArray);
+  cudaChannelFormatDesc format{};
+  cudaExtent extent{};
+  unsigned int flags = 0;
+  cudaError_t result = cudaArrayGetInfo(&format, &extent, &flags, array);
+  if (result != cudaSuccess) {
+    return result;
+  }
+  const size_t row_bytes =
+      extent.width * ((format.x + format.y + format.z + format.w) / 8);
+  size_t &x = copy.srcArray != nullptr ? copy.srcXInBytes : copy.dstXInBytes;
+  size_t &y = copy.srcArray != nullptr ? copy.srcY : copy.dstY;
+  if (row_bytes == 0 || x >= row_bytes) {
+    return cudaErrorInvalidValue;
+  }
+  while (bytes != 0) {
+    size_t width = std::min(bytes, row_bytes - x);
+    size_t rows = x == 0 && bytes >= row_bytes ? bytes / row_bytes : 1;
+    copy.srcPitch = copy.dstPitch = width;
+    result = copy_array_2d(&copy, width, rows, kind, stream);
+    if (result != cudaSuccess) {
+      return result;
+    }
+    size_t copied = width * rows;
+    bytes -= copied;
+    if (copy.srcArray != nullptr) {
+      copy.dstHost = static_cast<unsigned char *>(copy.dstHost) + copied;
+      copy.dstDevice += copied;
+    } else {
+      copy.srcHost = static_cast<const unsigned char *>(copy.srcHost) + copied;
+      copy.srcDevice += copied;
+    }
+    x = 0;
+    y += rows;
+  }
+  return cudaSuccess;
+}
+
+} // namespace
+
+extern "C" cudaError_t cudaMemcpy2DToArray(cudaArray_t dst, size_t wOffset,
+                                           size_t hOffset, const void *src,
+                                           size_t spitch, size_t width,
+                                           size_t height, cudaMemcpyKind kind) {
+  CUDA_MEMCPY3D copy{};
+  copy.dstArray = reinterpret_cast<CUarray>(dst);
+  copy.dstXInBytes = wOffset;
+  copy.dstY = hOffset;
+  copy.srcHost = src;
+  copy.srcDevice = reinterpret_cast<CUdeviceptr>(src);
+  copy.srcPitch = spitch;
+  return copy_array_2d(&copy, width, height, kind, nullptr);
+}
+
+extern "C" cudaError_t cudaMemcpy2DToArrayAsync(cudaArray_t dst, size_t wOffset,
+                                                size_t hOffset, const void *src,
+                                                size_t spitch, size_t width,
+                                                size_t height,
+                                                cudaMemcpyKind kind,
+                                                cudaStream_t stream) {
+  CUDA_MEMCPY3D copy{};
+  copy.dstArray = reinterpret_cast<CUarray>(dst);
+  copy.dstXInBytes = wOffset;
+  copy.dstY = hOffset;
+  copy.srcHost = src;
+  copy.srcDevice = reinterpret_cast<CUdeviceptr>(src);
+  copy.srcPitch = spitch;
+  return copy_array_2d(&copy, width, height, kind, &stream);
+}
+
+extern "C" cudaError_t cudaMemcpy2DFromArray(void *dst, size_t dpitch,
+                                             cudaArray_const_t src,
+                                             size_t wOffset, size_t hOffset,
+                                             size_t width, size_t height,
+                                             cudaMemcpyKind kind) {
+  CUDA_MEMCPY3D copy{};
+  copy.srcArray = reinterpret_cast<CUarray>(const_cast<cudaArray_t>(src));
+  copy.srcXInBytes = wOffset;
+  copy.srcY = hOffset;
+  copy.dstHost = dst;
+  copy.dstDevice = reinterpret_cast<CUdeviceptr>(dst);
+  copy.dstPitch = dpitch;
+  return copy_array_2d(&copy, width, height, kind, nullptr);
+}
+
+extern "C" cudaError_t
+cudaMemcpy2DFromArrayAsync(void *dst, size_t dpitch, cudaArray_const_t src,
+                           size_t wOffset, size_t hOffset, size_t width,
+                           size_t height, cudaMemcpyKind kind,
+                           cudaStream_t stream) {
+  CUDA_MEMCPY3D copy{};
+  copy.srcArray = reinterpret_cast<CUarray>(const_cast<cudaArray_t>(src));
+  copy.srcXInBytes = wOffset;
+  copy.srcY = hOffset;
+  copy.dstHost = dst;
+  copy.dstDevice = reinterpret_cast<CUdeviceptr>(dst);
+  copy.dstPitch = dpitch;
+  return copy_array_2d(&copy, width, height, kind, &stream);
+}
+
+extern "C" cudaError_t cudaMemcpyToArray(cudaArray_t dst, size_t wOffset,
+                                         size_t hOffset, const void *src,
+                                         size_t count, cudaMemcpyKind kind) {
+  CUDA_MEMCPY3D copy{};
+  copy.dstArray = reinterpret_cast<CUarray>(dst);
+  copy.dstXInBytes = wOffset;
+  copy.dstY = hOffset;
+  copy.srcHost = src;
+  copy.srcDevice = reinterpret_cast<CUdeviceptr>(src);
+  return copy_array_linear(copy, count, kind, nullptr);
+}
+
+extern "C" cudaError_t cudaMemcpyFromArray(void *dst, cudaArray_const_t src,
+                                           size_t wOffset, size_t hOffset,
+                                           size_t count, cudaMemcpyKind kind) {
+  CUDA_MEMCPY3D copy{};
+  copy.srcArray = reinterpret_cast<CUarray>(const_cast<cudaArray_t>(src));
+  copy.srcXInBytes = wOffset;
+  copy.srcY = hOffset;
+  copy.dstHost = dst;
+  copy.dstDevice = reinterpret_cast<CUdeviceptr>(dst);
+  return copy_array_linear(copy, count, kind, nullptr);
+}
+
+extern "C" cudaError_t cudaMemcpyToArrayAsync(cudaArray_t dst, size_t wOffset,
+                                              size_t hOffset, const void *src,
+                                              size_t count, cudaMemcpyKind kind,
+                                              cudaStream_t stream) {
+  CUDA_MEMCPY3D copy{};
+  copy.dstArray = reinterpret_cast<CUarray>(dst);
+  copy.dstXInBytes = wOffset;
+  copy.dstY = hOffset;
+  copy.srcHost = src;
+  copy.srcDevice = reinterpret_cast<CUdeviceptr>(src);
+  return copy_array_linear(copy, count, kind, &stream);
+}
+
+extern "C" cudaError_t
+cudaMemcpyFromArrayAsync(void *dst, cudaArray_const_t src, size_t wOffset,
+                         size_t hOffset, size_t count, cudaMemcpyKind kind,
+                         cudaStream_t stream) {
+  CUDA_MEMCPY3D copy{};
+  copy.srcArray = reinterpret_cast<CUarray>(const_cast<cudaArray_t>(src));
+  copy.srcXInBytes = wOffset;
+  copy.srcY = hOffset;
+  copy.dstHost = dst;
+  copy.dstDevice = reinterpret_cast<CUdeviceptr>(dst);
+  return copy_array_linear(copy, count, kind, &stream);
 }
 
 extern "C" cudaError_t cudaGetSymbolAddress(void **devPtr, const void *symbol) {
@@ -789,9 +1232,23 @@ extern "C" void __cudaRegisterVar(void **fatCubinHandle, char *hostVar,
                                   char *deviceAddress, const char *deviceName,
                                   int ext, size_t size, int constant,
                                   int global) {
+  const size_t address_length = strlen(deviceAddress) + 1;
+  const size_t name_length = strlen(deviceName) + 1;
   broadcast_fatbin(fatCubinHandle, [&](conn_t *conn, void **handle) {
-    lupine_rpc___cudaRegisterVar(conn, handle, hostVar, deviceAddress,
-                                 deviceName, ext, size, constant, global);
+    if (rpc_write_start_request(conn, RPC___cudaRegisterVar) < 0 ||
+        rpc_write(conn, &handle, sizeof(handle)) < 0 ||
+        rpc_write(conn, &hostVar, sizeof(hostVar)) < 0 ||
+        rpc_write(conn, &address_length, sizeof(address_length)) < 0 ||
+        rpc_write(conn, deviceAddress, address_length) < 0 ||
+        rpc_write(conn, &name_length, sizeof(name_length)) < 0 ||
+        rpc_write(conn, deviceName, name_length) < 0 ||
+        rpc_write(conn, &ext, sizeof(ext)) < 0 ||
+        rpc_write(conn, &size, sizeof(size)) < 0 ||
+        rpc_write(conn, &constant, sizeof(constant)) < 0 ||
+        rpc_write(conn, &global, sizeof(global)) < 0 ||
+        rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
+      return;
+    }
   });
 }
 
@@ -963,10 +1420,53 @@ cudaError_t launch(conn_t *conn, int op, const void *func, dim3 gridDim,
       lupine_rpc_write_end(conn) < 0) {
     return rpc_error();
   }
+  lupine_invalidate_runtime_context(conn);
   return cudaSuccess;
 }
 
 } // namespace
+
+extern "C" cudaError_t
+cudaGraphAddKernelNode(cudaGraphNode_t *node, cudaGraph_t graph,
+                       const cudaGraphNode_t *dependencies,
+                       size_t dependency_count,
+                       const cudaKernelNodeParams *params) {
+  if (node == nullptr || params == nullptr ||
+      (dependency_count != 0 && dependencies == nullptr)) {
+    return cudaErrorInvalidValue;
+  }
+  if (params->extra != nullptr) {
+    return cudaErrorNotSupported;
+  }
+  conn_t *conn = connection();
+  std::vector<size_t> sizes;
+  cudaError_t result = param_sizes(conn, params->func, &sizes);
+  if (result != cudaSuccess) {
+    return result;
+  }
+  if (!sizes.empty() && params->kernelParams == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  for (size_t index = 0; index < sizes.size(); ++index) {
+    if (params->kernelParams[index] == nullptr) {
+      return cudaErrorInvalidValue;
+    }
+  }
+  if (rpc_write_start_request(conn, RPC_cudaGraphAddKernelNode) < 0 ||
+      rpc_write(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_write(conn, &dependency_count, sizeof(dependency_count)) < 0 ||
+      rpc_write(conn, dependencies, dependency_count * sizeof(*dependencies)) <
+          0 ||
+      rpc_write(conn, params, sizeof(*params)) < 0 ||
+      write_params(conn, static_cast<uint32_t>(sizes.size()), sizes,
+                   params->kernelParams) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, node, sizeof(*node)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return result;
+}
 
 extern "C" cudaError_t cudaLaunchKernel(const void *func, dim3 gridDim,
                                         dim3 blockDim, void **args,
@@ -1027,6 +1527,7 @@ extern "C" cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
       lupine_rpc_write_end(conn) < 0) {
     return rpc_error();
   }
+  lupine_invalidate_runtime_context(conn);
   return cudaSuccess;
 }
 

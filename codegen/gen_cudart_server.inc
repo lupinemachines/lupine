@@ -4064,6 +4064,42 @@ ERROR_0:
 
 #endif
 
+#if CUDART_VERSION >= 12020 && CUDART_VERSION < 13000
+int handle_cudaMemAdvise_v2(conn_t *conn) {
+  const void *devPtr;
+  size_t count;
+  enum cudaMemoryAdvise advice;
+  struct cudaMemLocation location;
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = cudaError_t (*)(const void *, size_t, enum cudaMemoryAdvise,
+                               struct cudaMemLocation);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &devPtr, sizeof(const void *)) < 0 ||
+      rpc_read(conn, &count, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &advice, sizeof(enum cudaMemoryAdvise)) < 0 ||
+      rpc_read(conn, &location, sizeof(struct cudaMemLocation)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>("cudaMemAdvise_v2");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(devPtr, count, advice, location);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
 #if CUDART_VERSION >= 13000
 int handle_cudaMemDiscardAndPrefetchBatchAsync(conn_t *conn) {
   size_t count;
@@ -4649,6 +4685,44 @@ ERROR_0:
 
 #endif
 
+#if CUDART_VERSION >= 12020 && CUDART_VERSION < 13000
+int handle_cudaMemPrefetchAsync_v2(conn_t *conn) {
+  const void *devPtr;
+  size_t count;
+  struct cudaMemLocation location;
+  unsigned int flags;
+  cudaStream_t stream;
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = cudaError_t (*)(const void *, size_t, struct cudaMemLocation,
+                               unsigned int, cudaStream_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &devPtr, sizeof(const void *)) < 0 ||
+      rpc_read(conn, &count, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &location, sizeof(struct cudaMemLocation)) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>("cudaMemPrefetchAsync_v2");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(devPtr, count, location, flags, stream);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
 #if CUDART_VERSION >= 13000
 int handle_cudaMemPrefetchBatchAsync(conn_t *conn) {
   size_t count;
@@ -4882,58 +4956,6 @@ ERROR_0:
 }
 
 #endif
-
-int handle_cudaMemcpy3D(conn_t *conn) {
-  struct cudaMemcpy3DParms p {};
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(const struct cudaMemcpy3DParms *);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &p, sizeof(const struct cudaMemcpy3DParms)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaMemcpy3D");
-  return_value = fn == nullptr ? function_not_found() : fn(&p);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaMemcpy3DAsync(conn_t *conn) {
-  struct cudaMemcpy3DParms p {};
-  cudaStream_t stream;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(const struct cudaMemcpy3DParms *, cudaStream_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &p, sizeof(const struct cudaMemcpy3DParms)) < 0 ||
-      rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaMemcpy3DAsync");
-  return_value = fn == nullptr ? function_not_found() : fn(&p, stream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
 
 #if CUDART_VERSION >= 13000
 int handle_cudaMemcpy3DBatchAsync(conn_t *conn) {
@@ -7225,112 +7247,6 @@ int handle_cudaGraphAddExternalSemaphoresWaitNode(conn_t *conn) {
                                ? nullptr
                                : pDependencies),
                           numDependencies, &nodeParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pGraphNode, sizeof(cudaGraphNode_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)pDependencies);
-  return 0;
-ERROR_0:
-  free((void *)pDependencies);
-  return -1;
-}
-
-int handle_cudaGraphAddHostNode(conn_t *conn) {
-  cudaGraphNode_t pGraphNode{};
-  pGraphNode = {};
-  cudaGraph_t graph;
-  size_t numDependencies;
-  cudaGraphNode_t *pDependencies = nullptr;
-  size_t pDependencies_size;
-  struct cudaHostNodeParams pNodeParams {};
-  int request_id;
-  cudaError_t return_value;
-  using fn_t =
-      cudaError_t (*)(cudaGraphNode_t *, cudaGraph_t, const cudaGraphNode_t *,
-                      size_t, const struct cudaHostNodeParams *);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &graph, sizeof(cudaGraph_t)) < 0 ||
-      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 || false)
-    goto ERROR_0;
-  pDependencies_size = numDependencies * sizeof(const cudaGraphNode_t);
-  pDependencies = (cudaGraphNode_t *)malloc(pDependencies_size);
-  if (pDependencies_size != 0 && pDependencies == nullptr)
-    goto ERROR_0;
-  if ((pDependencies_size != 0 &&
-       rpc_read(conn, pDependencies, pDependencies_size) < 0) ||
-      rpc_read(conn, &pNodeParams, sizeof(const struct cudaHostNodeParams)) <
-          0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaGraphAddHostNode");
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(&pGraphNode, graph,
-                          (numDependencies * sizeof(const cudaGraphNode_t) == 0
-                               ? nullptr
-                               : pDependencies),
-                          numDependencies, &pNodeParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pGraphNode, sizeof(cudaGraphNode_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)pDependencies);
-  return 0;
-ERROR_0:
-  free((void *)pDependencies);
-  return -1;
-}
-
-int handle_cudaGraphAddKernelNode(conn_t *conn) {
-  cudaGraphNode_t pGraphNode{};
-  pGraphNode = {};
-  cudaGraph_t graph;
-  size_t numDependencies;
-  cudaGraphNode_t *pDependencies = nullptr;
-  size_t pDependencies_size;
-  struct cudaKernelNodeParams pNodeParams {};
-  int request_id;
-  cudaError_t return_value;
-  using fn_t =
-      cudaError_t (*)(cudaGraphNode_t *, cudaGraph_t, const cudaGraphNode_t *,
-                      size_t, const struct cudaKernelNodeParams *);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &graph, sizeof(cudaGraph_t)) < 0 ||
-      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 || false)
-    goto ERROR_0;
-  pDependencies_size = numDependencies * sizeof(const cudaGraphNode_t);
-  pDependencies = (cudaGraphNode_t *)malloc(pDependencies_size);
-  if (pDependencies_size != 0 && pDependencies == nullptr)
-    goto ERROR_0;
-  if ((pDependencies_size != 0 &&
-       rpc_read(conn, pDependencies, pDependencies_size) < 0) ||
-      rpc_read(conn, &pNodeParams, sizeof(const struct cudaKernelNodeParams)) <
-          0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaGraphAddKernelNode");
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(&pGraphNode, graph,
-                          (numDependencies * sizeof(const cudaGraphNode_t) == 0
-                               ? nullptr
-                               : pDependencies),
-                          numDependencies, &pNodeParams);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraphNode, sizeof(cudaGraphNode_t)) < 0 ||
@@ -10059,60 +9975,6 @@ int handle_cudaGraphicsUnregisterResource(conn_t *conn) {
     goto ERROR_0;
   return 0;
 ERROR_0:
-  return -1;
-}
-
-int handle___cudaRegisterVar(conn_t *conn) {
-  void **fatCubinHandle;
-  char *hostVar;
-  char *deviceAddress = nullptr;
-  std::size_t deviceAddress_len;
-  const char *deviceName = nullptr;
-  std::size_t deviceName_len;
-  int ext;
-  size_t size;
-  int constant;
-  int global;
-  int request_id;
-  using fn_t =
-      void (*)(void **, char *, char *, const char *, int, size_t, int, int);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
-      rpc_read(conn, &hostVar, sizeof(char *)) < 0 ||
-      rpc_read(conn, &deviceAddress_len, sizeof(std::size_t)) < 0)
-    goto ERROR_0;
-  deviceAddress = (char *)malloc(deviceAddress_len);
-  if ((deviceAddress_len != 0 && deviceAddress == nullptr) ||
-      rpc_read(conn, (void *)deviceAddress, deviceAddress_len) < 0 ||
-      rpc_read(conn, &deviceName_len, sizeof(std::size_t)) < 0)
-    goto ERROR_0;
-  deviceName = (const char *)malloc(deviceName_len);
-  if ((deviceName_len != 0 && deviceName == nullptr) ||
-      rpc_read(conn, (void *)deviceName, deviceName_len) < 0 ||
-      rpc_read(conn, &ext, sizeof(int)) < 0 ||
-      rpc_read(conn, &size, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &constant, sizeof(int)) < 0 ||
-      rpc_read(conn, &global, sizeof(int)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("__cudaRegisterVar");
-  if (fn == nullptr)
-    goto ERROR_0;
-  fn(fatCubinHandle, hostVar, deviceAddress, deviceName, ext, size, constant,
-     global);
-
-  if (rpc_write_start_response(conn, request_id) < 0 || rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)deviceName);
-  free((void *)deviceAddress);
-  return 0;
-ERROR_0:
-  free((void *)deviceName);
-  free((void *)deviceAddress);
   return -1;
 }
 

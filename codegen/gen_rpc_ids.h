@@ -628,6 +628,7 @@
 #define RPC_cudaMallocMipmappedArray 1413065046
 #define RPC_cudaMallocPitch 1525266976
 #define RPC_cudaMemAdvise 454382561
+#define RPC_cudaMemAdvise_v2 2105044895
 #define RPC_cudaMemDiscardAndPrefetchBatchAsync 537179149
 #define RPC_cudaMemDiscardBatchAsync 122929118
 #define RPC_cudaMemGetDefaultMemPool 24568841
@@ -635,6 +636,8 @@
 #define RPC_cudaMemGetMemPool 872893253
 #define RPC_cudaMemPoolCreate 42267840
 #define RPC_cudaMemPoolDestroy 1305230667
+#define RPC_cudaMemPoolExportToShareableHandle 67511027
+#define RPC_cudaMemPoolImportFromShareableHandle 463039057
 #define RPC_cudaMemPoolExportPointer 427388112
 #define RPC_cudaMemPoolGetAccess 1842725012
 #define RPC_cudaMemPoolGetAttribute 344501328
@@ -643,12 +646,11 @@
 #define RPC_cudaMemPoolSetAttribute 462846675
 #define RPC_cudaMemPoolTrimTo 717901187
 #define RPC_cudaMemPrefetchAsync 148669554
+#define RPC_cudaMemPrefetchAsync_v2 787234921
 #define RPC_cudaMemPrefetchBatchAsync 1093318000
 #define RPC_cudaMemRangeGetAttribute 1177590058
 #define RPC_cudaMemRangeGetAttributes 1081292356
 #define RPC_cudaMemSetMemPool 440560343
-#define RPC_cudaMemcpy3D 206766422
-#define RPC_cudaMemcpy3DAsync 1493022242
 #define RPC_cudaMemcpy3DBatchAsync 464298841
 #define RPC_cudaMemcpy3DPeer 417901906
 #define RPC_cudaMemcpy3DPeerAsync 1298493691

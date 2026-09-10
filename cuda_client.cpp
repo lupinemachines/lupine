@@ -833,9 +833,11 @@ extern "C" void *lupine_real_cuda_symbol(const char *name) {
 // Client-answered entry points must fail with NOT_INITIALIZED until cuInit;
 // forwarded ones get the server's own state.
 static std::atomic<bool> lupine_cuda_initialized{false};
+CUresult lupine_refresh_runtime_context();
 
 static bool lupine_cuda_is_initialized() {
-  return lupine_cuda_initialized.load(std::memory_order_acquire);
+  return lupine_refresh_runtime_context() == CUDA_SUCCESS &&
+         lupine_cuda_initialized.load(std::memory_order_acquire);
 }
 
 static CUresult lupine_remote_cuInit(conn_t *conn, unsigned int flags) {
@@ -1891,7 +1893,8 @@ lupine_translate_private_function_for_rpc(CUfunction function) {
   return lupine_translate_private_function(function);
 }
 
-static bool lupine_device_attribute_is_virtualized(CUdevice_attribute attrib) {
+extern "C" bool
+lupine_device_attribute_is_virtualized(CUdevice_attribute attrib) {
   switch (attrib) {
   case CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS:
   case CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES:
@@ -3377,6 +3380,44 @@ static thread_local CUcontext lupine_current_context = nullptr;
 static thread_local CUcontext lupine_default_context_hint = nullptr;
 static std::atomic<CUcontext> lupine_global_default_context_hint{nullptr};
 static thread_local auto *lupine_context_stack = new std::vector<CUcontext>();
+static thread_local conn_t *lupine_pending_runtime_context = nullptr;
+
+extern "C" void lupine_invalidate_runtime_context(conn_t *conn) {
+  lupine_pending_runtime_context = conn;
+}
+
+// Runtime calls may initialize or change the server lane's driver context.
+// Query it only when a subsequent driver call needs the client-side cache.
+// This observes CUDA state; it never calls cuInit or creates a context.
+CUresult lupine_refresh_runtime_context() {
+  conn_t *conn = lupine_pending_runtime_context;
+  if (conn == nullptr) {
+    return CUDA_SUCCESS;
+  }
+  lupine_pending_runtime_context = nullptr;
+  CUcontext context = nullptr;
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuCtxGetCurrent) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &context, sizeof(context)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (result == CUDA_SUCCESS) {
+    lupine_cuda_initialized.store(true, std::memory_order_release);
+    lupine_current_context = context;
+    if (context != nullptr) {
+      lupine_note_context_owner(context, conn);
+      lupine_default_context_hint = context;
+      lupine_global_default_context_hint.store(context,
+                                               std::memory_order_relaxed);
+    }
+    lupine_lane_context_cache_store(
+        lupine_route_identity(lupine_remote_route_for_conn(conn)), context);
+  }
+  return result;
+}
 
 CUcontext lupine_current_context_hint() { return lupine_current_context; }
 

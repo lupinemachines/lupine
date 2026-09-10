@@ -31,6 +31,7 @@ CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal);
 CUresult lupine_set_current_context_on_route(lupine_route route, CUcontext ctx);
 bool lupine_local_cuda_available();
 CUcontext lupine_current_context_hint();
+CUresult lupine_refresh_runtime_context();
 CUcontext lupine_default_context_hint_value();
 CUcontext lupine_global_default_context_hint_value();
 void lupine_accept_current_context_hint(CUcontext ctx);

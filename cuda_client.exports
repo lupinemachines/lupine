@@ -5,6 +5,7 @@
     lupine_checkpoint_*;
     lupine_rpc_*;
     lupine_prepare_rpc;
+    lupine_invalidate_runtime_context;
     lupine_note_stream_owner;
     lupine_note_event_owner;
     lupine_forget_stream_owner;
@@ -20,6 +21,7 @@
     lupine_adopt_host_allocation;
     lupine_free_host_allocation;
     lupine_materialize_host_allocations;
+    lupine_device_attribute_is_virtualized;
     lupine_stream_capture_begin;
     lupine_stream_capture_begin_complete;
     lupine_complete_stream_end_capture;

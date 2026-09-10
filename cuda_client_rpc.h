@@ -35,6 +35,7 @@ conn_t *lupine_rpc_conn_for_stream(struct CUstream_st *stream);
 conn_t *lupine_rpc_conn_for_event(struct CUevent_st *event);
 conn_t *lupine_rpc_conn_for_deviceptr(unsigned long long ptr);
 int lupine_prepare_rpc(conn_t *conn);
+void lupine_invalidate_runtime_context(conn_t *conn);
 void lupine_note_stream_owner(struct CUstream_st *stream, conn_t *conn);
 void lupine_note_event_owner(struct CUevent_st *event, conn_t *conn);
 void lupine_forget_stream_owner(struct CUstream_st *stream);

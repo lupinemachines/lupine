@@ -178,7 +178,15 @@ cudaError_t cudaDeviceFlushGPUDirectRDMAWrites(
  * @param device SEND_ONLY
  */
 cudaError_t cudaDeviceGetAttribute(int *value, enum cudaDeviceAttr attr,
-                                   int device);
+                                   int device) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess &&
+      lupine_device_attribute_is_virtualized(
+          static_cast<CUdevice_attribute>(attr))) {
+    *value = 0;
+  }
+  return return_value;
+}
 /**
  * @param device RECV_ONLY
  * @param pciBusId SEND_ONLY NULL_TERMINATED
@@ -696,7 +704,17 @@ cudaError_t cudaGraphicsGLRegisterImage(struct cudaGraphicsResource **resource,
  * @param prop RECV_ONLY
  * @param device SEND_ONLY
  */
-cudaError_t cudaGetDeviceProperties(struct cudaDeviceProp *prop, int device);
+cudaError_t cudaGetDeviceProperties(struct cudaDeviceProp *prop, int device) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    // Match the driver's remote-memory capabilities, not the server CPU's.
+    prop->pageableMemoryAccess = 0;
+    prop->pageableMemoryAccessUsesHostPageTables = 0;
+    prop->concurrentManagedAccess = 0;
+    prop->directManagedMemAccessFromHost = 0;
+  }
+  return return_value;
+}
 #if CUDART_VERSION < 12000
 /**
  * the result is a function pointer into the server's driver
@@ -1331,7 +1349,7 @@ cudaError_t cudaMallocPitch(void **devPtr, size_t *pitch, size_t width,
 }
 #if CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION < 13000
+ * @disabled server - legacy runtime ABI implemented alongside the current ABI
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param advice SEND_ONLY
@@ -1352,9 +1370,8 @@ cudaError_t cudaMemAdvise(const void *devPtr, size_t count,
                           enum cudaMemoryAdvise advice,
                           struct cudaMemLocation location);
 #endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @guard CUDART_VERSION >= 12020 && CUDART_VERSION < 13000
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param advice SEND_ONLY
@@ -1363,7 +1380,6 @@ cudaError_t cudaMemAdvise(const void *devPtr, size_t count,
 cudaError_t cudaMemAdvise_v2(const void *devPtr, size_t count,
                              enum cudaMemoryAdvise advice,
                              struct cudaMemLocation location);
-#endif
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
@@ -1434,6 +1450,30 @@ cudaError_t cudaMemPoolCreate(cudaMemPool_t *memPool,
  */
 cudaError_t cudaMemPoolDestroy(cudaMemPool_t memPool);
 /**
+ * @disabled - exchanges shareable file descriptors through the existing IPC
+ * broker
+ * @param handle_out RECV_ONLY SIZE:4
+ * @param memPool SEND_ONLY
+ * @param handleType SEND_ONLY
+ * @param flags SEND_ONLY
+ */
+cudaError_t
+cudaMemPoolExportToShareableHandle(void *handle_out, cudaMemPool_t memPool,
+                                   cudaMemAllocationHandleType handleType,
+                                   unsigned int flags);
+/**
+ * @disabled - redeems shareable file descriptors through the existing IPC
+ * broker
+ * @param memPool RECV_ONLY
+ * @param handle SEND_ONLY
+ * @param handleType SEND_ONLY
+ * @param flags SEND_ONLY
+ */
+cudaError_t
+cudaMemPoolImportFromShareableHandle(cudaMemPool_t *memPool, void *handle,
+                                     cudaMemAllocationHandleType handleType,
+                                     unsigned int flags);
+/**
  * @param exportData RECV_ONLY
  * @param ptr SEND_ONLY
  */
@@ -1500,7 +1540,7 @@ cudaError_t cudaMemPoolSetAttribute(cudaMemPool_t memPool,
 cudaError_t cudaMemPoolTrimTo(cudaMemPool_t memPool, size_t minBytesToKeep);
 #if CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION < 13000
+ * @disabled server - legacy runtime ABI implemented alongside the current ABI
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param dstDevice SEND_ONLY
@@ -1522,9 +1562,8 @@ cudaError_t cudaMemPrefetchAsync(const void *devPtr, size_t count,
                                  struct cudaMemLocation location,
                                  unsigned int flags, cudaStream_t stream);
 #endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @guard CUDART_VERSION >= 12020 && CUDART_VERSION < 13000
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param location SEND_ONLY
@@ -1534,7 +1573,6 @@ cudaError_t cudaMemPrefetchAsync(const void *devPtr, size_t count,
 cudaError_t cudaMemPrefetchAsync_v2(const void *devPtr, size_t count,
                                     struct cudaMemLocation location,
                                     unsigned int flags, cudaStream_t stream);
-#endif
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
@@ -1589,22 +1627,9 @@ cudaError_t cudaMemSetMemPool(struct cudaMemLocation *location,
                               enum cudaMemAllocationType type,
                               cudaMemPool_t memPool);
 #endif
-// cudaMemcpy, cudaMemcpy2D, and cudaMemcpy2DAsync are manual client exports in
-// cudart_client.cpp. They delegate to the driver's copy machinery and have no
-// CUDART RPC handlers to generate.
-/**
- * the copy parameters carry host pointers
- * @param p SEND_ONLY DEREF
- */
-cudaError_t cudaMemcpy3D(const struct cudaMemcpy3DParms *p);
-/**
- * the copy parameters carry host pointers
- * @routingkey STREAM stream
- * @param p SEND_ONLY DEREF
- * @param stream SEND_ONLY
- */
-cudaError_t cudaMemcpy3DAsync(const struct cudaMemcpy3DParms *p,
-                              cudaStream_t stream);
+// cudaMemcpy, the 2D/3D copies, and their array/async variants are manual
+// client exports in cudart_client.cpp. They use the driver's shared copy
+// machinery.
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
@@ -2401,6 +2426,8 @@ cudaError_t cudaGraphAddExternalSemaphoresWaitNode(
     const cudaGraphNode_t *pDependencies, size_t numDependencies,
     const struct cudaExternalSemaphoreWaitNodeParams *nodeParams);
 /**
+ * @disabled server - delivers the host callback through the shared side-effect
+ * lane
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -2412,6 +2439,7 @@ cudaError_t cudaGraphAddHostNode(cudaGraphNode_t *pGraphNode, cudaGraph_t graph,
                                  size_t numDependencies,
                                  const struct cudaHostNodeParams *pNodeParams);
 /**
+ * @disabled - packs kernel arguments using the launch metadata path
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -2690,7 +2718,7 @@ cudaError_t cudaGraphExecNodeSetParams(cudaGraphExec_t graphExec,
 #endif
 #if CUDART_VERSION < 12000
 /**
- * @guard CUDART_VERSION < 12000
+ * @disabled server - legacy runtime ABI implemented alongside the current ABI
  * @param hGraphExec SEND_ONLY
  * @param hGraph SEND_ONLY
  * @param hErrorNode_out RECV_ONLY
@@ -2822,11 +2850,11 @@ cudaGraphHostNodeSetParams(cudaGraphNode_t node,
                            const struct cudaHostNodeParams *pNodeParams);
 #if CUDART_VERSION < 12000
 /**
- * @guard CUDART_VERSION < 12000
+ * @disabled server - legacy runtime ABI implemented alongside the current ABI
  * @param pGraphExec RECV_ONLY
  * @param graph SEND_ONLY
- * @param pErrorNode RECV_ONLY
- * @param pLogBuffer RECV_ONLY LENGTH:bufferSize
+ * @param pErrorNode RECV_ONLY NULLABLE
+ * @param pLogBuffer RECV_ONLY NULLABLE LENGTH:bufferSize
  * @param bufferSize SEND_ONLY
  */
 cudaError_t cudaGraphInstantiate(cudaGraphExec_t *pGraphExec, cudaGraph_t graph,
@@ -3225,7 +3253,7 @@ void __cudaRegisterFunction(void **fatCubinHandle, const char *hostFun,
                             int thread_limit, uint3 *tid, uint3 *bid,
                             dim3 *bDim, dim3 *gDim, int *wSize);
 /**
- * @disabled client - broadcasts registration to each server's fatbin handle
+ * @disabled - broadcasts registration and retains names until fatbin unregister
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
  * @param deviceAddress SEND_ONLY NULL_TERMINATED

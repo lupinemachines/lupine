@@ -434,7 +434,7 @@ if(LUPINE_BUILD_CUDA)
     target_include_directories(lupine_cudart_client PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
     target_link_libraries(lupine_cudart_client PRIVATE
-        lupine_cudart_headers lupine_cuda_client Threads::Threads)
+        lupine_cudart_headers lupine_cuda_client lupine_ipc Threads::Threads)
     set_target_properties(lupine_cudart_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
     lupine_manylinux2014_client(lupine_cudart_client)

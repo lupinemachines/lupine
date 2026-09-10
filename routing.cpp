@@ -53,8 +53,7 @@ static bool &lupine_device_table_ready() {
 
 template <typename Handle>
 static std::unordered_map<Handle, lupine_owner_record> &lupine_owners() {
-  static auto *owners =
-      new std::unordered_map<Handle, lupine_owner_record>();
+  static auto *owners = new std::unordered_map<Handle, lupine_owner_record>();
   return *owners;
 }
 
@@ -608,9 +607,9 @@ static lupine_route lupine_route_for_known_owner(Handle handle) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   auto &owners = lupine_owners<Handle>();
   auto owner = owners.find(handle);
-  return owner == owners.end() ? lupine_route{LUPINE_ROUTE_INVALID, nullptr}
-                               : lupine_route_from_identity(
-                                     owner->second.route_id);
+  return owner == owners.end()
+             ? lupine_route{LUPINE_ROUTE_INVALID, nullptr}
+             : lupine_route_from_identity(owner->second.route_id);
 }
 
 template <typename Handle>
@@ -755,6 +754,9 @@ CUresult lupine_set_current_context_on_route(lupine_route route,
 }
 
 extern "C" lupine_route lupine_route_for_current_context() {
+  if (lupine_refresh_runtime_context() != CUDA_SUCCESS) {
+    return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
+  }
   return lupine_route_for_context(lupine_current_context_hint());
 }
 
@@ -779,6 +781,9 @@ static lupine_route lupine_route_for_default_context_hint(CUcontext ctx) {
 }
 
 extern "C" lupine_route lupine_route_for_default() {
+  if (lupine_refresh_runtime_context() != CUDA_SUCCESS) {
+    return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
+  }
   CUcontext current_hint = lupine_current_context_hint();
   if (current_hint != nullptr) {
     lupine_route route = lupine_route_for_default_context_hint(current_hint);
