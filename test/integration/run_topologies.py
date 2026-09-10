@@ -59,12 +59,18 @@ class Runner:
 
     def deploy(self):
         for role in self.hosts:
+            print(f"Waiting for {role} startup", flush=True)
             deadline = time.monotonic() + 600
             while True:
-                result = self.ssh(role, "test -f /var/lib/lupine-startup-complete",
+                result = self.ssh(role,
+                                  "if test -f /var/lib/lupine-startup-complete; then exit 0; "
+                                  "elif test -f /var/lib/lupine-startup-failed; then exit 42; "
+                                  "else exit 1; fi",
                                   timeout=15, check=False)
                 if result.returncode == 0:
                     break
+                if result.returncode == 42:
+                    raise RuntimeError(f"{role}: VM startup script failed; inspect its serial log")
                 if time.monotonic() > deadline:
                     raise RuntimeError(f"{role}: VM startup did not finish: {result.stdout}")
                 time.sleep(5)
@@ -76,7 +82,15 @@ class Runner:
             if role == "client":
                 self.ssh(role, "test ! -e /dev/nvidia0")
                 continue
-            data = json.loads(self.command(role, ["./topology_test", "inventory"]).stdout)
+            deadline = time.monotonic() + 180
+            while True:
+                probe = self.command(role, ["./topology_test", "inventory"], check=False)
+                if probe.returncode == 0:
+                    break
+                if time.monotonic() > deadline:
+                    raise RuntimeError(f"{role}: native CUDA did not become ready: {probe.stdout}")
+                time.sleep(5)
+            data = json.loads(probe.stdout)
             expected = self.hosts[role]["expected_gpu_count"]
             if len(data["devices"]) != expected or any(
                     "L4" not in device["name"] for device in data["devices"]):
