@@ -5929,6 +5929,54 @@ ERROR_0:
   return -1;
 }
 
+int handle_cudaProfilerStart(conn_t *conn) {
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = cudaError_t (*)();
+  fn_t fn = nullptr;
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>("cudaProfilerStart");
+  return_value = fn == nullptr ? function_not_found() : fn();
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cudaProfilerStop(conn_t *conn) {
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = cudaError_t (*)();
+  fn_t fn = nullptr;
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>("cudaProfilerStop");
+  return_value = fn == nullptr ? function_not_found() : fn();
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
 int handle_cudaRuntimeGetVersion(conn_t *conn) {
   int runtimeVersion{};
   runtimeVersion = {};

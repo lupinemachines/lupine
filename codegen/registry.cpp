@@ -520,6 +520,8 @@
   HANDLER(RPC_cudaOccupancyMaxPotentialClusterSize, handle_cudaOccupancyMaxPotentialClusterSize, rpc_backend::cudart) \
   HANDLER(RPC_cudaPeekAtLastError, handle_cudaPeekAtLastError, rpc_backend::cudart) \
   HANDLER(RPC_cudaPointerGetAttributes, handle_cudaPointerGetAttributes, rpc_backend::cudart) \
+  HANDLER(RPC_cudaProfilerStart, handle_cudaProfilerStart, rpc_backend::cudart) \
+  HANDLER(RPC_cudaProfilerStop, handle_cudaProfilerStop, rpc_backend::cudart) \
   HANDLER(RPC_cudaRuntimeGetVersion, handle_cudaRuntimeGetVersion, rpc_backend::cudart) \
   HANDLER(RPC_cudaSetDevice, handle_cudaSetDevice, rpc_backend::cudart) \
   HANDLER(RPC_cudaSetDeviceFlags, handle_cudaSetDeviceFlags, rpc_backend::cudart) \

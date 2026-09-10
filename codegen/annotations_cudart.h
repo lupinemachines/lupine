@@ -1756,6 +1756,9 @@ cudaError_t cudaPeekAtLastError(void);
  */
 cudaError_t cudaPointerGetAttributes(struct cudaPointerAttributes *attributes,
                                      const void *ptr);
+// Profiler control is declared in cuda_profiler_api.h.
+cudaError_t cudaProfilerStart(void);
+cudaError_t cudaProfilerStop(void);
 /**
  * @param runtimeVersion RECV_ONLY
  */

@@ -169,6 +169,8 @@ int handle_cudaOccupancyMaxActiveClusters(conn_t *conn);
 int handle_cudaOccupancyMaxPotentialClusterSize(conn_t *conn);
 int handle_cudaPeekAtLastError(conn_t *conn);
 int handle_cudaPointerGetAttributes(conn_t *conn);
+int handle_cudaProfilerStart(conn_t *conn);
+int handle_cudaProfilerStop(conn_t *conn);
 int handle_cudaRuntimeGetVersion(conn_t *conn);
 int handle_cudaSetDevice(conn_t *conn);
 int handle_cudaSetDeviceFlags(conn_t *conn);

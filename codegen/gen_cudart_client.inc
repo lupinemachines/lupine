@@ -4823,6 +4823,40 @@ cudaPointerGetAttributes(struct cudaPointerAttributes *attributes,
   return lupine_rpc_cudaPointerGetAttributes(conn, attributes, ptr);
 }
 
+static cudaError_t lupine_rpc_cudaProfilerStart(conn_t *conn) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaProfilerStart) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaProfilerStart() {
+  conn_t *conn = connection();
+  return lupine_rpc_cudaProfilerStart(conn);
+}
+
+static cudaError_t lupine_rpc_cudaProfilerStop(conn_t *conn) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaProfilerStop) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t cudaProfilerStop() {
+  conn_t *conn = connection();
+  return lupine_rpc_cudaProfilerStop(conn);
+}
+
 static cudaError_t lupine_rpc_cudaRuntimeGetVersion(conn_t *conn,
                                                     int *runtimeVersion) {
   cudaError_t return_value = rpc_error();

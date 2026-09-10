@@ -668,6 +668,8 @@
 #define RPC_cudaOccupancyMaxPotentialClusterSize 1223278984
 #define RPC_cudaPeekAtLastError 1072806477
 #define RPC_cudaPointerGetAttributes 1582769505
+#define RPC_cudaProfilerStart 996877089
+#define RPC_cudaProfilerStop 2061817296
 #define RPC_cudaRuntimeGetVersion 1640094675
 #define RPC_cudaSetDevice 708753741
 #define RPC_cudaSetDeviceFlags 1891659695

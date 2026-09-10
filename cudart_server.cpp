@@ -13,12 +13,16 @@
 #include <vector>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
 #endif
 
 #include "codegen/gen_rpc_ids.h"
+#include "cuda_compat.h"
 #include "cuda_server_memcpy.h"
 #include "lupine_fatbin.h"
 #include "rpc.h"
@@ -130,6 +134,7 @@ int handle_cudaFuncGetName(conn_t *conn) {
 namespace {
 
 struct function_registration {
+  const char *host_function = nullptr;
   std::string device_function;
   std::string device_name;
 };
@@ -198,7 +203,6 @@ int handle___cudaRegisterFatBinary(conn_t *conn) {
 
 int handle___cudaRegisterFunction(conn_t *conn) {
   void **handle = nullptr;
-  const char *host_function = nullptr;
   function_registration names;
   size_t device_function_length = 0;
   size_t device_name_length = 0;
@@ -210,7 +214,7 @@ int handle___cudaRegisterFunction(conn_t *conn) {
   dim3 block_dim, grid_dim;
   int warp_size = 0;
   if (rpc_read(conn, &handle, sizeof(handle)) < 0 ||
-      rpc_read(conn, &host_function, sizeof(host_function)) < 0 ||
+      rpc_read(conn, &names.host_function, sizeof(names.host_function)) < 0 ||
       rpc_read(conn, &device_function_length, sizeof(device_function_length)) <
           0) {
     return -1;
@@ -259,7 +263,7 @@ int handle___cudaRegisterFunction(conn_t *conn) {
     }
     entry->second->functions.push_back(std::move(names));
     auto &stored = entry->second->functions.back();
-    fn(handle, host_function, stored.device_function.data(),
+    fn(handle, stored.host_function, stored.device_function.data(),
        stored.device_name.c_str(), thread_limit,
        tid_present != nullptr ? &tid : nullptr,
        bid_present != nullptr ? &bid : nullptr,
@@ -498,8 +502,8 @@ int handle_cudaEventDestroy(conn_t *conn) {
 
 namespace {
 
-// The argument sizes of an entry point, in order; the client packs the
-// values by them. Only a runtime that can report the layout can launch.
+// The client packs argument values in this order. Do not probe past the end
+// with runtime APIs: their error would leak into the caller's cudaGetLastError.
 int handle_param_layout(conn_t *conn) {
   const void *func = nullptr;
   if (rpc_read(conn, &func, sizeof(func)) < 0) {
@@ -511,20 +515,49 @@ int handle_param_layout(conn_t *conn) {
   }
   std::vector<size_t> sizes;
   cudaError_t result = cudaSuccess;
-  using fn_t = cudaError_t (*)(const void *, size_t, size_t *, size_t *);
-  fn_t fn = cudart_symbol<fn_t>("cudaFuncGetParamInfo");
-  if (fn == nullptr) {
-    result = cudaErrorNotSupported;
+  // CUDA 13 accepts both registered host entries and cudaKernel_t handles.
+  // Identify host entries from their fatbin registration without probing a
+  // runtime API with the wrong handle kind and changing its last-error state.
+  CUkernel kernel = nullptr;
+#if CUDART_VERSION >= 13000
+  kernel = reinterpret_cast<CUkernel>(const_cast<void *>(func));
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex());
+    for (const auto &entry : registrations()) {
+      for (const auto &registered_function : entry.second->functions) {
+        if (registered_function.host_function == func) {
+          kernel = nullptr;
+          break;
+        }
+      }
+      if (kernel == nullptr) {
+        break;
+      }
+    }
   }
-  for (size_t index = 0; fn != nullptr; ++index) {
+#endif
+  cudaFunction_t function = nullptr;
+  if (kernel == nullptr) {
+    result = LUPINE_CUDART_CALL(cudaGetFuncBySymbol, function_not_found(),
+                                &function, func);
+  }
+  // Driver metadata queries do not change the runtime's last-error state
+  // when the terminating index is out of range. Launches still use CUDART.
+  for (size_t index = 0; result == cudaSuccess; ++index) {
     size_t offset = 0;
     size_t size = 0;
-    cudaError_t status = fn(func, index, &offset, &size);
-    if (status == cudaErrorInvalidValue) {
+    CUresult status =
+        kernel != nullptr
+            ? cuKernelGetParamInfo(kernel, index, &offset, &size)
+            : cuFuncGetParamInfo(reinterpret_cast<CUfunction>(function), index,
+                                 &offset, &size);
+    if (status == CUDA_ERROR_INVALID_VALUE) {
       break;
     }
-    if (status != cudaSuccess) {
-      result = status;
+    if (status != CUDA_SUCCESS) {
+      result = status == CUDA_ERROR_DEINITIALIZED
+                   ? cudaErrorDeviceUninitialized
+                   : static_cast<cudaError_t>(status);
       break;
     }
     sizes.push_back(size);
