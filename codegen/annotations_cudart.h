@@ -1942,6 +1942,7 @@ cudaError_t cudaStreamBeginCapture(cudaStream_t stream,
  * @param graph SEND_ONLY
  * @param dependencies SEND_ONLY LENGTH:numDependencies
  * @param dependencyData SEND_ONLY LENGTH:numDependencies
+ * @disabled client - supplies default edge data for an optional input array
  * @param numDependencies SEND_ONLY
  * @param mode SEND_ONLY
  */
@@ -2017,7 +2018,7 @@ cudaError_t cudaStreamDestroy(cudaStream_t stream) {
  * @disabled server - associates shared memcpy capture resources with the graph
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
- * @param pGraph RECV_ONLY
+ * @param pGraph RECV_ONLY NULLABLE
  */
 cudaError_t cudaStreamEndCapture(cudaStream_t stream, cudaGraph_t *pGraph) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
@@ -2031,9 +2032,9 @@ cudaError_t cudaStreamEndCapture(cudaStream_t stream, cudaGraph_t *pGraph) {
  */
 cudaError_t cudaStreamGetAttribute(cudaStream_t hStream, cudaStreamAttrID attr,
                                    cudaStreamAttrValue *value_out);
-#if CUDART_VERSION < 12000
+#if CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION < 12000
+ * @disabled - versioned capture API and returned dependency arrays
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param pCaptureStatus RECV_ONLY
@@ -2044,25 +2045,9 @@ cudaStreamGetCaptureInfo(cudaStream_t stream,
                          enum cudaStreamCaptureStatus *pCaptureStatus,
                          unsigned long long *pId);
 #endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
-/**
- * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
- * @routingkey STREAM stream
- * @param stream SEND_ONLY
- * @param captureStatus_out RECV_ONLY
- * @param id_out RECV_ONLY NULLABLE
- * @param graph_out RECV_ONLY NULLABLE
- * @param dependencies_out RECV_ONLY NULLABLE
- * @param numDependencies_out RECV_ONLY NULLABLE
- */
-cudaError_t cudaStreamGetCaptureInfo(
-    cudaStream_t stream, enum cudaStreamCaptureStatus *captureStatus_out,
-    unsigned long long *id_out, cudaGraph_t *graph_out,
-    const cudaGraphNode_t **dependencies_out, size_t *numDependencies_out);
-#endif
 #if CUDART_VERSION >= 13000
 /**
- * @guard CUDART_VERSION >= 13000
+ * @disabled - versioned capture API and returned dependency arrays
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param captureStatus_out RECV_ONLY
@@ -2090,9 +2075,9 @@ cudaStreamGetCaptureInfo_ptsz(cudaStream_t stream,
                               enum cudaStreamCaptureStatus *captureStatus_out,
                               unsigned long long *id_out);
 #endif
-#if CUDART_VERSION < 13000
 /**
  * @guard CUDART_VERSION < 13000
+ * @disabled - versioned capture API and returned dependency arrays
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param captureStatus_out RECV_ONLY
@@ -2105,10 +2090,9 @@ cudaError_t cudaStreamGetCaptureInfo_v2(
     cudaStream_t stream, enum cudaStreamCaptureStatus *captureStatus_out,
     unsigned long long *id_out, cudaGraph_t *graph_out,
     const cudaGraphNode_t **dependencies_out, size_t *numDependencies_out);
-#endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
  * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @disabled - versioned capture API and returned dependency arrays
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param captureStatus_out RECV_ONLY
@@ -2123,7 +2107,6 @@ cudaError_t cudaStreamGetCaptureInfo_v3(
     unsigned long long *id_out, cudaGraph_t *graph_out,
     const cudaGraphNode_t **dependencies_out,
     const cudaGraphEdgeData **edgeData_out, size_t *numDependencies_out);
-#endif
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
@@ -2188,7 +2171,7 @@ cudaError_t cudaStreamSetAttribute(cudaStream_t hStream, cudaStreamAttrID attr,
 cudaError_t cudaStreamSynchronize(cudaStream_t stream);
 #if CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION < 13000
+ * @disabled server - legacy runtime ABI implemented alongside the current ABI
  * @param stream SEND_ONLY
  * @param dependencies SEND_ONLY LENGTH:numDependencies
  * @param numDependencies SEND_ONLY
@@ -2205,6 +2188,7 @@ cudaError_t cudaStreamUpdateCaptureDependencies(cudaStream_t stream,
  * @param stream SEND_ONLY
  * @param dependencies SEND_ONLY LENGTH:numDependencies
  * @param dependencyData SEND_ONLY LENGTH:numDependencies
+ * @disabled client - supplies default edge data for an optional input array
  * @param numDependencies SEND_ONLY
  * @param flags SEND_ONLY
  */
@@ -2226,12 +2210,13 @@ cudaError_t cudaStreamUpdateCaptureDependencies_ptsz(
     cudaStream_t stream, cudaGraphNode_t *dependencies, size_t numDependencies,
     unsigned int flags);
 #endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
  * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param dependencies SEND_ONLY LENGTH:numDependencies
  * @param dependencyData SEND_ONLY LENGTH:numDependencies
+ * @disabled client - supplies default edge data for an optional input array
  * @param numDependencies SEND_ONLY
  * @param flags SEND_ONLY
  */
@@ -2239,7 +2224,6 @@ cudaError_t cudaStreamUpdateCaptureDependencies_v2(
     cudaStream_t stream, cudaGraphNode_t *dependencies,
     const cudaGraphEdgeData *dependencyData, size_t numDependencies,
     unsigned int flags);
-#endif
 /**
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
@@ -2489,7 +2473,8 @@ cudaGraphAddMemsetNode(cudaGraphNode_t *pGraphNode, cudaGraph_t graph,
                        const struct cudaMemsetParams *pMemsetParams);
 #if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @guard CUDART_VERSION >= 12000
+ * @disabled - marshals graph node pointer fields
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -2503,7 +2488,8 @@ cudaError_t cudaGraphAddNode(cudaGraphNode_t *pGraphNode, cudaGraph_t graph,
 #endif
 #if CUDART_VERSION >= 13000
 /**
- * @guard CUDART_VERSION >= 13000
+ * @guard CUDART_VERSION >= 12000
+ * @disabled - marshals graph node pointer fields
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -2517,9 +2503,9 @@ cudaError_t cudaGraphAddNode(cudaGraphNode_t *pGraphNode, cudaGraph_t graph,
                              size_t numDependencies,
                              struct cudaGraphNodeParams *nodeParams);
 #endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
  * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @disabled - marshals graph node pointer fields
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -2532,7 +2518,6 @@ cudaError_t cudaGraphAddNode_v2(cudaGraphNode_t *pGraphNode, cudaGraph_t graph,
                                 const cudaGraphEdgeData *dependencyData,
                                 size_t numDependencies,
                                 struct cudaGraphNodeParams *nodeParams);
-#endif
 /**
  * @param node SEND_ONLY
  * @param pGraph RECV_ONLY
@@ -2542,6 +2527,7 @@ cudaError_t cudaGraphChildGraphNodeGetGraph(cudaGraphNode_t node,
 /**
  * @param pGraphClone RECV_ONLY
  * @param originalGraph SEND_ONLY
+ * @disabled server - shared graph resource tracking
  */
 cudaError_t cudaGraphClone(cudaGraph_t *pGraphClone, cudaGraph_t originalGraph);
 #if CUDART_VERSION >= 12000
@@ -2584,12 +2570,38 @@ cudaError_t cudaGraphDebugDotPrint(cudaGraph_t graph, const char *path,
                                    unsigned int flags);
 /**
  * @param graph SEND_ONLY
+ * @disabled server - shared graph resource tracking
  */
-cudaError_t cudaGraphDestroy(cudaGraph_t graph);
+cudaError_t cudaGraphDestroy(cudaGraph_t graph) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+#if CUDART_VERSION >= 12000
+  if (return_value == cudaSuccess) {
+    std::lock_guard<std::mutex> lock(conditional_graphs_mutex());
+    auto &cache = conditional_graph_cache();
+    for (auto entry = cache.begin(); entry != cache.end();) {
+      if (entry->second.parent == graph) {
+        entry = cache.erase(entry);
+      } else {
+        ++entry;
+      }
+    }
+  }
+#endif
+  return return_value;
+}
 /**
  * @param node SEND_ONLY
  */
-cudaError_t cudaGraphDestroyNode(cudaGraphNode_t node);
+cudaError_t cudaGraphDestroyNode(cudaGraphNode_t node) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+#if CUDART_VERSION >= 12000
+  if (return_value == cudaSuccess) {
+    std::lock_guard<std::mutex> lock(conditional_graphs_mutex());
+    conditional_graph_cache().erase(node);
+  }
+#endif
+  return return_value;
+}
 /**
  * @param node SEND_ONLY
  * @param event_out RECV_ONLY
@@ -2624,6 +2636,7 @@ cudaError_t cudaGraphExecChildGraphNodeSetParams(cudaGraphExec_t hGraphExec,
                                                  cudaGraph_t childGraph);
 /**
  * @param graphExec SEND_ONLY
+ * @disabled server - shared graph resource tracking
  */
 cudaError_t cudaGraphExecDestroy(cudaGraphExec_t graphExec);
 /**
@@ -2692,6 +2705,7 @@ cudaGraphExecHostNodeSetParams(cudaGraphExec_t hGraphExec, cudaGraphNode_t node,
  * @param hGraphExec SEND_ONLY
  * @param node SEND_ONLY
  * @param pNodeParams SEND_ONLY DEREF
+ * @disabled - packs kernel argument values
  */
 cudaError_t cudaGraphExecKernelNodeSetParams(
     cudaGraphExec_t hGraphExec, cudaGraphNode_t node,
@@ -2850,7 +2864,7 @@ cudaGraphHostNodeSetParams(cudaGraphNode_t node,
                            const struct cudaHostNodeParams *pNodeParams);
 #if CUDART_VERSION < 12000
 /**
- * @disabled server - legacy runtime ABI implemented alongside the current ABI
+ * @disabled - versioned runtime ABI and shared graph resource tracking
  * @param pGraphExec RECV_ONLY
  * @param graph SEND_ONLY
  * @param pErrorNode RECV_ONLY NULLABLE
@@ -2863,10 +2877,10 @@ cudaError_t cudaGraphInstantiate(cudaGraphExec_t *pGraphExec, cudaGraph_t graph,
 #endif
 #if CUDART_VERSION >= 12000
 /**
- * @guard CUDART_VERSION >= 12000
  * @param pGraphExec RECV_ONLY
  * @param graph SEND_ONLY
  * @param flags SEND_ONLY
+ * @disabled - versioned runtime ABI and shared graph resource tracking
  */
 cudaError_t cudaGraphInstantiate(cudaGraphExec_t *pGraphExec, cudaGraph_t graph,
                                  unsigned long long flags);
@@ -2875,6 +2889,7 @@ cudaError_t cudaGraphInstantiate(cudaGraphExec_t *pGraphExec, cudaGraph_t graph,
  * @param pGraphExec RECV_ONLY
  * @param graph SEND_ONLY
  * @param flags SEND_ONLY
+ * @disabled server - shared graph resource tracking
  */
 cudaError_t cudaGraphInstantiateWithFlags(cudaGraphExec_t *pGraphExec,
                                           cudaGraph_t graph,
@@ -2885,6 +2900,7 @@ cudaError_t cudaGraphInstantiateWithFlags(cudaGraphExec_t *pGraphExec,
  * @param pGraphExec RECV_ONLY
  * @param graph SEND_ONLY
  * @param instantiateParams SEND_RECV DEREF
+ * @disabled server - shared graph resource tracking
  */
 cudaError_t
 cudaGraphInstantiateWithParams(cudaGraphExec_t *pGraphExec, cudaGraph_t graph,
@@ -2935,6 +2951,7 @@ cudaGraphKernelNodeSetAttribute(cudaGraphNode_t hNode,
 /**
  * @param node SEND_ONLY
  * @param pNodeParams SEND_ONLY DEREF
+ * @disabled - packs kernel argument values
  */
 cudaError_t
 cudaGraphKernelNodeSetParams(cudaGraphNode_t node,
@@ -2942,6 +2959,7 @@ cudaGraphKernelNodeSetParams(cudaGraphNode_t node,
 /**
  * @param graphExec SEND_ONLY
  * @param stream SEND_ONLY
+ * @disabled server - shared graph resource tracking
  */
 cudaError_t cudaGraphLaunch(cudaGraphExec_t graphExec, cudaStream_t stream);
 /**

@@ -692,6 +692,8 @@
 #define RPC_cudaStreamEndCapture 1836832765
 #define RPC_cudaStreamGetAttribute 936888510
 #define RPC_cudaStreamGetCaptureInfo 264166316
+#define RPC_cudaStreamGetCaptureInfo_v2 929307067
+#define RPC_cudaStreamGetCaptureInfo_v3 1080240429
 #define RPC_cudaStreamGetDevResource 926690194
 #define RPC_cudaStreamGetDevice 505924682
 #define RPC_cudaStreamGetFlags 1369836977
@@ -702,6 +704,7 @@
 #define RPC_cudaStreamSetAttribute 952704573
 #define RPC_cudaStreamSynchronize 1443046183
 #define RPC_cudaStreamUpdateCaptureDependencies 634516084
+#define RPC_cudaStreamUpdateCaptureDependencies_v2 766877243
 #define RPC_cudaStreamWaitEvent 589034173
 #define RPC_cudaThreadExchangeStreamCaptureMode 1752720635
 #define RPC_cudaUserObjectCreate 1131300037
@@ -721,6 +724,7 @@
 #define RPC_cudaGraphAddMemFreeNode 1377789385
 #define RPC_cudaGraphAddMemsetNode 2127408948
 #define RPC_cudaGraphAddNode 962776413
+#define RPC_cudaGraphAddNode_v2 278866754
 #define RPC_cudaGraphChildGraphNodeGetGraph 1149888295
 #define RPC_cudaGraphClone 1642151263
 #define RPC_cudaGraphConditionalHandleCreate 1281452719

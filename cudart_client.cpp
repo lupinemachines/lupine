@@ -11,6 +11,11 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 
+// CUDA 12 headers rename this call to _v2. Export the original ABI too.
+#ifdef cudaStreamGetCaptureInfo
+#undef cudaStreamGetCaptureInfo
+#endif
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -29,6 +34,23 @@
 namespace {
 
 cudaError_t rpc_error() { return cudaErrorDevicesUnavailable; }
+
+struct conditional_graphs {
+  cudaGraph_t parent;
+  std::vector<cudaGraph_t> children;
+};
+
+std::mutex &conditional_graphs_mutex() {
+  static auto *mutex = new std::mutex;
+  return *mutex;
+}
+
+std::unordered_map<cudaGraphNode_t, conditional_graphs> &
+conditional_graph_cache() {
+  static auto *cache =
+      new std::unordered_map<cudaGraphNode_t, conditional_graphs>;
+  return *cache;
+}
 
 // Most driver and runtime error values agree. A deinitialized driver is not
 // cudaErrorCudartUnloading (the runtime's historical value at the same number).
@@ -492,7 +514,26 @@ extern "C" const char *cudaGetErrorString(cudaError_t error) {
   return error_text(RPC_cudaGetErrorString, error, false);
 }
 
-#if CUDART_VERSION < 12000
+#if CUDART_VERSION >= 12000
+extern "C" cudaError_t cudaGraphInstantiate(cudaGraphExec_t *exec,
+                                            cudaGraph_t graph,
+                                            unsigned long long flags) {
+  if (exec == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  conn_t *conn = connection();
+  cudaError_t result = rpc_error();
+  if (rpc_write_start_request(conn, RPC_cudaGraphInstantiate) < 0 ||
+      rpc_write(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, exec, sizeof(*exec)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return result;
+}
+#else
 extern "C" cudaError_t cudaGraphInstantiate(cudaGraphExec_t *exec,
                                             cudaGraph_t graph,
                                             cudaGraphNode_t *error_node,
@@ -546,6 +587,28 @@ cudaGraphExecUpdate(cudaGraphExec_t exec, cudaGraph_t graph,
 #endif
 
 #if CUDART_VERSION < 13000
+extern "C" cudaError_t
+cudaStreamUpdateCaptureDependencies(cudaStream_t stream,
+                                    cudaGraphNode_t *dependencies, size_t count,
+                                    unsigned int flags) {
+  if (count != 0 && dependencies == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  conn_t *conn = connection_for_stream(stream);
+  cudaError_t result = rpc_error();
+  if (rpc_write_start_request(conn, RPC_cudaStreamUpdateCaptureDependencies) <
+          0 ||
+      rpc_write(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_write(conn, dependencies, count * sizeof(cudaGraphNode_t)) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return result;
+}
+
 extern "C" cudaError_t cudaMemAdvise(const void *devPtr, size_t count,
                                      cudaMemoryAdvise advice, int device) {
   conn_t *conn = connection();
@@ -580,9 +643,159 @@ extern "C" cudaError_t cudaMemPrefetchAsync(const void *devPtr, size_t count,
 }
 #endif
 
+#if CUDART_VERSION >= 12000
+extern "C" cudaError_t cudaStreamBeginCaptureToGraph(
+    cudaStream_t stream, cudaGraph_t graph, const cudaGraphNode_t *dependencies,
+    const cudaGraphEdgeData *edges, size_t count, cudaStreamCaptureMode mode) {
+  if (count != 0 && dependencies == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  // NVIDIA defines omitted edge data as a zero-initialized array.
+  std::vector<cudaGraphEdgeData> defaults(edges == nullptr ? count : 0);
+  return lupine_rpc_cudaStreamBeginCaptureToGraph(
+      connection_for_stream(stream), stream, graph, dependencies,
+      edges == nullptr ? defaults.data() : edges, count, mode);
+}
+
+#if CUDART_VERSION >= 13000
+extern "C" cudaError_t cudaStreamUpdateCaptureDependencies(
+    cudaStream_t stream, cudaGraphNode_t *dependencies,
+    const cudaGraphEdgeData *edges, size_t count, unsigned int flags) {
+  if (count != 0 && dependencies == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  std::vector<cudaGraphEdgeData> defaults(edges == nullptr ? count : 0);
+  return lupine_rpc_cudaStreamUpdateCaptureDependencies(
+      connection_for_stream(stream), stream, dependencies,
+      edges == nullptr ? defaults.data() : edges, count, flags);
+}
+#else
+extern "C" cudaError_t cudaStreamUpdateCaptureDependencies_v2(
+    cudaStream_t stream, cudaGraphNode_t *dependencies,
+    const cudaGraphEdgeData *edges, size_t count, unsigned int flags) {
+  if (count != 0 && dependencies == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  std::vector<cudaGraphEdgeData> defaults(edges == nullptr ? count : 0);
+  return lupine_rpc_cudaStreamUpdateCaptureDependencies_v2(
+      connection_for_stream(stream), stream, dependencies,
+      edges == nullptr ? defaults.data() : edges, count, flags);
+}
+#endif
+#endif
+
 // ---------------------------------------------------------------------------
 // Copies
 // ---------------------------------------------------------------------------
+
+namespace {
+
+cudaError_t capture_info(int op, cudaStream_t stream,
+                         cudaStreamCaptureStatus *status_out,
+                         unsigned long long *id_out, cudaGraph_t *graph_out,
+                         const cudaGraphNode_t **dependencies_out,
+                         const CUgraphEdgeData **edges_out, size_t *count_out) {
+  if (status_out == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  static thread_local std::vector<cudaGraphNode_t> dependencies;
+  static thread_local std::vector<CUgraphEdgeData> edges;
+  conn_t *conn = connection_for_stream(stream);
+  cudaStreamCaptureStatus status = cudaStreamCaptureStatusNone;
+  unsigned long long id = 0;
+  cudaGraph_t graph = nullptr;
+  size_t count = 0;
+  bool has_edges = false;
+  cudaError_t result = rpc_error();
+  if (rpc_write_start_request(conn, op) < 0 ||
+      rpc_write(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &status, sizeof(status)) < 0 ||
+      rpc_read(conn, &id, sizeof(id)) < 0 ||
+      rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0 ||
+      rpc_read(conn, &has_edges, sizeof(has_edges)) < 0) {
+    return rpc_error();
+  }
+  dependencies.resize(count);
+  edges.resize(has_edges ? count : 0);
+  if (rpc_read(conn, dependencies.data(), count * sizeof(cudaGraphNode_t)) <
+          0 ||
+      rpc_read(conn, edges.data(), edges.size() * sizeof(CUgraphEdgeData)) <
+          0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  if (result == cudaSuccess) {
+    *status_out = status;
+    if (id_out != nullptr)
+      *id_out = id;
+    if (graph_out != nullptr)
+      *graph_out = graph;
+    if (count_out != nullptr)
+      *count_out = count;
+    if (dependencies_out != nullptr) {
+      *dependencies_out = dependencies.empty() ? nullptr : dependencies.data();
+    }
+    if (edges_out != nullptr) {
+      *edges_out = edges.empty() ? nullptr : edges.data();
+    }
+  }
+  return result;
+}
+
+} // namespace
+
+#if CUDART_VERSION < 13000
+extern "C" cudaError_t cudaStreamGetCaptureInfo(cudaStream_t stream,
+                                                cudaStreamCaptureStatus *status,
+                                                unsigned long long *id) {
+  return capture_info(RPC_cudaStreamGetCaptureInfo, stream, status, id, nullptr,
+                      nullptr, nullptr, nullptr);
+}
+#else
+extern "C" cudaError_t
+cudaStreamGetCaptureInfo(cudaStream_t stream, cudaStreamCaptureStatus *status,
+                         unsigned long long *id, cudaGraph_t *graph,
+                         const cudaGraphNode_t **dependencies,
+                         const cudaGraphEdgeData **edges, size_t *count) {
+  const CUgraphEdgeData *edge_data = nullptr;
+  cudaError_t result =
+      capture_info(RPC_cudaStreamGetCaptureInfo, stream, status, id, graph,
+                   dependencies, &edge_data, count);
+  if (result == cudaSuccess && edges != nullptr) {
+    *edges = reinterpret_cast<const cudaGraphEdgeData *>(edge_data);
+  }
+  return result;
+}
+#endif
+
+#if CUDART_VERSION < 13000
+extern "C" cudaError_t cudaStreamGetCaptureInfo_v2(
+    cudaStream_t stream, cudaStreamCaptureStatus *status,
+    unsigned long long *id, cudaGraph_t *graph,
+    const cudaGraphNode_t **dependencies, size_t *count) {
+  return capture_info(RPC_cudaStreamGetCaptureInfo_v2, stream, status, id,
+                      graph, dependencies, nullptr, count);
+}
+#if CUDART_VERSION >= 12000
+extern "C" cudaError_t
+cudaStreamGetCaptureInfo_v3(cudaStream_t stream,
+                            cudaStreamCaptureStatus *status,
+                            unsigned long long *id, cudaGraph_t *graph,
+                            const cudaGraphNode_t **dependencies,
+                            const cudaGraphEdgeData **edges, size_t *count) {
+  const CUgraphEdgeData *edge_data = nullptr;
+  cudaError_t result =
+      capture_info(RPC_cudaStreamGetCaptureInfo_v3, stream, status, id, graph,
+                   dependencies, &edge_data, count);
+  if (result == cudaSuccess && edges != nullptr) {
+    *edges = reinterpret_cast<const cudaGraphEdgeData *>(edge_data);
+  }
+  return result;
+}
+#endif
+#endif
 
 namespace {
 
@@ -1390,6 +1603,30 @@ int write_params(conn_t *conn, const uint32_t &count,
   return 0;
 }
 
+cudaError_t graph_kernel_param_sizes(conn_t *conn,
+                                     const cudaKernelNodeParams *params,
+                                     std::vector<size_t> *sizes) {
+  if (params == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  if (params->extra != nullptr) {
+    return cudaErrorNotSupported;
+  }
+  cudaError_t result = param_sizes(conn, params->func, sizes);
+  if (result != cudaSuccess) {
+    return result;
+  }
+  if (!sizes->empty() && params->kernelParams == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  for (size_t index = 0; index < sizes->size(); ++index) {
+    if (params->kernelParams[index] == nullptr) {
+      return cudaErrorInvalidValue;
+    }
+  }
+  return cudaSuccess;
+}
+
 cudaError_t launch(conn_t *conn, int op, const void *func, dim3 gridDim,
                    dim3 blockDim, void **args, size_t sharedMem,
                    cudaStream_t stream) {
@@ -1435,22 +1672,11 @@ cudaGraphAddKernelNode(cudaGraphNode_t *node, cudaGraph_t graph,
       (dependency_count != 0 && dependencies == nullptr)) {
     return cudaErrorInvalidValue;
   }
-  if (params->extra != nullptr) {
-    return cudaErrorNotSupported;
-  }
   conn_t *conn = connection();
   std::vector<size_t> sizes;
-  cudaError_t result = param_sizes(conn, params->func, &sizes);
+  cudaError_t result = graph_kernel_param_sizes(conn, params, &sizes);
   if (result != cudaSuccess) {
     return result;
-  }
-  if (!sizes.empty() && params->kernelParams == nullptr) {
-    return cudaErrorInvalidValue;
-  }
-  for (size_t index = 0; index < sizes.size(); ++index) {
-    if (params->kernelParams[index] == nullptr) {
-      return cudaErrorInvalidValue;
-    }
   }
   if (rpc_write_start_request(conn, RPC_cudaGraphAddKernelNode) < 0 ||
       rpc_write(conn, &graph, sizeof(graph)) < 0 ||
@@ -1467,6 +1693,153 @@ cudaGraphAddKernelNode(cudaGraphNode_t *node, cudaGraph_t graph,
   }
   return result;
 }
+
+extern "C" cudaError_t
+cudaGraphKernelNodeSetParams(cudaGraphNode_t node,
+                             const cudaKernelNodeParams *params) {
+  conn_t *conn = connection();
+  std::vector<size_t> sizes;
+  cudaError_t result = graph_kernel_param_sizes(conn, params, &sizes);
+  if (result != cudaSuccess) {
+    return result;
+  }
+  if (rpc_write_start_request(conn, RPC_cudaGraphKernelNodeSetParams) < 0 ||
+      rpc_write(conn, &node, sizeof(node)) < 0 ||
+      rpc_write(conn, params, sizeof(*params)) < 0 ||
+      write_params(conn, static_cast<uint32_t>(sizes.size()), sizes,
+                   params->kernelParams) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return result;
+}
+
+extern "C" cudaError_t
+cudaGraphExecKernelNodeSetParams(cudaGraphExec_t exec, cudaGraphNode_t node,
+                                 const cudaKernelNodeParams *params) {
+  conn_t *conn = connection();
+  std::vector<size_t> sizes;
+  cudaError_t result = graph_kernel_param_sizes(conn, params, &sizes);
+  if (result != cudaSuccess) {
+    return result;
+  }
+  if (rpc_write_start_request(conn, RPC_cudaGraphExecKernelNodeSetParams) < 0 ||
+      rpc_write(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_write(conn, &node, sizeof(node)) < 0 ||
+      rpc_write(conn, params, sizeof(*params)) < 0 ||
+      write_params(conn, static_cast<uint32_t>(sizes.size()), sizes,
+                   params->kernelParams) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return result;
+}
+
+#if CUDART_VERSION >= 12000
+namespace {
+
+cudaError_t graph_add_node(int op, cudaGraphNode_t *node, cudaGraph_t graph,
+                           const cudaGraphNode_t *dependencies,
+                           const cudaGraphEdgeData *edges,
+                           size_t dependency_count,
+                           cudaGraphNodeParams *params) {
+  if (node == nullptr || params == nullptr ||
+      (dependency_count != 0 && dependencies == nullptr)) {
+    return cudaErrorInvalidValue;
+  }
+  conn_t *conn = connection();
+  std::vector<size_t> sizes;
+  cudaError_t result = cudaSuccess;
+  if (params->type == cudaGraphNodeTypeKernel) {
+    cudaKernelNodeParams kernel{};
+    kernel.func = params->kernel.func;
+    kernel.kernelParams = params->kernel.kernelParams;
+    kernel.extra = params->kernel.extra;
+    result = graph_kernel_param_sizes(conn, &kernel, &sizes);
+    if (result != cudaSuccess) {
+      return result;
+    }
+  } else {
+    switch (params->type) {
+    case cudaGraphNodeTypeConditional:
+    case cudaGraphNodeTypeEmpty:
+    case cudaGraphNodeTypeMemset:
+    case cudaGraphNodeTypeGraph:
+    case cudaGraphNodeTypeWaitEvent:
+    case cudaGraphNodeTypeEventRecord:
+    case cudaGraphNodeTypeMemFree:
+      break;
+    default:
+      return cudaErrorNotSupported;
+    }
+  }
+  bool has_edges = edges != nullptr;
+  std::vector<cudaGraph_t> children(params->type == cudaGraphNodeTypeConditional
+                                        ? params->conditional.size
+                                        : 0);
+  if (rpc_write_start_request(conn, op) < 0 ||
+      rpc_write(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_write(conn, &dependency_count, sizeof(dependency_count)) < 0 ||
+      rpc_write(conn, dependencies, dependency_count * sizeof(*dependencies)) <
+          0 ||
+      rpc_write(conn, &has_edges, sizeof(has_edges)) < 0 ||
+      (has_edges &&
+       rpc_write(conn, edges, dependency_count * sizeof(*edges)) < 0) ||
+      rpc_write(conn, params, sizeof(*params)) < 0 ||
+      (params->type == cudaGraphNodeTypeKernel &&
+       write_params(conn, static_cast<uint32_t>(sizes.size()), sizes,
+                    params->kernel.kernelParams) < 0) ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, node, sizeof(*node)) < 0 ||
+      rpc_read(conn, children.data(), children.size() * sizeof(cudaGraph_t)) <
+          0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  if (result == cudaSuccess && !children.empty()) {
+    std::lock_guard<std::mutex> lock(conditional_graphs_mutex());
+    auto &entry = conditional_graph_cache()[*node];
+    entry = {graph, std::move(children)};
+    params->conditional.phGraph_out = entry.children.data();
+  }
+  return result;
+}
+
+} // namespace
+
+#if CUDART_VERSION >= 13000
+extern "C" cudaError_t cudaGraphAddNode(cudaGraphNode_t *node,
+                                        cudaGraph_t graph,
+                                        const cudaGraphNode_t *dependencies,
+                                        const cudaGraphEdgeData *edges,
+                                        size_t dependency_count,
+                                        cudaGraphNodeParams *params) {
+  return graph_add_node(RPC_cudaGraphAddNode, node, graph, dependencies, edges,
+                        dependency_count, params);
+}
+#else
+extern "C" cudaError_t cudaGraphAddNode(cudaGraphNode_t *node,
+                                        cudaGraph_t graph,
+                                        const cudaGraphNode_t *dependencies,
+                                        size_t dependency_count,
+                                        cudaGraphNodeParams *params) {
+  return graph_add_node(RPC_cudaGraphAddNode, node, graph, dependencies,
+                        nullptr, dependency_count, params);
+}
+
+extern "C" cudaError_t cudaGraphAddNode_v2(cudaGraphNode_t *node,
+                                           cudaGraph_t graph,
+                                           const cudaGraphNode_t *dependencies,
+                                           const cudaGraphEdgeData *edges,
+                                           size_t dependency_count,
+                                           cudaGraphNodeParams *params) {
+  return graph_add_node(RPC_cudaGraphAddNode_v2, node, graph, dependencies,
+                        edges, dependency_count, params);
+}
+#endif
+#endif
 
 extern "C" cudaError_t cudaLaunchKernel(const void *func, dim3 gridDim,
                                         dim3 blockDim, void **args,

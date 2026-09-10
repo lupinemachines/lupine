@@ -6272,85 +6272,6 @@ ERROR_0:
 }
 
 #if CUDART_VERSION >= 13000
-int handle_cudaStreamGetCaptureInfo(conn_t *conn) {
-  cudaStream_t stream;
-  enum cudaStreamCaptureStatus captureStatus_out {};
-  captureStatus_out = {};
-  unsigned long long *id_out_null_check;
-  unsigned long long id_out;
-  cudaGraph_t *graph_out_null_check;
-  cudaGraph_t graph_out;
-  const cudaGraphNode_t **dependencies_out_null_check;
-  const cudaGraphNode_t *dependencies_out;
-  const cudaGraphEdgeData **edgeData_out_null_check;
-  const cudaGraphEdgeData *edgeData_out;
-  size_t *numDependencies_out_null_check;
-  size_t numDependencies_out;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaStream_t, enum cudaStreamCaptureStatus *,
-                               unsigned long long *, cudaGraph_t *,
-                               const cudaGraphNode_t **,
-                               const cudaGraphEdgeData **, size_t *);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 ||
-      rpc_read(conn, &id_out_null_check, sizeof(unsigned long long *)) < 0 ||
-      rpc_read(conn, &graph_out_null_check, sizeof(cudaGraph_t *)) < 0 ||
-      rpc_read(conn, &dependencies_out_null_check,
-               sizeof(const cudaGraphNode_t **)) < 0 ||
-      rpc_read(conn, &edgeData_out_null_check,
-               sizeof(const cudaGraphEdgeData **)) < 0 ||
-      rpc_read(conn, &numDependencies_out_null_check, sizeof(size_t *)) < 0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaStreamGetCaptureInfo");
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(stream, &captureStatus_out,
-               id_out_null_check ? &id_out : nullptr,
-               graph_out_null_check ? &graph_out : nullptr,
-               dependencies_out_null_check ? &dependencies_out : nullptr,
-               edgeData_out_null_check ? &edgeData_out : nullptr,
-               numDependencies_out_null_check ? &numDependencies_out : nullptr);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &captureStatus_out,
-                sizeof(enum cudaStreamCaptureStatus)) < 0 ||
-      rpc_write(conn, &id_out_null_check, sizeof(unsigned long long *)) < 0 ||
-      (id_out_null_check &&
-       rpc_write(conn, &id_out, sizeof(unsigned long long)) < 0) ||
-      rpc_write(conn, &graph_out_null_check, sizeof(cudaGraph_t *)) < 0 ||
-      (graph_out_null_check &&
-       rpc_write(conn, &graph_out, sizeof(cudaGraph_t)) < 0) ||
-      rpc_write(conn, &dependencies_out_null_check,
-                sizeof(const cudaGraphNode_t **)) < 0 ||
-      (dependencies_out_null_check &&
-       rpc_write(conn, &dependencies_out, sizeof(const cudaGraphNode_t *)) <
-           0) ||
-      rpc_write(conn, &edgeData_out_null_check,
-                sizeof(const cudaGraphEdgeData **)) < 0 ||
-      (edgeData_out_null_check &&
-       rpc_write(conn, &edgeData_out, sizeof(const cudaGraphEdgeData *)) < 0) ||
-      rpc_write(conn, &numDependencies_out_null_check, sizeof(size_t *)) < 0 ||
-      (numDependencies_out_null_check &&
-       rpc_write(conn, &numDependencies_out, sizeof(size_t)) < 0) ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaStreamGetDevResource(conn_t *conn) {
   cudaStream_t hStream;
   cudaDevResource resource{};
@@ -6604,6 +6525,71 @@ int handle_cudaStreamUpdateCaptureDependencies(conn_t *conn) {
     goto ERROR_0;
 
   fn = cudart_symbol<fn_t>("cudaStreamUpdateCaptureDependencies");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(stream,
+               (numDependencies * sizeof(cudaGraphNode_t) == 0 ? nullptr
+                                                               : dependencies),
+               (numDependencies * sizeof(const cudaGraphEdgeData) == 0
+                    ? nullptr
+                    : dependencyData),
+               numDependencies, flags);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)dependencyData);
+  free((void *)dependencies);
+  return 0;
+ERROR_0:
+  free((void *)dependencyData);
+  free((void *)dependencies);
+  return -1;
+}
+
+#endif
+
+#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+int handle_cudaStreamUpdateCaptureDependencies_v2(conn_t *conn) {
+  cudaStream_t stream;
+  size_t numDependencies;
+  cudaGraphNode_t *dependencies = nullptr;
+  size_t dependencies_size;
+  cudaGraphEdgeData *dependencyData = nullptr;
+  size_t dependencyData_size;
+  unsigned int flags;
+  int request_id;
+  cudaError_t return_value;
+  using fn_t = cudaError_t (*)(cudaStream_t, cudaGraphNode_t *,
+                               const cudaGraphEdgeData *, size_t, unsigned int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 ||
+      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+  dependencies_size = numDependencies * sizeof(cudaGraphNode_t);
+  dependencies = (cudaGraphNode_t *)malloc(dependencies_size);
+  if (dependencies_size != 0 && dependencies == nullptr)
+    goto ERROR_0;
+  if ((dependencies_size != 0 &&
+       rpc_read(conn, dependencies, dependencies_size) < 0) ||
+      false)
+    goto ERROR_0;
+  dependencyData_size = numDependencies * sizeof(const cudaGraphEdgeData);
+  dependencyData = (cudaGraphEdgeData *)malloc(dependencyData_size);
+  if (dependencyData_size != 0 && dependencyData == nullptr)
+    goto ERROR_0;
+  if ((dependencyData_size != 0 &&
+       rpc_read(conn, dependencyData, dependencyData_size) < 0) ||
+      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cudart_symbol<fn_t>("cudaStreamUpdateCaptureDependencies_v2");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -7429,77 +7415,6 @@ ERROR_0:
   return -1;
 }
 
-#if CUDART_VERSION >= 13000
-int handle_cudaGraphAddNode(conn_t *conn) {
-  cudaGraphNode_t pGraphNode{};
-  pGraphNode = {};
-  cudaGraph_t graph;
-  size_t numDependencies;
-  cudaGraphNode_t *pDependencies = nullptr;
-  size_t pDependencies_size;
-  cudaGraphEdgeData *dependencyData = nullptr;
-  size_t dependencyData_size;
-  struct cudaGraphNodeParams nodeParams {};
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(
-      cudaGraphNode_t *, cudaGraph_t, const cudaGraphNode_t *,
-      const cudaGraphEdgeData *, size_t, struct cudaGraphNodeParams *);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &graph, sizeof(cudaGraph_t)) < 0 ||
-      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 || false)
-    goto ERROR_0;
-  pDependencies_size = numDependencies * sizeof(const cudaGraphNode_t);
-  pDependencies = (cudaGraphNode_t *)malloc(pDependencies_size);
-  if (pDependencies_size != 0 && pDependencies == nullptr)
-    goto ERROR_0;
-  if ((pDependencies_size != 0 &&
-       rpc_read(conn, pDependencies, pDependencies_size) < 0) ||
-      false)
-    goto ERROR_0;
-  dependencyData_size = numDependencies * sizeof(const cudaGraphEdgeData);
-  dependencyData = (cudaGraphEdgeData *)malloc(dependencyData_size);
-  if (dependencyData_size != 0 && dependencyData == nullptr)
-    goto ERROR_0;
-  if ((dependencyData_size != 0 &&
-       rpc_read(conn, dependencyData, dependencyData_size) < 0) ||
-      rpc_read(conn, &nodeParams, sizeof(struct cudaGraphNodeParams)) < 0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaGraphAddNode");
-  return_value =
-      fn == nullptr ? function_not_found()
-                    : fn(&pGraphNode, graph,
-                         (numDependencies * sizeof(const cudaGraphNode_t) == 0
-                              ? nullptr
-                              : pDependencies),
-                         (numDependencies * sizeof(const cudaGraphEdgeData) == 0
-                              ? nullptr
-                              : dependencyData),
-                         numDependencies, &nodeParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pGraphNode, sizeof(cudaGraphNode_t)) < 0 ||
-      rpc_write(conn, &nodeParams, sizeof(struct cudaGraphNodeParams)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)dependencyData);
-  free((void *)pDependencies);
-  return 0;
-ERROR_0:
-  free((void *)dependencyData);
-  free((void *)pDependencies);
-  return -1;
-}
-
-#endif
-
 int handle_cudaGraphChildGraphNodeGetGraph(conn_t *conn) {
   cudaGraphNode_t node;
   cudaGraph_t pGraph{};
@@ -7520,35 +7435,6 @@ int handle_cudaGraphChildGraphNodeGetGraph(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraph, sizeof(cudaGraph_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaGraphClone(conn_t *conn) {
-  cudaGraph_t pGraphClone{};
-  pGraphClone = {};
-  cudaGraph_t originalGraph;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaGraph_t *, cudaGraph_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &originalGraph, sizeof(cudaGraph_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaGraphClone");
-  return_value =
-      fn == nullptr ? function_not_found() : fn(&pGraphClone, originalGraph);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pGraphClone, sizeof(cudaGraph_t)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -7697,31 +7583,6 @@ int handle_cudaGraphDebugDotPrint(conn_t *conn) {
   return 0;
 ERROR_0:
   free((void *)path);
-  return -1;
-}
-
-int handle_cudaGraphDestroy(conn_t *conn) {
-  cudaGraph_t graph;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaGraph_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &graph, sizeof(cudaGraph_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaGraphDestroy");
-  return_value = fn == nullptr ? function_not_found() : fn(graph);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
   return -1;
 }
 
@@ -7880,31 +7741,6 @@ int handle_cudaGraphExecChildGraphNodeSetParams(conn_t *conn) {
   fn = cudart_symbol<fn_t>("cudaGraphExecChildGraphNodeSetParams");
   return_value =
       fn == nullptr ? function_not_found() : fn(hGraphExec, node, childGraph);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaGraphExecDestroy(conn_t *conn) {
-  cudaGraphExec_t graphExec;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaGraphExec_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &graphExec, sizeof(cudaGraphExec_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaGraphExecDestroy");
-  return_value = fn == nullptr ? function_not_found() : fn(graphExec);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
@@ -8166,39 +8002,6 @@ int handle_cudaGraphExecHostNodeSetParams(conn_t *conn) {
     goto ERROR_0;
 
   fn = cudart_symbol<fn_t>("cudaGraphExecHostNodeSetParams");
-  return_value =
-      fn == nullptr ? function_not_found() : fn(hGraphExec, node, &pNodeParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaGraphExecKernelNodeSetParams(conn_t *conn) {
-  cudaGraphExec_t hGraphExec;
-  cudaGraphNode_t node;
-  struct cudaKernelNodeParams pNodeParams {};
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaGraphExec_t, cudaGraphNode_t,
-                               const struct cudaKernelNodeParams *);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &hGraphExec, sizeof(cudaGraphExec_t)) < 0 ||
-      rpc_read(conn, &node, sizeof(cudaGraphNode_t)) < 0 ||
-      rpc_read(conn, &pNodeParams, sizeof(const struct cudaKernelNodeParams)) <
-          0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaGraphExecKernelNodeSetParams");
   return_value =
       fn == nullptr ? function_not_found() : fn(hGraphExec, node, &pNodeParams);
 
@@ -8753,112 +8556,6 @@ ERROR_0:
   return -1;
 }
 
-#if CUDART_VERSION >= 12000
-int handle_cudaGraphInstantiate(conn_t *conn) {
-  cudaGraphExec_t pGraphExec{};
-  pGraphExec = {};
-  cudaGraph_t graph;
-  unsigned long long flags;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t =
-      cudaError_t (*)(cudaGraphExec_t *, cudaGraph_t, unsigned long long);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &graph, sizeof(cudaGraph_t)) < 0 ||
-      rpc_read(conn, &flags, sizeof(unsigned long long)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaGraphInstantiate");
-  return_value =
-      fn == nullptr ? function_not_found() : fn(&pGraphExec, graph, flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pGraphExec, sizeof(cudaGraphExec_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-#endif
-
-int handle_cudaGraphInstantiateWithFlags(conn_t *conn) {
-  cudaGraphExec_t pGraphExec{};
-  pGraphExec = {};
-  cudaGraph_t graph;
-  unsigned long long flags;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t =
-      cudaError_t (*)(cudaGraphExec_t *, cudaGraph_t, unsigned long long);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &graph, sizeof(cudaGraph_t)) < 0 ||
-      rpc_read(conn, &flags, sizeof(unsigned long long)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaGraphInstantiateWithFlags");
-  return_value =
-      fn == nullptr ? function_not_found() : fn(&pGraphExec, graph, flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pGraphExec, sizeof(cudaGraphExec_t)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-#if CUDART_VERSION >= 12000
-int handle_cudaGraphInstantiateWithParams(conn_t *conn) {
-  cudaGraphExec_t pGraphExec{};
-  pGraphExec = {};
-  cudaGraph_t graph;
-  cudaGraphInstantiateParams instantiateParams{};
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaGraphExec_t *, cudaGraph_t,
-                               cudaGraphInstantiateParams *);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &graph, sizeof(cudaGraph_t)) < 0 ||
-      rpc_read(conn, &instantiateParams, sizeof(cudaGraphInstantiateParams)) <
-          0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaGraphInstantiateWithParams");
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(&pGraphExec, graph, &instantiateParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pGraphExec, sizeof(cudaGraphExec_t)) < 0 ||
-      rpc_write(conn, &instantiateParams, sizeof(cudaGraphInstantiateParams)) <
-          0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-#endif
-
 #if CUDART_VERSION >= 13000
 int handle_cudaGraphKernelNodeCopyAttributes(conn_t *conn) {
   cudaGraphNode_t hDst;
@@ -8970,63 +8667,6 @@ int handle_cudaGraphKernelNodeSetAttribute(conn_t *conn) {
 
   fn = cudart_symbol<fn_t>("cudaGraphKernelNodeSetAttribute");
   return_value = fn == nullptr ? function_not_found() : fn(hNode, attr, &value);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaGraphKernelNodeSetParams(conn_t *conn) {
-  cudaGraphNode_t node;
-  struct cudaKernelNodeParams pNodeParams {};
-  int request_id;
-  cudaError_t return_value;
-  using fn_t =
-      cudaError_t (*)(cudaGraphNode_t, const struct cudaKernelNodeParams *);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &node, sizeof(cudaGraphNode_t)) < 0 ||
-      rpc_read(conn, &pNodeParams, sizeof(const struct cudaKernelNodeParams)) <
-          0 ||
-      false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaGraphKernelNodeSetParams");
-  return_value = fn == nullptr ? function_not_found() : fn(node, &pNodeParams);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaGraphLaunch(conn_t *conn) {
-  cudaGraphExec_t graphExec;
-  cudaStream_t stream;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaGraphExec_t, cudaStream_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &graphExec, sizeof(cudaGraphExec_t)) < 0 ||
-      rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaGraphLaunch");
-  return_value = fn == nullptr ? function_not_found() : fn(graphExec, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
