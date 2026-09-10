@@ -195,7 +195,6 @@ class Runner:
             ordered = [endpoints[server] for server in client["servers"]]
             local = [f"{client['host']}/{slot}" for slot in client["local_gpus"]]
             env = {"LUPINE_SERVER": ",".join(ordered),
-                   "LUPINE_DISABLE_LOCAL": "0" if local else "1",
                    "CUDA_VISIBLE_DEVICES": ",".join(self.gpu(device) for device in local),
                    "LD_LIBRARY_PATH": self.remote}
             owners = ["local"] * len(local)
