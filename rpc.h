@@ -113,6 +113,7 @@ struct conn_t {
   int request_id;
   int write_id;
   int write_op;
+  uint64_t write_fence;
   int32_t write_stream_id;
 
   pthread_t read_thread;
@@ -192,7 +193,10 @@ extern int rpc_wait_for_response(conn_t *conn);
 extern int rpc_write_start_request(conn_t *conn, const int op);
 // Starts a request and allocates its async-submission ticket while the normal
 // request lock is held. The caller writes the ticket into the request payload;
-// this adds no server acknowledgement or round trip.
+// this adds no server acknowledgement or round trip. Every request header also
+// carries the number of tickets issued before it, and the server serves none of
+// it until those submissions have reached the driver: a synchronous call on one
+// lane must observe fire-and-forget work another lane issued earlier.
 extern int rpc_write_start_async_request(conn_t *conn, const int op,
                                          uint64_t *sequence);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);

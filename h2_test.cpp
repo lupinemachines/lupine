@@ -1467,7 +1467,7 @@ void test_rpc_write_queue_grows() {
     require(rpc_write(&pair.client, &values[i], sizeof(values[i])) == 0,
             "large queue rpc_write failed");
   }
-  require(pair.client.write_queue.size() == kCount + 2,
+  require(pair.client.write_queue.size() == kCount + 3,
           "large queue count mismatch");
   require(rpc_write_end(&pair.client) > 0, "large queue write_end failed");
   reader.join();

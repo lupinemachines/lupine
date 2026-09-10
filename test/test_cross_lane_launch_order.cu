@@ -128,6 +128,50 @@ void test_cross_type_order(int *value, int *failures) {
   require_no_failures(failures, "async memsets overtook kernel launches");
 }
 
+// A synchronous request carries no ticket of its own, yet it must not reach
+// the driver before fire-and-forget work another lane issued earlier.
+void test_sync_readback_order(int *value) {
+  check(cudaMemset(value, 0xff, sizeof(*value)), "cudaMemset value");
+
+  std::atomic<int> phase{0};
+  std::atomic<int> stale{0};
+  std::thread producer([&] {
+    check(cudaSetDevice(0), "producer cudaSetDevice");
+    large_payload payload = {};
+    for (int round = 0; round < kRounds; ++round) {
+      wait_for(phase, round * 2);
+      payload.value = round;
+      publish<<<1, 1>>>(payload, value);
+      check(cudaGetLastError(), "publish launch");
+      phase.store(round * 2 + 1, std::memory_order_release);
+    }
+  });
+
+  std::thread consumer([&] {
+    check(cudaSetDevice(0), "consumer cudaSetDevice");
+    for (int round = 0; round < kRounds; ++round) {
+      wait_for(phase, round * 2 + 1);
+      int observed = -1;
+      check(cudaMemcpy(&observed, value, sizeof(observed),
+                       cudaMemcpyDeviceToHost),
+            "cudaMemcpy value");
+      if (observed != round) {
+        stale.fetch_add(1, std::memory_order_relaxed);
+      }
+      phase.store(round * 2 + 2, std::memory_order_release);
+    }
+  });
+
+  producer.join();
+  consumer.join();
+  int observed = stale.load(std::memory_order_relaxed);
+  if (observed != 0) {
+    std::fprintf(stderr, "FAIL: %d of %d synchronous readbacks overtook\n",
+                 observed, kRounds);
+    std::exit(EXIT_FAILURE);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -146,6 +190,7 @@ int main() {
 
   test_kernel_launch_order(value, failures);
   test_cross_type_order(value, failures);
+  test_sync_readback_order(value);
 
   check(cudaFree(failures), "cudaFree failures");
   check(cudaFree(value), "cudaFree value");
