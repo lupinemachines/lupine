@@ -11,6 +11,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent
 MODES = ("enumeration", "memory", "streams", "kernel", "peer-access", "peer-copy", "peer-copy-async")
+SAMPLE_SPEC = yaml.safe_load((ROOT / "samples.yaml").read_text())
+SAMPLES = SAMPLE_SPEC["samples"]
+WORKLOADS = (*MODES, *(f"sample:{name}" for name in SAMPLES))
 
 
 def check_topology(hosts, topology):
@@ -63,8 +66,10 @@ def load_specs(topologies=ROOT / "topologies.yaml", runs=ROOT / "runs.yaml"):
         for topology, modes in run["cases"].items():
             if topology not in matrix["topologies"]:
                 raise ValueError(f"{name}: unknown topology {topology}")
-            if not modes or len(modes) != len(set(modes)) or any(mode not in MODES for mode in modes):
-                raise ValueError(f"{name}/{topology}: select nonempty, unique workload modes from {MODES}")
+            if not modes or len(modes) != len(set(modes)) or any(mode not in WORKLOADS for mode in modes):
+                raise ValueError(f"{name}/{topology}: select nonempty, unique workload modes from {WORKLOADS}")
+            if any(mode.startswith("sample:") for mode in modes) and len(matrix["topologies"][topology]["expect_devices"]) < 2:
+                raise ValueError(f"{name}/{topology}: multi-GPU samples need at least two devices")
     return matrix, selections
 
 

@@ -36,13 +36,28 @@ runs:
     zones: [us-central1-a, us-central1-b, us-central1-c, us-west1-a, us-west1-b]
     cases:
       remote-single: &all [enumeration, memory, streams, kernel, peer-access, peer-copy, peer-copy-async]
-      remote-two-one-server: *all
-      remote-two-servers-same-host: *all
-      remote-two-servers-different-hosts: *all
+      remote-two-one-server: &with-samples
+        - enumeration
+        - memory
+        - streams
+        - kernel
+        - peer-access
+        - peer-copy
+        - peer-copy-async
+        - sample:simpleP2P
+        - sample:p2pBandwidthLatencyTest
+        - sample:streamOrderedAllocationP2P
+        - sample:simpleMultiGPU
+        - sample:MonteCarloMultiGPU
+        - sample:simpleCUFFT_MGPU
+        - sample:simpleCUFFT_2d_MGPU
+        - sample:conjugateGradientMultiDeviceCG
+      remote-two-servers-same-host: *with-samples
+      remote-two-servers-different-hosts: *with-samples
       remote-2-plus-1: *all
       remote-2-plus-2: *all
-      mixed-local-remote: *all
-      mixed-local-remote-same-host: *all
+      mixed-local-remote: *with-samples
+      mixed-local-remote-same-host: *with-samples
       reversed-endpoints: *all
       reversed-gpus: *all
       nonzero-physical-gpu: *all

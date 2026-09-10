@@ -172,6 +172,7 @@ jobs:
         run: |
           python3 test/integration/run_topologies.py \
             --run '${{ matrix.run }}' \
+            --jobs 8 \
             --inventory "$RESULTS/inventory.json" \
             --ssh-key "$RUNNER_TEMP/topology-key" \
             --artifacts "$RUNNER_TEMP/topology-artifacts" \

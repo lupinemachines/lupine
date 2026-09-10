@@ -1,4 +1,5 @@
 #include <cuda.h>
+#include <dlfcn.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -40,9 +41,13 @@ static std::string uuid(CUdevice device) {
 }
 
 static void inventory(const std::vector<CUdevice> &devices) {
+  Dl_info driver_info{};
+  require(dladdr(reinterpret_cast<void *>(cuInit), &driver_info) != 0,
+          "cannot identify native CUDA driver");
   int driver = 0;
   CUDA(cuDriverGetVersion(&driver));
-  std::cout << "{\"driver_version\":" << driver << ",\"devices\":[";
+  std::cout << "{\"driver_library\":" << std::quoted(driver_info.dli_fname)
+            << ",\"driver_version\":" << driver << ",\"devices\":[";
   for (size_t i = 0; i < devices.size(); ++i) {
     char name[256]{};
     CUDA(cuDeviceGetName(name, sizeof(name), devices[i]));

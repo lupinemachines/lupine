@@ -2,6 +2,7 @@
 """Run the L4 topology matrix over SSH against Terraform's inventory output."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import itertools
 import json
 from pathlib import Path
@@ -10,16 +11,17 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 
-from validate_specs import MODES, load_specs
+from validate_specs import SAMPLES, SAMPLE_SPEC, WORKLOADS, load_specs
 
 
 class Runner:
-    def __init__(self, inventory, key, artifacts, results, tests):
+    def __init__(self, inventory, key, artifacts, results, tests, jobs=8):
         self.inventory = inventory
         self.hosts = inventory["hosts"]
         self.artifacts = artifacts
         self.results = results
         self.tests = tests
+        self.jobs = jobs
         self.remote = f"/tmp/{inventory['run_id']}"
         self.options = ["-i", str(key), "-o", "IdentitiesOnly=yes",
                         "-o", "StrictHostKeyChecking=accept-new",
@@ -128,43 +130,88 @@ class Runner:
 
     def save_manifest(self, **extra):
         self.inventory.update(extra)
-        data = dict(self.inventory, native=self.native)
+        data = dict(self.inventory, native=self.native, jobs=self.jobs,
+                    samples_revision=SAMPLE_SPEC["revision"])
         (self.results / "resolved.json").write_text(json.dumps(data, indent=2) + "\n")
 
-    def record(self, name, result, elapsed=0):
+    def record(self, name, result, elapsed=0, skip_reason=None):
         logfile = name.replace("/", "_") + ".log"
         (self.results / logfile).write_text(result.stdout)
         self.cases.append({"name": name, "returncode": result.returncode,
-                           "seconds": elapsed, "log": logfile})
-        print(f"{'FAIL' if result.returncode else 'PASS'} {name}", flush=True)
+                           "seconds": elapsed, "log": logfile, "skip_reason": skip_reason})
+        status = "SKIP" if skip_reason else "FAIL" if result.returncode else "PASS"
+        print(f"{status} {name}", flush=True)
         if result.returncode:
             print(result.stdout[-4000:], flush=True)
         # Persist after each case so an interrupted job retains completed results.
         self.report()
 
-    def test(self, name, role, mode, expected, env, pair=(), peer=None):
+    def test(self, name, role, mode, expected, env, pair=(), peer=None, can_peer=False):
+        sample = SAMPLES[mode.removeprefix("sample:")] if mode.startswith("sample:") else None
         args = ["timeout", "--kill-after=5s", "45s", "./topology_test", mode,
                 ",".join(self.gpu(device) for device in expected)]
         args.extend(str(value) for value in pair)
         if peer is not None:
             args.append(str(peer))
+        executable = f"{self.remote}/topology_test"
+        if sample is not None:
+            executable = f"{self.remote}/samples/{mode.removeprefix('sample:')}"
+            args = ["timeout", "--kill-after=5s", f"{sample.get('timeout', 120)}s",
+                    executable, *sample.get("args", [])]
+            libraries = [f"{self.remote}/samples", *filter(None, [env.get("LD_LIBRARY_PATH")])]
+            env = dict(env, LD_LIBRARY_PATH=":".join(libraries))
+        driver = f"{self.remote}/libcuda.so.1" if env.get("LUPINE_SERVER") else self.native[role]["driver_library"]
+        guard = f"{self.remote}/driver_guard.so"
+        env = dict(env, LUPINE_TEST_EXECUTABLE=executable, LUPINE_TEST_DRIVER=driver,
+                   LD_PRELOAD=f"{driver}:{guard}")
         start = time.monotonic()
-        result = self.command(role, args, env, check=False)
-        self.record(name, result, time.monotonic() - start)
+        preflight = ""
+        if sample is not None:
+            # The sample's upstream source is unchanged. Verify its exact device
+            # map under the same environment before launching it.
+            probe = self.command(role, ["timeout", "--kill-after=5s", "45s", "./topology_test",
+                                       "enumeration", ",".join(self.gpu(device) for device in expected)],
+                                 env, check=False)
+            if probe.returncode:
+                return probe, time.monotonic() - start, None
+            preflight = probe.stdout
+        result = self.command(role, args, env, timeout=sample.get("timeout", 120) + 25 if sample else 70,
+                              check=False)
+        marker = f"LUPINE_TEST_DRIVER_OK {executable} {driver}"
+        if marker not in result.stdout.splitlines():
+            result = subprocess.CompletedProcess(result.args, result.returncode or 1,
+                result.stdout + "\nMissing in-process CUDA driver attestation\n")
+            return result, time.monotonic() - start, None
+        result.stdout = preflight + result.stdout
+        skip_reason = None
+        if result.returncode == 2 and sample and sample.get("requires_peer_access") and not can_peer:
+            skip_reason = "upstream EXIT_WAIVED: no direct peer-access pair in this topology"
+        return result, time.monotonic() - start, skip_reason
 
     def workloads(self, name, role, devices, owners, env, tests):
+        cases = []
+        can_peer = any(owners[src] == owners[dst] and self.native_peer(devices[src], devices[dst])
+                       for src, dst in itertools.permutations(range(len(devices)), 2))
         for mode in tests:
             if not mode.startswith("peer-"):
-                self.test(f"{name}.{mode}", role, mode, devices, env)
+                cases.append((f"{name}.{mode}", role, mode, devices, env, (), None, can_peer))
         pair_modes = [mode for mode in tests if mode.startswith("peer-")]
-        if not pair_modes:
-            return
         for src, dst in itertools.permutations(range(len(devices)), 2):
             peer = self.native_peer(devices[src], devices[dst]) if owners[src] == owners[dst] else 0
             label = f"{devices[src]}-to-{devices[dst]}"
             for mode in pair_modes:
-                self.test(f"{name}.{mode}.{label}", role, mode, devices, env,
-                          (src, dst), peer if mode == "peer-access" else None)
+                cases.append((f"{name}.{mode}.{label}", role, mode, devices, env,
+                              (src, dst), peer if mode == "peer-access" else None))
+        # Only the collector writes reports. Drain all clients before the caller
+        # can stop servers or reassign GPUs for the next topology.
+        with ThreadPoolExecutor(max_workers=self.jobs) as pool:
+            pending = {pool.submit(self.test, *case): case[0] for case in cases}
+            for future in as_completed(pending):
+                try:
+                    result, elapsed, skip_reason = future.result()
+                except Exception as error:
+                    result, elapsed, skip_reason = subprocess.CompletedProcess([], 1, str(error)), 0, None
+                self.record(pending[future], result, elapsed, skip_reason)
 
     def baseline(self):
         for role in self.native:
@@ -226,13 +273,17 @@ class Runner:
                 (self.results / log).write_text(result.stdout)
 
     def report(self):
-        failures = sum(case["returncode"] != 0 for case in self.cases)
+        failures = sum(case["returncode"] != 0 and not case["skip_reason"] for case in self.cases)
+        skipped = sum(bool(case["skip_reason"]) for case in self.cases)
         suite = ET.Element("testsuite", name="l4-topologies", tests=str(len(self.cases)),
-                           failures=str(failures), time=str(sum(case["seconds"] for case in self.cases)))
+                           failures=str(failures), skipped=str(skipped),
+                           time=str(sum(case["seconds"] for case in self.cases)))
         for case in self.cases:
             node = ET.SubElement(suite, "testcase", name=case["name"], time=str(case["seconds"]))
             output = (self.results / case["log"]).read_text()
-            if case["returncode"]:
+            if case["skip_reason"]:
+                ET.SubElement(node, "skipped", message=case["skip_reason"])
+            elif case["returncode"]:
                 ET.SubElement(node, "failure", message=f"exit {case['returncode']}").text = output
             ET.SubElement(node, "system-out").text = output
         ET.ElementTree(suite).write(self.results / "junit.xml", encoding="utf-8", xml_declaration=True)
@@ -249,7 +300,10 @@ def main():
     parser.add_argument("--spec", type=Path, default=Path(__file__).with_name("topologies.yaml"))
     parser.add_argument("--runs-spec", type=Path, default=Path(__file__).with_name("runs.yaml"))
     parser.add_argument("--run", default="regression")
+    parser.add_argument("--jobs", type=int, default=8, help="concurrent client processes per topology (default: 8)")
     args = parser.parse_args()
+    if args.jobs < 1:
+        parser.error("--jobs must be positive")
     matrix, selections = load_specs(args.spec, args.runs_spec)
     selection = selections["runs"][args.run]
     inventory = json.loads(args.inventory.read_text())
@@ -266,8 +320,8 @@ def main():
     inventory["selection"] = {"name": args.run, **selection}
     args.results.mkdir(parents=True, exist_ok=True)
     # Native controls cover the union of selected modes, once per GPU host.
-    tests = [mode for mode in MODES if any(mode in modes for modes in selection["cases"].values())]
-    runner = Runner(inventory, args.ssh_key, args.artifacts, args.results, tests)
+    tests = [mode for mode in WORKLOADS if any(mode in modes for modes in selection["cases"].values())]
+    runner = Runner(inventory, args.ssh_key, args.artifacts, args.results, tests, args.jobs)
     try:
         runner.deploy()
         runner.baseline()

@@ -1,0 +1,26 @@
+# Pinned CUDA 12.4.1 samples. They run through the driver shim with the upstream
+# CUDA runtime, exactly as the existing driver-only compliance suite does.
+revision: 5f97d7d0dff880bc6567faa4c5e62e389a6d6999
+samples:
+  simpleP2P:
+    source: 0_Introduction/simpleP2P
+    requires_peer_access: true
+  p2pBandwidthLatencyTest:
+    source: 5_Domain_Specific/p2pBandwidthLatencyTest
+    args: [--numElems=262144]
+    timeout: 180
+  streamOrderedAllocationP2P:
+    source: 2_Concepts_and_Techniques/streamOrderedAllocationP2P
+    requires_peer_access: true
+  simpleMultiGPU:
+    source: 0_Introduction/simpleMultiGPU
+  MonteCarloMultiGPU:
+    source: 5_Domain_Specific/MonteCarloMultiGPU
+    timeout: 180
+  simpleCUFFT_MGPU:
+    source: 4_CUDA_Libraries/simpleCUFFT_MGPU
+  simpleCUFFT_2d_MGPU:
+    source: 4_CUDA_Libraries/simpleCUFFT_2d_MGPU
+  conjugateGradientMultiDeviceCG:
+    source: 4_CUDA_Libraries/conjugateGradientMultiDeviceCG
+    timeout: 180

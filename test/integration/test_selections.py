@@ -2,13 +2,14 @@
 
 from copy import deepcopy
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
 import yaml
 
 from run_topologies import Runner
-from validate_specs import MODES, ROOT, load_specs
+from validate_specs import MODES, WORKLOADS, ROOT, load_specs
 
 
 class RecordingRunner(Runner):
@@ -23,7 +24,11 @@ class RecordingRunner(Runner):
     def native_peer(self, source, destination):
         return 1
 
-    def test(self, name, role, mode, expected, env, pair=(), peer=None):
+    def test(self, name, role, mode, expected, env, pair=(), peer=None, can_peer=False):
+        return subprocess.CompletedProcess([], 0, (mode, pair)), 0, None
+
+    def record(self, name, result, elapsed=0, skip_reason=None):
+        mode, pair = result.stdout
         self.selected.append((name, mode, pair))
 
 
@@ -33,7 +38,7 @@ class SelectionTests(unittest.TestCase):
 
     def collect(self, name):
         run = self.selections["runs"][name]
-        modes = [mode for mode in MODES if any(mode in selected for selected in run["cases"].values())]
+        modes = [mode for mode in WORKLOADS if any(mode in selected for selected in run["cases"].values())]
         runner = RecordingRunner(modes)
         runner.baseline()
         for name, modes in run["cases"].items():
@@ -44,8 +49,10 @@ class SelectionTests(unittest.TestCase):
 
     def test_regression_retains_all_existing_coverage(self):
         selected = self.collect("regression")
-        self.assertEqual(len(selected), 172)
-        self.assertEqual(sum(name.startswith("native-") for name, _, _ in selected), 20)
+        original = [(name, mode, pair) for name, mode, pair in selected if mode in MODES]
+        self.assertEqual(len(original), 172)
+        self.assertEqual(sum(name.startswith("native-") for name, _, _ in original), 20)
+        self.assertEqual(len(selected), 228)  # Eight samples on five layouts + both native hosts.
         self.assertEqual({name.split(".")[0] for name, _, _ in selected if not name.startswith("native-")},
                          set(self.matrix["topologies"]))
 

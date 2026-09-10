@@ -37,7 +37,7 @@ in another; its platform stays fixed for that run.
 
 | Run | CPU client | GPU host A | GPU host B | Coverage |
 | --- | --- | --- | --- | --- |
-| `regression` | Ubuntu 24.04 x86_64 | Ubuntu 24.04 x86_64 | Ubuntu 24.04 x86_64 | All modes across 11 layouts; 172 checks including native controls |
+| `regression` | Ubuntu 24.04 x86_64 | Ubuntu 24.04 x86_64 | Ubuntu 24.04 x86_64 | 172 driver checks across 11 layouts, plus 56 upstream sample invocations including native controls |
 | `linux-versions` | Ubuntu 22.04 x86_64 | Ubuntu 24.04 x86_64 | Ubuntu 22.04 x86_64 | Kernel on three selected layouts; 5 checks including native controls |
 | `arm64-client` | Ubuntu 24.04 arm64 | Ubuntu 24.04 x86_64 | Ubuntu 22.04 x86_64 | Kernel on three selected remote layouts; 5 checks including native controls |
 
@@ -46,6 +46,12 @@ on that topology. `kernel` verifies device order, context selection, allocation,
 module load, launch and output bytes on every visible GPU. Choosing `[peer-copy]`
 runs only synchronous copies, for every ordered device pair. Native controls run
 the union of selected workload modes once on each GPU host.
+
+The runner executes up to **eight client processes concurrently** within each
+topology, including native controls. `--jobs 1` restores serial execution for
+debugging. Each process retains its own timeout, log and result. Only the result
+collector writes JSON/JUnit, and every client finishes before servers stop or
+the next topology reassigns GPUs. Platform fleets remain sequential to reuse quota.
 
 Linux binaries build on native GitHub x86_64 and arm64 runners. The SSH runner
 checks `/etc/os-release` and the actual CPU architecture before selecting the
@@ -72,6 +78,31 @@ peer-access reporting must match native CUDA. Across endpoints or a local/remote
 boundary, peer enablement must report unsupported, matching the current Lupine
 contract. Peer copies are still attempted and their full contents verified.
 
+Every workload process must attest that `cuInit` and `cuGetProcAddress` resolve
+to the exact deployed driver library. `driver_guard.so` is preloaded alongside
+Lupine and verifies the loaded ELF object's file identity before the test starts;
+native controls instead require the NVIDIA driver identified during inventory.
+The guard only emits evidence from the intended executable, so an SSH helper or
+`timeout` process cannot satisfy the check. Missing evidence fails the test even
+if the process exits zero. Remote-only clients also have no local GPU, and exact
+UUID checks enforce device routing, including mixed local/remote layouts.
+
+`samples.yaml` pins NVIDIA CUDA Samples 12.4.1 and records build paths, arguments
+and timeouts. Select a sample with, for example, `sample:simpleMultiGPU` in
+`runs.yaml`. The regression run enables `simpleP2P`, `p2pBandwidthLatencyTest`,
+`streamOrderedAllocationP2P`, `simpleMultiGPU`, `MonteCarloMultiGPU`,
+`simpleCUFFT_MGPU`, `simpleCUFFT_2d_MGPU` and `conjugateGradientMultiDeviceCG` on
+one-server, split-server and mixed local/remote two-GPU layouts. Each has native
+controls on both GPU hosts. These run the unmodified upstream CUDA runtime
+samples over Lupine's driver shim; they do not test the separate CUDART proxy.
+
+Samples get a UUID preflight under the same environment and the driver guard
+runs inside the actual sample executable. The two direct-peer samples may exit
+with upstream `EXIT_WAIVED` when no peer-capable pair exists. This is recorded as
+a JUnit skip, never a pass, and is accepted only when the native peer matrix and
+topology ownership confirm the missing capability. An unexpected waiver fails.
+The explicit driver peer-copy tests still exercise copies across those boundaries.
+
 P2P copies are not skipped when native peer access is unavailable. A failed copy,
 wrong capability, timeout, segfault or byte mismatch fails its individual test;
 remaining tests continue. Native failures are retained too, so reports can show
@@ -89,7 +120,8 @@ network permissions. It:
 2. Resolves CPU/GPU image families to concrete image IDs for the run.
 3. Provisions the fleet with Terraform, retrying supported zones after destroying
    any partially allocated fleet.
-4. Runs native baselines and selected layouts/workloads, collecting results after each test.
+4. Runs native baselines and selected layouts/workloads with eight client workers,
+   collecting results after each test.
 5. Destroys the fleet even after test failure and uploads JUnit, per-test logs,
    server logs, native topology diagnostics, build revision/hash and resolved GPU
    mappings/environments.
