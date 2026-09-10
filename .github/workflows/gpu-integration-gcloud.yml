@@ -163,7 +163,7 @@ jobs:
               exit 0
             fi
             # Release partial allocations before attempting a different zone.
-            terraform -chdir="$TF_DIR" destroy -auto-approve -var-file=run.tfvars.json \
+            bash "$TF_DIR/cleanup.sh" "$TF_DIR" \
               2>&1 | tee -a "$RESULTS/provision.log"
           done
           exit 1

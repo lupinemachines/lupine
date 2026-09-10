@@ -140,10 +140,23 @@ and `b`; unreserved capacity remains subject to GCP availability and quota.
 
 The startup script installs host runtime dependencies. The selected GPU image
 must already have a compatible NVIDIA driver. CI sets a two-hour VM deletion
-limit as a fallback. Cleanup tries Terraform first, then deletes this run's VMs
-and firewall rules by their unique names if the state remains locked after an
-interruption. A stale state lock can require later reconciliation; cleanup does
-not force-unlock a possible Terraform writer.
+limit as a fallback. Cleanup tries Terraform first, then always reconciles this
+run's VMs and firewall rules across all zones by their unique names. It waits for
+unfinished create/delete operations and verifies that the fleet is gone, including
+failed creates missing from Terraform state. This also runs between zone retries.
+Cleanup fails if GCP cannot confirm removal within twenty minutes. A stale state
+lock can require later reconciliation; cleanup does not force-unlock a possible
+Terraform writer.
+
+In addition to provisioning permissions, the CI identity needs
+`compute.instances.list`, `compute.firewalls.list`, and
+`compute.globalOperations.list` for the cleanup inventory and aggregated operation
+listing. For the existing GCP CI custom role, add the two new read permissions:
+
+```bash
+gcloud iam roles update lupineGpuCiRunner --project=kevmo314 \
+  --add-permissions=compute.firewalls.list,compute.globalOperations.list
+```
 
 ## Local validation and execution
 
