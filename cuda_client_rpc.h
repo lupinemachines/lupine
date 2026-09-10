@@ -14,6 +14,7 @@ typedef struct conn_t conn_t;
 
 int lupine_rpc_open(void);
 int lupine_rpc_size(void);
+uint64_t lupine_rpc_thread_request_epoch(conn_t *conn);
 conn_t *lupine_rpc_client_get_connection(unsigned int index);
 int lupine_rpc_write_start_request(conn_t *conn, int op);
 int lupine_rpc_write_start_async_request(conn_t *conn, int op,

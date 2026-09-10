@@ -360,6 +360,21 @@ extern "C" cudaError_t cudaGetDevice(int *device) {
     return cudaErrorInvalidValue;
   }
   conn_t *conn = connection();
+  // PyTorch repeatedly asks for the current device between CUDA calls. An
+  // intervening request (driver or runtime) invalidates the answer, including
+  // context changes, resets, failed setters, and switches between servers.
+  struct device_query_cache {
+    conn_t *connection = nullptr;
+    uint64_t epoch = 0;
+    int device = 0;
+  };
+  static thread_local device_query_cache cached;
+  uint64_t epoch = lupine_rpc_thread_request_epoch(conn);
+  if (epoch != 0 && cached.connection == conn && cached.epoch == epoch) {
+    *device = cached.device;
+    return cudaSuccess;
+  }
+  cached.epoch = 0;
   int remote_device = 0;
   cudaError_t result = lupine_rpc_cudaGetDevice(conn, &remote_device);
   if (result != cudaSuccess) {
@@ -375,6 +390,7 @@ extern "C" cudaError_t cudaGetDevice(int *device) {
     remote_device += count;
   }
   *device = remote_device;
+  cached = {conn, lupine_rpc_thread_request_epoch(conn), remote_device};
   return cudaSuccess;
 }
 
