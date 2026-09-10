@@ -175,6 +175,9 @@ int connect_endpoint(client_transport_state &state,
     return -1;
   }
   if (rpc_conn_init(conn, connfd, 0) < 0) {
+    LUPINE_LOG_ERROR("Initializing RPC connection to "
+                     << endpoint.host << " port " << endpoint.port
+                     << " failed");
     return -1;
   }
   conn->logical_index = static_cast<int>(index);
@@ -188,6 +191,9 @@ int connect_endpoint(client_transport_state &state,
       int reserve_result =
           lupine_va_reserve_client(conn, window, min_slot, &slot);
       if (reserve_result < 0) {
+        LUPINE_LOG_ERROR("Reserving a virtual-address arena for "
+                         << endpoint.host << " port " << endpoint.port
+                         << " failed starting at slot " << min_slot);
         reset_connection(conn);
         return -1;
       }
@@ -228,6 +234,9 @@ int connect_endpoint(client_transport_state &state,
       }
     }
     if (http2_result < 0) {
+      LUPINE_LOG_ERROR("Completing the HTTP/2 handshake with "
+                       << endpoint.host << " port " << endpoint.port
+                       << " failed (result " << http2_result << ")");
       reset_connection(conn);
       return -1;
     }
@@ -237,6 +246,9 @@ int connect_endpoint(client_transport_state &state,
   state.endpoints[index] = endpoint;
   if (state.config.connection_kind != nullptr &&
       lupine_report_client_metadata(conn, state.config.connection_kind) < 0) {
+    LUPINE_LOG_ERROR("Reporting client metadata to "
+                     << endpoint.host << " port " << endpoint.port
+                     << " failed");
     reset_connection(conn);
     return -1;
   }
@@ -245,6 +257,9 @@ int connect_endpoint(client_transport_state &state,
   }
   if (pthread_create(&conn->read_thread, nullptr, dispatch_connection, conn) !=
       0) {
+    LUPINE_LOG_ERROR("Starting the RPC dispatch thread for "
+                     << endpoint.host << " port " << endpoint.port
+                     << " failed");
     reset_connection(conn);
     return -1;
   }

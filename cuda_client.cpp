@@ -867,7 +867,11 @@ extern "C" CUresult cuInit(unsigned int flags) {
     lupine_cuda_initialized.store(true, std::memory_order_release);
     return CUDA_SUCCESS;
   }
-  return first_error;
+  if (first_error != CUDA_SUCCESS) {
+    return first_error;
+  }
+  return getenv("LUPINE_SERVER") != nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                                            : CUDA_ERROR_NO_DEVICE;
 }
 
 extern "C" CUresult cuDeviceGetCount(int *count) {
