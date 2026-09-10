@@ -2982,11 +2982,12 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
   }
 
   struct source_cursor_state {
-    CUdeviceptr address = 0;
+    conn_t *conn = nullptr;
+    int request_id = -1;
     size_t remaining = 0;
     std::vector<unsigned char> storage;
   } source_cursor;
-  source_cursor.address = source;
+  source_cursor.conn = lupine_route_remote_conn(source_route);
   source_cursor.remaining = bytes;
   try {
     source_cursor.storage.resize(
@@ -2996,6 +2997,23 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
   }
   if (lupine_set_current_context_on_route(source_route, source_context) !=
       CUDA_SUCCESS) {
+    return -1;
+  }
+
+  // Start the source read before opening the destination response builder.
+  // Refill callbacks run while that builder owns the thread's RPC writer, so
+  // calling cuMemcpyDtoH_v2 from a refill would try to open a second writer
+  // and fail before reaching the source server. One streamed DtoH request lets
+  // the callback consume source responses without nesting RPC writers.
+  CUstream source_stream = CU_STREAM_LEGACY;
+  if (bytes != 0 &&
+      (lupine_prepare_rpc(source_cursor.conn) < 0 ||
+       rpc_write_start_request(source_cursor.conn, RPC_cuMemcpyDtoH_v2) < 0 ||
+       rpc_write(source_cursor.conn, &source, sizeof(source)) < 0 ||
+       rpc_write(source_cursor.conn, &bytes, sizeof(bytes)) < 0 ||
+       rpc_write(source_cursor.conn, &source_stream, sizeof(source_stream)) <
+           0 ||
+       (source_cursor.request_id = rpc_write_end(source_cursor.conn)) < 0)) {
     return -1;
   }
 
@@ -3009,22 +3027,44 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
     }
 
     size_t chunk = std::min(source->remaining, source->storage.size());
-    CUresult result =
-        cuMemcpyDtoH_v2(source->storage.data(), source->address, chunk);
+    CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    if (rpc_read_start(source->conn, source->request_id) < 0) {
+      source->remaining = 0;
+      LUPINE_LOG_ERROR("Cross-route DtoD source transport failed");
+      return -1;
+    }
+    bool read_failed = rpc_read(source->conn, &result, sizeof(result)) < 0;
+    if (!read_failed && result == CUDA_SUCCESS) {
+      read_failed = rpc_read(source->conn, source->storage.data(), chunk) < 0;
+    }
+    if (rpc_read_end(source->conn) < 0 || read_failed) {
+      source->remaining = 0;
+      LUPINE_LOG_ERROR("Cross-route DtoD source transport failed");
+      return -1;
+    }
     if (result != CUDA_SUCCESS) {
+      source->remaining = 0;
       LUPINE_LOG_ERROR("Cross-route DtoD source read failed: " << result);
       return -1;
     }
     cursor->data = source->storage.data();
     cursor->size = chunk;
-    source->address += chunk;
     source->remaining -= chunk;
     return 1;
   };
   rpc_write_cursor cursor(refill_source, &source_cursor);
-  if (rpc_write_start_response(destination_conn, request_id) < 0 ||
-      rpc_write_cursors(destination_conn, &cursor, 1) < 0 ||
-      rpc_write_end(destination_conn) < 0) {
+  int write_result = rpc_write_start_response(destination_conn, request_id);
+  if (write_result == 0) {
+    write_result = rpc_write_cursors(destination_conn, &cursor, 1);
+  }
+  if (write_result == 0) {
+    write_result = rpc_write_end(destination_conn) < 0 ? -1 : 0;
+  }
+  if (write_result < 0) {
+    rpc_write_cursor discard;
+    while (source_cursor.remaining != 0 &&
+           refill_source(&source_cursor, &discard) > 0) {
+    }
     return -1;
   }
   return 0;
