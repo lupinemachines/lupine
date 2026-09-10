@@ -2173,7 +2173,14 @@ extern "C" cudaError_t cudaGetExportTable(const void **ppExportTable,
     return cudaErrorInvalidValue;
   }
   conn_t *conn = connection();
-  return lupine_rpc_cudaGetExportTable(conn, ppExportTable, pExportTableId);
+  cudaError_t return_value =
+      lupine_rpc_cudaGetExportTable(conn, ppExportTable, pExportTableId);
+  if (return_value == cudaSuccess) {
+    // The native runtime returns a driver export table containing server-side
+    // function addresses. Use the existing client table for the same UUID.
+    return runtime_error(cuGetExportTable(ppExportTable, pExportTableId));
+  }
+  return return_value;
 }
 
 static cudaError_t lupine_rpc_cudaGetFuncBySymbol(conn_t *conn,

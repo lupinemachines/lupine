@@ -776,12 +776,19 @@ const char *cudaGetErrorName(cudaError_t error);
  */
 const char *cudaGetErrorString(cudaError_t error);
 /**
- * the result is a pointer into the server's driver
  * @param ppExportTable RECV_ONLY
  * @param pExportTableId SEND_ONLY DEREF
  */
 cudaError_t cudaGetExportTable(const void **ppExportTable,
-                               const cudaUUID_t *pExportTableId);
+                               const cudaUUID_t *pExportTableId) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    // The native runtime returns a driver export table containing server-side
+    // function addresses. Use the existing client table for the same UUID.
+    return runtime_error(cuGetExportTable(ppExportTable, pExportTableId));
+  }
+  return return_value;
+}
 /**
  * @param functionPtr RECV_ONLY
  * @param symbolPtr SEND_ONLY
