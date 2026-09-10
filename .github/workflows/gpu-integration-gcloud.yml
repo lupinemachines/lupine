@@ -144,8 +144,7 @@ jobs:
         if: always() && steps.topology-init.outcome == 'success'
         run: |
           set -euo pipefail
-          terraform -chdir="$TF_DIR" destroy -auto-approve -var-file=run.tfvars.json \
-            2>&1 | tee "$RESULTS/cleanup.log"
+          bash "$TF_DIR/cleanup.sh" "$TF_DIR" 2>&1 | tee "$RESULTS/cleanup.log"
 
       - name: Publish topology test report
         if: always() && hashFiles('test/integration/results/junit.xml') != ''

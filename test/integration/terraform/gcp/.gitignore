@@ -7,3 +7,4 @@
 crash.log
 crash.*.log
 inventory.json
+cleanup-error.log
