@@ -4,14 +4,14 @@ revision: 5f97d7d0dff880bc6567faa4c5e62e389a6d6999
 samples:
   simpleP2P:
     source: 0_Introduction/simpleP2P
-    requires_peer_access: true
+    peer_waiver: Peer to Peer access is not available amongst GPUs in the system, waiving test.
   p2pBandwidthLatencyTest:
     source: 5_Domain_Specific/p2pBandwidthLatencyTest
     args: [--numElems=262144]
     timeout: 180
   streamOrderedAllocationP2P:
     source: 2_Concepts_and_Techniques/streamOrderedAllocationP2P
-    requires_peer_access: true
+    peer_waiver: No Two or more Devices p2p capable found.. exiting..
   simpleMultiGPU:
     source: 0_Introduction/simpleMultiGPU
   MonteCarloMultiGPU:

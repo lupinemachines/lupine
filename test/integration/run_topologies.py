@@ -184,7 +184,8 @@ class Runner:
             return result, time.monotonic() - start, None
         result.stdout = preflight + result.stdout
         skip_reason = None
-        if result.returncode == 2 and sample and sample.get("requires_peer_access") and not can_peer:
+        if (result.returncode == 2 and sample and sample.get("peer_waiver")
+                and sample["peer_waiver"] in result.stdout and not can_peer):
             skip_reason = "upstream EXIT_WAIVED: no direct peer-access pair in this topology"
         return result, time.monotonic() - start, skip_reason
 

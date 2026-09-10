@@ -13,7 +13,7 @@ from unittest.mock import Mock
 import xml.etree.ElementTree as ET
 
 from run_topologies import Runner
-from validate_specs import ROOT
+from validate_specs import ROOT, SAMPLES
 
 
 class RunnerTests(unittest.TestCase):
@@ -76,13 +76,17 @@ class RunnerTests(unittest.TestCase):
         self.assertIsNone(skip)
 
     def test_waiver_requires_no_peer_access_and_driver_attestation(self):
-        for can_peer, attest, waived in ((False, True, True), (True, True, False), (False, False, False)):
-            with self.subTest(can_peer=can_peer, attest=attest):
+        for can_peer, attest, reason, waived in (
+                (False, True, True, True), (True, True, True, False),
+                (False, False, True, False), (False, True, False, False)):
+            with self.subTest(can_peer=can_peer, attest=attest, reason=reason):
                 def command(role, args, env, **kwargs):
                     if "enumeration" in args:
                         return subprocess.CompletedProcess(args, 0, "device map verified\n")
                     marker = f"LUPINE_TEST_DRIVER_OK {env['LUPINE_TEST_EXECUTABLE']} {env['LUPINE_TEST_DRIVER']}\n"
-                    return subprocess.CompletedProcess(args, 2, marker if attest else "")
+                    output = marker if attest else ""
+                    output += SAMPLES["simpleP2P"]["peer_waiver"] if reason else "unrelated waiver"
+                    return subprocess.CompletedProcess(args, 2, output)
                 self.runner.command = command
                 result, elapsed, skip = self.runner.test("test", "a", "sample:simpleP2P",
                     ["a/0", "a/1"], {}, can_peer=can_peer)
