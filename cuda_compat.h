@@ -56,6 +56,7 @@ CUresult cuFuncGetParamInfo(CUfunction, size_t, size_t *, size_t *);
 CUresult cuKernelGetAttribute(int *, CUfunction_attribute, CUkernel, CUdevice);
 CUresult cuKernelGetFunction(CUfunction *, CUkernel);
 CUresult cuLibraryGetKernel(CUkernel *, CUlibrary, const char *);
+CUresult cuLibraryGetModule(CUmodule *, CUlibrary);
 #ifdef __cplusplus
 }
 #endif
