@@ -284,7 +284,6 @@ int handle_cudaGraphicsResourceSetMapFlags(conn_t *conn);
 int handle_cudaGraphicsSubResourceGetMappedArray(conn_t *conn);
 int handle_cudaGraphicsUnmapResources(conn_t *conn);
 int handle_cudaGraphicsUnregisterResource(conn_t *conn);
-int handle___cudaRegisterFunction(conn_t *conn);
 int handle___cudaRegisterVar(conn_t *conn);
 int handle___cudaRegisterManagedVar(conn_t *conn);
 int handle___cudaRegisterTexture(conn_t *conn);

@@ -690,10 +690,30 @@ extern "C" void __cudaRegisterFunction(void **fatCubinHandle,
                                        const char *deviceName, int thread_limit,
                                        uint3 *tid, uint3 *bid, dim3 *bDim,
                                        dim3 *gDim, int *wSize) {
+  const size_t deviceFun_len = std::strlen(deviceFun) + 1;
+  const size_t deviceName_len = std::strlen(deviceName) + 1;
   broadcast_fatbin(fatCubinHandle, [&](conn_t *conn, void **handle) {
-    lupine_rpc___cudaRegisterFunction(conn, handle, hostFun, deviceFun,
-                                      deviceName, thread_limit, tid, bid, bDim,
-                                      gDim, wSize);
+    if (rpc_write_start_request(conn, RPC___cudaRegisterFunction) < 0 ||
+        rpc_write(conn, &handle, sizeof(handle)) < 0 ||
+        rpc_write(conn, &hostFun, sizeof(hostFun)) < 0 ||
+        rpc_write(conn, &deviceFun_len, sizeof(deviceFun_len)) < 0 ||
+        rpc_write(conn, deviceFun, deviceFun_len) < 0 ||
+        rpc_write(conn, &deviceName_len, sizeof(deviceName_len)) < 0 ||
+        rpc_write(conn, deviceName, deviceName_len) < 0 ||
+        rpc_write(conn, &thread_limit, sizeof(thread_limit)) < 0 ||
+        rpc_write(conn, &tid, sizeof(tid)) < 0 ||
+        (tid != nullptr && rpc_write(conn, tid, sizeof(*tid)) < 0) ||
+        rpc_write(conn, &bid, sizeof(bid)) < 0 ||
+        (bid != nullptr && rpc_write(conn, bid, sizeof(*bid)) < 0) ||
+        rpc_write(conn, &bDim, sizeof(bDim)) < 0 ||
+        (bDim != nullptr && rpc_write(conn, bDim, sizeof(*bDim)) < 0) ||
+        rpc_write(conn, &gDim, sizeof(gDim)) < 0 ||
+        (gDim != nullptr && rpc_write(conn, gDim, sizeof(*gDim)) < 0) ||
+        rpc_write(conn, &wSize, sizeof(wSize)) < 0 ||
+        (wSize != nullptr && rpc_write(conn, wSize, sizeof(*wSize)) < 0) ||
+        rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
+      return;
+    }
   });
 }
 

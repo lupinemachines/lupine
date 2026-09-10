@@ -400,6 +400,7 @@
   HANDLER(RPC_cudaLaunchKernelExC, handle_cudaLaunchKernelExC, rpc_backend::cudart) \
   HANDLER(RPC_cudaStreamQuery, handle_cudaStreamQuery, rpc_backend::cudart) \
   HANDLER(RPC_cudaStreamSynchronize, handle_cudaStreamSynchronize, rpc_backend::cudart) \
+  HANDLER(RPC___cudaRegisterFunction, handle___cudaRegisterFunction, rpc_backend::cudart) \
   HANDLER(RPC___cudaUnregisterFatBinary, handle___cudaUnregisterFatBinary, rpc_backend::cudart) \
   HANDLER(RPC___cudaRegisterFatBinary, handle___cudaRegisterFatBinary, rpc_backend::cudart) \
   HANDLER(RPC_lupineCudartFuncParamLayout, handle_lupineCudartFuncParamLayout, rpc_backend::cudart) \
@@ -606,7 +607,6 @@
   HANDLER(RPC_cudaGraphicsSubResourceGetMappedArray, handle_cudaGraphicsSubResourceGetMappedArray, rpc_backend::cudart) \
   HANDLER(RPC_cudaGraphicsUnmapResources, handle_cudaGraphicsUnmapResources, rpc_backend::cudart) \
   HANDLER(RPC_cudaGraphicsUnregisterResource, handle_cudaGraphicsUnregisterResource, rpc_backend::cudart) \
-  HANDLER(RPC___cudaRegisterFunction, handle___cudaRegisterFunction, rpc_backend::cudart) \
   HANDLER(RPC___cudaRegisterVar, handle___cudaRegisterVar, rpc_backend::cudart) \
   HANDLER(RPC___cudaRegisterManagedVar, handle___cudaRegisterManagedVar, rpc_backend::cudart) \
   HANDLER(RPC___cudaRegisterTexture, handle___cudaRegisterTexture, rpc_backend::cudart) \

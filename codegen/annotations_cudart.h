@@ -3121,10 +3121,10 @@ cudaError_t cudaGraphicsUnregisterResource(cudaGraphicsResource_t resource);
 
 // Compiler registration entry points are forwarded to the same runtime API.
 /**
- * @disabled client - broadcasts registration to each server's fatbin handle
+ * @disabled - broadcasts registration and retains names until fatbin unregister
  * @param fatCubinHandle SEND_ONLY
  * @param hostFun SEND_ONLY
- * @param deviceFun SEND_ONLY
+ * @param deviceFun SEND_ONLY NULL_TERMINATED
  * @param deviceName SEND_ONLY NULL_TERMINATED
  * @param thread_limit SEND_ONLY
  * @param tid SEND_ONLY NULLABLE

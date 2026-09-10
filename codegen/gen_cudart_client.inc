@@ -8271,35 +8271,6 @@ cudaGraphicsUnregisterResource(cudaGraphicsResource_t resource) {
   return lupine_rpc_cudaGraphicsUnregisterResource(conn, resource);
 }
 
-static void lupine_rpc___cudaRegisterFunction(
-    conn_t *conn, void **fatCubinHandle, const char *hostFun, char *deviceFun,
-    const char *deviceName, int thread_limit, uint3 *tid, uint3 *bid,
-    dim3 *bDim, dim3 *gDim, int *wSize) {
-  std::size_t deviceName_len =
-      static_cast<std::size_t>(std::strlen(deviceName) + 1);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC___cudaRegisterFunction) < 0 ||
-      rpc_write(conn, &fatCubinHandle, sizeof(void **)) < 0 ||
-      rpc_write(conn, &hostFun, sizeof(const char *)) < 0 ||
-      rpc_write(conn, &deviceFun, sizeof(char *)) < 0 ||
-      rpc_write(conn, &deviceName_len, sizeof(std::size_t)) < 0 ||
-      rpc_write(conn, deviceName, deviceName_len) < 0 ||
-      rpc_write(conn, &thread_limit, sizeof(int)) < 0 ||
-      rpc_write(conn, &tid, sizeof(uint3 *)) < 0 ||
-      (tid != nullptr && rpc_write(conn, tid, sizeof(uint3)) < 0) ||
-      rpc_write(conn, &bid, sizeof(uint3 *)) < 0 ||
-      (bid != nullptr && rpc_write(conn, bid, sizeof(uint3)) < 0) ||
-      rpc_write(conn, &bDim, sizeof(dim3 *)) < 0 ||
-      (bDim != nullptr && rpc_write(conn, bDim, sizeof(dim3)) < 0) ||
-      rpc_write(conn, &gDim, sizeof(dim3 *)) < 0 ||
-      (gDim != nullptr && rpc_write(conn, gDim, sizeof(dim3)) < 0) ||
-      rpc_write(conn, &wSize, sizeof(int *)) < 0 ||
-      (wSize != nullptr && rpc_write(conn, wSize, sizeof(int)) < 0) ||
-      rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
-    return;
-  }
-}
-
 static void lupine_rpc___cudaRegisterVar(conn_t *conn, void **fatCubinHandle,
                                          char *hostVar, char *deviceAddress,
                                          const char *deviceName, int ext,

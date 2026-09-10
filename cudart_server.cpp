@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <list>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -128,10 +129,17 @@ int handle_cudaFuncGetName(conn_t *conn) {
 
 namespace {
 
-// The manual fatbin loader owns the wrapper and image until unregistration.
+struct function_registration {
+  std::string device_function;
+  std::string device_name;
+};
+
+// NVIDIA keeps these names for later kernel lookup. List nodes keep their
+// addresses stable as more functions are registered to the same fatbin.
 struct fatbin_registration {
   lupine_fatbin_wrapper wrapper = {};
   std::vector<unsigned char> image;
+  std::list<function_registration> functions;
 };
 
 std::mutex &registry_mutex() {
@@ -183,6 +191,84 @@ int handle___cudaRegisterFatBinary(conn_t *conn) {
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &handle, sizeof(handle)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle___cudaRegisterFunction(conn_t *conn) {
+  void **handle = nullptr;
+  const char *host_function = nullptr;
+  function_registration names;
+  size_t device_function_length = 0;
+  size_t device_name_length = 0;
+  int thread_limit = 0;
+  uint3 *tid_present = nullptr, *bid_present = nullptr;
+  dim3 *block_dim_present = nullptr, *grid_dim_present = nullptr;
+  int *warp_size_present = nullptr;
+  uint3 tid{}, bid{};
+  dim3 block_dim, grid_dim;
+  int warp_size = 0;
+  if (rpc_read(conn, &handle, sizeof(handle)) < 0 ||
+      rpc_read(conn, &host_function, sizeof(host_function)) < 0 ||
+      rpc_read(conn, &device_function_length, sizeof(device_function_length)) <
+          0) {
+    return -1;
+  }
+  names.device_function.resize(device_function_length);
+  if (rpc_read(conn, names.device_function.data(), device_function_length) <
+          0 ||
+      rpc_read(conn, &device_name_length, sizeof(device_name_length)) < 0) {
+    return -1;
+  }
+  names.device_name.resize(device_name_length);
+  if (rpc_read(conn, names.device_name.data(), device_name_length) < 0 ||
+      names.device_function.empty() || names.device_function.back() != '\0' ||
+      names.device_name.empty() || names.device_name.back() != '\0' ||
+      rpc_read(conn, &thread_limit, sizeof(thread_limit)) < 0 ||
+      rpc_read(conn, &tid_present, sizeof(tid_present)) < 0 ||
+      (tid_present != nullptr && rpc_read(conn, &tid, sizeof(tid)) < 0) ||
+      rpc_read(conn, &bid_present, sizeof(bid_present)) < 0 ||
+      (bid_present != nullptr && rpc_read(conn, &bid, sizeof(bid)) < 0) ||
+      rpc_read(conn, &block_dim_present, sizeof(block_dim_present)) < 0 ||
+      (block_dim_present != nullptr &&
+       rpc_read(conn, &block_dim, sizeof(block_dim)) < 0) ||
+      rpc_read(conn, &grid_dim_present, sizeof(grid_dim_present)) < 0 ||
+      (grid_dim_present != nullptr &&
+       rpc_read(conn, &grid_dim, sizeof(grid_dim)) < 0) ||
+      rpc_read(conn, &warp_size_present, sizeof(warp_size_present)) < 0 ||
+      (warp_size_present != nullptr &&
+       rpc_read(conn, &warp_size, sizeof(warp_size)) < 0)) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  using fn_t = void (*)(void **, const char *, char *, const char *, int,
+                        uint3 *, uint3 *, dim3 *, dim3 *, int *);
+  auto fn = cudart_symbol<fn_t>("__cudaRegisterFunction");
+  if (fn == nullptr) {
+    return -1;
+  }
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex());
+    auto entry = registrations().find(handle);
+    if (entry == registrations().end()) {
+      return -1;
+    }
+    entry->second->functions.push_back(std::move(names));
+    auto &stored = entry->second->functions.back();
+    fn(handle, host_function, stored.device_function.data(),
+       stored.device_name.c_str(), thread_limit,
+       tid_present != nullptr ? &tid : nullptr,
+       bid_present != nullptr ? &bid : nullptr,
+       block_dim_present != nullptr ? &block_dim : nullptr,
+       grid_dim_present != nullptr ? &grid_dim : nullptr,
+       warp_size_present != nullptr ? &warp_size : nullptr);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
