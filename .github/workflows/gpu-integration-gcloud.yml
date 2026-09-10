@@ -29,6 +29,141 @@ permissions:
   id-token: write
 
 jobs:
+  gpu-topologies:
+    name: L4 topology integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GCP_PROJECT_ID: kevmo314
+      GCP_STATE_BUCKET: kevmo314-lupine-gpu-integration-cache
+      TOPOLOGY_RUN_ID: l4-topo-${{ github.run_id }}-${{ github.run_attempt }}
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_DIR: test/integration/terraform/gcp
+      RESULTS: test/integration/results
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Validate topology specs
+        run: |
+          python3 -m pip install -r test/integration/requirements.txt
+          python3 test/integration/validate_specs.py
+          mkdir -p "$RESULTS"
+
+      # Build before authentication so the Docker context cannot contain ADC.
+      - name: Build topology workloads and Lupine
+        run: |
+          docker buildx build -f test/integration/Dockerfile \
+            --output "type=local,dest=$RUNNER_TEMP/topology-build" .
+          tar czf "$RUNNER_TEMP/topology-artifacts.tar.gz" -C "$RUNNER_TEMP/topology-build" .
+          sha256sum "$RUNNER_TEMP/topology-artifacts.tar.gz" > "$RESULTS/build.sha256"
+          git rev-parse HEAD > "$RESULTS/revision.txt"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: projects/272419586516/locations/global/workloadIdentityPools/lupine-github/providers/github
+          service_account: lupine-gpu-ci@kevmo314.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Configure L4 fleet
+        run: |
+          set -euo pipefail
+          ssh-keygen -t ed25519 -N '' -f "$RUNNER_TEMP/topology-key"
+          export TOPOLOGY_RUNNER_IP="$(curl --fail --silent --show-error --retry 3 https://api.ipify.org)"
+          export TOPOLOGY_CPU_IMAGE="$(gcloud compute images describe-from-family ubuntu-2404-lts-amd64 \
+            --project=ubuntu-os-cloud --format='value(name)')"
+          export TOPOLOGY_GPU_IMAGE="$(gcloud compute images describe-from-family common-cu129-ubuntu-2404-nvidia-580 \
+            --project=ml-images --format='value(name)')"
+          python3 - <<'PY'
+          import ipaddress, json, os
+          from pathlib import Path
+          runner_ip = str(ipaddress.IPv4Address(os.environ['TOPOLOGY_RUNNER_IP']))
+          config = {
+              'project_id': os.environ['GCP_PROJECT_ID'],
+              'run_id': os.environ['TOPOLOGY_RUN_ID'],
+              'cpu_image': 'projects/ubuntu-os-cloud/global/images/' + os.environ['TOPOLOGY_CPU_IMAGE'],
+              'gpu_image': 'projects/ml-images/global/images/' + os.environ['TOPOLOGY_GPU_IMAGE'],
+              'ssh_public_key': (Path(os.environ['RUNNER_TEMP']) / 'topology-key.pub').read_text(),
+              'ssh_source_ranges': [runner_ip + '/32'],
+              'max_run_seconds': 7200,
+          }
+          (Path(os.environ['TF_DIR']) / 'run.tfvars.json').write_text(json.dumps(config))
+          PY
+
+      - name: Initialize Terraform state
+        id: topology-init
+        run: |
+          terraform -chdir="$TF_DIR" fmt -check
+          terraform -chdir="$TF_DIR" init \
+            -backend-config="bucket=$GCP_STATE_BUCKET" \
+            -backend-config="prefix=gpu-integration/topologies/$TOPOLOGY_RUN_ID"
+          terraform -chdir="$TF_DIR" validate
+
+      - name: Provision L4 fleet
+        run: |
+          set -euo pipefail
+          for zone in us-central1-a us-central1-b us-central1-c us-west1-a us-west1-b; do
+            python3 - "$TF_DIR/run.tfvars.json" "$zone" <<'PY'
+          import json, sys
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          config = json.loads(path.read_text())
+          config['zone'] = sys.argv[2]
+          path.write_text(json.dumps(config))
+          PY
+            if terraform -chdir="$TF_DIR" apply -auto-approve -var-file=run.tfvars.json \
+                2>&1 | tee -a "$RESULTS/provision.log"; then
+              terraform -chdir="$TF_DIR" output -json inventory > "$RESULTS/inventory.json"
+              exit 0
+            fi
+            # Release partial allocations before attempting a different zone.
+            terraform -chdir="$TF_DIR" destroy -auto-approve -var-file=run.tfvars.json \
+              2>&1 | tee -a "$RESULTS/provision.log"
+          done
+          exit 1
+
+      - name: Run native baselines and Lupine topologies
+        run: |
+          python3 test/integration/run_topologies.py \
+            --inventory "$RESULTS/inventory.json" \
+            --ssh-key "$RUNNER_TEMP/topology-key" \
+            --artifacts "$RUNNER_TEMP/topology-artifacts.tar.gz" \
+            --results "$RESULTS"
+
+      - name: Destroy topology fleet
+        if: always() && steps.topology-init.outcome == 'success'
+        run: |
+          set -euo pipefail
+          terraform -chdir="$TF_DIR" destroy -auto-approve -var-file=run.tfvars.json \
+            2>&1 | tee "$RESULTS/cleanup.log"
+
+      - name: Publish topology test report
+        if: always() && hashFiles('test/integration/results/junit.xml') != ''
+        uses: dorny/test-reporter@v3
+        with:
+          name: L4 topology results
+          path: test/integration/results/junit.xml
+          reporter: java-junit
+          fail-on-error: "false"
+
+      - name: Upload topology logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: l4-topologies-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test/integration/results/
+          if-no-files-found: warn
+
   gpu-integration:
     name: ${{ matrix.name }} GPU integration on GCE L4
     runs-on: ubuntu-latest

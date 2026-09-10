@@ -1,0 +1,88 @@
+version: 1
+
+# Fixed GCP fleet: one CPU VM and two VMs with two L4s each. GPU numbers are
+# stable slots resolved to UUIDs. Reuse this fleet one topology at a time.
+hosts:
+  client: {gpus: 0}
+  a: {gpus: 2}
+  b: {gpus: 2}
+
+# Workload groups executed by run_topologies.py; see README.md.
+tests:
+  - enumeration
+  - allocation-and-copy
+  - all-device-pairs
+  - streams-and-events
+  - kernel-launch
+
+topologies:
+  remote-single:
+    servers:
+      s0: {host: a, gpus: [0]}
+    client: {host: client, local_gpus: [], servers: [s0]}
+    expect_devices: [a/0]
+
+  remote-two-one-server:
+    servers:
+      s0: {host: a, gpus: [0, 1]}
+    client: {host: client, local_gpus: [], servers: [s0]}
+    expect_devices: [a/0, a/1]
+
+  remote-two-servers-same-host:
+    servers:
+      s0: {host: a, gpus: [0]}
+      s1: {host: a, gpus: [1]}
+    client: {host: client, local_gpus: [], servers: [s0, s1]}
+    expect_devices: [a/0, a/1]
+
+  remote-two-servers-different-hosts:
+    servers:
+      s0: {host: a, gpus: [0]}
+      s1: {host: b, gpus: [0]}
+    client: {host: client, local_gpus: [], servers: [s0, s1]}
+    expect_devices: [a/0, b/0]
+
+  remote-2-plus-1:
+    servers:
+      s0: {host: a, gpus: [0, 1]}
+      s1: {host: b, gpus: [0]}
+    client: {host: client, local_gpus: [], servers: [s0, s1]}
+    expect_devices: [a/0, a/1, b/0]
+
+  remote-2-plus-2:
+    servers:
+      s0: {host: a, gpus: [0, 1]}
+      s1: {host: b, gpus: [0, 1]}
+    client: {host: client, local_gpus: [], servers: [s0, s1]}
+    expect_devices: [a/0, a/1, b/0, b/1]
+
+  mixed-local-remote:
+    servers:
+      s0: {host: b, gpus: [0]}
+    client: {host: a, local_gpus: [0], servers: [s0]}
+    expect_devices: [a/0, b/0]
+
+  mixed-local-remote-same-host:
+    servers:
+      s0: {host: a, gpus: [1]}
+    client: {host: a, local_gpus: [0], servers: [s0]}
+    expect_devices: [a/0, a/1]
+
+  reversed-endpoints:
+    servers:
+      s0: {host: a, gpus: [0, 1]}
+      s1: {host: b, gpus: [0]}
+    client: {host: client, local_gpus: [], servers: [s1, s0]}
+    expect_devices: [b/0, a/0, a/1]
+
+  reversed-gpus:
+    servers:
+      s0: {host: a, gpus: [1, 0]}
+    client: {host: client, local_gpus: [], servers: [s0]}
+    expect_devices: [a/1, a/0]
+
+  nonzero-physical-gpu:
+    servers:
+      s0: {host: a, gpus: [1]}
+    client: {host: client, local_gpus: [], servers: [s0]}
+    expect_devices: [a/1]

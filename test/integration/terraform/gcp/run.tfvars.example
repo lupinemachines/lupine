@@ -1,0 +1,11 @@
+# Copy to run.tfvars and substitute your project, images, key and runner IP.
+project_id        = "your-gcp-project"
+run_id            = "lupine-topology-123-1"
+zone              = "us-central1-a"
+cpu_image         = "projects/your-image-project/global/images/lupine-cpu-IMAGE-VERSION"
+gpu_image         = "projects/your-image-project/global/images/lupine-gpu-IMAGE-VERSION"
+ssh_public_key    = "ssh-ed25519 REPLACE_WITH_RUNNER_PUBLIC_KEY"
+ssh_source_ranges = ["198.51.100.10/32"]
+
+# Reserve matching capacity separately, then require those reservations here.
+# reservations = { a = "lupine-gpu-a", b = "lupine-gpu-b" }
