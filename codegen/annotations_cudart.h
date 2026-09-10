@@ -8,10 +8,6 @@
 //
 // This file declares the runtime RPCs and how their parameters are marshalled.
 // @disabled marks the client or server implementations that remain manual.
-//
-// Every result comes back as a return value, so the manual client keeps the
-// sticky error: calls it answers itself set it, and cudaGetLastError never
-// has to ask the server.
 
 /**
  * @param desc RECV_ONLY
@@ -365,6 +361,7 @@ cudaError_t cudaDeviceSetMemPool(int device, cudaMemPool_t memPool);
  */
 cudaError_t cudaDeviceSetSharedMemConfig(enum cudaSharedMemConfig config);
 #endif
+/** @disabled - returns deferred memcpy results and device output */
 cudaError_t cudaDeviceSynchronize(void);
 #if CUDART_VERSION >= 12000
 /**
@@ -382,17 +379,28 @@ cudaDeviceUnregisterAsyncNotification(int device,
  */
 cudaError_t cudaDriverGetVersion(int *driverVersion);
 /**
- * @recordowner EVENT event
  * @param event RECV_ONLY
  */
-cudaError_t cudaEventCreate(cudaEvent_t *event);
+cudaError_t cudaEventCreate(cudaEvent_t *event) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_event_owner(*event, conn);
+  }
+  return return_value;
+}
 /**
- * @recordowner EVENT event
  * @param event RECV_ONLY
  * @param flags SEND_ONLY
  */
-cudaError_t cudaEventCreateWithFlags(cudaEvent_t *event, unsigned int flags);
+cudaError_t cudaEventCreateWithFlags(cudaEvent_t *event, unsigned int flags) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_event_owner(*event, conn);
+  }
+  return return_value;
+}
 /**
+ * @disabled - coordinates shared event completion state
  * @routingkey EVENT event
  * @param event SEND_ONLY
  */
@@ -405,25 +413,37 @@ cudaError_t cudaEventDestroy(cudaEvent_t event);
  */
 cudaError_t cudaEventElapsedTime(float *ms, cudaEvent_t start, cudaEvent_t end);
 /**
+ * @disabled - returns deferred memcpy results
  * @routingkey EVENT event
  * @param event SEND_ONLY
  */
 cudaError_t cudaEventQuery(cudaEvent_t event);
 /**
+ * @disabled server - records shared memcpy completion markers
  * @routingkey STREAM stream
  * @param event SEND_ONLY
  * @param stream SEND_ONLY
  */
-cudaError_t cudaEventRecord(cudaEvent_t event, cudaStream_t stream);
+cudaError_t cudaEventRecord(cudaEvent_t event, cudaStream_t stream) {
+  lupine_event_invalidate_completion(event);
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
+ * @disabled server - records shared memcpy completion markers
  * @routingkey STREAM stream
  * @param event SEND_ONLY
  * @param stream SEND_ONLY
  * @param flags SEND_ONLY
  */
 cudaError_t cudaEventRecordWithFlags(cudaEvent_t event, cudaStream_t stream,
-                                     unsigned int flags);
+                                     unsigned int flags) {
+  lupine_event_invalidate_completion(event);
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
+ * @disabled - returns deferred memcpy results and device output
  * @routingkey EVENT event
  * @param event SEND_ONLY
  */
@@ -475,7 +495,6 @@ cudaError_t cudaExecutionCtxRecordEvent(cudaExecutionContext_t ctx,
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
- * @recordowner STREAM phStream
  * @param phStream RECV_ONLY
  * @param ctx SEND_ONLY
  * @param flags SEND_ONLY
@@ -483,7 +502,13 @@ cudaError_t cudaExecutionCtxRecordEvent(cudaExecutionContext_t ctx,
  */
 cudaError_t cudaExecutionCtxStreamCreate(cudaStream_t *phStream,
                                          cudaExecutionContext_t ctx,
-                                         unsigned int flags, int priority);
+                                         unsigned int flags, int priority) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_stream_owner(*phStream, conn);
+  }
+  return return_value;
+}
 #endif
 #if CUDART_VERSION >= 13000
 /**
@@ -527,7 +552,7 @@ cudaError_t cudaFree(void *devPtr) {
   }
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_forget_allocation(devPtr);
+    lupine_forget_deviceptr_owner(reinterpret_cast<unsigned long long>(devPtr));
   }
   return return_value;
 }
@@ -543,7 +568,7 @@ cudaError_t cudaFreeArray(cudaArray_t array);
 cudaError_t cudaFreeAsync(void *devPtr, cudaStream_t hStream) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_forget_allocation(devPtr);
+    lupine_forget_deviceptr_owner(reinterpret_cast<unsigned long long>(devPtr));
   }
   return return_value;
 }
@@ -733,9 +758,6 @@ cudaError_t cudaGetFuncBySymbol(cudaFunction_t *functionPtr,
  */
 cudaError_t cudaGetKernel(cudaKernel_t *kernelPtr, const void *entryFuncAddr);
 #endif
-/**
- * @disabled client - the sticky error is kept on the client
- */
 cudaError_t cudaGetLastError(void);
 /**
  * @param levelArray RECV_ONLY
@@ -863,7 +885,7 @@ cudaError_t cudaImportExternalSemaphore(
 cudaError_t cudaInitDevice(int device, unsigned int deviceFlags,
                            unsigned int flags) {
   if (conn == nullptr) {
-    return record(cudaErrorInvalidDevice);
+    return cudaErrorInvalidDevice;
   }
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   return return_value;
@@ -886,12 +908,17 @@ cudaError_t cudaIpcGetEventHandle(cudaIpcEventHandle_t *handle,
  */
 cudaError_t cudaIpcGetMemHandle(cudaIpcMemHandle_t *handle, void *devPtr);
 /**
- * @recordowner EVENT event
  * @param event RECV_ONLY
  * @param handle SEND_ONLY
  */
 cudaError_t cudaIpcOpenEventHandle(cudaEvent_t *event,
-                                   cudaIpcEventHandle_t handle);
+                                   cudaIpcEventHandle_t handle) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_event_owner(*event, conn);
+  }
+  return return_value;
+}
 /**
  * @param devPtr RECV_ONLY
  * @param handle SEND_ONLY
@@ -1117,7 +1144,8 @@ cudaError_t cudaLogsUnregisterCallback(cudaLogsCallbackHandle callback);
 cudaError_t cudaMalloc(void **devPtr, size_t size) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_note_allocation(conn, *devPtr, size);
+    lupine_note_deviceptr_allocation(
+        reinterpret_cast<unsigned long long>(*devPtr), size, conn);
   }
   return return_value;
 }
@@ -1129,9 +1157,9 @@ cudaError_t cudaMalloc3D(struct cudaPitchedPtr *pitchedDevPtr,
                          struct cudaExtent extent) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_note_allocation(conn, pitchedDevPtr->ptr,
-                               pitchedDevPtr->pitch * extent.height *
-                                   extent.depth);
+    lupine_note_deviceptr_allocation(
+        reinterpret_cast<unsigned long long>(pitchedDevPtr->ptr),
+        pitchedDevPtr->pitch * extent.height * extent.depth, conn);
   }
   return return_value;
 }
@@ -1163,7 +1191,8 @@ cudaError_t cudaMallocArray(cudaArray_t *array,
 cudaError_t cudaMallocAsync(void **devPtr, size_t size, cudaStream_t hStream) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_note_allocation(conn, *devPtr, size);
+    lupine_note_deviceptr_allocation(
+        reinterpret_cast<unsigned long long>(*devPtr), size, conn);
   }
   return return_value;
 }
@@ -1179,7 +1208,8 @@ cudaError_t cudaMallocFromPoolAsync(void **ptr, size_t size,
                                     cudaStream_t stream) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_note_allocation(conn, *ptr, size);
+    lupine_note_deviceptr_allocation(reinterpret_cast<unsigned long long>(*ptr),
+                                     size, conn);
   }
   return return_value;
 }
@@ -1197,7 +1227,8 @@ cudaError_t cudaMallocHost(void **ptr, size_t size);
 cudaError_t cudaMallocManaged(void **devPtr, size_t size, unsigned int flags) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_note_allocation(conn, *devPtr, size);
+    lupine_note_deviceptr_allocation(
+        reinterpret_cast<unsigned long long>(*devPtr), size, conn);
   }
   return return_value;
 }
@@ -1223,7 +1254,8 @@ cudaError_t cudaMallocPitch(void **devPtr, size_t *pitch, size_t width,
                             size_t height) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_note_allocation(conn, *devPtr, *pitch * height);
+    lupine_note_deviceptr_allocation(
+        reinterpret_cast<unsigned long long>(*devPtr), *pitch * height, conn);
   }
   return return_value;
 }
@@ -1683,7 +1715,7 @@ cudaError_t cudaOccupancyMaxActiveClusters(
     int *numClusters, const void *func, const cudaLaunchConfig_t *launchConfig) {
   if (launchConfig == nullptr ||
       (launchConfig->numAttrs != 0 && launchConfig->attrs == nullptr)) {
-    return record(cudaErrorInvalidValue);
+    return cudaErrorInvalidValue;
   }
   if (launchConfig->stream != nullptr) {
     conn = lupine_rpc_conn_for_stream(launchConfig->stream);
@@ -1701,7 +1733,7 @@ cudaError_t cudaOccupancyMaxPotentialClusterSize(
     int *clusterSize, const void *func, const cudaLaunchConfig_t *launchConfig) {
   if (launchConfig == nullptr ||
       (launchConfig->numAttrs != 0 && launchConfig->attrs == nullptr)) {
-    return record(cudaErrorInvalidValue);
+    return cudaErrorInvalidValue;
   }
   if (launchConfig->stream != nullptr) {
     conn = lupine_rpc_conn_for_stream(launchConfig->stream);
@@ -1710,9 +1742,6 @@ cudaError_t cudaOccupancyMaxPotentialClusterSize(
   return return_value;
 }
 // clang-format on
-/**
- * @disabled client - the sticky error is kept on the client
- */
 cudaError_t cudaPeekAtLastError(void);
 /**
  * @param attributes RECV_ONLY
@@ -1834,29 +1863,50 @@ cudaError_t cudaStreamBeginRecaptureToGraph(
  */
 cudaError_t cudaStreamCopyAttributes(cudaStream_t dst, cudaStream_t src);
 /**
- * @recordowner STREAM pStream
  * @param pStream RECV_ONLY
  */
-cudaError_t cudaStreamCreate(cudaStream_t *pStream);
+cudaError_t cudaStreamCreate(cudaStream_t *pStream) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_stream_owner(*pStream, conn);
+  }
+  return return_value;
+}
 /**
- * @recordowner STREAM pStream
  * @param pStream RECV_ONLY
  * @param flags SEND_ONLY
  */
 cudaError_t cudaStreamCreateWithFlags(cudaStream_t *pStream,
-                                      unsigned int flags);
+                                      unsigned int flags) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_stream_owner(*pStream, conn);
+  }
+  return return_value;
+}
 /**
- * @recordowner STREAM pStream
  * @param pStream RECV_ONLY
  * @param flags SEND_ONLY
  * @param priority SEND_ONLY
  */
 cudaError_t cudaStreamCreateWithPriority(cudaStream_t *pStream,
-                                         unsigned int flags, int priority);
+                                         unsigned int flags, int priority) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_stream_owner(*pStream, conn);
+  }
+  return return_value;
+}
 /**
  * @param stream SEND_ONLY
  */
-cudaError_t cudaStreamDestroy(cudaStream_t stream);
+cudaError_t cudaStreamDestroy(cudaStream_t stream) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_forget_stream_owner(stream);
+  }
+  return return_value;
+}
 /**
  * @param stream SEND_ONLY
  * @param pGraph RECV_ONLY
@@ -2006,6 +2056,7 @@ cudaError_t cudaStreamGetPriority(cudaStream_t hStream, int *priority);
 cudaError_t cudaStreamIsCapturing(cudaStream_t stream,
                                   enum cudaStreamCaptureStatus *pCaptureStatus);
 /**
+ * @disabled - returns deferred memcpy results
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  */
@@ -2018,6 +2069,7 @@ cudaError_t cudaStreamQuery(cudaStream_t stream);
 cudaError_t cudaStreamSetAttribute(cudaStream_t hStream, cudaStreamAttrID attr,
                                    const cudaStreamAttrValue *value);
 /**
+ * @disabled - returns deferred memcpy results and device output
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  */
@@ -3069,6 +3121,7 @@ cudaError_t cudaGraphicsUnregisterResource(cudaGraphicsResource_t resource);
 
 // Compiler registration entry points are forwarded to the same runtime API.
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  * @param hostFun SEND_ONLY
  * @param deviceFun SEND_ONLY
@@ -3085,6 +3138,7 @@ void __cudaRegisterFunction(void **fatCubinHandle, const char *hostFun,
                             int thread_limit, uint3 *tid, uint3 *bid,
                             dim3 *bDim, dim3 *gDim, int *wSize);
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
  * @param deviceAddress SEND_ONLY NULL_TERMINATED
@@ -3098,6 +3152,7 @@ void __cudaRegisterVar(void **fatCubinHandle, char *hostVar,
                        char *deviceAddress, const char *deviceName, int ext,
                        size_t size, int constant, int global);
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  * @param hostVarPtrAddress SEND_ONLY
  * @param deviceAddress SEND_ONLY NULL_TERMINATED
@@ -3111,6 +3166,7 @@ void __cudaRegisterManagedVar(void **fatCubinHandle, void **hostVarPtrAddress,
                               char *deviceAddress, const char *deviceName,
                               int ext, size_t size, int constant, int global);
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
  * @param deviceAddress SEND_ONLY
@@ -3123,6 +3179,7 @@ void __cudaRegisterTexture(void **fatCubinHandle, const void *hostVar,
                            const void **deviceAddress, const char *deviceName,
                            int dim, int norm, int ext);
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
  * @param deviceAddress SEND_ONLY
@@ -3134,6 +3191,7 @@ void __cudaRegisterSurface(void **fatCubinHandle, const void *hostVar,
                            const void **deviceAddress, const char *deviceName,
                            int dim, int ext);
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  * @param deviceName SEND_ONLY NULL_TERMINATED
  * @param hostVar SEND_ONLY
@@ -3148,6 +3206,7 @@ void __cudaRegisterHostVar(void **fatCubinHandle, const char *deviceName,
 // inaccessible after registration. Copying a window changes its canonical
 // addresses and breaks calls through host-originated function pointers.
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  * @param functionTable SEND_ONLY
  * @param functionWindowSize SEND_ONLY
@@ -3176,11 +3235,12 @@ cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
                                        size_t *sharedMem, void *stream);
 
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  */
 void __cudaRegisterFatBinaryEnd(void **fatCubinHandle);
 /**
- * @disabled server - releases the fatbin image owned by the manual load handler
+ * @disabled - broadcasts unregister and releases the manual registration
  * @param fatCubinHandle SEND_ONLY
  */
 void __cudaUnregisterFatBinary(void **fatCubinHandle);
@@ -3191,7 +3251,6 @@ void __cudaUnregisterFatBinary(void **fatCubinHandle);
 char __cudaInitModule(void **fatCubinHandle) {
   fatCubinHandle = fatbin_handle(conn, fatCubinHandle);
   if (fatCubinHandle == nullptr) {
-    record(cudaErrorInvalidResourceHandle);
     return 0;
   }
   char return_value = LUPINE_GENERATED_CALL();
@@ -3207,17 +3266,18 @@ char __cudaInitModule(void **fatCubinHandle) {
 cudaError_t __cudaGetKernel(cudaKernel_t *kernel, const void *entryFuncAddr);
 #endif
 
-// Registry-only operations without API declarations above. The code generator
-// reads these annotations directly; the C++ parser intentionally ignores them.
-#if 0
+// Manual operations still need declarations so their RPC IDs are generated.
 /** @disabled */
-void __cudaRegisterFatBinary();
+void **__cudaRegisterFatBinary(void *fatCubin);
 
+#if CUDART_VERSION >= 13000
 /**
  * @disabled
  * @guard CUDART_VERSION >= 13000
  */
-void __cudaLaunchKernel();
+cudaError_t __cudaLaunchKernel(cudaKernel_t kernel, dim3 gridDim, dim3 blockDim,
+                               void **args, size_t sharedMem,
+                               cudaStream_t stream);
+#endif
 /** @disabled */
 void lupineCudartFuncParamLayout();
-#endif

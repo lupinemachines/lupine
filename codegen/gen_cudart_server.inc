@@ -1435,30 +1435,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cudaDeviceSynchronize(conn_t *conn) {
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)();
-  fn_t fn = nullptr;
-  if (false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaDeviceSynchronize");
-  return_value = fn == nullptr ? function_not_found() : fn();
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 #if CUDART_VERSION >= 12000
 int handle_cudaDeviceUnregisterAsyncNotification(conn_t *conn) {
   int device;
@@ -1571,31 +1547,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cudaEventDestroy(conn_t *conn) {
-  cudaEvent_t event;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaEvent_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &event, sizeof(cudaEvent_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaEventDestroy");
-  return_value = fn == nullptr ? function_not_found() : fn(event);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cudaEventElapsedTime(conn_t *conn) {
   float ms{};
   ms = {};
@@ -1618,113 +1569,6 @@ int handle_cudaEventElapsedTime(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &ms, sizeof(float)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaEventQuery(conn_t *conn) {
-  cudaEvent_t event;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaEvent_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &event, sizeof(cudaEvent_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaEventQuery");
-  return_value = fn == nullptr ? function_not_found() : fn(event);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaEventRecord(conn_t *conn) {
-  cudaEvent_t event;
-  cudaStream_t stream;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaEvent_t, cudaStream_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &event, sizeof(cudaEvent_t)) < 0 ||
-      rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaEventRecord");
-  return_value = fn == nullptr ? function_not_found() : fn(event, stream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaEventRecordWithFlags(conn_t *conn) {
-  cudaEvent_t event;
-  cudaStream_t stream;
-  unsigned int flags;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaEvent_t, cudaStream_t, unsigned int);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &event, sizeof(cudaEvent_t)) < 0 ||
-      rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 ||
-      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaEventRecordWithFlags");
-  return_value =
-      fn == nullptr ? function_not_found() : fn(event, stream, flags);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaEventSynchronize(conn_t *conn) {
-  cudaEvent_t event;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaEvent_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &event, sizeof(cudaEvent_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaEventSynchronize");
-  return_value = fn == nullptr ? function_not_found() : fn(event);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -6931,31 +6775,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cudaStreamQuery(conn_t *conn) {
-  cudaStream_t stream;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaStream_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaStreamQuery");
-  return_value = fn == nullptr ? function_not_found() : fn(stream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cudaStreamSetAttribute(conn_t *conn) {
   cudaStream_t hStream;
   cudaLaunchAttributeID attr;
@@ -6978,31 +6797,6 @@ int handle_cudaStreamSetAttribute(conn_t *conn) {
   fn = cudart_symbol<fn_t>("cudaStreamSetAttribute");
   return_value =
       fn == nullptr ? function_not_found() : fn(hStream, attr, &value);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
-int handle_cudaStreamSynchronize(conn_t *conn) {
-  cudaStream_t stream;
-  int request_id;
-  cudaError_t return_value;
-  using fn_t = cudaError_t (*)(cudaStream_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cudart_symbol<fn_t>("cudaStreamSynchronize");
-  return_value = fn == nullptr ? function_not_found() : fn(stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cudaError_t)) < 0 ||

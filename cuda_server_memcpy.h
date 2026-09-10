@@ -4,6 +4,7 @@
 #include <cuda.h>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "rpc.h"
@@ -30,6 +31,30 @@ struct lupine_pending_dtoh_item {
 };
 
 using lupine_pending_dtoh_items = std::vector<lupine_pending_dtoh_item>;
+struct lupine_captured_stdout {
+  int saved_stdout = -1;
+  bool active = false;
+  std::string output;
+};
+
+bool lupine_start_stdout_capture(lupine_captured_stdout *capture);
+void lupine_finish_stdout_capture(lupine_captured_stdout *capture);
+int lupine_write_captured_stdout(conn_t *conn,
+                                 const lupine_captured_stdout &capture);
+void lupine_note_device_stdout_image(const unsigned char *image,
+                                     size_t image_size);
+lupine_pending_dtoh_items lupine_detach_pending_dtoh_copies(conn_t *conn,
+                                                            CUstream stream,
+                                                            bool all_streams);
+lupine_pending_dtoh_items lupine_detach_event_dtoh_copies(conn_t *conn,
+                                                          CUevent event);
+int lupine_write_pending_dtoh_copies(conn_t *conn,
+                                     const lupine_pending_dtoh_items &pending,
+                                     bool include_count);
+void lupine_cleanup_pending_dtoh_copies(lupine_pending_dtoh_items *pending);
+void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream);
+void lupine_forget_event_dtoh_marker(conn_t *conn, CUevent event);
+
 using lupine_pending_dtoh_streams =
     std::unordered_map<CUstream, lupine_pending_dtoh_items>;
 

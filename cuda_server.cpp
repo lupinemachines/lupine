@@ -336,12 +336,6 @@ CUresult lupine_defer_host_free(CUstream stream, void *ptr) {
 }
 #endif
 
-struct lupine_captured_stdout {
-  int saved_stdout = -1;
-  bool active = false;
-  std::string output;
-};
-
 static pthread_mutex_t lupine_stdout_capture_mutex = PTHREAD_MUTEX_INITIALIZER;
 static std::atomic<bool> lupine_stdout_capture_required{false};
 
@@ -377,8 +371,8 @@ static bool lupine_image_may_use_device_stdout(const unsigned char *image,
                                 sizeof(ptx_version) - 1);
 }
 
-static void lupine_note_device_stdout_image(const unsigned char *image,
-                                            size_t image_size) {
+void lupine_note_device_stdout_image(const unsigned char *image,
+                                     size_t image_size) {
   if (lupine_image_may_use_device_stdout(image, image_size)) {
     lupine_stdout_capture_required.store(true, std::memory_order_release);
   }
@@ -415,7 +409,7 @@ static FILE *lupine_stdout_capture_file() {
   return file;
 }
 
-static bool lupine_start_stdout_capture(lupine_captured_stdout *capture) {
+bool lupine_start_stdout_capture(lupine_captured_stdout *capture) {
   if (capture == nullptr) {
     return false;
   }
@@ -470,7 +464,7 @@ static bool lupine_start_stdout_capture(lupine_captured_stdout *capture) {
   return true;
 }
 
-static void lupine_finish_stdout_capture(lupine_captured_stdout *capture) {
+void lupine_finish_stdout_capture(lupine_captured_stdout *capture) {
   if (capture == nullptr || !capture->active) {
     return;
   }
@@ -509,8 +503,8 @@ static void lupine_finish_stdout_capture(lupine_captured_stdout *capture) {
   pthread_mutex_unlock(&lupine_stdout_capture_mutex);
 }
 
-static int lupine_write_captured_stdout(conn_t *conn,
-                                        const lupine_captured_stdout &capture) {
+int lupine_write_captured_stdout(conn_t *conn,
+                                 const lupine_captured_stdout &capture) {
   auto *output_size = static_cast<uint64_t *>(
       rpc_write_buffer(conn, sizeof(uint64_t), alignof(uint64_t)));
   if (output_size == nullptr) {
@@ -795,7 +789,7 @@ static void lupine_append_pending_dtoh_copies(
   }
 }
 
-static std::vector<lupine_pending_dtoh_item>
+std::vector<lupine_pending_dtoh_item>
 lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
                                   bool all_streams) {
   std::vector<lupine_pending_dtoh_item> copies;
@@ -840,8 +834,7 @@ lupine_remove_event_dtoh_markers(lupine_pending_dtoh_streams *streams,
   }
 }
 
-static void lupine_note_event_record(conn_t *conn, CUevent event,
-                                     CUstream stream) {
+void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream) {
   lupine_pending_dtoh_streams initial;
   initial[stream].push_back({event});
   lupine_pending_dtoh_copies().upsert(
@@ -874,7 +867,7 @@ static void lupine_note_event_record(conn_t *conn, CUevent event,
       std::move(initial));
 }
 
-static void lupine_forget_event_dtoh_marker(conn_t *conn, CUevent event) {
+void lupine_forget_event_dtoh_marker(conn_t *conn, CUevent event) {
   lupine_pending_dtoh_copies().erase_fn(
       conn, [event](lupine_pending_dtoh_streams &streams) {
         lupine_remove_event_dtoh_markers(&streams, event);
@@ -882,7 +875,7 @@ static void lupine_forget_event_dtoh_marker(conn_t *conn, CUevent event) {
       });
 }
 
-static std::vector<lupine_pending_dtoh_item>
+std::vector<lupine_pending_dtoh_item>
 lupine_detach_event_dtoh_copies(conn_t *conn, CUevent event) {
   std::vector<lupine_pending_dtoh_item> copies;
   lupine_pending_dtoh_copies().erase_fn(
@@ -912,7 +905,7 @@ lupine_detach_event_dtoh_copies(conn_t *conn, CUevent event) {
   return copies;
 }
 
-static int lupine_write_pending_dtoh_copies(
+int lupine_write_pending_dtoh_copies(
     conn_t *conn, const std::vector<lupine_pending_dtoh_item> &pending,
     bool include_count) {
   if (include_count) {
@@ -933,7 +926,7 @@ static int lupine_write_pending_dtoh_copies(
   return 0;
 }
 
-static void lupine_cleanup_pending_dtoh_copies(
+void lupine_cleanup_pending_dtoh_copies(
     std::vector<lupine_pending_dtoh_item> *pending) {
   if (pending == nullptr) {
     return;

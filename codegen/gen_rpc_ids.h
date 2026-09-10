@@ -798,6 +798,9 @@
 #define RPC___cudaUnregisterFatBinary 83215989
 #define RPC___cudaInitModule 112657159
 #define RPC___cudaGetKernel 2093390772
+#define RPC___cudaRegisterFatBinary 1167276453
+#define RPC___cudaLaunchKernel 1206577725
+#define RPC_lupineCudartFuncParamLayout 632188610
 
 #define LUPINE_RPC_cuGetExportTableMetadata 565915314
 #define LUPINE_RPC_cuGraphConditionalHandleCreate 1689373620

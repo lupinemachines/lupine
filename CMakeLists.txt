@@ -403,6 +403,65 @@ if(LUPINE_BUILD_CUDA)
     endif()
 endif()
 
+if(LUPINE_BUILD_CUDA)
+    if(LUPINE_CUDA_HEADER_VERSION)
+        math(EXPR LUPINE_CUDART_MAJOR "${LUPINE_CUDA_HEADER_VERSION} / 1000")
+    else()
+        set(LUPINE_CUDART_MAJOR ${CUDAToolkit_VERSION_MAJOR})
+    endif()
+    set(LUPINE_CUDART_SOVERSION ${LUPINE_CUDART_MAJOR})
+    set(LUPINE_CUDART_DLL_SUFFIX ${LUPINE_CUDART_MAJOR})
+    if(LUPINE_CUDART_MAJOR EQUAL 11)
+        set(LUPINE_CUDART_SOVERSION 11.0)
+        set(LUPINE_CUDART_DLL_SUFFIX 110)
+    endif()
+    configure_file(cudart.exports.in cudart.exports @ONLY)
+
+    add_library(lupine_cudart_headers INTERFACE)
+    target_include_directories(lupine_cudart_headers INTERFACE
+        ${CUDAToolkit_INCLUDE_DIRS})
+    # Header-only CUDA wheels omit the compiler's host qualifier definitions.
+    find_path(LUPINE_CUDA_CRT_INCLUDE_DIR crt/host_defines.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
+    if(NOT LUPINE_CUDA_CRT_INCLUDE_DIR)
+        configure_file(python/cudart/host_defines_stub.h
+            cudart-headers/crt/host_defines.h COPYONLY)
+        target_include_directories(lupine_cudart_headers BEFORE INTERFACE
+            ${CMAKE_CURRENT_BINARY_DIR}/cudart-headers)
+    endif()
+
+    add_library(lupine_cudart_client SHARED cudart_client.cpp)
+    target_include_directories(lupine_cudart_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
+    target_link_libraries(lupine_cudart_client PRIVATE
+        lupine_cudart_headers lupine_cuda_client Threads::Threads)
+    set_target_properties(lupine_cudart_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+    lupine_manylinux2014_client(lupine_cudart_client)
+    if(WIN32)
+        target_compile_options(lupine_cudart_client PRIVATE /wd4996)
+        set_target_properties(lupine_cudart_client PROPERTIES
+            OUTPUT_NAME cudart64_${LUPINE_CUDART_DLL_SUFFIX}
+            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        target_compile_options(lupine_cudart_client PRIVATE
+            -Wno-deprecated-declarations)
+        set_target_properties(lupine_cudart_client PROPERTIES OUTPUT_NAME cudart)
+        if(APPLE)
+            set_target_properties(lupine_cudart_client PROPERTIES
+                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+        else()
+            target_link_options(lupine_cudart_client PRIVATE
+                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/cudart.exports")
+            set_target_properties(lupine_cudart_client PROPERTIES
+                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+                VERSION ${LUPINE_CUDART_SOVERSION}
+                SOVERSION ${LUPINE_CUDART_SOVERSION})
+        endif()
+    endif()
+    add_custom_target(lupine_cudart DEPENDS lupine_cudart_client)
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -485,6 +544,12 @@ if(LUPINE_BUILD_SERVER)
         target_link_libraries(lupine_cuda_server PRIVATE
             lupine_server_core lupine_cuda_checkpoint lupine_ipc
             lupine_cuda_smemcpy_module CUDA::cuda_driver)
+
+        add_library(lupine_cudart_server STATIC cudart_server.cpp)
+        lupine_internal_target(lupine_cudart_server)
+        target_compile_definitions(lupine_cudart_server PRIVATE LUPINE_RPC_SERVER)
+        target_link_libraries(lupine_cudart_server PRIVATE
+            lupine_cudart_headers lupine_server_core ${CMAKE_DL_LIBS})
     endif()
 
     if(LUPINE_BUILD_NVML)
@@ -578,9 +643,11 @@ if(LUPINE_BUILD_SERVER)
     if(LUPINE_BUILD_CUDA)
         target_compile_definitions(lupine_driver_server PRIVATE
             LUPINE_BUILD_CUDA_BACKEND
+            LUPINE_BUILD_CUDART_BACKEND
             LUPINE_RPC_SERVER
             LUPINE_BACKEND_VERSION="${CUDAToolkit_VERSION}")
-        target_link_libraries(lupine_driver_server PRIVATE lupine_cuda_server)
+        target_link_libraries(lupine_driver_server PRIVATE
+            lupine_cuda_server lupine_cudart_server lupine_cudart_headers)
     endif()
     if(LUPINE_BUILD_NVML)
         target_compile_definitions(lupine_driver_server PRIVATE
@@ -733,6 +800,9 @@ message(STATUS "RPC core target: lupine_rpc_core")
 message(STATUS "Client TLS (OpenSSL): ${OpenSSL_FOUND}")
 if(TARGET lupine_cuda_client)
     message(STATUS "Building CUDA client: lupine_cuda_client (libcuda.so.1)")
+endif()
+if(TARGET lupine_cudart_client)
+    message(STATUS "Building CUDA runtime client: lupine_cudart_client")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS
