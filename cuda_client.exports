@@ -4,6 +4,37 @@
     dlsym;
     lupine_checkpoint_*;
     lupine_rpc_*;
+    lupine_prepare_rpc;
+    lupine_invalidate_runtime_context;
+    lupine_note_stream_owner;
+    lupine_note_event_owner;
+    lupine_forget_stream_owner;
+    lupine_forget_event_owner;
+    lupine_local_device_for_remote;
+    lupine_note_deviceptr_allocation;
+    lupine_forget_deviceptr_owner;
+    lupine_deep_cache_reset;
+    lupine_deep_cache_add;
+    lupine_read_deferred_dtoh_copies;
+    lupine_forward_remote_stdout;
+    lupine_sync_mapped_device_to_host;
+    lupine_invalidate_managed_allocations;
+    lupine_adopt_host_allocation;
+    lupine_free_host_allocation;
+    lupine_materialize_host_allocations;
+    lupine_device_attribute_is_virtualized;
+    lupine_stream_capture_begin;
+    lupine_stream_capture_begin_complete;
+    lupine_complete_stream_end_capture;
+    lupine_register_host_allocation;
+    lupine_unregister_host_allocation;
+    lupine_host_pointer_for_rpc;
+    lupine_free_device_allocation;
+    lupine_mark_mapped_host_kernel_params;
+    extern "C++" {
+      "lupine_event_invalidate_completion(CUevent_st*)";
+      "lupine_event_lifecycle_mutex()";
+    };
   local:
     *;
 };

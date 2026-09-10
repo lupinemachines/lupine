@@ -565,6 +565,8 @@
 #define RPC_cudaGetDevice 1527949872
 #define RPC_cudaGetDeviceCount 16963840
 #define RPC_cudaGetDeviceFlags 266263768
+#define RPC_cudaGraphicsGLRegisterBuffer 1331443019
+#define RPC_cudaGraphicsGLRegisterImage 400804807
 #define RPC_cudaGetDeviceProperties 1319842630
 #define RPC_cudaGetDriverEntryPoint 1388955937
 #define RPC_cudaGetDriverEntryPointByVersion 1051667765
@@ -626,6 +628,7 @@
 #define RPC_cudaMallocMipmappedArray 1413065046
 #define RPC_cudaMallocPitch 1525266976
 #define RPC_cudaMemAdvise 454382561
+#define RPC_cudaMemAdvise_v2 2105044895
 #define RPC_cudaMemDiscardAndPrefetchBatchAsync 537179149
 #define RPC_cudaMemDiscardBatchAsync 122929118
 #define RPC_cudaMemGetDefaultMemPool 24568841
@@ -633,6 +636,8 @@
 #define RPC_cudaMemGetMemPool 872893253
 #define RPC_cudaMemPoolCreate 42267840
 #define RPC_cudaMemPoolDestroy 1305230667
+#define RPC_cudaMemPoolExportToShareableHandle 67511027
+#define RPC_cudaMemPoolImportFromShareableHandle 463039057
 #define RPC_cudaMemPoolExportPointer 427388112
 #define RPC_cudaMemPoolGetAccess 1842725012
 #define RPC_cudaMemPoolGetAttribute 344501328
@@ -641,12 +646,11 @@
 #define RPC_cudaMemPoolSetAttribute 462846675
 #define RPC_cudaMemPoolTrimTo 717901187
 #define RPC_cudaMemPrefetchAsync 148669554
+#define RPC_cudaMemPrefetchAsync_v2 787234921
 #define RPC_cudaMemPrefetchBatchAsync 1093318000
 #define RPC_cudaMemRangeGetAttribute 1177590058
 #define RPC_cudaMemRangeGetAttributes 1081292356
 #define RPC_cudaMemSetMemPool 440560343
-#define RPC_cudaMemcpy3D 206766422
-#define RPC_cudaMemcpy3DAsync 1493022242
 #define RPC_cudaMemcpy3DBatchAsync 464298841
 #define RPC_cudaMemcpy3DPeer 417901906
 #define RPC_cudaMemcpy3DPeerAsync 1298493691
@@ -668,6 +672,8 @@
 #define RPC_cudaOccupancyMaxPotentialClusterSize 1223278984
 #define RPC_cudaPeekAtLastError 1072806477
 #define RPC_cudaPointerGetAttributes 1582769505
+#define RPC_cudaProfilerStart 996877089
+#define RPC_cudaProfilerStop 2061817296
 #define RPC_cudaRuntimeGetVersion 1640094675
 #define RPC_cudaSetDevice 708753741
 #define RPC_cudaSetDeviceFlags 1891659695
@@ -686,6 +692,8 @@
 #define RPC_cudaStreamEndCapture 1836832765
 #define RPC_cudaStreamGetAttribute 936888510
 #define RPC_cudaStreamGetCaptureInfo 264166316
+#define RPC_cudaStreamGetCaptureInfo_v2 929307067
+#define RPC_cudaStreamGetCaptureInfo_v3 1080240429
 #define RPC_cudaStreamGetDevResource 926690194
 #define RPC_cudaStreamGetDevice 505924682
 #define RPC_cudaStreamGetFlags 1369836977
@@ -696,6 +704,7 @@
 #define RPC_cudaStreamSetAttribute 952704573
 #define RPC_cudaStreamSynchronize 1443046183
 #define RPC_cudaStreamUpdateCaptureDependencies 634516084
+#define RPC_cudaStreamUpdateCaptureDependencies_v2 766877243
 #define RPC_cudaStreamWaitEvent 589034173
 #define RPC_cudaThreadExchangeStreamCaptureMode 1752720635
 #define RPC_cudaUserObjectCreate 1131300037
@@ -715,6 +724,7 @@
 #define RPC_cudaGraphAddMemFreeNode 1377789385
 #define RPC_cudaGraphAddMemsetNode 2127408948
 #define RPC_cudaGraphAddNode 962776413
+#define RPC_cudaGraphAddNode_v2 278866754
 #define RPC_cudaGraphChildGraphNodeGetGraph 1149888295
 #define RPC_cudaGraphClone 1642151263
 #define RPC_cudaGraphConditionalHandleCreate 1281452719
@@ -798,6 +808,9 @@
 #define RPC___cudaUnregisterFatBinary 83215989
 #define RPC___cudaInitModule 112657159
 #define RPC___cudaGetKernel 2093390772
+#define RPC___cudaRegisterFatBinary 1167276453
+#define RPC___cudaLaunchKernel 1206577725
+#define RPC_lupineCudartFuncParamLayout 632188610
 
 #define LUPINE_RPC_cuGetExportTableMetadata 565915314
 #define LUPINE_RPC_cuGraphConditionalHandleCreate 1689373620

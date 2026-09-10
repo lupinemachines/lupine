@@ -8,15 +8,11 @@
 //
 // This file declares the runtime RPCs and how their parameters are marshalled.
 // @disabled marks the client or server implementations that remain manual.
-//
-// Every result comes back as a return value, so the manual client keeps the
-// sticky error: calls it answers itself set it, and cudaGetLastError never
-// has to ask the server.
 
 /**
- * @param desc RECV_ONLY
- * @param extent RECV_ONLY
- * @param flags RECV_ONLY
+ * @param desc RECV_ONLY NULLABLE
+ * @param extent RECV_ONLY NULLABLE
+ * @param flags RECV_ONLY NULLABLE
  * @param array SEND_ONLY
  */
 cudaError_t cudaArrayGetInfo(struct cudaChannelFormatDesc *desc,
@@ -182,7 +178,15 @@ cudaError_t cudaDeviceFlushGPUDirectRDMAWrites(
  * @param device SEND_ONLY
  */
 cudaError_t cudaDeviceGetAttribute(int *value, enum cudaDeviceAttr attr,
-                                   int device);
+                                   int device) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess &&
+      lupine_device_attribute_is_virtualized(
+          static_cast<CUdevice_attribute>(attr))) {
+    *value = 0;
+  }
+  return return_value;
+}
 /**
  * @param device RECV_ONLY
  * @param pciBusId SEND_ONLY NULL_TERMINATED
@@ -365,6 +369,7 @@ cudaError_t cudaDeviceSetMemPool(int device, cudaMemPool_t memPool);
  */
 cudaError_t cudaDeviceSetSharedMemConfig(enum cudaSharedMemConfig config);
 #endif
+/** @disabled - returns deferred memcpy results and device output */
 cudaError_t cudaDeviceSynchronize(void);
 #if CUDART_VERSION >= 12000
 /**
@@ -382,21 +387,39 @@ cudaDeviceUnregisterAsyncNotification(int device,
  */
 cudaError_t cudaDriverGetVersion(int *driverVersion);
 /**
- * @recordowner EVENT event
  * @param event RECV_ONLY
  */
-cudaError_t cudaEventCreate(cudaEvent_t *event);
+cudaError_t cudaEventCreate(cudaEvent_t *event) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_event_owner(*event, conn);
+  }
+  return return_value;
+}
 /**
- * @recordowner EVENT event
  * @param event RECV_ONLY
  * @param flags SEND_ONLY
  */
-cudaError_t cudaEventCreateWithFlags(cudaEvent_t *event, unsigned int flags);
+cudaError_t cudaEventCreateWithFlags(cudaEvent_t *event, unsigned int flags) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_event_owner(*event, conn);
+  }
+  return return_value;
+}
 /**
+ * @disabled server - removes shared event completion markers
  * @routingkey EVENT event
  * @param event SEND_ONLY
  */
-cudaError_t cudaEventDestroy(cudaEvent_t event);
+cudaError_t cudaEventDestroy(cudaEvent_t event) {
+  std::unique_lock<std::shared_mutex> lock(lupine_event_lifecycle_mutex());
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_forget_event_owner(event);
+  }
+  return return_value;
+}
 /**
  * @routingkey EVENT start
  * @param ms RECV_ONLY
@@ -405,25 +428,37 @@ cudaError_t cudaEventDestroy(cudaEvent_t event);
  */
 cudaError_t cudaEventElapsedTime(float *ms, cudaEvent_t start, cudaEvent_t end);
 /**
+ * @disabled - returns deferred memcpy results
  * @routingkey EVENT event
  * @param event SEND_ONLY
  */
 cudaError_t cudaEventQuery(cudaEvent_t event);
 /**
+ * @disabled server - records shared memcpy completion markers
  * @routingkey STREAM stream
  * @param event SEND_ONLY
  * @param stream SEND_ONLY
  */
-cudaError_t cudaEventRecord(cudaEvent_t event, cudaStream_t stream);
+cudaError_t cudaEventRecord(cudaEvent_t event, cudaStream_t stream) {
+  lupine_event_invalidate_completion(event);
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
+ * @disabled server - records shared memcpy completion markers
  * @routingkey STREAM stream
  * @param event SEND_ONLY
  * @param stream SEND_ONLY
  * @param flags SEND_ONLY
  */
 cudaError_t cudaEventRecordWithFlags(cudaEvent_t event, cudaStream_t stream,
-                                     unsigned int flags);
+                                     unsigned int flags) {
+  lupine_event_invalidate_completion(event);
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
+ * @disabled - returns deferred memcpy results and device output
  * @routingkey EVENT event
  * @param event SEND_ONLY
  */
@@ -475,7 +510,6 @@ cudaError_t cudaExecutionCtxRecordEvent(cudaExecutionContext_t ctx,
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
- * @recordowner STREAM phStream
  * @param phStream RECV_ONLY
  * @param ctx SEND_ONLY
  * @param flags SEND_ONLY
@@ -483,7 +517,13 @@ cudaError_t cudaExecutionCtxRecordEvent(cudaExecutionContext_t ctx,
  */
 cudaError_t cudaExecutionCtxStreamCreate(cudaStream_t *phStream,
                                          cudaExecutionContext_t ctx,
-                                         unsigned int flags, int priority);
+                                         unsigned int flags, int priority) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_stream_owner(*phStream, conn);
+  }
+  return return_value;
+}
 #endif
 #if CUDART_VERSION >= 13000
 /**
@@ -518,17 +558,19 @@ cudaError_t cudaExternalMemoryGetMappedMipmappedArray(
     cudaMipmappedArray_t *mipmap, cudaExternalMemory_t extMem,
     const struct cudaExternalMemoryMipmappedArrayDesc *mipmapDesc);
 /**
+ * @disabled server - shares managed allocation teardown with the driver
  * @param devPtr SEND_ONLY
  */
 cudaError_t cudaFree(void *devPtr) {
   if (devPtr != nullptr) {
-    conn = lupine_rpc_conn_for_deviceptr(
-        reinterpret_cast<unsigned long long>(devPtr));
+    return runtime_error(lupine_free_device_allocation(
+        reinterpret_cast<CUdeviceptr>(devPtr),
+        [](conn_t *owner, CUdeviceptr remote) {
+          return static_cast<CUresult>(
+              lupine_rpc_cudaFree(owner, reinterpret_cast<void *>(remote)));
+        }));
   }
   cudaError_t return_value = LUPINE_GENERATED_CALL();
-  if (return_value == cudaSuccess) {
-    lupine_rpc_forget_allocation(devPtr);
-  }
   return return_value;
 }
 /**
@@ -543,15 +585,25 @@ cudaError_t cudaFreeArray(cudaArray_t array);
 cudaError_t cudaFreeAsync(void *devPtr, cudaStream_t hStream) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_forget_allocation(devPtr);
+    lupine_forget_deviceptr_owner(reinterpret_cast<unsigned long long>(devPtr));
   }
   return return_value;
 }
 /**
- * host memory the server allocated is not addressable from the client
+ * @disabled server - shares pinned allocation teardown with the driver
  * @param ptr SEND_ONLY
  */
-cudaError_t cudaFreeHost(void *ptr);
+cudaError_t cudaFreeHost(void *ptr) {
+  if (ptr != nullptr) {
+    return runtime_error(
+        lupine_free_host_allocation(ptr, [](conn_t *owner, void *remote_host) {
+          return static_cast<CUresult>(
+              lupine_rpc_cudaFreeHost(owner, remote_host));
+        }));
+  }
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @param mipmappedArray SEND_ONLY
  */
@@ -631,15 +683,41 @@ cudaError_t cudaGetDeviceCount(int *count);
  */
 cudaError_t cudaGetDeviceFlags(unsigned int *flags);
 /**
+ * @param resource RECV_ONLY
+ * @param buffer SEND_ONLY
+ * @param flags SEND_ONLY
+ */
+cudaError_t cudaGraphicsGLRegisterBuffer(struct cudaGraphicsResource **resource,
+                                         unsigned int buffer,
+                                         unsigned int flags);
+/**
+ * @param resource RECV_ONLY
+ * @param image SEND_ONLY
+ * @param target SEND_ONLY
+ * @param flags SEND_ONLY
+ */
+cudaError_t cudaGraphicsGLRegisterImage(struct cudaGraphicsResource **resource,
+                                        unsigned int image, unsigned int target,
+                                        unsigned int flags);
+/**
  * @routingkey DEVICE device
  * @param prop RECV_ONLY
  * @param device SEND_ONLY
  */
-cudaError_t cudaGetDeviceProperties(struct cudaDeviceProp *prop, int device);
+cudaError_t cudaGetDeviceProperties(struct cudaDeviceProp *prop, int device) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    // Match the driver's remote-memory capabilities, not the server CPU's.
+    prop->pageableMemoryAccess = 0;
+    prop->pageableMemoryAccessUsesHostPageTables = 0;
+    prop->concurrentManagedAccess = 0;
+    prop->directManagedMemAccessFromHost = 0;
+  }
+  return return_value;
+}
 #if CUDART_VERSION < 12000
 /**
- * the result is a function pointer into the server's driver
- * @guard CUDART_VERSION < 12000
+ * @disabled - legacy three-argument ABI; native server query, client symbol lookup
  * @param symbol SEND_ONLY NULL_TERMINATED
  * @param funcPtr RECV_ONLY
  * @param flags SEND_ONLY
@@ -647,10 +725,9 @@ cudaError_t cudaGetDeviceProperties(struct cudaDeviceProp *prop, int device);
 cudaError_t cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
                                     unsigned long long flags);
 #endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+#if CUDART_VERSION >= 12000
 /**
- * the result is a function pointer into the server's driver
- * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @guard CUDART_VERSION >= 12000
  * @param symbol SEND_ONLY NULL_TERMINATED
  * @param funcPtr RECV_ONLY
  * @param flags SEND_ONLY
@@ -659,21 +736,13 @@ cudaError_t cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
 cudaError_t
 cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
                         unsigned long long flags,
-                        enum cudaDriverEntryPointQueryResult *driverStatus);
-#endif
-#if CUDART_VERSION >= 13000
-/**
- * the result is a function pointer into the server's driver
- * @guard CUDART_VERSION >= 13000
- * @param symbol SEND_ONLY NULL_TERMINATED
- * @param funcPtr RECV_ONLY
- * @param flags SEND_ONLY
- * @param driverStatus RECV_ONLY NULLABLE
- */
-cudaError_t
-cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
-                        unsigned long long flags,
-                        enum cudaDriverEntryPointQueryResult *driverStatus);
+                        enum cudaDriverEntryPointQueryResult *driverStatus) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess && *funcPtr != nullptr) {
+    return driver_entry_point(symbol, funcPtr, CUDART_VERSION, flags);
+  }
+  return return_value;
+}
 #endif
 #if CUDART_VERSION >= 13000
 /**
@@ -688,7 +757,13 @@ cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
 cudaError_t cudaGetDriverEntryPointByVersion(
     const char *symbol, void **funcPtr, unsigned int cudaVersion,
     unsigned long long flags,
-    enum cudaDriverEntryPointQueryResult *driverStatus);
+    enum cudaDriverEntryPointQueryResult *driverStatus) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess && *funcPtr != nullptr) {
+    return driver_entry_point(symbol, funcPtr, cudaVersion, flags);
+  }
+  return return_value;
+}
 #endif
 /**
  * @disabled - the runtime returns a static string of unknown length, which the
@@ -701,30 +776,25 @@ const char *cudaGetErrorName(cudaError_t error);
  */
 const char *cudaGetErrorString(cudaError_t error);
 /**
- * the result is a pointer into the server's driver
  * @param ppExportTable RECV_ONLY
  * @param pExportTableId SEND_ONLY DEREF
  */
 cudaError_t cudaGetExportTable(const void **ppExportTable,
-                               const cudaUUID_t *pExportTableId);
-#if CUDART_VERSION < 12000
+                               const cudaUUID_t *pExportTableId) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    // The native runtime returns a driver export table containing server-side
+    // function addresses. Use the existing client table for the same UUID.
+    return runtime_error(cuGetExportTable(ppExportTable, pExportTableId));
+  }
+  return return_value;
+}
 /**
  * @param functionPtr RECV_ONLY
  * @param symbolPtr SEND_ONLY
- * @guard CUDART_VERSION < 12000
- */
-cudaError_t CUDARTAPI_CDECL cudaGetFuncBySymbol(cudaFunction_t *functionPtr,
-                                                const void *symbolPtr);
-#endif
-#if CUDART_VERSION >= 13000
-/**
- * @param functionPtr RECV_ONLY
- * @param symbolPtr SEND_ONLY
- * @guard CUDART_VERSION >= 13000
  */
 cudaError_t cudaGetFuncBySymbol(cudaFunction_t *functionPtr,
                                 const void *symbolPtr);
-#endif
 #if CUDART_VERSION >= 12000
 /**
  * @param kernelPtr RECV_ONLY
@@ -733,9 +803,6 @@ cudaError_t cudaGetFuncBySymbol(cudaFunction_t *functionPtr,
  */
 cudaError_t cudaGetKernel(cudaKernel_t *kernelPtr, const void *entryFuncAddr);
 #endif
-/**
- * @disabled client - the sticky error is kept on the client
- */
 cudaError_t cudaGetLastError(void);
 /**
  * @param levelArray RECV_ONLY
@@ -806,38 +873,66 @@ cudaError_t cudaGreenCtxCreate(cudaExecutionContext_t *phCtx,
                                unsigned int flags);
 #endif
 /**
- * host memory the server allocated is not addressable from the client
+ * @disabled server - allocates inside the shared client/server address arena
  * @param pHost RECV_ONLY
  * @param size SEND_ONLY
  * @param flags SEND_ONLY
  */
-cudaError_t cudaHostAlloc(void **pHost, size_t size, unsigned int flags);
+cudaError_t cudaHostAlloc(void **pHost, size_t size, unsigned int flags) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    return_value = adopt_runtime_host_allocation(conn, pHost, size, flags);
+  }
+  return return_value;
+}
 /**
- * host memory the server allocated is not addressable from the client
  * @param pDevice RECV_ONLY
  * @param pHost SEND_ONLY
  * @param flags SEND_ONLY
  */
 cudaError_t cudaHostGetDevicePointer(void **pDevice, void *pHost,
-                                     unsigned int flags);
+                                     unsigned int flags) {
+  pHost = lupine_host_pointer_for_rpc(pHost, &conn);
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    void *params[] = {pDevice};
+    size_t size = sizeof(*pDevice);
+    lupine_mark_mapped_host_kernel_params(params, &size, 1);
+  }
+  return return_value;
+}
 /**
- * host memory the server allocated is not addressable from the client
+ * @disabled server - preserves flags for allocations backed by registration
  * @param pFlags RECV_ONLY
  * @param pHost SEND_ONLY
  */
-cudaError_t cudaHostGetFlags(unsigned int *pFlags, void *pHost);
+cudaError_t cudaHostGetFlags(unsigned int *pFlags, void *pHost) {
+  pHost = lupine_host_pointer_for_rpc(pHost, &conn);
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
- * host memory the server allocated is not addressable from the client
+ * @disabled - shares page-range registration and returns the server backing
  * @param ptr SEND_ONLY
  * @param size SEND_ONLY
  * @param flags SEND_ONLY
  */
 cudaError_t cudaHostRegister(void *ptr, size_t size, unsigned int flags);
 /**
- * host memory the server allocated is not addressable from the client
+ * @disabled server - shares registered backing teardown with the driver
  * @param ptr SEND_ONLY
  */
-cudaError_t cudaHostUnregister(void *ptr);
+cudaError_t cudaHostUnregister(void *ptr) {
+  if (ptr != nullptr) {
+    return runtime_error(lupine_unregister_host_allocation(
+        ptr, [](conn_t *owner, void *remote_host) {
+          return static_cast<CUresult>(
+              lupine_rpc_cudaHostUnregister(owner, remote_host));
+        }));
+  }
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @param extMem_out RECV_ONLY
  * @param memHandleDesc SEND_ONLY DEREF
@@ -863,7 +958,7 @@ cudaError_t cudaImportExternalSemaphore(
 cudaError_t cudaInitDevice(int device, unsigned int deviceFlags,
                            unsigned int flags) {
   if (conn == nullptr) {
-    return record(cudaErrorInvalidDevice);
+    return cudaErrorInvalidDevice;
   }
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   return return_value;
@@ -886,12 +981,17 @@ cudaError_t cudaIpcGetEventHandle(cudaIpcEventHandle_t *handle,
  */
 cudaError_t cudaIpcGetMemHandle(cudaIpcMemHandle_t *handle, void *devPtr);
 /**
- * @recordowner EVENT event
  * @param event RECV_ONLY
  * @param handle SEND_ONLY
  */
 cudaError_t cudaIpcOpenEventHandle(cudaEvent_t *event,
-                                   cudaIpcEventHandle_t handle);
+                                   cudaIpcEventHandle_t handle) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_event_owner(*event, conn);
+  }
+  return return_value;
+}
 /**
  * @param devPtr RECV_ONLY
  * @param handle SEND_ONLY
@@ -920,7 +1020,7 @@ cudaError_t cudaLaunchCooperativeKernel(const void *func, dim3 gridDim,
                                         dim3 blockDim, void **args,
                                         size_t sharedMem, cudaStream_t stream);
 /**
- * the callback is a client function
+ * @disabled server - delivers the callback through the shared side-effect lane
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param callbackFunc SEND_ONLY
@@ -930,6 +1030,7 @@ cudaError_t cudaLaunchHostFunc(cudaStream_t stream, cudaHostFn_t callbackFunc,
                                void *userData);
 #if CUDART_VERSION >= 13000
 /**
+ * @disabled server - delivers the callback through the shared side-effect lane
  * @guard CUDART_VERSION >= 13000
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
@@ -1117,7 +1218,8 @@ cudaError_t cudaLogsUnregisterCallback(cudaLogsCallbackHandle callback);
 cudaError_t cudaMalloc(void **devPtr, size_t size) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_note_allocation(conn, *devPtr, size);
+    lupine_note_deviceptr_allocation(
+        reinterpret_cast<unsigned long long>(*devPtr), size, conn);
   }
   return return_value;
 }
@@ -1129,9 +1231,9 @@ cudaError_t cudaMalloc3D(struct cudaPitchedPtr *pitchedDevPtr,
                          struct cudaExtent extent) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_note_allocation(conn, pitchedDevPtr->ptr,
-                               pitchedDevPtr->pitch * extent.height *
-                                   extent.depth);
+    lupine_note_deviceptr_allocation(
+        reinterpret_cast<unsigned long long>(pitchedDevPtr->ptr),
+        pitchedDevPtr->pitch * extent.height * extent.depth, conn);
   }
   return return_value;
 }
@@ -1163,7 +1265,8 @@ cudaError_t cudaMallocArray(cudaArray_t *array,
 cudaError_t cudaMallocAsync(void **devPtr, size_t size, cudaStream_t hStream) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_note_allocation(conn, *devPtr, size);
+    lupine_note_deviceptr_allocation(
+        reinterpret_cast<unsigned long long>(*devPtr), size, conn);
   }
   return return_value;
 }
@@ -1179,25 +1282,44 @@ cudaError_t cudaMallocFromPoolAsync(void **ptr, size_t size,
                                     cudaStream_t stream) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_note_allocation(conn, *ptr, size);
+    lupine_note_deviceptr_allocation(reinterpret_cast<unsigned long long>(*ptr),
+                                     size, conn);
   }
   return return_value;
 }
 /**
- * host memory the server allocated is not addressable from the client
+ * @disabled server - allocates inside the shared client/server address arena
  * @param ptr RECV_ONLY
  * @param size SEND_ONLY
  */
-cudaError_t cudaMallocHost(void **ptr, size_t size);
+cudaError_t cudaMallocHost(void **ptr, size_t size) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    return_value = adopt_runtime_host_allocation(conn, ptr, size, 0);
+  }
+  return return_value;
+}
 /**
+ * @disabled server - places native managed allocations in the shared VA arena
  * @param devPtr RECV_ONLY
  * @param size SEND_ONLY
  * @param flags SEND_ONLY
  */
 cudaError_t cudaMallocManaged(void **devPtr, size_t size, unsigned int flags) {
+  const size_t requested_size = size;
+  if (size != 0) {
+    size = std::max(size, LUPINE_MANAGED_ALLOCATION_MIN_BYTES);
+  }
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_note_allocation(conn, *devPtr, size);
+    void *remote = *devPtr;
+    return_value = runtime_error(lupine_adopt_host_allocation(
+        conn, devPtr, remote, reinterpret_cast<CUdeviceptr>(remote),
+        requested_size, flags, true));
+    if (return_value != cudaSuccess) {
+      lupine_rpc_cudaFree(conn, remote);
+      *devPtr = nullptr;
+    }
   }
   return return_value;
 }
@@ -1223,13 +1345,14 @@ cudaError_t cudaMallocPitch(void **devPtr, size_t *pitch, size_t width,
                             size_t height) {
   cudaError_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == cudaSuccess) {
-    lupine_rpc_note_allocation(conn, *devPtr, *pitch * height);
+    lupine_note_deviceptr_allocation(
+        reinterpret_cast<unsigned long long>(*devPtr), *pitch * height, conn);
   }
   return return_value;
 }
 #if CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION < 13000
+ * @disabled server - legacy runtime ABI implemented alongside the current ABI
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param advice SEND_ONLY
@@ -1250,9 +1373,8 @@ cudaError_t cudaMemAdvise(const void *devPtr, size_t count,
                           enum cudaMemoryAdvise advice,
                           struct cudaMemLocation location);
 #endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @guard CUDART_VERSION >= 12020 && CUDART_VERSION < 13000
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param advice SEND_ONLY
@@ -1261,7 +1383,6 @@ cudaError_t cudaMemAdvise(const void *devPtr, size_t count,
 cudaError_t cudaMemAdvise_v2(const void *devPtr, size_t count,
                              enum cudaMemoryAdvise advice,
                              struct cudaMemLocation location);
-#endif
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
@@ -1332,6 +1453,30 @@ cudaError_t cudaMemPoolCreate(cudaMemPool_t *memPool,
  */
 cudaError_t cudaMemPoolDestroy(cudaMemPool_t memPool);
 /**
+ * @disabled - exchanges shareable file descriptors through the existing IPC
+ * broker
+ * @param handle_out RECV_ONLY SIZE:4
+ * @param memPool SEND_ONLY
+ * @param handleType SEND_ONLY
+ * @param flags SEND_ONLY
+ */
+cudaError_t
+cudaMemPoolExportToShareableHandle(void *handle_out, cudaMemPool_t memPool,
+                                   cudaMemAllocationHandleType handleType,
+                                   unsigned int flags);
+/**
+ * @disabled - redeems shareable file descriptors through the existing IPC
+ * broker
+ * @param memPool RECV_ONLY
+ * @param handle SEND_ONLY
+ * @param handleType SEND_ONLY
+ * @param flags SEND_ONLY
+ */
+cudaError_t
+cudaMemPoolImportFromShareableHandle(cudaMemPool_t *memPool, void *handle,
+                                     cudaMemAllocationHandleType handleType,
+                                     unsigned int flags);
+/**
  * @param exportData RECV_ONLY
  * @param ptr SEND_ONLY
  */
@@ -1398,7 +1543,7 @@ cudaError_t cudaMemPoolSetAttribute(cudaMemPool_t memPool,
 cudaError_t cudaMemPoolTrimTo(cudaMemPool_t memPool, size_t minBytesToKeep);
 #if CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION < 13000
+ * @disabled server - legacy runtime ABI implemented alongside the current ABI
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param dstDevice SEND_ONLY
@@ -1420,9 +1565,8 @@ cudaError_t cudaMemPrefetchAsync(const void *devPtr, size_t count,
                                  struct cudaMemLocation location,
                                  unsigned int flags, cudaStream_t stream);
 #endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @guard CUDART_VERSION >= 12020 && CUDART_VERSION < 13000
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param location SEND_ONLY
@@ -1432,7 +1576,6 @@ cudaError_t cudaMemPrefetchAsync(const void *devPtr, size_t count,
 cudaError_t cudaMemPrefetchAsync_v2(const void *devPtr, size_t count,
                                     struct cudaMemLocation location,
                                     unsigned int flags, cudaStream_t stream);
-#endif
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
@@ -1487,22 +1630,9 @@ cudaError_t cudaMemSetMemPool(struct cudaMemLocation *location,
                               enum cudaMemAllocationType type,
                               cudaMemPool_t memPool);
 #endif
-// cudaMemcpy, cudaMemcpy2D, and cudaMemcpy2DAsync are manual client exports in
-// cudart_client.cpp. They delegate to the driver's copy machinery and have no
-// CUDART RPC handlers to generate.
-/**
- * the copy parameters carry host pointers
- * @param p SEND_ONLY DEREF
- */
-cudaError_t cudaMemcpy3D(const struct cudaMemcpy3DParms *p);
-/**
- * the copy parameters carry host pointers
- * @routingkey STREAM stream
- * @param p SEND_ONLY DEREF
- * @param stream SEND_ONLY
- */
-cudaError_t cudaMemcpy3DAsync(const struct cudaMemcpy3DParms *p,
-                              cudaStream_t stream);
+// cudaMemcpy, the 2D/3D copies, and their array/async variants are manual
+// client exports in cudart_client.cpp. They use the driver's shared copy
+// machinery.
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
@@ -1683,7 +1813,7 @@ cudaError_t cudaOccupancyMaxActiveClusters(
     int *numClusters, const void *func, const cudaLaunchConfig_t *launchConfig) {
   if (launchConfig == nullptr ||
       (launchConfig->numAttrs != 0 && launchConfig->attrs == nullptr)) {
-    return record(cudaErrorInvalidValue);
+    return cudaErrorInvalidValue;
   }
   if (launchConfig->stream != nullptr) {
     conn = lupine_rpc_conn_for_stream(launchConfig->stream);
@@ -1701,7 +1831,7 @@ cudaError_t cudaOccupancyMaxPotentialClusterSize(
     int *clusterSize, const void *func, const cudaLaunchConfig_t *launchConfig) {
   if (launchConfig == nullptr ||
       (launchConfig->numAttrs != 0 && launchConfig->attrs == nullptr)) {
-    return record(cudaErrorInvalidValue);
+    return cudaErrorInvalidValue;
   }
   if (launchConfig->stream != nullptr) {
     conn = lupine_rpc_conn_for_stream(launchConfig->stream);
@@ -1710,9 +1840,6 @@ cudaError_t cudaOccupancyMaxPotentialClusterSize(
   return return_value;
 }
 // clang-format on
-/**
- * @disabled client - the sticky error is kept on the client
- */
 cudaError_t cudaPeekAtLastError(void);
 /**
  * @param attributes RECV_ONLY
@@ -1720,6 +1847,9 @@ cudaError_t cudaPeekAtLastError(void);
  */
 cudaError_t cudaPointerGetAttributes(struct cudaPointerAttributes *attributes,
                                      const void *ptr);
+// Profiler control is declared in cuda_profiler_api.h.
+cudaError_t cudaProfilerStart(void);
+cudaError_t cudaProfilerStop(void);
 /**
  * @param runtimeVersion RECV_ONLY
  */
@@ -1776,7 +1906,7 @@ cudaError_t cudaSignalExternalSemaphoresAsync_v2(
     unsigned int numExtSems, cudaStream_t stream);
 #endif
 /**
- * the callback is a client function
+ * @disabled server - delivers the callback through the shared side-effect lane
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param callback SEND_ONLY
@@ -1795,11 +1925,19 @@ cudaError_t cudaStreamAddCallback(cudaStream_t stream,
 cudaError_t cudaStreamAttachMemAsync(cudaStream_t stream, void *devPtr,
                                      size_t length, unsigned int flags);
 /**
+ * @disabled server - prepares shared memcpy capture resources
+ * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param mode SEND_ONLY
  */
 cudaError_t cudaStreamBeginCapture(cudaStream_t stream,
-                                   enum cudaStreamCaptureMode mode);
+                                   enum cudaStreamCaptureMode mode) {
+  lupine_materialize_host_allocations();
+  lupine_capture_begin_guard capture_guard;
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  capture_guard.complete(static_cast<CUresult>(return_value));
+  return return_value;
+}
 #if CUDART_VERSION >= 12000
 /**
  * @guard CUDART_VERSION >= 12000
@@ -1807,6 +1945,7 @@ cudaError_t cudaStreamBeginCapture(cudaStream_t stream,
  * @param graph SEND_ONLY
  * @param dependencies SEND_ONLY LENGTH:numDependencies
  * @param dependencyData SEND_ONLY LENGTH:numDependencies
+ * @disabled client - supplies default edge data for an optional input array
  * @param numDependencies SEND_ONLY
  * @param mode SEND_ONLY
  */
@@ -1834,34 +1973,61 @@ cudaError_t cudaStreamBeginRecaptureToGraph(
  */
 cudaError_t cudaStreamCopyAttributes(cudaStream_t dst, cudaStream_t src);
 /**
- * @recordowner STREAM pStream
  * @param pStream RECV_ONLY
  */
-cudaError_t cudaStreamCreate(cudaStream_t *pStream);
+cudaError_t cudaStreamCreate(cudaStream_t *pStream) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_stream_owner(*pStream, conn);
+  }
+  return return_value;
+}
 /**
- * @recordowner STREAM pStream
  * @param pStream RECV_ONLY
  * @param flags SEND_ONLY
  */
 cudaError_t cudaStreamCreateWithFlags(cudaStream_t *pStream,
-                                      unsigned int flags);
+                                      unsigned int flags) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_stream_owner(*pStream, conn);
+  }
+  return return_value;
+}
 /**
- * @recordowner STREAM pStream
  * @param pStream RECV_ONLY
  * @param flags SEND_ONLY
  * @param priority SEND_ONLY
  */
 cudaError_t cudaStreamCreateWithPriority(cudaStream_t *pStream,
-                                         unsigned int flags, int priority);
+                                         unsigned int flags, int priority) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_note_stream_owner(*pStream, conn);
+  }
+  return return_value;
+}
 /**
  * @param stream SEND_ONLY
  */
-cudaError_t cudaStreamDestroy(cudaStream_t stream);
+cudaError_t cudaStreamDestroy(cudaStream_t stream) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == cudaSuccess) {
+    lupine_forget_stream_owner(stream);
+  }
+  return return_value;
+}
 /**
+ * @disabled server - associates shared memcpy capture resources with the graph
+ * @routingkey STREAM stream
  * @param stream SEND_ONLY
- * @param pGraph RECV_ONLY
+ * @param pGraph RECV_ONLY NULLABLE
  */
-cudaError_t cudaStreamEndCapture(cudaStream_t stream, cudaGraph_t *pGraph);
+cudaError_t cudaStreamEndCapture(cudaStream_t stream, cudaGraph_t *pGraph) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+  lupine_complete_stream_end_capture(static_cast<CUresult>(return_value));
+  return return_value;
+}
 /**
  * @param hStream SEND_ONLY
  * @param attr SEND_ONLY
@@ -1869,9 +2035,9 @@ cudaError_t cudaStreamEndCapture(cudaStream_t stream, cudaGraph_t *pGraph);
  */
 cudaError_t cudaStreamGetAttribute(cudaStream_t hStream, cudaStreamAttrID attr,
                                    cudaStreamAttrValue *value_out);
-#if CUDART_VERSION < 12000
+#if CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION < 12000
+ * @disabled - versioned capture API and returned dependency arrays
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param pCaptureStatus RECV_ONLY
@@ -1882,25 +2048,9 @@ cudaStreamGetCaptureInfo(cudaStream_t stream,
                          enum cudaStreamCaptureStatus *pCaptureStatus,
                          unsigned long long *pId);
 #endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
-/**
- * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
- * @routingkey STREAM stream
- * @param stream SEND_ONLY
- * @param captureStatus_out RECV_ONLY
- * @param id_out RECV_ONLY NULLABLE
- * @param graph_out RECV_ONLY NULLABLE
- * @param dependencies_out RECV_ONLY NULLABLE
- * @param numDependencies_out RECV_ONLY NULLABLE
- */
-cudaError_t cudaStreamGetCaptureInfo(
-    cudaStream_t stream, enum cudaStreamCaptureStatus *captureStatus_out,
-    unsigned long long *id_out, cudaGraph_t *graph_out,
-    const cudaGraphNode_t **dependencies_out, size_t *numDependencies_out);
-#endif
 #if CUDART_VERSION >= 13000
 /**
- * @guard CUDART_VERSION >= 13000
+ * @disabled - versioned capture API and returned dependency arrays
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param captureStatus_out RECV_ONLY
@@ -1928,9 +2078,9 @@ cudaStreamGetCaptureInfo_ptsz(cudaStream_t stream,
                               enum cudaStreamCaptureStatus *captureStatus_out,
                               unsigned long long *id_out);
 #endif
-#if CUDART_VERSION < 13000
 /**
  * @guard CUDART_VERSION < 13000
+ * @disabled - versioned capture API and returned dependency arrays
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param captureStatus_out RECV_ONLY
@@ -1943,10 +2093,9 @@ cudaError_t cudaStreamGetCaptureInfo_v2(
     cudaStream_t stream, enum cudaStreamCaptureStatus *captureStatus_out,
     unsigned long long *id_out, cudaGraph_t *graph_out,
     const cudaGraphNode_t **dependencies_out, size_t *numDependencies_out);
-#endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
  * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @disabled - versioned capture API and returned dependency arrays
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param captureStatus_out RECV_ONLY
@@ -1961,7 +2110,6 @@ cudaError_t cudaStreamGetCaptureInfo_v3(
     unsigned long long *id_out, cudaGraph_t *graph_out,
     const cudaGraphNode_t **dependencies_out,
     const cudaGraphEdgeData **edgeData_out, size_t *numDependencies_out);
-#endif
 #if CUDART_VERSION >= 13000
 /**
  * @guard CUDART_VERSION >= 13000
@@ -2006,6 +2154,7 @@ cudaError_t cudaStreamGetPriority(cudaStream_t hStream, int *priority);
 cudaError_t cudaStreamIsCapturing(cudaStream_t stream,
                                   enum cudaStreamCaptureStatus *pCaptureStatus);
 /**
+ * @disabled - returns deferred memcpy results
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  */
@@ -2018,13 +2167,14 @@ cudaError_t cudaStreamQuery(cudaStream_t stream);
 cudaError_t cudaStreamSetAttribute(cudaStream_t hStream, cudaStreamAttrID attr,
                                    const cudaStreamAttrValue *value);
 /**
+ * @disabled - returns deferred memcpy results and device output
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  */
 cudaError_t cudaStreamSynchronize(cudaStream_t stream);
 #if CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION < 13000
+ * @disabled server - legacy runtime ABI implemented alongside the current ABI
  * @param stream SEND_ONLY
  * @param dependencies SEND_ONLY LENGTH:numDependencies
  * @param numDependencies SEND_ONLY
@@ -2041,6 +2191,7 @@ cudaError_t cudaStreamUpdateCaptureDependencies(cudaStream_t stream,
  * @param stream SEND_ONLY
  * @param dependencies SEND_ONLY LENGTH:numDependencies
  * @param dependencyData SEND_ONLY LENGTH:numDependencies
+ * @disabled client - supplies default edge data for an optional input array
  * @param numDependencies SEND_ONLY
  * @param flags SEND_ONLY
  */
@@ -2062,12 +2213,13 @@ cudaError_t cudaStreamUpdateCaptureDependencies_ptsz(
     cudaStream_t stream, cudaGraphNode_t *dependencies, size_t numDependencies,
     unsigned int flags);
 #endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
  * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param dependencies SEND_ONLY LENGTH:numDependencies
  * @param dependencyData SEND_ONLY LENGTH:numDependencies
+ * @disabled client - supplies default edge data for an optional input array
  * @param numDependencies SEND_ONLY
  * @param flags SEND_ONLY
  */
@@ -2075,7 +2227,6 @@ cudaError_t cudaStreamUpdateCaptureDependencies_v2(
     cudaStream_t stream, cudaGraphNode_t *dependencies,
     const cudaGraphEdgeData *dependencyData, size_t numDependencies,
     unsigned int flags);
-#endif
 /**
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
@@ -2262,6 +2413,8 @@ cudaError_t cudaGraphAddExternalSemaphoresWaitNode(
     const cudaGraphNode_t *pDependencies, size_t numDependencies,
     const struct cudaExternalSemaphoreWaitNodeParams *nodeParams);
 /**
+ * @disabled server - delivers the host callback through the shared side-effect
+ * lane
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -2273,6 +2426,7 @@ cudaError_t cudaGraphAddHostNode(cudaGraphNode_t *pGraphNode, cudaGraph_t graph,
                                  size_t numDependencies,
                                  const struct cudaHostNodeParams *pNodeParams);
 /**
+ * @disabled - packs kernel arguments using the launch metadata path
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -2322,7 +2476,8 @@ cudaGraphAddMemsetNode(cudaGraphNode_t *pGraphNode, cudaGraph_t graph,
                        const struct cudaMemsetParams *pMemsetParams);
 #if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
- * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @guard CUDART_VERSION >= 12000
+ * @disabled - marshals graph node pointer fields
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -2336,7 +2491,8 @@ cudaError_t cudaGraphAddNode(cudaGraphNode_t *pGraphNode, cudaGraph_t graph,
 #endif
 #if CUDART_VERSION >= 13000
 /**
- * @guard CUDART_VERSION >= 13000
+ * @guard CUDART_VERSION >= 12000
+ * @disabled - marshals graph node pointer fields
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -2350,9 +2506,9 @@ cudaError_t cudaGraphAddNode(cudaGraphNode_t *pGraphNode, cudaGraph_t graph,
                              size_t numDependencies,
                              struct cudaGraphNodeParams *nodeParams);
 #endif
-#if CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
 /**
  * @guard CUDART_VERSION >= 12000 && CUDART_VERSION < 13000
+ * @disabled - marshals graph node pointer fields
  * @param pGraphNode RECV_ONLY
  * @param graph SEND_ONLY
  * @param numDependencies SEND_ONLY
@@ -2365,7 +2521,6 @@ cudaError_t cudaGraphAddNode_v2(cudaGraphNode_t *pGraphNode, cudaGraph_t graph,
                                 const cudaGraphEdgeData *dependencyData,
                                 size_t numDependencies,
                                 struct cudaGraphNodeParams *nodeParams);
-#endif
 /**
  * @param node SEND_ONLY
  * @param pGraph RECV_ONLY
@@ -2375,6 +2530,7 @@ cudaError_t cudaGraphChildGraphNodeGetGraph(cudaGraphNode_t node,
 /**
  * @param pGraphClone RECV_ONLY
  * @param originalGraph SEND_ONLY
+ * @disabled server - shared graph resource tracking
  */
 cudaError_t cudaGraphClone(cudaGraph_t *pGraphClone, cudaGraph_t originalGraph);
 #if CUDART_VERSION >= 12000
@@ -2417,12 +2573,38 @@ cudaError_t cudaGraphDebugDotPrint(cudaGraph_t graph, const char *path,
                                    unsigned int flags);
 /**
  * @param graph SEND_ONLY
+ * @disabled server - shared graph resource tracking
  */
-cudaError_t cudaGraphDestroy(cudaGraph_t graph);
+cudaError_t cudaGraphDestroy(cudaGraph_t graph) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+#if CUDART_VERSION >= 12000
+  if (return_value == cudaSuccess) {
+    std::lock_guard<std::mutex> lock(conditional_graphs_mutex());
+    auto &cache = conditional_graph_cache();
+    for (auto entry = cache.begin(); entry != cache.end();) {
+      if (entry->second.parent == graph) {
+        entry = cache.erase(entry);
+      } else {
+        ++entry;
+      }
+    }
+  }
+#endif
+  return return_value;
+}
 /**
  * @param node SEND_ONLY
  */
-cudaError_t cudaGraphDestroyNode(cudaGraphNode_t node);
+cudaError_t cudaGraphDestroyNode(cudaGraphNode_t node) {
+  cudaError_t return_value = LUPINE_GENERATED_CALL();
+#if CUDART_VERSION >= 12000
+  if (return_value == cudaSuccess) {
+    std::lock_guard<std::mutex> lock(conditional_graphs_mutex());
+    conditional_graph_cache().erase(node);
+  }
+#endif
+  return return_value;
+}
 /**
  * @param node SEND_ONLY
  * @param event_out RECV_ONLY
@@ -2457,6 +2639,7 @@ cudaError_t cudaGraphExecChildGraphNodeSetParams(cudaGraphExec_t hGraphExec,
                                                  cudaGraph_t childGraph);
 /**
  * @param graphExec SEND_ONLY
+ * @disabled server - shared graph resource tracking
  */
 cudaError_t cudaGraphExecDestroy(cudaGraphExec_t graphExec);
 /**
@@ -2525,6 +2708,7 @@ cudaGraphExecHostNodeSetParams(cudaGraphExec_t hGraphExec, cudaGraphNode_t node,
  * @param hGraphExec SEND_ONLY
  * @param node SEND_ONLY
  * @param pNodeParams SEND_ONLY DEREF
+ * @disabled - packs kernel argument values
  */
 cudaError_t cudaGraphExecKernelNodeSetParams(
     cudaGraphExec_t hGraphExec, cudaGraphNode_t node,
@@ -2551,7 +2735,7 @@ cudaError_t cudaGraphExecNodeSetParams(cudaGraphExec_t graphExec,
 #endif
 #if CUDART_VERSION < 12000
 /**
- * @guard CUDART_VERSION < 12000
+ * @disabled server - legacy runtime ABI implemented alongside the current ABI
  * @param hGraphExec SEND_ONLY
  * @param hGraph SEND_ONLY
  * @param hErrorNode_out RECV_ONLY
@@ -2683,11 +2867,11 @@ cudaGraphHostNodeSetParams(cudaGraphNode_t node,
                            const struct cudaHostNodeParams *pNodeParams);
 #if CUDART_VERSION < 12000
 /**
- * @guard CUDART_VERSION < 12000
+ * @disabled - versioned runtime ABI and shared graph resource tracking
  * @param pGraphExec RECV_ONLY
  * @param graph SEND_ONLY
- * @param pErrorNode RECV_ONLY
- * @param pLogBuffer RECV_ONLY LENGTH:bufferSize
+ * @param pErrorNode RECV_ONLY NULLABLE
+ * @param pLogBuffer RECV_ONLY NULLABLE LENGTH:bufferSize
  * @param bufferSize SEND_ONLY
  */
 cudaError_t cudaGraphInstantiate(cudaGraphExec_t *pGraphExec, cudaGraph_t graph,
@@ -2696,10 +2880,10 @@ cudaError_t cudaGraphInstantiate(cudaGraphExec_t *pGraphExec, cudaGraph_t graph,
 #endif
 #if CUDART_VERSION >= 12000
 /**
- * @guard CUDART_VERSION >= 12000
  * @param pGraphExec RECV_ONLY
  * @param graph SEND_ONLY
  * @param flags SEND_ONLY
+ * @disabled - versioned runtime ABI and shared graph resource tracking
  */
 cudaError_t cudaGraphInstantiate(cudaGraphExec_t *pGraphExec, cudaGraph_t graph,
                                  unsigned long long flags);
@@ -2708,6 +2892,7 @@ cudaError_t cudaGraphInstantiate(cudaGraphExec_t *pGraphExec, cudaGraph_t graph,
  * @param pGraphExec RECV_ONLY
  * @param graph SEND_ONLY
  * @param flags SEND_ONLY
+ * @disabled server - shared graph resource tracking
  */
 cudaError_t cudaGraphInstantiateWithFlags(cudaGraphExec_t *pGraphExec,
                                           cudaGraph_t graph,
@@ -2718,6 +2903,7 @@ cudaError_t cudaGraphInstantiateWithFlags(cudaGraphExec_t *pGraphExec,
  * @param pGraphExec RECV_ONLY
  * @param graph SEND_ONLY
  * @param instantiateParams SEND_RECV DEREF
+ * @disabled server - shared graph resource tracking
  */
 cudaError_t
 cudaGraphInstantiateWithParams(cudaGraphExec_t *pGraphExec, cudaGraph_t graph,
@@ -2768,6 +2954,7 @@ cudaGraphKernelNodeSetAttribute(cudaGraphNode_t hNode,
 /**
  * @param node SEND_ONLY
  * @param pNodeParams SEND_ONLY DEREF
+ * @disabled - packs kernel argument values
  */
 cudaError_t
 cudaGraphKernelNodeSetParams(cudaGraphNode_t node,
@@ -2775,6 +2962,7 @@ cudaGraphKernelNodeSetParams(cudaGraphNode_t node,
 /**
  * @param graphExec SEND_ONLY
  * @param stream SEND_ONLY
+ * @disabled server - shared graph resource tracking
  */
 cudaError_t cudaGraphLaunch(cudaGraphExec_t graphExec, cudaStream_t stream);
 /**
@@ -3069,9 +3257,10 @@ cudaError_t cudaGraphicsUnregisterResource(cudaGraphicsResource_t resource);
 
 // Compiler registration entry points are forwarded to the same runtime API.
 /**
+ * @disabled - broadcasts registration and retains names until fatbin unregister
  * @param fatCubinHandle SEND_ONLY
  * @param hostFun SEND_ONLY
- * @param deviceFun SEND_ONLY
+ * @param deviceFun SEND_ONLY NULL_TERMINATED
  * @param deviceName SEND_ONLY NULL_TERMINATED
  * @param thread_limit SEND_ONLY
  * @param tid SEND_ONLY NULLABLE
@@ -3085,6 +3274,7 @@ void __cudaRegisterFunction(void **fatCubinHandle, const char *hostFun,
                             int thread_limit, uint3 *tid, uint3 *bid,
                             dim3 *bDim, dim3 *gDim, int *wSize);
 /**
+ * @disabled - broadcasts registration and retains names until fatbin unregister
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
  * @param deviceAddress SEND_ONLY NULL_TERMINATED
@@ -3098,6 +3288,7 @@ void __cudaRegisterVar(void **fatCubinHandle, char *hostVar,
                        char *deviceAddress, const char *deviceName, int ext,
                        size_t size, int constant, int global);
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  * @param hostVarPtrAddress SEND_ONLY
  * @param deviceAddress SEND_ONLY NULL_TERMINATED
@@ -3111,6 +3302,7 @@ void __cudaRegisterManagedVar(void **fatCubinHandle, void **hostVarPtrAddress,
                               char *deviceAddress, const char *deviceName,
                               int ext, size_t size, int constant, int global);
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
  * @param deviceAddress SEND_ONLY
@@ -3123,6 +3315,7 @@ void __cudaRegisterTexture(void **fatCubinHandle, const void *hostVar,
                            const void **deviceAddress, const char *deviceName,
                            int dim, int norm, int ext);
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  * @param hostVar SEND_ONLY
  * @param deviceAddress SEND_ONLY
@@ -3134,6 +3327,7 @@ void __cudaRegisterSurface(void **fatCubinHandle, const void *hostVar,
                            const void **deviceAddress, const char *deviceName,
                            int dim, int ext);
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  * @param deviceName SEND_ONLY NULL_TERMINATED
  * @param hostVar SEND_ONLY
@@ -3148,6 +3342,7 @@ void __cudaRegisterHostVar(void **fatCubinHandle, const char *deviceName,
 // inaccessible after registration. Copying a window changes its canonical
 // addresses and breaks calls through host-originated function pointers.
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  * @param functionTable SEND_ONLY
  * @param functionWindowSize SEND_ONLY
@@ -3176,11 +3371,12 @@ cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
                                        size_t *sharedMem, void *stream);
 
 /**
+ * @disabled client - broadcasts registration to each server's fatbin handle
  * @param fatCubinHandle SEND_ONLY
  */
 void __cudaRegisterFatBinaryEnd(void **fatCubinHandle);
 /**
- * @disabled server - releases the fatbin image owned by the manual load handler
+ * @disabled - broadcasts unregister and releases the manual registration
  * @param fatCubinHandle SEND_ONLY
  */
 void __cudaUnregisterFatBinary(void **fatCubinHandle);
@@ -3191,7 +3387,6 @@ void __cudaUnregisterFatBinary(void **fatCubinHandle);
 char __cudaInitModule(void **fatCubinHandle) {
   fatCubinHandle = fatbin_handle(conn, fatCubinHandle);
   if (fatCubinHandle == nullptr) {
-    record(cudaErrorInvalidResourceHandle);
     return 0;
   }
   char return_value = LUPINE_GENERATED_CALL();
@@ -3207,17 +3402,18 @@ char __cudaInitModule(void **fatCubinHandle) {
 cudaError_t __cudaGetKernel(cudaKernel_t *kernel, const void *entryFuncAddr);
 #endif
 
-// Registry-only operations without API declarations above. The code generator
-// reads these annotations directly; the C++ parser intentionally ignores them.
-#if 0
+// Manual operations still need declarations so their RPC IDs are generated.
 /** @disabled */
-void __cudaRegisterFatBinary();
+void **__cudaRegisterFatBinary(void *fatCubin);
 
+#if CUDART_VERSION >= 13000
 /**
  * @disabled
  * @guard CUDART_VERSION >= 13000
  */
-void __cudaLaunchKernel();
+cudaError_t __cudaLaunchKernel(cudaKernel_t kernel, dim3 gridDim, dim3 blockDim,
+                               void **args, size_t sharedMem,
+                               cudaStream_t stream);
+#endif
 /** @disabled */
 void lupineCudartFuncParamLayout();
-#endif

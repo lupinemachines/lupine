@@ -4,12 +4,53 @@
 #include <cuda.h>
 
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
 struct lupine_graph_resources;
+
+struct lupine_host_callback_data {
+  conn_t *conn = nullptr;
+  CUhostFn fn = nullptr;
+  void *userData = nullptr;
+  lupine_graph_resources *resources = nullptr;
+  std::optional<CUstream> stream;
+};
+
+struct lupine_stream_callback_data {
+  conn_t *conn = nullptr;
+  CUstreamCallback callback = nullptr;
+  void *userData = nullptr;
+};
+
+void CUDA_CB lupine_graph_host_callback(void *userData);
+void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
+                                    void *userData);
+
+struct lupine_host_registration_ops {
+  CUresult (*register_host)(void *, size_t, unsigned int);
+  CUresult (*unregister_host)(void *);
+  CUresult (*device_pointer)(CUdeviceptr *, void *);
+};
+
+CUresult lupine_server_map_host_allocation(
+    conn_t *conn, void **pointer, CUdeviceptr *device_pointer, size_t bytes,
+    unsigned int flags, unsigned int register_flags,
+    const lupine_host_registration_ops &ops);
+CUresult lupine_server_free_host_allocation(void *pointer,
+                                            CUresult (*native_free)(void *));
+bool lupine_server_host_allocation_flags(void *pointer, unsigned int *flags);
+CUresult lupine_server_allocate_managed(
+    conn_t *conn, CUdeviceptr *pointer, size_t bytes, unsigned int flags,
+    CUresult (*allocate)(CUdeviceptr *, size_t, unsigned int),
+    CUresult (*release)(CUdeviceptr));
+CUresult
+lupine_server_free_device_allocation(CUdeviceptr pointer,
+                                     CUresult (*native_free)(CUdeviceptr));
 
 struct lupine_graph_host_copy {
   void *client_dst = nullptr;
@@ -30,6 +71,30 @@ struct lupine_pending_dtoh_item {
 };
 
 using lupine_pending_dtoh_items = std::vector<lupine_pending_dtoh_item>;
+struct lupine_captured_stdout {
+  int saved_stdout = -1;
+  bool active = false;
+  std::string output;
+};
+
+bool lupine_start_stdout_capture(lupine_captured_stdout *capture);
+void lupine_finish_stdout_capture(lupine_captured_stdout *capture);
+int lupine_write_captured_stdout(conn_t *conn,
+                                 const lupine_captured_stdout &capture);
+void lupine_note_device_stdout_image(const unsigned char *image,
+                                     size_t image_size);
+lupine_pending_dtoh_items lupine_detach_pending_dtoh_copies(conn_t *conn,
+                                                            CUstream stream,
+                                                            bool all_streams);
+lupine_pending_dtoh_items lupine_detach_event_dtoh_copies(conn_t *conn,
+                                                          CUevent event);
+int lupine_write_pending_dtoh_copies(conn_t *conn,
+                                     const lupine_pending_dtoh_items &pending,
+                                     bool include_count);
+void lupine_cleanup_pending_dtoh_copies(lupine_pending_dtoh_items *pending);
+void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream);
+void lupine_forget_event_dtoh_marker(conn_t *conn, CUevent event);
+
 using lupine_pending_dtoh_streams =
     std::unordered_map<CUstream, lupine_pending_dtoh_items>;
 

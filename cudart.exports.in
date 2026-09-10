@@ -1,0 +1,8 @@
+/* Match NVIDIA's ELF version node for runtime consumers. */
+libcudart.so.@LUPINE_CUDART_SOVERSION@ {
+  global:
+    cuda*;
+    __cuda*;
+  local:
+    *;
+};

@@ -42,7 +42,7 @@ CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-180}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-library-samples/results/$(date +%Y%m%d-%H%M%S)}"
-nvjpeg_assets="${TMPDIR:-/tmp}/lupine-nvjpeg-assets"
+nvjpeg_assets="${NVJPEG_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg-assets}"
 
 usage() {
   cat <<EOF
@@ -115,6 +115,8 @@ build_sample() {
   local build="$LIBRARY_SAMPLES_BUILD_DIR/$sample"
   local log="$build.build.log"
   mkdir -p "$(dirname "$build")"
+  # Use the shared runtime by default. Explicit upstream cudart_static links
+  # (the nvJPEG multi-instance examples) remain driver/static-runtime coverage.
   # The cuSPARSE lists link bare cudart/cusparse/cuda names and compile host
   # .cpp files that include cuda_fp16.h; LIBRARY_PATH and CPATH are how the
   # toolkit reaches those lines without patching the samples.
@@ -123,6 +125,7 @@ build_sample() {
      CPATH="$CUDA_HOME/include${CPATH:+:$CPATH}" \
       cmake -S "$LIBRARY_SAMPLES_DIR/$sample" -B "$build" -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared \
         -DCMAKE_CUDA_ARCHITECTURES="$LIBRARY_SAMPLES_ARCH" \
         -DCUDAToolkit_ROOT="$CUDA_HOME" \
         $LIBRARY_SAMPLES_CMAKE_ARGS >"$log" 2>&1 \
