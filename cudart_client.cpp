@@ -36,6 +36,9 @@ cudaError_t runtime_error(CUresult error) {
                                            : static_cast<cudaError_t>(error);
 }
 
+cudaError_t adopt_runtime_host_allocation(conn_t *conn, void **host,
+                                          size_t bytes, unsigned int flags);
+
 size_t mem_pool_attribute_width(enum cudaMemPoolAttr attr) {
   switch (attr) {
   case cudaMemPoolReuseFollowEventDependencies:
@@ -89,7 +92,7 @@ conn_t *connection() {
   return lupine_rpc_client_get_connection(current_connection_index);
 }
 
-constexpr auto connection_for_device = lupine_rpc_conn_for_device;
+conn_t *connection_for_device(int *device, cudaError_t *result = nullptr);
 
 conn_t *connection_for_stream(cudaStream_t stream) {
   if (stream == nullptr || stream == cudaStreamLegacy ||
@@ -151,6 +154,80 @@ void **fatbin_handle(conn_t *conn, void **fatCubinHandle) {
 
 #include "codegen/gen_cudart_client.inc"
 
+namespace {
+
+conn_t *connection_for_device(int *device, cudaError_t *result) {
+  int ordinal = *device;
+  cudaError_t status = cudaErrorInvalidDevice;
+  if (ordinal >= 0) {
+    for (conn_t *conn : all_connections()) {
+      int count = 0;
+      status = lupine_rpc_cudaGetDeviceCount(conn, &count);
+      if (status != cudaSuccess) {
+        break;
+      }
+      if (ordinal < count) {
+        *device = ordinal;
+        if (result != nullptr) {
+          *result = cudaSuccess;
+        }
+        return conn;
+      }
+      ordinal -= count;
+      status = cudaErrorInvalidDevice;
+    }
+  }
+  if (result != nullptr) {
+    *result = status;
+  }
+  return nullptr;
+}
+
+cudaError_t adopt_runtime_host_allocation(conn_t *conn, void **host,
+                                          size_t bytes, unsigned int flags) {
+  void *remote_host = *host;
+  void *device_ptr = nullptr;
+  cudaError_t result =
+      lupine_rpc_cudaHostGetDevicePointer(conn, &device_ptr, remote_host, 0);
+  if (result == cudaSuccess) {
+    result = runtime_error(lupine_adopt_host_allocation(
+        conn, host, remote_host, reinterpret_cast<CUdeviceptr>(device_ptr),
+        bytes, flags));
+  }
+  if (result != cudaSuccess) {
+    lupine_rpc_cudaFreeHost(conn, remote_host);
+    *host = nullptr;
+  }
+  return result;
+}
+
+} // namespace
+
+extern "C" cudaError_t cudaHostRegister(void *ptr, size_t bytes,
+                                        unsigned int flags) {
+  return runtime_error(lupine_register_host_allocation(
+      connection(), ptr, bytes, flags,
+      [](conn_t *conn, void *base, size_t size, unsigned int flags,
+         void **server_host, CUdeviceptr *device_ptr) {
+        cudaError_t result = rpc_error();
+        if (rpc_write_start_request(conn, RPC_cudaHostRegister) < 0 ||
+            rpc_write(conn, &base, sizeof(base)) < 0 ||
+            rpc_write(conn, &size, sizeof(size)) < 0 ||
+            rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+            rpc_wait_for_response(conn) < 0 ||
+            rpc_read(conn, server_host, sizeof(*server_host)) < 0 ||
+            rpc_read(conn, device_ptr, sizeof(*device_ptr)) < 0 ||
+            rpc_read(conn, &result, sizeof(result)) < 0 ||
+            rpc_read_end(conn) < 0) {
+          return CUDA_ERROR_DEVICE_UNAVAILABLE;
+        }
+        return static_cast<CUresult>(result);
+      },
+      [](conn_t *conn, void *host) {
+        return static_cast<CUresult>(lupine_rpc_cudaHostUnregister(conn, host));
+      }));
+}
+
 // ---------------------------------------------------------------------------
 // Device management
 // ---------------------------------------------------------------------------
@@ -186,20 +263,27 @@ extern "C" cudaError_t cudaGetDevice(int *device) {
   if (result != cudaSuccess) {
     return result;
   }
-  *device = lupine_local_device_for_remote(conn, remote_device);
-  if (*device < 0) {
-    return rpc_error();
+  for (unsigned int index = 0; index < current_connection_index; ++index) {
+    int count = 0;
+    result = lupine_rpc_cudaGetDeviceCount(
+        lupine_rpc_client_get_connection(index), &count);
+    if (result != cudaSuccess) {
+      return result;
+    }
+    remote_device += count;
   }
+  *device = remote_device;
   return cudaSuccess;
 }
 
 extern "C" cudaError_t cudaSetDevice(int device) {
   int remote_device = device;
-  conn_t *conn = lupine_rpc_conn_for_device(&remote_device);
+  cudaError_t result = cudaSuccess;
+  conn_t *conn = connection_for_device(&remote_device, &result);
   if (conn == nullptr) {
-    return cudaErrorInvalidDevice;
+    return result;
   }
-  cudaError_t result = lupine_rpc_cudaSetDevice(conn, remote_device);
+  result = lupine_rpc_cudaSetDevice(conn, remote_device);
   if (result != cudaSuccess) {
     return result;
   }
@@ -865,6 +949,7 @@ cudaError_t launch(conn_t *conn, int op, const void *func, dim3 gridDim,
     if (args[i] == nullptr)
       return cudaErrorInvalidValue;
   }
+  lupine_mark_mapped_host_kernel_params(args, sizes.data(), count);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       lupine_rpc_write_start_async_request(conn, op, &async_sequence) < 0 ||
@@ -922,6 +1007,7 @@ extern "C" cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
     if (args[i] == nullptr)
       return cudaErrorInvalidValue;
   }
+  lupine_mark_mapped_host_kernel_params(args, sizes.data(), count);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       lupine_rpc_write_start_async_request(conn, RPC_cudaLaunchKernelExC,

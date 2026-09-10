@@ -1648,13 +1648,14 @@ static cudaError_t lupine_rpc_cudaFree(conn_t *conn, void *devPtr) {
 extern "C" cudaError_t cudaFree(void *devPtr) {
   conn_t *conn = connection();
   if (devPtr != nullptr) {
-    conn = lupine_rpc_conn_for_deviceptr(
-        reinterpret_cast<unsigned long long>(devPtr));
+    return runtime_error(lupine_free_device_allocation(
+        reinterpret_cast<CUdeviceptr>(devPtr),
+        [](conn_t *owner, CUdeviceptr remote) {
+          return static_cast<CUresult>(
+              lupine_rpc_cudaFree(owner, reinterpret_cast<void *>(remote)));
+        }));
   }
   cudaError_t return_value = lupine_rpc_cudaFree(conn, devPtr);
-  if (return_value == cudaSuccess) {
-    lupine_forget_deviceptr_owner(reinterpret_cast<unsigned long long>(devPtr));
-  }
   return return_value;
 }
 
@@ -1712,7 +1713,15 @@ static cudaError_t lupine_rpc_cudaFreeHost(conn_t *conn, void *ptr) {
 
 extern "C" cudaError_t cudaFreeHost(void *ptr) {
   conn_t *conn = connection();
-  return lupine_rpc_cudaFreeHost(conn, ptr);
+  if (ptr != nullptr) {
+    return runtime_error(
+        lupine_free_host_allocation(ptr, [](conn_t *owner, void *remote_host) {
+          return static_cast<CUresult>(
+              lupine_rpc_cudaFreeHost(owner, remote_host));
+        }));
+  }
+  cudaError_t return_value = lupine_rpc_cudaFreeHost(conn, ptr);
+  return return_value;
 }
 
 static cudaError_t
@@ -1941,6 +1950,63 @@ extern "C" cudaError_t cudaGetDeviceFlags(unsigned int *flags) {
   return lupine_rpc_cudaGetDeviceFlags(conn, flags);
 }
 
+static cudaError_t lupine_rpc_cudaGraphicsGLRegisterBuffer(
+    conn_t *conn, struct cudaGraphicsResource **resource, unsigned int buffer,
+    unsigned int flags) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaGraphicsGLRegisterBuffer) < 0 ||
+      rpc_write(conn, &buffer, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, resource, sizeof(struct cudaGraphicsResource *)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t
+cudaGraphicsGLRegisterBuffer(struct cudaGraphicsResource **resource,
+                             unsigned int buffer, unsigned int flags) {
+  if (resource == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  conn_t *conn = connection();
+  return lupine_rpc_cudaGraphicsGLRegisterBuffer(conn, resource, buffer, flags);
+}
+
+static cudaError_t lupine_rpc_cudaGraphicsGLRegisterImage(
+    conn_t *conn, struct cudaGraphicsResource **resource, unsigned int image,
+    unsigned int target, unsigned int flags) {
+  cudaError_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaGraphicsGLRegisterImage) < 0 ||
+      rpc_write(conn, &image, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &target, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, resource, sizeof(struct cudaGraphicsResource *)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cudaError_t
+cudaGraphicsGLRegisterImage(struct cudaGraphicsResource **resource,
+                            unsigned int image, unsigned int target,
+                            unsigned int flags) {
+  if (resource == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  conn_t *conn = connection();
+  return lupine_rpc_cudaGraphicsGLRegisterImage(conn, resource, image, target,
+                                                flags);
+}
+
 static cudaError_t
 lupine_rpc_cudaGetDeviceProperties(conn_t *conn, struct cudaDeviceProp *prop,
                                    int device) {
@@ -2077,7 +2143,6 @@ extern "C" cudaError_t cudaGetExportTable(const void **ppExportTable,
   return lupine_rpc_cudaGetExportTable(conn, ppExportTable, pExportTableId);
 }
 
-#if CUDART_VERSION >= 13000
 static cudaError_t lupine_rpc_cudaGetFuncBySymbol(conn_t *conn,
                                                   cudaFunction_t *functionPtr,
                                                   const void *symbolPtr) {
@@ -2102,8 +2167,6 @@ extern "C" cudaError_t cudaGetFuncBySymbol(cudaFunction_t *functionPtr,
   conn_t *conn = connection();
   return lupine_rpc_cudaGetFuncBySymbol(conn, functionPtr, symbolPtr);
 }
-
-#endif
 
 #if CUDART_VERSION >= 12000
 static cudaError_t lupine_rpc_cudaGetKernel(conn_t *conn,
@@ -2382,7 +2445,11 @@ extern "C" cudaError_t cudaHostAlloc(void **pHost, size_t size,
     return cudaErrorInvalidValue;
   }
   conn_t *conn = connection();
-  return lupine_rpc_cudaHostAlloc(conn, pHost, size, flags);
+  cudaError_t return_value = lupine_rpc_cudaHostAlloc(conn, pHost, size, flags);
+  if (return_value == cudaSuccess) {
+    return_value = adopt_runtime_host_allocation(conn, pHost, size, flags);
+  }
+  return return_value;
 }
 
 static cudaError_t lupine_rpc_cudaHostGetDevicePointer(conn_t *conn,
@@ -2409,7 +2476,15 @@ extern "C" cudaError_t cudaHostGetDevicePointer(void **pDevice, void *pHost,
     return cudaErrorInvalidValue;
   }
   conn_t *conn = connection();
-  return lupine_rpc_cudaHostGetDevicePointer(conn, pDevice, pHost, flags);
+  pHost = lupine_host_pointer_for_rpc(pHost, &conn);
+  cudaError_t return_value =
+      lupine_rpc_cudaHostGetDevicePointer(conn, pDevice, pHost, flags);
+  if (return_value == cudaSuccess) {
+    void *params[] = {pDevice};
+    size_t size = sizeof(*pDevice);
+    lupine_mark_mapped_host_kernel_params(params, &size, 1);
+  }
+  return return_value;
 }
 
 static cudaError_t
@@ -2432,30 +2507,9 @@ extern "C" cudaError_t cudaHostGetFlags(unsigned int *pFlags, void *pHost) {
     return cudaErrorInvalidValue;
   }
   conn_t *conn = connection();
-  return lupine_rpc_cudaHostGetFlags(conn, pFlags, pHost);
-}
-
-static cudaError_t lupine_rpc_cudaHostRegister(conn_t *conn, void *ptr,
-                                               size_t size,
-                                               unsigned int flags) {
-  cudaError_t return_value = rpc_error();
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cudaHostRegister) < 0 ||
-      rpc_write(conn, &ptr, sizeof(void *)) < 0 ||
-      rpc_write(conn, &size, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
+  pHost = lupine_host_pointer_for_rpc(pHost, &conn);
+  cudaError_t return_value = lupine_rpc_cudaHostGetFlags(conn, pFlags, pHost);
   return return_value;
-}
-
-extern "C" cudaError_t cudaHostRegister(void *ptr, size_t size,
-                                        unsigned int flags) {
-  conn_t *conn = connection();
-  return lupine_rpc_cudaHostRegister(conn, ptr, size, flags);
 }
 
 static cudaError_t lupine_rpc_cudaHostUnregister(conn_t *conn, void *ptr) {
@@ -2473,7 +2527,15 @@ static cudaError_t lupine_rpc_cudaHostUnregister(conn_t *conn, void *ptr) {
 
 extern "C" cudaError_t cudaHostUnregister(void *ptr) {
   conn_t *conn = connection();
-  return lupine_rpc_cudaHostUnregister(conn, ptr);
+  if (ptr != nullptr) {
+    return runtime_error(lupine_unregister_host_allocation(
+        ptr, [](conn_t *owner, void *remote_host) {
+          return static_cast<CUresult>(
+              lupine_rpc_cudaHostUnregister(owner, remote_host));
+        }));
+  }
+  cudaError_t return_value = lupine_rpc_cudaHostUnregister(conn, ptr);
+  return return_value;
 }
 
 static cudaError_t lupine_rpc_cudaImportExternalMemory(
@@ -3453,7 +3515,11 @@ extern "C" cudaError_t cudaMallocHost(void **ptr, size_t size) {
     return cudaErrorInvalidValue;
   }
   conn_t *conn = connection();
-  return lupine_rpc_cudaMallocHost(conn, ptr, size);
+  cudaError_t return_value = lupine_rpc_cudaMallocHost(conn, ptr, size);
+  if (return_value == cudaSuccess) {
+    return_value = adopt_runtime_host_allocation(conn, ptr, size, 0);
+  }
+  return return_value;
 }
 
 static cudaError_t lupine_rpc_cudaMallocManaged(conn_t *conn, void **devPtr,
@@ -3479,11 +3545,21 @@ extern "C" cudaError_t cudaMallocManaged(void **devPtr, size_t size,
     return cudaErrorInvalidValue;
   }
   conn_t *conn = connection();
+  const size_t requested_size = size;
+  if (size != 0) {
+    size = std::max(size, LUPINE_MANAGED_ALLOCATION_MIN_BYTES);
+  }
   cudaError_t return_value =
       lupine_rpc_cudaMallocManaged(conn, devPtr, size, flags);
   if (return_value == cudaSuccess) {
-    lupine_note_deviceptr_allocation(
-        reinterpret_cast<unsigned long long>(*devPtr), size, conn);
+    void *remote = *devPtr;
+    return_value = runtime_error(lupine_adopt_host_allocation(
+        conn, devPtr, remote, reinterpret_cast<CUdeviceptr>(remote),
+        requested_size, flags, true));
+    if (return_value != cudaSuccess) {
+      lupine_rpc_cudaFree(conn, remote);
+      *devPtr = nullptr;
+    }
   }
   return return_value;
 }
@@ -5039,8 +5115,13 @@ lupine_rpc_cudaStreamBeginCapture(conn_t *conn, cudaStream_t stream,
 
 extern "C" cudaError_t cudaStreamBeginCapture(cudaStream_t stream,
                                               enum cudaStreamCaptureMode mode) {
-  conn_t *conn = connection();
-  return lupine_rpc_cudaStreamBeginCapture(conn, stream, mode);
+  conn_t *conn = connection_for_stream(stream);
+  lupine_materialize_host_allocations();
+  lupine_capture_begin_guard capture_guard;
+  cudaError_t return_value =
+      lupine_rpc_cudaStreamBeginCapture(conn, stream, mode);
+  capture_guard.complete(static_cast<CUresult>(return_value));
+  return return_value;
 }
 
 #if CUDART_VERSION >= 12000
@@ -5272,8 +5353,11 @@ extern "C" cudaError_t cudaStreamEndCapture(cudaStream_t stream,
   if (pGraph == nullptr) {
     return cudaErrorInvalidValue;
   }
-  conn_t *conn = connection();
-  return lupine_rpc_cudaStreamEndCapture(conn, stream, pGraph);
+  conn_t *conn = connection_for_stream(stream);
+  cudaError_t return_value =
+      lupine_rpc_cudaStreamEndCapture(conn, stream, pGraph);
+  lupine_complete_stream_end_capture(static_cast<CUresult>(return_value));
+  return return_value;
 }
 
 static cudaError_t

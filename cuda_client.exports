@@ -17,6 +17,17 @@
     lupine_read_deferred_dtoh_copies;
     lupine_forward_remote_stdout;
     lupine_sync_mapped_device_to_host;
+    lupine_adopt_host_allocation;
+    lupine_free_host_allocation;
+    lupine_materialize_host_allocations;
+    lupine_stream_capture_begin;
+    lupine_stream_capture_begin_complete;
+    lupine_complete_stream_end_capture;
+    lupine_register_host_allocation;
+    lupine_unregister_host_allocation;
+    lupine_host_pointer_for_rpc;
+    lupine_free_device_allocation;
+    lupine_mark_mapped_host_kernel_params;
     extern "C++" {
       "lupine_event_invalidate_completion(CUevent_st*)";
       "lupine_event_lifecycle_mutex()";

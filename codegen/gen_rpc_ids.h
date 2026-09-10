@@ -565,6 +565,8 @@
 #define RPC_cudaGetDevice 1527949872
 #define RPC_cudaGetDeviceCount 16963840
 #define RPC_cudaGetDeviceFlags 266263768
+#define RPC_cudaGraphicsGLRegisterBuffer 1331443019
+#define RPC_cudaGraphicsGLRegisterImage 400804807
 #define RPC_cudaGetDeviceProperties 1319842630
 #define RPC_cudaGetDriverEntryPoint 1388955937
 #define RPC_cudaGetDriverEntryPointByVersion 1051667765

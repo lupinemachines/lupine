@@ -4,6 +4,7 @@
 #include <cuda.h>
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,45 @@
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
 struct lupine_graph_resources;
+
+struct lupine_host_callback_data {
+  conn_t *conn = nullptr;
+  CUhostFn fn = nullptr;
+  void *userData = nullptr;
+  lupine_graph_resources *resources = nullptr;
+  std::optional<CUstream> stream;
+};
+
+struct lupine_stream_callback_data {
+  conn_t *conn = nullptr;
+  CUstreamCallback callback = nullptr;
+  void *userData = nullptr;
+};
+
+void CUDA_CB lupine_graph_host_callback(void *userData);
+void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
+                                    void *userData);
+
+struct lupine_host_registration_ops {
+  CUresult (*register_host)(void *, size_t, unsigned int);
+  CUresult (*unregister_host)(void *);
+  CUresult (*device_pointer)(CUdeviceptr *, void *);
+};
+
+CUresult lupine_server_map_host_allocation(
+    conn_t *conn, void **pointer, CUdeviceptr *device_pointer, size_t bytes,
+    unsigned int flags, unsigned int register_flags,
+    const lupine_host_registration_ops &ops);
+CUresult lupine_server_free_host_allocation(void *pointer,
+                                            CUresult (*native_free)(void *));
+bool lupine_server_host_allocation_flags(void *pointer, unsigned int *flags);
+CUresult lupine_server_allocate_managed(
+    conn_t *conn, CUdeviceptr *pointer, size_t bytes, unsigned int flags,
+    CUresult (*allocate)(CUdeviceptr *, size_t, unsigned int),
+    CUresult (*release)(CUdeviceptr));
+CUresult
+lupine_server_free_device_allocation(CUdeviceptr pointer,
+                                     CUresult (*native_free)(CUdeviceptr));
 
 struct lupine_graph_host_copy {
   void *client_dst = nullptr;

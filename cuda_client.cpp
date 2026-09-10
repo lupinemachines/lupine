@@ -7014,33 +7014,18 @@ static CUresult lupine_cuStreamGetCaptureInfo(
 // answer NONE locally while this is zero.
 std::atomic<int> lupine_active_stream_captures{0};
 
-class lupine_capture_begin_guard {
-public:
-  lupine_capture_begin_guard() { lupine_checkpoint::capture_begin(); }
+extern "C" void lupine_stream_capture_begin() {
+  lupine_checkpoint::capture_begin();
+}
 
-  ~lupine_capture_begin_guard() {
-    if (!completed_) {
-      lupine_checkpoint::capture_begin_complete(false);
-    }
+extern "C" void lupine_stream_capture_begin_complete(bool started) {
+  lupine_checkpoint::capture_begin_complete(started);
+  if (started) {
+    lupine_active_stream_captures.fetch_add(1);
   }
+}
 
-  CUresult complete(CUresult result) {
-    if (!completed_) {
-      completed_ = true;
-      bool started = result == CUDA_SUCCESS;
-      lupine_checkpoint::capture_begin_complete(started);
-      if (started) {
-        lupine_active_stream_captures.fetch_add(1);
-      }
-    }
-    return result;
-  }
-
-private:
-  bool completed_ = false;
-};
-
-static CUresult lupine_complete_stream_end_capture(CUresult result) {
+extern "C" CUresult lupine_complete_stream_end_capture(CUresult result) {
   // CUDA_SUCCESS ends a valid capture. An invalidated or unjoined capture also
   // leaves capture mode when EndCapture reports the terminal error. Errors
   // such as WRONG_THREAD and UNMATCHED leave the tracked capture untouched.
