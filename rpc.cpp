@@ -488,6 +488,7 @@ struct rpc_thread_io {
   conn_t *response_conn = nullptr;
   rpc_response_route response;
   conn_t *held_call_lock = nullptr;
+  bool await_response = false;
 };
 
 static thread_local rpc_thread_io rpc_tls_io;
@@ -807,6 +808,7 @@ int rpc_wait_for_response(conn_t *conn) {
   int op = conn->write_op;
   uint64_t start =
       lupine_rpc_stats_path() != nullptr ? lupine_rpc_stats_now_ns() : 0;
+  rpc_tls_io.await_response = true;
   int write_id = rpc_write_end(conn);
   if (write_id < 0) {
     return -1;
@@ -1021,11 +1023,14 @@ int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
 // the request lock is released after the request is sent and the function
 // returns the request id which can be used to wait for a response.
 int rpc_write_end(conn_t *conn) {
+  bool awaited = rpc_tls_io.await_response;
+  rpc_tls_io.await_response = false;
   if (conn == nullptr || rpc_tls_io.write_conn != conn) {
     return -1;
   }
   bool request = conn->write_op != -1;
   bool request_nested_in_response = rpc_tls_io.nested_write.conn == conn;
+  awaited = awaited || !request;
   if (conn->closed) {
     rpc_release_write_builder(conn, request_nested_in_response);
     if (request) {
@@ -1041,7 +1046,8 @@ int rpc_write_end(conn_t *conn) {
         rpc_write_cursor(&conn->write_id, sizeof(conn->write_id));
     conn->write_queue[1] =
         rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
-    result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
+    result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue,
+                                    awaited);
   }
   rpc_release_write_builder(conn, request_nested_in_response);
   if (request) {

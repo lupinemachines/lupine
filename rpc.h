@@ -256,8 +256,11 @@ extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                                  size_t size);
 extern int rpc_http2_write(conn_t *conn,
                            std::vector<rpc_write_cursor> &cursors);
+// flush: the message is awaited, so its block is emitted and framed before
+// the write thread is signalled instead of with that thread's next drain.
 extern int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
-                                  std::vector<rpc_write_cursor> &cursors);
+                                  std::vector<rpc_write_cursor> &cursors,
+                                  bool flush);
 extern int32_t rpc_http2_dispatch_stream(conn_t *conn);
 extern int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id);
 extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);

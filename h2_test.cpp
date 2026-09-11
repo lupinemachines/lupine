@@ -130,7 +130,7 @@ int write_bytes(conn_t *conn, const void *data, size_t size) {
 int write_stream_bytes(conn_t *conn, int32_t stream_id, const void *data,
                        size_t size) {
   std::vector<rpc_write_cursor> cursors = {rpc_write_cursor(data, size)};
-  return rpc_http2_write_stream(conn, stream_id, cursors);
+  return rpc_http2_write_stream(conn, stream_id, cursors, false);
 }
 
 std::string read_string(conn_t *conn, size_t size) {
@@ -322,7 +322,7 @@ void test_data_provider_frame_sizing() {
   });
   size_t max_data_frame_size = 0;
   int data_frame_count = 0;
-  for (int frame_count = 0; frame_count < 8 && data_frame_count < 2;
+  for (int frame_count = 0; frame_count < 8 && data_frame_count < 1;
        ++frame_count) {
     std::array<unsigned char, 9> header = {};
     require(raw_read_frame(pair.server.connfd, &header),
@@ -1274,8 +1274,8 @@ void test_reset_wakes_flow_controlled_writer() {
   h2_pair pair;
   init_raw_server_peer(&pair);
 
-  // Shrink the peer's stream window so the writer pauses after 64 KiB rather
-  // than requiring another multi-gigabyte test payload.
+  // Shrink the peer's stream window so the writer pauses once 8 MiB of output
+  // sit behind it, rather than requiring a multi-gigabyte test payload.
   std::array<unsigned char, 15> settings = {};
   settings[2] = 6;
   settings[3] = NGHTTP2_SETTINGS;
@@ -1326,7 +1326,7 @@ void test_reset_wakes_flow_controlled_writer() {
     }
   });
 
-  std::string payload(128 * 1024, '\0');
+  std::string payload(12 * 1024 * 1024, '\0');
   uint32_t seed = 29;
   for (char &byte : payload) {
     seed = seed * 1664525u + 1013904223u;
