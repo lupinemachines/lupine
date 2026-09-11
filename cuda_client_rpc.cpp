@@ -9,10 +9,6 @@ extern "C" int lupine_rpc_open() { return rpc_open(); }
 
 extern "C" int lupine_rpc_size() { return rpc_size(); }
 
-extern "C" uint64_t lupine_rpc_thread_request_epoch(conn_t *conn) {
-  return rpc_thread_request_epoch(conn);
-}
-
 extern "C" conn_t *lupine_rpc_client_get_connection(unsigned int index) {
   return rpc_client_get_connection(index);
 }

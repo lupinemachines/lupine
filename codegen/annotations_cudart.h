@@ -3354,6 +3354,7 @@ void __cudaRegisterUnifiedTable(void **fatCubinHandle, void *functionTable,
                                 size_t dataWindowSize);
 
 /**
+ * @disabled client - launch configuration is a client thread-local stack
  * @param gridDim SEND_ONLY
  * @param blockDim SEND_ONLY
  * @param sharedMem SEND_ONLY
@@ -3362,6 +3363,7 @@ void __cudaRegisterUnifiedTable(void **fatCubinHandle, void *functionTable,
 unsigned __cudaPushCallConfiguration(dim3 gridDim, dim3 blockDim,
                                      size_t sharedMem, void *stream);
 /**
+ * @disabled client - pops the client thread-local launch configuration
  * @param gridDim RECV_ONLY NULLABLE
  * @param blockDim RECV_ONLY NULLABLE
  * @param sharedMem RECV_ONLY NULLABLE

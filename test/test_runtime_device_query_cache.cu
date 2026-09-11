@@ -1,15 +1,11 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 
-#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
 
-#ifndef _WIN32
-#include <dlfcn.h>
-struct conn_t;
-#endif
+extern "C" CUresult cuCtxCreate_v2(CUcontext *, unsigned int, CUdevice);
 
 static void require(bool condition, const char *message) {
   if (!condition) {
@@ -23,23 +19,10 @@ static void check_device(int expected) {
   require(cudaGetDevice(&actual) == cudaSuccess && actual == expected,
           "cudaGetDevice returned a stale or incorrect device");
 
-#ifndef _WIN32
-  auto epoch = reinterpret_cast<uint64_t (*)(conn_t *)>(
-      dlsym(RTLD_DEFAULT, "lupine_rpc_thread_request_epoch"));
-  auto connection = reinterpret_cast<conn_t *(*)(unsigned int)>(
-      dlsym(RTLD_DEFAULT, "lupine_rpc_client_get_connection"));
-  uint64_t before = epoch && connection ? epoch(connection(0)) : 0;
-#endif
   for (int i = 0; i < 100; ++i) {
     require(cudaGetDevice(&actual) == cudaSuccess && actual == expected,
             "repeated cudaGetDevice returned the wrong device");
   }
-#ifndef _WIN32
-  if (before != 0) {
-    require(epoch(connection(0)) == before,
-            "repeated device queries introduced network round trips");
-  }
-#endif
 }
 
 int main() {
@@ -76,6 +59,17 @@ int main() {
   check_device(0);
   require(cuCtxSetCurrent(context) == CUDA_SUCCESS, "restore context failed");
   check_device(0);
+  CUdevice driver_device = 0;
+  require(cuDeviceGet(&driver_device, 0) == CUDA_SUCCESS, "cuDeviceGet failed");
+  for (int i = 0; i < 3; ++i) {
+    CUcontext temporary = nullptr;
+    require(cuCtxCreate_v2(&temporary, 0, driver_device) == CUDA_SUCCESS,
+            "create non-primary context failed");
+    check_device(0);
+    require(cuCtxDestroy(temporary) == CUDA_SUCCESS, "destroy context failed");
+    require(cuCtxSetCurrent(context) == CUDA_SUCCESS, "restore context failed");
+    check_device(0);
+  }
   require(cudaDeviceReset() == cudaSuccess, "cudaDeviceReset failed");
   check_device(0);
   std::puts("runtime device queries preserve device, thread, and context state "

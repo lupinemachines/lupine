@@ -101,9 +101,14 @@ size_t mem_pool_attribute_width(enum cudaMemPoolAttr attr) {
   }
 }
 
+// Invalidate device-query results before attempting a synchronous runtime call,
+// including requests that fail. Driver context changes are checked separately.
+thread_local uint64_t runtime_request_epoch = 1;
+
 // The generated code speaks the RPC core's vocabulary; the driver shim exports
 // it under its own prefix so both can be declared in one translation unit.
 int rpc_write_start_request(conn_t *conn, int op) {
+  ++runtime_request_epoch;
   if (lupine_prepare_rpc(conn) < 0) {
     return -1;
   }
@@ -198,6 +203,48 @@ void **fatbin_handle(conn_t *conn, void **fatCubinHandle) {
 } // namespace
 
 #include "codegen/gen_cudart_client.inc"
+
+namespace {
+
+struct launch_configuration {
+  dim3 grid;
+  dim3 block;
+  size_t shared_memory;
+  void *stream;
+};
+
+thread_local std::vector<launch_configuration> launch_configurations;
+
+} // namespace
+
+extern "C" unsigned __cudaPushCallConfiguration(dim3 gridDim, dim3 blockDim,
+                                                size_t sharedMem,
+                                                void *stream) {
+  launch_configurations.push_back({gridDim, blockDim, sharedMem, stream});
+  return cudaSuccess;
+}
+
+extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
+                                                  size_t *sharedMem,
+                                                  void *stream) {
+  if (gridDim == nullptr || blockDim == nullptr || sharedMem == nullptr ||
+      stream == nullptr) {
+    return cudaErrorInvalidValue;
+  }
+  if (launch_configurations.empty()) {
+    // The server stack is also empty. Preserve native error reporting and its
+    // last-error state without introducing client-side sticky-error tracking.
+    return lupine_rpc___cudaPopCallConfiguration(connection(), gridDim,
+                                                 blockDim, sharedMem, stream);
+  }
+  const auto config = launch_configurations.back();
+  launch_configurations.pop_back();
+  *gridDim = config.grid;
+  *blockDim = config.block;
+  *sharedMem = config.shared_memory;
+  *static_cast<void **>(stream) = config.stream;
+  return cudaSuccess;
+}
 
 namespace {
 
@@ -360,17 +407,25 @@ extern "C" cudaError_t cudaGetDevice(int *device) {
     return cudaErrorInvalidValue;
   }
   conn_t *conn = connection();
-  // PyTorch repeatedly asks for the current device between CUDA calls. An
-  // intervening request (driver or runtime) invalidates the answer, including
-  // context changes, resets, failed setters, and switches between servers.
+  // Repeated runtime queries are local until a synchronous runtime request or a
+  // driver context change. cuCtxGetCurrent uses the driver's existing context
+  // tracking, including mixed driver/runtime calls. Check its cached device too
+  // because a destroyed context handle may be reused for another device.
   struct device_query_cache {
     conn_t *connection = nullptr;
     uint64_t epoch = 0;
+    CUcontext context = nullptr;
+    CUdevice context_device = 0;
     int device = 0;
   };
   static thread_local device_query_cache cached;
-  uint64_t epoch = lupine_rpc_thread_request_epoch(conn);
-  if (epoch != 0 && cached.connection == conn && cached.epoch == epoch) {
+  CUcontext context = nullptr;
+  CUdevice context_device = 0;
+  if (conn != nullptr && cached.connection == conn &&
+      cached.epoch == runtime_request_epoch &&
+      cuCtxGetCurrent(&context) == CUDA_SUCCESS && context == cached.context &&
+      (context == nullptr || (cuCtxGetDevice(&context_device) == CUDA_SUCCESS &&
+                              context_device == cached.context_device))) {
     *device = cached.device;
     return cudaSuccess;
   }
@@ -390,7 +445,11 @@ extern "C" cudaError_t cudaGetDevice(int *device) {
     remote_device += count;
   }
   *device = remote_device;
-  cached = {conn, lupine_rpc_thread_request_epoch(conn), remote_device};
+  if (cuCtxGetCurrent(&context) == CUDA_SUCCESS &&
+      (context == nullptr || cuCtxGetDevice(&context_device) == CUDA_SUCCESS)) {
+    cached = {conn, runtime_request_epoch, context, context_device,
+              remote_device};
+  }
   return cudaSuccess;
 }
 

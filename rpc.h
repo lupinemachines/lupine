@@ -192,9 +192,6 @@ extern int rpc_wait_for_response(conn_t *conn);
 // remote server) or a closed conn fails here, so callers surface their
 // unavailable-server result without per-call-site null checks.
 extern int rpc_write_start_request(conn_t *conn, const int op);
-// Changes on every request attempt by this thread, including failed requests.
-// Zero means the connection is unavailable and cannot satisfy a cached query.
-extern uint64_t rpc_thread_request_epoch(conn_t *conn);
 // Starts a request and allocates its async-submission ticket while the normal
 // request lock is held. The caller writes the ticket into the request payload;
 // this adds no server acknowledgement or round trip.

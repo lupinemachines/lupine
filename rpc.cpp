@@ -479,7 +479,6 @@ struct rpc_nested_write_frame {
 };
 
 struct rpc_thread_io {
-  uint64_t request_epoch = 1;
   conn_t *bound_conn = nullptr;
   int32_t bound_stream = -1;
   conn_t *read_conn = nullptr;
@@ -538,10 +537,6 @@ void rpc_release_held_call_lock(conn_t *conn) {
 }
 
 } // namespace
-
-uint64_t rpc_thread_request_epoch(conn_t *conn) {
-  return conn == nullptr || conn->closed ? 0 : rpc_tls_io.request_epoch;
-}
 
 int rpc_bind_http2_stream(conn_t *conn, int32_t stream_id) {
   if (conn == nullptr || stream_id < 0) {
@@ -834,7 +829,6 @@ int rpc_wait_for_response(conn_t *conn) {
 // only one request can be active at a time, so this function will take the
 // request lock from the connection.
 int rpc_write_start_request(conn_t *conn, const int op) {
-  ++rpc_tls_io.request_epoch;
   if (conn == nullptr || conn->closed) {
     return -1;
   }
