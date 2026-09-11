@@ -2146,6 +2146,11 @@ extern "C" CUresult cuDeviceTotalMem(size_t *bytes, CUdevice dev) {
   return cuDeviceTotalMem_v2(bytes, dev);
 }
 
+static void lupine_stream_pool_init(lupine_route route, CUdevice dev,
+                                    CUcontext ctx);
+static void lupine_stream_pool_discard(int route_id, CUdevice dev,
+                                       CUcontext ctx);
+
 extern "C" CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev) {
   CUdevice remote_dev = dev;
   lupine_route route = lupine_route_for_device(&remote_dev);
@@ -2174,6 +2179,7 @@ extern "C" CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev) {
   }
   if (return_value == CUDA_SUCCESS && pctx != nullptr) {
     lupine_note_context_owner_route(*pctx, route);
+    lupine_stream_pool_init(route, dev, *pctx);
   }
   return return_value;
 }
@@ -2185,6 +2191,7 @@ extern "C" CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
     return CUDA_ERROR_INVALID_DEVICE;
   }
   lupine_invalidate_primary_ctx_state(dev);
+  lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value =
@@ -2282,6 +2289,7 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
     return CUDA_ERROR_INVALID_DEVICE;
   }
   lupine_invalidate_primary_ctx_state(dev);
+  lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value =
@@ -3497,6 +3505,146 @@ extern "C" CUresult cuProfilerStop(void) {
                                       : CUDA_ERROR_NOT_INITIALIZED;
 }
 
+// torch's c10 stream pool creates 32 streams at each of up to 4 priorities on
+// its first side-stream use, one round trip each. When a primary context is
+// first retained on a remote route the client instead has the server create
+// that whole pool under it with one lupineStreamPoolInit round trip, so
+// stream requests with a matching (flags, priority) are answered locally;
+// any other request is created singly. A stream belongs to the context
+// current when it was created, so pools are keyed by (route, context) and
+// dropped when that context goes away; pooled streams never handed out are
+// freed with the server context.
+static constexpr uint32_t kLupineStreamPoolMax = 4 * 32;
+
+struct lupine_stream_pool {
+  CUdevice dev;
+  std::map<std::pair<unsigned int, int>, std::vector<CUstream>> streams;
+};
+
+static std::mutex &lupine_stream_pool_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+static std::map<std::pair<int, CUcontext>, lupine_stream_pool> &
+lupine_stream_pools() {
+  static auto *pools =
+      new std::map<std::pair<int, CUcontext>, lupine_stream_pool>();
+  return *pools;
+}
+
+// The handles arrive in creation order (stream-major, priority-minor); they
+// are pushed in reverse so hand-out pops them in that order.
+static void lupine_stream_pool_init(lupine_route route, CUdevice dev,
+                                    CUcontext ctx) {
+  std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
+  auto &pools = lupine_stream_pools();
+  auto key = std::make_pair(lupine_route_identity(route), ctx);
+  if (pools.find(key) != pools.end()) {
+    return;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  uint32_t created = 0;
+  uint32_t priorities = 0;
+  int least = 0;
+  CUstream streams[kLupineStreamPoolMax];
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, LUPINE_RPC_lupineStreamPoolInit) < 0 ||
+      rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &created, sizeof(created)) < 0 ||
+      rpc_read(conn, &priorities, sizeof(priorities)) < 0 ||
+      rpc_read(conn, &least, sizeof(least)) < 0 ||
+      created > kLupineStreamPoolMax || (created != 0 && priorities == 0) ||
+      rpc_read(conn, streams, created * sizeof(*streams)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return;
+  }
+  auto &pool = pools[key];
+  pool.dev = dev;
+  for (uint32_t i = created; i-- > 0;) {
+    int priority = least - static_cast<int>(i % priorities);
+    pool.streams[{CU_STREAM_NON_BLOCKING, priority}].push_back(streams[i]);
+  }
+}
+
+static void lupine_stream_pool_discard(int route_id, CUdevice dev,
+                                       CUcontext ctx) {
+  std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
+  auto &pools = lupine_stream_pools();
+  for (auto it = pools.begin(); it != pools.end();) {
+    bool matches = ctx != nullptr
+                       ? it->first.second == ctx
+                       : it->first.first == route_id && it->second.dev == dev;
+    it = matches ? pools.erase(it) : std::next(it);
+  }
+}
+
+static CUresult lupine_stream_create_remote(lupine_route route,
+                                            CUstream *phStream,
+                                            unsigned int flags, int priority) {
+  CUcontext ctx = lupine_current_context_hint();
+  if (ctx != nullptr) {
+    std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
+    auto &pools = lupine_stream_pools();
+    auto pool = pools.find({lupine_route_identity(route), ctx});
+    if (pool != pools.end()) {
+      auto bucket = pool->second.streams.find({flags, priority});
+      if (bucket != pool->second.streams.end() && !bucket->second.empty()) {
+        *phStream = bucket->second.back();
+        bucket->second.pop_back();
+        lupine_note_stream_owner_route(*phStream, route);
+        return CUDA_SUCCESS;
+      }
+    }
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuStreamCreateWithPriority) < 0 ||
+      rpc_write(conn, phStream, sizeof(CUstream)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &priority, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, phStream, sizeof(CUstream)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS && phStream != nullptr) {
+    lupine_note_stream_owner_route(*phStream, route);
+  }
+  return return_value;
+}
+
+extern "C" CUresult cuStreamCreate(CUstream *phStream, unsigned int Flags) {
+  lupine_route route = lupine_route_for_current_context();
+  if (!lupine_route_is_local(route)) {
+    return lupine_stream_create_remote(route, phStream, Flags, 0);
+  }
+  CUresult return_value =
+      lupine_call_real_cuda_fn("cuStreamCreate", phStream, Flags);
+  if (return_value == CUDA_SUCCESS && phStream != nullptr) {
+    lupine_note_stream_owner_route(*phStream, route);
+  }
+  return return_value;
+}
+
+extern "C" CUresult cuStreamCreateWithPriority(CUstream *phStream,
+                                               unsigned int flags,
+                                               int priority) {
+  lupine_route route = lupine_route_for_current_context();
+  if (!lupine_route_is_local(route)) {
+    return lupine_stream_create_remote(route, phStream, flags, priority);
+  }
+  CUresult return_value = lupine_call_real_cuda_fn("cuStreamCreateWithPriority",
+                                                   phStream, flags, priority);
+  if (return_value == CUDA_SUCCESS && phStream != nullptr) {
+    lupine_note_stream_owner_route(*phStream, route);
+  }
+  return return_value;
+}
+
 CUresult cuStreamDestroy_v2(CUstream hStream);
 extern "C" CUresult cuEventDestroy_v2(CUevent hEvent) {
   std::unique_lock<std::shared_mutex> event_lifecycle_lock(
@@ -3660,6 +3808,7 @@ extern "C" void lupine_forget_destroyed_context(CUcontext ctx) {
     return;
   }
   lupine_forget_context_owner(ctx);
+  lupine_stream_pool_discard(-1, -1, ctx);
   if (lupine_current_context == ctx) {
     lupine_current_context = nullptr;
   }
