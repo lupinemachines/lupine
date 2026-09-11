@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <climits>
 #include <deque>
@@ -34,14 +35,22 @@ constexpr uint32_t kH2ServerWindow =
 constexpr uint64_t kH2MaxHeldBytes = LUPINE_FF_STAGING_WINDOW_BYTES / 2;
 constexpr uint32_t kH2MaxFrame = (16 * 1024 * 1024) - 1;
 constexpr size_t kH2FrameHeaderLen = 9;
-constexpr size_t kH2EncodeChunkBytes = 4 * 1024 * 1024;
-constexpr size_t kH2ProviderMinFrameBytes = 16 * 1024;
-constexpr size_t kH2ProviderMaxFrameBytes = 1024 * 1024;
+// LZ4F_max4MB, the encoder's block size. Input short of a block stays inside
+// LZ4F until a flush, and each compression step feeds exactly one block so a
+// very compressible body cannot delay its first byte until all of it has been
+// compressed.
+constexpr size_t kH2Lz4BlockBytes = 4 * 1024 * 1024;
+constexpr size_t kH2MaxDataFrameBytes = 1024 * 1024;
 constexpr size_t kH2DecodeBufferBytes = 64 * 1024;
 // Retained capacity for drained staging buffers, a few frames' worth.
 constexpr size_t kH2StagingPoolBytes = 4 * 1024 * 1024;
 // Output nghttp2 may produce ahead of the socket before request writers block.
 constexpr size_t kH2OutboundLimitBytes = 8 * 1024 * 1024;
+// How long the client write thread polls for more output before it parks.
+// Parked, every message costs its producer a futex wake and the two then
+// contend for session_mutex; polling covers the gap between back-to-back RPCs.
+// The server hosts one write thread per connection and does not poll.
+constexpr auto kH2WriterPoll = std::chrono::microseconds(200);
 constexpr std::array<uint8_t, 8> kH2ShutdownPing = {'l', 'u', 'p', 'i',
                                                     'n', 'e', 0,   1};
 // Linux restarts slow start after an idle period of one retransmission
@@ -67,7 +76,18 @@ struct h2_stream {
   bool encoder_started = false;
   bool encoder_finished = false;
   bool decoder_finished = false;
-  size_t provider_frame_bytes = kH2ProviderMinFrameBytes;
+  // One DATA item carries the stream's whole body. It defers whenever
+  // `encoded` runs dry and is resumed when more output lands.
+  bool provider_submitted = false;
+  bool provider_deferred = false;
+  bool flush_queued = false;
+  // Input LZ4F holds back for its next block; only a flush emits it.
+  size_t buffered = 0;
+  // Compressed output nghttp2 has not framed yet: valid up to encoded_size,
+  // consumed up to encoded_offset. Capacity is retained across bursts.
+  std::vector<unsigned char> encoded;
+  size_t encoded_size = 0;
+  size_t encoded_offset = 0;
   LZ4F_compressionContext_t encoder = nullptr;
   LZ4F_decompressionContext_t decoder = nullptr;
   int response_status = 0;
@@ -98,14 +118,17 @@ struct h2_transport {
   // far more than it will ever need again.
   std::vector<h2_buffer> buffer_pool;
   size_t buffer_pool_bytes = 0;
-  // LZ4F_compressBound includes a full worst-case block even for tiny input.
-  // Writes are serialized, so retain one connection-wide workspace and track
-  // its valid prefix separately instead of resizing/zeroing it per RPC.
-  std::vector<unsigned char> encoder_output;
   // Wire bytes nghttp2 has produced that the socket has not taken yet. Only
   // the write thread sends, so a producer never blocks in the socket and
   // everything queued while one send is in flight leaves in the next one.
   std::vector<unsigned char> outbound;
+  // Streams whose encoder holds input short of a block. The write thread
+  // flushes them before each send, so every message queued while one send is
+  // in flight shares a block instead of paying a block and a flush each.
+  std::vector<int32_t> flush_pending;
+  // Bumped whenever outbound or flush_pending grows, so the write thread can
+  // poll for work without touching session_mutex.
+  std::atomic<uint64_t> output_generation{0};
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
   pthread_cond_t heartbeat_progress = PTHREAD_COND_INITIALIZER;
@@ -161,19 +184,6 @@ void h2_release_codecs(h2_stream &stream) {
   }
 }
 
-struct h2_write_source {
-  std::vector<rpc_write_cursor> *cursors = nullptr;
-  rpc_write_cursor *refill_cursor = nullptr;
-  size_t index = 0;
-  uint64_t progress = 0;
-  std::vector<unsigned char> pending;
-  size_t pending_size = 0;
-  size_t pending_offset = 0;
-  bool terminal_generated = false;
-  bool finish_stream = false;
-  bool complete = false;
-};
-
 void receive_bytes(h2_transport *transport, int32_t stream_id,
                    const unsigned char *data, size_t len) {
   if (len == 0) {
@@ -216,6 +226,7 @@ void h2_queue_output(h2_transport *transport, const struct iovec *iov,
     transport->outbound.insert(transport->outbound.end(), data,
                                data + iov[i].iov_len);
   }
+  transport->output_generation.fetch_add(1, std::memory_order_release);
   pthread_cond_broadcast(&transport->outbound_progress);
 }
 
@@ -256,40 +267,6 @@ int h2_write_socket(h2_transport *transport, const unsigned char *data,
   return 0;
 }
 
-void *h2_write_main(void *arg) {
-  auto *transport = static_cast<h2_transport *>(arg);
-  std::vector<unsigned char> chunk;
-  pthread_mutex_lock(&transport->session_mutex);
-  // transport_failed alone does not stop the drain: a rejected handshake
-  // sets it while the GOAWAY and shutdown PING are still queued.
-  for (;;) {
-    while (transport->outbound.empty() && !transport->write_stop) {
-      pthread_cond_wait(&transport->outbound_progress,
-                        &transport->session_mutex);
-    }
-    if (transport->write_stop) {
-      break;
-    }
-    chunk.clear();
-    chunk.swap(transport->outbound);
-    transport->write_busy = true;
-    pthread_mutex_unlock(&transport->session_mutex);
-    int result = h2_write_socket(transport, chunk.data(), chunk.size());
-    pthread_mutex_lock(&transport->session_mutex);
-    transport->write_busy = false;
-    if (result < 0) {
-      transport->write_failed = true;
-      transport->transport_failed = true;
-      pthread_cond_broadcast(&transport->session_progress);
-      break;
-    }
-    pthread_cond_broadcast(&transport->outbound_progress);
-  }
-  pthread_cond_broadcast(&transport->outbound_progress);
-  pthread_mutex_unlock(&transport->session_mutex);
-  return nullptr;
-}
-
 ssize_t h2_send_callback(nghttp2_session *, const uint8_t *data, size_t length,
                          int, void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
@@ -306,161 +283,30 @@ LZ4F_preferences_t h2_lz4_preferences() {
   return preferences;
 }
 
-void h2_update_provider_frame_size(h2_stream &stream, size_t encoded) {
-  if (encoded != 0) {
-    // Match nghttp2's next provider buffer to actual compressed output: large
-    // blocks amortize DATA framing, while high-ratio blocks avoid repeatedly
-    // reserving a mostly empty maximum-size buffer.
-    stream.provider_frame_bytes =
-        std::clamp(encoded, kH2ProviderMinFrameBytes, kH2ProviderMaxFrameBytes);
-  }
-}
-
-unsigned char *h2_append_pending(h2_write_source &source, size_t capacity) {
-  size_t required = source.pending_size + capacity;
-  if (source.pending.size() < required) {
-    source.pending.resize(required);
-  }
-  return source.pending.data() + source.pending_size;
-}
-
-void h2_commit_pending(h2_write_source &source, size_t produced) {
-  source.pending_size += produced;
-}
-
 ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
                                      uint8_t *, size_t length,
                                      uint32_t *data_flags,
-                                     nghttp2_data_source *source,
-                                     void *user_data) {
+                                     nghttp2_data_source *, void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
-  auto *write_source = static_cast<h2_write_source *>(source->ptr);
   h2_stream &stream = h2_get_stream(transport, stream_id);
-  if (length == 0 || write_source->complete || stream.encoder_finished) {
-    return NGHTTP2_ERR_CALLBACK_FAILURE;
+  size_t available = stream.encoded_size - stream.encoded_offset;
+  if (available == 0) {
+    stream.provider_deferred = true;
+    return NGHTTP2_ERR_DEFERRED;
   }
-
-  const LZ4F_preferences_t preferences = h2_lz4_preferences();
-  size_t input_budget = kH2EncodeChunkBytes;
-  while (write_source->pending_size < length && !write_source->complete) {
-
-    if (!stream.encoder_started) {
-      if (LZ4F_isError(
-              LZ4F_createCompressionContext(&stream.encoder, LZ4F_VERSION))) {
-        return NGHTTP2_ERR_CALLBACK_FAILURE;
-      }
-      size_t capacity = LZ4F_HEADER_SIZE_MAX;
-      unsigned char *destination = h2_append_pending(*write_source, capacity);
-      size_t header = LZ4F_compressBegin(stream.encoder, destination, capacity,
-                                         &preferences);
-      if (LZ4F_isError(header)) {
-        return NGHTTP2_ERR_CALLBACK_FAILURE;
-      }
-      h2_commit_pending(*write_source, header);
-      stream.encoder_started = true;
-      continue;
-    }
-
-    rpc_write_cursor *cursor = nullptr;
-    if (write_source->cursors != nullptr) {
-      auto &cursors = *write_source->cursors;
-      while (write_source->index < cursors.size()) {
-        auto &candidate = cursors[write_source->index];
-        if (candidate.remaining() != 0) {
-          cursor = &candidate;
-          break;
-        }
-        if (candidate.refill != nullptr) {
-          write_source->refill_cursor = &candidate;
-          return NGHTTP2_ERR_DEFERRED;
-        }
-        ++write_source->index;
-      }
-    }
-
-    if (cursor == nullptr) {
-      if (!write_source->terminal_generated) {
-        size_t capacity = LZ4F_compressBound(0, &preferences);
-        unsigned char *destination = h2_append_pending(*write_source, capacity);
-        size_t terminal;
-        if (write_source->finish_stream) {
-          terminal =
-              LZ4F_compressEnd(stream.encoder, destination, capacity, nullptr);
-        } else {
-          terminal = LZ4F_flush(stream.encoder, destination, capacity, nullptr);
-        }
-        if (LZ4F_isError(terminal)) {
-          return NGHTTP2_ERR_CALLBACK_FAILURE;
-        }
-        h2_update_provider_frame_size(stream, terminal);
-        h2_commit_pending(*write_source, terminal);
-        write_source->terminal_generated = true;
-        continue;
-      }
-      if (write_source->finish_stream) {
-        stream.encoder_finished = true;
-        *data_flags |= NGHTTP2_DATA_FLAG_EOF;
-      } else {
-        *data_flags |= NGHTTP2_DATA_FLAG_EOF | NGHTTP2_DATA_FLAG_NO_END_STREAM;
-      }
-      write_source->complete = true;
-      break;
-    }
-
-    // Bound work by logical input as well as encoded output. Otherwise a very
-    // compressible body can consume gigabytes while trying to fill one large
-    // HTTP/2 DATA frame, delaying the first byte until the entire body has
-    // been compressed.
-    if (input_budget == 0) {
-      break;
-    }
-
-    size_t input = std::min(cursor->size, input_budget);
-    size_t capacity = LZ4F_compressBound(input, &preferences);
-    unsigned char *destination = h2_append_pending(*write_source, capacity);
-    size_t encoded = LZ4F_compressUpdate(stream.encoder, destination, capacity,
-                                         cursor->data, input, nullptr);
-    if (LZ4F_isError(encoded)) {
-      return NGHTTP2_ERR_CALLBACK_FAILURE;
-    }
-    h2_update_provider_frame_size(stream, encoded);
-    h2_commit_pending(*write_source, encoded);
-    cursor->data += input;
-    cursor->size -= input;
-    input_budget -= input;
-    write_source->progress += input;
-    if (cursor->size == 0 && cursor->refill == nullptr) {
-      ++write_source->index;
-    }
-  }
-
-  size_t available = write_source->pending_size - write_source->pending_offset;
   size_t produced = std::min(available, length);
-  if (produced == 0) {
-    return write_source->complete ? 0 : NGHTTP2_ERR_CALLBACK_FAILURE;
-  }
   *data_flags |= NGHTTP2_DATA_FLAG_NO_COPY;
-  if (produced == available && write_source->terminal_generated) {
-    if (write_source->finish_stream) {
-      stream.encoder_finished = true;
-      *data_flags |= NGHTTP2_DATA_FLAG_EOF;
-    } else {
-      *data_flags |= NGHTTP2_DATA_FLAG_EOF | NGHTTP2_DATA_FLAG_NO_END_STREAM;
-    }
-    write_source->complete = true;
+  if (produced == available && stream.encoder_finished) {
+    *data_flags |= NGHTTP2_DATA_FLAG_EOF;
   }
   return static_cast<ssize_t>(produced);
 }
 
 int h2_send_data_callback(nghttp2_session *, nghttp2_frame *frame,
                           const uint8_t *framehd, size_t length,
-                          nghttp2_data_source *source, void *user_data) {
+                          nghttp2_data_source *, void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
-  auto *write_source = static_cast<h2_write_source *>(source->ptr);
-  size_t available = write_source->pending_size - write_source->pending_offset;
-  if (length > available) {
-    return NGHTTP2_ERR_CALLBACK_FAILURE;
-  }
+  h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
 
   std::array<struct iovec, 4> iov = {};
   int iov_count = 0;
@@ -471,8 +317,7 @@ int h2_send_data_callback(nghttp2_session *, nghttp2_frame *frame,
     padlen = static_cast<unsigned char>(frame->data.padlen - 1);
     iov[iov_count++] = {&padlen, 1};
   }
-  iov[iov_count++] = {
-      write_source->pending.data() + write_source->pending_offset, length};
+  iov[iov_count++] = {stream.encoded.data() + stream.encoded_offset, length};
 
   unsigned char padding[256] = {};
   if (frame->data.padlen > 1) {
@@ -480,11 +325,10 @@ int h2_send_data_callback(nghttp2_session *, nghttp2_frame *frame,
   }
   h2_queue_output(transport, iov.data(), iov_count);
 
-  write_source->pending_offset += length;
-  write_source->progress += length;
-  if (write_source->pending_offset == write_source->pending_size) {
-    write_source->pending_size = 0;
-    write_source->pending_offset = 0;
+  stream.encoded_offset += length;
+  if (stream.encoded_offset == stream.encoded_size) {
+    stream.encoded_size = 0;
+    stream.encoded_offset = 0;
   }
   return 0;
 }
@@ -501,9 +345,10 @@ ssize_t h2_data_source_read_length_callback(nghttp2_session *, uint8_t,
   if (window <= 0) {
     return NGHTTP2_ERR_CALLBACK_FAILURE;
   }
-  size_t max_len = std::min<size_t>(kH2MaxFrame, remote_max_frame_size);
-  max_len = std::min(max_len,
-                     h2_get_stream(transport, stream_id).provider_frame_bytes);
+  h2_stream &stream = h2_get_stream(transport, stream_id);
+  size_t max_len =
+      std::min<size_t>(kH2MaxDataFrameBytes, remote_max_frame_size);
+  max_len = std::min(max_len, stream.encoded_size - stream.encoded_offset);
   max_len = std::min<size_t>(max_len, static_cast<size_t>(window));
   return static_cast<ssize_t>(std::max<size_t>(1, max_len));
 }
@@ -914,66 +759,228 @@ int h2_flush_session_locked(h2_transport *transport) {
   return result == 0 ? 0 : -1;
 }
 
-int h2_send_source_locked(h2_transport *transport, int32_t stream_id,
-                          h2_write_source *source) {
-  source->pending.swap(transport->encoder_output);
-  nghttp2_data_provider provider = {};
-  provider.source.ptr = source;
-  provider.read_callback = h2_data_source_read_callback;
-  int result = nghttp2_submit_data(transport->session, NGHTTP2_FLAG_NONE,
-                                   stream_id, &provider);
-  // nghttp2 retains provider.source.ptr until the provider reaches EOF. Keep
-  // the stack-backed source alive while flow control pauses the stream, and
-  // release the mutex while the read thread applies WINDOW_UPDATE frames.
-  while (result == 0 && !source->complete) {
-    while (transport->outbound.size() > kH2OutboundLimitBytes &&
-           !transport->write_failed) {
-      pthread_cond_wait(&transport->outbound_progress,
-                        &transport->session_mutex);
+unsigned char *h2_reserve_encoded(h2_stream &stream, size_t capacity) {
+  size_t required = stream.encoded_size + capacity;
+  if (stream.encoded.size() < required) {
+    stream.encoded.resize(required);
+  }
+  return stream.encoded.data() + stream.encoded_size;
+}
+
+int h2_start_encoder_locked(h2_stream &stream) {
+  if (LZ4F_isError(
+          LZ4F_createCompressionContext(&stream.encoder, LZ4F_VERSION))) {
+    return -1;
+  }
+  const LZ4F_preferences_t preferences = h2_lz4_preferences();
+  unsigned char *destination = h2_reserve_encoded(stream, LZ4F_HEADER_SIZE_MAX);
+  size_t header = LZ4F_compressBegin(stream.encoder, destination,
+                                     LZ4F_HEADER_SIZE_MAX, &preferences);
+  if (LZ4F_isError(header)) {
+    return -1;
+  }
+  stream.encoded_size += header;
+  stream.encoder_started = true;
+  return 0;
+}
+
+// Only the blocks the input completes come out; the remainder waits inside
+// LZ4F until a flush. LZ4F_compressBound reserves a whole worst-case block
+// even for tiny input, and `encoded` keeps that capacity across bursts.
+int h2_encode_locked(h2_stream &stream, const unsigned char *data,
+                     size_t input) {
+  const LZ4F_preferences_t preferences = h2_lz4_preferences();
+  size_t capacity = stream.buffered + input < kH2Lz4BlockBytes
+                        ? 8
+                        : LZ4F_compressBound(input, &preferences);
+  unsigned char *destination = h2_reserve_encoded(stream, capacity);
+  size_t encoded = LZ4F_compressUpdate(stream.encoder, destination, capacity,
+                                       data, input, nullptr);
+  if (LZ4F_isError(encoded)) {
+    return -1;
+  }
+  stream.encoded_size += encoded;
+  stream.buffered = (stream.buffered + input) % kH2Lz4BlockBytes;
+  return 0;
+}
+
+// Emits the block LZ4F is holding (nothing when it holds none), or the frame
+// end.
+int h2_encode_terminal_locked(h2_stream &stream, bool finish) {
+  size_t capacity = stream.buffered + 16;
+  unsigned char *destination = h2_reserve_encoded(stream, capacity);
+  size_t terminal =
+      finish ? LZ4F_compressEnd(stream.encoder, destination, capacity, nullptr)
+             : LZ4F_flush(stream.encoder, destination, capacity, nullptr);
+  if (LZ4F_isError(terminal)) {
+    return -1;
+  }
+  stream.encoded_size += terminal;
+  stream.buffered = 0;
+  if (finish) {
+    stream.encoder_finished = true;
+  }
+  return 0;
+}
+
+// Hands the stream's encoded bytes to nghttp2. The stream's DATA item is
+// submitted on first use and resumed from its deferral after that; whatever
+// the peer's window does not cover stays encoded until the read thread pumps
+// the session after the next WINDOW_UPDATE.
+int h2_pump_stream_locked(h2_transport *transport, int32_t stream_id,
+                          h2_stream &stream) {
+  if (stream.encoded_offset == stream.encoded_size) {
+    return 0;
+  }
+  if (!stream.provider_submitted) {
+    nghttp2_data_provider provider = {};
+    provider.read_callback = h2_data_source_read_callback;
+    if (nghttp2_submit_data(transport->session, NGHTTP2_FLAG_NONE, stream_id,
+                            &provider) != 0) {
+      return -1;
     }
-    uint64_t progress = source->progress;
-    if (h2_flush_session_locked(transport) < 0) {
-      result = -1;
-      break;
+    stream.provider_submitted = true;
+  } else if (stream.provider_deferred) {
+    if (nghttp2_session_resume_data(transport->session, stream_id) != 0) {
+      return -1;
     }
-    if (source->complete) {
-      break;
-    }
-    if (transport->transport_failed) {
-      result = -1;
-      break;
-    }
-    if (source->refill_cursor != nullptr) {
-      rpc_write_cursor *cursor = source->refill_cursor;
-      pthread_mutex_unlock(&transport->session_mutex);
-      int refill = cursor->refill(cursor->refill_context, cursor);
-      pthread_mutex_lock(&transport->session_mutex);
-      source->refill_cursor = nullptr;
-      if (transport->transport_failed || refill < 0 ||
-          (refill == 0 && cursor->remaining() != 0) ||
-          (refill > 0 &&
-           (cursor->data == nullptr || cursor->remaining() == 0))) {
-        result = -1;
-        break;
+    stream.provider_deferred = false;
+  }
+  return h2_flush_session_locked(transport);
+}
+
+// Compresses the cursors in order. Whole blocks reach nghttp2 here; the tail
+// short of a block stays with the encoder for the write thread to flush, so
+// every message queued while one send is in flight shares a block.
+int h2_write_stream_locked(h2_transport *transport, int32_t stream_id,
+                           std::vector<rpc_write_cursor> &cursors) {
+  h2_stream &stream = h2_get_stream(transport, stream_id);
+  if (stream.closed || stream.encoder_finished ||
+      (!stream.encoder_started && h2_start_encoder_locked(stream) < 0)) {
+    return -1;
+  }
+  for (rpc_write_cursor &cursor : cursors) {
+    for (;;) {
+      if (cursor.size == 0) {
+        if (cursor.refill == nullptr) {
+          break;
+        }
+        pthread_mutex_unlock(&transport->session_mutex);
+        int refill = cursor.refill(cursor.refill_context, &cursor);
+        pthread_mutex_lock(&transport->session_mutex);
+        if (transport->transport_failed || stream.closed || refill < 0 ||
+            (refill == 0 && cursor.remaining() != 0) ||
+            (refill > 0 &&
+             (cursor.data == nullptr || cursor.remaining() == 0))) {
+          return -1;
+        }
+        if (refill == 0) {
+          cursor.refill = nullptr;
+        }
+        continue;
       }
-      if (refill == 0) {
-        cursor->refill = nullptr;
+      size_t input = std::min(cursor.size, kH2Lz4BlockBytes);
+      size_t encoded_before = stream.encoded_size;
+      if (h2_encode_locked(stream, cursor.data, input) < 0 ||
+          (stream.encoded_size != encoded_before &&
+           h2_pump_stream_locked(transport, stream_id, stream) < 0)) {
+        return -1;
       }
-      if (nghttp2_session_resume_data(transport->session, stream_id) != 0) {
-        result = -1;
-        break;
-      }
-      continue;
-    }
-    if (source->progress == progress &&
+      cursor.data += input;
+      cursor.size -= input;
+      while (!transport->transport_failed && !stream.closed &&
+             stream.encoded_size - stream.encoded_offset >
+                 kH2OutboundLimitBytes) {
         pthread_cond_wait(&transport->session_progress,
-                          &transport->session_mutex) != 0) {
-      result = -1;
-      break;
+                          &transport->session_mutex);
+      }
+      while (!transport->write_failed &&
+             transport->outbound.size() > kH2OutboundLimitBytes) {
+        pthread_cond_wait(&transport->outbound_progress,
+                          &transport->session_mutex);
+      }
+      if (transport->transport_failed || stream.closed) {
+        return -1;
+      }
     }
   }
-  source->pending.swap(transport->encoder_output);
-  return result == 0 ? 0 : -1;
+  if (!stream.flush_queued) {
+    transport->flush_pending.push_back(stream_id);
+    stream.flush_queued = true;
+  }
+  return 0;
+}
+
+int h2_flush_pending_locked(h2_transport *transport) {
+  int result = 0;
+  for (int32_t stream_id : transport->flush_pending) {
+    h2_stream &stream = h2_get_stream(transport, stream_id);
+    stream.flush_queued = false;
+    if (stream.closed || stream.encoder_finished) {
+      continue;
+    }
+    if (h2_encode_terminal_locked(stream, false) < 0 ||
+        h2_pump_stream_locked(transport, stream_id, stream) < 0) {
+      result = -1;
+    }
+  }
+  transport->flush_pending.clear();
+  return result;
+}
+
+void h2_await_output_locked(h2_transport *transport) {
+  if (!transport->server) {
+    uint64_t seen =
+        transport->output_generation.load(std::memory_order_relaxed);
+    pthread_mutex_unlock(&transport->session_mutex);
+    auto deadline = std::chrono::steady_clock::now() + kH2WriterPoll;
+    while (transport->output_generation.load(std::memory_order_acquire) ==
+               seen &&
+           std::chrono::steady_clock::now() < deadline) {
+    }
+    pthread_mutex_lock(&transport->session_mutex);
+  }
+  if (transport->outbound.empty() && transport->flush_pending.empty() &&
+      !transport->write_stop) {
+    pthread_cond_wait(&transport->outbound_progress, &transport->session_mutex);
+  }
+}
+
+void *h2_write_main(void *arg) {
+  auto *transport = static_cast<h2_transport *>(arg);
+  std::vector<unsigned char> chunk;
+  pthread_mutex_lock(&transport->session_mutex);
+  // transport_failed alone does not stop the drain: a rejected handshake
+  // sets it while the GOAWAY and shutdown PING are still queued.
+  for (;;) {
+    while (transport->outbound.empty() && transport->flush_pending.empty() &&
+           !transport->write_stop) {
+      h2_await_output_locked(transport);
+    }
+    if (transport->write_stop) {
+      break;
+    }
+    int result = h2_flush_pending_locked(transport);
+    if (result == 0 && !transport->outbound.empty()) {
+      chunk.clear();
+      chunk.swap(transport->outbound);
+      transport->write_busy = true;
+      pthread_mutex_unlock(&transport->session_mutex);
+      result = h2_write_socket(transport, chunk.data(), chunk.size());
+      pthread_mutex_lock(&transport->session_mutex);
+      transport->write_busy = false;
+    }
+    if (result < 0) {
+      transport->write_failed = true;
+      transport->transport_failed = true;
+      pthread_cond_broadcast(&transport->session_progress);
+      break;
+    }
+    pthread_cond_broadcast(&transport->outbound_progress);
+  }
+  pthread_cond_broadcast(&transport->outbound_progress);
+  pthread_mutex_unlock(&transport->session_mutex);
+  return nullptr;
 }
 
 void *h2_heartbeat_main(void *arg) {
@@ -1120,10 +1127,10 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
 }
 
 void h2_drain_output_locked(h2_transport *transport) {
-  while ((!transport->outbound.empty() || transport->write_busy) &&
+  while ((!transport->outbound.empty() || !transport->flush_pending.empty() ||
+          transport->write_busy) &&
          !transport->write_failed) {
-    pthread_cond_wait(&transport->outbound_progress,
-                      &transport->session_mutex);
+    pthread_cond_wait(&transport->outbound_progress, &transport->session_mutex);
   }
 }
 
@@ -1319,11 +1326,13 @@ int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
     return 0;
   }
 
-  h2_write_source source;
-  source.cursors = &cursors;
   pthread_mutex_lock(&transport->session_mutex);
-  int result = h2_send_source_locked(transport, stream_id, &source);
+  int result = h2_write_stream_locked(transport, stream_id, cursors);
   pthread_mutex_unlock(&transport->session_mutex);
+  // Signalled after the unlock so the write thread never wakes into a mutex
+  // its producer still holds.
+  transport->output_generation.fetch_add(1, std::memory_order_release);
+  pthread_cond_broadcast(&transport->outbound_progress);
   return result;
 }
 
@@ -1390,19 +1399,29 @@ int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id) {
 namespace {
 
 int h2_end_stream_locked(h2_transport *transport, int32_t stream_id) {
-  h2_write_source source;
-  source.finish_stream = true;
-  return h2_send_source_locked(transport, stream_id, &source);
+  h2_stream &stream = h2_get_stream(transport, stream_id);
+  if (stream.closed || stream.encoder_finished ||
+      (!stream.encoder_started && h2_start_encoder_locked(stream) < 0) ||
+      h2_encode_terminal_locked(stream, true) < 0) {
+    return -1;
+  }
+  return h2_pump_stream_locked(transport, stream_id, stream);
 }
 
 } // namespace
 
+// Emits the encoder tails on the caller instead of the write thread: for a
+// message the caller is about to wait on, nothing is gained by deferring, and
+// the flush would only drag the encoder and framing state onto the other core.
 int rpc_http2_flush(conn_t *conn) {
   if (conn == nullptr || conn->http2 == nullptr) {
     return -1;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
   pthread_mutex_lock(&transport->session_mutex);
+  if (h2_flush_pending_locked(transport) < 0) {
+    transport->write_failed = true;
+  }
   h2_drain_output_locked(transport);
   int result = transport->write_failed ? -1 : 0;
   pthread_mutex_unlock(&transport->session_mutex);
