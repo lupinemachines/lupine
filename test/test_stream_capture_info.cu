@@ -5,6 +5,17 @@
 #include <cstdlib>
 #include <thread>
 
+#ifdef cuGetProcAddress
+#undef cuGetProcAddress
+#endif
+extern "C" CUresult cuGetProcAddress(const char *, void **, int, cuuint64_t);
+
+#ifdef cuStreamGetCaptureInfo
+#undef cuStreamGetCaptureInfo
+#endif
+extern "C" CUresult cuStreamGetCaptureInfo(CUstream, CUstreamCaptureStatus *,
+                                           cuuint64_t *);
+
 extern "C" CUresult cuStreamGetCaptureInfo_v2(CUstream, CUstreamCaptureStatus *,
                                               cuuint64_t *, CUgraph *,
                                               const CUgraphNode **, size_t *);
@@ -22,6 +33,9 @@ static void check_status(CUstream stream, CUstreamCaptureStatus expected) {
   CUgraph graph = nullptr;
   const CUgraphNode *dependencies = nullptr;
   size_t count = 0;
+  require(cuStreamGetCaptureInfo(stream, &status, &id) == CUDA_SUCCESS &&
+              status == expected,
+          "legacy capture status is incorrect");
   require(cuStreamGetCaptureInfo_v2(stream, &status, &id, &graph, &dependencies,
                                     &count) == CUDA_SUCCESS &&
               status == expected,
@@ -31,12 +45,49 @@ static void check_status(CUstream stream, CUstreamCaptureStatus expected) {
     require(count != 0 && dependencies != nullptr,
             "captured dependency metadata is missing");
   }
+  using CaptureInfoV1 =
+      CUresult (*)(CUstream, CUstreamCaptureStatus *, cuuint64_t *);
+  using CaptureInfoV2 =
+      CUresult (*)(CUstream, CUstreamCaptureStatus *, cuuint64_t *, CUgraph *,
+                   const CUgraphNode **, size_t *);
+  void *function = nullptr;
+  require(cuGetProcAddress("cuStreamGetCaptureInfo", &function, 10010, 0) ==
+              CUDA_SUCCESS,
+          "v1 lookup failed");
+  require(reinterpret_cast<CaptureInfoV1>(function)(stream, &status, &id) ==
+                  CUDA_SUCCESS &&
+              status == expected,
+          "versioned v1 capture query failed");
+  require(cuGetProcAddress("cuStreamGetCaptureInfo", &function, 11030, 0) ==
+              CUDA_SUCCESS,
+          "v2 lookup failed");
+  count = 0;
+  require(reinterpret_cast<CaptureInfoV2>(function)(stream, &status, &id,
+                                                    &graph, &dependencies,
+                                                    &count) == CUDA_SUCCESS &&
+              status == expected,
+          "versioned v2 capture query failed");
+  if (expected == CU_STREAM_CAPTURE_STATUS_ACTIVE) {
+    require(count != 0 && dependencies != nullptr,
+            "versioned v2 lost capture dependencies");
+  }
 #if CUDA_VERSION >= 12030
   const CUgraphEdgeData *edges = nullptr;
   require(cuStreamGetCaptureInfo_v3(stream, &status, &id, &graph, &dependencies,
                                     &edges, &count) == CUDA_SUCCESS &&
               status == expected,
           "v3 capture status is incorrect");
+  using CaptureInfoV3 =
+      CUresult (*)(CUstream, CUstreamCaptureStatus *, cuuint64_t *, CUgraph *,
+                   const CUgraphNode **, const CUgraphEdgeData **, size_t *);
+  require(cuGetProcAddress("cuStreamGetCaptureInfo", &function, 12030, 0) ==
+              CUDA_SUCCESS,
+          "v3 lookup failed");
+  require(reinterpret_cast<CaptureInfoV3>(function)(
+              stream, &status, &id, &graph, &dependencies, &edges, &count) ==
+                  CUDA_SUCCESS &&
+              status == expected,
+          "versioned v3 capture query failed");
 #endif
 }
 
