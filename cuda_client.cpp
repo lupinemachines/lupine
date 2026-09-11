@@ -1264,6 +1264,22 @@ extern "C" CUresult cuModuleGetFunction(CUfunction *function, CUmodule module,
   return result;
 }
 
+struct lupine_wire_library_kernel_record {
+  std::string name;
+  CUkernel kernel = nullptr;
+  CUfunction function = nullptr;
+  uint32_t param_count = 0;
+  std::vector<uint64_t> params;
+};
+
+static int lupine_read_library_snapshot(
+    conn_t *conn, bool with_attributes,
+    std::vector<lupine_wire_library_kernel_record> *table);
+
+static void lupine_apply_library_snapshot(
+    CUlibrary library, conn_t *conn,
+    const std::vector<lupine_wire_library_kernel_record> &table);
+
 static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
                                                       lupine_route route,
                                                       CUlibrary *library);
@@ -1461,6 +1477,8 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
 
   CUlibrary loaded = nullptr;
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  conn_t *metadata_conn = nullptr;
+  std::vector<lupine_wire_library_kernel_record> table;
   if (lupine_route_is_local(route)) {
     if (record.code == nullptr) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -1474,8 +1492,13 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
     conn_t *conn = lupine_route_remote_conn(route);
     size_t image_size = record.image.size();
     unsigned int zero_options = 0;
+    bool with_metadata = rpc_http2_peer_supports(
+        conn, LUPINE_SERVER_CAPABILITY_LIBRARY_LOAD_METADATA);
+    int load_opcode = with_metadata
+                          ? LUPINE_RPC_lupineLibraryLoadDataWithMetadata
+                          : RPC_cuLibraryLoadData;
     if (lupine_prepare_rpc(conn) < 0 ||
-        rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
+        rpc_write_start_request(conn, load_opcode) < 0 ||
         rpc_write(conn, &record.kind, sizeof(record.kind)) < 0 ||
         rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
         rpc_write(conn, record.image.data(), image_size) < 0 ||
@@ -1483,8 +1506,14 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
         rpc_write(conn, &zero_options, sizeof(zero_options)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &loaded, sizeof(loaded)) < 0 ||
-        rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+        rpc_read(conn, &result, sizeof(result)) < 0 ||
+        (with_metadata && result == CUDA_SUCCESS &&
+         lupine_read_library_snapshot(conn, true, &table) < 0) ||
+        rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    if (with_metadata) {
+      metadata_conn = conn;
     }
   }
 
@@ -1502,6 +1531,11 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
     loaded_record.code = record.code;
     loaded_record.image = std::move(record.image);
     loaded_record.libraries_by_route[route_id] = loaded;
+  }
+  if (metadata_conn != nullptr) {
+    // Publishing the snapshot can issue fallback queries, so consume the
+    // entire load response and release the image-record lock first.
+    lupine_apply_library_snapshot(loaded, metadata_conn, table);
   }
   *library = loaded;
   return CUDA_SUCCESS;
@@ -4912,18 +4946,6 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
   }
   return return_value;
 }
-
-struct lupine_wire_library_kernel_record {
-  std::string name;
-  CUkernel kernel = nullptr;
-  CUfunction function = nullptr;
-  uint32_t param_count = 0;
-  std::vector<uint64_t> params;
-};
-
-static void lupine_apply_library_snapshot(
-    CUlibrary library, conn_t *conn,
-    const std::vector<lupine_wire_library_kernel_record> &table);
 
 // Read both the standalone legacy snapshot and the metadata embedded in a load
 // response. Cache ownership is published only after the response is consumed.
