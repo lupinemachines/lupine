@@ -16,7 +16,11 @@ static bool check(CUresult result, const char *operation) {
       return 1;                                                                \
   } while (false)
 
-int main() {
+int main(int argc, char **argv) {
+  // Older peers retain the existing staging path. The optional mode isolates
+  // fallback coverage from its pre-existing cross-thread completion issue.
+  const bool single_thread =
+      argc == 2 && std::strcmp(argv[1], "--single-thread") == 0;
   CHECK(cuInit(0));
   CUdevice device;
   CUcontext context;
@@ -37,7 +41,7 @@ int main() {
   CHECK(cuMemAlloc(&destination, size));
   std::memset(host, 0x5a, size);
 
-  for (int mode = 0; mode < 4; ++mode) {
+  for (int mode = 0; mode < (single_thread ? 3 : 4); ++mode) {
     unsigned char expected = static_cast<unsigned char>(0x30 + mode);
     CHECK(cuMemsetD8Async(source, expected, size, stream));
     CHECK(cuMemcpyDtoHAsync(host + 17, source + 17, size - 34, stream));
@@ -59,6 +63,12 @@ int main() {
       waiter.join();
       CHECK(result);
     }
+    if (host[17] != expected) {
+      std::fprintf(stderr,
+                   "mode %d immediate host result: expected %u, got %u\n", mode,
+                   unsigned(expected), unsigned(host[17]));
+      return 1;
+    }
     // No intervening CPU write: HtoD must see the completed DtoH in the
     // server's mirror, even when another lane performed synchronization.
     CHECK(cuMemcpyHtoDAsync(destination, host + 17, size - 34, stream));
@@ -66,18 +76,28 @@ int main() {
     unsigned char result[size] = {};
     CHECK(cuMemcpyDtoH(result, destination, size - 34));
     for (size_t i = 0; i < size - 34; ++i) {
-      if (result[i] != expected)
+      if (result[i] != expected) {
+        std::fprintf(stderr, "mode %d byte %zu: expected %u, got %u\n", mode, i,
+                     unsigned(expected), unsigned(result[i]));
         return 1;
+      }
     }
-    if (host[0] != 0x5a || host[size - 1] != 0x5a || host[17] != expected)
+    if (host[0] != 0x5a || host[size - 1] != 0x5a || host[17] != expected) {
+      std::fprintf(stderr, "mode %d host guards/data: %u %u %u\n", mode,
+                   unsigned(host[0]), unsigned(host[size - 1]),
+                   unsigned(host[17]));
       return 1;
+    }
     // Later CPU writes must still fault/dirty and reach the server.
     host[19] = 0x7e;
     CHECK(cuMemcpyHtoDAsync(destination, host + 17, 16, stream));
     CHECK(cuStreamSynchronize(stream));
     CHECK(cuMemcpyDtoH(result, destination, 16));
-    if (result[2] != 0x7e)
+    if (result[2] != 0x7e) {
+      std::fprintf(stderr, "mode %d lost CPU edit: %u\n", mode,
+                   unsigned(result[2]));
       return 1;
+    }
   }
 
   // Captured copies retain their staging-backed path and can replay.
@@ -95,8 +115,11 @@ int main() {
     CHECK(cuMemsetD8Async(source, 0x60 + iteration, 32, stream));
     CHECK(cuGraphLaunch(executable, stream));
     CHECK(cuStreamSynchronize(stream));
-    if (host[32] != 0x60 + iteration)
+    if (host[32] != 0x60 + iteration) {
+      std::fprintf(stderr, "graph replay %d: got %u\n", iteration,
+                   unsigned(host[32]));
       return 1;
+    }
   }
   CHECK(cuGraphExecDestroy(executable));
   CHECK(cuGraphDestroy(graph));
