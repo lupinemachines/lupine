@@ -117,6 +117,9 @@ class ArrayOperation:
     ptr: Pointer
     # if int, it's a constant length, if Parameter, it's a variable length.
     length: Union[int, Parameter]
+    # A SEND_ONLY NULLABLE LENGTH array the caller may leave null; a presence
+    # byte leads it on the wire.
+    nullable: bool = False
 
     @property
     def is_void_bytes(self) -> bool:
@@ -171,6 +174,7 @@ class ArrayOperation:
         """
         if (
             not self.send
+            or self.nullable
             or isinstance(self.length, int)
             or isinstance(self.ptr, Array)
         ):
@@ -182,7 +186,14 @@ class ArrayOperation:
     def client_rpc_write(self, f):
         if not self.send:
             return
-        if isinstance(self.length, int):
+        if self.nullable:
+            name = self.parameter.name
+            f.write(
+                f"        rpc_write(conn, &{name}_null, sizeof(uint8_t)) < 0 ||\n"
+                f"        (!{name}_null && {self.transfer_size_expr()} != 0 && "
+                f"rpc_write(conn, {name}, {self.transfer_size_expr()}) < 0) ||\n"
+            )
+        elif isinstance(self.length, int):
             f.write(
                 f"        rpc_write(conn, {self.parameter.name}, {self.length}) < 0 ||\n"
             )
@@ -254,10 +265,37 @@ class ArrayOperation:
             s = f"    {self.ptr.format()} {self.parameter.name} = nullptr;\n"
             if self.send:
                 s += f"    size_t {self.parameter.name}_size;\n"
+            if self.nullable:
+                s += f"    uint8_t {self.parameter.name}_null = 0;\n"
             self.ptr.ptr_to.const = c
         return s
 
+    def client_declaration(self) -> str:
+        name = self.parameter.name
+        return f"    uint8_t {name}_null = {name} == nullptr ? 1 : 0;\n"
+
     def server_rpc_read(self, f) -> Optional[str]:
+        if self.nullable:
+            name = self.parameter.name
+            f.write(
+                f"        rpc_read(conn, &{name}_null, sizeof(uint8_t)) < 0 ||\n"
+            )
+            f.write("        false)\n")
+            f.write("        goto ERROR_0;\n")
+            f.write(f"    {name}_size = {self.server_transfer_size_expr()};\n")
+            f.write(f"    if (!{name}_null) {{\n")
+            f.write(
+                f"        {name} = ({self.mutable_ptr_format()})malloc({name}_size);\n"
+            )
+            f.write(f"        if ({name}_size != 0 && {name} == nullptr)\n")
+            f.write("            goto ERROR_0;\n")
+            f.write("    }\n")
+            f.write("    if(\n")
+            f.write(
+                f"        (!{name}_null && {name}_size != 0 && "
+                f"rpc_read(conn, {name}, {name}_size) < 0) ||\n"
+            )
+            return name
         if not self.send:
             # if this parameter is recv only and it's a type pointer, it needs to be malloc'd.
             if isinstance(self.ptr, Pointer):
@@ -315,6 +353,8 @@ class ArrayOperation:
     def server_reference(self) -> str:
         if isinstance(self.length, int):
             return f"{self.parameter.name}"
+        if self.nullable:
+            return f"({self.parameter.name}_null ? nullptr : {self.parameter.name})"
         return (
             f"({self.server_transfer_size_expr()} == 0 ? "
             f"nullptr : {self.parameter.name})"

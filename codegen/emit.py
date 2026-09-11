@@ -100,7 +100,7 @@ def write_client_validation(f, backend: Backend, function, operations):
             checks.append(f"{name} == nullptr")
         elif isinstance(operation, DereferenceOperation):
             checks.append(f"{name} == nullptr")
-        elif isinstance(operation, ArrayOperation):
+        elif isinstance(operation, ArrayOperation) and not operation.nullable:
             checks.append(
                 f"({operation.transfer_size_expr()} != 0 && {name} == nullptr)"
             )
@@ -137,7 +137,7 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
         if isinstance(
             operation,
             (InOutCountOperation, NullableArrayOperation, ScalarOperation),
-        ):
+        ) or (isinstance(operation, ArrayOperation) and operation.nullable):
             f.write(operation.client_declaration())
         elif isinstance(operation, NullTerminatedOperation):
             f.write(
