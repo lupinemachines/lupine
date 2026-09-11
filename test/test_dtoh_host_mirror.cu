@@ -130,6 +130,9 @@ int main(int argc, char **argv) {
   CHECK(cuStreamDestroy(stream));
   CHECK(cuDevicePrimaryCtxRelease(device));
   std::puts(
-      "DtoH mirror, partial ranges, CPU edits, cross-lane and capture passed");
+      single_thread
+          ? "DtoH legacy fallback: partial ranges, CPU edits and capture passed"
+          : "DtoH mirror: partial ranges, CPU edits, cross-lane and capture "
+            "passed");
   return 0;
 }
