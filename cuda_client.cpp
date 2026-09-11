@@ -4441,7 +4441,7 @@ extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
     if (bytes == 0) {
       continue;
     }
-    if (rpc_read(conn, dst, bytes) < 0) {
+    if (lupine_read_deferred_host_copy(conn, dst, bytes) < 0) {
       return -1;
     }
   }

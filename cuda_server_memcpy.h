@@ -68,6 +68,7 @@ struct lupine_pending_dtoh_item {
   void *server_src = nullptr;
   size_t bytes = 0;
   bool pinned = false;
+  bool owns_storage = true;
 };
 
 using lupine_pending_dtoh_items = std::vector<lupine_pending_dtoh_item>;

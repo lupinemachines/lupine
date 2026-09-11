@@ -919,7 +919,7 @@ void lupine_cleanup_pending_dtoh_copies(
     return;
   }
   for (auto &copy : *pending) {
-    if (copy.server_src != nullptr) {
+    if (copy.server_src != nullptr && copy.owns_storage) {
       if (copy.pinned) {
         cuMemFreeHost(copy.server_src);
       } else {
