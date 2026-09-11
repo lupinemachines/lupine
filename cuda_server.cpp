@@ -1105,7 +1105,98 @@ int handle_lupineFunctionAttributeSnapshot(conn_t *conn) {
   return rpc_write_end(conn);
 }
 
-int handle_cuLibraryLoadData(conn_t *conn) {
+// Own the packed snapshot until the load response has been submitted. In
+// particular, do not reallocate the RPC copy buffer holding JIT output lengths.
+static std::vector<unsigned char>
+lupine_collect_library_load_metadata(CUlibrary library) {
+  std::vector<unsigned char> bytes;
+  auto append = [&](const auto &value) {
+    const auto *data = reinterpret_cast<const unsigned char *>(&value);
+    bytes.insert(bytes.end(), data, data + sizeof(value));
+  };
+  CUresult result = CUDA_ERROR_NOT_SUPPORTED;
+  CUdevice device = -1;
+  uint32_t count = 0;
+#if CUDA_VERSION >= 12040
+  CUdevice current_device = -1;
+  if (cuCtxGetDevice(&current_device) == CUDA_SUCCESS) {
+    device = current_device;
+  }
+  unsigned int kernel_count = 0;
+  result = cuLibraryGetKernelCount(&kernel_count, library);
+  std::vector<CUkernel> kernels;
+  if (result == CUDA_SUCCESS && kernel_count != 0) {
+    kernels.resize(kernel_count);
+    result = cuLibraryEnumerateKernels(kernels.data(), kernel_count, library);
+  }
+#endif
+  append(result);
+  append(device);
+  const size_t count_offset = bytes.size();
+  append(count);
+#if CUDA_VERSION >= 12040
+  if (result != CUDA_SUCCESS) {
+    return bytes;
+  }
+  auto append_attributes = [&](auto query, bool available) {
+    uint32_t attribute_count = available ? CU_FUNC_ATTRIBUTE_MAX : 0;
+    append(attribute_count);
+    for (uint32_t attribute = 0; attribute < attribute_count; ++attribute) {
+      int value = 0;
+      CUresult attribute_result =
+          query(&value, static_cast<CUfunction_attribute>(attribute));
+      append(attribute_result);
+      append(static_cast<int>(attribute));
+      append(value);
+    }
+  };
+  for (CUkernel kernel : kernels) {
+    const char *name = nullptr;
+    if (kernel == nullptr || cuKernelGetName(&name, kernel) != CUDA_SUCCESS ||
+        name == nullptr) {
+      continue;
+    }
+    CUfunction function = nullptr;
+    if (cuKernelGetFunction(&function, kernel) != CUDA_SUCCESS) {
+      function = nullptr;
+    }
+    std::vector<uint64_t> params;
+    for (size_t index = 0;; ++index) {
+      size_t offset = 0;
+      size_t size = 0;
+      if (cuKernelGetParamInfo(kernel, index, &offset, &size) != CUDA_SUCCESS) {
+        break;
+      }
+      params.push_back(offset);
+      params.push_back(size);
+    }
+    uint32_t name_length = static_cast<uint32_t>(std::strlen(name) + 1);
+    append(name_length);
+    bytes.insert(bytes.end(), name, name + name_length);
+    append(kernel);
+    append(function);
+    append(static_cast<uint32_t>(params.size() / 2));
+    for (uint64_t param : params) {
+      append(param);
+    }
+    append_attributes(
+        [function](int *value, CUfunction_attribute attribute) {
+          return cuFuncGetAttribute(value, attribute, function);
+        },
+        function != nullptr);
+    append_attributes(
+        [kernel, device](int *value, CUfunction_attribute attribute) {
+          return cuKernelGetAttribute(value, attribute, kernel, device);
+        },
+        device >= 0);
+    ++count;
+  }
+#endif
+  std::memcpy(bytes.data() + count_offset, &count, sizeof(count));
+  return bytes;
+}
+
+static int lupine_handle_library_load_data(conn_t *conn, bool with_metadata) {
   uint32_t kind = 0;
   size_t image_size = 0;
   int request_id;
@@ -1185,10 +1276,16 @@ int handle_cuLibraryLoadData(conn_t *conn) {
     lupine_note_device_stdout_image(image.data(), image.size());
   }
 
+  std::vector<unsigned char> metadata;
+  if (with_metadata && result == CUDA_SUCCESS) {
+    metadata = lupine_collect_library_load_metadata(library);
+  }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &library, sizeof(library)) < 0 ||
       lupine_write_jit_outputs(conn, &jit_state) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      rpc_write(conn, metadata.data(), metadata.size()) < 0 ||
+      rpc_write_end(conn) < 0) {
     std::free(jit_state.options);
     std::free(jit_state.option_values);
     std::free(jit_state.info_log);
@@ -1200,6 +1297,14 @@ int handle_cuLibraryLoadData(conn_t *conn) {
   std::free(jit_state.info_log);
   std::free(jit_state.error_log);
   return 0;
+}
+
+int handle_cuLibraryLoadData(conn_t *conn) {
+  return lupine_handle_library_load_data(conn, false);
+}
+
+int handle_lupineLibraryLoadDataWithMetadata(conn_t *conn) {
+  return lupine_handle_library_load_data(conn, true);
 }
 
 int handle_lupineLibrarySnapshot(conn_t *conn) {

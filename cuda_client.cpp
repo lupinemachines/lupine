@@ -4921,55 +4921,83 @@ struct lupine_wire_library_kernel_record {
   std::vector<uint64_t> params;
 };
 
-static void lupine_prefill_library_snapshot(CUlibrary library, conn_t *conn) {
-  if (library == nullptr) {
-    return;
-  }
+static void lupine_apply_library_snapshot(
+    CUlibrary library, conn_t *conn,
+    const std::vector<lupine_wire_library_kernel_record> &table);
 
+// Read both the standalone legacy snapshot and the metadata embedded in a load
+// response. Cache ownership is published only after the response is consumed.
+static int lupine_read_library_snapshot(
+    conn_t *conn, bool with_attributes,
+    std::vector<lupine_wire_library_kernel_record> *table) {
   CUresult result = CUDA_ERROR_UNKNOWN;
+  CUdevice device = -1;
   uint32_t table_count = 0;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, LUPINE_RPC_lupineLibrarySnapshot) < 0 ||
-      rpc_write(conn, &library, sizeof(library)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 ||
-      rpc_read(conn, &table_count, sizeof(table_count)) < 0) {
-    return;
+  if (rpc_read(conn, &result, sizeof(result)) < 0 ||
+      (with_attributes && rpc_read(conn, &device, sizeof(device)) < 0) ||
+      rpc_read(conn, &table_count, sizeof(table_count)) < 0 ||
+      table_count > 1024 * 1024) {
+    return -1;
   }
   if (result != CUDA_SUCCESS) {
-    (void)rpc_read_end(conn);
-    return;
+    return table_count == 0 ? 0 : -1;
   }
-
-  std::vector<lupine_wire_library_kernel_record> table;
-  table.reserve(table_count);
+  table->reserve(table_count);
   for (uint32_t i = 0; i < table_count; ++i) {
     lupine_wire_library_kernel_record record;
     uint32_t name_len = 0;
     if (rpc_read(conn, &name_len, sizeof(name_len)) < 0 || name_len == 0 ||
         name_len > 64 * 1024) {
-      return;
+      return -1;
     }
     record.name.resize(name_len);
     if (rpc_read(conn, record.name.data(), name_len) < 0 ||
+        record.name.back() != '\0' ||
         rpc_read(conn, &record.kernel, sizeof(record.kernel)) < 0 ||
         rpc_read(conn, &record.function, sizeof(record.function)) < 0 ||
-        rpc_read(conn, &record.param_count, sizeof(record.param_count)) < 0) {
-      return;
+        rpc_read(conn, &record.param_count, sizeof(record.param_count)) < 0 ||
+        record.param_count > 64 * 1024) {
+      return -1;
     }
     record.name.resize(name_len - 1);
     record.params.resize(static_cast<size_t>(record.param_count) * 2);
-    if (record.param_count != 0 &&
-        rpc_read(conn, record.params.data(),
+    if (rpc_read(conn, record.params.data(),
                  record.params.size() * sizeof(uint64_t)) < 0) {
-      return;
+      return -1;
     }
-    table.push_back(std::move(record));
+    if (with_attributes) {
+      lupine_route route = lupine_remote_route_for_conn(conn);
+      if (lupine_read_function_attributes(conn, route, record.function) < 0 ||
+          lupine_read_kernel_attributes(conn, route, record.kernel, device) <
+              0) {
+        return -1;
+      }
+    }
+    table->push_back(std::move(record));
   }
-  if (rpc_read_end(conn) < 0) {
+  return 0;
+}
+
+static void lupine_prefill_library_snapshot(CUlibrary library, conn_t *conn) {
+  if (library == nullptr) {
     return;
   }
 
+  std::vector<lupine_wire_library_kernel_record> table;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, LUPINE_RPC_lupineLibrarySnapshot) < 0 ||
+      rpc_write(conn, &library, sizeof(library)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      lupine_read_library_snapshot(conn, false, &table) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return;
+  }
+  lupine_apply_library_snapshot(library, conn, table);
+}
+
+static void lupine_apply_library_snapshot(
+    CUlibrary library, conn_t *conn,
+    const std::vector<lupine_wire_library_kernel_record> &table) {
   lupine_route remote_route = lupine_remote_route_for_conn(conn);
   CUcontext current_context = nullptr;
   (void)cuCtxGetCurrent(&current_context);
@@ -5118,8 +5146,12 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
   size_t image_size = image_bytes.size();
+  bool with_metadata = rpc_http2_peer_supports(
+      conn, LUPINE_SERVER_CAPABILITY_LIBRARY_LOAD_METADATA);
+  int load_opcode = with_metadata ? LUPINE_RPC_lupineLibraryLoadDataWithMetadata
+                                  : RPC_cuLibraryLoadData;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
+      rpc_write_start_request(conn, load_opcode) < 0 ||
       rpc_copy_alloc(conn, libraryOptionValues == nullptr
                                ? numLibraryOptions * sizeof(uintptr_t)
                                : 0) < 0 ||
@@ -5155,7 +5187,10 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
                               jitOptionsValues) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  std::vector<lupine_wire_library_kernel_record> table;
   if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      (with_metadata && return_value == CUDA_SUCCESS &&
+       lupine_read_library_snapshot(conn, true, &table) < 0) ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -5164,8 +5199,12 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
     lupine_record_library_image(*library, lupine_remote_route_for_conn(conn),
                                 kind, image_bytes.data(), image_bytes.size(),
                                 code);
-    lupine_prefill_library_snapshot(*library, conn);
-    lupine_prefill_library_attribute_snapshot(*library, conn);
+    if (with_metadata) {
+      lupine_apply_library_snapshot(*library, conn, table);
+    } else {
+      lupine_prefill_library_snapshot(*library, conn);
+      lupine_prefill_library_attribute_snapshot(*library, conn);
+    }
   }
   return return_value;
 }

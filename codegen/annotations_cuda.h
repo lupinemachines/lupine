@@ -3297,6 +3297,8 @@ void lupineFunctionAttributeSnapshot();
 /** @disabled */
 void lupineLibrarySnapshot();
 /** @disabled */
+void lupineLibraryLoadDataWithMetadata();
+/** @disabled */
 void lupineLibraryAttributeSnapshot();
 /** @disabled */
 void cuGraphConditionalHandleCreate();

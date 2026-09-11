@@ -225,11 +225,14 @@ int client_handler(lupine_socket_t connfd) {
 #else
       nullptr,
 #endif
+      0
 #ifdef LUPINE_MONITORING_ENABLED
-      LUPINE_SERVER_CAPABILITY_CLIENT_METADATA,
-#else
-      0,
+          | LUPINE_SERVER_CAPABILITY_CLIENT_METADATA
 #endif
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+          | LUPINE_SERVER_CAPABILITY_LIBRARY_LOAD_METADATA
+#endif
+      ,
   };
 
   // Identify the protocol before any RPC state exists: HTTP/2 preface means

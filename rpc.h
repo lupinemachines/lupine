@@ -282,6 +282,7 @@ struct rpc_http2_server_metadata {
   uint64_t capabilities = 0;
 };
 constexpr uint64_t LUPINE_SERVER_CAPABILITY_CLIENT_METADATA = UINT64_C(1);
+constexpr uint64_t LUPINE_SERVER_CAPABILITY_LIBRARY_LOAD_METADATA = UINT64_C(2);
 // Sends HEAD / and returns the backend-version response header, or nullptr
 // when the request fails or the server does not advertise a version.
 // The returned pointer remains valid until rpc_http2_destroy() or
