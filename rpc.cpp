@@ -21,10 +21,12 @@
 #define MAP_FIXED_NOREPLACE 0x100000
 #endif
 
-namespace {
-
-#if !defined(_WIN32) && !defined(__APPLE__)
 void *lupine_va_reserve_exact(uintptr_t base, size_t size) {
+#if defined(_WIN32) || defined(__APPLE__)
+  (void)base;
+  (void)size;
+  return nullptr;
+#else
   int flags = MAP_PRIVATE | MAP_ANONYMOUS;
 #ifdef MAP_NORESERVE
   flags |= MAP_NORESERVE;
@@ -40,10 +42,8 @@ void *lupine_va_reserve_exact(uintptr_t base, size_t size) {
     return nullptr;
   }
   return mapping;
-}
 #endif
-
-} // namespace
+}
 
 void lupine_va_release(conn_t *conn) {
   if (conn == nullptr || conn->va_size == 0) {

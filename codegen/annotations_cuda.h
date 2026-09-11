@@ -639,17 +639,12 @@ CUresult cuKernelGetName(const char **name, CUkernel hfunc);
  */
 CUresult cuMemGetInfo_v2(size_t *free, size_t *total);
 /**
- * @routingkey CURRENT_CONTEXT
- * @recordowner DEVICEPTR dptr
+ * @disabled client - manual client places the allocation in the route's device
+ * arena and materializes it without a round trip
  * @param dptr SEND_RECV
  * @param bytesize SEND_ONLY
  */
-CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
-  CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS && dptr != nullptr)
-    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
-  return return_value;
-}
+CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize);
 /**
  * @routingkey CURRENT_CONTEXT
  * @recordowner DEVICEPTR dptr
@@ -1273,16 +1268,11 @@ cuMemGetAllocationPropertiesFromHandle(CUmemAllocationProp *prop,
 CUresult cuMemRetainAllocationHandle(CUmemGenericAllocationHandle *handle,
                                      void *addr);
 /**
- * @routingkey DEVICEPTR dptr
+ * @disabled client - manual client releases device-arena pointers itself
  * @param dptr SEND_ONLY
  * @param hStream SEND_ONLY
  */
-CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream) {
-  CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS)
-    lupine_forget_deviceptr_owner(dptr);
-  return return_value;
-}
+CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream);
 /**
  * @routingkey STREAM hStream
  * @recordowner DEVICEPTR dptr
@@ -3333,4 +3323,10 @@ void cuStreamGetCaptureInfo_v3();
 void lupineManagedHostFlush();
 /** @disabled */
 void lupineDeviceSnapshot();
+/** @disabled */
+void lupineDeviceArenaReserve();
+/** @disabled */
+void lupineDeviceArenaMap();
+/** @disabled */
+void lupineDeviceArenaUnmap();
 #endif

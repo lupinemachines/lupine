@@ -1137,36 +1137,6 @@ CUresult cuMemGetInfo_v2(size_t *free, size_t *total) {
   return return_value;
 }
 
-CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
-  lupine_route route = lupine_route_for_current_context();
-  CUresult return_value;
-  if (lupine_route_is_local(route)) {
-    return_value = lupine_call_real_cuda_fn("cuMemAlloc_v2", dptr, bytesize);
-    if (return_value == CUDA_SUCCESS && dptr != nullptr) {
-      lupine_note_deviceptr_owner_route(*dptr, route);
-    }
-    if (return_value == CUDA_SUCCESS && dptr != nullptr)
-      lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemAlloc_v2) < 0 ||
-      rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &bytesize, sizeof(size_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS && dptr != nullptr) {
-    lupine_note_deviceptr_owner_route(*dptr, route);
-  }
-  if (return_value == CUDA_SUCCESS && dptr != nullptr)
-    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
-  return return_value;
-}
-
 CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
                             size_t WidthInBytes, size_t Height,
                             unsigned int ElementSizeBytes) {
@@ -2359,29 +2329,6 @@ cuMemGetAllocationPropertiesFromHandle(CUmemAllocationProp *prop,
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream) {
-  lupine_route route = lupine_route_for_deviceptr(dptr);
-  CUresult return_value;
-  if (lupine_route_is_local(route)) {
-    return_value = lupine_call_real_cuda_fn("cuMemFreeAsync", dptr, hStream);
-    if (return_value == CUDA_SUCCESS)
-      lupine_forget_deviceptr_owner(dptr);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemFreeAsync) < 0 ||
-      rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS)
-    lupine_forget_deviceptr_owner(dptr);
   return return_value;
 }
 
@@ -7058,13 +7005,6 @@ extern "C" CUresult cuModuleGetGlobal(CUdeviceptr *dptr, size_t *bytes,
   return cuModuleGetGlobal_v2(dptr, bytes, hmod, name);
 }
 
-#ifdef cuMemAlloc
-#undef cuMemAlloc
-#endif
-extern "C" CUresult cuMemAlloc(CUdeviceptr *dptr, size_t bytesize) {
-  return cuMemAlloc_v2(dptr, bytesize);
-}
-
 #ifdef cuMemAllocPitch
 #undef cuMemAllocPitch
 #endif
@@ -7365,13 +7305,6 @@ extern "C" CUresult cuMemMapArrayAsync_ptsz(CUarrayMapInfo *mapInfoList,
                                             unsigned int count,
                                             CUstream hStream) {
   return cuMemMapArrayAsync(mapInfoList, count, hStream);
-}
-
-#ifdef cuMemFreeAsync_ptsz
-#undef cuMemFreeAsync_ptsz
-#endif
-extern "C" CUresult cuMemFreeAsync_ptsz(CUdeviceptr dptr, CUstream hStream) {
-  return cuMemFreeAsync(dptr, hStream);
 }
 
 #ifdef cuMemAllocAsync_ptsz
@@ -7897,7 +7830,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuGraphExecUpdate", (void *)cuGraphExecUpdate},
     {"cuCtxDestroy", (void *)cuCtxDestroy_v2},
     {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},
-    {"cuMemAlloc", (void *)cuMemAlloc_v2},
     {"cuMemAllocPitch", (void *)cuMemAllocPitch_v2},
     {"cuMemcpyDtoD", (void *)cuMemcpyDtoD_v2},
     {"cuMemcpyDtoDAsync", (void *)cuMemcpyDtoDAsync_v2},
@@ -7934,7 +7866,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamGetAttribute_ptsz", (void *)cuStreamGetAttribute},
     {"cuStreamSetAttribute_ptsz", (void *)cuStreamSetAttribute},
     {"cuMemMapArrayAsync_ptsz", (void *)cuMemMapArrayAsync},
-    {"cuMemFreeAsync_ptsz", (void *)cuMemFreeAsync},
     {"cuMemAllocAsync_ptsz", (void *)cuMemAllocAsync},
     {"cuMemAllocFromPoolAsync_ptsz", (void *)cuMemAllocFromPoolAsync},
 #if CUDA_VERSION >= 12030

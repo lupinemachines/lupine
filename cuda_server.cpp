@@ -4294,6 +4294,197 @@ void lupine_server_cleanup_identity_allocations(conn_t *conn) {
   }
 }
 
+// Device arena: cuMemAlloc on a remote route places the allocation inside a
+// VA range this process reserved once, then maps it here without a response.
+// A map that fails cannot reach its caller, so the first failure is held and
+// returned, once, by the next synchronizing RPC on this connection.
+namespace {
+
+struct lupine_device_arena_state {
+  std::mutex mutex;
+  CUdeviceptr base = 0;
+  size_t size = 0;
+  size_t granularity = 0;
+};
+
+lupine_device_arena_state lupine_device_arena;
+std::atomic<int> lupine_device_arena_deferred{CUDA_SUCCESS};
+
+CUmemAllocationProp lupine_device_arena_prop(CUdevice device) {
+  CUmemAllocationProp prop = {};
+  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  prop.location.id = device;
+  return prop;
+}
+
+CUresult lupine_device_arena_reserve(CUdeviceptr hint, CUdeviceptr *base,
+                                     size_t *size, size_t *granularity,
+                                     size_t *free_bytes) {
+  CUdevice device = 0;
+  size_t total = 0;
+  CUresult result = cuCtxGetDevice(&device);
+  if (result == CUDA_SUCCESS) {
+    result = cuMemGetInfo_v2(free_bytes, &total);
+  }
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  std::lock_guard<std::mutex> lock(lupine_device_arena.mutex);
+  if (lupine_device_arena.size == 0) {
+    CUmemAllocationProp prop = lupine_device_arena_prop(device);
+    size_t granule = 0;
+    result = cuMemGetAllocationGranularity(&granule, &prop,
+                                           CU_MEM_ALLOC_GRANULARITY_MINIMUM);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+    // Reserve VA only. The client never reuses addresses, so give it the full
+    // slot independently of physical memory; exhaustion falls back to cuMemAlloc.
+    size_t span = LUPINE_DEVICE_ARENA_SLOT;
+    CUdeviceptr reserved = 0;
+    result = cuMemAddressReserve(&reserved, span, granule, hint, 0);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+    // The client only reserves the slot it proposed; anywhere else could
+    // alias its host memory.
+    if (reserved != hint) {
+      cuMemAddressFree(reserved, span);
+      return CUDA_ERROR_NOT_SUPPORTED;
+    }
+    lupine_device_arena.base = reserved;
+    lupine_device_arena.size = span;
+    lupine_device_arena.granularity = granule;
+  }
+  *base = lupine_device_arena.base;
+  *size = lupine_device_arena.size;
+  *granularity = lupine_device_arena.granularity;
+  return CUDA_SUCCESS;
+}
+
+CUresult lupine_device_arena_map(CUdeviceptr address, size_t size) {
+  CUdevice device = 0;
+  CUresult result = cuCtxGetDevice(&device);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  CUmemAllocationProp prop = lupine_device_arena_prop(device);
+  CUmemGenericAllocationHandle handle = 0;
+  result = cuMemCreate(&handle, size, &prop, 0);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  result = cuMemMap(address, size, 0, handle, 0);
+  // The mapping keeps the memory alive from here on, so cuMemUnmap alone
+  // frees it.
+  cuMemRelease(handle);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  CUmemAccessDesc access = {};
+  access.location = prop.location;
+  access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+  result = cuMemSetAccess(address, size, &access, 1);
+  if (result != CUDA_SUCCESS) {
+    cuMemUnmap(address, size);
+    return result;
+  }
+  // cuMemAlloc memory becomes visible to a peer when the peer enables access;
+  // a mapping is only ever visible to the devices granted here.
+  int count = 0;
+  if (cuDeviceGetCount(&count) == CUDA_SUCCESS) {
+    for (int peer = 0; peer < count; ++peer) {
+      int can_access = 0;
+      if (peer != device &&
+          cuDeviceCanAccessPeer(&can_access, peer, device) == CUDA_SUCCESS &&
+          can_access != 0) {
+        access.location.id = peer;
+        (void)cuMemSetAccess(address, size, &access, 1);
+      }
+    }
+  }
+  return CUDA_SUCCESS;
+}
+
+} // namespace
+
+CUresult lupine_server_take_deferred_result(CUresult result) {
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  return static_cast<CUresult>(
+      lupine_device_arena_deferred.exchange(CUDA_SUCCESS));
+}
+
+int handle_lupineDeviceArenaReserve(conn_t *conn) {
+  uint64_t hint = 0;
+  if (rpc_read(conn, &hint, sizeof(hint)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUdeviceptr base = 0;
+  size_t size = 0;
+  size_t granularity = 0;
+  size_t free_bytes = 0;
+  CUresult result = lupine_device_arena_reserve(hint, &base, &size,
+                                                &granularity, &free_bytes);
+  uint64_t fields[4] = {base, size, granularity, free_bytes};
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, fields, sizeof(fields)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_lupineDeviceArenaMap(conn_t *conn) {
+  uint64_t async_sequence = 0;
+  uint64_t address = 0;
+  uint64_t size = 0;
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &address, sizeof(address)) < 0 ||
+      rpc_read(conn, &size, sizeof(size)) < 0 || rpc_read_end(conn) < 0 ||
+      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+    return -1;
+  }
+  CUresult result = lupine_device_arena_map(address, size);
+  rpc_async_sequence_end(conn);
+  if (result != CUDA_SUCCESS) {
+    LUPINE_LOG_ERROR("Mapping " << size << " bytes of device arena at 0x"
+                                << std::hex << address << std::dec
+                                << " failed: " << result);
+    int expected = CUDA_SUCCESS;
+    lupine_device_arena_deferred.compare_exchange_strong(expected, result);
+  }
+  return 0;
+}
+
+int handle_lupineDeviceArenaUnmap(conn_t *conn) {
+  uint64_t async_sequence = 0;
+  uint64_t address = 0;
+  uint64_t size = 0;
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &address, sizeof(address)) < 0 ||
+      rpc_read(conn, &size, sizeof(size)) < 0 || rpc_read_end(conn) < 0 ||
+      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+    return -1;
+  }
+  // cuMemFree waits for the context's outstanding work; cuMemUnmap does not.
+  cuCtxSynchronize();
+  CUresult result = cuMemUnmap(address, size);
+  rpc_async_sequence_end(conn);
+  if (result != CUDA_SUCCESS) {
+    LUPINE_LOG_ERROR("Unmapping " << size << " bytes of device arena at 0x"
+                                  << std::hex << address << std::dec
+                                  << " failed: " << result);
+  }
+  return 0;
+}
+
 int handle_cuCtxSynchronize(conn_t *conn) {
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
@@ -4301,7 +4492,7 @@ int handle_cuCtxSynchronize(conn_t *conn) {
   }
   lupine_captured_stdout capture;
   lupine_start_stdout_capture(&capture);
-  CUresult result = cuCtxSynchronize();
+  CUresult result = lupine_server_take_deferred_result(cuCtxSynchronize());
   lupine_finish_stdout_capture(&capture);
   auto pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
   bool failed = rpc_write_start_response(conn, request_id) < 0 ||
@@ -4326,7 +4517,8 @@ int handle_cuCtxSynchronize_v2(conn_t *conn) {
   }
   lupine_captured_stdout capture;
   lupine_start_stdout_capture(&capture);
-  CUresult result = cuCtxSynchronize_v2(ctx);
+  CUresult result =
+      lupine_server_take_deferred_result(cuCtxSynchronize_v2(ctx));
   lupine_finish_stdout_capture(&capture);
   auto pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
   bool failed = rpc_write_start_response(conn, request_id) < 0 ||
@@ -4351,7 +4543,8 @@ int handle_cuStreamSynchronize(conn_t *conn) {
   }
   lupine_captured_stdout capture;
   lupine_start_stdout_capture(&capture);
-  CUresult result = cuStreamSynchronize(stream);
+  CUresult result =
+      lupine_server_take_deferred_result(cuStreamSynchronize(stream));
   lupine_finish_stdout_capture(&capture);
   uint32_t copy_count = 0;
   std::vector<lupine_graph_host_copy> graph_copies =
@@ -4412,7 +4605,8 @@ int handle_cuEventSynchronize(conn_t *conn) {
   }
   lupine_captured_stdout capture;
   lupine_start_stdout_capture(&capture);
-  CUresult result = cuEventSynchronize(event);
+  CUresult result =
+      lupine_server_take_deferred_result(cuEventSynchronize(event));
   lupine_finish_stdout_capture(&capture);
   std::vector<lupine_pending_dtoh_item> pending;
   if (result == CUDA_SUCCESS) {

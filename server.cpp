@@ -214,6 +214,16 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
 
 int client_handler(lupine_socket_t connfd) {
   const rpc_handler_registry &handlers = lupine_rpc_handlers();
+  // Device arena state is per process, which is per connection only where
+  // the server forks.
+  constexpr uint64_t capabilities =
+#ifdef LUPINE_MONITORING_ENABLED
+      LUPINE_SERVER_CAPABILITY_CLIENT_METADATA |
+#endif
+#if defined(LUPINE_BUILD_CUDA_BACKEND) && defined(__linux__)
+      LUPINE_SERVER_CAPABILITY_DEVICE_ARENA |
+#endif
+      0;
   const rpc_http2_server_metadata metadata = {
 #ifdef LUPINE_BACKEND_VERSION
       LUPINE_BACKEND_VERSION,
@@ -225,11 +235,7 @@ int client_handler(lupine_socket_t connfd) {
 #else
       nullptr,
 #endif
-#ifdef LUPINE_MONITORING_ENABLED
-      LUPINE_SERVER_CAPABILITY_CLIENT_METADATA,
-#else
-      0,
-#endif
+      capabilities,
   };
 
   // Identify the protocol before any RPC state exists: HTTP/2 preface means
