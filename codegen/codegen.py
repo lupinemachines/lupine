@@ -246,6 +246,9 @@ REGISTRY_CPP_TEMPLATE = Template(
 #include <cublasLt.h>
 #include <cublas_v2.h>
 #endif
+#ifdef LUPINE_BUILD_CUFFT_BACKEND
+#include <cufftXt.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -257,6 +260,8 @@ $cudart_registry_entries
 $cublas_registry_entries
 #define LUPINE_CUBLASLT_RPC_HANDLERS(HANDLER) \
 $cublaslt_registry_entries
+#define LUPINE_CUFFT_RPC_HANDLERS(HANDLER) \
+$cufft_registry_entries
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
 $nvml_registry_entries
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
@@ -278,6 +283,10 @@ LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $cublas_guarded_declarations
 LUPINE_CUBLASLT_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $cublaslt_guarded_declarations
+#endif
+#ifdef LUPINE_BUILD_CUFFT_BACKEND
+LUPINE_CUFFT_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$cufft_guarded_declarations
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -310,6 +319,10 @@ $cublas_guarded_handlers
       LUPINE_CUBLASLT_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $cublaslt_guarded_handlers
 #endif
+#ifdef LUPINE_BUILD_CUFFT_BACKEND
+      LUPINE_CUFFT_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$cufft_guarded_handlers
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvml_guarded_handlers
@@ -328,6 +341,7 @@ $hip_guarded_handlers
 #undef LUPINE_CUDART_RPC_HANDLERS
 #undef LUPINE_CUBLAS_RPC_HANDLERS
 #undef LUPINE_CUBLASLT_RPC_HANDLERS
+#undef LUPINE_CUFFT_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
 '''
@@ -352,6 +366,7 @@ SERVER_BACKENDS = {
     "CUBLAS": "rpc_backend::cublas",
     # cuBLASLt ships with cuBLAS and runs in the same server child.
     "CUBLASLT": "rpc_backend::cublas",
+    "CUFFT": "rpc_backend::cufft",
     "NVML": "rpc_backend::nvml",
     "HIP": "rpc_backend::hip",
 }
@@ -465,11 +480,23 @@ CUBLASLT = Backend(
     not_supported="CUBLAS_STATUS_NOT_SUPPORTED",
 )
 
+# cuFFT plans are integer handles the server's library hands out; the client
+# routes each one back to the connection that created it.
+CUFFT = Backend(
+    result="cufftResult",
+    invalid_argument="CUFFT_INVALID_VALUE",
+    device_routing_kind="DEVICE",
+    symbol_lookup="cufft_symbol",
+    guard_null_conn=True,
+    not_supported="CUFFT_NOT_SUPPORTED",
+)
+
 ANNOTATION_FILES = {
     "cuda": "annotations_cuda.h",
     "cudart": "annotations_cudart.h",
     "cublas": "annotations_cublas.h",
     "cublaslt": "annotations_cublaslt.h",
+    "cufft": "annotations_cufft.h",
     "nvml": "annotations_nvml.h",
     "hip": "annotations_hip.h",
 }
@@ -525,7 +552,7 @@ def infer_routing_key(
             return "DEVICEPTR", param
         # A library handle is created on one server and routes every later
         # call there.
-        if type_name in ("cublasHandle_t", "cublasLtHandle_t"):
+        if type_name in ("cublasHandle_t", "cublasLtHandle_t", "cufftHandle"):
             return "HANDLE", param
     return None, None
 
@@ -759,11 +786,28 @@ def parse_annotation(
                     length_param = next(
                         p for p in params if p.name == length_arg.split(":")[1]
                     )
-                    if nullable:
+                    if nullable and send:
+                        # SEND_ONLY NULLABLE LENGTH: an optional in-array the
+                        # caller may leave null (cufftPlanMany's embeds).
+                        if recv:
+                            raise NotImplementedError(
+                                "NULLABLE LENGTH is SEND_ONLY or RECV_ONLY"
+                            )
+                        operations.append(
+                            ArrayOperation(
+                                send=True,
+                                recv=False,
+                                parameter=param,
+                                ptr=param.type,
+                                length=length_param,
+                                nullable=True,
+                            )
+                        )
+                    elif nullable:
                         # NULLABLE LENGTH: an optional out-array sized by an
                         # in/out count param (the cuGraphGetNodes query
                         # pattern); linked to its count in the post-pass below.
-                        if send or not recv:
+                        if not recv:
                             raise NotImplementedError(
                                 "NULLABLE LENGTH requires a RECV_ONLY out-array"
                             )
@@ -1655,6 +1699,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 cublaslt_registry_entries=" \\\n".join(
                     registry_entries["CUBLASLT"]
                 ),
+                cufft_registry_entries=" \\\n".join(
+                    registry_entries["CUFFT"]
+                ),
                 nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
                 hip_registry_entries=" \\\n".join(registry_entries["HIP"]),
                 cuda_guarded_declarations="\n".join(
@@ -1669,6 +1716,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 cublaslt_guarded_declarations="\n".join(
                     guarded_declarations["CUBLASLT"]
                 ),
+                cufft_guarded_declarations="\n".join(
+                    guarded_declarations["CUFFT"]
+                ),
                 nvml_guarded_declarations="\n".join(
                     guarded_declarations["NVML"]
                 ),
@@ -1681,6 +1731,7 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 cublaslt_guarded_handlers="\n".join(
                     guarded_handlers["CUBLASLT"]
                 ),
+                cufft_guarded_handlers="\n".join(guarded_handlers["CUFFT"]),
                 nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
             )
@@ -1696,8 +1747,9 @@ def main():
     options = ParserOptions(
         preprocessor=make_gcc_preprocessor(
             # cublas_api.h refuses direct inclusion until its umbrella
-            # header has defined this marker.
-            defines=["__HIP_PLATFORM_AMD__", "CUBLASAPI="],
+            # header has defined this marker; cufft.h's is a visibility
+            # attribute the parser does not read.
+            defines=["__HIP_PLATFORM_AMD__", "CUBLASAPI=", "CUFFTAPI="],
             include_paths=[cuda_include_dir, hip_include_dir],
         ),
     )
@@ -1874,6 +1926,10 @@ def main():
         annotations_by_target["cublaslt"],
         client_call_templates=client_call_templates_by_target["cublaslt"],
     )
+    cufft_functions_with_annotations = collect_backend_functions(
+        annotations_by_target["cufft"],
+        client_call_templates=client_call_templates_by_target["cufft"],
+    )
 
     annotated_names = sorted(
         {function.name.format() for function in cuda_annotations.namespace.functions}
@@ -1889,7 +1945,9 @@ def main():
         annotated_names,
         hip_functions_with_annotations,
         cudart_functions_with_annotations,
-        cublas_functions_with_annotations + cublaslt_functions_with_annotations,
+        cublas_functions_with_annotations
+        + cublaslt_functions_with_annotations
+        + cufft_functions_with_annotations,
     )
 
     with open("gen_nvml_client.inc", "w") as f:
@@ -1993,6 +2051,7 @@ def main():
     for backend, target, functions in (
         (CUBLAS, "cublas", cublas_functions_with_annotations),
         (CUBLASLT, "cublaslt", cublaslt_functions_with_annotations),
+        (CUFFT, "cufft", cufft_functions_with_annotations),
     ):
         with open(f"gen_{target}_client.inc", "w") as f:
             f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
@@ -2075,6 +2134,7 @@ def main():
     for target, functions in (
         ("CUBLAS", cublas_functions_with_annotations),
         ("CUBLASLT", cublaslt_functions_with_annotations),
+        ("CUFFT", cufft_functions_with_annotations),
     ):
         generated_bindings.extend(
             ServerBinding(
@@ -2153,6 +2213,9 @@ def main():
             "gen_cublaslt_client.inc",
             "gen_cublaslt_server.inc",
             "gen_cublaslt_server.h",
+            "gen_cufft_client.inc",
+            "gen_cufft_server.inc",
+            "gen_cufft_server.h",
         ],
         check=True,
     )
@@ -2186,12 +2249,18 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_cublaslt_server.inc",
             "gen_cublaslt_server.h",
         ],
+        "cufft": [
+            "gen_cufft_client.inc",
+            "gen_cufft_server.inc",
+            "gen_cufft_server.h",
+        ],
     }
     forbidden = {
         "cuda": ["nvml", "hip"],
         "cudart": ["nvml", "hip"],
         "cublas": ["nvml", "hip"],
         "cublaslt": ["nvml", "hip"],
+        "cufft": ["nvml", "hip"],
         "nvml": ["cuda_compat", "<cuda.h>", "handle_cu", "hip"],
         "hip": ["cuda", "nvml"],
     }
@@ -2212,7 +2281,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--verify-backend",
-        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "nvml", "hip"),
+        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "nvml", "hip"),
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()

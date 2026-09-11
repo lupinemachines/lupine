@@ -1,0 +1,10 @@
+/* The version node is literally NVIDIA's SONAME: consumers reference library
+   symbols as name@libcufft.so.<major>. The 11.3 to 11.4 headers bind the JIT
+   callback to a __cufft-prefixed symbol. */
+libcufft.so.@LUPINE_CUFFT_SOVERSION@ {
+  global:
+    cufft*;
+    __cufft*;
+  local:
+    *;
+};
