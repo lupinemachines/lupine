@@ -2178,8 +2178,6 @@ extern "C" CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev) {
   return return_value;
 }
 
-static void lupine_stream_pool_discard(int route_id, CUcontext ctx);
-
 extern "C" CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
   CUdevice remote_dev = dev;
   lupine_route route = lupine_route_for_device(&remote_dev);
@@ -2187,7 +2185,6 @@ extern "C" CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
     return CUDA_ERROR_INVALID_DEVICE;
   }
   lupine_invalidate_primary_ctx_state(dev);
-  lupine_stream_pool_discard(lupine_route_identity(route), nullptr);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value =
@@ -2285,7 +2282,6 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
     return CUDA_ERROR_INVALID_DEVICE;
   }
   lupine_invalidate_primary_ctx_state(dev);
-  lupine_stream_pool_discard(lupine_route_identity(route), nullptr);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value =
@@ -3463,95 +3459,6 @@ extern "C" CUresult cuProfilerStop(void) {
                                       : CUDA_ERROR_NOT_INITIALIZED;
 }
 
-// Streams are created a batch at a time and handed out one per
-// cuStreamCreateWithPriority. A stream belongs to the context current when it
-// was created, so the pool is keyed by (route, context, flags, priority) and
-// emptied when that context goes away; pooled streams never handed out are
-// freed with the server context.
-static constexpr uint32_t kLupineStreamCreateBatch = 32;
-
-static std::mutex &lupine_stream_pool_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
-}
-
-static std::map<std::tuple<int, CUcontext, unsigned int, int>,
-                std::vector<CUstream>> &
-lupine_stream_pool() {
-  static auto *pool =
-      new std::map<std::tuple<int, CUcontext, unsigned int, int>,
-                   std::vector<CUstream>>();
-  return *pool;
-}
-
-static void lupine_stream_pool_discard(int route_id, CUcontext ctx) {
-  std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
-  auto &pool = lupine_stream_pool();
-  for (auto it = pool.begin(); it != pool.end();) {
-    bool route_matches = route_id < 0 || std::get<0>(it->first) == route_id;
-    bool ctx_matches = ctx == nullptr || std::get<1>(it->first) == ctx;
-    it = route_matches && ctx_matches ? pool.erase(it) : std::next(it);
-  }
-}
-
-extern "C" CUresult cuStreamCreateWithPriority(CUstream *phStream,
-                                               unsigned int flags,
-                                               int priority) {
-  lupine_route route = lupine_route_for_current_context();
-  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (lupine_route_is_local(route)) {
-    return_value = lupine_call_real_cuda_fn("cuStreamCreateWithPriority",
-                                            phStream, flags, priority);
-    if (return_value == CUDA_SUCCESS && phStream != nullptr) {
-      lupine_note_stream_owner_route(*phStream, route);
-    }
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUcontext ctx = lupine_current_context_hint();
-  auto key =
-      std::make_tuple(lupine_route_identity(route), ctx, flags, priority);
-  if (ctx != nullptr) {
-    std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
-    auto it = lupine_stream_pool().find(key);
-    if (it != lupine_stream_pool().end() && !it->second.empty()) {
-      *phStream = it->second.back();
-      it->second.pop_back();
-      lupine_note_stream_owner_route(*phStream, route);
-      return CUDA_SUCCESS;
-    }
-  }
-
-  uint32_t count = ctx != nullptr ? kLupineStreamCreateBatch : 1;
-  uint32_t created = 0;
-  CUstream streams[kLupineStreamCreateBatch];
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, LUPINE_RPC_lupineStreamCreateBatch) < 0 ||
-      rpc_write(conn, &count, sizeof(count)) < 0 ||
-      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
-      rpc_write(conn, &priority, sizeof(priority)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &created, sizeof(created)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      created > count ||
-      (created != 0 &&
-       rpc_read(conn, streams, created * sizeof(*streams)) < 0) ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (created == 0) {
-    return return_value;
-  }
-  *phStream = streams[0];
-  lupine_note_stream_owner_route(*phStream, route);
-  if (created > 1) {
-    std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
-    auto &pooled = lupine_stream_pool()[key];
-    pooled.insert(pooled.end(), streams + 1, streams + created);
-  }
-  return CUDA_SUCCESS;
-}
-
 CUresult cuStreamDestroy_v2(CUstream hStream);
 extern "C" CUresult cuEventDestroy_v2(CUevent hEvent) {
   std::unique_lock<std::shared_mutex> event_lifecycle_lock(
@@ -3715,7 +3622,6 @@ extern "C" void lupine_forget_destroyed_context(CUcontext ctx) {
     return;
   }
   lupine_forget_context_owner(ctx);
-  lupine_stream_pool_discard(-1, ctx);
   if (lupine_current_context == ctx) {
     lupine_current_context = nullptr;
   }

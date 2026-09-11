@@ -1487,7 +1487,6 @@ CUresult cuPointerGetAttributes(unsigned int numAttributes,
  */
 CUresult cuStreamCreate(CUstream *phStream, unsigned int Flags);
 /**
- * @disabled client - manual client hands out streams batch-created per context
  * @routingkey CURRENT_CONTEXT
  * @recordowner STREAM phStream
  * @param phStream SEND_RECV
@@ -3324,8 +3323,6 @@ void cuGraphConditionalHandleCreate();
 void cuGraphAddNode_v2();
 /** @disabled */
 void lupineEventQueryBatch();
-/** @disabled */
-void lupineStreamCreateBatch();
 /** @disabled */
 void cuStreamBeginCaptureToGraph();
 /** @disabled handle_cuStreamUpdateCaptureDependencies */
