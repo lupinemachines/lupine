@@ -6954,6 +6954,19 @@ static bool lupine_is_writable_user_pointer(const void *ptr, size_t size) {
 #endif
 }
 
+// Include admitted capture starts, not just completed BeginCapture calls: a
+// different thread may query after the server starts capture but before the
+// initiating thread receives its reply.
+std::atomic<int> lupine_active_stream_captures{0};
+
+static bool lupine_stream_handle_is_known(CUstream hStream) {
+  if (hStream == nullptr || hStream == CU_STREAM_LEGACY ||
+      hStream == CU_STREAM_PER_THREAD) {
+    return true;
+  }
+  return lupine_route_for_known_stream(hStream).kind != LUPINE_ROUTE_INVALID;
+}
+
 static CUresult lupine_cuStreamGetCaptureInfo(
     CUstream stream, CUstreamCaptureStatus *captureStatus_out,
     cuuint64_t *id_out, CUgraph *graph_out,
@@ -6993,6 +7006,17 @@ static CUresult lupine_cuStreamGetCaptureInfo(
     }
   }
 #endif
+
+  // Like cuStreamIsCapturing, this query needs no server state when no capture
+  // is outstanding. Optional outputs are only defined during active capture.
+  // Keep unknown streams and uninitialized/detached contexts on the RPC path.
+  if (captureStatus_out != nullptr && lupine_cuda_is_initialized() &&
+      lupine_current_context != nullptr &&
+      lupine_active_stream_captures.load() == 0 &&
+      lupine_stream_handle_is_known(stream)) {
+    *captureStatus_out = CU_STREAM_CAPTURE_STATUS_NONE;
+    return CUDA_SUCCESS;
+  }
 
   CUstreamCaptureStatus status = CU_STREAM_CAPTURE_STATUS_NONE;
   cuuint64_t id = 0;
@@ -7080,19 +7104,15 @@ static CUresult lupine_cuStreamGetCaptureInfo(
   return return_value;
 }
 
-// Stream captures started by this client and not yet terminated. A stream can
-// only be capturing if we started the capture, so cuStreamIsCapturing can
-// answer NONE locally while this is zero.
-std::atomic<int> lupine_active_stream_captures{0};
-
 extern "C" void lupine_stream_capture_begin() {
   lupine_checkpoint::capture_begin();
+  lupine_active_stream_captures.fetch_add(1);
 }
 
 extern "C" void lupine_stream_capture_begin_complete(bool started) {
   lupine_checkpoint::capture_begin_complete(started);
-  if (started) {
-    lupine_active_stream_captures.fetch_add(1);
+  if (!started) {
+    lupine_active_stream_captures.fetch_sub(1);
   }
 }
 
@@ -7107,14 +7127,6 @@ extern "C" CUresult lupine_complete_stream_end_capture(CUresult result) {
     lupine_active_stream_captures.fetch_sub(1);
   }
   return result;
-}
-
-static bool lupine_stream_handle_is_known(CUstream hStream) {
-  if (hStream == nullptr || hStream == CU_STREAM_LEGACY ||
-      hStream == CU_STREAM_PER_THREAD) {
-    return true;
-  }
-  return lupine_route_for_known_stream(hStream).kind != LUPINE_ROUTE_INVALID;
 }
 
 extern "C" CUresult cuStreamIsCapturing(CUstream hStream,
