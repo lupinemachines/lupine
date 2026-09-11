@@ -3319,10 +3319,6 @@ void lupineFunctionParamLayoutSnapshot();
 /** @disabled */
 void lupineFunctionAttributeSnapshot();
 /** @disabled */
-void lupineLibrarySnapshot();
-/** @disabled */
-void lupineLibraryAttributeSnapshot();
-/** @disabled */
 void cuGraphConditionalHandleCreate();
 /** @disabled handle_cuGraphAddNode */
 void cuGraphAddNode_v2();
