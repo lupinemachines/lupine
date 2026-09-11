@@ -1055,9 +1055,10 @@ ERROR_0:
 
 int handle_cuModuleGetLoadingMode(conn_t *conn) {
   CUmoduleLoadingMode mode{};
+  mode = {};
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &mode, sizeof(CUmoduleLoadingMode)) < 0 || false)
+  if (false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -3743,22 +3744,23 @@ ERROR_0:
 
 int handle_cuThreadExchangeStreamCaptureMode(conn_t *conn) {
   CUstreamCaptureMode mode{};
+  uint64_t async_sequence = 0;
   int request_id;
-  CUresult return_value;
-  if (rpc_read(conn, &mode, sizeof(CUstreamCaptureMode)) < 0 || false)
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &mode, sizeof(CUstreamCaptureMode)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuThreadExchangeStreamCaptureMode(&mode);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &mode, sizeof(CUstreamCaptureMode)) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
+  if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
+
+  cuThreadExchangeStreamCaptureMode(&mode);
+
+  rpc_async_sequence_end(conn);
+
   return 0;
 ERROR_0:
   return -1;

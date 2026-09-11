@@ -820,7 +820,17 @@ static bool lupine_cuda_is_initialized() {
          lupine_cuda_initialized.load(std::memory_order_acquire);
 }
 
+static libcuckoo::cuckoohash_map<conn_t *, bool> &lupine_initialized_conns() {
+  static auto *conns = new libcuckoo::cuckoohash_map<conn_t *, bool>();
+  return *conns;
+}
+
+// Every library calls cuInit; the server stays initialized, so one success
+// per connection answers the rest. The driver still rejects non-zero flags.
 static CUresult lupine_remote_cuInit(conn_t *conn, unsigned int flags) {
+  if (flags == 0 && lupine_initialized_conns().contains(conn)) {
+    return CUDA_SUCCESS;
+  }
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuInit) < 0 ||
@@ -829,7 +839,73 @@ static CUresult lupine_remote_cuInit(conn_t *conn, unsigned int flags) {
       rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  if (result == CUDA_SUCCESS) {
+    lupine_initialized_conns().insert(conn, true);
+  }
   return result;
+}
+
+// The driver version and module loading mode are fixed for the life of the
+// server process, so one reply per connection answers every library's query.
+static libcuckoo::cuckoohash_map<conn_t *, int> &lupine_driver_version_cache() {
+  static auto *cache = new libcuckoo::cuckoohash_map<conn_t *, int>();
+  return *cache;
+}
+
+static libcuckoo::cuckoohash_map<conn_t *, CUmoduleLoadingMode> &
+lupine_loading_mode_cache() {
+  static auto *cache =
+      new libcuckoo::cuckoohash_map<conn_t *, CUmoduleLoadingMode>();
+  return *cache;
+}
+
+extern "C" CUresult cuDriverGetVersion(int *driverVersion) {
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn("cuDriverGetVersion", driverVersion);
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (driverVersion != nullptr &&
+      lupine_driver_version_cache().find(conn, *driverVersion)) {
+    return CUDA_SUCCESS;
+  }
+  CUresult return_value;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuDriverGetVersion) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, driverVersion, sizeof(int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS && driverVersion != nullptr) {
+    lupine_driver_version_cache().insert_or_assign(conn, *driverVersion);
+  }
+  return return_value;
+}
+
+extern "C" CUresult cuModuleGetLoadingMode(CUmoduleLoadingMode *mode) {
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn("cuModuleGetLoadingMode", mode);
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (mode != nullptr && lupine_loading_mode_cache().find(conn, *mode)) {
+    return CUDA_SUCCESS;
+  }
+  CUresult return_value;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuModuleGetLoadingMode) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, mode, sizeof(CUmoduleLoadingMode)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS && mode != nullptr) {
+    lupine_loading_mode_cache().insert_or_assign(conn, *mode);
+  }
+  return return_value;
 }
 
 extern "C" CUresult cuInit(unsigned int flags) {
@@ -2146,55 +2222,32 @@ extern "C" CUresult cuDeviceTotalMem(size_t *bytes, CUdevice dev) {
   return cuDeviceTotalMem_v2(bytes, dev);
 }
 
-extern "C" CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev) {
-  CUdevice remote_dev = dev;
-  lupine_route route = lupine_route_for_device(&remote_dev);
-  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
-    return CUDA_ERROR_INVALID_DEVICE;
-  }
-  lupine_invalidate_primary_ctx_state(dev);
-  CUresult return_value;
-  if (lupine_route_is_local(route)) {
-    return_value =
-        lupine_call_real_cuda_fn("cuDevicePrimaryCtxRetain", pctx, remote_dev);
-    if (return_value == CUDA_SUCCESS && pctx != nullptr) {
-      lupine_note_context_owner_route(*pctx, route);
-    }
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxRetain) < 0 ||
-      rpc_write(conn, &remote_dev, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pctx, sizeof(CUcontext)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (return_value == CUDA_SUCCESS && pctx != nullptr) {
-    lupine_note_context_owner_route(*pctx, route);
-  }
-  return return_value;
+// One forwarded retain keeps a device's primary context alive for every
+// retain this client holds, so later retains are counted here and only the
+// release that drops the count to zero goes through. The driver keeps its own
+// count across Reset but deactivates the context, so Reset releases the
+// forwarded retain and the next retain goes through again.
+struct lupine_primary_ctx_retain {
+  CUcontext context = nullptr;
+  int count = 0;
+  bool forwarded = false;
+};
+
+static std::mutex &lupine_primary_ctx_retain_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
 }
 
-extern "C" CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
-  CUdevice remote_dev = dev;
-  lupine_route route = lupine_route_for_device(&remote_dev);
-  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
-    return CUDA_ERROR_INVALID_DEVICE;
-  }
-  lupine_invalidate_primary_ctx_state(dev);
+static std::unordered_map<int, lupine_primary_ctx_retain> &
+lupine_primary_ctx_retains() {
+  static auto *retains =
+      new std::unordered_map<int, lupine_primary_ctx_retain>();
+  return *retains;
+}
+
+static CUresult lupine_remote_primary_ctx_release(conn_t *conn,
+                                                  CUdevice remote_dev) {
   CUresult return_value;
-  if (lupine_route_is_local(route)) {
-    return_value =
-        lupine_call_real_cuda_fn("cuDevicePrimaryCtxRelease_v2", remote_dev);
-    if (return_value == CUDA_SUCCESS) {
-      lupine_invalidate_current_context_cache();
-    }
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxRelease_v2) < 0 ||
       rpc_write(conn, &remote_dev, sizeof(CUdevice)) < 0 ||
@@ -2207,6 +2260,88 @@ extern "C" CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
     lupine_invalidate_current_context_cache();
   }
   return return_value;
+}
+
+extern "C" CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev) {
+  CUdevice remote_dev = dev;
+  lupine_route route = lupine_route_for_device(&remote_dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
+  CUresult return_value;
+  if (lupine_route_is_local(route)) {
+    lupine_invalidate_primary_ctx_state(dev);
+    return_value =
+        lupine_call_real_cuda_fn("cuDevicePrimaryCtxRetain", pctx, remote_dev);
+    if (return_value == CUDA_SUCCESS && pctx != nullptr) {
+      lupine_note_context_owner_route(*pctx, route);
+    }
+    return return_value;
+  }
+  std::lock_guard<std::mutex> lock(lupine_primary_ctx_retain_mutex());
+  auto &retains = lupine_primary_ctx_retains();
+  auto retained = retains.find(static_cast<int>(dev));
+  if (retained == retains.end() || !retained->second.forwarded) {
+    lupine_invalidate_primary_ctx_state(dev);
+    conn_t *conn = lupine_route_remote_conn(route);
+    CUcontext context = nullptr;
+    if (lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxRetain) < 0 ||
+        rpc_write(conn, &remote_dev, sizeof(CUdevice)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &context, sizeof(CUcontext)) < 0 ||
+        rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+        rpc_read_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    if (return_value != CUDA_SUCCESS) {
+      return return_value;
+    }
+    lupine_note_context_owner_route(context, route);
+    retained =
+        retains.emplace(static_cast<int>(dev), lupine_primary_ctx_retain{})
+            .first;
+    retained->second.context = context;
+    retained->second.forwarded = true;
+  }
+  ++retained->second.count;
+  if (pctx != nullptr) {
+    *pctx = retained->second.context;
+  }
+  return CUDA_SUCCESS;
+}
+
+extern "C" CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
+  CUdevice remote_dev = dev;
+  lupine_route route = lupine_route_for_device(&remote_dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
+  if (lupine_route_is_local(route)) {
+    lupine_invalidate_primary_ctx_state(dev);
+    CUresult return_value =
+        lupine_call_real_cuda_fn("cuDevicePrimaryCtxRelease_v2", remote_dev);
+    if (return_value == CUDA_SUCCESS) {
+      lupine_invalidate_current_context_cache();
+    }
+    return return_value;
+  }
+  std::lock_guard<std::mutex> lock(lupine_primary_ctx_retain_mutex());
+  auto &retains = lupine_primary_ctx_retains();
+  auto retained = retains.find(static_cast<int>(dev));
+  if (retained != retains.end()) {
+    if (--retained->second.count > 0) {
+      return CUDA_SUCCESS;
+    }
+    bool forwarded = retained->second.forwarded;
+    retains.erase(retained);
+    if (!forwarded) {
+      return CUDA_SUCCESS;
+    }
+  }
+  lupine_invalidate_primary_ctx_state(dev);
+  return lupine_remote_primary_ctx_release(lupine_route_remote_conn(route),
+                                           remote_dev);
 }
 
 extern "C" CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev,
@@ -2292,6 +2427,7 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  std::lock_guard<std::mutex> lock(lupine_primary_ctx_retain_mutex());
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxReset_v2) < 0 ||
       rpc_write(conn, &remote_dev, sizeof(CUdevice)) < 0 ||
@@ -2302,6 +2438,12 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
   }
   if (return_value == CUDA_SUCCESS) {
     lupine_invalidate_current_context_cache();
+    auto &retains = lupine_primary_ctx_retains();
+    auto retained = retains.find(static_cast<int>(dev));
+    if (retained != retains.end() && retained->second.forwarded) {
+      retained->second.forwarded = false;
+      (void)lupine_remote_primary_ctx_release(conn, remote_dev);
+    }
   }
   return return_value;
 }
@@ -3319,6 +3461,15 @@ static const void *lupine_remote_private_export_table(const CUuuid *uuid) {
   if (uuid == nullptr || !lupine_remote_private_exports_enabled()) {
     return nullptr;
   }
+  // The server answers from its own driver, so the reply, refusals included,
+  // is fixed per table id for the life of the process.
+  static auto *answered =
+      new libcuckoo::cuckoohash_map<std::string, const void *>();
+  std::string uuid_hex = lupine_uuid_hex(uuid);
+  const void *table = nullptr;
+  if (answered->find(uuid_hex, table)) {
+    return table;
+  }
 
   conn_t *conn = rpc_client_get_connection(0);
   CUresult result = CUDA_ERROR_UNKNOWN;
@@ -3355,16 +3506,18 @@ static const void *lupine_remote_private_export_table(const CUuuid *uuid) {
       byte_size % sizeof(void *) != 0 || slot_count == 0 ||
       slot_count != byte_size / sizeof(void *) ||
       slot_count > LUPINE_PRIVATE_EXPORT_MAX_SLOTS) {
+    answered->insert_or_assign(uuid_hex, nullptr);
     return nullptr;
   }
 
-  std::string uuid_hex = lupine_uuid_hex(uuid);
   std::vector<uint64_t> code_hashes(hashes, hashes + slot_count);
   LUPINE_TRACE_LOG("LUPINE remote cuGetExportTable metadata uuid="
                    << uuid_hex << " bytes=" << byte_size
                    << " slots=" << slot_count);
-  return lupine_make_private_export_table(
+  table = lupine_make_private_export_table(
       uuid_hex.c_str(), static_cast<size_t>(byte_size), code_hashes);
+  answered->insert_or_assign(uuid_hex, table);
+  return table;
 }
 
 static const void *lupine_private_export_table_from_env(const CUuuid *uuid) {
@@ -7218,17 +7371,61 @@ extern "C" CUresult lupine_complete_stream_end_capture(CUresult result) {
   return result;
 }
 
+// Each connection serves this client thread on one lane thread, in order, so
+// the swap only has to be queued ahead of the thread's next request, and the
+// previous mode is known here: every thread starts GLOBAL on both sides.
+// Every connection's lane gets it since any of them may serve that request.
+extern "C" CUresult
+cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode) {
+  static thread_local CUstreamCaptureMode thread_mode =
+      CU_STREAM_CAPTURE_MODE_GLOBAL;
+  CUstreamCaptureMode requested = *mode;
+  if (lupine_local_cuda_available()) {
+    CUresult result =
+        lupine_call_real_cuda_fn("cuThreadExchangeStreamCaptureMode", mode);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+  } else {
+    *mode = thread_mode;
+  }
+  thread_mode = requested;
+  if (rpc_open() != 0) {
+    return CUDA_SUCCESS;
+  }
+  for (int i = 0; i < rpc_size(); ++i) {
+    conn_t *conn = rpc_client_get_connection(i);
+    uint64_t async_sequence = 0;
+    if (lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_async_request(
+            conn, RPC_cuThreadExchangeStreamCaptureMode, &async_sequence) < 0 ||
+        rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+        rpc_write(conn, &requested, sizeof(requested)) < 0 ||
+        rpc_write_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+  }
+  return CUDA_SUCCESS;
+}
+
 extern "C" CUresult cuStreamIsCapturing(CUstream hStream,
                                         CUstreamCaptureStatus *captureStatus) {
   if (captureStatus == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   // Libraries poll capture state on the launch path. While this client has no
-  // capture outstanding, a stream it knows cannot be capturing, so answer
-  // without a round trip. Unknown handles go to the server's driver instead.
+  // capture outstanding, a stream it knows cannot be capturing, and a stream
+  // seen capturing stays so until a capture ends, so answer both without a
+  // round trip. Unknown handles go to the server's driver instead.
   if (lupine_active_stream_captures.load() == 0 &&
       lupine_stream_handle_is_known(hStream)) {
     *captureStatus = CU_STREAM_CAPTURE_STATUS_NONE;
+    return CUDA_SUCCESS;
+  }
+  lupine_stream_capture_entry cached;
+  if (lupine_stream_capture_cache().find(hStream, cached) &&
+      cached.epoch == lupine_stream_capture_epoch.load()) {
+    *captureStatus = CU_STREAM_CAPTURE_STATUS_ACTIVE;
     return CUDA_SUCCESS;
   }
   lupine_route route = hStream != nullptr ? lupine_route_for_stream(hStream)

@@ -20,6 +20,7 @@ CUresult cuGetErrorName(CUresult error, const char **pStr);
  */
 CUresult cuInit(unsigned int Flags);
 /**
+ * @disabled client - manual client caches the version per route
  * @param driverVersion RECV_ONLY
  */
 CUresult cuDriverGetVersion(int *driverVersion);
@@ -361,7 +362,8 @@ CUresult cuModuleUnload(CUmodule hmod) {
   return return_value;
 }
 /**
- * @param mode SEND_RECV
+ * @disabled client - manual client caches the mode per route
+ * @param mode RECV_ONLY
  */
 CUresult cuModuleGetLoadingMode(CUmoduleLoadingMode *mode);
 /**
@@ -1692,7 +1694,9 @@ CUresult cuStreamAddCallback(CUstream hStream, CUstreamCallback callback,
  */
 CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode);
 /**
- * @param mode SEND_RECV
+ * @async
+ * @disabled client - manual client tracks the thread's capture mode
+ * @param mode SEND_ONLY DEREF
  */
 CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode);
 /**

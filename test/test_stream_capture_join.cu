@@ -47,6 +47,10 @@ static void check_same(CUstream stream, capture_state expected) {
   CUstreamCaptureStatus status = CU_STREAM_CAPTURE_STATUS_NONE;
   cuuint64_t id = 0;
   CUgraph graph = nullptr;
+  require(cuStreamIsCapturing(stream, &status) == CUDA_SUCCESS &&
+              status == expected.status,
+          "cuStreamIsCapturing disagrees with the driver");
+  status = CU_STREAM_CAPTURE_STATUS_NONE;
   require(cuStreamGetCaptureInfo(stream, &status, &id) == CUDA_SUCCESS &&
               status == expected.status && id == expected.id,
           "legacy query disagrees with the driver");
