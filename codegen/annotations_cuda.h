@@ -276,7 +276,12 @@ CUresult cuCtxGetCacheConfig(CUfunc_cache *pconfig);
 /**
  * @param config SEND_ONLY
  */
-CUresult cuCtxSetCacheConfig(CUfunc_cache config);
+CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_disable_local_occupancy();
+  return return_value;
+}
 /**
  * @param pConfig RECV_ONLY
  */
@@ -601,9 +606,11 @@ CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
 CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
                               CUkernel kernel, CUdevice dev) {
   CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS)
+  if (return_value == CUDA_SUCCESS) {
     lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel,
                                         (int)attrib, (int)dev);
+    lupine_invalidate_occupancy_cache();
+  }
   return return_value;
 }
 /**
@@ -612,7 +619,12 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
  * @param dev SEND_ONLY
  */
 CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
-                                CUdevice dev);
+                                CUdevice dev) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_disable_local_occupancy();
+  return return_value;
+}
 /**
  * @guard CUDA_VERSION >= 12030
  * @routingkey FUNCTION hfunc
@@ -1935,8 +1947,13 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
                             int value) {
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (return_value == CUDA_SUCCESS) {
-    lupine_invalidate_kernel_attribute_cache();
-    lupine_invalidate_function_attribute_cache();
+    lupine_kernel_attribute_cache_erase_for_function(
+        lupine_route_identity(route),
+        lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
+    lupine_function_attribute_cache_erase(
+        lupine_route_identity(route),
+        lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
+    lupine_invalidate_occupancy_cache();
   }
   return return_value;
 }
@@ -1945,7 +1962,12 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
  * @param hfunc SEND_ONLY
  * @param config SEND_ONLY
  */
-CUresult cuFuncSetCacheConfig(CUfunction hfunc, CUfunc_cache config);
+CUresult cuFuncSetCacheConfig(CUfunction hfunc, CUfunc_cache config) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_disable_local_occupancy();
+  return return_value;
+}
 /**
  * @routingkey FUNCTION hfunc
  * @param hfunc SEND_ONLY

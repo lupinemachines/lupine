@@ -103,7 +103,7 @@ static constexpr size_t lupine_attribute_copy_size() {
 }
 
 static constexpr size_t lupine_attribute_snapshot_copy_size() {
-  return sizeof(uint32_t) + static_cast<size_t>(CU_FUNC_ATTRIBUTE_MAX) *
+  return sizeof(uint32_t) + (static_cast<size_t>(CU_FUNC_ATTRIBUTE_MAX) + 1) *
                                 lupine_attribute_copy_size();
 }
 
@@ -114,9 +114,10 @@ static int lupine_write_attribute_snapshot(conn_t *conn, Query query) {
   if (count == nullptr) {
     return -1;
   }
-  *count = static_cast<uint32_t>(CU_FUNC_ATTRIBUTE_MAX);
+  *count = static_cast<uint32_t>(CU_FUNC_ATTRIBUTE_MAX) + 1;
 
-  for (int attribute = 0; attribute < CU_FUNC_ATTRIBUTE_MAX; ++attribute) {
+  for (int attribute = LUPINE_FUNC_ATTRIBUTE_DEVICE;
+       attribute < CU_FUNC_ATTRIBUTE_MAX; ++attribute) {
     auto *result = static_cast<CUresult *>(
         rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
     auto *wire_attribute =
@@ -128,7 +129,9 @@ static int lupine_write_attribute_snapshot(conn_t *conn, Query query) {
     }
     *wire_attribute = attribute;
     *value = 0;
-    *result = query(value, static_cast<CUfunction_attribute>(attribute));
+    *result = attribute == LUPINE_FUNC_ATTRIBUTE_DEVICE
+                  ? cuCtxGetDevice(value)
+                  : query(value, static_cast<CUfunction_attribute>(attribute));
   }
   return 0;
 }

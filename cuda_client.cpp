@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cuda.h>
+#include <cuda_occupancy.h>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -459,6 +460,11 @@ lupine_module_functions() {
   static auto *functions =
       new std::unordered_map<CUfunction, lupine_module_function_record>();
   return *functions;
+}
+
+static std::unordered_map<CUfunction, CUkernel> &lupine_function_kernels() {
+  static auto *kernels = new std::unordered_map<CUfunction, CUkernel>();
+  return *kernels;
 }
 
 static std::unordered_map<CUfunction, CUlibrary> &lupine_library_functions() {
@@ -1134,6 +1140,7 @@ static void lupine_record_library_function(CUfunction function,
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+  lupine_function_kernels()[function] = kernel;
   auto kernel_record = lupine_library_kernels().find(kernel);
   if (kernel_record != lupine_library_kernels().end() &&
       kernel_record->second.library != nullptr) {
@@ -2557,6 +2564,166 @@ extern "C" void lupine_invalidate_function_attribute_cache() {
   lupine_function_attribute_cache().clear();
 }
 
+// A function is one kernel instantiated in one context, so a set on it moves
+// exactly one kernel-attribute entry; without that pairing the whole cache is
+// the only safe target.
+extern "C" void lupine_kernel_attribute_cache_erase_for_function(
+    int route_id, CUfunction function, int attrib) {
+  CUkernel kernel = nullptr;
+  int device = -1;
+  {
+    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+    auto it = lupine_function_kernels().find(function);
+    if (it != lupine_function_kernels().end()) {
+      kernel = it->second;
+    }
+  }
+  if (kernel == nullptr ||
+      !lupine_function_attribute_cache().find(
+          lupine_function_attribute_key{route_id, function,
+                                        LUPINE_FUNC_ATTRIBUTE_DEVICE},
+          device)) {
+    lupine_kernel_attribute_cache().clear();
+    return;
+  }
+  lupine_kernel_attribute_cache().erase(
+      lupine_kernel_attribute_key{route_id, kernel, attrib, device});
+}
+
+extern "C" void lupine_function_attribute_cache_erase(int route_id,
+                                                      CUfunction function,
+                                                      int attrib) {
+  lupine_function_attribute_cache().erase(
+      lupine_function_attribute_key{route_id, function, attrib});
+}
+
+extern "C" void lupine_invalidate_occupancy_cache() {
+  lupine_occupancy_cache().clear();
+}
+
+// Occupancy is a pure function of the kernel's attributes and the device's
+// limits, both already cached client-side, so NVIDIA's header-only calculator
+// answers a miss without a round trip. Only inputs verified against the driver
+// are modelled: sm_7x/8x with the default cache config (any cache-config setter
+// disables the path for the process) and flags the calculator ignores there.
+// Everything else goes to the driver.
+static std::atomic<bool> lupine_local_occupancy_enabled{true};
+
+extern "C" void lupine_disable_local_occupancy() {
+  lupine_local_occupancy_enabled.store(false);
+}
+
+static bool lupine_occupancy_local(lupine_route route, CUfunction function,
+                                   int blockSize, size_t dynamicSMemSize,
+                                   unsigned int flags, int *numBlocks) {
+  if (!lupine_local_occupancy_enabled.load() ||
+      (flags & ~CU_OCCUPANCY_DISABLE_CACHING_OVERRIDE) != 0) {
+    return false;
+  }
+  static const int kFunctionInputs[] = {
+      LUPINE_FUNC_ATTRIBUTE_DEVICE,
+      CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
+      CU_FUNC_ATTRIBUTE_NUM_REGS,
+      CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES,
+      CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+      CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT};
+  static const CUdevice_attribute kDeviceInputs[] = {
+      CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
+      CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
+      CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
+      CU_DEVICE_ATTRIBUTE_MAX_THREADS_PER_MULTIPROCESSOR,
+      CU_DEVICE_ATTRIBUTE_MAX_REGISTERS_PER_BLOCK,
+      CU_DEVICE_ATTRIBUTE_MAX_REGISTERS_PER_MULTIPROCESSOR,
+      CU_DEVICE_ATTRIBUTE_WARP_SIZE,
+      CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK,
+      CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR,
+      CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT,
+      CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN,
+      CU_DEVICE_ATTRIBUTE_RESERVED_SHARED_MEMORY_PER_BLOCK};
+  int route_id = lupine_route_identity(route);
+  conn_t *conn = lupine_route_remote_conn(route);
+  int f[sizeof(kFunctionInputs) / sizeof(kFunctionInputs[0])];
+  CUdevice device = -1;
+  // A CUfunction carries its context's device in the snapshot; a CUkernel
+  // handle (cudart's lazy-loading path) is evaluated on the current context.
+  if (lupine_function_attribute_cache().find(
+          lupine_function_attribute_key{route_id, function, kFunctionInputs[0]},
+          f[0])) {
+    device = lupine_local_device_for_remote(conn, f[0]);
+    for (size_t i = 1; i < sizeof(f) / sizeof(f[0]); ++i) {
+      if (!lupine_function_attribute_cache().find(
+              lupine_function_attribute_key{route_id, function,
+                                            kFunctionInputs[i]},
+              f[i])) {
+        return false;
+      }
+    }
+  } else {
+    CUdevice remote_device = -1;
+    if (!lupine_current_context_device_cache_lookup(
+            lupine_current_context_hint(), &device) ||
+        (remote_device = device,
+         !lupine_translate_device_for_conn(conn, &remote_device))) {
+      return false;
+    }
+    for (size_t i = 1; i < sizeof(f) / sizeof(f[0]); ++i) {
+      if (!lupine_kernel_attribute_cache().find(
+              lupine_kernel_attribute_key{
+                  route_id, reinterpret_cast<CUkernel>(function),
+                  kFunctionInputs[i], static_cast<int>(remote_device)},
+              f[i])) {
+        return false;
+      }
+    }
+  }
+  if (device < 0) {
+    return false;
+  }
+  lupine_prefill_device_snapshot(conn);
+  int d[sizeof(kDeviceInputs) / sizeof(kDeviceInputs[0])];
+  for (size_t i = 0; i < sizeof(d) / sizeof(d[0]); ++i) {
+    if (!lupine_device_attribute_cache().find(
+            lupine_device_attribute_key{static_cast<int>(device),
+                                        static_cast<int>(kDeviceInputs[i])},
+            d[i])) {
+      return false;
+    }
+  }
+  if (d[0] != 7 && d[0] != 8) {
+    return false;
+  }
+  cudaOccDeviceProp prop;
+  prop.computeMajor = d[0];
+  prop.computeMinor = d[1];
+  prop.maxThreadsPerBlock = d[2];
+  prop.maxThreadsPerMultiprocessor = d[3];
+  prop.regsPerBlock = d[4];
+  prop.regsPerMultiprocessor = d[5];
+  prop.warpSize = d[6];
+  prop.sharedMemPerBlock = static_cast<size_t>(d[7]);
+  prop.sharedMemPerMultiprocessor = static_cast<size_t>(d[8]);
+  prop.numSms = d[9];
+  prop.sharedMemPerBlockOptin = static_cast<size_t>(d[10]);
+  prop.reservedSharedMemPerBlock = static_cast<size_t>(d[11]);
+  cudaOccFuncAttributes attr;
+  attr.maxThreadsPerBlock = f[1];
+  attr.numRegs = f[2];
+  attr.sharedSizeBytes = static_cast<size_t>(f[3]);
+  attr.shmemLimitConfig = FUNC_SHMEM_LIMIT_OPTIN;
+  attr.maxDynamicSharedSizeBytes = static_cast<size_t>(f[4]);
+  attr.numBlockBarriers = 1;
+  cudaOccDeviceState state;
+  state.carveoutConfig = f[5];
+  cudaOccResult result;
+  if (cudaOccMaxActiveBlocksPerMultiprocessor(&result, &prop, &attr, &state,
+                                              blockSize, dynamicSMemSize) !=
+      CUDA_OCC_SUCCESS) {
+    return false;
+  }
+  *numBlocks = result.activeBlocksPerMultiprocessor;
+  return true;
+}
+
 static CUresult lupine_cuOccupancy_cached(int *numBlocks, CUfunction func,
                                           int blockSize, size_t dynamicSMemSize,
                                           unsigned int flags, bool with_flags) {
@@ -2583,6 +2750,11 @@ static CUresult lupine_cuOccupancy_cached(int *numBlocks, CUfunction func,
                            flags,
                            with_flags};
   if (lupine_occupancy_cache().find(key, *numBlocks)) {
+    return CUDA_SUCCESS;
+  }
+  if (lupine_occupancy_local(route, translated, blockSize, dynamicSMemSize,
+                             flags, numBlocks)) {
+    lupine_occupancy_cache().insert_or_assign(key, *numBlocks);
     return CUDA_SUCCESS;
   }
   conn_t *conn = lupine_route_remote_conn(route);
