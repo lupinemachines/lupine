@@ -589,10 +589,11 @@ if [[ "$needs_build" == "1" ]]; then
           echo "missing sample Makefile: $sample" >&2
           continue
         fi
-        make -C "$build_srcdir" -j"$JOBS" EXTRA_NVCCFLAGS="${EXTRA_NVCCFLAGS:-} --cudart shared" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"} || echo "sample build failed: $sample" >&2
+        make -C "$build_srcdir" -j"$JOBS" EXTRA_NVCCFLAGS="--cudart shared" \
+          ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"} || echo "sample build failed: $sample" >&2
       done
     else
-      make -C "$CUDA_SAMPLES_DIR" -j"$JOBS" EXTRA_NVCCFLAGS="${EXTRA_NVCCFLAGS:-} --cudart shared" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"}
+      make -C "$CUDA_SAMPLES_DIR" -j"$JOBS" EXTRA_NVCCFLAGS="--cudart shared" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"}
     fi
   fi
 fi

@@ -165,10 +165,20 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
   int result = -1;
   switch (handler.backend) {
   case rpc_backend::cuda:
-  case rpc_backend::cudart:
 #ifdef LUPINE_BUILD_CUDA_BACKEND
   {
-    backend_name = handler.backend == rpc_backend::cuda ? "CUDA" : "cudart";
+    backend_name = "CUDA";
+    lupine_checkpoint::cuda_call_guard guard;
+    result = handler.handler(conn);
+    break;
+  }
+#else
+    break;
+#endif
+  case rpc_backend::cudart:
+#ifdef LUPINE_BUILD_CUDART_BACKEND
+  {
+    backend_name = "CUDART";
     lupine_checkpoint::cuda_call_guard guard;
     result = handler.handler(conn);
     break;
@@ -258,6 +268,9 @@ int client_handler(lupine_socket_t connfd) {
 #endif
   }
   if (http2_init_result != 0) {
+    if (rpc_http2_server_graceful_shutdown(&conn) < 0) {
+      LUPINE_LOG_DEBUG("HTTP/2 peer closed before acknowledging shutdown");
+    }
     rpc_conn_destroy(&conn);
 #ifdef LUPINE_BUILD_CUDA_BACKEND
     return lupine_server_checkpoint_child_finish();

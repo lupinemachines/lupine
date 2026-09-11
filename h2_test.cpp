@@ -496,6 +496,8 @@ void test_client_await_ready_rejects_stale_bundle() {
   rpc_http2_server_metadata metadata = {nullptr, &kClientBundles};
   require(rpc_http2_server_init_with_metadata(&pair.server, &metadata) == 1,
           "server dispatched a stale client bundle");
+  require(rpc_http2_server_graceful_shutdown(&pair.server) == 0,
+          "server did not finish the rejected handshake gracefully");
   client.join();
 
   lupine_test_unsetenv("LUPINE_CLIENT_ETAG");
@@ -503,6 +505,46 @@ void test_client_await_ready_rejects_stale_bundle() {
   require(ready == LUPINE_RPC_HTTP2_CLIENT_MISMATCH,
           "stale client bundle did not report a client mismatch");
 }
+
+#if !defined(_WIN32) && !defined(__APPLE__)
+void test_client_retries_va_conflict_on_same_connection() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  long page_size = sysconf(_SC_PAGESIZE);
+  require(page_size > 0, "could not determine the test page size");
+  void *occupied = mmap(nullptr, static_cast<size_t>(page_size), PROT_NONE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  require(occupied != MAP_FAILED, "could not reserve the test page");
+  pair.client.va_base = reinterpret_cast<uintptr_t>(occupied);
+  pair.client.va_size = static_cast<size_t>(page_size);
+  uintptr_t base = pair.client.va_base;
+  size_t size = pair.client.va_size;
+  lupine_socket_t socket = pair.client.connfd;
+
+  int server_result = -1;
+  std::thread server(
+      [&] { server_result = rpc_http2_server_init(&pair.server); });
+  require(rpc_http2_client_init(&pair.client) == LUPINE_RPC_HTTP2_VA_CONFLICT,
+          "server did not reject the occupied test arena");
+
+  lupine_va_release(&pair.client);
+  pair.client.va_base = base;
+  pair.client.va_size = size;
+  pair.client.va_next = 0;
+  require(rpc_http2_client_retry_handshake(&pair.client) == 0,
+          "client did not retry the arena handshake");
+  server.join();
+
+  require(server_result == 0, "server did not accept the retried arena");
+  require(pair.client.connfd == socket,
+          "arena retry replaced the HTTP/2 connection");
+  // The server owns the accepted test mapping in this single-process pair.
+  pair.client.va_base = 0;
+  pair.client.va_size = 0;
+  pair.client.va_next = 0;
+}
+#endif
 
 void test_client_await_ready_reports_capabilities(bool advertise) {
   h2_pair pair;
@@ -830,6 +872,7 @@ void test_truncated_read_clears_direct_destination() {
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   write_all(&pair.client, {prefix});
+  require(rpc_http2_flush(&pair.client) == 0, "truncated writer flush failed");
   require(shutdown(pair.client.connfd, LUPINE_TEST_SHUT_WR) == 0,
           "truncated writer shutdown failed");
   reader.join();
@@ -1070,20 +1113,21 @@ void test_large_payload() {
   require(received == payload, "large payload mismatch");
 }
 
-#ifndef _WIN32
-// The payload is a >2 GiB read-only MAP_NORESERVE mapping that is never
-// faulted in; Windows cannot hand out readable pages without charging
-// commit, so this case stays Unix-only.
 void test_payload_larger_than_flow_control_window() {
   h2_pair pair = make_pair();
   exchange_settings(&pair);
 
+  // Flow control counts compressed bytes. Cross the current server window
+  // with incompressible data; a multi-GiB zero mapping compresses below the
+  // window while still allowing gigabytes of decoded staging in the receiver.
   constexpr size_t payload_size =
-      static_cast<size_t>(INT32_MAX) + 64 * 1024 + 1;
-
-  void *payload = mmap(nullptr, payload_size, PROT_READ,
-                       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-  require(payload != MAP_FAILED, "flow-control payload mmap failed");
+      LUPINE_FF_STAGING_WINDOW_BYTES + 64 * 1024 + 1;
+  std::vector<unsigned char> payload(payload_size);
+  uint32_t seed = 53;
+  for (unsigned char &byte : payload) {
+    seed = seed * 1664525u + 1013904223u;
+    byte = static_cast<unsigned char>(seed >> 24);
+  }
 
   std::atomic<bool> read_failed{false};
   size_t received = 0;
@@ -1096,8 +1140,7 @@ void test_payload_larger_than_flow_control_window() {
         read_failed = true;
         break;
       }
-      if (!std::all_of(buffer.begin(), buffer.begin() + chunk,
-                       [](unsigned char value) { return value == 0; })) {
+      if (memcmp(buffer.data(), payload.data() + received, chunk) != 0) {
         read_failed = true;
         break;
       }
@@ -1113,7 +1156,7 @@ void test_payload_larger_than_flow_control_window() {
     (void)rpc_http2_read(&pair.client, &unused, sizeof(unused));
   });
 
-  int write_result = write_bytes(&pair.client, payload, payload_size);
+  int write_result = write_bytes(&pair.client, payload.data(), payload.size());
   if (write_result != 0) {
     shutdown(pair.client.connfd, LUPINE_TEST_SHUT_RDWR);
     shutdown(pair.server.connfd, LUPINE_TEST_SHUT_RDWR);
@@ -1121,13 +1164,11 @@ void test_payload_larger_than_flow_control_window() {
   server_reader.join();
   shutdown(pair.client.connfd, LUPINE_TEST_SHUT_RDWR);
   client_control_reader.join();
-  munmap(payload, payload_size);
 
   require(write_result == 0, "flow-controlled write failed before completion");
   require(!read_failed, "flow-controlled read failed");
   require(received == payload_size, "flow-controlled payload was truncated");
 }
-#endif
 
 // A server-side hold keeps received payload bytes uncredited until the staging
 // they landed in retires. Held bytes saturate at a cap so the reader filling
@@ -1934,6 +1975,9 @@ int main() {
   RUN_CASE(test_head_probe_cuda_version_metadata(nullptr));
   RUN_CASE(test_client_await_ready_accepts_current_bundle());
   RUN_CASE(test_client_await_ready_rejects_stale_bundle());
+#if !defined(_WIN32) && !defined(__APPLE__)
+  RUN_CASE(test_client_retries_va_conflict_on_same_connection());
+#endif
   RUN_CASE(test_client_await_ready_reports_capabilities(true));
   RUN_CASE(test_client_await_ready_reports_capabilities(false));
   RUN_CASE(test_client_metadata_capability(true, 0));
@@ -1956,8 +2000,8 @@ int main() {
   RUN_CASE(test_refillable_cursor_round_trip());
 #ifndef _WIN32
   RUN_CASE(test_refillable_cursor_across_flow_control_window());
-  RUN_CASE(test_payload_larger_than_flow_control_window());
 #endif
+  RUN_CASE(test_payload_larger_than_flow_control_window());
   RUN_CASE(test_server_window_hold_caps_and_releases());
   RUN_CASE(test_reset_wakes_flow_controlled_writer());
   std::cout << "h2_test: PASS" << std::endl;

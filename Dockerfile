@@ -91,7 +91,7 @@ ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
 LABEL org.opencontainers.image.title="lupine-client"
-LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, NVML, and HIP shims"
+LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA, NVML, and HIP shims"
 LABEL org.opencontainers.image.source="https://github.com/lupinemachines/lupine"
 LABEL org.opencontainers.image.version="${CUDA_VERSION}-rocm-${ROCM_VERSION}-ubuntu${UBUNTU_VERSION}"
 
@@ -134,12 +134,11 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/* /tmp/nvidia-utils
 
 COPY --from=client-build /opt/lupine/build/libcuda.so.1 /opt/lupine/lib/libcuda.so.1
-COPY --from=client-build /opt/lupine/build/libcudart.so.* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libcudart.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1
 COPY --from=client-build /opt/lupine/build/libamdhip64.so.1 /opt/lupine/lib/libamdhip64.so.1
 
 RUN ln -sf /opt/lupine/lib/libcuda.so.1 /opt/lupine/lib/libcuda.so \
-    && ln -sf "$(basename /opt/lupine/lib/libcudart.so.*)" /opt/lupine/lib/libcudart.so \
     && ln -sf /opt/lupine/lib/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so \
     && ln -sf /opt/lupine/lib/libamdhip64.so.1 /opt/lupine/lib/libamdhip64.so
 

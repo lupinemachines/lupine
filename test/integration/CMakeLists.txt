@@ -9,18 +9,23 @@ endif()
 get_filename_component(LUPINE_LIB "${LUPINE_LIB}" ABSOLUTE)
 get_filename_component(shim_dir "${LUPINE_LIB}" DIRECTORY)
 file(GLOB runtime_libs "${shim_dir}/libcudart.so*")
-if(NOT EXISTS "${LUPINE_LIB}" OR NOT runtime_libs)
+file(GLOB nvml_libs "${shim_dir}/libnvidia-ml.so*")
+if(NOT EXISTS "${LUPINE_LIB}" OR NOT EXISTS "${shim_dir}/libcudart.so")
     message(FATAL_ERROR "Build lupine_cuda_client and lupine_cudart_client before configuring integration tests")
 endif()
 
-# Both variants use the same build. Only the libraries visible to the loader
-# differ: never put the full build directory on the driver-only search path.
+# Both variants use one build. Never put its full library directory on the
+# driver-only search path: that would also expose the CUDART shim.
 set(variants driver-only driver-runtime)
 foreach(variant IN LISTS variants)
     set(lib_dir "${CMAKE_CURRENT_BINARY_DIR}/${variant}/lib")
     file(MAKE_DIRECTORY "${lib_dir}")
     file(CREATE_LINK "${LUPINE_LIB}" "${lib_dir}/libcuda.so.1" SYMBOLIC)
     file(CREATE_LINK "${LUPINE_LIB}" "${lib_dir}/libcuda.so" SYMBOLIC)
+    foreach(lib IN LISTS nvml_libs)
+        get_filename_component(name "${lib}" NAME)
+        file(CREATE_LINK "${lib}" "${lib_dir}/${name}" SYMBOLIC)
+    endforeach()
     if(variant STREQUAL "driver-runtime")
         foreach(lib IN LISTS runtime_libs)
             get_filename_component(name "${lib}" NAME)
@@ -35,7 +40,10 @@ if(NOT results_dir)
 endif()
 set(custom_build_dir "${CMAKE_CURRENT_BINARY_DIR}/custom-bin")
 file(MAKE_DIRECTORY "${custom_build_dir}")
-set(port 14900)
+set(port "$ENV{SERVER_PORT_BASE}")
+if(NOT port)
+    set(port 14900)
+endif()
 
 function(add_suite suite script)
     set(list_env ${ARGN})
@@ -50,8 +58,7 @@ function(add_suite suite script)
 
     foreach(name IN LISTS tests)
         if(suite STREQUAL "custom")
-            # Compile each custom executable once, even when both variants run
-            # in parallel or only one variant is selected with ctest -L.
+            # Each executable is built once and shared by both loader variants.
             add_test(NAME "build.custom.${name}" COMMAND "${script}" "${name}")
             set_tests_properties("build.custom.${name}" PROPERTIES
                 ENVIRONMENT "BUILD_ONLY=1;BUILD_TESTS=1;BUILD_DIR=${custom_build_dir};SERVER_UPLOAD=0;LUPINE_LIB=${LUPINE_LIB};LD_LIBRARY_PATH=;LD_PRELOAD="
@@ -64,6 +71,8 @@ function(add_suite suite script)
                 "SERVER_PORT_BASE=${port}" "SERVER_UPLOAD=0"
                 "RESULTS_DIR=${results_dir}/cases/${variant}/${suite}/${name}"
                 "LUPINE_LIB=${lib_dir}/libcuda.so.1"
+                "LUPINE_TEST_VARIANT=${variant}"
+                "LUPINE_CUDART_LIB=${shim_dir}/libcudart.so"
                 "LD_LIBRARY_PATH=${lib_dir}" "LD_PRELOAD="
                 "NVJPEG_ASSETS_DIR=${results_dir}/assets/${variant}"
                 ${ARGN})

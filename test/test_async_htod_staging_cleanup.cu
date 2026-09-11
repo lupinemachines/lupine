@@ -6,13 +6,13 @@
 
 #define CHECK(call)                                                            \
   do {                                                                         \
-    CUresult result = (call);                                                   \
-    if (result != CUDA_SUCCESS) {                                               \
-      const char *message = nullptr;                                            \
-      cuGetErrorString(result, &message);                                       \
-      std::fprintf(stderr, "%s failed at line %d: %s (%d)\n", #call,         \
-                   __LINE__, message == nullptr ? "unknown" : message,         \
-                   static_cast<int>(result));                                   \
+    CUresult result = (call);                                                  \
+    if (result != CUDA_SUCCESS) {                                              \
+      const char *message = nullptr;                                           \
+      cuGetErrorString(result, &message);                                      \
+      std::fprintf(stderr, "%s failed at line %d: %s (%d)\n", #call, __LINE__, \
+                   message == nullptr ? "unknown" : message,                   \
+                   static_cast<int>(result));                                  \
       return 1;                                                                \
     }                                                                          \
   } while (0)
@@ -36,6 +36,15 @@ int main() {
   CUstream stream = nullptr;
   CHECK(cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING));
 
+  // CUDA permits copying on a stream whose context is not current. Staging
+  // must use the stream's context without changing the caller's binding.
+  CUcontext other_context = nullptr;
+#if CUDA_VERSION >= 13000
+  CHECK(cuCtxCreate(&other_context, nullptr, 0, device));
+#else
+  CHECK(cuCtxCreate(&other_context, 0, device));
+#endif
+
   std::vector<unsigned char> source(bytes);
   std::vector<unsigned char> destination(bytes);
   for (int iteration = 0; iteration < iterations; ++iteration) {
@@ -43,8 +52,15 @@ int main() {
               static_cast<unsigned char>(iteration + 1));
     CHECK(cuMemcpyHtoDAsync(remote, source.data(), bytes, stream));
     CHECK(cuStreamSynchronize(stream));
+    CUcontext current = nullptr;
+    CHECK(cuCtxGetCurrent(&current));
+    if (current != other_context) {
+      std::fprintf(stderr, "asynchronous HtoD changed the current context\n");
+      return 1;
+    }
   }
 
+  CHECK(cuCtxSetCurrent(context));
   CHECK(cuMemcpyDtoH(destination.data(), remote, bytes));
   if (destination != source) {
     std::fprintf(stderr, "final asynchronous HtoD payload did not match\n");
@@ -53,6 +69,7 @@ int main() {
 
   CHECK(cuStreamDestroy(stream));
   CHECK(cuMemFree(remote));
+  CHECK(cuCtxDestroy(other_context));
   CHECK(cuCtxDestroy(context));
   std::printf("PASS: asynchronous HtoD staging cleanup preserves data\n");
   return 0;

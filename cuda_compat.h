@@ -17,6 +17,10 @@
 #endif
 #endif
 
+// Attribute-snapshot wire entry carrying the function's device (the server's
+// current device at snapshot time); sits below every real CUfunction_attribute.
+#define LUPINE_FUNC_ATTRIBUTE_DEVICE (-1)
+
 #if CUDA_VERSION < 12000
 typedef struct CUlibrary_st *CUlibrary;
 typedef struct CUkernel_st *CUkernel;
@@ -56,6 +60,7 @@ CUresult cuFuncGetParamInfo(CUfunction, size_t, size_t *, size_t *);
 CUresult cuKernelGetAttribute(int *, CUfunction_attribute, CUkernel, CUdevice);
 CUresult cuKernelGetFunction(CUfunction *, CUkernel);
 CUresult cuLibraryGetKernel(CUkernel *, CUlibrary, const char *);
+CUresult cuLibraryGetModule(CUmodule *, CUlibrary);
 #ifdef __cplusplus
 }
 #endif

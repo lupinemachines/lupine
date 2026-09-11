@@ -3,21 +3,29 @@
 #include <cuda.h>
 #include <cuda_runtime_api.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <list>
 #include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
 #endif
 
 #include "codegen/gen_rpc_ids.h"
+#include "cuda_compat.h"
+#include "cuda_server_memcpy.h"
+#include "ipc.h"
 #include "lupine_fatbin.h"
 #include "rpc.h"
 
@@ -29,12 +37,14 @@ cudaError_t function_not_found() { return cudaErrorNotSupported; }
 // struct layouts, so an older or newer runtime on the machine is not a match.
 void *cudart_library() {
   static void *library = []() -> void * {
-    const std::string major = std::to_string(CUDART_VERSION / 1000);
+    const int major = CUDART_VERSION / 1000;
 #ifdef _WIN32
-    const std::string name = "cudart64_" + major + ".dll";
+    const std::string suffix = major == 11 ? "110" : std::to_string(major);
+    const std::string name = "cudart64_" + suffix + ".dll";
     return reinterpret_cast<void *>(LoadLibraryA(name.c_str()));
 #else
-    const std::string name = "libcudart.so." + major;
+    const std::string suffix = major == 11 ? "11.0" : std::to_string(major);
+    const std::string name = "libcudart.so." + suffix;
     return dlopen(name.c_str(), RTLD_LAZY | RTLD_LOCAL);
 #endif
   }();
@@ -59,14 +69,6 @@ template <typename Fn> Fn cudart_symbol(const char *name) {
     auto fn = cudart_symbol<decltype(&name)>(#name);                           \
     return fn == nullptr ? (not_found) : fn(__VA_ARGS__);                      \
   }())
-
-int write_result(conn_t *conn, int request_id, cudaError_t result) {
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
 
 // cudaGetErrorName and cudaGetErrorString return static strings, so the
 // response carries the bytes length-prefixed instead of a result code.
@@ -93,12 +95,699 @@ int handle_error_text(conn_t *conn, const char *symbol) {
 
 } // namespace
 
+#if CUDART_VERSION < 12000
+int handle_cudaGetDriverEntryPoint(conn_t *conn) {
+  size_t length = 0;
+  unsigned long long flags = 0;
+  void *function = nullptr;
+  if (rpc_read(conn, &length, sizeof(length)) < 0 || length == 0) {
+    return -1;
+  }
+  std::vector<char> symbol(length);
+  if (rpc_read(conn, symbol.data(), length) < 0 || symbol.back() != '\0' ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaError_t result =
+      LUPINE_CUDART_CALL(cudaGetDriverEntryPoint, function_not_found(),
+                         symbol.data(), &function, flags);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &function, sizeof(function)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+#endif
+
 int handle_cudaGetErrorName(conn_t *conn) {
   return handle_error_text(conn, "cudaGetErrorName");
 }
 
 int handle_cudaGetErrorString(conn_t *conn) {
   return handle_error_text(conn, "cudaGetErrorString");
+}
+
+namespace {
+
+// Use the same reserved-address backing as the driver, but let the native
+// runtime own its registration and lifetime.
+const lupine_host_registration_ops runtime_host_registration = {
+    [](void *pointer, size_t bytes, unsigned int flags) {
+      return static_cast<CUresult>(LUPINE_CUDART_CALL(
+          cudaHostRegister, function_not_found(), pointer, bytes, flags));
+    },
+    [](void *pointer) {
+      return static_cast<CUresult>(LUPINE_CUDART_CALL(
+          cudaHostUnregister, function_not_found(), pointer));
+    },
+    [](CUdeviceptr *device_pointer, void *pointer) {
+      void *device = nullptr;
+      cudaError_t result = LUPINE_CUDART_CALL(
+          cudaHostGetDevicePointer, function_not_found(), &device, pointer, 0);
+      *device_pointer = reinterpret_cast<CUdeviceptr>(device);
+      return static_cast<CUresult>(result);
+    }};
+
+cudaError_t finish_graph_instantiation(cudaGraphExec_t *exec,
+                                       lupine_graph_resources *resources,
+                                       lupine_htod_graph_binding *binding,
+                                       cudaError_t result) {
+  if (result == cudaSuccess) {
+    result = static_cast<cudaError_t>(
+        lupine_associate_graph_exec_resources(*exec, resources, *binding));
+    if (result != cudaSuccess) {
+      (void)LUPINE_CUDART_CALL(cudaGraphExecDestroy, function_not_found(),
+                               *exec);
+      *exec = nullptr;
+    }
+  }
+  lupine_release_htod_graph_binding(binding);
+  return result;
+}
+
+} // namespace
+
+#if CUDART_VERSION < 12000
+int handle_cudaGraphInstantiate(conn_t *conn) {
+  cudaGraph_t graph = nullptr;
+  bool has_error_node = false, has_log = false;
+  size_t log_size = 0;
+  if (rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &has_error_node, sizeof(has_error_node)) < 0 ||
+      rpc_read(conn, &log_size, sizeof(log_size)) < 0 ||
+      rpc_read(conn, &has_log, sizeof(has_log)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  std::vector<char> log(has_log ? std::max(log_size, size_t{1}) : 0);
+  cudaGraphExec_t exec = nullptr;
+  cudaGraphNode_t error_node = nullptr;
+  lupine_graph_resources *resources = nullptr;
+  lupine_htod_graph_binding binding;
+  cudaError_t result = static_cast<cudaError_t>(
+      lupine_prepare_graph_exec_resources(graph, &resources, &binding));
+  if (result == cudaSuccess) {
+    result = LUPINE_CUDART_CALL(cudaGraphInstantiate, function_not_found(),
+                                &exec, binding.prepared,
+                                has_error_node ? &error_node : nullptr,
+                                has_log ? log.data() : nullptr, log_size);
+  }
+  if (result != cudaSuccess) {
+    error_node = lupine_original_htod_graph_node(binding, error_node);
+  }
+  result = finish_graph_instantiation(&exec, resources, &binding, result);
+  bool log_has_data = has_log && result != cudaSuccess;
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &exec, sizeof(exec)) < 0 ||
+      (has_error_node &&
+       rpc_write(conn, &error_node, sizeof(error_node)) < 0) ||
+      rpc_write(conn, &log_has_data, sizeof(log_has_data)) < 0 ||
+      (log_has_data && rpc_write(conn, log.data(), log_size) < 0) ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaGraphExecUpdate(conn_t *conn) {
+  cudaGraphExec_t exec = nullptr;
+  cudaGraph_t graph = nullptr;
+  bool has_error_node = false, has_update_result = false;
+  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &has_error_node, sizeof(has_error_node)) < 0 ||
+      rpc_read(conn, &has_update_result, sizeof(has_update_result)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaGraphNode_t error_node = nullptr;
+  cudaGraphExecUpdateResult update_result{};
+  cudaError_t result =
+      LUPINE_CUDART_CALL(cudaGraphExecUpdate, function_not_found(), exec, graph,
+                         has_error_node ? &error_node : nullptr,
+                         has_update_result ? &update_result : nullptr);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (has_error_node &&
+       rpc_write(conn, &error_node, sizeof(error_node)) < 0) ||
+      (has_update_result &&
+       rpc_write(conn, &update_result, sizeof(update_result)) < 0) ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+#endif
+
+int handle_cudaGraphInstantiateWithFlags(conn_t *conn) {
+  cudaGraph_t graph = nullptr;
+  unsigned long long flags = 0;
+  if (rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaGraphExec_t exec = nullptr;
+  lupine_graph_resources *resources = nullptr;
+  lupine_htod_graph_binding binding;
+  cudaError_t result = static_cast<cudaError_t>(
+      lupine_prepare_graph_exec_resources(graph, &resources, &binding));
+  if (result == cudaSuccess) {
+    result =
+        LUPINE_CUDART_CALL(cudaGraphInstantiateWithFlags, function_not_found(),
+                           &exec, binding.prepared, flags);
+  }
+  result = finish_graph_instantiation(&exec, resources, &binding, result);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+#if CUDART_VERSION >= 12000
+int handle_cudaGraphInstantiate(conn_t *conn) {
+  cudaGraph_t graph = nullptr;
+  unsigned long long flags = 0;
+  if (rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaGraphExec_t exec = nullptr;
+  lupine_graph_resources *resources = nullptr;
+  lupine_htod_graph_binding binding;
+  cudaError_t result = static_cast<cudaError_t>(
+      lupine_prepare_graph_exec_resources(graph, &resources, &binding));
+  if (result == cudaSuccess) {
+    result = LUPINE_CUDART_CALL(cudaGraphInstantiate, function_not_found(),
+                                &exec, binding.prepared, flags);
+  }
+  result = finish_graph_instantiation(&exec, resources, &binding, result);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaGraphInstantiateWithParams(conn_t *conn) {
+  cudaGraph_t graph = nullptr;
+  cudaGraphInstantiateParams params{};
+  if (rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &params, sizeof(params)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaGraphExec_t exec = nullptr;
+  lupine_graph_resources *resources = nullptr;
+  lupine_htod_graph_binding binding;
+  cudaError_t result = static_cast<cudaError_t>(
+      lupine_prepare_graph_exec_resources(graph, &resources, &binding));
+  if (result == cudaSuccess) {
+    result =
+        LUPINE_CUDART_CALL(cudaGraphInstantiateWithParams, function_not_found(),
+                           &exec, binding.prepared, &params);
+  }
+  if (result != cudaSuccess) {
+    params.errNode_out =
+        lupine_original_htod_graph_node(binding, params.errNode_out);
+  }
+  result = finish_graph_instantiation(&exec, resources, &binding, result);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_write(conn, &params, sizeof(params)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+#endif
+
+int handle_cudaGraphClone(conn_t *conn) {
+  cudaGraph_t original = nullptr;
+  if (rpc_read(conn, &original, sizeof(original)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaGraph_t clone = nullptr;
+  cudaError_t result = LUPINE_CUDART_CALL(cudaGraphClone, function_not_found(),
+                                          &clone, original);
+  if (result == cudaSuccess) {
+    lupine_clone_graph_resources(clone, original);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &clone, sizeof(clone)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaGraphLaunch(conn_t *conn) {
+  cudaGraphExec_t exec = nullptr;
+  cudaStream_t stream = nullptr;
+  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaError_t result =
+      LUPINE_CUDART_CALL(cudaGraphLaunch, function_not_found(), exec, stream);
+  lupine_note_graph_launch(exec, stream, static_cast<CUresult>(result));
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaGraphExecDestroy(conn_t *conn) {
+  cudaGraphExec_t exec = nullptr;
+  if (rpc_read(conn, &exec, sizeof(exec)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaError_t result =
+      LUPINE_CUDART_CALL(cudaGraphExecDestroy, function_not_found(), exec);
+  if (result == cudaSuccess) {
+    result =
+        static_cast<cudaError_t>(lupine_release_graph_exec_resources(exec));
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaGraphDestroy(conn_t *conn) {
+  cudaGraph_t graph = nullptr;
+  if (rpc_read(conn, &graph, sizeof(graph)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaError_t result =
+      LUPINE_CUDART_CALL(cudaGraphDestroy, function_not_found(), graph);
+  if (result == cudaSuccess) {
+    lupine_erase_graph_resources(graph);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+#if CUDART_VERSION < 13000
+int handle_cudaStreamUpdateCaptureDependencies(conn_t *conn) {
+  cudaStream_t stream = nullptr;
+  size_t count = 0;
+  unsigned int flags = 0;
+  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0) {
+    return -1;
+  }
+  std::vector<cudaGraphNode_t> dependencies(count);
+  if (rpc_read(conn, dependencies.data(), count * sizeof(cudaGraphNode_t)) <
+          0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaError_t result = LUPINE_CUDART_CALL(cudaStreamUpdateCaptureDependencies,
+                                          function_not_found(), stream,
+                                          dependencies.data(), count, flags);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaMemAdvise(conn_t *conn) {
+  const void *pointer = nullptr;
+  size_t count = 0;
+  cudaMemoryAdvise advice{};
+  int device = 0;
+  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0 ||
+      rpc_read(conn, &advice, sizeof(advice)) < 0 ||
+      rpc_read(conn, &device, sizeof(device)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaError_t result = LUPINE_CUDART_CALL(cudaMemAdvise, function_not_found(),
+                                          pointer, count, advice, device);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaMemPrefetchAsync(conn_t *conn) {
+  const void *pointer = nullptr;
+  size_t count = 0;
+  int device = 0;
+  cudaStream_t stream = nullptr;
+  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0 ||
+      rpc_read(conn, &device, sizeof(device)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaError_t result =
+      LUPINE_CUDART_CALL(cudaMemPrefetchAsync, function_not_found(), pointer,
+                         count, device, stream);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+#endif
+
+int handle_cudaMemPoolExportToShareableHandle(conn_t *conn) {
+  cudaMemPool_t pool = nullptr;
+  cudaMemAllocationHandleType handle_type{};
+  unsigned int flags = 0;
+  if (rpc_read(conn, &pool, sizeof(pool)) < 0 ||
+      rpc_read(conn, &handle_type, sizeof(handle_type)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  lupine_ipc_token token{};
+  cudaError_t result = cudaErrorNotSupported;
+  if (handle_type == cudaMemHandleTypePosixFileDescriptor &&
+      lupine_ipc_make_token(&token) == 0) {
+    int fd = -1;
+    result =
+        LUPINE_CUDART_CALL(cudaMemPoolExportToShareableHandle,
+                           function_not_found(), &fd, pool, handle_type, flags);
+    if (result == cudaSuccess) {
+      if (lupine_ipc_broker_register_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL, &token,
+                                        fd) < 0) {
+        result = cudaErrorUnknown;
+      }
+      lupine_fd_close(fd);
+    }
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &token, sizeof(token)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaMemPoolImportFromShareableHandle(conn_t *conn) {
+  lupine_ipc_token token{};
+  cudaMemAllocationHandleType handle_type{};
+  unsigned int flags = 0;
+  if (rpc_read(conn, &token, sizeof(token)) < 0 ||
+      rpc_read(conn, &handle_type, sizeof(handle_type)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaMemPool_t pool = nullptr;
+  cudaError_t result = cudaErrorInvalidValue;
+  if (handle_type == cudaMemHandleTypePosixFileDescriptor) {
+    int fd = lupine_ipc_broker_get_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL, &token);
+    if (fd >= 0) {
+      result = LUPINE_CUDART_CALL(
+          cudaMemPoolImportFromShareableHandle, function_not_found(), &pool,
+          reinterpret_cast<void *>(static_cast<uintptr_t>(fd)), handle_type,
+          flags);
+      lupine_fd_close(fd);
+    }
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pool, sizeof(pool)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaMallocManaged(conn_t *conn) {
+  size_t bytes = 0;
+  unsigned int flags = 0;
+  if (rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUdeviceptr pointer = 0;
+  cudaError_t result = static_cast<cudaError_t>(lupine_server_allocate_managed(
+      conn, &pointer, bytes, flags,
+      [](CUdeviceptr *p, size_t size, unsigned int allocation_flags) {
+        void *address = nullptr;
+        cudaError_t status =
+            LUPINE_CUDART_CALL(cudaMallocManaged, function_not_found(),
+                               &address, size, allocation_flags);
+        *p = reinterpret_cast<CUdeviceptr>(address);
+        return static_cast<CUresult>(status);
+      },
+      [](CUdeviceptr p) {
+        return static_cast<CUresult>(LUPINE_CUDART_CALL(
+            cudaFree, function_not_found(), reinterpret_cast<void *>(p)));
+      }));
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pointer, sizeof(pointer)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaFree(conn_t *conn) {
+  CUdeviceptr pointer = 0;
+  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaError_t result = static_cast<cudaError_t>(
+      lupine_server_free_device_allocation(pointer, [](CUdeviceptr p) {
+        return static_cast<CUresult>(LUPINE_CUDART_CALL(
+            cudaFree, function_not_found(), reinterpret_cast<void *>(p)));
+      }));
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaMallocHost(conn_t *conn) {
+  size_t bytes = 0;
+  if (rpc_read(conn, &bytes, sizeof(bytes)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  void *pointer = nullptr;
+  cudaError_t result;
+  if (conn->va_size == 0 || bytes == 0) {
+    result = LUPINE_CUDART_CALL(cudaMallocHost, function_not_found(), &pointer,
+                                bytes);
+  } else {
+    CUdeviceptr device_pointer = 0;
+    result = static_cast<cudaError_t>(lupine_server_map_host_allocation(
+        conn, &pointer, &device_pointer, bytes, 0, cudaHostRegisterMapped,
+        runtime_host_registration));
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pointer, sizeof(pointer)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaHostAlloc(conn_t *conn) {
+  size_t bytes = 0;
+  unsigned int flags = 0;
+  if (rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  void *pointer = nullptr;
+  cudaError_t result;
+  constexpr unsigned int valid_flags =
+      cudaHostAllocPortable | cudaHostAllocMapped | cudaHostAllocWriteCombined;
+  if (conn->va_size == 0 || bytes == 0 || (flags & ~valid_flags) != 0) {
+    result = LUPINE_CUDART_CALL(cudaHostAlloc, function_not_found(), &pointer,
+                                bytes, flags);
+  } else {
+    CUdeviceptr device_pointer = 0;
+    result = static_cast<cudaError_t>(lupine_server_map_host_allocation(
+        conn, &pointer, &device_pointer, bytes, flags,
+        cudaHostRegisterMapped | (flags & cudaHostAllocPortable),
+        runtime_host_registration));
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pointer, sizeof(pointer)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaHostRegister(conn_t *conn) {
+  void *client_base = nullptr;
+  size_t bytes = 0;
+  unsigned int flags = 0;
+  if (rpc_read(conn, &client_base, sizeof(client_base)) < 0 ||
+      rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  void *pointer = nullptr;
+  CUdeviceptr device_pointer = 0;
+  cudaError_t result =
+      static_cast<cudaError_t>(lupine_server_map_host_allocation(
+          conn, &pointer, &device_pointer, bytes, flags,
+          flags | cudaHostRegisterMapped, runtime_host_registration));
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pointer, sizeof(pointer)) < 0 ||
+      rpc_write(conn, &device_pointer, sizeof(device_pointer)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaHostUnregister(conn_t *conn) {
+  void *pointer = nullptr;
+  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaError_t result = static_cast<cudaError_t>(
+      lupine_server_free_host_allocation(pointer, [](void *p) {
+        return static_cast<CUresult>(
+            LUPINE_CUDART_CALL(cudaHostUnregister, function_not_found(), p));
+      }));
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaFreeHost(conn_t *conn) {
+  void *pointer = nullptr;
+  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaError_t result = static_cast<cudaError_t>(
+      lupine_server_free_host_allocation(pointer, [](void *p) {
+        return static_cast<CUresult>(
+            LUPINE_CUDART_CALL(cudaFreeHost, function_not_found(), p));
+      }));
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaHostGetFlags(conn_t *conn) {
+  void *pointer = nullptr;
+  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  unsigned int flags = 0;
+  cudaError_t result = cudaSuccess;
+  if (!lupine_server_host_allocation_flags(pointer, &flags)) {
+    result = LUPINE_CUDART_CALL(cudaHostGetFlags, function_not_found(), &flags,
+                                pointer);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
 }
 
 #if CUDART_VERSION >= 12000
@@ -133,10 +822,19 @@ int handle_cudaFuncGetName(conn_t *conn) {
 
 namespace {
 
-// The manual fatbin loader owns the wrapper and image until unregistration.
+struct function_registration {
+  const char *host_function = nullptr;
+  std::string device_function;
+  std::string device_name;
+};
+
+// NVIDIA keeps these names for later kernel lookup. List nodes keep their
+// addresses stable as more functions are registered to the same fatbin.
 struct fatbin_registration {
   lupine_fatbin_wrapper wrapper = {};
   std::vector<unsigned char> image;
+  std::list<function_registration> functions;
+  std::list<std::pair<std::string, std::string>> variables;
 };
 
 std::mutex &registry_mutex() {
@@ -181,11 +879,145 @@ int handle___cudaRegisterFatBinary(conn_t *conn) {
   if (handle == nullptr) {
     delete registration;
   } else {
+    lupine_note_device_stdout_image(registration->image.data(),
+                                    registration->image.size());
     std::lock_guard<std::mutex> lock(registry_mutex());
     registrations()[handle] = registration;
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &handle, sizeof(handle)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle___cudaRegisterFunction(conn_t *conn) {
+  void **handle = nullptr;
+  function_registration names;
+  size_t device_function_length = 0;
+  size_t device_name_length = 0;
+  int thread_limit = 0;
+  uint3 *tid_present = nullptr, *bid_present = nullptr;
+  dim3 *block_dim_present = nullptr, *grid_dim_present = nullptr;
+  int *warp_size_present = nullptr;
+  uint3 tid{}, bid{};
+  dim3 block_dim, grid_dim;
+  int warp_size = 0;
+  if (rpc_read(conn, &handle, sizeof(handle)) < 0 ||
+      rpc_read(conn, &names.host_function, sizeof(names.host_function)) < 0 ||
+      rpc_read(conn, &device_function_length, sizeof(device_function_length)) <
+          0) {
+    return -1;
+  }
+  names.device_function.resize(device_function_length);
+  if (rpc_read(conn, names.device_function.data(), device_function_length) <
+          0 ||
+      rpc_read(conn, &device_name_length, sizeof(device_name_length)) < 0) {
+    return -1;
+  }
+  names.device_name.resize(device_name_length);
+  if (rpc_read(conn, names.device_name.data(), device_name_length) < 0 ||
+      names.device_function.empty() || names.device_function.back() != '\0' ||
+      names.device_name.empty() || names.device_name.back() != '\0' ||
+      rpc_read(conn, &thread_limit, sizeof(thread_limit)) < 0 ||
+      rpc_read(conn, &tid_present, sizeof(tid_present)) < 0 ||
+      (tid_present != nullptr && rpc_read(conn, &tid, sizeof(tid)) < 0) ||
+      rpc_read(conn, &bid_present, sizeof(bid_present)) < 0 ||
+      (bid_present != nullptr && rpc_read(conn, &bid, sizeof(bid)) < 0) ||
+      rpc_read(conn, &block_dim_present, sizeof(block_dim_present)) < 0 ||
+      (block_dim_present != nullptr &&
+       rpc_read(conn, &block_dim, sizeof(block_dim)) < 0) ||
+      rpc_read(conn, &grid_dim_present, sizeof(grid_dim_present)) < 0 ||
+      (grid_dim_present != nullptr &&
+       rpc_read(conn, &grid_dim, sizeof(grid_dim)) < 0) ||
+      rpc_read(conn, &warp_size_present, sizeof(warp_size_present)) < 0 ||
+      (warp_size_present != nullptr &&
+       rpc_read(conn, &warp_size, sizeof(warp_size)) < 0)) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  using fn_t = void (*)(void **, const char *, char *, const char *, int,
+                        uint3 *, uint3 *, dim3 *, dim3 *, int *);
+  auto fn = cudart_symbol<fn_t>("__cudaRegisterFunction");
+  if (fn == nullptr) {
+    return -1;
+  }
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex());
+    auto entry = registrations().find(handle);
+    if (entry == registrations().end()) {
+      return -1;
+    }
+    entry->second->functions.push_back(std::move(names));
+    auto &stored = entry->second->functions.back();
+    fn(handle, stored.host_function, stored.device_function.data(),
+       stored.device_name.c_str(), thread_limit,
+       tid_present != nullptr ? &tid : nullptr,
+       bid_present != nullptr ? &bid : nullptr,
+       block_dim_present != nullptr ? &block_dim : nullptr,
+       grid_dim_present != nullptr ? &grid_dim : nullptr,
+       warp_size_present != nullptr ? &warp_size : nullptr);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle___cudaRegisterVar(conn_t *conn) {
+  void **handle = nullptr;
+  char *hostVar = nullptr;
+  size_t address_length = 0, name_length = 0;
+  std::pair<std::string, std::string> names;
+  int ext = 0, constant = 0, global = 0;
+  size_t size = 0;
+  if (rpc_read(conn, &handle, sizeof(handle)) < 0 ||
+      rpc_read(conn, &hostVar, sizeof(hostVar)) < 0 ||
+      rpc_read(conn, &address_length, sizeof(address_length)) < 0) {
+    return -1;
+  }
+  names.first.resize(address_length);
+  if (rpc_read(conn, names.first.data(), address_length) < 0 ||
+      rpc_read(conn, &name_length, sizeof(name_length)) < 0) {
+    return -1;
+  }
+  names.second.resize(name_length);
+  if (rpc_read(conn, names.second.data(), name_length) < 0 ||
+      names.first.empty() || names.first.back() != '\0' ||
+      names.second.empty() || names.second.back() != '\0' ||
+      rpc_read(conn, &ext, sizeof(ext)) < 0 ||
+      rpc_read(conn, &size, sizeof(size)) < 0 ||
+      rpc_read(conn, &constant, sizeof(constant)) < 0 ||
+      rpc_read(conn, &global, sizeof(global)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  using fn_t =
+      void (*)(void **, char *, char *, const char *, int, size_t, int, int);
+  auto fn = cudart_symbol<fn_t>("__cudaRegisterVar");
+  if (fn == nullptr) {
+    return -1;
+  }
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex());
+    auto entry = registrations().find(handle);
+    if (entry == registrations().end()) {
+      return -1;
+    }
+    entry->second->variables.push_back(std::move(names));
+    auto &stored = entry->second->variables.back();
+    fn(handle, hostVar, stored.first.data(), stored.second.c_str(), ext, size,
+       constant, global);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
@@ -200,9 +1032,10 @@ int handle___cudaUnregisterFatBinary(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
-  auto fn = cudart_symbol<unregister_fat_binary_fn>("__cudaUnregisterFatBinary");
+  auto fn =
+      cudart_symbol<unregister_fat_binary_fn>("__cudaUnregisterFatBinary");
   if (fn == nullptr) {
-    return write_result(conn, request_id, function_not_found());
+    return -1;
   }
   fn(handle);
   {
@@ -213,7 +1046,486 @@ int handle___cudaUnregisterFatBinary(conn_t *conn) {
       registrations().erase(entry);
     }
   }
-  return write_result(conn, request_id, cudaSuccess);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Completion and event bookkeeping shared with the driver copy paths
+// ---------------------------------------------------------------------------
+
+namespace {
+
+int write_completion(conn_t *conn, int request_id, cudaError_t result,
+                     std::vector<lupine_pending_dtoh_item> *pending,
+                     const std::vector<lupine_graph_host_copy> &graph_copies,
+                     const lupine_captured_stdout *capture) {
+  const uint32_t count =
+      static_cast<uint32_t>(pending->size() + graph_copies.size());
+  bool failed = rpc_write_start_response(conn, request_id) < 0 ||
+                rpc_copy_alloc(conn, 2 * sizeof(uint64_t)) < 0 ||
+                rpc_write(conn, &count, sizeof(count)) < 0;
+  for (const auto &copy : graph_copies) {
+    if (failed) {
+      break;
+    }
+    failed = rpc_write(conn, &copy.client_dst, sizeof(copy.client_dst)) < 0 ||
+             rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) < 0 ||
+             rpc_write(conn, copy.server_src, copy.bytes) < 0;
+  }
+  failed =
+      failed || lupine_write_pending_dtoh_copies(conn, *pending, false) < 0 ||
+      (capture != nullptr &&
+       lupine_write_captured_stdout(conn, *capture) < 0) ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0;
+  lupine_cleanup_pending_dtoh_copies(pending);
+  return failed ? -1 : 0;
+}
+
+int handle_stream_completion(conn_t *conn, bool synchronize) {
+  cudaStream_t stream = nullptr;
+  if (rpc_read(conn, &stream, sizeof(stream)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  lupine_captured_stdout capture;
+  if (synchronize) {
+    lupine_start_stdout_capture(&capture);
+  }
+  cudaError_t result =
+      synchronize
+          ? LUPINE_CUDART_CALL(cudaStreamSynchronize, function_not_found(),
+                               stream)
+          : LUPINE_CUDART_CALL(cudaStreamQuery, function_not_found(), stream);
+  if (synchronize) {
+    lupine_finish_stdout_capture(&capture);
+  }
+  std::vector<lupine_pending_dtoh_item> pending;
+  std::vector<lupine_graph_host_copy> graph_copies;
+  if (result == cudaSuccess) {
+    pending =
+        lupine_detach_pending_dtoh_copies(conn, stream, stream == nullptr);
+    graph_copies = lupine_take_stream_dtoh_copies(stream);
+  }
+  return write_completion(conn, request_id, result, &pending, graph_copies,
+                          synchronize ? &capture : nullptr);
+}
+
+int handle_event_completion(conn_t *conn, bool synchronize) {
+  cudaEvent_t event = nullptr;
+  if (rpc_read(conn, &event, sizeof(event)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  lupine_captured_stdout capture;
+  if (synchronize) {
+    lupine_start_stdout_capture(&capture);
+  }
+  cudaError_t result =
+      synchronize
+          ? LUPINE_CUDART_CALL(cudaEventSynchronize, function_not_found(),
+                               event)
+          : LUPINE_CUDART_CALL(cudaEventQuery, function_not_found(), event);
+  if (synchronize) {
+    lupine_finish_stdout_capture(&capture);
+  }
+  std::vector<lupine_pending_dtoh_item> pending;
+  if (result == cudaSuccess) {
+    pending = lupine_detach_event_dtoh_copies(conn, event);
+  }
+  return write_completion(conn, request_id, result, &pending, {},
+                          synchronize ? &capture : nullptr);
+}
+
+int handle_event_record(conn_t *conn, bool with_flags) {
+  cudaEvent_t event = nullptr;
+  cudaStream_t stream = nullptr;
+  unsigned int flags = 0;
+  if (rpc_read(conn, &event, sizeof(event)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      (with_flags && rpc_read(conn, &flags, sizeof(flags)) < 0)) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaError_t result =
+      with_flags
+          ? LUPINE_CUDART_CALL(cudaEventRecordWithFlags, function_not_found(),
+                               event, stream, flags)
+          : LUPINE_CUDART_CALL(cudaEventRecord, function_not_found(), event,
+                               stream);
+  if (result == cudaSuccess) {
+    lupine_record_event_capture_resources(event, stream);
+    lupine_note_event_record(conn, event, stream);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+} // namespace
+
+int handle_cudaDeviceSynchronize(conn_t *conn) {
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  lupine_captured_stdout capture;
+  lupine_start_stdout_capture(&capture);
+  cudaError_t result =
+      LUPINE_CUDART_CALL(cudaDeviceSynchronize, function_not_found());
+  lupine_finish_stdout_capture(&capture);
+  std::vector<lupine_pending_dtoh_item> pending;
+  if (result == cudaSuccess) {
+    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
+  }
+  return write_completion(conn, request_id, result, &pending, {}, &capture);
+}
+
+int handle_cudaStreamSynchronize(conn_t *conn) {
+  return handle_stream_completion(conn, true);
+}
+
+int handle_cudaStreamQuery(conn_t *conn) {
+  return handle_stream_completion(conn, false);
+}
+
+int handle_cudaEventSynchronize(conn_t *conn) {
+  return handle_event_completion(conn, true);
+}
+
+int handle_cudaEventQuery(conn_t *conn) {
+  return handle_event_completion(conn, false);
+}
+
+int handle_cudaEventRecord(conn_t *conn) {
+  return handle_event_record(conn, false);
+}
+
+int handle_cudaEventRecordWithFlags(conn_t *conn) {
+  return handle_event_record(conn, true);
+}
+
+int handle_cudaEventDestroy(conn_t *conn) {
+  cudaEvent_t event = nullptr;
+  if (rpc_read(conn, &event, sizeof(event)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaError_t result =
+      LUPINE_CUDART_CALL(cudaEventDestroy, function_not_found(), event);
+  if (result == cudaSuccess) {
+    lupine_forget_event_capture_resources(event);
+    lupine_forget_event_dtoh_marker(conn, event);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaGraphAddHostNode(conn_t *conn) {
+  cudaGraph_t graph = nullptr;
+  size_t dependency_count = 0;
+  if (rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &dependency_count, sizeof(dependency_count)) < 0) {
+    return -1;
+  }
+  std::vector<cudaGraphNode_t> dependencies(dependency_count);
+  cudaHostNodeParams params{};
+  if (rpc_read(conn, dependencies.data(),
+               dependency_count * sizeof(cudaGraphNode_t)) < 0 ||
+      rpc_read(conn, &params, sizeof(params)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  auto *callback = new lupine_host_callback_data{
+      conn, params.fn, params.userData, lupine_get_graph_resources(graph), {}};
+  cudaHostNodeParams server_params{
+      params.fn == nullptr ? nullptr : lupine_graph_host_callback, callback};
+  cudaGraphNode_t node = nullptr;
+  cudaError_t result = LUPINE_CUDART_CALL(
+      cudaGraphAddHostNode, function_not_found(), &node, graph,
+      dependencies.data(), dependency_count, &server_params);
+  if (result != cudaSuccess) {
+    delete callback;
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &node, sizeof(node)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaStreamBeginCapture(conn_t *conn) {
+  cudaStream_t stream = nullptr;
+  cudaStreamCaptureMode mode = cudaStreamCaptureModeGlobal;
+  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_read(conn, &mode, sizeof(mode)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  auto *resources = lupine_begin_stream_capture_resources(stream);
+  constexpr size_t scratch_size = 128ull * 1024ull * 1024ull;
+  void *scratch = nullptr;
+  cudaError_t result = LUPINE_CUDART_CALL(cudaMallocHost, function_not_found(),
+                                          &scratch, scratch_size);
+  if (result == cudaSuccess &&
+      !lupine_graph_install_capture_scratch(resources, scratch, scratch_size)) {
+    LUPINE_CUDART_CALL(cudaFreeHost, function_not_found(), scratch);
+  }
+  if (result == cudaSuccess) {
+    result = static_cast<cudaError_t>(lupine_server_prepare_htod_capture(conn));
+  }
+  if (result == cudaSuccess) {
+    result = LUPINE_CUDART_CALL(cudaStreamBeginCapture, function_not_found(),
+                                stream, mode);
+  }
+  if (result != cudaSuccess) {
+    lupine_discard_stream_capture_resources(resources);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaStreamEndCapture(conn_t *conn) {
+  cudaStream_t stream = nullptr;
+  cudaGraph_t *graph_out = nullptr;
+  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_read(conn, &graph_out, sizeof(graph_out)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaGraph_t graph = nullptr;
+  cudaError_t result = LUPINE_CUDART_CALL(cudaStreamEndCapture,
+                                          function_not_found(), stream, &graph);
+  lupine_finish_stream_capture_resources(stream, graph, result == cudaSuccess);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &graph_out, sizeof(graph_out)) < 0 ||
+      (graph_out != nullptr && rpc_write(conn, &graph, sizeof(graph)) < 0) ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+namespace {
+
+int handle_capture_info(conn_t *conn, const char *name, int version) {
+  cudaStream_t stream = nullptr;
+  if (rpc_read(conn, &stream, sizeof(stream)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cudaStreamCaptureStatus status = cudaStreamCaptureStatusNone;
+  unsigned long long id = 0;
+  cudaGraph_t graph = nullptr;
+  const cudaGraphNode_t *dependencies = nullptr;
+  const void *edges = nullptr;
+  size_t count = 0;
+  cudaError_t result = function_not_found();
+  if (version == 1) {
+    using fn_t = cudaError_t (*)(cudaStream_t, cudaStreamCaptureStatus *,
+                                 unsigned long long *);
+    auto fn = cudart_symbol<fn_t>(name);
+    if (fn != nullptr)
+      result = fn(stream, &status, &id);
+  } else if (version == 2) {
+    using fn_t = cudaError_t (*)(cudaStream_t, cudaStreamCaptureStatus *,
+                                 unsigned long long *, cudaGraph_t *,
+                                 const cudaGraphNode_t **, size_t *);
+    auto fn = cudart_symbol<fn_t>(name);
+    if (fn != nullptr)
+      result = fn(stream, &status, &id, &graph, &dependencies, &count);
+  }
+#if CUDART_VERSION >= 12000
+  else {
+    static_assert(sizeof(cudaGraphEdgeData) == sizeof(CUgraphEdgeData));
+    const cudaGraphEdgeData *edge_data = nullptr;
+    using fn_t = cudaError_t (*)(cudaStream_t, cudaStreamCaptureStatus *,
+                                 unsigned long long *, cudaGraph_t *,
+                                 const cudaGraphNode_t **,
+                                 const cudaGraphEdgeData **, size_t *);
+    auto fn = cudart_symbol<fn_t>(name);
+    if (fn != nullptr) {
+      result =
+          fn(stream, &status, &id, &graph, &dependencies, &edge_data, &count);
+    }
+    edges = edge_data;
+  }
+#endif
+  if (result != cudaSuccess || dependencies == nullptr) {
+    count = 0;
+  }
+  bool has_edges = edges != nullptr;
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &status, sizeof(status)) < 0 ||
+      rpc_write(conn, &id, sizeof(id)) < 0 ||
+      rpc_write(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_write(conn, &has_edges, sizeof(has_edges)) < 0 ||
+      rpc_write(conn, dependencies, count * sizeof(cudaGraphNode_t)) < 0 ||
+      (has_edges &&
+       rpc_write(conn, edges, count * sizeof(CUgraphEdgeData)) < 0) ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+} // namespace
+
+int handle_cudaStreamGetCaptureInfo(conn_t *conn) {
+#if CUDART_VERSION < 13000
+  constexpr int version = 1;
+#else
+  constexpr int version = 3;
+#endif
+  return handle_capture_info(conn, "cudaStreamGetCaptureInfo", version);
+}
+
+#if CUDART_VERSION < 13000
+int handle_cudaStreamGetCaptureInfo_v2(conn_t *conn) {
+  return handle_capture_info(conn, "cudaStreamGetCaptureInfo_v2", 2);
+}
+#if CUDART_VERSION >= 12000
+int handle_cudaStreamGetCaptureInfo_v3(conn_t *conn) {
+  return handle_capture_info(conn, "cudaStreamGetCaptureInfo_v3", 3);
+}
+#endif
+#endif
+
+int handle_cudaLaunchHostFunc(conn_t *conn) {
+  cudaStream_t stream = nullptr;
+  cudaHostFn_t callback = nullptr;
+  void *userData = nullptr;
+  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_read(conn, &callback, sizeof(callback)) < 0 ||
+      rpc_read(conn, &userData, sizeof(userData)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  auto *data = new lupine_host_callback_data{
+      conn, callback, userData, lupine_get_stream_resources(stream), stream};
+  cudaError_t result = LUPINE_CUDART_CALL(
+      cudaLaunchHostFunc, function_not_found(), stream,
+      callback == nullptr ? nullptr : lupine_graph_host_callback, data);
+  if (result != cudaSuccess) {
+    delete data;
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+#if CUDART_VERSION >= 13000
+int handle_cudaLaunchHostFunc_v2(conn_t *conn) {
+  cudaStream_t stream = nullptr;
+  cudaHostFn_t callback = nullptr;
+  void *userData = nullptr;
+  unsigned int syncMode = 0;
+  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_read(conn, &callback, sizeof(callback)) < 0 ||
+      rpc_read(conn, &userData, sizeof(userData)) < 0 ||
+      rpc_read(conn, &syncMode, sizeof(syncMode)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  auto *data = new lupine_host_callback_data{
+      conn, callback, userData, lupine_get_stream_resources(stream), stream};
+  cudaError_t result = LUPINE_CUDART_CALL(
+      cudaLaunchHostFunc_v2, function_not_found(), stream,
+      callback == nullptr ? nullptr : lupine_graph_host_callback, data,
+      syncMode);
+  if (result != cudaSuccess) {
+    delete data;
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+#endif
+
+namespace {
+
+void CUDART_CB runtime_stream_callback(cudaStream_t stream, cudaError_t status,
+                                       void *userData) {
+  lupine_stream_callback(stream, static_cast<CUresult>(status), userData);
+}
+
+} // namespace
+
+int handle_cudaStreamAddCallback(conn_t *conn) {
+  cudaStream_t stream = nullptr;
+  cudaStreamCallback_t callback = nullptr;
+  void *userData = nullptr;
+  unsigned int flags = 0;
+  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_read(conn, &callback, sizeof(callback)) < 0 ||
+      rpc_read(conn, &userData, sizeof(userData)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  auto *data = new lupine_stream_callback_data{
+      conn, reinterpret_cast<CUstreamCallback>(callback), userData};
+  cudaError_t result = LUPINE_CUDART_CALL(
+      cudaStreamAddCallback, function_not_found(), stream,
+      callback == nullptr ? nullptr : runtime_stream_callback, data, flags);
+  if (result != cudaSuccess) {
+    delete data;
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,8 +1534,8 @@ int handle___cudaUnregisterFatBinary(conn_t *conn) {
 
 namespace {
 
-// The argument sizes of an entry point, in order; the client packs the
-// values by them. Only a runtime that can report the layout can launch.
+// The client packs argument values in this order. Do not probe past the end
+// with runtime APIs: their error would leak into the caller's cudaGetLastError.
 int handle_param_layout(conn_t *conn) {
   const void *func = nullptr;
   if (rpc_read(conn, &func, sizeof(func)) < 0) {
@@ -235,20 +1547,49 @@ int handle_param_layout(conn_t *conn) {
   }
   std::vector<size_t> sizes;
   cudaError_t result = cudaSuccess;
-  using fn_t = cudaError_t (*)(const void *, size_t, size_t *, size_t *);
-  fn_t fn = cudart_symbol<fn_t>("cudaFuncGetParamInfo");
-  if (fn == nullptr) {
-    result = cudaErrorNotSupported;
+  // CUDA 13 accepts both registered host entries and cudaKernel_t handles.
+  // Identify host entries from their fatbin registration without probing a
+  // runtime API with the wrong handle kind and changing its last-error state.
+  CUkernel kernel = nullptr;
+#if CUDART_VERSION >= 13000
+  kernel = reinterpret_cast<CUkernel>(const_cast<void *>(func));
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex());
+    for (const auto &entry : registrations()) {
+      for (const auto &registered_function : entry.second->functions) {
+        if (registered_function.host_function == func) {
+          kernel = nullptr;
+          break;
+        }
+      }
+      if (kernel == nullptr) {
+        break;
+      }
+    }
   }
-  for (size_t index = 0; fn != nullptr; ++index) {
+#endif
+  cudaFunction_t function = nullptr;
+  if (kernel == nullptr) {
+    result = LUPINE_CUDART_CALL(cudaGetFuncBySymbol, function_not_found(),
+                                &function, func);
+  }
+  // Driver metadata queries do not change the runtime's last-error state
+  // when the terminating index is out of range. Launches still use CUDART.
+  for (size_t index = 0; result == cudaSuccess; ++index) {
     size_t offset = 0;
     size_t size = 0;
-    cudaError_t status = fn(func, index, &offset, &size);
-    if (status == cudaErrorInvalidValue) {
+    CUresult status =
+        kernel != nullptr
+            ? cuKernelGetParamInfo(kernel, index, &offset, &size)
+            : cuFuncGetParamInfo(reinterpret_cast<CUfunction>(function), index,
+                                 &offset, &size);
+    if (status == CUDA_ERROR_INVALID_VALUE) {
       break;
     }
-    if (status != cudaSuccess) {
-      result = status;
+    if (status != CUDA_SUCCESS) {
+      result = status == CUDA_ERROR_DEINITIALIZED
+                   ? cudaErrorDeviceUninitialized
+                   : static_cast<cudaError_t>(status);
       break;
     }
     sizes.push_back(size);
@@ -405,5 +1746,173 @@ int handle_cudaLaunchKernelExC(conn_t *conn) {
   rpc_async_sequence_end(conn);
   return 0;
 }
+
+int handle_cudaGraphAddKernelNode(conn_t *conn) {
+  cudaGraph_t graph = nullptr;
+  size_t dependency_count = 0;
+  if (rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &dependency_count, sizeof(dependency_count)) < 0) {
+    return -1;
+  }
+  std::vector<cudaGraphNode_t> dependencies(dependency_count);
+  cudaKernelNodeParams params{};
+  packed_params arguments;
+  if (rpc_read(conn, dependencies.data(),
+               dependency_count * sizeof(cudaGraphNode_t)) < 0 ||
+      rpc_read(conn, &params, sizeof(params)) < 0 ||
+      read_params(conn, &arguments) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  params.kernelParams = arguments.pointers.data();
+  params.extra = nullptr;
+  cudaGraphNode_t node = nullptr;
+  cudaError_t result =
+      LUPINE_CUDART_CALL(cudaGraphAddKernelNode, function_not_found(), &node,
+                         graph, dependencies.data(), dependency_count, &params);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &node, sizeof(node)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaGraphKernelNodeSetParams(conn_t *conn) {
+  cudaGraphNode_t node = nullptr;
+  cudaKernelNodeParams params{};
+  packed_params arguments;
+  if (rpc_read(conn, &node, sizeof(node)) < 0 ||
+      rpc_read(conn, &params, sizeof(params)) < 0 ||
+      read_params(conn, &arguments) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  params.kernelParams = arguments.pointers.data();
+  params.extra = nullptr;
+  cudaError_t result = LUPINE_CUDART_CALL(cudaGraphKernelNodeSetParams,
+                                          function_not_found(), node, &params);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cudaGraphExecKernelNodeSetParams(conn_t *conn) {
+  cudaGraphExec_t exec = nullptr;
+  cudaGraphNode_t node = nullptr;
+  cudaKernelNodeParams params{};
+  packed_params arguments;
+  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_read(conn, &node, sizeof(node)) < 0 ||
+      rpc_read(conn, &params, sizeof(params)) < 0 ||
+      read_params(conn, &arguments) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  params.kernelParams = arguments.pointers.data();
+  params.extra = nullptr;
+  cudaError_t result = LUPINE_CUDART_CALL(
+      cudaGraphExecKernelNodeSetParams, function_not_found(), exec,
+      lupine_htod_graph_exec_node(exec, node), &params);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+#if CUDART_VERSION >= 12000
+namespace {
+
+int handle_graph_add_node(conn_t *conn, bool version_two) {
+  cudaGraph_t graph = nullptr;
+  size_t dependency_count = 0;
+  if (rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &dependency_count, sizeof(dependency_count)) < 0) {
+    return -1;
+  }
+  std::vector<cudaGraphNode_t> dependencies(dependency_count);
+  bool has_edges = false;
+  if (rpc_read(conn, dependencies.data(),
+               dependency_count * sizeof(cudaGraphNode_t)) < 0 ||
+      rpc_read(conn, &has_edges, sizeof(has_edges)) < 0) {
+    return -1;
+  }
+  std::vector<cudaGraphEdgeData> edges(has_edges ? dependency_count : 0);
+  cudaGraphNodeParams params{};
+  packed_params arguments;
+  if (rpc_read(conn, edges.data(), edges.size() * sizeof(cudaGraphEdgeData)) <
+          0 ||
+      rpc_read(conn, &params, sizeof(params)) < 0 ||
+      (params.type == cudaGraphNodeTypeKernel &&
+       read_params(conn, &arguments) < 0)) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  std::vector<cudaGraph_t> children(params.type == cudaGraphNodeTypeConditional
+                                        ? params.conditional.size
+                                        : 0);
+  if (params.type == cudaGraphNodeTypeKernel) {
+    params.kernel.kernelParams = arguments.pointers.data();
+    params.kernel.extra = nullptr;
+  } else if (params.type == cudaGraphNodeTypeConditional) {
+    params.conditional.phGraph_out = nullptr;
+  }
+  cudaGraphNode_t node = nullptr;
+#if CUDART_VERSION >= 13000
+  cudaError_t result = LUPINE_CUDART_CALL(
+      cudaGraphAddNode, function_not_found(), &node, graph, dependencies.data(),
+      has_edges ? edges.data() : nullptr, dependency_count, &params);
+#else
+  cudaError_t result =
+      version_two
+          ? LUPINE_CUDART_CALL(cudaGraphAddNode_v2, function_not_found(), &node,
+                               graph, dependencies.data(),
+                               has_edges ? edges.data() : nullptr,
+                               dependency_count, &params)
+          : LUPINE_CUDART_CALL(cudaGraphAddNode, function_not_found(), &node,
+                               graph, dependencies.data(), dependency_count,
+                               &params);
+#endif
+  if (result == cudaSuccess && !children.empty() &&
+      params.conditional.phGraph_out != nullptr) {
+    std::copy_n(params.conditional.phGraph_out, children.size(),
+                children.data());
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &node, sizeof(node)) < 0 ||
+      rpc_write(conn, children.data(), children.size() * sizeof(cudaGraph_t)) <
+          0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+} // namespace
+
+int handle_cudaGraphAddNode(conn_t *conn) {
+  return handle_graph_add_node(conn, false);
+}
+#if CUDART_VERSION < 13000
+int handle_cudaGraphAddNode_v2(conn_t *conn) {
+  return handle_graph_add_node(conn, true);
+}
+#endif
+#endif
 
 #include "codegen/gen_cudart_server.inc"

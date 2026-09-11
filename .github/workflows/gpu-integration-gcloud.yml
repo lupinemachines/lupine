@@ -372,8 +372,7 @@ jobs:
               -DENABLE_CUDA_C_LINKING_SAMPLE=1
             cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$(nproc)"
           else
-            make -C "$CUDA_SAMPLES_DIR" -j"$(nproc)" \
-              EXTRA_NVCCFLAGS="--cudart shared" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"}
+            make -C "$CUDA_SAMPLES_DIR" -j"$(nproc)" EXTRA_NVCCFLAGS="--cudart shared" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"}
           fi
           SCRIPT
 
@@ -653,7 +652,6 @@ jobs:
               export CCACHE_COMPILERCHECK=content
               export CCACHE_COMPRESS=true
               export LUPINE_LIB="$LUPINE_BUILD_DIR/libcuda.so.1"
-              export LUPINE_DISABLE_LOCAL=1
               export SERVER_LOCAL_BIN="$LUPINE_BUILD_DIR/lupine_driver_server"
               export SERVER_REMOTE_BIN="/tmp/lupine-driver-server-${MATRIX_LABEL}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
               export SSH_OPTS="-i /tmp/lupine-ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
@@ -688,8 +686,8 @@ jobs:
                 scp -q "${ssh_args[@]}" "$SERVER_LOCAL_BIN" \
                   "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
 
-              # The VM toolkit may differ from this lane. Runtime RPC handlers
-              # need the NVIDIA libcudart matching the headers we built with.
+              # Load the same vendor runtime on the GPU server as in this lane.
+              # The client keeps its two shim search paths separate below.
               server_runtime_dir="${SERVER_REMOTE_BIN}-runtime"
               timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
                 ssh "${ssh_args[@]}" "$SERVER_SSH_TARGET" "mkdir -p $server_runtime_dir"
@@ -703,6 +701,8 @@ jobs:
               export LIBRARY_SAMPLES_SKIP_LIST="cuFFT/3d_mgpu_c2c/bin/3d_mgpu_c2c_example"
               export INTEGRATION_RESULTS_DIR="/results/test/integration/results/$(date +%Y%m%d-%H%M%S)"
               mkdir -p "$INTEGRATION_RESULTS_DIR"
+              # Registers driver-only and driver-runtime against one build;
+              # one CTest invocation runs both even when either variant fails.
               cmake -S /src/test/integration -B /tmp/lupine-integration-ctest
               timeout --kill-after=30s "$COMPLIANCE_TIMEOUT" \
                 ctest --test-dir /tmp/lupine-integration-ctest \

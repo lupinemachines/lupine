@@ -6,12 +6,10 @@
 #include <vector>
 
 #include <cuda.h>
-#include <cuda_runtime_api.h>
 
 #include "cache.h"
 #include "client_routing.h"
 #include "codegen/gen_rpc_ids.h"
-#include "cuda_client_rpc.h"
 #include "events.h"
 
 extern int rpc_open();
@@ -55,8 +53,7 @@ static bool &lupine_device_table_ready() {
 
 template <typename Handle>
 static std::unordered_map<Handle, lupine_owner_record> &lupine_owners() {
-  static auto *owners =
-      new std::unordered_map<Handle, lupine_owner_record>();
+  static auto *owners = new std::unordered_map<Handle, lupine_owner_record>();
   return *owners;
 }
 
@@ -331,37 +328,8 @@ lupine_lookup_device_on_all_routes_impl(CUdevice *device, void *context,
   return first_error;
 }
 
-static cudaError_t lupine_remote_cudaGetDeviceCount(conn_t *conn, int *count) {
-  cudaError_t result = cudaErrorDevicesUnavailable;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cudaGetDeviceCount) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, count, sizeof(*count)) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-    return cudaErrorDevicesUnavailable;
-  }
-  return result;
-}
-
 extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device) {
-  if (device == nullptr || *device < 0 || rpc_open() != 0) {
-    return nullptr;
-  }
-  int ordinal = *device;
-  for (int index = 0; index < rpc_size(); ++index) {
-    conn_t *conn = rpc_client_get_connection(static_cast<unsigned int>(index));
-    int count = 0;
-    if (lupine_remote_cudaGetDeviceCount(conn, &count) != cudaSuccess) {
-      return nullptr;
-    }
-    lupine_rpc_note_runtime_initialized();
-    if (ordinal < count) {
-      *device = ordinal;
-      return conn;
-    }
-    ordinal -= count;
-  }
-  return nullptr;
+  return lupine_route_remote_conn(lupine_route_for_device(device));
 }
 
 extern "C" lupine_route lupine_route_for_device(CUdevice *device) {
@@ -639,9 +607,9 @@ static lupine_route lupine_route_for_known_owner(Handle handle) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   auto &owners = lupine_owners<Handle>();
   auto owner = owners.find(handle);
-  return owner == owners.end() ? lupine_route{LUPINE_ROUTE_INVALID, nullptr}
-                               : lupine_route_from_identity(
-                                     owner->second.route_id);
+  return owner == owners.end()
+             ? lupine_route{LUPINE_ROUTE_INVALID, nullptr}
+             : lupine_route_from_identity(owner->second.route_id);
 }
 
 template <typename Handle>
@@ -786,6 +754,9 @@ CUresult lupine_set_current_context_on_route(lupine_route route,
 }
 
 extern "C" lupine_route lupine_route_for_current_context() {
+  if (lupine_refresh_runtime_context() != CUDA_SUCCESS) {
+    return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
+  }
   return lupine_route_for_context(lupine_current_context_hint());
 }
 
@@ -810,6 +781,9 @@ static lupine_route lupine_route_for_default_context_hint(CUcontext ctx) {
 }
 
 extern "C" lupine_route lupine_route_for_default() {
+  if (lupine_refresh_runtime_context() != CUDA_SUCCESS) {
+    return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
+  }
   CUcontext current_hint = lupine_current_context_hint();
   if (current_hint != nullptr) {
     lupine_route route = lupine_route_for_default_context_hint(current_hint);

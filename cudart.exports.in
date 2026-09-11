@@ -1,5 +1,4 @@
-/* The version node is literally NVIDIA's SONAME: consumers such as PyTorch
-   reference runtime symbols as name@libcudart.so.<major>. */
+/* Match NVIDIA's ELF version node for runtime consumers. */
 libcudart.so.@LUPINE_CUDART_SOVERSION@ {
   global:
     cuda*;

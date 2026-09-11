@@ -87,6 +87,13 @@ extern "C" void lupine_kernel_attribute_cache_erase(int route_id,
                                                     CUkernel kernel, int attrib,
                                                     int dev);
 extern "C" void lupine_invalidate_function_attribute_cache();
+extern "C" void lupine_function_attribute_cache_erase(int route_id,
+                                                      CUfunction function,
+                                                      int attrib);
+extern "C" void lupine_kernel_attribute_cache_erase_for_function(
+    int route_id, CUfunction function, int attrib);
+extern "C" void lupine_invalidate_occupancy_cache();
+extern "C" void lupine_disable_local_occupancy();
 extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);
 extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
@@ -493,8 +500,12 @@ CUresult cuCtxGetCacheConfig(CUfunc_cache *pconfig) {
 CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
   lupine_route route = lupine_route_for_default();
   CUresult return_value;
-  if (lupine_route_is_local(route))
-    return lupine_call_real_cuda_fn("cuCtxSetCacheConfig", config);
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn("cuCtxSetCacheConfig", config);
+    if (return_value == CUDA_SUCCESS)
+      lupine_disable_local_occupancy();
+    return return_value;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxSetCacheConfig) < 0 ||
@@ -503,6 +514,8 @@ CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_disable_local_occupancy();
   return return_value;
 }
 
@@ -1013,9 +1026,11 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn("cuKernelSetAttribute", attrib, val,
                                             kernel, dev);
-    if (return_value == CUDA_SUCCESS)
+    if (return_value == CUDA_SUCCESS) {
       lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel,
                                           (int)attrib, (int)dev);
+      lupine_invalidate_occupancy_cache();
+    }
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -1031,9 +1046,11 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return_value = CUDA_SUCCESS;
-  if (return_value == CUDA_SUCCESS)
+  if (return_value == CUDA_SUCCESS) {
     lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel,
                                         (int)attrib, (int)dev);
+    lupine_invalidate_occupancy_cache();
+  }
   return return_value;
 }
 
@@ -1043,9 +1060,13 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
   if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
     return CUDA_ERROR_INVALID_DEVICE;
   CUresult return_value;
-  if (lupine_route_is_local(route))
-    return lupine_call_real_cuda_fn("cuKernelSetCacheConfig", kernel, config,
-                                    dev);
+  if (lupine_route_is_local(route)) {
+    return_value =
+        lupine_call_real_cuda_fn("cuKernelSetCacheConfig", kernel, config, dev);
+    if (return_value == CUDA_SUCCESS)
+      lupine_disable_local_occupancy();
+    return return_value;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuKernelSetCacheConfig) < 0 ||
@@ -1056,6 +1077,8 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_disable_local_occupancy();
   return return_value;
 }
 
@@ -3281,8 +3304,13 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
     return_value =
         lupine_call_real_cuda_fn("cuFuncSetAttribute", hfunc, attrib, value);
     if (return_value == CUDA_SUCCESS) {
-      lupine_invalidate_kernel_attribute_cache();
-      lupine_invalidate_function_attribute_cache();
+      lupine_kernel_attribute_cache_erase_for_function(
+          lupine_route_identity(route),
+          lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
+      lupine_function_attribute_cache_erase(
+          lupine_route_identity(route),
+          lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
+      lupine_invalidate_occupancy_cache();
     }
     return return_value;
   }
@@ -3298,8 +3326,13 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS) {
-    lupine_invalidate_kernel_attribute_cache();
-    lupine_invalidate_function_attribute_cache();
+    lupine_kernel_attribute_cache_erase_for_function(
+        lupine_route_identity(route),
+        lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
+    lupine_function_attribute_cache_erase(
+        lupine_route_identity(route),
+        lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
+    lupine_invalidate_occupancy_cache();
   }
   return return_value;
 }
@@ -3307,8 +3340,13 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
 CUresult cuFuncSetCacheConfig(CUfunction hfunc, CUfunc_cache config) {
   lupine_route route = lupine_route_for_function(hfunc);
   CUresult return_value;
-  if (lupine_route_is_local(route))
-    return lupine_call_real_cuda_fn("cuFuncSetCacheConfig", hfunc, config);
+  if (lupine_route_is_local(route)) {
+    return_value =
+        lupine_call_real_cuda_fn("cuFuncSetCacheConfig", hfunc, config);
+    if (return_value == CUDA_SUCCESS)
+      lupine_disable_local_occupancy();
+    return return_value;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -3319,6 +3357,8 @@ CUresult cuFuncSetCacheConfig(CUfunction hfunc, CUfunc_cache config) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_disable_local_occupancy();
   return return_value;
 }
 

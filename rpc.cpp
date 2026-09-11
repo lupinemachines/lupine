@@ -43,7 +43,9 @@ void *lupine_va_reserve_exact(uintptr_t base, size_t size) {
 }
 #endif
 
-void lupine_va_destroy(conn_t *conn) {
+} // namespace
+
+void lupine_va_release(conn_t *conn) {
   if (conn == nullptr || conn->va_size == 0) {
     return;
   }
@@ -56,8 +58,6 @@ void lupine_va_destroy(conn_t *conn) {
   conn->va_size = 0;
   conn->va_next = 0;
 }
-
-} // namespace
 
 lupine_va_window lupine_va_local_window(void) {
 #if defined(_WIN32) || defined(__APPLE__)
@@ -393,7 +393,7 @@ void rpc_conn_destroy(conn_t *conn) {
   }
   rpc_close_transport_socket(conn);
   rpc_http2_destroy(conn);
-  lupine_va_destroy(conn);
+  lupine_va_release(conn);
   rpc_write_buffer_release(conn);
   std::vector<rpc_write_cursor>().swap(conn->write_queue);
   std::vector<rpc_host_allocation_write>().swap(conn->host_allocation_writes);

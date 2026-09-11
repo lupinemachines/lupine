@@ -919,7 +919,7 @@ class DereferenceOperation:
     def server_declaration(self) -> str:
         c = self.type_.ptr_to.const
         self.type_.ptr_to.const = False
-        result = f"    {self.type_.ptr_to.format()} {self.parameter.name};\n"
+        result = f"    {self.type_.ptr_to.format()} {self.parameter.name}{{}};\n"
         self.type_.ptr_to.const = c
         return result
 

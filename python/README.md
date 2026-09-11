@@ -52,8 +52,6 @@ native HTTP/2 connection, so:
 - `LUPINE_LIBDIR` — load shims from a custom directory (e.g. a newer build).
 - `TRITON_LIBCUDA_PATH` — defaults to the selected shim directory so
   `torch.compile` can link Triton's launcher; an explicit value is preserved.
-- `LUPINE_DISABLE_LOCAL=0` — include local GPUs (when present) in the
-  topology ahead of the remote ones.
 
 The package depends on nothing but the standard library.
 
@@ -80,9 +78,8 @@ An explicit `LUPINE_SERVER` still wins. An externally managed
 `LUPINE_GPU_TYPE`, `LUPINE_GPU_COUNT`, and `LUPINE_REGION` to constrain automatic
 placement, and `LUPINE_AUTO=0` to disable the hook for one process.
 
-The hook does not change `LUPINE_DISABLE_LOCAL`. As with the explicit API,
-PyTorch must have a compiled CUDA backend; a CPU-only PyTorch build cannot
-gain one at runtime.
+As with the explicit API, PyTorch must have a compiled CUDA backend; a CPU-only
+PyTorch build cannot gain one at runtime.
 
 ## Authenticated cloud API
 

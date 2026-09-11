@@ -13,6 +13,9 @@ int handle_cudaDestroyExternalMemory(conn_t *conn);
 int handle_cudaDestroyExternalSemaphore(conn_t *conn);
 int handle_cudaDestroySurfaceObject(conn_t *conn);
 int handle_cudaDestroyTextureObject(conn_t *conn);
+int handle_cudaDevResourceGenerateDesc(conn_t *conn);
+int handle_cudaDevSmResourceSplit(conn_t *conn);
+int handle_cudaDevSmResourceSplitByCount(conn_t *conn);
 int handle_cudaDeviceCanAccessPeer(conn_t *conn);
 int handle_cudaDeviceDisablePeerAccess(conn_t *conn);
 int handle_cudaDeviceEnablePeerAccess(conn_t *conn);
@@ -21,107 +24,59 @@ int handle_cudaDeviceGetAttribute(conn_t *conn);
 int handle_cudaDeviceGetByPCIBusId(conn_t *conn);
 int handle_cudaDeviceGetCacheConfig(conn_t *conn);
 int handle_cudaDeviceGetDefaultMemPool(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaDeviceGetDevResource(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaDeviceGetExecutionCtx(conn_t *conn);
-#endif
-
 int handle_cudaDeviceGetGraphMemAttribute(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaDeviceGetHostAtomicCapabilities(conn_t *conn);
-#endif
-
 int handle_cudaDeviceGetLimit(conn_t *conn);
 int handle_cudaDeviceGetMemPool(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaDeviceGetP2PAtomicCapabilities(conn_t *conn);
-#endif
-
 int handle_cudaDeviceGetP2PAttribute(conn_t *conn);
 int handle_cudaDeviceGetPCIBusId(conn_t *conn);
 int handle_cudaDeviceGetStreamPriorityRange(conn_t *conn);
 int handle_cudaDeviceGetTexture1DLinearMaxWidth(conn_t *conn);
 int handle_cudaDeviceGraphMemTrim(conn_t *conn);
+int handle_cudaDeviceRegisterAsyncNotification(conn_t *conn);
 int handle_cudaDeviceReset(conn_t *conn);
 int handle_cudaDeviceSetCacheConfig(conn_t *conn);
 int handle_cudaDeviceSetGraphMemAttribute(conn_t *conn);
 int handle_cudaDeviceSetLimit(conn_t *conn);
 int handle_cudaDeviceSetMemPool(conn_t *conn);
-int handle_cudaDeviceSynchronize(conn_t *conn);
+int handle_cudaDeviceUnregisterAsyncNotification(conn_t *conn);
 int handle_cudaDriverGetVersion(conn_t *conn);
 int handle_cudaEventCreate(conn_t *conn);
 int handle_cudaEventCreateWithFlags(conn_t *conn);
-int handle_cudaEventDestroy(conn_t *conn);
 int handle_cudaEventElapsedTime(conn_t *conn);
-int handle_cudaEventQuery(conn_t *conn);
-int handle_cudaEventRecord(conn_t *conn);
-int handle_cudaEventRecordWithFlags(conn_t *conn);
-int handle_cudaEventSynchronize(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaExecutionCtxDestroy(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaExecutionCtxGetDevResource(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaExecutionCtxGetDevice(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaExecutionCtxGetId(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaExecutionCtxRecordEvent(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaExecutionCtxStreamCreate(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaExecutionCtxSynchronize(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaExecutionCtxWaitEvent(conn_t *conn);
-#endif
-
 int handle_cudaExternalMemoryGetMappedBuffer(conn_t *conn);
 int handle_cudaExternalMemoryGetMappedMipmappedArray(conn_t *conn);
-int handle_cudaFree(conn_t *conn);
 int handle_cudaFreeArray(conn_t *conn);
 int handle_cudaFreeAsync(conn_t *conn);
 int handle_cudaFreeMipmappedArray(conn_t *conn);
 int handle_cudaFuncGetAttributes(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaFuncGetParamCount(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 12000
 int handle_cudaFuncGetParamInfo(conn_t *conn);
-#endif
-
 int handle_cudaFuncSetAttribute(conn_t *conn);
 int handle_cudaFuncSetCacheConfig(conn_t *conn);
 int handle_cudaGetChannelDesc(conn_t *conn);
 int handle_cudaGetDevice(conn_t *conn);
 int handle_cudaGetDeviceCount(conn_t *conn);
 int handle_cudaGetDeviceFlags(conn_t *conn);
+int handle_cudaGraphicsGLRegisterBuffer(conn_t *conn);
+int handle_cudaGraphicsGLRegisterImage(conn_t *conn);
 int handle_cudaGetDeviceProperties(conn_t *conn);
-#if CUDART_VERSION >= 13000
+int handle_cudaGetDriverEntryPoint(conn_t *conn);
+int handle_cudaGetDriverEntryPointByVersion(conn_t *conn);
+int handle_cudaGetExportTable(conn_t *conn);
 int handle_cudaGetFuncBySymbol(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 12000
 int handle_cudaGetKernel(conn_t *conn);
-#endif
-
 int handle_cudaGetLastError(conn_t *conn);
 int handle_cudaGetMipmappedArrayLevel(conn_t *conn);
 int handle_cudaGetSurfaceObjectResourceDesc(conn_t *conn);
@@ -130,77 +85,46 @@ int handle_cudaGetSymbolSize(conn_t *conn);
 int handle_cudaGetTextureObjectResourceDesc(conn_t *conn);
 int handle_cudaGetTextureObjectResourceViewDesc(conn_t *conn);
 int handle_cudaGetTextureObjectTextureDesc(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaGreenCtxCreate(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 12000
+int handle_cudaHostGetDevicePointer(conn_t *conn);
+int handle_cudaImportExternalMemory(conn_t *conn);
+int handle_cudaImportExternalSemaphore(conn_t *conn);
 int handle_cudaInitDevice(conn_t *conn);
-#endif
-
 int handle_cudaIpcCloseMemHandle(conn_t *conn);
 int handle_cudaIpcGetEventHandle(conn_t *conn);
 int handle_cudaIpcGetMemHandle(conn_t *conn);
 int handle_cudaIpcOpenEventHandle(conn_t *conn);
 int handle_cudaIpcOpenMemHandle(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaKernelSetAttributeForDevice(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
+int handle_cudaLibraryEnumerateKernels(conn_t *conn);
 int handle_cudaLibraryGetGlobal(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
+int handle_cudaLibraryGetKernel(conn_t *conn);
 int handle_cudaLibraryGetKernelCount(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaLibraryGetManaged(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
+int handle_cudaLibraryGetUnifiedFunction(conn_t *conn);
+int handle_cudaLibraryLoadData(conn_t *conn);
+int handle_cudaLibraryLoadFromFile(conn_t *conn);
 int handle_cudaLibraryUnload(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaLogsCurrent(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaLogsDumpToFile(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaLogsDumpToMemory(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
+int handle_cudaLogsRegisterCallback(conn_t *conn);
 int handle_cudaLogsUnregisterCallback(conn_t *conn);
-#endif
-
 int handle_cudaMalloc(conn_t *conn);
 int handle_cudaMalloc3D(conn_t *conn);
 int handle_cudaMalloc3DArray(conn_t *conn);
 int handle_cudaMallocArray(conn_t *conn);
 int handle_cudaMallocAsync(conn_t *conn);
 int handle_cudaMallocFromPoolAsync(conn_t *conn);
-int handle_cudaMallocManaged(conn_t *conn);
 int handle_cudaMallocMipmappedArray(conn_t *conn);
 int handle_cudaMallocPitch(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaMemAdvise(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
+int handle_cudaMemAdvise_v2(conn_t *conn);
+int handle_cudaMemDiscardAndPrefetchBatchAsync(conn_t *conn);
+int handle_cudaMemDiscardBatchAsync(conn_t *conn);
 int handle_cudaMemGetDefaultMemPool(conn_t *conn);
-#endif
-
 int handle_cudaMemGetInfo(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaMemGetMemPool(conn_t *conn);
-#endif
-
 int handle_cudaMemPoolCreate(conn_t *conn);
 int handle_cudaMemPoolDestroy(conn_t *conn);
 int handle_cudaMemPoolExportPointer(conn_t *conn);
@@ -210,15 +134,18 @@ int handle_cudaMemPoolImportPointer(conn_t *conn);
 int handle_cudaMemPoolSetAccess(conn_t *conn);
 int handle_cudaMemPoolSetAttribute(conn_t *conn);
 int handle_cudaMemPoolTrimTo(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaMemPrefetchAsync(conn_t *conn);
-#endif
-
+int handle_cudaMemPrefetchAsync_v2(conn_t *conn);
+int handle_cudaMemPrefetchBatchAsync(conn_t *conn);
 int handle_cudaMemRangeGetAttribute(conn_t *conn);
-#if CUDART_VERSION >= 13000
+int handle_cudaMemRangeGetAttributes(conn_t *conn);
 int handle_cudaMemSetMemPool(conn_t *conn);
-#endif
-
+int handle_cudaMemcpy3DBatchAsync(conn_t *conn);
+int handle_cudaMemcpy3DPeer(conn_t *conn);
+int handle_cudaMemcpy3DPeerAsync(conn_t *conn);
+int handle_cudaMemcpy3DWithAttributesAsync(conn_t *conn);
+int handle_cudaMemcpyBatchAsync(conn_t *conn);
+int handle_cudaMemcpyWithAttributesAsync(conn_t *conn);
 int handle_cudaMemset(conn_t *conn);
 int handle_cudaMemset2D(conn_t *conn);
 int handle_cudaMemset2DAsync(conn_t *conn);
@@ -234,154 +161,99 @@ int handle_cudaOccupancyMaxActiveClusters(conn_t *conn);
 int handle_cudaOccupancyMaxPotentialClusterSize(conn_t *conn);
 int handle_cudaPeekAtLastError(conn_t *conn);
 int handle_cudaPointerGetAttributes(conn_t *conn);
+int handle_cudaProfilerStart(conn_t *conn);
+int handle_cudaProfilerStop(conn_t *conn);
 int handle_cudaRuntimeGetVersion(conn_t *conn);
 int handle_cudaSetDevice(conn_t *conn);
 int handle_cudaSetDeviceFlags(conn_t *conn);
 int handle_cudaSetValidDevices(conn_t *conn);
 int handle_cudaSignalExternalSemaphoresAsync(conn_t *conn);
 int handle_cudaStreamAttachMemAsync(conn_t *conn);
-int handle_cudaStreamBeginCapture(conn_t *conn);
-#if CUDART_VERSION >= 12000
 int handle_cudaStreamBeginCaptureToGraph(conn_t *conn);
-#endif
-
+int handle_cudaStreamBeginRecaptureToGraph(conn_t *conn);
 int handle_cudaStreamCopyAttributes(conn_t *conn);
 int handle_cudaStreamCreate(conn_t *conn);
 int handle_cudaStreamCreateWithFlags(conn_t *conn);
 int handle_cudaStreamCreateWithPriority(conn_t *conn);
 int handle_cudaStreamDestroy(conn_t *conn);
-int handle_cudaStreamEndCapture(conn_t *conn);
 int handle_cudaStreamGetAttribute(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaStreamGetDevResource(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaStreamGetDevice(conn_t *conn);
-#endif
-
 int handle_cudaStreamGetFlags(conn_t *conn);
-#if CUDART_VERSION >= 12000
 int handle_cudaStreamGetId(conn_t *conn);
-#endif
-
 int handle_cudaStreamGetPriority(conn_t *conn);
 int handle_cudaStreamIsCapturing(conn_t *conn);
-int handle_cudaStreamQuery(conn_t *conn);
 int handle_cudaStreamSetAttribute(conn_t *conn);
-int handle_cudaStreamSynchronize(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaStreamUpdateCaptureDependencies(conn_t *conn);
-#endif
-
+int handle_cudaStreamUpdateCaptureDependencies_v2(conn_t *conn);
 int handle_cudaStreamWaitEvent(conn_t *conn);
 int handle_cudaThreadExchangeStreamCaptureMode(conn_t *conn);
+int handle_cudaUserObjectCreate(conn_t *conn);
 int handle_cudaUserObjectRelease(conn_t *conn);
 int handle_cudaUserObjectRetain(conn_t *conn);
 int handle_cudaWaitExternalSemaphoresAsync(conn_t *conn);
 int handle_cudaGraphAddChildGraphNode(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaGraphAddDependencies(conn_t *conn);
-#endif
-
 int handle_cudaGraphAddEmptyNode(conn_t *conn);
 int handle_cudaGraphAddEventRecordNode(conn_t *conn);
 int handle_cudaGraphAddEventWaitNode(conn_t *conn);
+int handle_cudaGraphAddExternalSemaphoresSignalNode(conn_t *conn);
+int handle_cudaGraphAddExternalSemaphoresWaitNode(conn_t *conn);
+int handle_cudaGraphAddMemAllocNode(conn_t *conn);
 int handle_cudaGraphAddMemFreeNode(conn_t *conn);
 int handle_cudaGraphAddMemsetNode(conn_t *conn);
 int handle_cudaGraphChildGraphNodeGetGraph(conn_t *conn);
-int handle_cudaGraphClone(conn_t *conn);
-#if CUDART_VERSION >= 12000
 int handle_cudaGraphConditionalHandleCreate(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaGraphConditionalHandleCreate_v2(conn_t *conn);
-#endif
-
 int handle_cudaGraphCreate(conn_t *conn);
 int handle_cudaGraphDebugDotPrint(conn_t *conn);
-int handle_cudaGraphDestroy(conn_t *conn);
 int handle_cudaGraphDestroyNode(conn_t *conn);
 int handle_cudaGraphEventRecordNodeGetEvent(conn_t *conn);
 int handle_cudaGraphEventRecordNodeSetEvent(conn_t *conn);
 int handle_cudaGraphEventWaitNodeGetEvent(conn_t *conn);
 int handle_cudaGraphEventWaitNodeSetEvent(conn_t *conn);
 int handle_cudaGraphExecChildGraphNodeSetParams(conn_t *conn);
-int handle_cudaGraphExecDestroy(conn_t *conn);
 int handle_cudaGraphExecEventRecordNodeSetEvent(conn_t *conn);
 int handle_cudaGraphExecEventWaitNodeSetEvent(conn_t *conn);
-#if CUDART_VERSION >= 12000
+int handle_cudaGraphExecExternalSemaphoresSignalNodeSetParams(conn_t *conn);
+int handle_cudaGraphExecExternalSemaphoresWaitNodeSetParams(conn_t *conn);
 int handle_cudaGraphExecGetFlags(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaGraphExecGetId(conn_t *conn);
-#endif
-
+int handle_cudaGraphExecHostNodeSetParams(conn_t *conn);
 int handle_cudaGraphExecMemsetNodeSetParams(conn_t *conn);
-#if CUDART_VERSION >= 12000
+int handle_cudaGraphExecNodeSetParams(conn_t *conn);
 int handle_cudaGraphExecUpdate(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
+int handle_cudaGraphExternalSemaphoresSignalNodeGetParams(conn_t *conn);
+int handle_cudaGraphExternalSemaphoresSignalNodeSetParams(conn_t *conn);
+int handle_cudaGraphExternalSemaphoresWaitNodeGetParams(conn_t *conn);
+int handle_cudaGraphExternalSemaphoresWaitNodeSetParams(conn_t *conn);
 int handle_cudaGraphGetEdges(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaGraphGetId(conn_t *conn);
-#endif
-
 int handle_cudaGraphGetNodes(conn_t *conn);
 int handle_cudaGraphGetRootNodes(conn_t *conn);
-#if CUDART_VERSION >= 12000
-int handle_cudaGraphInstantiate(conn_t *conn);
-#endif
-
-int handle_cudaGraphInstantiateWithFlags(conn_t *conn);
-#if CUDART_VERSION >= 12000
-int handle_cudaGraphInstantiateWithParams(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
+int handle_cudaGraphHostNodeGetParams(conn_t *conn);
+int handle_cudaGraphHostNodeSetParams(conn_t *conn);
 int handle_cudaGraphKernelNodeCopyAttributes(conn_t *conn);
-#endif
-
 int handle_cudaGraphKernelNodeGetAttribute(conn_t *conn);
+int handle_cudaGraphKernelNodeGetParams(conn_t *conn);
 int handle_cudaGraphKernelNodeSetAttribute(conn_t *conn);
-int handle_cudaGraphLaunch(conn_t *conn);
+int handle_cudaGraphMemAllocNodeGetParams(conn_t *conn);
 int handle_cudaGraphMemFreeNodeGetParams(conn_t *conn);
 int handle_cudaGraphMemsetNodeGetParams(conn_t *conn);
 int handle_cudaGraphMemsetNodeSetParams(conn_t *conn);
 int handle_cudaGraphNodeFindInClone(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaGraphNodeGetContainingGraph(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaGraphNodeGetDependencies(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
 int handle_cudaGraphNodeGetDependentNodes(conn_t *conn);
-#endif
-
 int handle_cudaGraphNodeGetEnabled(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaGraphNodeGetLocalId(conn_t *conn);
-#endif
-
-#if CUDART_VERSION >= 13000
+int handle_cudaGraphNodeGetParams(conn_t *conn);
 int handle_cudaGraphNodeGetToolsId(conn_t *conn);
-#endif
-
 int handle_cudaGraphNodeGetType(conn_t *conn);
 int handle_cudaGraphNodeSetEnabled(conn_t *conn);
+int handle_cudaGraphNodeSetParams(conn_t *conn);
 int handle_cudaGraphReleaseUserObject(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle_cudaGraphRemoveDependencies(conn_t *conn);
-#endif
-
 int handle_cudaGraphRetainUserObject(conn_t *conn);
 int handle_cudaGraphUpload(conn_t *conn);
 int handle_cudaGraphicsMapResources(conn_t *conn);
@@ -391,8 +263,6 @@ int handle_cudaGraphicsResourceSetMapFlags(conn_t *conn);
 int handle_cudaGraphicsSubResourceGetMappedArray(conn_t *conn);
 int handle_cudaGraphicsUnmapResources(conn_t *conn);
 int handle_cudaGraphicsUnregisterResource(conn_t *conn);
-int handle___cudaRegisterFunction(conn_t *conn);
-int handle___cudaRegisterVar(conn_t *conn);
 int handle___cudaRegisterManagedVar(conn_t *conn);
 int handle___cudaRegisterTexture(conn_t *conn);
 int handle___cudaRegisterSurface(conn_t *conn);
@@ -402,6 +272,4 @@ int handle___cudaPushCallConfiguration(conn_t *conn);
 int handle___cudaPopCallConfiguration(conn_t *conn);
 int handle___cudaRegisterFatBinaryEnd(conn_t *conn);
 int handle___cudaInitModule(conn_t *conn);
-#if CUDART_VERSION >= 13000
 int handle___cudaGetKernel(conn_t *conn);
-#endif
