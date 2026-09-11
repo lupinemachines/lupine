@@ -785,9 +785,8 @@ int h2_start_encoder_locked(h2_stream &stream) {
 }
 
 // Only the blocks the input completes come out; the remainder waits inside
-// LZ4F for a flush. LZ4F_compressBound assumes a block already nearly full,
-// so it is consulted only when a block will complete; otherwise the update
-// needs just the frame end it reserves.
+// LZ4F until a flush. LZ4F_compressBound reserves a whole worst-case block
+// even for tiny input, and `encoded` keeps that capacity across bursts.
 int h2_encode_locked(h2_stream &stream, const unsigned char *data,
                      size_t input) {
   const LZ4F_preferences_t preferences = h2_lz4_preferences();
@@ -805,7 +804,8 @@ int h2_encode_locked(h2_stream &stream, const unsigned char *data,
   return 0;
 }
 
-// Emits the block LZ4F is holding, or the frame end.
+// Emits the block LZ4F is holding (nothing when it holds none), or the frame
+// end.
 int h2_encode_terminal_locked(h2_stream &stream, bool finish) {
   size_t capacity = stream.buffered + 16;
   unsigned char *destination = h2_reserve_encoded(stream, capacity);
@@ -850,11 +850,10 @@ int h2_pump_stream_locked(h2_transport *transport, int32_t stream_id,
 }
 
 // Compresses the cursors in order. Whole blocks reach nghttp2 here; the tail
-// short of a block stays with the encoder for the write thread to flush,
-// unless the message is awaited: then nothing is gained by deferring, and the
-// flush would only drag the encoder and framing state onto the other core.
+// short of a block stays with the encoder for the write thread to flush, so
+// every message queued while one send is in flight shares a block.
 int h2_write_stream_locked(h2_transport *transport, int32_t stream_id,
-                           std::vector<rpc_write_cursor> &cursors, bool flush) {
+                           std::vector<rpc_write_cursor> &cursors) {
   h2_stream &stream = h2_get_stream(transport, stream_id);
   if (stream.closed || stream.encoder_finished ||
       (!stream.encoder_started && h2_start_encoder_locked(stream) < 0)) {
@@ -904,15 +903,6 @@ int h2_write_stream_locked(h2_transport *transport, int32_t stream_id,
         return -1;
       }
     }
-  }
-  if (stream.buffered == 0) {
-    return 0;
-  }
-  if (flush) {
-    return h2_encode_terminal_locked(stream, false) < 0 ||
-                   h2_pump_stream_locked(transport, stream_id, stream) < 0
-               ? -1
-               : 0;
   }
   if (!stream.flush_queued) {
     transport->flush_pending.push_back(stream_id);
@@ -1328,7 +1318,7 @@ int rpc_http2_read(conn_t *conn, void *data, size_t size) {
 }
 
 int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
-                           std::vector<rpc_write_cursor> &cursors, bool flush) {
+                           std::vector<rpc_write_cursor> &cursors) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   if (std::all_of(
           cursors.begin(), cursors.end(),
@@ -1337,7 +1327,7 @@ int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
   }
 
   pthread_mutex_lock(&transport->session_mutex);
-  int result = h2_write_stream_locked(transport, stream_id, cursors, flush);
+  int result = h2_write_stream_locked(transport, stream_id, cursors);
   pthread_mutex_unlock(&transport->session_mutex);
   // Signalled after the unlock so the write thread never wakes into a mutex
   // its producer still holds.
@@ -1348,8 +1338,7 @@ int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
 
 int rpc_http2_write(conn_t *conn, std::vector<rpc_write_cursor> &cursors) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
-  return rpc_http2_write_stream(conn, transport->dispatch_stream_id, cursors,
-                                false);
+  return rpc_http2_write_stream(conn, transport->dispatch_stream_id, cursors);
 }
 
 int32_t rpc_http2_dispatch_stream(conn_t *conn) {
@@ -1421,12 +1410,18 @@ int h2_end_stream_locked(h2_transport *transport, int32_t stream_id) {
 
 } // namespace
 
+// Emits the encoder tails on the caller instead of the write thread: for a
+// message the caller is about to wait on, nothing is gained by deferring, and
+// the flush would only drag the encoder and framing state onto the other core.
 int rpc_http2_flush(conn_t *conn) {
   if (conn == nullptr || conn->http2 == nullptr) {
     return -1;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
   pthread_mutex_lock(&transport->session_mutex);
+  if (h2_flush_pending_locked(transport) < 0) {
+    transport->write_failed = true;
+  }
   h2_drain_output_locked(transport);
   int result = transport->write_failed ? -1 : 0;
   pthread_mutex_unlock(&transport->session_mutex);

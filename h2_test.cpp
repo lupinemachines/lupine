@@ -130,7 +130,7 @@ int write_bytes(conn_t *conn, const void *data, size_t size) {
 int write_stream_bytes(conn_t *conn, int32_t stream_id, const void *data,
                        size_t size) {
   std::vector<rpc_write_cursor> cursors = {rpc_write_cursor(data, size)};
-  return rpc_http2_write_stream(conn, stream_id, cursors, false);
+  return rpc_http2_write_stream(conn, stream_id, cursors);
 }
 
 std::string read_string(conn_t *conn, size_t size) {
