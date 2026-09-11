@@ -1,6 +1,6 @@
 // Run with two LUPINE_SERVER endpoints to exercise library reconstruction on
-// another route, including a mixed-version destination. A single GPU can back
-// two separate server processes for this test.
+// another route. A single GPU can back two separate server processes for this
+// test; both servers must use the same protocol version as the client.
 #include <cuda.h>
 
 #include <cstdio>

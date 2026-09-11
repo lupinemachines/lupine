@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 #if CUDA_VERSION < 12040
 int main() {
@@ -83,6 +84,58 @@ int main() {
     CHECK(cuCtxSynchronize());
     CHECK(cuLibraryUnload(library));
   }
+  // More parameters than fit in one server-side deque block: queued spans
+  // must survive storage growth, alongside the JIT output length buffer.
+  constexpr int wide_count = 80;
+  std::string wide_image =
+      ".version 7.0\n.target sm_70\n.address_size 64\n.visible .entry wide(";
+  for (int i = 0; i < wide_count; ++i) {
+    if (i != 0) {
+      wide_image += ",";
+    }
+    wide_image += ".param .u64 p" + std::to_string(i);
+  }
+  wide_image += ") { ret; }\n.visible .entry no_args() { ret; }\n";
+  CUlibrary wide = nullptr;
+  char wide_info[1024] = {};
+  CUjit_option wide_options[] = {CU_JIT_INFO_LOG_BUFFER,
+                                 CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES};
+  void *wide_values[] = {wide_info,
+                         reinterpret_cast<void *>(sizeof(wide_info))};
+  CHECK(cuLibraryLoadData(&wide, wide_image.c_str(), wide_options, wide_values,
+                          2, nullptr, nullptr, 0));
+  CUkernel wide_kernel;
+  CUfunction wide_function;
+  CHECK(cuLibraryGetKernel(&wide_kernel, wide, "wide"));
+  CHECK(cuKernelGetFunction(&wide_function, wide_kernel));
+  unsigned long long wide_values_in[wide_count] = {};
+  void *wide_arguments[wide_count];
+  for (int i = 0; i < wide_count; ++i) {
+    size_t offset = 0, size = 0;
+    CHECK(cuFuncGetParamInfo(wide_function, i, &offset, &size));
+    if (offset != i * sizeof(unsigned long long) ||
+        size != sizeof(unsigned long long)) {
+      std::fprintf(stderr, "wide parameter %d: offset=%zu size=%zu\n", i,
+                   offset, size);
+      return 1;
+    }
+    wide_arguments[i] = &wide_values_in[i];
+  }
+  CHECK(cuLaunchKernel(wide_function, 1, 1, 1, 1, 1, 1, 0, nullptr,
+                       wide_arguments, nullptr));
+  CHECK(cuLibraryGetKernel(&wide_kernel, wide, "no_args"));
+  CHECK(cuKernelGetFunction(&wide_function, wide_kernel));
+  size_t ignored_offset = 0, ignored_size = 0;
+  if (cuFuncGetParamInfo(wide_function, 0, &ignored_offset, &ignored_size) !=
+      CUDA_ERROR_INVALID_VALUE) {
+    std::fprintf(stderr, "zero-argument kernel has a parameter\n");
+    return 1;
+  }
+  CHECK(cuLaunchKernel(wide_function, 1, 1, 1, 1, 1, 1, 0, nullptr, nullptr,
+                       nullptr));
+  CHECK(cuCtxSynchronize());
+  CHECK(cuLibraryUnload(wide));
+
   CUlibrary empty = nullptr;
   const char empty_image[] = ".version 7.0\n.target sm_70\n.address_size 64\n"
                              ".visible .global .u32 counter;\n";

@@ -98,9 +98,6 @@
   HANDLER(LUPINE_RPC_cuPrivateGetModuleNode, handle_cuPrivateGetModuleNode, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineFunctionParamLayoutSnapshot, handle_lupineFunctionParamLayoutSnapshot, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineFunctionAttributeSnapshot, handle_lupineFunctionAttributeSnapshot, rpc_backend::cuda) \
-  HANDLER(LUPINE_RPC_lupineLibrarySnapshot, handle_lupineLibrarySnapshot, rpc_backend::cuda) \
-  HANDLER(LUPINE_RPC_lupineLibraryLoadDataWithMetadata, handle_lupineLibraryLoadDataWithMetadata, rpc_backend::cuda) \
-  HANDLER(LUPINE_RPC_lupineLibraryAttributeSnapshot, handle_lupineLibraryAttributeSnapshot, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_cuGraphConditionalHandleCreate, handle_cuGraphConditionalHandleCreate, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphAddNode_v2, handle_cuGraphAddNode, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineEventQueryBatch, handle_lupineEventQueryBatch, rpc_backend::cuda) \
