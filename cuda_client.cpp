@@ -2588,8 +2588,46 @@ extern "C" void lupine_function_attribute_cache_erase(int route_id,
       lupine_function_attribute_key{route_id, function, attrib});
 }
 
-extern "C" void lupine_invalidate_occupancy_cache() {
-  lupine_occupancy_cache().clear();
+// Drops the occupancy answers that depend on one kernel, whichever handle the
+// caller queried it through. Occupancy of every other kernel stays valid.
+extern "C" void lupine_occupancy_cache_erase_function(int route_id,
+                                                      CUfunction function) {
+  std::vector<CUfunction> handles = {function};
+  {
+    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+    auto &pairs = lupine_function_kernels();
+    auto paired = pairs.find(function);
+    if (paired != pairs.end()) {
+      handles.push_back(reinterpret_cast<CUfunction>(paired->second));
+    }
+    for (const auto &[other, kernel] : pairs) {
+      if (reinterpret_cast<CUfunction>(kernel) == function) {
+        handles.push_back(other);
+      }
+    }
+  }
+  auto table = lupine_occupancy_cache().lock_table();
+  for (auto it = table.begin(); it != table.end();) {
+    bool match = it->first.route_id == route_id &&
+                 std::find(handles.begin(), handles.end(),
+                           it->first.function) != handles.end();
+    it = match ? table.erase(it) : std::next(it);
+  }
+}
+
+// The set is fire-and-forget, so the caller was already told it succeeded;
+// the cache mirrors that. A repeat of the value in place (torch sets the same
+// dynamic shared-memory limit before every launch) touches nothing.
+extern "C" void lupine_kernel_attribute_set_note(int route_id, CUkernel kernel,
+                                                 int attrib, int dev, int val) {
+  lupine_kernel_attribute_key key{route_id, kernel, attrib, dev};
+  int cached = 0;
+  if (lupine_kernel_attribute_cache().find(key, cached) && cached == val) {
+    return;
+  }
+  lupine_kernel_attribute_cache().insert_or_assign(key, val);
+  lupine_occupancy_cache_erase_function(route_id,
+                                        reinterpret_cast<CUfunction>(kernel));
 }
 
 // Occupancy is a pure function of the kernel's attributes and the device's
