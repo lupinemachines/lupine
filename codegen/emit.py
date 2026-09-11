@@ -17,6 +17,7 @@ from ops import (
     NullableArrayOperation,
     NullableOperation,
     NullTerminatedOperation,
+    ScalarOperation,
 )
 
 
@@ -133,7 +134,10 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
         initial_value = "rpc_error()" if result == backend.result else "{}"
         f.write(f"  {result} return_value = {initial_value};\n")
     for operation in operations:
-        if isinstance(operation, (InOutCountOperation, NullableArrayOperation)):
+        if isinstance(
+            operation,
+            (InOutCountOperation, NullableArrayOperation, ScalarOperation),
+        ):
             f.write(operation.client_declaration())
         elif isinstance(operation, NullTerminatedOperation):
             f.write(
@@ -216,6 +220,13 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
             raise RuntimeError(f"{name}: EVENT routing requires a parameter")
         f.write(
             "  conn_t *conn = connection_for_event("
+            f"{metadata.routing_parameter.name});\n"
+        )
+    elif metadata.routing_kind == "HANDLE":
+        if metadata.routing_parameter is None:
+            raise RuntimeError(f"{name}: HANDLE routing requires a parameter")
+        f.write(
+            "  conn_t *conn = connection_for_handle("
             f"{metadata.routing_parameter.name});\n"
         )
     elif metadata.routing_kind == "STREAM":
@@ -355,3 +366,26 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     f.write("}\n\n")
     if metadata.guard is not None:
         f.write("#endif\n\n")
+
+
+def write_scalar_slot(f, functions_with_annotations):
+    """The server-side slot a pointer-mode scalar's value lands in."""
+    if not any(
+        isinstance(operation, ScalarOperation)
+        for _, _, operations, _ in functions_with_annotations
+        for operation in operations
+    ):
+        return
+    f.write(
+        "// A pointer-mode scalar's value lands in the handler's inline slot,\n"
+        "// or on the heap when it is wider.\n"
+        "static unsigned char *lupine_scalar_slot(std::vector<unsigned char> &heap,\n"
+        "                                         unsigned char *slot, size_t size,\n"
+        "                                         uint32_t width) {\n"
+        "  if (width <= size) {\n"
+        "    return slot;\n"
+        "  }\n"
+        "  heap.resize(width);\n"
+        "  return heap.data();\n"
+        "}\n\n"
+    )

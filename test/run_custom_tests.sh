@@ -128,7 +128,7 @@ if [[ "$BUILD_TESTS" == "1" ]]; then
   arch_arg="-arch=all"
   [[ -n "$CUDA_SAMPLES_ARCH" ]] && arch_arg="-arch=sm_$CUDA_SAMPLES_ARCH"
   "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$arch_arg" \
-    "$src" -o "$exe" -lcuda -lcublas -ldl -L"$CUDA_HOME/lib64/stubs"
+    "$src" -o "$exe" -lcuda -lcublas -lcublasLt -ldl -L"$CUDA_HOME/lib64/stubs"
 fi
 [[ -x "$exe" ]] || { echo "missing custom test executable: $exe" >&2; exit 1; }
 if [[ "$BUILD_ONLY" == "1" ]]; then

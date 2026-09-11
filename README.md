@@ -236,7 +236,7 @@ docker pull ghcr.io/lupinemachines/lupine-client:cuda-12.4.1-ubuntu22.04
 docker pull ghcr.io/lupinemachines/lupine-server:cuda-12.4.1-ubuntu22.04
 ```
 
-Client images contain the CUDA driver, CUDA runtime, NVML, and HIP shims, their runtime dependencies,
+Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, NVML, and HIP shims, their runtime dependencies,
 and `nvidia-smi`. They are based on Ubuntu and contain neither the CUDA nor ROCm
 SDK. The `-slim` tags remain available as compatibility aliases with the same
 SDK-free contents, for example
@@ -328,11 +328,13 @@ cmake --build build
 ```
 
 CMake builds the CUDA driver shim at `build/libcuda.so.1`, the CUDA runtime shim
-at `build/libcudart.so.<major>`, the NVML shim at `build/libnvidia-ml.so.1`, the
-HIP shim at `build/libamdhip64.so.1`, and the server at
-`build/lupine_driver_server`. The runtime shim covers the whole runtime API: it
-forwards `cuda*` calls on the driver shim's connections, so both must come from
-the same build.
+at `build/libcudart.so.<major>`, the cuBLAS and cuBLASLt shims at
+`build/libcublas.so.<major>` and `build/libcublasLt.so.<major>` (when the
+toolkit's cuBLAS headers are present), the NVML shim at
+`build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and the
+server at `build/lupine_driver_server`. The runtime and cuBLAS shims cover their
+whole APIs: they forward `cuda*`, `cublas*` and `cublasLt*` calls on the driver
+shim's connections, so all of them must come from the same build.
 
 Redistributable server builds pass `LUPINE_CLIENT_BUNDLE_INPUT` with staged
 native client directories. CMake deterministically assembles all six platform

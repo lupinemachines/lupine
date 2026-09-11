@@ -186,6 +186,17 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
 #else
     break;
 #endif
+  case rpc_backend::cublas:
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+  {
+    backend_name = "cuBLAS";
+    lupine_checkpoint::cuda_call_guard guard;
+    result = handler.handler(conn);
+    break;
+  }
+#else
+    break;
+#endif
   case rpc_backend::nvml:
 #ifdef LUPINE_BUILD_NVML_BACKEND
     backend_name = "NVML";
