@@ -2661,35 +2661,19 @@ lupine_free_device_allocation(CUdeviceptr dptr, lupine_device_free_fn release) {
   return result;
 }
 
-// Device arena: cuMemAlloc on a remote route picks an address inside the VA
-// range its server reserved and tells the server to map it there without
-// waiting, so cuMemAlloc reports CUDA_SUCCESS optimistically. A map the
-// server cannot back is returned, once, by the next cuCtxSynchronize,
-// cuStreamSynchronize or cuEventSynchronize on that connection. Spans are
-// whole granules backed on the device of the context current when they were
-// mapped; requests below a granule are carved from a granule shared only
-// within that context, which stays mapped until its last carve is freed.
+// Device allocations bump through a reserved VA range without reusing addresses.
+// Only whole granules take this path; small allocations stay with cuMemAlloc.
+// Mapping remains optimistic: backing failures surface at the next synchronize.
 namespace {
-
-constexpr size_t LUPINE_DEVICE_ARENA_CARVE_ALIGNMENT = 512;
-
-struct lupine_device_arena_span {
-  size_t size = 0;
-  unsigned live = 0;
-  size_t used = 0;
-  CUcontext carver = nullptr;
-};
 
 struct lupine_device_arena {
   uintptr_t base = 0;
   size_t size = 0;
+  size_t next = 0;
   size_t granularity = 0;
   size_t budget = 0;
   size_t mapped = 0;
-  std::map<uintptr_t, size_t> free_spans;
-  std::unordered_map<uintptr_t, lupine_device_arena_span> spans;
-  std::unordered_map<uintptr_t, uintptr_t> carves;
-  std::unordered_map<CUcontext, uintptr_t> carve_spans;
+  std::unordered_map<CUdeviceptr, size_t> allocations;
 };
 
 std::mutex lupine_device_arena_mutex;
@@ -2729,7 +2713,8 @@ lupine_device_arena *lupine_device_arena_for_locked(conn_t *conn) {
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, fields, sizeof(fields)) < 0 ||
       rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0 ||
-      result != CUDA_SUCCESS || fields[0] != hint || fields[2] == 0 ||
+      result != CUDA_SUCCESS || fields[0] != hint || fields[1] == 0 ||
+      fields[1] > LUPINE_DEVICE_ARENA_SLOT || fields[2] == 0 ||
       lupine_va_reserve_exact(fields[0], fields[1]) == nullptr) {
     return nullptr;
   }
@@ -2737,26 +2722,7 @@ lupine_device_arena *lupine_device_arena_for_locked(conn_t *conn) {
   arena.size = fields[1];
   arena.granularity = fields[2];
   arena.budget = fields[3];
-  arena.free_spans[arena.base] = arena.size;
   return &arena;
-}
-
-void lupine_device_arena_return_locked(lupine_device_arena *arena,
-                                       uintptr_t start, size_t size) {
-  auto next = arena->free_spans.lower_bound(start);
-  if (next != arena->free_spans.end() && start + size == next->first) {
-    size += next->second;
-    next = arena->free_spans.erase(next);
-  }
-  if (next != arena->free_spans.begin()) {
-    auto prev = std::prev(next);
-    if (prev->first + prev->second == start) {
-      start = prev->first;
-      size += prev->second;
-      arena->free_spans.erase(prev);
-    }
-  }
-  arena->free_spans[start] = size;
 }
 
 int lupine_device_arena_send(conn_t *conn, int op, uintptr_t start,
@@ -2773,40 +2739,7 @@ int lupine_device_arena_send(conn_t *conn, int op, uintptr_t start,
   return 0;
 }
 
-bool lupine_device_arena_map_locked(conn_t *conn, lupine_device_arena *arena,
-                                    size_t size, uintptr_t *start) {
-  // Past the free memory the server reported when the arena was reserved the
-  // driver answers instead, so an out-of-memory result stays synchronous
-  // while this route is the device's only tenant.
-  if (arena->mapped + size > arena->budget) {
-    return false;
-  }
-  auto it =
-      std::find_if(arena->free_spans.begin(), arena->free_spans.end(),
-                   [size](const std::pair<const uintptr_t, size_t> &span) {
-                     return span.second >= size;
-                   });
-  if (it == arena->free_spans.end()) {
-    return false;
-  }
-  uintptr_t claimed = it->first;
-  size_t remaining = it->second - size;
-  arena->free_spans.erase(it);
-  if (remaining != 0) {
-    arena->free_spans[claimed + size] = remaining;
-  }
-  if (lupine_device_arena_send(conn, LUPINE_RPC_lupineDeviceArenaMap, claimed,
-                               size) < 0) {
-    lupine_device_arena_return_locked(arena, claimed, size);
-    return false;
-  }
-  arena->mapped += size;
-  *start = claimed;
-  return true;
-}
-
-// False when the arena cannot take the request; the caller then allocates
-// synchronously.
+// False when the request needs the ordinary synchronous allocation path.
 bool lupine_device_arena_alloc(conn_t *conn, size_t bytesize,
                                CUdeviceptr *dptr) {
   if (lupine_prepare_rpc(conn) < 0) {
@@ -2814,43 +2747,28 @@ bool lupine_device_arena_alloc(conn_t *conn, size_t bytesize,
   }
   std::lock_guard<std::mutex> lock(lupine_device_arena_mutex);
   lupine_device_arena *arena = lupine_device_arena_for_locked(conn);
-  if (arena == nullptr) {
+  if (arena == nullptr || bytesize < arena->granularity ||
+      bytesize > SIZE_MAX - (arena->granularity - 1)) {
     return false;
   }
   size_t granule = arena->granularity;
-  if (bytesize >= granule) {
-    size_t size = (bytesize + granule - 1) / granule * granule;
-    uintptr_t start = 0;
-    if (!lupine_device_arena_map_locked(conn, arena, size, &start)) {
-      return false;
-    }
-    arena->spans[start] = {size, 1, size};
-    *dptr = start;
-    return true;
+  size_t size = (bytesize + granule - 1) / granule * granule;
+  // The reservation limits cumulative VA use; the budget estimates live backing.
+  // Neither exhaustion nor a large request may wrap the bump offset.
+  if (size > arena->size - arena->next ||
+      size > arena->budget - arena->mapped) {
+    return false;
   }
-  CUcontext carver = lupine_current_context_hint();
-  uintptr_t &carve_span = arena->carve_spans[carver];
-  auto span = arena->spans.find(carve_span);
-  size_t offset = 0;
-  if (span != arena->spans.end()) {
-    offset = (span->second.used + LUPINE_DEVICE_ARENA_CARVE_ALIGNMENT - 1) &
-             ~(LUPINE_DEVICE_ARENA_CARVE_ALIGNMENT - 1);
+  CUdeviceptr start = arena->base + arena->next;
+  arena->next += size;
+  // Even a failed send consumes its address, since the server may have seen it.
+  if (lupine_device_arena_send(conn, LUPINE_RPC_lupineDeviceArenaMap, start,
+                               size) < 0) {
+    return false;
   }
-  if (span == arena->spans.end() || offset + bytesize > span->second.size) {
-    uintptr_t start = 0;
-    if (!lupine_device_arena_map_locked(conn, arena, granule, &start)) {
-      return false;
-    }
-    carve_span = start;
-    span = arena->spans
-               .emplace(start, lupine_device_arena_span{granule, 0, 0, carver})
-               .first;
-    offset = 0;
-  }
-  span->second.used = offset + bytesize;
-  ++span->second.live;
-  *dptr = span->first + offset;
-  arena->carves[*dptr] = span->first;
+  arena->mapped += size;
+  arena->allocations.emplace(start, size);
+  *dptr = start;
   return true;
 }
 
@@ -2869,32 +2787,18 @@ bool lupine_device_arena_free(conn_t *conn, CUdeviceptr dptr,
   }
   std::lock_guard<std::mutex> lock(lupine_device_arena_mutex);
   lupine_device_arena *arena = &lupine_device_arenas()[conn];
-  uintptr_t start = dptr;
-  auto carve = arena->carves.find(dptr);
-  if (carve != arena->carves.end()) {
-    start = carve->second;
-    arena->carves.erase(carve);
-  }
-  auto span = arena->spans.find(start);
-  if (span == arena->spans.end()) {
-    return false;
-  }
-  *result = CUDA_SUCCESS;
-  if (--span->second.live != 0) {
+  auto allocation = arena->allocations.find(dptr);
+  if (allocation == arena->allocations.end()) {
+    *result = CUDA_ERROR_INVALID_VALUE;
     return true;
   }
-  auto carving = arena->carve_spans.find(span->second.carver);
-  if (carving != arena->carve_spans.end() && carving->second == start) {
-    span->second.used = 0;
-    return true;
-  }
-  size_t size = span->second.size;
-  arena->spans.erase(span);
-  arena->mapped -= size;
-  lupine_device_arena_return_locked(arena, start, size);
-  if (lupine_device_arena_send(conn, LUPINE_RPC_lupineDeviceArenaUnmap, start,
-                               size) < 0) {
-    *result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  size_t size = allocation->second;
+  *result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (lupine_device_arena_send(conn, LUPINE_RPC_lupineDeviceArenaUnmap, dptr,
+                               size) == 0) {
+    arena->allocations.erase(allocation);
+    arena->mapped -= size;
+    *result = CUDA_SUCCESS;
   }
   return true;
 }

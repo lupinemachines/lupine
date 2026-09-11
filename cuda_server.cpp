@@ -4382,10 +4382,9 @@ CUresult lupine_device_arena_reserve(CUdeviceptr hint, CUdeviceptr *base,
     if (result != CUDA_SUCCESS) {
       return result;
     }
-    // Twice the device's memory leaves the client's free list room to
-    // fragment before it must fall back to synchronous allocation.
-    size_t span = std::min((2 * total + granule - 1) / granule * granule,
-                           LUPINE_DEVICE_ARENA_SLOT);
+    // Reserve VA only. The client never reuses addresses, so give it the full
+    // slot independently of physical memory; exhaustion falls back to cuMemAlloc.
+    size_t span = LUPINE_DEVICE_ARENA_SLOT;
     CUdeviceptr reserved = 0;
     result = cuMemAddressReserve(&reserved, span, granule, hint, 0);
     if (result != CUDA_SUCCESS) {
