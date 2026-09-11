@@ -822,3 +822,4 @@
 #define LUPINE_RPC_lupineFunctionAttributeSnapshot 115640665
 #define LUPINE_RPC_lupineFunctionParamLayoutSnapshot 1930405904
 #define LUPINE_RPC_lupineManagedHostFlush 1450411892
+#define LUPINE_RPC_lupineStreamPoolInit 394532239

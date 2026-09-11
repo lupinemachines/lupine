@@ -2620,61 +2620,6 @@ CUresult cuMemRangeGetAttribute(void *data, size_t dataSize,
   return return_value;
 }
 
-CUresult cuStreamCreate(CUstream *phStream, unsigned int Flags) {
-  lupine_route route = lupine_route_for_current_context();
-  CUresult return_value;
-  if (lupine_route_is_local(route)) {
-    return_value = lupine_call_real_cuda_fn("cuStreamCreate", phStream, Flags);
-    if (return_value == CUDA_SUCCESS && phStream != nullptr) {
-      lupine_note_stream_owner_route(*phStream, route);
-    }
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuStreamCreate) < 0 ||
-      rpc_write(conn, phStream, sizeof(CUstream)) < 0 ||
-      rpc_write(conn, &Flags, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, phStream, sizeof(CUstream)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS && phStream != nullptr) {
-    lupine_note_stream_owner_route(*phStream, route);
-  }
-  return return_value;
-}
-
-CUresult cuStreamCreateWithPriority(CUstream *phStream, unsigned int flags,
-                                    int priority) {
-  lupine_route route = lupine_route_for_current_context();
-  CUresult return_value;
-  if (lupine_route_is_local(route)) {
-    return_value = lupine_call_real_cuda_fn("cuStreamCreateWithPriority",
-                                            phStream, flags, priority);
-    if (return_value == CUDA_SUCCESS && phStream != nullptr) {
-      lupine_note_stream_owner_route(*phStream, route);
-    }
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuStreamCreateWithPriority) < 0 ||
-      rpc_write(conn, phStream, sizeof(CUstream)) < 0 ||
-      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &priority, sizeof(int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, phStream, sizeof(CUstream)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS && phStream != nullptr) {
-    lupine_note_stream_owner_route(*phStream, route);
-  }
-  return return_value;
-}
-
 CUresult cuStreamGetPriority(CUstream hStream, int *priority) {
   lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
                                            : lupine_route_for_default());

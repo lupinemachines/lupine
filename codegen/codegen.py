@@ -229,6 +229,7 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineFunctionAttributeSnapshot",
     "lupineFunctionParamLayoutSnapshot",
     "lupineManagedHostFlush",
+    "lupineStreamPoolInit",
 ]
 
 REGISTRY_CPP_TEMPLATE = Template(
