@@ -187,6 +187,11 @@ extern int rpc_drain(conn_t *conn, size_t size);
 extern int rpc_read_end(conn_t *conn);
 
 extern int rpc_wait_for_response(conn_t *conn);
+// Requests sent back-to-back on one lane are answered in send order. Waits for
+// the response to an earlier request by the id rpc_write_end returned; the
+// caller must collect every pipelined response, in order, before the lane
+// waits for any later request.
+extern int rpc_wait_for_pipelined_response(conn_t *conn, int write_id);
 
 // Owns connection validation for the request chain: a null conn (route with no
 // remote server) or a closed conn fails here, so callers surface their
