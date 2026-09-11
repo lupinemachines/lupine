@@ -52,6 +52,12 @@ route-local device back to its virtual client ordinal before returning it.
 manual client implementation with the original API name. These manual symbols
 remain part of the generated client function map.
 
+A declaration with parameters but no `@param` lines is a client stub: the
+generated function ignores its arguments and returns the backend's
+not-supported status, and no RPC id, server handler, or registration is
+generated for it. Use it for entry points whose arguments cannot cross the
+wire, such as client callbacks.
+
 `@guard <preprocessor-expression>` wraps the generated client wrapper, server
 handler, function-map entry, and server registration. Use it for APIs that are
 not declared by every supported CUDA toolkit, such as an API introduced in a
