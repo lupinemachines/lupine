@@ -823,6 +823,22 @@ int rpc_wait_for_response(conn_t *conn) {
   return 0;
 }
 
+int rpc_wait_for_pipelined_response(conn_t *conn, int write_id) {
+  if (conn == nullptr) {
+    return -1;
+  }
+  rpc_tls_io.response_conn = conn;
+  rpc_tls_io.response = {write_id,
+                         rpc_http2_lane_stream(conn, rpc_tls_lane.id)};
+  if (rpc_http2_flush(conn) < 0) {
+    return -1;
+  }
+  rpc_http2_response_wait_begin(conn);
+  int result = rpc_read_start(conn, write_id);
+  rpc_http2_response_wait_end(conn);
+  return result;
+}
+
 // rpc_write_start_request starts a new request builder on the given connection
 // index with a specific op code.
 //
