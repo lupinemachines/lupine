@@ -40,6 +40,8 @@ constexpr size_t kH2ProviderMaxFrameBytes = 1024 * 1024;
 constexpr size_t kH2DecodeBufferBytes = 64 * 1024;
 // Retained capacity for drained staging buffers, a few frames' worth.
 constexpr size_t kH2StagingPoolBytes = 4 * 1024 * 1024;
+// Output nghttp2 may produce ahead of the socket before request writers block.
+constexpr size_t kH2OutboundLimitBytes = 8 * 1024 * 1024;
 constexpr std::array<uint8_t, 8> kH2ShutdownPing = {'l', 'u', 'p', 'i',
                                                     'n', 'e', 0,   1};
 // Linux restarts slow start after an idle period of one retransmission
@@ -100,11 +102,20 @@ struct h2_transport {
   // Writes are serialized, so retain one connection-wide workspace and track
   // its valid prefix separately instead of resizing/zeroing it per RPC.
   std::vector<unsigned char> encoder_output;
+  // Wire bytes nghttp2 has produced that the socket has not taken yet. Only
+  // the write thread sends, so a producer never blocks in the socket and
+  // everything queued while one send is in flight leaves in the next one.
+  std::vector<unsigned char> outbound;
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
   pthread_cond_t heartbeat_progress = PTHREAD_COND_INITIALIZER;
+  pthread_cond_t outbound_progress = PTHREAD_COND_INITIALIZER;
   pthread_t read_thread = {};
   pthread_t heartbeat_thread = {};
+  pthread_t write_thread = {};
+  bool write_stop = false;
+  bool write_busy = false;
+  bool write_failed = false;
   int response_waiters = 0;
   bool transport_failed = false;
   bool shutdown_acknowledged = false;
@@ -197,63 +208,24 @@ void receive_bytes(h2_transport *transport, int32_t stream_id,
       transport->read_stats.peak_staged_bytes, transport->staged_bytes);
 }
 
-// Maximum buffers per vectored send. Compressed DATA uses at most four, but
-// cap defensively so a single sendmsg never exceeds the platform's IOV_MAX.
-constexpr int kH2MaxSendIov = 512;
-
-#ifdef LUPINE_TLS_OPENSSL
-constexpr size_t kH2TlsCoalesceCapacity = 4 * 1024;
-constexpr size_t kH2TlsCoalesceFragmentMax = 256;
-
-struct h2_tls_batch {
-  int count = 0;
-  size_t size = 0;
-};
-
-h2_tls_batch h2_plan_tls_batch(const struct iovec *iov, int iov_count) {
-  h2_tls_batch batch;
-  while (batch.count < iov_count) {
-    size_t size = iov[batch.count].iov_len;
-    if (size > kH2TlsCoalesceFragmentMax ||
-        size > kH2TlsCoalesceCapacity - batch.size) {
-      break;
-    }
-    batch.size += size;
-    ++batch.count;
+// Callers hold session_mutex, as every nghttp2_session_send does.
+void h2_queue_output(h2_transport *transport, const struct iovec *iov,
+                     int iov_count) {
+  for (int i = 0; i < iov_count; ++i) {
+    const auto *data = static_cast<const unsigned char *>(iov[i].iov_base);
+    transport->outbound.insert(transport->outbound.end(), data,
+                               data + iov[i].iov_len);
   }
-  if (batch.count < 2) {
-    return {};
-  }
-  return batch;
+  pthread_cond_broadcast(&transport->outbound_progress);
 }
-#endif
 
-int h2_write_all(h2_transport *transport, const struct iovec *iov,
-                 int iov_count) {
-  std::vector<struct iovec> local(iov, iov + iov_count);
-  struct iovec *cursor = local.data();
-  int count = iov_count;
-#ifdef LUPINE_TLS_OPENSSL
-  std::array<unsigned char, kH2TlsCoalesceCapacity> tls_scratch;
-#endif
-  while (count > 0) {
+int h2_write_socket(h2_transport *transport, const unsigned char *data,
+                    size_t size) {
+  while (size > 0) {
     ssize_t n;
 #ifdef LUPINE_TLS_OPENSSL
     if (transport->tls != nullptr) {
       SSL *ssl = static_cast<SSL *>(transport->tls);
-      const void *data = cursor[0].iov_base;
-      size_t size = cursor[0].iov_len;
-      const h2_tls_batch batch = h2_plan_tls_batch(cursor, count);
-      if (batch.count != 0) {
-        size_t offset = 0;
-        for (int i = 0; i < batch.count; ++i) {
-          memcpy(tls_scratch.data() + offset, cursor[i].iov_base,
-                 cursor[i].iov_len);
-          offset += cursor[i].iov_len;
-        }
-        data = tls_scratch.data();
-        size = batch.size;
-      }
       int want = static_cast<int>(std::min(size, static_cast<size_t>(INT_MAX)));
       int r;
       while ((r = SSL_write(ssl, data, want)) <= 0) {
@@ -266,8 +238,8 @@ int h2_write_all(h2_transport *transport, const struct iovec *iov,
     } else
 #endif
     {
-      int batch = std::min(count, kH2MaxSendIov);
-      n = lupine_socket_sendv(transport->netfd, cursor, batch);
+      struct iovec iov = {const_cast<unsigned char *>(data), size};
+      n = lupine_socket_sendv(transport->netfd, &iov, 1);
       if (n < 0) {
         if (lupine_socket_error_is_intr()) {
           continue;
@@ -278,26 +250,52 @@ int h2_write_all(h2_transport *transport, const struct iovec *iov,
         return -1;
       }
     }
-    size_t written = static_cast<size_t>(n);
-    while (count > 0 && written >= cursor[0].iov_len) {
-      written -= cursor[0].iov_len;
-      ++cursor;
-      --count;
-    }
-    if (count > 0 && written != 0) {
-      cursor[0].iov_base = static_cast<char *>(cursor[0].iov_base) + written;
-      cursor[0].iov_len -= written;
-    }
+    data += static_cast<size_t>(n);
+    size -= static_cast<size_t>(n);
   }
   return 0;
+}
+
+void *h2_write_main(void *arg) {
+  auto *transport = static_cast<h2_transport *>(arg);
+  std::vector<unsigned char> chunk;
+  pthread_mutex_lock(&transport->session_mutex);
+  // transport_failed alone does not stop the drain: a rejected handshake
+  // sets it while the GOAWAY and shutdown PING are still queued.
+  for (;;) {
+    while (transport->outbound.empty() && !transport->write_stop) {
+      pthread_cond_wait(&transport->outbound_progress,
+                        &transport->session_mutex);
+    }
+    if (transport->write_stop) {
+      break;
+    }
+    chunk.clear();
+    chunk.swap(transport->outbound);
+    transport->write_busy = true;
+    pthread_mutex_unlock(&transport->session_mutex);
+    int result = h2_write_socket(transport, chunk.data(), chunk.size());
+    pthread_mutex_lock(&transport->session_mutex);
+    transport->write_busy = false;
+    if (result < 0) {
+      transport->write_failed = true;
+      transport->transport_failed = true;
+      pthread_cond_broadcast(&transport->session_progress);
+      break;
+    }
+    pthread_cond_broadcast(&transport->outbound_progress);
+  }
+  pthread_cond_broadcast(&transport->outbound_progress);
+  pthread_mutex_unlock(&transport->session_mutex);
+  return nullptr;
 }
 
 ssize_t h2_send_callback(nghttp2_session *, const uint8_t *data, size_t length,
                          int, void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
   struct iovec iov = {const_cast<uint8_t *>(data), length};
-  return h2_write_all(transport, &iov, 1) == 0 ? static_cast<ssize_t>(length)
-                                               : NGHTTP2_ERR_CALLBACK_FAILURE;
+  h2_queue_output(transport, &iov, 1);
+  return static_cast<ssize_t>(length);
 }
 
 LZ4F_preferences_t h2_lz4_preferences() {
@@ -480,9 +478,7 @@ int h2_send_data_callback(nghttp2_session *, nghttp2_frame *frame,
   if (frame->data.padlen > 1) {
     iov[iov_count++] = {padding, frame->data.padlen - 1};
   }
-  if (h2_write_all(transport, iov.data(), iov_count) < 0) {
-    return NGHTTP2_ERR_CALLBACK_FAILURE;
-  }
+  h2_queue_output(transport, iov.data(), iov_count);
 
   write_source->pending_offset += length;
   write_source->progress += length;
@@ -930,6 +926,11 @@ int h2_send_source_locked(h2_transport *transport, int32_t stream_id,
   // the stack-backed source alive while flow control pauses the stream, and
   // release the mutex while the read thread applies WINDOW_UPDATE frames.
   while (result == 0 && !source->complete) {
+    while (transport->outbound.size() > kH2OutboundLimitBytes &&
+           !transport->write_failed) {
+      pthread_cond_wait(&transport->outbound_progress,
+                        &transport->session_mutex);
+    }
     uint64_t progress = source->progress;
     if (h2_flush_session_locked(transport) < 0) {
       result = -1;
@@ -1118,6 +1119,24 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
   return stream_id;
 }
 
+void h2_drain_output_locked(h2_transport *transport) {
+  while ((!transport->outbound.empty() || transport->write_busy) &&
+         !transport->write_failed) {
+    pthread_cond_wait(&transport->outbound_progress,
+                      &transport->session_mutex);
+  }
+}
+
+void h2_stop_write_thread(h2_transport *transport) {
+  pthread_mutex_lock(&transport->session_mutex);
+  h2_drain_output_locked(transport);
+  transport->write_stop = true;
+  pthread_cond_broadcast(&transport->outbound_progress);
+  pthread_mutex_unlock(&transport->session_mutex);
+  pthread_join(transport->write_thread, nullptr);
+  transport->write_thread = 0;
+}
+
 int h2_init_direct(conn_t *conn, bool server, bool probe,
                    const rpc_http2_server_metadata *metadata = nullptr) {
   auto *transport = new h2_transport();
@@ -1203,12 +1222,20 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   }
 
   conn->http2 = transport;
+  if (pthread_create(&transport->write_thread, nullptr, h2_write_main,
+                     transport) != 0) {
+    conn->http2 = nullptr;
+    nghttp2_session_del(transport->session);
+    delete transport;
+    return -1;
+  }
   pthread_mutex_lock(&transport->session_mutex);
   int flush_result = h2_flush_session_locked(transport);
   pthread_mutex_unlock(&transport->session_mutex);
   if (flush_result < 0 || pthread_create(&transport->read_thread, nullptr,
                                          h2_read_main, transport) != 0) {
     conn->http2 = nullptr;
+    h2_stop_write_thread(transport);
     nghttp2_session_del(transport->session);
     delete transport;
     return -1;
@@ -1369,6 +1396,18 @@ int h2_end_stream_locked(h2_transport *transport, int32_t stream_id) {
 }
 
 } // namespace
+
+int rpc_http2_flush(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return -1;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  h2_drain_output_locked(transport);
+  int result = transport->write_failed ? -1 : 0;
+  pthread_mutex_unlock(&transport->session_mutex);
+  return result;
+}
 
 int rpc_http2_end_stream(conn_t *conn, int32_t stream_id) {
   if (conn == nullptr || conn->http2 == nullptr || stream_id < 0) {
@@ -1751,6 +1790,9 @@ void rpc_http2_destroy(conn_t *conn) {
     pthread_join(transport->read_thread, nullptr);
     transport->read_thread = 0;
   }
+  if (transport->write_thread != 0) {
+    h2_stop_write_thread(transport);
+  }
   if (transport->session != nullptr) {
     nghttp2_session_del(transport->session);
     transport->session = nullptr;
@@ -1759,6 +1801,7 @@ void rpc_http2_destroy(conn_t *conn) {
     (void)stream_id;
     h2_release_codecs(stream);
   }
+  pthread_cond_destroy(&transport->outbound_progress);
   pthread_cond_destroy(&transport->heartbeat_progress);
   pthread_cond_destroy(&transport->session_progress);
   pthread_mutex_destroy(&transport->session_mutex);

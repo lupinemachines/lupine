@@ -872,6 +872,7 @@ void test_truncated_read_clears_direct_destination() {
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   write_all(&pair.client, {prefix});
+  require(rpc_http2_flush(&pair.client) == 0, "truncated writer flush failed");
   require(shutdown(pair.client.connfd, LUPINE_TEST_SHUT_WR) == 0,
           "truncated writer shutdown failed");
   reader.join();
