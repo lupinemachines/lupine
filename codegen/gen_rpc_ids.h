@@ -817,6 +817,9 @@
 #define LUPINE_RPC_cuPrivateGetModuleNode 1986234018
 #define LUPINE_RPC_cuStreamBeginCaptureToGraph 1423223781
 #define LUPINE_RPC_cuStreamGetCaptureInfo_v3 1793131524
+#define LUPINE_RPC_lupineDeviceArenaMap 908175909
+#define LUPINE_RPC_lupineDeviceArenaReserve 508395445
+#define LUPINE_RPC_lupineDeviceArenaUnmap 801630499
 #define LUPINE_RPC_lupineDeviceSnapshot 838398900
 #define LUPINE_RPC_lupineEventQueryBatch 1291828496
 #define LUPINE_RPC_lupineFunctionAttributeSnapshot 115640665

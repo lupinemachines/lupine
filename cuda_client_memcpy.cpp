@@ -9,6 +9,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <unordered_map>
 #ifndef _WIN32
 #include <fcntl.h>
 #include <sched.h>
@@ -2660,12 +2661,292 @@ lupine_free_device_allocation(CUdeviceptr dptr, lupine_device_free_fn release) {
   return result;
 }
 
+// Device arena: cuMemAlloc on a remote route picks an address inside the VA
+// range its server reserved and tells the server to map it there without
+// waiting, so cuMemAlloc reports CUDA_SUCCESS optimistically. A map the
+// server cannot back is returned, once, by the next cuCtxSynchronize,
+// cuStreamSynchronize or cuEventSynchronize on that connection. Spans are
+// whole granules backed on the device of the context current when they were
+// mapped; requests below a granule are carved from a granule shared only
+// within that context, which stays mapped until its last carve is freed.
+namespace {
+
+constexpr size_t LUPINE_DEVICE_ARENA_CARVE_ALIGNMENT = 512;
+
+struct lupine_device_arena_span {
+  size_t size = 0;
+  unsigned live = 0;
+  size_t used = 0;
+  CUcontext carver = nullptr;
+};
+
+struct lupine_device_arena {
+  uintptr_t base = 0;
+  size_t size = 0;
+  size_t granularity = 0;
+  size_t budget = 0;
+  size_t mapped = 0;
+  std::map<uintptr_t, size_t> free_spans;
+  std::unordered_map<uintptr_t, lupine_device_arena_span> spans;
+  std::unordered_map<uintptr_t, uintptr_t> carves;
+  std::unordered_map<CUcontext, uintptr_t> carve_spans;
+};
+
+std::mutex lupine_device_arena_mutex;
+
+std::unordered_map<conn_t *, lupine_device_arena> &lupine_device_arenas() {
+  static auto *arenas = new std::unordered_map<conn_t *, lupine_device_arena>();
+  return *arenas;
+}
+
+bool lupine_device_arena_enabled() {
+  static bool enabled = [] {
+    const char *value = getenv("LUPINE_DEVICE_ARENA");
+    return value == nullptr || strcmp(value, "0") != 0;
+  }();
+  return enabled;
+}
+
+// Null when the server offers no arena; that verdict is kept so the route
+// stays on the synchronous path.
+lupine_device_arena *lupine_device_arena_for_locked(conn_t *conn) {
+  auto &arenas = lupine_device_arenas();
+  auto it = arenas.find(conn);
+  if (it != arenas.end()) {
+    return it->second.size != 0 ? &it->second : nullptr;
+  }
+  lupine_device_arena &arena = arenas[conn];
+  uint64_t hint =
+      LUPINE_DEVICE_ARENA_BASE +
+      static_cast<uint64_t>(conn->logical_index) * LUPINE_DEVICE_ARENA_SLOT;
+  uint64_t fields[4] = {};
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (!lupine_device_arena_enabled() || conn->logical_index < 0 ||
+      conn->logical_index >= static_cast<int>(LUPINE_VA_ARENA_COUNT) ||
+      !rpc_http2_peer_supports(conn, LUPINE_SERVER_CAPABILITY_DEVICE_ARENA) ||
+      rpc_write_start_request(conn, LUPINE_RPC_lupineDeviceArenaReserve) < 0 ||
+      rpc_write(conn, &hint, sizeof(hint)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, fields, sizeof(fields)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0 ||
+      result != CUDA_SUCCESS || fields[0] != hint || fields[2] == 0 ||
+      lupine_va_reserve_exact(fields[0], fields[1]) == nullptr) {
+    return nullptr;
+  }
+  arena.base = fields[0];
+  arena.size = fields[1];
+  arena.granularity = fields[2];
+  arena.budget = fields[3];
+  arena.free_spans[arena.base] = arena.size;
+  return &arena;
+}
+
+void lupine_device_arena_return_locked(lupine_device_arena *arena,
+                                       uintptr_t start, size_t size) {
+  auto next = arena->free_spans.lower_bound(start);
+  if (next != arena->free_spans.end() && start + size == next->first) {
+    size += next->second;
+    next = arena->free_spans.erase(next);
+  }
+  if (next != arena->free_spans.begin()) {
+    auto prev = std::prev(next);
+    if (prev->first + prev->second == start) {
+      start = prev->first;
+      size += prev->second;
+      arena->free_spans.erase(prev);
+    }
+  }
+  arena->free_spans[start] = size;
+}
+
+int lupine_device_arena_send(conn_t *conn, int op, uintptr_t start,
+                             size_t size) {
+  uint64_t sequence = 0;
+  uint64_t address = start;
+  uint64_t bytes = size;
+  if (rpc_write_start_async_request(conn, op, &sequence) < 0 ||
+      rpc_write(conn, &sequence, sizeof(sequence)) < 0 ||
+      rpc_write(conn, &address, sizeof(address)) < 0 ||
+      rpc_write(conn, &bytes, sizeof(bytes)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+bool lupine_device_arena_map_locked(conn_t *conn, lupine_device_arena *arena,
+                                    size_t size, uintptr_t *start) {
+  // Past the free memory the server reported when the arena was reserved the
+  // driver answers instead, so an out-of-memory result stays synchronous
+  // while this route is the device's only tenant.
+  if (arena->mapped + size > arena->budget) {
+    return false;
+  }
+  auto it =
+      std::find_if(arena->free_spans.begin(), arena->free_spans.end(),
+                   [size](const std::pair<const uintptr_t, size_t> &span) {
+                     return span.second >= size;
+                   });
+  if (it == arena->free_spans.end()) {
+    return false;
+  }
+  uintptr_t claimed = it->first;
+  size_t remaining = it->second - size;
+  arena->free_spans.erase(it);
+  if (remaining != 0) {
+    arena->free_spans[claimed + size] = remaining;
+  }
+  if (lupine_device_arena_send(conn, LUPINE_RPC_lupineDeviceArenaMap, claimed,
+                               size) < 0) {
+    lupine_device_arena_return_locked(arena, claimed, size);
+    return false;
+  }
+  arena->mapped += size;
+  *start = claimed;
+  return true;
+}
+
+// False when the arena cannot take the request; the caller then allocates
+// synchronously.
+bool lupine_device_arena_alloc(conn_t *conn, size_t bytesize,
+                               CUdeviceptr *dptr) {
+  if (lupine_prepare_rpc(conn) < 0) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(lupine_device_arena_mutex);
+  lupine_device_arena *arena = lupine_device_arena_for_locked(conn);
+  if (arena == nullptr) {
+    return false;
+  }
+  size_t granule = arena->granularity;
+  if (bytesize >= granule) {
+    size_t size = (bytesize + granule - 1) / granule * granule;
+    uintptr_t start = 0;
+    if (!lupine_device_arena_map_locked(conn, arena, size, &start)) {
+      return false;
+    }
+    arena->spans[start] = {size, 1, size};
+    *dptr = start;
+    return true;
+  }
+  CUcontext carver = lupine_current_context_hint();
+  uintptr_t &carve_span = arena->carve_spans[carver];
+  auto span = arena->spans.find(carve_span);
+  size_t offset = 0;
+  if (span != arena->spans.end()) {
+    offset = (span->second.used + LUPINE_DEVICE_ARENA_CARVE_ALIGNMENT - 1) &
+             ~(LUPINE_DEVICE_ARENA_CARVE_ALIGNMENT - 1);
+  }
+  if (span == arena->spans.end() || offset + bytesize > span->second.size) {
+    uintptr_t start = 0;
+    if (!lupine_device_arena_map_locked(conn, arena, granule, &start)) {
+      return false;
+    }
+    carve_span = start;
+    span = arena->spans
+               .emplace(start, lupine_device_arena_span{granule, 0, 0, carver})
+               .first;
+    offset = 0;
+  }
+  span->second.used = offset + bytesize;
+  ++span->second.live;
+  *dptr = span->first + offset;
+  arena->carves[*dptr] = span->first;
+  return true;
+}
+
+bool lupine_device_arena_owns(conn_t *conn, CUdeviceptr dptr) {
+  std::lock_guard<std::mutex> lock(lupine_device_arena_mutex);
+  auto it = lupine_device_arenas().find(conn);
+  return it != lupine_device_arenas().end() && dptr >= it->second.base &&
+         dptr - it->second.base < it->second.size;
+}
+
+// False when dptr is not an arena allocation of conn.
+bool lupine_device_arena_free(conn_t *conn, CUdeviceptr dptr,
+                              CUresult *result) {
+  if (!lupine_device_arena_owns(conn, dptr) || lupine_prepare_rpc(conn) < 0) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(lupine_device_arena_mutex);
+  lupine_device_arena *arena = &lupine_device_arenas()[conn];
+  uintptr_t start = dptr;
+  auto carve = arena->carves.find(dptr);
+  if (carve != arena->carves.end()) {
+    start = carve->second;
+    arena->carves.erase(carve);
+  }
+  auto span = arena->spans.find(start);
+  if (span == arena->spans.end()) {
+    return false;
+  }
+  *result = CUDA_SUCCESS;
+  if (--span->second.live != 0) {
+    return true;
+  }
+  auto carving = arena->carve_spans.find(span->second.carver);
+  if (carving != arena->carve_spans.end() && carving->second == start) {
+    span->second.used = 0;
+    return true;
+  }
+  size_t size = span->second.size;
+  arena->spans.erase(span);
+  arena->mapped -= size;
+  lupine_device_arena_return_locked(arena, start, size);
+  if (lupine_device_arena_send(conn, LUPINE_RPC_lupineDeviceArenaUnmap, start,
+                               size) < 0) {
+    *result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return true;
+}
+
+} // namespace
+
+extern "C" CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
+  if (dptr == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  lupine_route route = lupine_route_for_current_context();
+  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn("cuMemAlloc_v2", dptr, bytesize);
+  } else {
+    conn_t *conn = lupine_route_remote_conn(route);
+    if (bytesize != 0 && lupine_device_arena_alloc(conn, bytesize, dptr)) {
+      return_value = CUDA_SUCCESS;
+    } else if (lupine_prepare_rpc(conn) < 0 ||
+               rpc_write_start_request(conn, RPC_cuMemAlloc_v2) < 0 ||
+               rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
+               rpc_write(conn, &bytesize, sizeof(size_t)) < 0 ||
+               rpc_wait_for_response(conn) < 0 ||
+               rpc_read(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
+               rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+               rpc_read_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+  }
+  if (return_value == CUDA_SUCCESS) {
+    lupine_note_deviceptr_owner_route(*dptr, route);
+    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
+  }
+  return return_value;
+}
+
+#ifdef cuMemAlloc
+#undef cuMemAlloc
+#endif
+extern "C" CUresult cuMemAlloc(CUdeviceptr *dptr, size_t bytesize) {
+  return cuMemAlloc_v2(dptr, bytesize);
+}
+
 extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
   return lupine_free_device_allocation(dptr, [](conn_t *conn, CUdeviceptr ptr) {
     if (conn == nullptr) {
       return lupine_call_real_cuda_fn("cuMemFree_v2", ptr);
     }
     CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    if (lupine_device_arena_free(conn, ptr, &result)) {
+      return result;
+    }
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemFree_v2) < 0 ||
         rpc_write(conn, &ptr, sizeof(ptr)) < 0 ||
@@ -2681,6 +2962,43 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
 #undef cuMemFree
 #endif
 extern "C" CUresult cuMemFree(CUdeviceptr dptr) { return cuMemFree_v2(dptr); }
+
+extern "C" CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream) {
+  lupine_route route = lupine_route_for_deviceptr(dptr);
+  if (lupine_route_is_local(route)) {
+    CUresult return_value =
+        lupine_call_real_cuda_fn("cuMemFreeAsync", dptr, hStream);
+    if (return_value == CUDA_SUCCESS) {
+      lupine_forget_deviceptr_owner(dptr);
+    }
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_device_arena_owns(conn, dptr)) {
+    return cuMemFree_v2(dptr);
+  }
+  CUresult return_value;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuMemFreeAsync) < 0 ||
+      rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
+      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    lupine_forget_deviceptr_owner(dptr);
+  }
+  return return_value;
+}
+
+#ifdef cuMemFreeAsync_ptsz
+#undef cuMemFreeAsync_ptsz
+#endif
+extern "C" CUresult cuMemFreeAsync_ptsz(CUdeviceptr dptr, CUstream hStream) {
+  return cuMemFreeAsync(dptr, hStream);
+}
 
 extern "C" CUresult cuPointerGetAttribute(void *data,
                                           CUpointer_attribute attribute,

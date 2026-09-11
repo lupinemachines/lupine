@@ -83,6 +83,11 @@ static constexpr unsigned int LUPINE_VA_ARENA_COUNT = 8;
 // cannot work for every window: a positive offset from a high base leaves
 // canonical user space, and a negative one underflows from a low base.
 static constexpr uintptr_t LUPINE_VA_WRITE_BASE = UINT64_C(0x500000000000);
+// Device arenas sit between the write alias and the host window, one slot per
+// connection. The client proposes the slot and reserves it locally, so no
+// host address of its own can ever alias a device-arena pointer.
+static constexpr uintptr_t LUPINE_DEVICE_ARENA_BASE = UINT64_C(0x600000000000);
+static constexpr size_t LUPINE_DEVICE_ARENA_SLOT = UINT64_C(0x010000000000);
 
 // The address range a peer is able to host arenas in. The server's driver
 // decides this, so the server states it and the client carves its own arenas
@@ -154,6 +159,9 @@ extern int lupine_va_reserve_client(conn_t *conn,
 extern int lupine_va_reserve_server(conn_t *conn, uintptr_t base, size_t size);
 // Releases a rejected candidate without disturbing the connection transport.
 extern void lupine_va_release(conn_t *conn);
+// Reserves [base, base + size) as an inaccessible placeholder; null when the
+// range is taken or the platform cannot pin a range.
+extern void *lupine_va_reserve_exact(uintptr_t base, size_t size);
 // Bump-claims an aligned span inside the connection's arena. Concurrent callers
 // each get a disjoint span; false means the arena cannot fit the request.
 extern bool lupine_va_claim(conn_t *conn, size_t size, size_t alignment,
@@ -282,6 +290,9 @@ struct rpc_http2_server_metadata {
   uint64_t capabilities = 0;
 };
 constexpr uint64_t LUPINE_SERVER_CAPABILITY_CLIENT_METADATA = UINT64_C(1);
+// The server maps cuMemAlloc allocations into a per-connection device arena
+// on request instead of choosing their addresses itself.
+constexpr uint64_t LUPINE_SERVER_CAPABILITY_DEVICE_ARENA = UINT64_C(2);
 // Sends HEAD / and returns the backend-version response header, or nullptr
 // when the request fails or the server does not advertise a version.
 // The returned pointer remains valid until rpc_http2_destroy() or
