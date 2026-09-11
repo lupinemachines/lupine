@@ -228,6 +228,7 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineFunctionParamLayoutSnapshot",
     "lupineLibraryAttributeSnapshot",
     "lupineLibrarySnapshot",
+    "lupineStreamCreateBatch",
     "lupineManagedHostFlush",
 ]
 

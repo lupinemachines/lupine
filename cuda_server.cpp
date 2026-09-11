@@ -3327,6 +3327,46 @@ int handle_cuEventQuery(conn_t *conn) {
   return failed ? -1 : 0;
 }
 
+// Creates up to count streams under the lane's current context in one round
+// trip. Creation stops at the first failure; the streams already created are
+// still returned so the client can use them.
+int handle_lupineStreamCreateBatch(conn_t *conn) {
+  constexpr uint32_t kStreamCreateBatchMax = 32;
+  uint32_t count = 0;
+  unsigned int flags = 0;
+  int priority = 0;
+  if (rpc_read(conn, &count, sizeof(count)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_read(conn, &priority, sizeof(priority)) < 0 || count == 0 ||
+      count > kStreamCreateBatchMax) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUstream streams[kStreamCreateBatchMax];
+  CUresult result = CUDA_SUCCESS;
+  uint32_t created = 0;
+  for (; created < count; ++created) {
+    result = cuStreamCreateWithPriority(&streams[created], flags, priority);
+    if (result != CUDA_SUCCESS) {
+      break;
+    }
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &created, sizeof(created)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      (created != 0 &&
+       rpc_write(conn, streams, created * sizeof(*streams)) < 0) ||
+      rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 int handle_lupineEventQueryBatch(conn_t *conn) {
   constexpr uint32_t kEventQueryBatchMax = 16;
   uint32_t count = 0;
@@ -4428,22 +4468,17 @@ int handle_cuStreamSynchronize(conn_t *conn) {
 }
 
 int handle_cuGraphLaunch(conn_t *conn) {
+  uint64_t async_sequence = 0;
   CUgraphExec exec = nullptr;
   CUstream stream = nullptr;
-  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0) {
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0 ||
+      rpc_async_sequence_begin(conn, async_sequence) < 0) {
     return -1;
   }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  CUresult result = cuGraphLaunch(exec, stream);
-  lupine_note_graph_launch(exec, stream, result);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_note_graph_launch(exec, stream, cuGraphLaunch(exec, stream));
+  rpc_async_sequence_end(conn);
   return 0;
 }
 
