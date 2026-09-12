@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -11,6 +13,7 @@
 #include "client_routing.h"
 #include "codegen/gen_rpc_ids.h"
 #include "events.h"
+#include "visible_devices.h"
 
 extern int rpc_open();
 extern int rpc_size();
@@ -159,6 +162,63 @@ static CUresult lupine_remote_cuDeviceGet(conn_t *conn, CUdevice *device,
   return result;
 }
 
+static CUresult lupine_remote_cuDeviceGetUuid(conn_t *conn, CUuuid *uuid,
+                                              CUdevice device) {
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (uuid == nullptr || lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuDeviceGetUuid_v2) < 0 ||
+      rpc_write(conn, &device, sizeof(device)) < 0 ||
+      rpc_wait_for_response(conn) < 0 || rpc_read(conn, uuid, 16) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return result;
+}
+
+static std::string lupine_uuid_hex(const CUuuid &uuid) {
+  static const char *digits = "0123456789abcdef";
+  std::string out;
+  out.reserve(32);
+  for (int i = 0; i < 16; ++i) {
+    const unsigned char byte = static_cast<unsigned char>(uuid.bytes[i]);
+    out.push_back(digits[(byte >> 4) & 0xf]);
+    out.push_back(digits[byte & 0xf]);
+  }
+  return out;
+}
+
+// Narrows the table to what CUDA_VISIBLE_DEVICES leaves visible, in the order
+// it lists. The table is the ordinal space, so dropping an entry here is what
+// renumbers the rest and puts a device beyond a client's reach.
+static void
+lupine_apply_visible_devices(std::vector<lupine_device_entry> &devices) {
+  const char *spec = getenv("CUDA_VISIBLE_DEVICES");
+  if (spec == nullptr) {
+    return;
+  }
+  const std::vector<int> visible = lupine_select_visible_devices(
+      spec, static_cast<int>(devices.size()), [&devices](int index) {
+        const lupine_device_entry &entry = devices[static_cast<size_t>(index)];
+        CUuuid uuid = {};
+        const CUresult result =
+            entry.local
+                ? lupine_call_real_cuda_fn("cuDeviceGetUuid_v2", &uuid,
+                                           entry.local_device)
+                : lupine_remote_cuDeviceGetUuid(
+                      rpc_client_get_connection(entry.conn_index), &uuid,
+                      entry.remote_device);
+        // A device that will not say what it is simply matches no UUID.
+        return result == CUDA_SUCCESS ? lupine_uuid_hex(uuid) : std::string();
+      });
+
+  std::vector<lupine_device_entry> selected;
+  selected.reserve(visible.size());
+  for (const int index : visible) {
+    selected.push_back(devices[static_cast<size_t>(index)]);
+  }
+  devices.swap(selected);
+}
+
 static CUresult lupine_ensure_device_table() {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   if (lupine_device_table_ready()) {
@@ -215,6 +275,9 @@ static CUresult lupine_ensure_device_table() {
   if (devices.empty()) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  // Selecting nothing out of a fleet that is there is an answer, not a
+  // failure: the driver reports no devices rather than refusing the call.
+  lupine_apply_visible_devices(devices);
   lupine_device_table_ready() = true;
   return CUDA_SUCCESS;
 }
