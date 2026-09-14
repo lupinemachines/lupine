@@ -2903,7 +2903,9 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
       result = cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
       if (result == CUDA_SUCCESS && byteCount != 0) {
         lupine_pending_dtoh_item copy{nullptr, dstHost, host, byteCount,
-                                      alloc_result == CUDA_SUCCESS};
+                                      alloc_result == CUDA_SUCCESS
+                                          ? lupine_dtoh_storage::pinned
+                                          : lupine_dtoh_storage::heap};
         lupine_pending_dtoh_copies().upsert(
             conn,
             [stream, &copy](lupine_pending_dtoh_streams &streams,
@@ -2977,8 +2979,8 @@ int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
     CUresult result =
         cuMemcpyDtoHAsync_v2(server_host, srcDevice, byteCount, stream);
     if (result == CUDA_SUCCESS && byteCount != 0) {
-      lupine_pending_dtoh_item copy{nullptr,   client_alias, server_host,
-                                    byteCount, false,        false};
+      lupine_pending_dtoh_item copy{nullptr, client_alias, server_host,
+                                    byteCount, lupine_dtoh_storage::borrowed};
       lupine_pending_dtoh_copies().upsert(
           conn,
           [stream, &copy](lupine_pending_dtoh_streams &streams,
