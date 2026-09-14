@@ -1,7 +1,6 @@
 #include <cuda.h>
 
 #include <cstdio>
-#include <cstring>
 #include <thread>
 
 static bool check(CUresult result, const char *operation) {
@@ -16,11 +15,7 @@ static bool check(CUresult result, const char *operation) {
       return 1;                                                                \
   } while (false)
 
-int main(int argc, char **argv) {
-  // Older peers retain the existing staging path. The optional mode isolates
-  // fallback coverage from its pre-existing cross-thread completion issue.
-  const bool single_thread =
-      argc == 2 && std::strcmp(argv[1], "--single-thread") == 0;
+int main() {
   CHECK(cuInit(0));
   CUdevice device;
   CUcontext context;
@@ -41,7 +36,7 @@ int main(int argc, char **argv) {
   CHECK(cuMemAlloc(&destination, size));
   std::memset(host, 0x5a, size);
 
-  for (int mode = 0; mode < (single_thread ? 3 : 4); ++mode) {
+  for (int mode = 0; mode < 4; ++mode) {
     unsigned char expected = static_cast<unsigned char>(0x30 + mode);
     CHECK(cuMemsetD8Async(source, expected, size, stream));
     CHECK(cuMemcpyDtoHAsync(host + 17, source + 17, size - 34, stream));
@@ -70,7 +65,8 @@ int main(int argc, char **argv) {
       return 1;
     }
     // No intervening CPU write: HtoD must see the completed DtoH in the
-    // server's mirror, even when another lane performed synchronization.
+    // server's pinned allocation, even when another lane performed
+    // synchronization.
     CHECK(cuMemcpyHtoDAsync(destination, host + 17, size - 34, stream));
     CHECK(cuStreamSynchronize(stream));
     unsigned char result[size] = {};
@@ -129,10 +125,7 @@ int main(int argc, char **argv) {
   CHECK(cuEventDestroy(event));
   CHECK(cuStreamDestroy(stream));
   CHECK(cuDevicePrimaryCtxRelease(device));
-  std::puts(
-      single_thread
-          ? "DtoH legacy fallback: partial ranges, CPU edits and capture passed"
-          : "DtoH mirror: partial ranges, CPU edits, cross-lane and capture "
-            "passed");
+  std::puts("Pinned DtoH: partial ranges, CPU edits, cross-thread sync and "
+            "capture passed");
   return 0;
 }

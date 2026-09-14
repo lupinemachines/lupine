@@ -798,7 +798,7 @@ lupine_mark_mapped_host_kernel_params(void *const *kernel_params,
   }
 }
 
-// Writable aliases are private to the transport. Only the mirrored DtoH RPC
+// Writable aliases are private to the transport. Only the pinned DtoH RPC
 // returns one as a destination; ordinary CUDA calls return application
 // pointers.
 static lupine_host_allocation_map::iterator
@@ -818,20 +818,22 @@ lupine_find_io_alias_locked(uintptr_t address, size_t bytes, int route_id) {
 
 extern "C" int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
                                               size_t bytes) {
-  bool mirrored = false;
+  bool pinned_destination = false;
   {
     std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-    mirrored = lupine_find_io_alias_locked(
-                   reinterpret_cast<uintptr_t>(destination), bytes,
-                   lupine_route_identity(lupine_remote_route_for_conn(conn))) !=
-               lupine_mutable_host_allocations_locked().end();
+    pinned_destination =
+        lupine_find_io_alias_locked(
+            reinterpret_cast<uintptr_t>(destination), bytes,
+            lupine_route_identity(lupine_remote_route_for_conn(conn))) !=
+        lupine_mutable_host_allocations_locked().end();
   }
   int result = rpc_read(conn, destination, bytes);
-  if (result < 0 || !mirrored || bytes == 0) {
+  if (result < 0 || !pinned_destination || bytes == 0) {
     return result;
   }
   // Apply readability after mapped-memory invalidation, just like normal
-  // deferred responses, but retain the alias so collection knows it is clean.
+  // deferred responses, but retain the alias so collection knows the server
+  // already has these bytes.
   if (pthread_mutex_lock(&conn->write_mutex) != 0) {
     return -1;
   }
@@ -860,7 +862,7 @@ static CUresult lupine_collect_host_allocation_writes(conn_t *conn) {
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   for (const auto &write : writes) {
     uintptr_t start = write.start;
-    bool mirrored = false;
+    bool pinned_destination = false;
     auto it =
         lupine_find_host_allocation_locked(reinterpret_cast<void *>(start));
     if (it == lupine_mutable_host_allocations_locked().end()) {
@@ -870,7 +872,7 @@ static CUresult lupine_collect_host_allocation_writes(conn_t *conn) {
       if (it != lupine_mutable_host_allocations_locked().end()) {
         start = reinterpret_cast<uintptr_t>(it->first) + start -
                 reinterpret_cast<uintptr_t>(it->second.io_alias);
-        mirrored = true;
+        pinned_destination = true;
       }
     }
     if (it == lupine_mutable_host_allocations_locked().end() ||
@@ -885,7 +887,7 @@ static CUresult lupine_collect_host_allocation_writes(conn_t *conn) {
       continue;
     }
     uintptr_t end = start + bytes;
-    if (!mirrored) {
+    if (!pinned_destination) {
       lupine_queue_dirty_host_range(&allocation, start, end);
     } else {
       uintptr_t page_start = start - start % allocation.page_size;
@@ -1254,11 +1256,10 @@ static bool lupine_translate_client_host_range_to_server(
   return true;
 }
 
-static bool lupine_mirrored_dtoh_destination(conn_t *conn, void *destination,
-                                             size_t bytes, void **client_alias,
-                                             void **server_mirror) {
-  if (bytes == 0 ||
-      !rpc_http2_peer_supports(conn, LUPINE_SERVER_CAPABILITY_MIRRORED_DTOH)) {
+static bool lupine_pinned_dtoh_destination(conn_t *conn, void *destination,
+                                           size_t bytes, void **client_alias,
+                                           void **server_host) {
+  if (bytes == 0) {
     return false;
   }
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
@@ -1281,8 +1282,7 @@ static bool lupine_mirrored_dtoh_destination(conn_t *conn, void *destination,
   }
   size_t offset = address - reinterpret_cast<uintptr_t>(it->first);
   *client_alias = static_cast<unsigned char *>(allocation.io_alias) + offset;
-  *server_mirror =
-      reinterpret_cast<void *>(allocation.server_host_ptr + offset);
+  *server_host = reinterpret_cast<void *>(allocation.server_host_ptr + offset);
   return true;
 }
 
@@ -1808,7 +1808,8 @@ static CUresult lupine_sync_mapped_device_to_host(bool managed_only) {
 
   // Deferred DtoH payloads land through the writable alias. Apply those
   // writes after invalidation so their pages remain readable. Staging-backed
-  // copies need a later flush; mirrored copies are already current remotely.
+  // copies need a later flush; direct pinned copies are already current
+  // remotely.
   for (int route_id = 0; route_id < rpc_size(); ++route_id) {
     conn_t *conn = lupine_route_remote_conn(
         lupine_route_from_identity(static_cast<int>(route_id)));
@@ -3582,18 +3583,18 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
   conn_t *conn = lupine_route_remote_conn(route);
   uint64_t async_sequence = 0;
   void *client_alias = nullptr;
-  void *server_mirror = nullptr;
-  bool mirrored = lupine_mirrored_dtoh_destination(
-      conn, dstHost, ByteCount, &client_alias, &server_mirror);
-  int copy_opcode = mirrored ? LUPINE_RPC_lupineMemcpyDtoHAsyncMirrored
-                             : RPC_cuMemcpyDtoHAsync_v2;
+  void *server_host = nullptr;
+  bool pinned_destination = lupine_pinned_dtoh_destination(
+      conn, dstHost, ByteCount, &client_alias, &server_host);
+  int copy_opcode = pinned_destination ? LUPINE_RPC_lupineMemcpyDtoHAsyncPinned
+                                       : RPC_cuMemcpyDtoHAsync_v2;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_async_request(conn, copy_opcode, &async_sequence) < 0 ||
       rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &dstHost, sizeof(dstHost)) < 0 ||
-      (mirrored &&
+      (pinned_destination &&
        (rpc_write(conn, &client_alias, sizeof(client_alias)) < 0 ||
-        rpc_write(conn, &server_mirror, sizeof(server_mirror)) < 0)) ||
+        rpc_write(conn, &server_host, sizeof(server_host)) < 0)) ||
       rpc_write(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||

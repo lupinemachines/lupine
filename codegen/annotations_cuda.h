@@ -3313,7 +3313,7 @@ void cuStreamGetCaptureInfo_v3();
 /** @disabled */
 void lupineManagedHostFlush();
 /** @disabled */
-void lupineMemcpyDtoHAsyncMirrored();
+void lupineMemcpyDtoHAsyncPinned();
 /** @disabled */
 void lupineDeviceSnapshot();
 #endif

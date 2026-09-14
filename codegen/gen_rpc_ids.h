@@ -824,4 +824,4 @@
 #define LUPINE_RPC_lupineLibraryAttributeSnapshot 1063587880
 #define LUPINE_RPC_lupineLibrarySnapshot 1662367389
 #define LUPINE_RPC_lupineManagedHostFlush 1450411892
-#define LUPINE_RPC_lupineMemcpyDtoHAsyncMirrored 390401710
+#define LUPINE_RPC_lupineMemcpyDtoHAsyncPinned 160311540
