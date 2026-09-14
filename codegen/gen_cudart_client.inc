@@ -8364,14 +8364,6 @@ static unsigned lupine_rpc___cudaPushCallConfiguration(
   return return_value;
 }
 
-extern "C" unsigned __cudaPushCallConfiguration(dim3 gridDim, dim3 blockDim,
-                                                size_t sharedMem,
-                                                void *stream) {
-  conn_t *conn = connection();
-  return lupine_rpc___cudaPushCallConfiguration(conn, gridDim, blockDim,
-                                                sharedMem, stream);
-}
-
 static cudaError_t lupine_rpc___cudaPopCallConfiguration(conn_t *conn,
                                                          dim3 *gridDim,
                                                          dim3 *blockDim,
@@ -8399,17 +8391,6 @@ static cudaError_t lupine_rpc___cudaPopCallConfiguration(conn_t *conn,
     return rpc_error();
   }
   return return_value;
-}
-
-extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
-                                                  size_t *sharedMem,
-                                                  void *stream) {
-  if ((8 != 0 && stream == nullptr)) {
-    return cudaErrorInvalidValue;
-  }
-  conn_t *conn = connection();
-  return lupine_rpc___cudaPopCallConfiguration(conn, gridDim, blockDim,
-                                               sharedMem, stream);
 }
 
 static void lupine_rpc___cudaRegisterFatBinaryEnd(conn_t *conn,

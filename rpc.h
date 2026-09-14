@@ -261,6 +261,8 @@ extern int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
 extern int32_t rpc_http2_dispatch_stream(conn_t *conn);
 extern int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id);
 extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);
+// Blocks until every queued wire byte has reached the socket.
+extern int rpc_http2_flush(conn_t *conn);
 extern int32_t rpc_http2_accept_stream(conn_t *conn);
 extern int rpc_http2_client_init(conn_t *conn);
 // Sends another arena preflight on the existing HTTP/2 connection and waits

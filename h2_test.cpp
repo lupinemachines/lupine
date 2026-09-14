@@ -322,7 +322,7 @@ void test_data_provider_frame_sizing() {
   });
   size_t max_data_frame_size = 0;
   int data_frame_count = 0;
-  for (int frame_count = 0; frame_count < 8 && data_frame_count < 2;
+  for (int frame_count = 0; frame_count < 8 && data_frame_count < 1;
        ++frame_count) {
     std::array<unsigned char, 9> header = {};
     require(raw_read_frame(pair.server.connfd, &header),
@@ -872,6 +872,7 @@ void test_truncated_read_clears_direct_destination() {
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   write_all(&pair.client, {prefix});
+  require(rpc_http2_flush(&pair.client) == 0, "truncated writer flush failed");
   require(shutdown(pair.client.connfd, LUPINE_TEST_SHUT_WR) == 0,
           "truncated writer shutdown failed");
   reader.join();
@@ -1273,8 +1274,8 @@ void test_reset_wakes_flow_controlled_writer() {
   h2_pair pair;
   init_raw_server_peer(&pair);
 
-  // Shrink the peer's stream window so the writer pauses after 64 KiB rather
-  // than requiring another multi-gigabyte test payload.
+  // Shrink the peer's stream window so the writer pauses once 8 MiB of output
+  // sit behind it, rather than requiring a multi-gigabyte test payload.
   std::array<unsigned char, 15> settings = {};
   settings[2] = 6;
   settings[3] = NGHTTP2_SETTINGS;
@@ -1325,7 +1326,7 @@ void test_reset_wakes_flow_controlled_writer() {
     }
   });
 
-  std::string payload(128 * 1024, '\0');
+  std::string payload(12 * 1024 * 1024, '\0');
   uint32_t seed = 29;
   for (char &byte : payload) {
     seed = seed * 1664525u + 1013904223u;

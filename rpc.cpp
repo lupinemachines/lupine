@@ -808,7 +808,7 @@ int rpc_wait_for_response(conn_t *conn) {
   uint64_t start =
       lupine_rpc_stats_path() != nullptr ? lupine_rpc_stats_now_ns() : 0;
   int write_id = rpc_write_end(conn);
-  if (write_id < 0) {
+  if (write_id < 0 || rpc_http2_flush(conn) < 0) {
     return -1;
   }
   rpc_http2_response_wait_begin(conn);

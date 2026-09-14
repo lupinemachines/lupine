@@ -20,6 +20,7 @@ CUresult cuGetErrorName(CUresult error, const char **pStr);
  */
 CUresult cuInit(unsigned int Flags);
 /**
+ * @disabled client - manual client caches the version per route
  * @param driverVersion RECV_ONLY
  */
 CUresult cuDriverGetVersion(int *driverVersion);
@@ -276,7 +277,12 @@ CUresult cuCtxGetCacheConfig(CUfunc_cache *pconfig);
 /**
  * @param config SEND_ONLY
  */
-CUresult cuCtxSetCacheConfig(CUfunc_cache config);
+CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_disable_local_occupancy();
+  return return_value;
+}
 /**
  * @param pConfig RECV_ONLY
  */
@@ -356,7 +362,8 @@ CUresult cuModuleUnload(CUmodule hmod) {
   return return_value;
 }
 /**
- * @param mode SEND_RECV
+ * @disabled client - manual client caches the mode per route
+ * @param mode RECV_ONLY
  */
 CUresult cuModuleGetLoadingMode(CUmoduleLoadingMode *mode);
 /**
@@ -601,9 +608,10 @@ CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
 CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
                               CUkernel kernel, CUdevice dev) {
   CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS)
-    lupine_kernel_attribute_cache_erase(lupine_route_identity(route), kernel,
-                                        (int)attrib, (int)dev);
+  if (return_value == CUDA_SUCCESS) {
+    lupine_kernel_attribute_set_note(lupine_route_identity(route), kernel,
+                                     (int)attrib, (int)dev, val);
+  }
   return return_value;
 }
 /**
@@ -612,7 +620,12 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
  * @param dev SEND_ONLY
  */
 CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
-                                CUdevice dev);
+                                CUdevice dev) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_disable_local_occupancy();
+  return return_value;
+}
 /**
  * @guard CUDA_VERSION >= 12030
  * @routingkey FUNCTION hfunc
@@ -1468,6 +1481,7 @@ CUresult cuPointerGetAttributes(unsigned int numAttributes,
                                 CUpointer_attribute *attributes, void **data,
                                 CUdeviceptr ptr);
 /**
+ * @disabled client - manual client hands out pooled streams
  * @routingkey CURRENT_CONTEXT
  * @recordowner STREAM phStream
  * @param phStream SEND_RECV
@@ -1475,6 +1489,7 @@ CUresult cuPointerGetAttributes(unsigned int numAttributes,
  */
 CUresult cuStreamCreate(CUstream *phStream, unsigned int Flags);
 /**
+ * @disabled client - manual client hands out pooled streams
  * @routingkey CURRENT_CONTEXT
  * @recordowner STREAM phStream
  * @param phStream SEND_RECV
@@ -1681,7 +1696,9 @@ CUresult cuStreamAddCallback(CUstream hStream, CUstreamCallback callback,
  */
 CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode);
 /**
- * @param mode SEND_RECV
+ * @async
+ * @disabled client - manual client tracks the thread's capture mode
+ * @param mode SEND_ONLY DEREF
  */
 CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode);
 /**
@@ -1935,8 +1952,15 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
                             int value) {
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (return_value == CUDA_SUCCESS) {
-    lupine_invalidate_kernel_attribute_cache();
-    lupine_invalidate_function_attribute_cache();
+    lupine_kernel_attribute_cache_erase_for_function(
+        lupine_route_identity(route),
+        lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
+    lupine_function_attribute_cache_erase(
+        lupine_route_identity(route),
+        lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
+    lupine_occupancy_cache_erase_function(
+        lupine_route_identity(route),
+        lupine_translate_private_function_for_rpc(hfunc));
   }
   return return_value;
 }
@@ -1945,7 +1969,12 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
  * @param hfunc SEND_ONLY
  * @param config SEND_ONLY
  */
-CUresult cuFuncSetCacheConfig(CUfunction hfunc, CUfunc_cache config);
+CUresult cuFuncSetCacheConfig(CUfunction hfunc, CUfunc_cache config) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_disable_local_occupancy();
+  return return_value;
+}
 /**
  * @routingkey FUNCTION hfunc
  * @param hfunc SEND_ONLY
@@ -2697,6 +2726,7 @@ CUresult cuGraphNodeGetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
  */
 CUresult cuGraphUpload(CUgraphExec hGraphExec, CUstream hStream);
 /**
+ * @async
  * @param hGraphExec SEND_ONLY
  * @param hStream SEND_ONLY
  * @disabled server
@@ -3295,15 +3325,13 @@ void lupineFunctionParamLayoutSnapshot();
 /** @disabled */
 void lupineFunctionAttributeSnapshot();
 /** @disabled */
-void lupineLibrarySnapshot();
-/** @disabled */
-void lupineLibraryAttributeSnapshot();
-/** @disabled */
 void cuGraphConditionalHandleCreate();
 /** @disabled handle_cuGraphAddNode */
 void cuGraphAddNode_v2();
 /** @disabled */
 void lupineEventQueryBatch();
+/** @disabled */
+void lupineStreamPoolInit();
 /** @disabled */
 void cuStreamBeginCaptureToGraph();
 /** @disabled handle_cuStreamUpdateCaptureDependencies */

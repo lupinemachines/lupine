@@ -1,6 +1,7 @@
 #include <cuda.h>
 
 #include <cstdio>
+#include <cstring>
 #include <thread>
 
 static bool check(CUresult result, const char *operation) {

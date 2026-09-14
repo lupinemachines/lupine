@@ -31,6 +31,25 @@ class Backend:
     # A device named by handle rather than by ordinal has to be looked for on
     # every connection.
     lookup_on_all_connections: bool = False
+    # The status a declaration the annotation file says nothing about returns.
+    not_supported: str = ""
+
+
+def unsupported(function, metadata) -> bool:
+    """A declaration with parameters but no @param lines gets a stub."""
+    return bool(function.parameters) and not metadata.operations and not (
+        metadata.disabled_client or metadata.disabled_server
+    )
+
+
+def write_stub(f, backend: Backend, function):
+    name = function.name.format()
+    params = ", ".join(format_function_params(function))
+    f.write(f'extern "C" {function.return_type.format()} {name}({params}) {{\n')
+    for parameter in function.parameters:
+        if parameter.name:
+            f.write(f"  (void){parameter.name};\n")
+    f.write(f"  return {backend.not_supported};\n}}\n\n")
 
 
 def format_function_params(function: Function) -> list[str]:
