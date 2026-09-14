@@ -28,7 +28,8 @@ void *hip_library() {
       }
     }
 #else
-    static const char *const names[] = {"libamdhip64.so.6", "libamdhip64.so"};
+    static const char *const names[] = {"libamdhip64.so.7", "libamdhip64.so.6",
+                                        "libamdhip64.so"};
     for (const char *name : names) {
       void *candidate = dlopen(name, RTLD_LAZY | RTLD_LOCAL);
       if (candidate != nullptr) {

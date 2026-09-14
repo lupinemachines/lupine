@@ -58,6 +58,8 @@ struct lupine_graph_host_copy {
   size_t bytes = 0;
 };
 
+enum class lupine_dtoh_storage { borrowed, heap, pinned };
+
 // A device-to-host copy the server holds until a synchronize collects it. The
 // copy handlers here produce these; the stream, event and context synchronize
 // handlers in cuda_server.cpp drain them, so the registry is shared rather than
@@ -67,7 +69,7 @@ struct lupine_pending_dtoh_item {
   void *client_dst = nullptr;
   void *server_src = nullptr;
   size_t bytes = 0;
-  bool pinned = false;
+  lupine_dtoh_storage storage = lupine_dtoh_storage::borrowed;
 };
 
 using lupine_pending_dtoh_items = std::vector<lupine_pending_dtoh_item>;

@@ -48,6 +48,8 @@ extern "C" void
 lupine_mark_mapped_host_kernel_params(void *const *kernel_params,
                                       const size_t *sizes, uint32_t count);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
+extern "C" int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
+                                              size_t bytes);
 extern "C" CUresult lupine_invalidate_managed_allocations();
 extern "C" void lupine_materialize_host_allocations();
 

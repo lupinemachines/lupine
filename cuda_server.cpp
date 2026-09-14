@@ -923,14 +923,20 @@ void lupine_cleanup_pending_dtoh_copies(
     return;
   }
   for (auto &copy : *pending) {
-    if (copy.server_src != nullptr) {
-      if (copy.pinned) {
-        cuMemFreeHost(copy.server_src);
-      } else {
-        free(copy.server_src);
-      }
-      copy.server_src = nullptr;
+    if (copy.server_src == nullptr) {
+      continue;
     }
+    switch (copy.storage) {
+    case lupine_dtoh_storage::borrowed:
+      break;
+    case lupine_dtoh_storage::heap:
+      free(copy.server_src);
+      break;
+    case lupine_dtoh_storage::pinned:
+      cuMemFreeHost(copy.server_src);
+      break;
+    }
+    copy.server_src = nullptr;
   }
   pending->clear();
 }

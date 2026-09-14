@@ -84,13 +84,6 @@ int open_connections() {
   return lupine_client_transport_open(hip_transport_config());
 }
 
-conn_t *connection(unsigned int index = 0) {
-  if (open_connections() < 0) {
-    return nullptr;
-  }
-  return lupine_client_transport_connection(index);
-}
-
 hipError_t call_int_out_on(conn_t *conn, int op, int *value) {
   hipError_t result = rpc_error();
   int remote_value = 0;
@@ -164,6 +157,10 @@ hipError_t ensure_devices_locked() {
   return hipSuccess;
 }
 
+// The virtual ordinal hipSetDevice last selected on this thread; every
+// generated call without its own routing key goes to that device's server.
+thread_local int current_device = 0;
+
 conn_t *connection_for_device(int *device) {
   if (device == nullptr) {
     return nullptr;
@@ -181,6 +178,11 @@ conn_t *connection_for_device(int *device) {
   lupine_hip_remote_device mapped = devices[virtual_ordinal];
   *device = mapped.remote_ordinal;
   return lupine_client_transport_connection(mapped.conn_index);
+}
+
+conn_t *connection() {
+  int device = current_device;
+  return connection_for_device(&device);
 }
 
 } // namespace
@@ -240,5 +242,29 @@ extern "C" hipError_t hipDeviceGet(int *device, int ordinal) {
     return hipErrorInvalidDevice;
   }
   *device = ordinal;
+  return hipSuccess;
+}
+
+extern "C" hipError_t hipSetDevice(int deviceId) {
+  int remote_device = deviceId;
+  conn_t *conn = connection_for_device(&remote_device);
+  if (conn == nullptr) {
+    return hipErrorInvalidDevice;
+  }
+  hipError_t result = rpc_error();
+  if (rpc_write_start_request(conn, RPC_hipSetDevice) < 0 ||
+      rpc_write(conn, &remote_device, sizeof(remote_device)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  if (result == hipSuccess) {
+    current_device = deviceId;
+  }
+  return result;
+}
+
+extern "C" hipError_t hipGetDevice(int *deviceId) {
+  *deviceId = current_device;
   return hipSuccess;
 }

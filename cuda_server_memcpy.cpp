@@ -3014,7 +3014,9 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
       result = cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
       if (result == CUDA_SUCCESS && byteCount != 0) {
         lupine_pending_dtoh_item copy{nullptr, dstHost, host, byteCount,
-                                      alloc_result == CUDA_SUCCESS};
+                                      alloc_result == CUDA_SUCCESS
+                                          ? lupine_dtoh_storage::pinned
+                                          : lupine_dtoh_storage::heap};
         lupine_pending_dtoh_copies().upsert(
             conn,
             [stream, &copy](lupine_pending_dtoh_streams &streams,
@@ -3035,6 +3037,71 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   } else if (host != nullptr) {
     free(host);
   }
+  rpc_async_sequence_end(conn);
+  return 0;
+}
+
+int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
+  uint64_t async_sequence = 0;
+  void *dstHost = nullptr;
+  void *client_alias = nullptr;
+  void *server_host = nullptr;
+  CUdeviceptr srcDevice = 0;
+  size_t byteCount = 0;
+  CUstream stream = nullptr;
+
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
+      rpc_read(conn, &client_alias, sizeof(client_alias)) < 0 ||
+      rpc_read(conn, &server_host, sizeof(server_host)) < 0 ||
+      rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
+      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0) {
+    return -1;
+  }
+
+  if (rpc_read_end(conn) < 0) {
+    return -1;
+  }
+
+  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
+    return -1;
+  }
+
+  CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
+  if (stream != nullptr) {
+    cuStreamIsCapturing(stream, &capture_status);
+  }
+
+  if (capture_status != CU_STREAM_CAPTURE_STATUS_NONE) {
+    // Graph replay owns its staging storage and uses the application pointer.
+    auto *resources = lupine_get_stream_resources(stream);
+    void *host = lupine_alloc_capture_scratch(resources, byteCount);
+    if (host != nullptr || byteCount == 0) {
+      CUresult result =
+          cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
+      if (result == CUDA_SUCCESS) {
+        lupine_graph_note_dtoh_copy(resources, dstHost, host, byteCount);
+      }
+    }
+  } else {
+    // Copy into the owning server's existing pinned allocation. Returning the
+    // client's writable alias identifies bytes that need no host flush.
+    CUresult result =
+        cuMemcpyDtoHAsync_v2(server_host, srcDevice, byteCount, stream);
+    if (result == CUDA_SUCCESS && byteCount != 0) {
+      lupine_pending_dtoh_item copy{nullptr, client_alias, server_host,
+                                    byteCount, lupine_dtoh_storage::borrowed};
+      lupine_pending_dtoh_copies().upsert(
+          conn,
+          [stream, &copy](lupine_pending_dtoh_streams &streams,
+                          libcuckoo::UpsertContext) {
+            streams[stream].push_back(copy);
+          },
+          lupine_pending_dtoh_streams{});
+    }
+  }
+
   rpc_async_sequence_end(conn);
   return 0;
 }

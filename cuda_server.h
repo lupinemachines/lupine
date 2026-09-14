@@ -15,6 +15,7 @@ int handle_cuModuleLoadDataEx(conn_t *conn);
 int handle_lupineFunctionParamLayoutSnapshot(conn_t *conn);
 int handle_lupineFunctionAttributeSnapshot(conn_t *conn);
 int handle_cuLibraryLoadData(conn_t *conn);
+int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn);
 int handle_cuMemPoolSetAttribute(conn_t *conn);
 int handle_cuMemPoolGetAttribute(conn_t *conn);
 int handle_cuMemExportToShareableHandle(conn_t *conn);
