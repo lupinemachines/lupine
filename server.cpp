@@ -108,6 +108,46 @@ static bool lupine_install_child_signal_handler(lupine_socket_t connection) {
   return sigaction(SIGTERM, &action, nullptr) == 0;
 }
 
+#ifdef __linux__
+// Linux clamps SO_RCVBUF/SO_SNDBUF to net.core.rmem_max/wmem_max, whose
+// defaults sit far below the tcp_rmem/tcp_wmem autotune maxima, so a fixed
+// buffer only replaces autotuning where it reaches at least as high. Set on
+// the listener so accepted sockets inherit it and negotiate their window scale
+// from it.
+static constexpr long kSocketBufferBytes = 64L * 1024 * 1024;
+
+static long lupine_sysctl_field(const char *path, int field) {
+  FILE *file = fopen(path, "r");
+  if (file == nullptr) {
+    return -1;
+  }
+  long values[3] = {-1, -1, -1};
+  int parsed = fscanf(file, "%ld %ld %ld", &values[0], &values[1], &values[2]);
+  fclose(file);
+  return field < parsed ? values[field] : -1;
+}
+
+static void lupine_request_socket_buffers(lupine_socket_t fd) {
+  struct {
+    int option;
+    const char *core_max;
+    const char *autotune;
+  } directions[] = {
+      {SO_RCVBUF, "/proc/sys/net/core/rmem_max", "/proc/sys/net/ipv4/tcp_rmem"},
+      {SO_SNDBUF, "/proc/sys/net/core/wmem_max", "/proc/sys/net/ipv4/tcp_wmem"},
+  };
+  for (const auto &direction : directions) {
+    long core_max = lupine_sysctl_field(direction.core_max, 0);
+    long fixed = std::min(kSocketBufferBytes, core_max);
+    if (core_max < 0 || fixed < lupine_sysctl_field(direction.autotune, 2)) {
+      continue;
+    }
+    int value = static_cast<int>(fixed);
+    setsockopt(fd, SOL_SOCKET, direction.option, &value, sizeof(value));
+  }
+}
+#endif
+
 static void
 lupine_reap_connection_children(std::unordered_set<pid_t> &children) {
   sigset_t child_mask;
@@ -413,6 +453,9 @@ int main() {
     exit(EXIT_FAILURE);
   }
 
+#ifdef __linux__
+  lupine_request_socket_buffers(sockfd);
+#endif
   if (listen(sockfd, MAX_CLIENTS) != 0) {
     LUPINE_LOG_ERROR("Listen failed.");
     exit(EXIT_FAILURE);

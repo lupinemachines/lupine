@@ -136,7 +136,32 @@ negotiate or fall back to another encoding.
   backoff, and each attempt is bounded by a deadline so a packet-filtered port
   is detected quickly rather than blocking for the full SYN-retransmit window.
 
-Socket buffer sizes are left to the OS, which auto-tunes on modern kernels.
+### Bandwidth on high-latency links
+
+Bytes in flight per connection are bounded by the kernel socket buffers on
+both ends, so on a 150 ms path a single TCP connection with Linux defaults
+(4 MB `tcp_wmem`, 6 MB `tcp_rmem`, 208 KB `net.core.*mem_max`) moves large
+copies at ~16 MB/s. Raising the server side helps the download direction (and uploads from clients whose own limits are raised):
+
+- **Server socket buffers.** The server asks for 64 MB send and receive
+  buffers on its listener, replacing autotuning where the host allows. Linux
+  clamps the request to `net.core.rmem_max`/`net.core.wmem_max`, so the host
+  or pod running the server needs them raised, along with the autotune maxima
+  so a single connection can use them:
+
+  ```bash
+  docker run --rm --gpus all -p 14833:14833 \
+    --sysctl net.core.rmem_max=67108864 --sysctl net.core.wmem_max=67108864 \
+    --sysctl net.ipv4.tcp_rmem="4096 131072 67108864" \
+    --sysctl net.ipv4.tcp_wmem="4096 16384 67108864" \
+    ghcr.io/lupinemachines/lupine-server:cuda-13.3.1-ubuntu24.04
+  ```
+
+  (`net.core.*` are not namespaced, so `--sysctl` only works for the
+  `net.ipv4.tcp_*` entries in a container; set `net.core.*mem_max` on the
+  host, or in a Kubernetes pod through `securityContext.sysctls` with them
+  listed as allowed unsafe sysctls.) `ss -tim` on the server shows the
+  effective `rb`/`tb` per accepted socket.
 
 ## Trace Logging
 
