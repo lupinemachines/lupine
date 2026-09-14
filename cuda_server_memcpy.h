@@ -94,6 +94,7 @@ int lupine_write_pending_dtoh_copies(conn_t *conn,
                                      const lupine_pending_dtoh_items &pending,
                                      bool include_count);
 void lupine_cleanup_pending_dtoh_copies(lupine_pending_dtoh_items *pending);
+void lupine_forget_landed_dtoh(const void *server_src);
 void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream);
 void lupine_forget_event_dtoh_marker(conn_t *conn, CUevent event);
 

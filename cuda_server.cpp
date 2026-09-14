@@ -926,6 +926,7 @@ void lupine_cleanup_pending_dtoh_copies(
     if (copy.server_src == nullptr) {
       continue;
     }
+    lupine_forget_landed_dtoh(copy.server_src);
     switch (copy.storage) {
     case lupine_dtoh_storage::borrowed:
       break;
