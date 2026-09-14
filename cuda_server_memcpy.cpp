@@ -1572,7 +1572,9 @@ static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
 // The pageable source travels in the request, so this thread reads it
 // straight into the ring and never originates a server-to-client call: it
 // may wait for the stream here without holding the call lock that a callback
-// queued ahead of the copy could need.
+// queued ahead of the copy could need. Page-locked sources still arrive by
+// pull, read when the stream reaches the copy, because queued work may write
+// them first.
 static CUresult lupine_copy_pushed_host_to_device(conn_t *conn, CUstream stream,
                                                   bool blocking,
                                                   lupine_htod_copy copy) {
@@ -1968,7 +1970,7 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   CUdeviceptr destination = 0;
   const void *source = nullptr;
   bool is_server_authoritative = false;
-  bool pushed = false;
+  uint64_t pushed_bytes = 0;
   size_t bytes = 0;
   CUresult result = CUDA_SUCCESS;
 
@@ -1977,10 +1979,13 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
       rpc_read(conn, &destination, sizeof(destination)) < 0 ||
       rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
       rpc_read(conn, &source, sizeof(source)) < 0 ||
-      rpc_read(conn, &pushed, sizeof(pushed)) < 0) {
+      rpc_read(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0) {
     return -1;
   }
-  if (bytes != 0 && pushed) {
+  if (pushed_bytes != 0 && pushed_bytes != bytes) {
+    return -1;
+  }
+  if (pushed_bytes != 0) {
     result = lupine_copy_pushed_host_to_device(
         conn, CU_STREAM_LEGACY, true,
         lupine_make_linear_htod_copy(destination, source, bytes));
@@ -1993,7 +1998,7 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   if (bytes != 0 && is_server_authoritative) {
     result =
         cuMemcpy(destination, reinterpret_cast<CUdeviceptr>(source), bytes);
-  } else if (bytes != 0 && !pushed) {
+  } else if (bytes != 0 && pushed_bytes == 0) {
     result = lupine_copy_client_host_to_device(
         conn, CU_STREAM_LEGACY, true,
         lupine_make_linear_htod_copy(destination, source, bytes));
@@ -2857,7 +2862,7 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   CUdeviceptr dstDevice = 0;
   const void *srcHost = nullptr;
   bool is_server_authoritative = false;
-  bool pushed = false;
+  uint64_t pushed_bytes = 0;
   size_t byteCount = 0;
   CUstream stream = nullptr;
   CUresult result = CUDA_SUCCESS;
@@ -2868,10 +2873,13 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
       rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
       rpc_read(conn, &stream, sizeof(stream)) < 0 ||
       rpc_read(conn, &srcHost, sizeof(srcHost)) < 0 ||
-      rpc_read(conn, &pushed, sizeof(pushed)) < 0) {
+      rpc_read(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0) {
     return -1;
   }
-  if (byteCount != 0 && pushed) {
+  if (pushed_bytes != 0 && pushed_bytes != byteCount) {
+    return -1;
+  }
+  if (pushed_bytes != 0) {
     result = lupine_copy_pushed_host_to_device(
         conn, stream, false,
         lupine_make_linear_htod_copy(dstDevice, srcHost, byteCount));
@@ -2884,7 +2892,7 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   if (byteCount != 0 && is_server_authoritative) {
     result = cuMemcpyAsync(dstDevice, reinterpret_cast<CUdeviceptr>(srcHost),
                            byteCount, stream);
-  } else if (byteCount != 0 && !pushed) {
+  } else if (byteCount != 0 && pushed_bytes == 0) {
     result = lupine_copy_client_host_to_device(
         conn, stream, false,
         lupine_make_linear_htod_copy(dstDevice, srcHost, byteCount));
