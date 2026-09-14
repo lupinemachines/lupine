@@ -366,6 +366,7 @@ if(LUPINE_BUILD_CUDA)
         ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client_rpc.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/events.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/visible_devices.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client_memcpy.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/gen_cuda_client.cpp
     )
@@ -670,6 +671,14 @@ if(BUILD_TESTING)
     target_link_libraries(transport_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(transport_test)
     add_test(NAME transport_test COMMAND transport_test)
+
+    add_executable(visible_devices_test
+        ${CMAKE_CURRENT_SOURCE_DIR}/visible_devices_test.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/visible_devices.cpp)
+    target_include_directories(visible_devices_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR})
+    lupine_apply_sanitizer(visible_devices_test)
+    add_test(NAME visible_devices_test COMMAND visible_devices_test)
 
 
     add_executable(checkpoint_test

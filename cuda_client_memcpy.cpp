@@ -3206,6 +3206,38 @@ extern "C" CUresult cuMemcpyDtoH(void *dstHost, CUdeviceptr srcDevice,
   return cuMemcpyDtoH_v2(dstHost, srcDevice, ByteCount);
 }
 
+// Bytes of the source that travel in the request: the whole copy for a
+// pageable client source, nothing otherwise. A page-locked (tracked) source
+// may still be written by work queued ahead of the copy, and CUDA reads it
+// when the stream reaches the copy, so the server keeps pulling it at that
+// point; a pageable source is staged at issue natively too, so sending it now
+// is exact. Server-authoritative memory and device memory on another route
+// never leave the client here either.
+static uint64_t lupine_htod_pushed_bytes(bool is_server_authoritative,
+                                         const void *source, size_t bytes) {
+  if (is_server_authoritative || bytes == 0) {
+    return 0;
+  }
+  uintptr_t start = reinterpret_cast<uintptr_t>(source);
+  if (start > UINTPTR_MAX - bytes) {
+    return 0;
+  }
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    for (const auto &entry : lupine_mutable_host_allocations_locked()) {
+      uintptr_t base = reinterpret_cast<uintptr_t>(entry.first);
+      if (base < start + bytes && start < base + entry.second.size) {
+        return 0;
+      }
+    }
+  }
+  CUdeviceptr ptr = reinterpret_cast<CUdeviceptr>(source);
+  return !lupine_deviceptr_is_tracked(ptr) &&
+                 lupine_is_client_mapped_address(ptr)
+             ? bytes
+             : 0;
+}
+
 extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                                     size_t ByteCount) {
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
@@ -3228,6 +3260,8 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
   const void *wire_source = is_server_authoritative
                                 ? reinterpret_cast<const void *>(server_source)
                                 : srcHost;
+  uint64_t pushed_bytes =
+      lupine_htod_pushed_bytes(is_server_authoritative, srcHost, ByteCount);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
       rpc_write(conn, &is_server_authoritative,
@@ -3235,6 +3269,8 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
       rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
+      rpc_write(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0 ||
+      (pushed_bytes != 0 && rpc_write(conn, srcHost, pushed_bytes) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -3275,6 +3311,8 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
   const void *wire_source = is_server_authoritative
                                 ? reinterpret_cast<const void *>(server_source)
                                 : srcHost;
+  uint64_t pushed_bytes =
+      lupine_htod_pushed_bytes(is_server_authoritative, srcHost, ByteCount);
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
@@ -3284,6 +3322,8 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
+      rpc_write(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0 ||
+      (pushed_bytes != 0 && rpc_write(conn, srcHost, pushed_bytes) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {

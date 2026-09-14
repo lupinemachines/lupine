@@ -4382,22 +4382,17 @@ int handle_cuStreamSynchronize(conn_t *conn) {
 }
 
 int handle_cuGraphLaunch(conn_t *conn) {
+  uint64_t async_sequence = 0;
   CUgraphExec exec = nullptr;
   CUstream stream = nullptr;
-  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0) {
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0 ||
+      rpc_async_sequence_begin(conn, async_sequence) < 0) {
     return -1;
   }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  CUresult result = cuGraphLaunch(exec, stream);
-  lupine_note_graph_launch(exec, stream, result);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_note_graph_launch(exec, stream, cuGraphLaunch(exec, stream));
+  rpc_async_sequence_end(conn);
   return 0;
 }
 
@@ -4605,6 +4600,57 @@ int handle_cuCtxCreate_v2(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &context, sizeof(context)) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+// Creates the client's stream pool under the context it names in one round
+// trip: kStreamPoolPerPriority streams at each usable priority from the least
+// downward, capped at kStreamPoolMaxPriorities, in torch's c10 creation order
+// (stream-major, priority-minor), all CU_STREAM_NON_BLOCKING. Creation stops
+// at the first failure; the streams already created are still returned.
+int handle_lupineStreamPoolInit(conn_t *conn) {
+  constexpr uint32_t kStreamPoolPerPriority = 32;
+  constexpr uint32_t kStreamPoolMaxPriorities = 4;
+  CUcontext context = nullptr;
+  if (rpc_read(conn, &context, sizeof(context)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUstream streams[kStreamPoolPerPriority * kStreamPoolMaxPriorities];
+  uint32_t created = 0;
+  uint32_t priorities = 0;
+  int least = 0;
+  int greatest = 0;
+  if (cuCtxPushCurrent(context) == CUDA_SUCCESS) {
+    priorities = 1;
+    if (cuCtxGetStreamPriorityRange(&least, &greatest) == CUDA_SUCCESS) {
+      priorities =
+          std::min<uint32_t>(kStreamPoolMaxPriorities,
+                             static_cast<uint32_t>(least - greatest) + 1);
+    }
+    for (; created < kStreamPoolPerPriority * priorities; ++created) {
+      int priority = least - static_cast<int>(created % priorities);
+      if (cuStreamCreateWithPriority(&streams[created], CU_STREAM_NON_BLOCKING,
+                                     priority) != CUDA_SUCCESS) {
+        break;
+      }
+    }
+    CUcontext popped = nullptr;
+    cuCtxPopCurrent(&popped);
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &created, sizeof(created)) < 0 ||
+      rpc_write(conn, &priorities, sizeof(priorities)) < 0 ||
+      rpc_write(conn, &least, sizeof(least)) < 0 ||
+      rpc_write(conn, streams, created * sizeof(*streams)) < 0 ||
+      rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
