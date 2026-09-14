@@ -36,5 +36,10 @@ extern "C" int lupine_ipc_broker_get_fd(uint32_t kind,
 // Parent side: service one request on a child's broker socket; returns -1
 // when the socket is dead and should be dropped.
 extern "C" int lupine_ipc_broker_parent_handle(int fd);
+// One-way fd hand-off over a socketpair: the parent passes a client's bulk
+// connection to the child that owns the session. recv blocks; -1 means the
+// socket is dead.
+extern "C" int lupine_ipc_send_fd(int sock, int fd);
+extern "C" int lupine_ipc_recv_fd(int sock);
 
 #endif

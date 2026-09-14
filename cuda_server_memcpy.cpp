@@ -1909,6 +1909,115 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   return 0;
 }
 
+// Chunks of one striped copy arrive on the bulk connections in any order and
+// only stage here; the device copy runs on the main lane, which keeps it FIFO
+// behind the client's earlier work on that lane.
+struct lupine_bulk_staging {
+  unsigned char *data = nullptr;
+  size_t total = 0;
+  size_t landed = 0;
+};
+
+static std::mutex lupine_bulk_staging_mutex;
+static std::condition_variable lupine_bulk_staging_progress;
+static std::unordered_map<uint64_t, lupine_bulk_staging> lupine_bulk_stagings;
+static bool lupine_bulk_connection_lost = false;
+
+void lupine_server_bulk_connection_lost() {
+  std::lock_guard<std::mutex> lock(lupine_bulk_staging_mutex);
+  lupine_bulk_connection_lost = true;
+  lupine_bulk_staging_progress.notify_all();
+}
+
+int handle_lupineBulkChunk(conn_t *conn) {
+  uint64_t copy_id = 0;
+  uint64_t total = 0;
+  uint64_t offset = 0;
+  uint64_t bytes = 0;
+  if (rpc_read(conn, &copy_id, sizeof(copy_id)) < 0 ||
+      rpc_read(conn, &total, sizeof(total)) < 0 ||
+      rpc_read(conn, &offset, sizeof(offset)) < 0 ||
+      rpc_read(conn, &bytes, sizeof(bytes)) < 0) {
+    return -1;
+  }
+  unsigned char *destination = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(lupine_bulk_staging_mutex);
+    lupine_bulk_staging &staging = lupine_bulk_stagings[copy_id];
+    if (staging.data == nullptr) {
+      staging.data = static_cast<unsigned char *>(malloc(total));
+      if (staging.data == nullptr) {
+        std::abort();
+      }
+      staging.total = total;
+    }
+    destination = staging.data + offset;
+  }
+  if (rpc_read(conn, destination, bytes) < 0 || rpc_read_end(conn) < 0) {
+    return -1;
+  }
+  std::lock_guard<std::mutex> lock(lupine_bulk_staging_mutex);
+  lupine_bulk_staging &staging = lupine_bulk_stagings[copy_id];
+  staging.landed += bytes;
+  if (staging.landed == staging.total) {
+    lupine_bulk_staging_progress.notify_all();
+  }
+  return 0;
+}
+
+int handle_lupineMemcpyHtoDBulk(conn_t *conn) {
+  uint64_t copy_id = 0;
+  uint64_t destination = 0;
+  size_t bytes = 0;
+  // A host destination is the server's copy of a client host allocation, the
+  // same memory lupineManagedHostFlush writes.
+  uint8_t to_host = 0;
+  if (rpc_read(conn, &copy_id, sizeof(copy_id)) < 0 ||
+      rpc_read(conn, &destination, sizeof(destination)) < 0 ||
+      rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
+      rpc_read(conn, &to_host, sizeof(to_host)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  unsigned char *data = nullptr;
+  {
+    std::unique_lock<std::mutex> lock(lupine_bulk_staging_mutex);
+    lupine_bulk_staging_progress.wait(lock, [&] {
+      auto it = lupine_bulk_stagings.find(copy_id);
+      return lupine_bulk_connection_lost ||
+             (it != lupine_bulk_stagings.end() &&
+              it->second.landed == it->second.total);
+    });
+    auto it = lupine_bulk_stagings.find(copy_id);
+    if (it != lupine_bulk_stagings.end()) {
+      if (it->second.landed == it->second.total) {
+        data = it->second.data;
+      } else {
+        free(it->second.data);
+      }
+      lupine_bulk_stagings.erase(it);
+    }
+  }
+  if (data != nullptr && to_host != 0) {
+    memcpy(reinterpret_cast<void *>(destination), data, bytes);
+    result = CUDA_SUCCESS;
+  } else if (data != nullptr) {
+    result =
+        cuMemcpyHtoD_v2(static_cast<CUdeviceptr>(destination), data, bytes);
+  }
+  free(data);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 static int lupine_write_dtoh_chunk_response(conn_t *conn, int request_id,
                                             CUresult result, const void *data,
                                             size_t bytes) {

@@ -571,6 +571,36 @@ void test_client_await_ready_reports_capabilities(bool advertise) {
   require(supported == advertise, "server capability was reported incorrectly");
 }
 
+void test_client_await_ready_reports_bulk_token(bool advertise) {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+
+  std::string token;
+  bool supported = false;
+  std::thread client([&] {
+    require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
+    require(rpc_http2_client_await_ready(&pair.client) == 0,
+            "matching builds were not accepted");
+    const char *peer_token = rpc_http2_peer_bulk_token(&pair.client);
+    token = peer_token == nullptr ? "" : peer_token;
+    supported = rpc_http2_peer_supports(
+        &pair.client, LUPINE_SERVER_CAPABILITY_BULK_CONNECTIONS);
+  });
+  const rpc_http2_server_metadata metadata = {
+      nullptr,
+      nullptr,
+      advertise ? LUPINE_SERVER_CAPABILITY_BULK_CONNECTIONS : 0,
+      advertise ? "0123456789abcdef0123456789abcdef" : nullptr,
+  };
+  require(rpc_http2_server_init_with_metadata(&pair.server, &metadata) == 0,
+          "server h2 init failed");
+  client.join();
+
+  require(supported == advertise, "bulk capability was reported incorrectly");
+  require(token == (advertise ? "0123456789abcdef0123456789abcdef" : ""),
+          "bulk token was reported incorrectly");
+}
+
 void test_client_metadata_capability(bool advertise, int metadata_status) {
   h2_pair pair;
   init_pair_sockets(&pair);
@@ -1980,6 +2010,8 @@ int main() {
 #endif
   RUN_CASE(test_client_await_ready_reports_capabilities(true));
   RUN_CASE(test_client_await_ready_reports_capabilities(false));
+  RUN_CASE(test_client_await_ready_reports_bulk_token(true));
+  RUN_CASE(test_client_await_ready_reports_bulk_token(false));
   RUN_CASE(test_client_metadata_capability(true, 0));
   RUN_CASE(test_client_metadata_capability(true, 3));
   RUN_CASE(test_client_metadata_capability(false, 0));

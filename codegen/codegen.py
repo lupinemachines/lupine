@@ -229,6 +229,8 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineFunctionAttributeSnapshot",
     "lupineFunctionParamLayoutSnapshot",
     "lupineManagedHostFlush",
+    "lupineBulkChunk",
+    "lupineMemcpyHtoDBulk",
 ]
 
 REGISTRY_CPP_TEMPLATE = Template(

@@ -23,6 +23,17 @@ struct lupine_client_endpoint {
   bool tls = false;
 };
 
+// Extra connections to one server for striping large transfers. Each carries
+// one stream that the caller writes raw RPC frames to while holding mutex.
+constexpr unsigned int LUPINE_BULK_CONNECTIONS_MAX = 8;
+struct lupine_bulk_lanes {
+  pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+  unsigned int count = 0;
+  bool failed = false;
+  conn_t *conn[LUPINE_BULK_CONNECTIONS_MAX] = {};
+  int32_t stream[LUPINE_BULK_CONNECTIONS_MAX] = {};
+};
+
 struct lupine_client_transport_config {
   lupine_client_dial_policy dial_policy =
       lupine_client_dial_policy::bounded_retry;
@@ -51,6 +62,11 @@ LUPINE_TRANSPORT_INTERNAL const lupine_client_endpoint *
 lupine_client_transport_endpoint(unsigned int index);
 LUPINE_TRANSPORT_INTERNAL void
 lupine_client_transport_retire_lane(uint64_t lane_id);
+// The bulk lanes for a connection's server, dialed on first use. Null when the
+// server does not route bulk connections, LUPINE_BULK_CONNECTIONS is 0, the
+// endpoint uses TLS, or a lane has failed.
+LUPINE_TRANSPORT_INTERNAL lupine_bulk_lanes *
+lupine_client_transport_bulk_lanes(conn_t *conn);
 
 #undef LUPINE_TRANSPORT_INTERNAL
 

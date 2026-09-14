@@ -106,6 +106,8 @@
   HANDLER(LUPINE_RPC_cuStreamGetCaptureInfo_v3, handle_cuStreamGetCaptureInfo, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineManagedHostFlush, handle_lupineManagedHostFlush, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineDeviceSnapshot, handle_lupineDeviceSnapshot, rpc_backend::cuda) \
+  HANDLER(LUPINE_RPC_lupineBulkChunk, handle_lupineBulkChunk, rpc_backend::cuda) \
+  HANDLER(LUPINE_RPC_lupineMemcpyHtoDBulk, handle_lupineMemcpyHtoDBulk, rpc_backend::cuda) \
   HANDLER(RPC_cuInit, handle_cuInit, rpc_backend::cuda) \
   HANDLER(RPC_cuDriverGetVersion, handle_cuDriverGetVersion, rpc_backend::cuda) \
   HANDLER(RPC_cuDeviceGet, handle_cuDeviceGet, rpc_backend::cuda) \

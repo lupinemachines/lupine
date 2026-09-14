@@ -215,4 +215,11 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 EXPOSE 14833
 
+# The server asks for 64 MB socket buffers; the kernel clamps that to the
+# host's net.core.rmem_max/wmem_max, which are not namespaced and cannot be
+# set from an image. Run with them raised on the host (or as allowed unsafe
+# sysctls in a pod) and pass the namespaced autotune maxima, e.g.
+#   --sysctl net.ipv4.tcp_rmem="4096 131072 67108864"
+#   --sysctl net.ipv4.tcp_wmem="4096 16384 67108864"
+# See README "Bandwidth on high-latency links".
 ENTRYPOINT ["/opt/lupine/bin/lupine_driver_server"]

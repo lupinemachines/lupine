@@ -136,7 +136,43 @@ negotiate or fall back to another encoding.
   backoff, and each attempt is bounded by a deadline so a packet-filtered port
   is detected quickly rather than blocking for the full SYN-retransmit window.
 
-Socket buffer sizes are left to the OS, which auto-tunes on modern kernels.
+### Bandwidth on high-latency links
+
+Bytes in flight per connection are bounded by the kernel socket buffers on
+both ends, so on a 150 ms path a single TCP connection with Linux defaults
+(4 MB `tcp_wmem`, 6 MB `tcp_rmem`, 208 KB `net.core.*mem_max`) moves large
+copies at ~16 MB/s. Two things raise that:
+
+- **Server socket buffers.** The server asks for 64 MB send and receive
+  buffers on its listener, replacing autotuning where the host allows. Linux
+  clamps the request to `net.core.rmem_max`/`net.core.wmem_max`, so the host
+  or pod running the server needs them raised, along with the autotune maxima
+  so a client that cannot open extra connections still benefits:
+
+  ```bash
+  docker run --rm --gpus all -p 14833:14833 \
+    --sysctl net.core.rmem_max=67108864 --sysctl net.core.wmem_max=67108864 \
+    --sysctl net.ipv4.tcp_rmem="4096 131072 67108864" \
+    --sysctl net.ipv4.tcp_wmem="4096 16384 67108864" \
+    ghcr.io/lupinemachines/lupine-server:cuda-13.3.1-ubuntu24.04
+  ```
+
+  (`net.core.*` are not namespaced, so `--sysctl` only works for the
+  `net.ipv4.tcp_*` entries in a container; set `net.core.*mem_max` on the
+  host, or in a Kubernetes pod through `securityContext.sysctls` with them
+  listed as allowed unsafe sysctls.) `ss -tim` on the server shows the
+  effective `rb`/`tb` per accepted socket.
+- **Client bulk connections.** An unprivileged client cannot raise its own
+  kernel limits, so for copies of 8 MB and more it opens extra TCP
+  connections to the same server (`LUPINE_BULK_CONNECTIONS`, default 4, 0
+  disables) and stripes the copy's chunks across them; each connection gets
+  its own window. The server advertises the feature in its handshake, so an
+  older server keeps the single-connection path. Bulk connections carry a
+  session preamble before the HTTP/2 preface and are plain TCP only: an
+  `https://` endpoint or an HTTP/2-aware proxy in front of the server keeps
+  the single connection. Synchronous `cuMemcpyHtoD` and the flush of a
+  pinned host allocation's dirty pages are striped today; device-to-host
+  copies still use the session connection.
 
 ## Trace Logging
 
