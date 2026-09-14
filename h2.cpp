@@ -144,6 +144,7 @@ struct h2_transport {
   bool shutdown_acknowledged = false;
   std::string peer_cuda_version;
   std::string peer_capabilities;
+  std::string peer_bulk_token;
   std::string peer_client_etag;
   std::string client_etag;
   std::string client_platform;
@@ -151,6 +152,7 @@ struct h2_transport {
   const lupine_client_bundle_registry *client_bundles = nullptr;
   std::string server_version;
   std::string server_capabilities;
+  std::string server_bulk_token;
   std::string session_id;
   std::string peer_va_base;
   std::string peer_va_size;
@@ -428,6 +430,7 @@ constexpr char kLupineSessionHeader[] = "x-lupine-session";
 constexpr char kLupineVaBaseHeader[] = "x-lupine-va-base";
 constexpr char kLupineVaSizeHeader[] = "x-lupine-va-size";
 constexpr char kLupineCapabilitiesHeader[] = "x-lupine-capabilities";
+constexpr char kLupineBulkTokenHeader[] = "x-lupine-bulk-token";
 constexpr char kLupineClientEtagHeader[] = "x-lupine-client-etag";
 constexpr char kLupineClientPlatformHeader[] = "x-lupine-client-platform";
 constexpr char kLupineVaWindowBaseHeader[] = "x-lupine-va-window-base";
@@ -499,6 +502,10 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
   if (!transport->server_capabilities.empty()) {
     headers.push_back(h2_nv(kLupineCapabilitiesHeader,
                             transport->server_capabilities.c_str()));
+  }
+  if (!transport->server_bulk_token.empty()) {
+    headers.push_back(
+        h2_nv(kLupineBulkTokenHeader, transport->server_bulk_token.c_str()));
   }
   // State the window on every response, probe included: the client has to know
   // it before it reserves anything, and no single constant fits both platforms.
@@ -713,6 +720,12 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
       memcmp(name, kLupineCapabilitiesHeader, namelen) == 0) {
     transport->peer_capabilities.assign(reinterpret_cast<const char *>(value),
                                         valuelen);
+    return 0;
+  }
+  if (namelen == strlen(kLupineBulkTokenHeader) &&
+      memcmp(name, kLupineBulkTokenHeader, namelen) == 0) {
+    transport->peer_bulk_token.assign(reinterpret_cast<const char *>(value),
+                                      valuelen);
     return 0;
   }
   if (namelen == strlen(kLupineVaWindowBaseHeader) &&
@@ -1072,6 +1085,7 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
                                    bool probe) {
   transport->peer_cuda_version.clear();
   transport->peer_capabilities.clear();
+  transport->peer_bulk_token.clear();
   transport->peer_client_etag.clear();
   transport->peer_va_base.clear();
   transport->peer_va_size.clear();
@@ -1156,6 +1170,9 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   }
   if (metadata != nullptr && metadata->capabilities != 0) {
     transport->server_capabilities = h2_hex(metadata->capabilities);
+  }
+  if (metadata != nullptr && metadata->bulk_token != nullptr) {
+    transport->server_bulk_token = metadata->bulk_token;
   }
   if (metadata != nullptr) {
     transport->client_bundles = metadata->client_bundles;
@@ -1719,6 +1736,19 @@ bool rpc_http2_peer_supports(conn_t *conn, uint64_t capabilities) {
   bool parsed = h2_parse_hex64(transport->peer_capabilities, &advertised);
   pthread_mutex_unlock(&transport->session_mutex);
   return parsed && (advertised & capabilities) == capabilities;
+}
+
+const char *rpc_http2_peer_bulk_token(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return nullptr;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  const char *token = transport->peer_bulk_token.empty()
+                          ? nullptr
+                          : transport->peer_bulk_token.c_str();
+  pthread_mutex_unlock(&transport->session_mutex);
+  return token;
 }
 
 int rpc_http2_server_init(conn_t *conn) {

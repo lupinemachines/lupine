@@ -3344,4 +3344,8 @@ void lupineManagedHostFlush();
 void lupineMemcpyDtoHAsyncPinned();
 /** @disabled */
 void lupineDeviceSnapshot();
+/** @disabled */
+void lupineBulkChunk();
+/** @disabled */
+void lupineMemcpyHtoDBulk();
 #endif

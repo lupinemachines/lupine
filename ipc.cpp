@@ -19,6 +19,8 @@ extern "C" int lupine_ipc_broker_get_fd(uint32_t, const lupine_ipc_token *) {
   return -1;
 }
 extern "C" int lupine_ipc_broker_parent_handle(int) { return -1; }
+extern "C" int lupine_ipc_send_fd(int, int) { return -1; }
+extern "C" int lupine_ipc_recv_fd(int) { return -1; }
 
 #else
 
@@ -289,6 +291,16 @@ extern "C" int lupine_ipc_broker_get_fd(uint32_t kind,
     return -1;
   }
   return fd;
+}
+
+extern "C" int lupine_ipc_send_fd(int sock, int fd) {
+  lupine_ipc_broker_msg msg = {};
+  return lupine_send_broker_msg(sock, msg, fd);
+}
+
+extern "C" int lupine_ipc_recv_fd(int sock) {
+  lupine_ipc_broker_msg msg;
+  return lupine_recv_broker_msg(sock, &msg);
 }
 
 extern "C" int lupine_ipc_broker_parent_handle(int fd) {

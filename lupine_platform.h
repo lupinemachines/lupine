@@ -695,8 +695,9 @@ inline int lupine_fd_truncate(int fd, off_t length) {
 //     blip then surfaces as a fatal RPC error. Keepalive probes are emitted
 //     only while the connection is idle, so active transfers pay no latency.
 //     With the defaults a dead peer is detected in ~105s instead of hanging on
-//     the retransmit timer. Socket buffer sizing is left to the OS, which
-//     auto-tunes on modern kernels.
+//     the retransmit timer. Socket buffer sizing is left to the OS autotuner
+//     except on the server listener, which asks for fixed large buffers where
+//     the host sysctls allow them (see lupine_request_socket_buffers).
 //   * TCP_USER_TIMEOUT, where available, applies the same dead-peer bound
 //     while application data is unacknowledged. TCP keepalive does not run
 //     while data is in flight, which otherwise leaves a disconnected client

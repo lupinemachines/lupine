@@ -9,6 +9,7 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <thread>
 #ifndef _WIN32
 #include <fcntl.h>
 #include <sched.h>
@@ -38,6 +39,7 @@ extern std::atomic<int> lupine_active_stream_captures;
 
 static void lupine_pointer_attribute_cache_clear();
 #include "rpc.h"
+#include "transport.h"
 
 extern int rpc_size();
 CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
@@ -55,6 +57,13 @@ CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
 
 // CUDA stream handles are process-local to their owning driver. A copy whose
 // data lives on another route must fall back to the synchronous staging path.
+static bool lupine_device_copy_uses_remote_callback(CUdeviceptr destination,
+                                                    CUdeviceptr source);
+static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
+                                 uint64_t destination, const void *source,
+                                 size_t bytes, bool to_host);
+static constexpr size_t LUPINE_BULK_COPY_MIN_BYTES = 8 * 1024 * 1024;
+
 static bool lupine_stream_crosses_route(CUstream stream, lupine_route route) {
   if (stream == nullptr) {
     return false;
@@ -1081,6 +1090,9 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     return CUDA_SUCCESS;
   };
 
+  // Copies this large fan their chunks out over the bulk connections instead of
+  // travelling on the session connection; the batch ahead of them goes first
+  // only so a batch never straddles one.
   uint32_t count = 0;
   for (const auto &range : merged) {
     auto &allocation = *range.allocation;
@@ -1093,14 +1105,29 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     size_t offset = start - allocation.host_base;
     size_t bytes = end - start;
     CUdeviceptr dst = allocation.server_host_ptr + offset;
-    memcpy(headers[count].data(), &dst, sizeof(dst));
-    memcpy(headers[count].data() + sizeof(dst), &bytes, sizeof(bytes));
-    cursors[count * 2] = rpc_write_cursor(
-        headers[count].data(), LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES);
     const void *source = reinterpret_cast<void *>(start);
     if (allocation.io_alias != nullptr) {
       source = static_cast<unsigned char *>(allocation.io_alias) + offset;
     }
+    lupine_bulk_lanes *lanes = bytes >= LUPINE_BULK_COPY_MIN_BYTES
+                                   ? lupine_client_transport_bulk_lanes(conn)
+                                   : nullptr;
+    if (lanes != nullptr) {
+      CUresult result = send_batch(count);
+      count = 0;
+      if (result == CUDA_SUCCESS) {
+        result = lupine_bulk_push(conn, lanes, dst, source, bytes, true);
+      }
+      if (result != CUDA_SUCCESS) {
+        release_ranges(true);
+        return result;
+      }
+      continue;
+    }
+    memcpy(headers[count].data(), &dst, sizeof(dst));
+    memcpy(headers[count].data() + sizeof(dst), &bytes, sizeof(bytes));
+    cursors[count * 2] = rpc_write_cursor(
+        headers[count].data(), LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES);
     cursors[count * 2 + 1] = rpc_write_cursor(source, bytes);
     ++count;
     if (count == LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES) {
@@ -3340,6 +3367,81 @@ static uint64_t lupine_htod_pushed_bytes(bool is_server_authoritative,
              : 0;
 }
 
+struct lupine_bulk_chunk_header {
+  int request_id;
+  int op;
+  uint64_t copy_id;
+  uint64_t total;
+  uint64_t offset;
+  uint64_t bytes;
+};
+
+// The chunks only stage on the server, in whatever order the connections
+// deliver them. The copy into `destination` (device memory, or with to_host
+// the server's copy of a host allocation) is requested on the caller's lane
+// once every chunk has been queued, so it stays FIFO behind the caller's
+// earlier work on that lane and runs once the last chunk has landed. One
+// thread per lane takes chunks from a shared counter, so a connection whose
+// window has collapsed takes fewer of them instead of pacing the whole copy.
+static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
+                                 uint64_t destination, const void *source,
+                                 size_t bytes, bool to_host) {
+  static std::atomic<uint64_t> next_copy_id{1};
+  if (pthread_mutex_lock(&lanes->mutex) != 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  uint64_t copy_id = next_copy_id.fetch_add(1);
+  size_t chunks = (bytes + LUPINE_RPC_TRANSFER_CHUNK_BYTES - 1) /
+                  LUPINE_RPC_TRANSFER_CHUNK_BYTES;
+  std::atomic<size_t> next_chunk{0};
+  std::atomic<bool> queued{true};
+  auto feed = [&](unsigned int lane) {
+    const auto *data = static_cast<const unsigned char *>(source);
+    for (size_t chunk = next_chunk.fetch_add(1); chunk < chunks && queued;
+         chunk = next_chunk.fetch_add(1)) {
+      size_t offset = chunk * LUPINE_RPC_TRANSFER_CHUNK_BYTES;
+      size_t chunk_bytes = std::min(
+          static_cast<size_t>(LUPINE_RPC_TRANSFER_CHUNK_BYTES), bytes - offset);
+      lupine_bulk_chunk_header header = {
+          2, LUPINE_RPC_lupineBulkChunk, copy_id, bytes, offset, chunk_bytes};
+      std::vector<rpc_write_cursor> cursors = {
+          rpc_write_cursor(&header, sizeof(header)),
+          rpc_write_cursor(data + offset, chunk_bytes)};
+      if (rpc_http2_write_stream(lanes->conn[lane], lanes->stream[lane],
+                                 cursors) < 0) {
+        queued = false;
+      }
+    }
+  };
+  std::vector<std::thread> feeders;
+  for (unsigned int lane = 1; lane < lanes->count; ++lane) {
+    feeders.emplace_back(feed, lane);
+  }
+  feed(0);
+  for (auto &feeder : feeders) {
+    feeder.join();
+  }
+  if (!queued) {
+    lanes->failed = true;
+  }
+  pthread_mutex_unlock(&lanes->mutex);
+
+  uint8_t host = to_host ? 1 : 0;
+  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (!queued ||
+      rpc_write_start_request(conn, LUPINE_RPC_lupineMemcpyHtoDBulk) < 0 ||
+      rpc_write(conn, &copy_id, sizeof(copy_id)) < 0 ||
+      rpc_write(conn, &destination, sizeof(destination)) < 0 ||
+      rpc_write(conn, &bytes, sizeof(bytes)) < 0 ||
+      rpc_write(conn, &host, sizeof(host)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return return_value;
+}
+
 extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                                     size_t ByteCount) {
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
@@ -3364,18 +3466,30 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                                 : srcHost;
   uint64_t pushed_bytes =
       lupine_htod_pushed_bytes(is_server_authoritative, srcHost, ByteCount);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
-      rpc_write(conn, &is_server_authoritative,
-                sizeof(is_server_authoritative)) < 0 ||
-      rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
-      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
-      rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
-      rpc_write(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0 ||
-      (pushed_bytes != 0 && rpc_write(conn, srcHost, pushed_bytes) < 0) ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+  lupine_bulk_lanes *lanes = nullptr;
+  if (pushed_bytes == ByteCount && ByteCount >= LUPINE_BULK_COPY_MIN_BYTES &&
+      !lupine_device_copy_uses_remote_callback(
+          dstDevice, reinterpret_cast<CUdeviceptr>(srcHost))) {
+    lanes = lupine_client_transport_bulk_lanes(conn);
+  }
+  if (lanes != nullptr) {
+    return_value = lupine_prepare_rpc(conn) < 0
+                       ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                       : lupine_bulk_push(conn, lanes, dstDevice, srcHost,
+                                          ByteCount, false);
+  } else if (lupine_prepare_rpc(conn) < 0 ||
+             rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
+             rpc_write(conn, &is_server_authoritative,
+                       sizeof(is_server_authoritative)) < 0 ||
+             rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
+             rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
+             rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
+             rpc_write(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0 ||
+             (pushed_bytes != 0 &&
+              rpc_write(conn, srcHost, pushed_bytes) < 0) ||
+             rpc_wait_for_response(conn) < 0 ||
+             rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+             rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
