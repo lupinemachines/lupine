@@ -1569,95 +1569,6 @@ static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
   return result == CUDA_SUCCESS ? restore : result;
 }
 
-// The pageable source travels in the request, so this thread reads it
-// straight into the ring and never originates a server-to-client call: it
-// may wait for the stream here without holding the call lock that a callback
-// queued ahead of the copy could need.
-static CUresult lupine_copy_pushed_host_to_device(conn_t *conn, CUstream stream,
-                                                  bool blocking,
-                                                  lupine_htod_copy copy) {
-  // A captured copy is replayed by the graph without the client, so it keeps
-  // pulling at launch and the pushed bytes are dropped.
-  if (lupine_captured_stream_resources(stream) != nullptr) {
-    if (rpc_drain(conn, copy.bytes) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    return lupine_copy_client_host_to_device(conn, stream, blocking, copy);
-  }
-
-  CUcontext stream_context = nullptr;
-  CUresult result = cuStreamGetCtx(stream, &stream_context);
-  if (result == CUDA_SUCCESS) {
-    result = cuCtxPushCurrent_v2(stream_context);
-  }
-  if (result != CUDA_SUCCESS) {
-    return rpc_drain(conn, copy.bytes) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE
-                                           : result;
-  }
-
-  lupine_staging_state *state = nullptr;
-  CUcontext context = nullptr;
-  CUdevice device = 0;
-  result = lupine_current_htod_context(conn, &state, &context, &device);
-  lupine_staging_operation operation(result == CUDA_SUCCESS ? state : nullptr,
-                                     context, device);
-  if (result == CUDA_SUCCESS && !operation.acquired()) {
-    result = CUDA_ERROR_INVALID_CONTEXT;
-  }
-  std::shared_ptr<lupine_htod_side_effect_ring> ring;
-  if (result == CUDA_SUCCESS) {
-    ring = lupine_prepare_htod_side_effect_ring(*state, context, result);
-  }
-  if (result == CUDA_SUCCESS) {
-    result = lupine_prepare_htod_copy(copy, ring);
-  }
-  bool executing = false;
-  if (result == CUDA_SUCCESS) {
-    ring->acquire_execution();
-    executing = true;
-    result = cuEventRecord(ring->ordering_event(), stream);
-    if (result == CUDA_SUCCESS) {
-      result =
-          cuStreamWaitEvent(ring->transfer_stream(), ring->ordering_event(), 0);
-    }
-  }
-
-  // The body is consumed whole even after a failure so the lane stays in
-  // sync; fragments past the failure are read and dropped.
-  size_t offset = 0;
-  while (offset < copy.bytes) {
-    auto fragment =
-        copy.fragment(offset, lupine_htod_side_effect_ring::fragment_bytes);
-    void *slot =
-        ring == nullptr
-            ? nullptr
-            : ring->data(ring->ring_offset(copy, fragment.logical_offset));
-    int read = slot == nullptr ? rpc_drain(conn, fragment.bytes)
-                               : rpc_read(conn, slot, fragment.bytes);
-    if (read < 0) {
-      result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-      break;
-    }
-    offset += fragment.bytes;
-    if (result == CUDA_SUCCESS) {
-      result = lupine_enqueue_htod_fragment(copy, fragment, ring,
-                                            ring->transfer_stream());
-    }
-    // The ring holds one fragment: the copy must leave it before the next one
-    // lands.
-    if (result == CUDA_SUCCESS) {
-      result = ring->synchronize();
-    }
-  }
-  if (executing) {
-    (void)ring->synchronize();
-    ring->release_execution();
-  }
-  CUcontext popped = nullptr;
-  CUresult restore = cuCtxPopCurrent_v2(&popped);
-  return result == CUDA_SUCCESS ? restore : result;
-}
-
 static lupine_htod_copy lupine_make_linear_htod_copy(CUdeviceptr destination,
                                                      const void *source,
                                                      size_t bytes) {
@@ -1968,7 +1879,6 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   CUdeviceptr destination = 0;
   const void *source = nullptr;
   bool is_server_authoritative = false;
-  bool pushed = false;
   size_t bytes = 0;
   CUresult result = CUDA_SUCCESS;
 
@@ -1976,14 +1886,8 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
                sizeof(is_server_authoritative)) < 0 ||
       rpc_read(conn, &destination, sizeof(destination)) < 0 ||
       rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
-      rpc_read(conn, &source, sizeof(source)) < 0 ||
-      rpc_read(conn, &pushed, sizeof(pushed)) < 0) {
+      rpc_read(conn, &source, sizeof(source)) < 0) {
     return -1;
-  }
-  if (bytes != 0 && pushed) {
-    result = lupine_copy_pushed_host_to_device(
-        conn, CU_STREAM_LEGACY, true,
-        lupine_make_linear_htod_copy(destination, source, bytes));
   }
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
@@ -1993,7 +1897,7 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   if (bytes != 0 && is_server_authoritative) {
     result =
         cuMemcpy(destination, reinterpret_cast<CUdeviceptr>(source), bytes);
-  } else if (bytes != 0 && !pushed) {
+  } else if (bytes != 0) {
     result = lupine_copy_client_host_to_device(
         conn, CU_STREAM_LEGACY, true,
         lupine_make_linear_htod_copy(destination, source, bytes));
@@ -2857,7 +2761,6 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   CUdeviceptr dstDevice = 0;
   const void *srcHost = nullptr;
   bool is_server_authoritative = false;
-  bool pushed = false;
   size_t byteCount = 0;
   CUstream stream = nullptr;
   CUresult result = CUDA_SUCCESS;
@@ -2867,14 +2770,8 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
       rpc_read(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
       rpc_read(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_read(conn, &srcHost, sizeof(srcHost)) < 0 ||
-      rpc_read(conn, &pushed, sizeof(pushed)) < 0) {
+      rpc_read(conn, &srcHost, sizeof(srcHost)) < 0) {
     return -1;
-  }
-  if (byteCount != 0 && pushed) {
-    result = lupine_copy_pushed_host_to_device(
-        conn, stream, false,
-        lupine_make_linear_htod_copy(dstDevice, srcHost, byteCount));
   }
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
@@ -2884,7 +2781,7 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   if (byteCount != 0 && is_server_authoritative) {
     result = cuMemcpyAsync(dstDevice, reinterpret_cast<CUdeviceptr>(srcHost),
                            byteCount, stream);
-  } else if (byteCount != 0 && !pushed) {
+  } else if (byteCount != 0) {
     result = lupine_copy_client_host_to_device(
         conn, stream, false,
         lupine_make_linear_htod_copy(dstDevice, srcHost, byteCount));

@@ -3206,12 +3206,6 @@ extern "C" CUresult cuMemcpyDtoH(void *dstHost, CUdeviceptr srcDevice,
   return cuMemcpyDtoH_v2(dstHost, srcDevice, ByteCount);
 }
 
-static bool lupine_htod_source_is_pushed(bool is_server_authoritative,
-                                         const void *source, size_t bytes) {
-  return !is_server_authoritative && bytes != 0 &&
-         lupine_copy_pointer_is_host(reinterpret_cast<CUdeviceptr>(source));
-}
-
 extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                                     size_t ByteCount) {
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
@@ -3234,13 +3228,6 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
   const void *wire_source = is_server_authoritative
                                 ? reinterpret_cast<const void *>(server_source)
                                 : srcHost;
-  // Host sources travel in the request. The server pulls only what it cannot
-  // read from here: server-authoritative memory, device memory on another
-  // route, and copies it captures into graphs.
-  bool pushed =
-      lupine_htod_source_is_pushed(is_server_authoritative, srcHost, ByteCount);
-  const void *body =
-      pushed ? lupine_mapped_host_read_source(srcHost, ByteCount) : nullptr;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
       rpc_write(conn, &is_server_authoritative,
@@ -3248,8 +3235,6 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
       rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
-      rpc_write(conn, &pushed, sizeof(pushed)) < 0 ||
-      (pushed && rpc_write(conn, body, ByteCount) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -3290,10 +3275,6 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
   const void *wire_source = is_server_authoritative
                                 ? reinterpret_cast<const void *>(server_source)
                                 : srcHost;
-  bool pushed =
-      lupine_htod_source_is_pushed(is_server_authoritative, srcHost, ByteCount);
-  const void *body =
-      pushed ? lupine_mapped_host_read_source(srcHost, ByteCount) : nullptr;
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
@@ -3303,8 +3284,6 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
-      rpc_write(conn, &pushed, sizeof(pushed)) < 0 ||
-      (pushed && rpc_write(conn, body, ByteCount) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
