@@ -15,14 +15,6 @@ permissions:
   contents: read
 
 jobs:
-  integration-harness:
-    name: Integration harness (no GPU)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v6
-      - run: python3 -m unittest discover -s test/integration -p 'test_*.py' -v
-
   # Full coverage, including the Unix-only tests and everything that needs the
   # CUDA image. The matrix below cannot replace this; it covers the portable
   # targets on the platforms this one cannot reach.
