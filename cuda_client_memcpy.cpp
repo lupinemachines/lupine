@@ -772,15 +772,23 @@ static std::vector<lupine_mapped_host_snapshot> lupine_mapped_host_snapshots() {
   return snapshots;
 }
 
-static lupine_host_allocation::route_mapping *
-lupine_find_portable_mapping(lupine_host_allocation &allocation,
-                             int route_id) {
-  for (auto &mapping : allocation.portable_mappings) {
-    if (mapping.route_id == route_id) {
-      return &mapping;
+static bool lupine_mapping_for_route(
+    void *host, const lupine_host_allocation &allocation, int route_id,
+    lupine_host_allocation::route_mapping *mapping) {
+  if (allocation.route_id == route_id) {
+    *mapping = {route_id, allocation.server_host_ptr,
+                allocation.local_cuda
+                    ? reinterpret_cast<CUdeviceptr>(host)
+                    : allocation.device_ptr};
+    return true;
+  }
+  for (const auto &portable_mapping : allocation.portable_mappings) {
+    if (portable_mapping.route_id == route_id) {
+      *mapping = portable_mapping;
+      return true;
     }
   }
-  return nullptr;
+  return false;
 }
 
 static lupine_host_allocation_map::iterator
@@ -846,15 +854,9 @@ CUresult lupine_translate_mapped_host_pointer(lupine_route route,
   }
 
   int route_id = lupine_route_identity(route);
-  if (allocation.route_id == route_id) {
-    *translated = (allocation.local_cuda
-                       ? reinterpret_cast<CUdeviceptr>(it->first)
-                       : allocation.device_ptr) +
-                  offset;
-    return CUDA_SUCCESS;
-  }
-  if (auto *mapping = lupine_find_portable_mapping(allocation, route_id)) {
-    *translated = mapping->device_ptr + offset;
+  lupine_host_allocation::route_mapping mapping;
+  if (lupine_mapping_for_route(it->first, allocation, route_id, &mapping)) {
+    *translated = mapping.device_ptr + offset;
     return CUDA_SUCCESS;
   }
 
@@ -1082,44 +1084,35 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     }
   }
 
-  // Nothing observes writes to a registration, so the whole window goes over
-  // before device work can read it.
+  // Nothing observes writes to an untracked primary registration, so its
+  // whole window goes over before device work can read it. Dirty-page tracking
+  // is anchored at the primary mapping, so portable secondary mappings also
+  // receive the allocation's current contents before work is submitted there.
   {
     std::lock_guard<std::mutex> allocation_lock(lupine_host_allocation_mutex());
-    for (auto &entry : lupine_mutable_host_allocations_locked()) {
-      auto &allocation = entry.second;
-      if (allocation.tracking_enabled || !allocation.device_pointer_exposed ||
-          allocation.server_host_ptr == 0 || allocation.local_cuda ||
-          allocation.route_id != static_cast<int>(route_id) ||
-          __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0) {
-        continue;
-      }
-      __atomic_add_fetch(&allocation.pending_dirty_ranges, 1, __ATOMIC_ACQ_REL);
-      ranges.push_back({&allocation, allocation.host_base,
-                        allocation.host_base + allocation.size});
-    }
-  }
-
-  // A portable allocation has one CUDA mapping per remote route. Dirty-page
-  // tracking is anchored at the primary mapping, so fan its current contents
-  // out to every secondary mapping before work is submitted there.
-  {
-    std::lock_guard<std::mutex> allocation_lock(lupine_host_allocation_mutex());
-    for (auto &entry : lupine_mutable_host_allocations_locked()) {
-      auto &allocation = entry.second;
+    auto &allocations = lupine_mutable_host_allocations_locked();
+    for (auto it = allocations.begin(); it != allocations.end(); ++it) {
+      auto &allocation = it->second;
       if (!allocation.device_pointer_exposed ||
           __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0) {
         continue;
       }
-      auto *mapping = lupine_find_portable_mapping(
-          allocation, static_cast<int>(route_id));
-      if (mapping == nullptr || mapping->server_host_ptr == 0) {
+      lupine_host_allocation::route_mapping mapping;
+      if (!lupine_mapping_for_route(it->first, allocation,
+                                    static_cast<int>(route_id), &mapping) ||
+          mapping.server_host_ptr == 0) {
+        continue;
+      }
+      bool primary = allocation.route_id == static_cast<int>(route_id);
+      if (primary && (allocation.tracking_enabled || allocation.local_cuda)) {
         continue;
       }
       __atomic_add_fetch(&allocation.pending_dirty_ranges, 1,
                          __ATOMIC_ACQ_REL);
       ranges.push_back({&allocation, allocation.host_base,
-                        allocation.host_base + allocation.storage_size});
+                        allocation.host_base +
+                            (primary ? allocation.size
+                                     : allocation.storage_size)});
     }
   }
 
@@ -1212,17 +1205,14 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     }
     size_t offset = start - allocation.host_base;
     size_t bytes = end - start;
-    CUdeviceptr server_host_ptr = allocation.server_host_ptr;
-    if (allocation.route_id != static_cast<int>(route_id)) {
-      auto *mapping = lupine_find_portable_mapping(
-          allocation, static_cast<int>(route_id));
-      if (mapping == nullptr) {
-        release_ranges(true);
-        return CUDA_ERROR_INVALID_VALUE;
-      }
-      server_host_ptr = mapping->server_host_ptr;
+    lupine_host_allocation::route_mapping mapping;
+    if (!lupine_mapping_for_route(
+            reinterpret_cast<void *>(allocation.host_base), allocation,
+            static_cast<int>(route_id), &mapping)) {
+      release_ranges(true);
+      return CUDA_ERROR_INVALID_VALUE;
     }
-    CUdeviceptr dst = server_host_ptr + offset;
+    CUdeviceptr dst = mapping.server_host_ptr + offset;
     memcpy(headers[count].data(), &dst, sizeof(dst));
     memcpy(headers[count].data() + sizeof(dst), &bytes, sizeof(bytes));
     cursors[count * 2] = rpc_write_cursor(
