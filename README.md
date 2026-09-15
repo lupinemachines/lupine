@@ -136,27 +136,7 @@ negotiate or fall back to another encoding.
   backoff, and each attempt is bounded by a deadline so a packet-filtered port
   is detected quickly rather than blocking for the full SYN-retransmit window.
 
-### Bandwidth on high-latency links
-
-Bytes in flight per connection are bounded by the kernel socket buffers on
-both ends, so on a 150 ms path a single TCP connection with Linux defaults
-(4 MB `tcp_wmem`, 6 MB `tcp_rmem`, 208 KB `net.core.*mem_max`) moves large
-copies at ~16 MB/s.
-
-- **Socket buffers.** Raise `net.ipv4.tcp_rmem`/`tcp_wmem` maxima on hosts
-  you control so autotuning can fill the path; an unprivileged client cannot.
-
-- **Client bulk connections.** Since the client cannot raise its own kernel
-  limits, for copies of 8 MB and more it opens extra TCP
-  connections to the same server (`LUPINE_BULK_CONNECTIONS`, default 4, 0
-  disables) and stripes the copy's chunks across them; each connection gets
-  its own window. The server advertises the feature in its handshake, so an
-  older server keeps the single-connection path. Bulk connections carry a
-  session preamble before the HTTP/2 preface and are plain TCP only: an
-  `https://` endpoint or an HTTP/2-aware proxy in front of the server keeps
-  the single connection. Synchronous `cuMemcpyHtoD` and the flush of a
-  pinned host allocation's dirty pages are striped today; device-to-host
-  copies still use the session connection.
+Socket buffer sizes are left to the OS, which auto-tunes on modern kernels.
 
 ## Trace Logging
 
