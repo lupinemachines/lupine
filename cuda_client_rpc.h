@@ -50,6 +50,18 @@ void *lupine_deep_cache_add(const void *key, size_t bytes);
 #ifdef __cplusplus
 }
 
+// Only the client invokes this function and dereferences user_data. The
+// server carries both as opaque tokens, just like CUDA's log callback bridge.
+using library_log_callback = void (*)(void *user_data, int level,
+                                      const char *function, const char *message,
+                                      size_t length);
+struct library_log_target {
+  library_log_callback callback = nullptr;
+  void *user_data = nullptr;
+};
+
+constexpr uint32_t LUPINE_MAX_LIBRARY_LOG_BYTES = 4 * 1024 * 1024;
+
 #include <shared_mutex>
 void lupine_event_invalidate_completion(struct CUevent_st *event);
 std::shared_mutex &lupine_event_lifecycle_mutex();

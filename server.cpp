@@ -1,5 +1,5 @@
 #ifdef LUPINE_BUILD_CUBLAS_BACKEND
-#include "library_logging.h"
+void lupine_cublas_cleanup_logs(struct conn_t *conn);
 #endif
 #include <atomic>
 #include <cerrno>

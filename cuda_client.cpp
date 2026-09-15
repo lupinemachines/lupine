@@ -1,4 +1,3 @@
-#include "library_logging.h"
 #include "lupine_platform.h"
 #include "pending_log_callbacks.h"
 
@@ -53,6 +52,7 @@
 #include "codegen/gen_cuda_client.h"
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_client_memcpy.h"
+#include "cuda_client_rpc.h"
 #include "cuda_profiler_compat.h"
 #include "events.h"
 #include "ipc.h"
@@ -8848,7 +8848,54 @@ void *rpc_client_dispatch_thread(void *arg) {
       break;
 #endif
     } else if (op == LUPINE_SIDE_EFFECT_LIBRARY_LOG) {
-      if (lupine_read_library_log(conn, lupine_pending_logs()) < 0) {
+      library_log_target target;
+      int level = 0;
+      int32_t origin_stream = -1;
+      uint8_t before_callbacks = 0;
+      uint32_t function_length = 0, length = 0;
+      if (rpc_read(conn, &target.callback, sizeof(target.callback)) < 0 ||
+          rpc_read(conn, &target.user_data, sizeof(target.user_data)) < 0 ||
+          rpc_read(conn, &origin_stream, sizeof(origin_stream)) < 0 ||
+          rpc_read(conn, &before_callbacks, sizeof(before_callbacks)) < 0 ||
+          rpc_read(conn, &level, sizeof(level)) < 0 ||
+          rpc_read(conn, &function_length, sizeof(function_length)) < 0 ||
+          rpc_read(conn, &length, sizeof(length)) < 0 ||
+          function_length > LUPINE_MAX_LIBRARY_LOG_BYTES ||
+          length > LUPINE_MAX_LIBRARY_LOG_BYTES) {
+        break;
+      }
+      std::string function, message;
+      try {
+        function.resize(function_length);
+        message.resize(length);
+      } catch (...) {
+        break;
+      }
+      if (rpc_read(conn, function.data(), function_length) < 0 ||
+          rpc_read(conn, message.data(), length) < 0) {
+        break;
+      }
+      int32_t callback_stream = rpc_current_http2_stream(conn);
+      int request_id = rpc_read_end(conn);
+      if (request_id < 0 || target.callback == nullptr) {
+        break;
+      }
+      auto invoke = [target, level, function = std::move(function),
+                     message = std::move(message)] {
+        target.callback(target.user_data, level, function.c_str(),
+                        message.c_str(), message.size());
+      };
+      if (origin_stream < 0 || origin_stream == callback_stream) {
+        invoke();
+      } else if (!lupine_pending_logs().enqueue(conn, origin_stream,
+                                                std::move(invoke),
+                                                before_callbacks != 0)) {
+        break;
+      }
+      void *response = nullptr;
+      if (rpc_write_start_response(conn, request_id) < 0 ||
+          rpc_write(conn, &response, sizeof(response)) < 0 ||
+          rpc_write_end(conn) < 0) {
         break;
       }
     } else if (op == LUPINE_SIDE_EFFECT_READ_HOST_MEMORY) {

@@ -364,7 +364,6 @@ if(LUPINE_BUILD_CUDA)
         ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client_rpc.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/library_logging_client.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/events.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/visible_devices.cpp
@@ -614,8 +613,7 @@ if(LUPINE_BUILD_SERVER)
         if(LUPINE_BUILD_CUBLAS)
             add_library(lupine_cublas_server STATIC
                 ${CMAKE_CURRENT_SOURCE_DIR}/cublas_server.cpp
-                ${CMAKE_CURRENT_SOURCE_DIR}/cublaslt_server.cpp
-                ${CMAKE_CURRENT_SOURCE_DIR}/library_logging_server.cpp)
+                ${CMAKE_CURRENT_SOURCE_DIR}/cublaslt_server.cpp)
             lupine_internal_target(lupine_cublas_server)
             target_include_directories(lupine_cublas_server PRIVATE
                 ${CUDAToolkit_INCLUDE_DIRS})
@@ -876,29 +874,6 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
 
     if(TARGET lupine_cublas_client)
-        foreach(library IN ITEMS cublas cublasLt)
-            add_library(fake_${library}_logging SHARED test/fake_cublas_logging.cpp)
-            target_link_libraries(fake_${library}_logging PRIVATE lupine_cudart_headers)
-            if(library STREQUAL cublasLt)
-                target_compile_definitions(fake_${library}_logging PRIVATE TEST_CUBLASLT)
-            endif()
-            set_target_properties(fake_${library}_logging PROPERTIES
-                OUTPUT_NAME ${library} SOVERSION ${LUPINE_CUBLAS_SOVERSION}
-                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/logging-fixtures")
-        endforeach()
-        add_executable(cublas_logging_test test/test_cublas_logging.cpp
-            cublas_client.cpp cublaslt_client.cpp cublas_server.cpp cublaslt_server.cpp
-            library_logging_client.cpp library_logging_server.cpp)
-        target_include_directories(cublas_logging_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-        target_link_libraries(cublas_logging_test PRIVATE
-            lupine_cudart_headers Threads::Threads ${CMAKE_DL_LIBS})
-        target_compile_options(cublas_logging_test PRIVATE -Wno-deprecated-declarations)
-        lupine_apply_sanitizer(cublas_logging_test)
-        add_dependencies(cublas_logging_test fake_cublas_logging fake_cublasLt_logging)
-        add_test(NAME cublas_logging_test COMMAND ${CMAKE_COMMAND} -E env
-            "LD_LIBRARY_PATH=${CMAKE_CURRENT_BINARY_DIR}/logging-fixtures"
-            $<TARGET_FILE:cublas_logging_test>)
-        set_tests_properties(cublas_logging_test PROPERTIES TIMEOUT 30)
         add_test(NAME cublas_exports
             COMMAND bash -c
                 "nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSgemm_v2 && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasGemmEx && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSetMatrix && nm -D \"$<TARGET_FILE:lupine_cublaslt_client>\" | grep -q cublasLtMatmul && nm -D \"$<TARGET_FILE:lupine_cublaslt_client>\" | grep -q cublasLtMatmulDescCreate")

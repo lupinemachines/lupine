@@ -29,9 +29,6 @@ int handle_cublasLtCreate(conn_t *conn) {
   fn = cublaslt_symbol<fn_t>("cublasLtCreate");
   return_value = fn == nullptr ? function_not_found() : fn(&lightHandle);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &lightHandle, sizeof(cublasLtHandle_t)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -57,9 +54,6 @@ int handle_cublasLtDestroy(conn_t *conn) {
 
   fn = cublaslt_symbol<fn_t>("cublasLtDestroy");
   return_value = fn == nullptr ? function_not_found() : fn(lightHandle);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -88,9 +82,6 @@ int handle_cublasLtDisableCpuInstructionsSetMask(conn_t *conn) {
   if (fn == nullptr)
     goto ERROR_0;
   return_value = fn(mask);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(unsigned)) < 0 ||
@@ -142,9 +133,6 @@ int handle_cublasLtEmulationDescGetAttribute(conn_t *conn) {
                           attr, (sizeInBytes == 0 ? nullptr : buf), sizeInBytes,
                           sizeWritten_null_check ? &sizeWritten : nullptr);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, buf, sizeInBytes) < 0 ||
       rpc_write(conn, &sizeWritten_null_check, sizeof(size_t *)) < 0 ||
@@ -181,9 +169,6 @@ int handle_cublasLtEmulationDescInit_internal(conn_t *conn) {
   fn = cublaslt_symbol<fn_t>("cublasLtEmulationDescInit_internal");
   return_value =
       fn == nullptr ? function_not_found() : fn(&emulationDesc, size);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &emulationDesc, sizeof(cublasLtEmulationDescOpaque_t)) <
@@ -233,9 +218,6 @@ int handle_cublasLtEmulationDescSetAttribute(conn_t *conn) {
                      : fn(&emulationDesc, attr,
                           (sizeInBytes == 0 ? nullptr : buf), sizeInBytes);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &emulationDesc, sizeof(cublasLtEmulationDescOpaque_t)) <
           0 ||
@@ -268,9 +250,6 @@ int handle_cublasLtGetCudartVersion(conn_t *conn) {
     goto ERROR_0;
   return_value = fn();
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(size_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -297,9 +276,6 @@ int handle_cublasLtGetProperty(conn_t *conn) {
 
   fn = cublaslt_symbol<fn_t>("cublasLtGetProperty");
   return_value = fn == nullptr ? function_not_found() : fn(type, &value);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &value, sizeof(int)) < 0 ||
@@ -328,9 +304,6 @@ int handle_cublasLtGetVersion(conn_t *conn) {
     goto ERROR_0;
   return_value = fn();
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(size_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -356,9 +329,6 @@ int handle_cublasLtHeuristicsCacheGetCapacity(conn_t *conn) {
 
   fn = cublaslt_symbol<fn_t>("cublasLtHeuristicsCacheGetCapacity");
   return_value = fn == nullptr ? function_not_found() : fn(&capacity);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &capacity, sizeof(size_t)) < 0 ||
@@ -386,9 +356,6 @@ int handle_cublasLtHeuristicsCacheSetCapacity(conn_t *conn) {
   fn = cublaslt_symbol<fn_t>("cublasLtHeuristicsCacheSetCapacity");
   return_value = fn == nullptr ? function_not_found() : fn(capacity);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -412,9 +379,6 @@ int handle_cublasLtLoggerForceDisable(conn_t *conn) {
 
   fn = cublaslt_symbol<fn_t>("cublasLtLoggerForceDisable");
   return_value = fn == nullptr ? function_not_found() : fn();
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -441,9 +405,6 @@ int handle_cublasLtLoggerSetLevel(conn_t *conn) {
   fn = cublaslt_symbol<fn_t>("cublasLtLoggerSetLevel");
   return_value = fn == nullptr ? function_not_found() : fn(level);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -468,9 +429,6 @@ int handle_cublasLtLoggerSetMask(conn_t *conn) {
 
   fn = cublaslt_symbol<fn_t>("cublasLtLoggerSetMask");
   return_value = fn == nullptr ? function_not_found() : fn(mask);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -592,9 +550,6 @@ int handle_cublasLtMatmul(conn_t *conn) {
                algo_null_check ? &algo : nullptr, workspace,
                workspaceSizeInBytes, stream);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -636,9 +591,6 @@ int handle_cublasLtMatmulAlgoCapGetAttribute(conn_t *conn) {
           ? function_not_found()
           : fn(&algo, attr, (sizeInBytes == 0 ? nullptr : buf), sizeInBytes,
                sizeWritten_null_check ? &sizeWritten : nullptr);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, buf, sizeInBytes) < 0 ||
@@ -717,9 +669,6 @@ int handle_cublasLtMatmulAlgoCheck(conn_t *conn) {
                Cdesc_null_check ? &Cdesc : nullptr,
                Ddesc_null_check ? &Ddesc : nullptr, &algo, &result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(cublasLtMatmulHeuristicResult_t)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -796,9 +745,6 @@ int handle_cublasLtMatmulAlgoCheckForStream(conn_t *conn) {
                Cdesc_null_check ? &Cdesc : nullptr,
                Ddesc_null_check ? &Ddesc : nullptr, &algo, &result, stream);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(cublasLtMatmulHeuristicResult_t)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -843,9 +789,6 @@ int handle_cublasLtMatmulAlgoConfigGetAttribute(conn_t *conn) {
           ? function_not_found()
           : fn(&algo, attr, (sizeInBytes == 0 ? nullptr : buf), sizeInBytes,
                sizeWritten_null_check ? &sizeWritten : nullptr);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, buf, sizeInBytes) < 0 ||
@@ -894,9 +837,6 @@ int handle_cublasLtMatmulAlgoConfigSetAttribute(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(&algo, attr, (sizeInBytes == 0 ? nullptr : buf), sizeInBytes);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &algo, sizeof(cublasLtMatmulAlgo_t)) < 0 ||
@@ -994,9 +934,6 @@ int handle_cublasLtMatmulAlgoGetHeuristic(conn_t *conn) {
                     ? nullptr
                     : heuristicResultsArray),
                &returnAlgoCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, heuristicResultsArray,
@@ -1100,9 +1037,6 @@ int handle_cublasLtMatmulAlgoGetHeuristicForStream(conn_t *conn) {
                     : heuristicResultsArray),
                &returnAlgoCount, stream);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, heuristicResultsArray,
                 requestedAlgoCount * sizeof(cublasLtMatmulHeuristicResult_t)) <
@@ -1166,9 +1100,6 @@ int handle_cublasLtMatmulAlgoGetIds(conn_t *conn) {
                (requestedAlgoCount * sizeof(int) == 0 ? nullptr : algoIdsArray),
                &returnAlgoCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, algoIdsArray, requestedAlgoCount * sizeof(int)) < 0 ||
       rpc_write(conn, &returnAlgoCount, sizeof(int)) < 0 ||
@@ -1219,9 +1150,6 @@ int handle_cublasLtMatmulAlgoInit(conn_t *conn) {
                                : fn(lightHandle, computeType, scaleType, Atype,
                                     Btype, Ctype, Dtype, algoId, &algo);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &algo, sizeof(cublasLtMatmulAlgo_t)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -1269,9 +1197,6 @@ int handle_cublasLtMatmulDescGetAttribute(conn_t *conn) {
                           (sizeInBytes == 0 ? nullptr : buf), sizeInBytes,
                           sizeWritten_null_check ? &sizeWritten : nullptr);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, buf, sizeInBytes) < 0 ||
       rpc_write(conn, &sizeWritten_null_check, sizeof(size_t *)) < 0 ||
@@ -1310,9 +1235,6 @@ int handle_cublasLtMatmulDescInit_internal(conn_t *conn) {
   fn = cublaslt_symbol<fn_t>("cublasLtMatmulDescInit_internal");
   return_value = fn == nullptr ? function_not_found()
                                : fn(&matmulDesc, size, computeType, scaleType);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &matmulDesc, sizeof(cublasLtMatmulDescOpaque_t)) < 0 ||
@@ -1356,9 +1278,6 @@ int handle_cublasLtMatmulDescSetAttribute(conn_t *conn) {
                      ? function_not_found()
                      : fn(&matmulDesc, attr, (sizeInBytes == 0 ? nullptr : buf),
                           sizeInBytes);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &matmulDesc, sizeof(cublasLtMatmulDescOpaque_t)) < 0 ||
@@ -1409,9 +1328,6 @@ int handle_cublasLtMatmulPreferenceGetAttribute(conn_t *conn) {
                           (sizeInBytes == 0 ? nullptr : buf), sizeInBytes,
                           sizeWritten_null_check ? &sizeWritten : nullptr);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, buf, sizeInBytes) < 0 ||
       rpc_write(conn, &sizeWritten_null_check, sizeof(size_t *)) < 0 ||
@@ -1444,9 +1360,6 @@ int handle_cublasLtMatmulPreferenceInit_internal(conn_t *conn) {
 
   fn = cublaslt_symbol<fn_t>("cublasLtMatmulPreferenceInit_internal");
   return_value = fn == nullptr ? function_not_found() : fn(&pref, size);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pref, sizeof(cublasLtMatmulPreferenceOpaque_t)) < 0 ||
@@ -1490,9 +1403,6 @@ int handle_cublasLtMatmulPreferenceSetAttribute(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(&pref, attr, (sizeInBytes == 0 ? nullptr : buf), sizeInBytes);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pref, sizeof(cublasLtMatmulPreferenceOpaque_t)) < 0 ||
@@ -1543,9 +1453,6 @@ int handle_cublasLtMatrixLayoutGetAttribute(conn_t *conn) {
                           (sizeInBytes == 0 ? nullptr : buf), sizeInBytes,
                           sizeWritten_null_check ? &sizeWritten : nullptr);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, buf, sizeInBytes) < 0 ||
       rpc_write(conn, &sizeWritten_null_check, sizeof(size_t *)) < 0 ||
@@ -1589,9 +1496,6 @@ int handle_cublasLtMatrixLayoutInit_internal(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(&matLayout, size, type, rows, cols, ld);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &matLayout, sizeof(cublasLtMatrixLayoutOpaque_t)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -1634,9 +1538,6 @@ int handle_cublasLtMatrixLayoutSetAttribute(conn_t *conn) {
                      ? function_not_found()
                      : fn(&matLayout, attr, (sizeInBytes == 0 ? nullptr : buf),
                           sizeInBytes);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &matLayout, sizeof(cublasLtMatrixLayoutOpaque_t)) < 0 ||
@@ -1740,9 +1641,6 @@ int handle_cublasLtMatrixTransform(conn_t *conn) {
                B, Bdesc_null_check ? &Bdesc : nullptr, C,
                Cdesc_null_check ? &Cdesc : nullptr, stream);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -1791,9 +1689,6 @@ int handle_cublasLtMatrixTransformDescGetAttribute(conn_t *conn) {
                           attr, (sizeInBytes == 0 ? nullptr : buf), sizeInBytes,
                           sizeWritten_null_check ? &sizeWritten : nullptr);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, buf, sizeInBytes) < 0 ||
       rpc_write(conn, &sizeWritten_null_check, sizeof(size_t *)) < 0 ||
@@ -1830,9 +1725,6 @@ int handle_cublasLtMatrixTransformDescInit_internal(conn_t *conn) {
   fn = cublaslt_symbol<fn_t>("cublasLtMatrixTransformDescInit_internal");
   return_value = fn == nullptr ? function_not_found()
                                : fn(&transformDesc, size, scaleType);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &transformDesc,
@@ -1879,9 +1771,6 @@ int handle_cublasLtMatrixTransformDescSetAttribute(conn_t *conn) {
                      ? function_not_found()
                      : fn(&transformDesc, attr,
                           (sizeInBytes == 0 ? nullptr : buf), sizeInBytes);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &transformDesc,

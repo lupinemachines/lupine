@@ -1618,7 +1618,6 @@
 #define RPC_cublasLtHeuristicsCacheGetCapacity 990575848
 #define RPC_cublasLtHeuristicsCacheSetCapacity 623201185
 #define RPC_cublasLtLoggerForceDisable 1053976711
-#define RPC_cublasLtLoggerOpenFile 1130133316
 #define RPC_cublasLtLoggerSetCallback 746044557
 #define RPC_cublasLtLoggerSetFile 592086259
 #define RPC_cublasLtLoggerSetLevel 600222307

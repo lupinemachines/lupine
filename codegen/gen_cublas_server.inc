@@ -56,9 +56,6 @@ int handle_cublasAsumEx(conn_t *conn) {
                                  : result,
                resultType, executiontype);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -117,9 +114,6 @@ int handle_cublasAsumEx_64(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result,
                resultType, executiontype);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -193,9 +187,6 @@ int handle_cublasAxpyEx(conn_t *conn) {
                    : alpha,
                alphaType, x, xType, incx, y, yType, incy, executiontype);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -262,9 +253,6 @@ int handle_cublasAxpyEx_64(conn_t *conn) {
                    : alpha,
                alphaType, x, xType, incx, y, yType, incy, executiontype);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -322,9 +310,6 @@ int handle_cublasCaxpy_v2(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -384,9 +369,6 @@ int handle_cublasCaxpy_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -426,9 +408,6 @@ int handle_cublasCcopy_v2(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -466,9 +445,6 @@ int handle_cublasCcopy_v2_64(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasCcopy_v2_64");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -519,9 +495,6 @@ int handle_cublasCdgmm(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, mode, m, n, A, lda, x, incx, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -569,9 +542,6 @@ int handle_cublasCdgmm_64(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, mode, m, n, A, lda, x, incx, C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -624,9 +594,6 @@ int handle_cublasCdotc_v2(conn_t *conn) {
                                    result_heap, result_value,
                                    sizeof(result_value), result_width))
                              : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -685,9 +652,6 @@ int handle_cublasCdotc_v2_64(conn_t *conn) {
                                    sizeof(result_value), result_width))
                              : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -745,9 +709,6 @@ int handle_cublasCdotu_v2(conn_t *conn) {
                                    sizeof(result_value), result_width))
                              : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -804,9 +765,6 @@ int handle_cublasCdotu_v2_64(conn_t *conn) {
                                    result_heap, result_value,
                                    sizeof(result_value), result_width))
                              : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -901,9 +859,6 @@ int handle_cublasCgbmv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -991,9 +946,6 @@ int handle_cublasCgbmv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -1080,9 +1032,6 @@ int handle_cublasCgeam(conn_t *conn) {
                    : beta,
                B, ldb, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -1168,9 +1117,6 @@ int handle_cublasCgeam_64(conn_t *conn) {
                    : beta,
                B, ldb, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -1224,9 +1170,6 @@ int handle_cublasCgelsBatched(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, trans, m, n, nrhs, Aarray, lda, Carray, ldc,
                           &info, devInfoArray, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &info, sizeof(int)) < 0 ||
@@ -1314,9 +1257,6 @@ int handle_cublasCgemm3m(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -1407,9 +1347,6 @@ int handle_cublasCgemm3mBatched(conn_t *conn) {
                    : beta,
                Carray, ldc, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -1499,9 +1436,6 @@ int handle_cublasCgemm3mBatched_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                Carray, ldc, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -1597,9 +1531,6 @@ int handle_cublasCgemm3mEx(conn_t *conn) {
                    : beta,
                C, Ctype, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -1693,9 +1624,6 @@ int handle_cublasCgemm3mEx_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                C, Ctype, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -1794,9 +1722,6 @@ int handle_cublasCgemm3mStridedBatched(conn_t *conn) {
                    : beta,
                C, ldc, strideC, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -1893,9 +1818,6 @@ int handle_cublasCgemm3mStridedBatched_64(conn_t *conn) {
                    : beta,
                C, ldc, strideC, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -1984,9 +1906,6 @@ int handle_cublasCgemm3m_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -2079,9 +1998,6 @@ int handle_cublasCgemmBatched(conn_t *conn) {
                    : beta,
                Carray, ldc, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -2171,9 +2087,6 @@ int handle_cublasCgemmBatched_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                Carray, ldc, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -2269,9 +2182,6 @@ int handle_cublasCgemmEx(conn_t *conn) {
                    : beta,
                C, Ctype, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -2365,9 +2275,6 @@ int handle_cublasCgemmEx_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                C, Ctype, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -2466,9 +2373,6 @@ int handle_cublasCgemmStridedBatched(conn_t *conn) {
                    : beta,
                C, ldc, strideC, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -2565,9 +2469,6 @@ int handle_cublasCgemmStridedBatched_64(conn_t *conn) {
                    : beta,
                C, ldc, strideC, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -2656,9 +2557,6 @@ int handle_cublasCgemm_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -2746,9 +2644,6 @@ int handle_cublasCgemm_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -2835,9 +2730,6 @@ int handle_cublasCgemvBatched(conn_t *conn) {
                    : beta,
                yarray, incy, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -2922,9 +2814,6 @@ int handle_cublasCgemvBatched_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                yarray, incy, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -3018,9 +2907,6 @@ int handle_cublasCgemvStridedBatched(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -3113,9 +2999,6 @@ int handle_cublasCgemvStridedBatched_64(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -3200,9 +3083,6 @@ int handle_cublasCgemv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -3286,9 +3166,6 @@ int handle_cublasCgemv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -3332,9 +3209,6 @@ int handle_cublasCgeqrfBatched(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found()
                     : fn(handle, m, n, Aarray, lda, TauArray, &info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &info, sizeof(int)) < 0 ||
@@ -3400,9 +3274,6 @@ int handle_cublasCgerc_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -3466,9 +3337,6 @@ int handle_cublasCgerc_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -3535,9 +3403,6 @@ int handle_cublasCgeru_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -3602,9 +3467,6 @@ int handle_cublasCgeru_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -3645,9 +3507,6 @@ int handle_cublasCgetrfBatched(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasCgetrfBatched");
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, n, A, lda, P, info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -3693,9 +3552,6 @@ int handle_cublasCgetriBatched(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, n, A, lda, P, C, ldc, info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -3745,9 +3601,6 @@ int handle_cublasCgetrsBatched(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, trans, n, nrhs, Aarray, lda,
                                     devIpiv, Barray, ldb, &info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &info, sizeof(int)) < 0 ||
@@ -3832,9 +3685,6 @@ int handle_cublasChbmv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -3917,9 +3767,6 @@ int handle_cublasChbmv_v2_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -4007,9 +3854,6 @@ int handle_cublasChemm_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -4095,9 +3939,6 @@ int handle_cublasChemm_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -4180,9 +4021,6 @@ int handle_cublasChemv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -4264,9 +4102,6 @@ int handle_cublasChemv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -4332,9 +4167,6 @@ int handle_cublasCher2_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -4399,9 +4231,6 @@ int handle_cublasCher2_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -4489,9 +4318,6 @@ int handle_cublasCher2k_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -4577,9 +4403,6 @@ int handle_cublasCher2k_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -4641,9 +4464,6 @@ int handle_cublasCher_v2(conn_t *conn) {
                    : alpha,
                x, incx, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -4703,9 +4523,6 @@ int handle_cublasCher_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -4793,9 +4610,6 @@ int handle_cublasCherk3mEx(conn_t *conn) {
                    : beta,
                C, Ctype, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -4880,9 +4694,6 @@ int handle_cublasCherk3mEx_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                C, Ctype, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -4970,9 +4781,6 @@ int handle_cublasCherkEx(conn_t *conn) {
                    : beta,
                C, Ctype, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5058,9 +4866,6 @@ int handle_cublasCherkEx_64(conn_t *conn) {
                    : beta,
                C, Ctype, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5142,9 +4947,6 @@ int handle_cublasCherk_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5225,9 +5027,6 @@ int handle_cublasCherk_v2_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -5315,9 +5114,6 @@ int handle_cublasCherkx(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5403,9 +5199,6 @@ int handle_cublasCherkx_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5486,9 +5279,6 @@ int handle_cublasChpmv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5568,9 +5358,6 @@ int handle_cublasChpmv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5634,9 +5421,6 @@ int handle_cublasChpr2_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5699,9 +5483,6 @@ int handle_cublasChpr2_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5761,9 +5542,6 @@ int handle_cublasChpr_v2(conn_t *conn) {
                    : alpha,
                x, incx, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5822,9 +5600,6 @@ int handle_cublasChpr_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5869,9 +5644,6 @@ int handle_cublasCmatinvBatched(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, n, A, lda, Ainv, lda_inv, info, batchSize);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5912,9 +5684,6 @@ int handle_cublasCopyEx(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasCopyEx");
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, n, x, xType, incx, y, yType, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -5959,9 +5728,6 @@ int handle_cublasCopyEx_64(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, n, x, xType, incx, y, yType, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5989,9 +5755,6 @@ int handle_cublasCreate_v2(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>("cublasCreate_v2");
   return_value = fn == nullptr ? function_not_found() : fn(&handle);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
@@ -6063,9 +5826,6 @@ int handle_cublasCrot_v2(conn_t *conn) {
                          s_heap, s_value, sizeof(s_value), s_width))
                    : s);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -6135,9 +5895,6 @@ int handle_cublasCrot_v2_64(conn_t *conn) {
                    ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
                          s_heap, s_value, sizeof(s_value), s_width))
                    : s);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -6214,9 +5971,6 @@ int handle_cublasCrotg_v2(conn_t *conn) {
                                   s_heap, s_value, sizeof(s_value), s_width))
                             : s);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (a_width != 0 &&
        rpc_write(conn,
@@ -6285,9 +6039,6 @@ int handle_cublasCscal_v2(conn_t *conn) {
                    : alpha,
                x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -6340,9 +6091,6 @@ int handle_cublasCscal_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -6415,9 +6163,6 @@ int handle_cublasCsrot_v2(conn_t *conn) {
                          s_heap, s_value, sizeof(s_value), s_width))
                    : s);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -6488,9 +6233,6 @@ int handle_cublasCsrot_v2_64(conn_t *conn) {
                          s_heap, s_value, sizeof(s_value), s_width))
                    : s);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -6545,9 +6287,6 @@ int handle_cublasCsscal_v2(conn_t *conn) {
                    : alpha,
                x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -6601,9 +6340,6 @@ int handle_cublasCsscal_v2_64(conn_t *conn) {
                    : alpha,
                x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -6643,9 +6379,6 @@ int handle_cublasCswap_v2(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -6683,9 +6416,6 @@ int handle_cublasCswap_v2_64(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasCswap_v2_64");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -6773,9 +6503,6 @@ int handle_cublasCsymm_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -6861,9 +6588,6 @@ int handle_cublasCsymm_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -6946,9 +6670,6 @@ int handle_cublasCsymv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -7030,9 +6751,6 @@ int handle_cublasCsymv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -7098,9 +6816,6 @@ int handle_cublasCsyr2_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -7165,9 +6880,6 @@ int handle_cublasCsyr2_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -7255,9 +6967,6 @@ int handle_cublasCsyr2k_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -7343,9 +7052,6 @@ int handle_cublasCsyr2k_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -7407,9 +7113,6 @@ int handle_cublasCsyr_v2(conn_t *conn) {
                    : alpha,
                x, incx, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -7469,9 +7172,6 @@ int handle_cublasCsyr_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -7559,9 +7259,6 @@ int handle_cublasCsyrk3mEx(conn_t *conn) {
                    : beta,
                C, Ctype, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -7646,9 +7343,6 @@ int handle_cublasCsyrk3mEx_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                C, Ctype, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -7736,9 +7430,6 @@ int handle_cublasCsyrkEx(conn_t *conn) {
                    : beta,
                C, Ctype, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -7824,9 +7515,6 @@ int handle_cublasCsyrkEx_64(conn_t *conn) {
                    : beta,
                C, Ctype, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -7909,9 +7597,6 @@ int handle_cublasCsyrk_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -7992,9 +7677,6 @@ int handle_cublasCsyrk_v2_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -8082,9 +7764,6 @@ int handle_cublasCsyrkx(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -8170,9 +7849,6 @@ int handle_cublasCsyrkx_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -8222,9 +7898,6 @@ int handle_cublasCtbmv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -8272,9 +7945,6 @@ int handle_cublasCtbmv_v2_64(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -8325,9 +7995,6 @@ int handle_cublasCtbsv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -8376,9 +8043,6 @@ int handle_cublasCtbsv_v2_64(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -8423,9 +8087,6 @@ int handle_cublasCtpmv_v2(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -8468,9 +8129,6 @@ int handle_cublasCtpmv_v2_64(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasCtpmv_v2_64");
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -8516,9 +8174,6 @@ int handle_cublasCtpsv_v2(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -8562,9 +8217,6 @@ int handle_cublasCtpsv_v2_64(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -8603,9 +8255,6 @@ int handle_cublasCtpttr(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasCtpttr");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, uplo, n, AP, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -8678,9 +8327,6 @@ int handle_cublasCtrmm_v2(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb, C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -8755,9 +8401,6 @@ int handle_cublasCtrmm_v2_64(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -8805,9 +8448,6 @@ int handle_cublasCtrmv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -8853,9 +8493,6 @@ int handle_cublasCtrmv_v2_64(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -8929,9 +8566,6 @@ int handle_cublasCtrsmBatched(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -9003,9 +8637,6 @@ int handle_cublasCtrsmBatched_64(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -9076,9 +8707,6 @@ int handle_cublasCtrsm_v2(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -9148,9 +8776,6 @@ int handle_cublasCtrsm_v2_64(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -9198,9 +8823,6 @@ int handle_cublasCtrsv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -9247,9 +8869,6 @@ int handle_cublasCtrsv_v2_64(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -9288,9 +8907,6 @@ int handle_cublasCtrttp(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasCtrttp");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, uplo, n, A, lda, AP);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -9337,9 +8953,6 @@ int handle_cublasDasum_v2(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -9392,9 +9005,6 @@ int handle_cublasDasum_v2_64(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -9459,9 +9069,6 @@ int handle_cublasDaxpy_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -9519,9 +9126,6 @@ int handle_cublasDaxpy_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -9561,9 +9165,6 @@ int handle_cublasDcopy_v2(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -9601,9 +9202,6 @@ int handle_cublasDcopy_v2_64(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasDcopy_v2_64");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -9654,9 +9252,6 @@ int handle_cublasDdgmm(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, mode, m, n, A, lda, x, incx, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -9704,9 +9299,6 @@ int handle_cublasDdgmm_64(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, mode, m, n, A, lda, x, incx, C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -9759,9 +9351,6 @@ int handle_cublasDdot_v2(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -9819,9 +9408,6 @@ int handle_cublasDdot_v2_64(conn_t *conn) {
                                     sizeof(result_value), result_width))
                               : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -9853,9 +9439,6 @@ int handle_cublasDestroy_v2(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>("cublasDestroy_v2");
   return_value = fn == nullptr ? function_not_found() : fn(handle);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -9941,9 +9524,6 @@ int handle_cublasDgbmv_v2(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -10032,9 +9612,6 @@ int handle_cublasDgbmv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -10121,9 +9698,6 @@ int handle_cublasDgeam(conn_t *conn) {
                    : beta,
                B, ldb, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -10209,9 +9783,6 @@ int handle_cublasDgeam_64(conn_t *conn) {
                    : beta,
                B, ldb, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -10265,9 +9836,6 @@ int handle_cublasDgelsBatched(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, trans, m, n, nrhs, Aarray, lda, Carray, ldc,
                           &info, devInfoArray, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &info, sizeof(int)) < 0 ||
@@ -10358,9 +9926,6 @@ int handle_cublasDgemmBatched(conn_t *conn) {
                    : beta,
                Carray, ldc, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -10450,9 +10015,6 @@ int handle_cublasDgemmBatched_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                Carray, ldc, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -10632,9 +10194,6 @@ int handle_cublasDgemmGroupedBatched(conn_t *conn) {
                (group_count * sizeof(const int) == 0 ? nullptr : ldc_array),
                group_count,
                (group_count * sizeof(const int) == 0 ? nullptr : group_size));
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -10830,9 +10389,6 @@ int handle_cublasDgemmGroupedBatched_64(conn_t *conn) {
                (group_count * sizeof(const int64_t) == 0 ? nullptr
                                                          : group_size));
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -10947,9 +10503,6 @@ int handle_cublasDgemmStridedBatched(conn_t *conn) {
                    : beta,
                C, ldc, strideC, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -11046,9 +10599,6 @@ int handle_cublasDgemmStridedBatched_64(conn_t *conn) {
                    : beta,
                C, ldc, strideC, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -11137,9 +10687,6 @@ int handle_cublasDgemm_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -11227,9 +10774,6 @@ int handle_cublasDgemm_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -11316,9 +10860,6 @@ int handle_cublasDgemvBatched(conn_t *conn) {
                    : beta,
                yarray, incy, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -11403,9 +10944,6 @@ int handle_cublasDgemvBatched_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                yarray, incy, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -11499,9 +11037,6 @@ int handle_cublasDgemvStridedBatched(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -11593,9 +11128,6 @@ int handle_cublasDgemvStridedBatched_64(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -11678,9 +11210,6 @@ int handle_cublasDgemv_v2(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -11765,9 +11294,6 @@ int handle_cublasDgemv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -11811,9 +11337,6 @@ int handle_cublasDgeqrfBatched(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found()
                     : fn(handle, m, n, Aarray, lda, TauArray, &info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &info, sizeof(int)) < 0 ||
@@ -11879,9 +11402,6 @@ int handle_cublasDger_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -11946,9 +11466,6 @@ int handle_cublasDger_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -11989,9 +11506,6 @@ int handle_cublasDgetrfBatched(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasDgetrfBatched");
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, n, A, lda, P, info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -12037,9 +11551,6 @@ int handle_cublasDgetriBatched(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, n, A, lda, P, C, ldc, info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -12090,9 +11601,6 @@ int handle_cublasDgetrsBatched(conn_t *conn) {
                                : fn(handle, trans, n, nrhs, Aarray, lda,
                                     devIpiv, Barray, ldb, &info, batchSize);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &info, sizeof(int)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -12135,9 +11643,6 @@ int handle_cublasDmatinvBatched(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, n, A, lda, Ainv, lda_inv, info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -12184,9 +11689,6 @@ int handle_cublasDnrm2_v2(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -12239,9 +11741,6 @@ int handle_cublasDnrm2_v2_64(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -12309,9 +11808,6 @@ int handle_cublasDotEx(conn_t *conn) {
                                  : result,
                resultType, executionType);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -12376,9 +11872,6 @@ int handle_cublasDotEx_64(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result,
                resultType, executionType);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -12446,9 +11939,6 @@ int handle_cublasDotcEx(conn_t *conn) {
                                  : result,
                resultType, executionType);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -12513,9 +12003,6 @@ int handle_cublasDotcEx_64(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result,
                resultType, executionType);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -12592,9 +12079,6 @@ int handle_cublasDrot_v2(conn_t *conn) {
                          s_heap, s_value, sizeof(s_value), s_width))
                    : s);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -12664,9 +12148,6 @@ int handle_cublasDrot_v2_64(conn_t *conn) {
                    ? reinterpret_cast<const double *>(lupine_scalar_slot(
                          s_heap, s_value, sizeof(s_value), s_width))
                    : s);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -12743,9 +12224,6 @@ int handle_cublasDrotg_v2(conn_t *conn) {
                                   s_heap, s_value, sizeof(s_value), s_width))
                             : s);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (a_width != 0 &&
        rpc_write(conn,
@@ -12818,9 +12296,6 @@ int handle_cublasDrotm_v2(conn_t *conn) {
                                             sizeof(param_value), param_width))
                    : param);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -12877,9 +12352,6 @@ int handle_cublasDrotm_v2_64(conn_t *conn) {
                          lupine_scalar_slot(param_heap, param_value,
                                             sizeof(param_value), param_width))
                    : param);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -12977,9 +12449,6 @@ int handle_cublasDrotmg_v2(conn_t *conn) {
                                       param_heap, param_value,
                                       sizeof(param_value), param_width))
                                 : param);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (d1_width != 0 &&
@@ -13082,9 +12551,6 @@ int handle_cublasDsbmv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -13168,9 +12634,6 @@ int handle_cublasDsbmv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -13225,9 +12688,6 @@ int handle_cublasDscal_v2(conn_t *conn) {
                    : alpha,
                x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -13280,9 +12740,6 @@ int handle_cublasDscal_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -13363,9 +12820,6 @@ int handle_cublasDspmv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -13444,9 +12898,6 @@ int handle_cublasDspmv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -13510,9 +12961,6 @@ int handle_cublasDspr2_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -13575,9 +13023,6 @@ int handle_cublasDspr2_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -13637,9 +13082,6 @@ int handle_cublasDspr_v2(conn_t *conn) {
                    : alpha,
                x, incx, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -13698,9 +13140,6 @@ int handle_cublasDspr_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -13740,9 +13179,6 @@ int handle_cublasDswap_v2(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -13780,9 +13216,6 @@ int handle_cublasDswap_v2_64(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasDswap_v2_64");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -13870,9 +13303,6 @@ int handle_cublasDsymm_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -13958,9 +13388,6 @@ int handle_cublasDsymm_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -14042,9 +13469,6 @@ int handle_cublasDsymv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -14125,9 +13549,6 @@ int handle_cublasDsymv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -14193,9 +13614,6 @@ int handle_cublasDsyr2_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -14259,9 +13677,6 @@ int handle_cublasDsyr2_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -14349,9 +13764,6 @@ int handle_cublasDsyr2k_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -14437,9 +13849,6 @@ int handle_cublasDsyr2k_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -14501,9 +13910,6 @@ int handle_cublasDsyr_v2(conn_t *conn) {
                    : alpha,
                x, incx, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -14563,9 +13969,6 @@ int handle_cublasDsyr_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -14648,9 +14051,6 @@ int handle_cublasDsyrk_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -14731,9 +14131,6 @@ int handle_cublasDsyrk_v2_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -14821,9 +14218,6 @@ int handle_cublasDsyrkx(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -14909,9 +14303,6 @@ int handle_cublasDsyrkx_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -14961,9 +14352,6 @@ int handle_cublasDtbmv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -15011,9 +14399,6 @@ int handle_cublasDtbmv_v2_64(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -15064,9 +14449,6 @@ int handle_cublasDtbsv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -15115,9 +14497,6 @@ int handle_cublasDtbsv_v2_64(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -15162,9 +14541,6 @@ int handle_cublasDtpmv_v2(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -15207,9 +14583,6 @@ int handle_cublasDtpmv_v2_64(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasDtpmv_v2_64");
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -15255,9 +14628,6 @@ int handle_cublasDtpsv_v2(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -15301,9 +14671,6 @@ int handle_cublasDtpsv_v2_64(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -15342,9 +14709,6 @@ int handle_cublasDtpttr(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasDtpttr");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, uplo, n, AP, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -15417,9 +14781,6 @@ int handle_cublasDtrmm_v2(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb, C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -15494,9 +14855,6 @@ int handle_cublasDtrmm_v2_64(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -15544,9 +14902,6 @@ int handle_cublasDtrmv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -15592,9 +14947,6 @@ int handle_cublasDtrmv_v2_64(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -15668,9 +15020,6 @@ int handle_cublasDtrsmBatched(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -15742,9 +15091,6 @@ int handle_cublasDtrsmBatched_64(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -15815,9 +15161,6 @@ int handle_cublasDtrsm_v2(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -15887,9 +15230,6 @@ int handle_cublasDtrsm_v2_64(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -15937,9 +15277,6 @@ int handle_cublasDtrsv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -15986,9 +15323,6 @@ int handle_cublasDtrsv_v2_64(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -16027,9 +15361,6 @@ int handle_cublasDtrttp(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasDtrttp");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, uplo, n, A, lda, AP);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -16076,9 +15407,6 @@ int handle_cublasDzasum_v2(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -16131,9 +15459,6 @@ int handle_cublasDzasum_v2_64(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -16188,9 +15513,6 @@ int handle_cublasDznrm2_v2(conn_t *conn) {
                                     sizeof(result_value), result_width))
                               : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -16242,9 +15564,6 @@ int handle_cublasDznrm2_v2_64(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -16352,9 +15671,6 @@ int handle_cublasGemmBatchedEx(conn_t *conn) {
                    : beta,
                Carray, Ctype, ldc, batchCount, computeType, algo);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -16455,9 +15771,6 @@ int handle_cublasGemmBatchedEx_64(conn_t *conn) {
                    : beta,
                Carray, Ctype, ldc, batchCount, computeType, algo);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -16557,9 +15870,6 @@ int handle_cublasGemmEx(conn_t *conn) {
                    : beta,
                C, Ctype, ldc, computeType, algo);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -16657,9 +15967,6 @@ int handle_cublasGemmEx_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                C, Ctype, ldc, computeType, algo);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -16848,9 +16155,6 @@ int handle_cublasGemmGroupedBatchedEx(conn_t *conn) {
                group_count,
                (group_count * sizeof(const int) == 0 ? nullptr : group_size),
                computeType);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -17055,9 +16359,6 @@ int handle_cublasGemmGroupedBatchedEx_64(conn_t *conn) {
                                                          : group_size),
                computeType);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -17184,9 +16485,6 @@ int handle_cublasGemmStridedBatchedEx(conn_t *conn) {
                    : beta,
                C, Ctype, ldc, strideC, batchCount, computeType, algo);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -17294,9 +16592,6 @@ int handle_cublasGemmStridedBatchedEx_64(conn_t *conn) {
                    : beta,
                C, Ctype, ldc, strideC, batchCount, computeType, algo);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -17326,9 +16621,6 @@ int handle_cublasGetAtomicsMode(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasGetAtomicsMode");
   return_value = fn == nullptr ? function_not_found() : fn(handle, &mode);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasAtomicsMode_t)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -17355,9 +16647,6 @@ int handle_cublasGetCudartVersion(conn_t *conn) {
   if (fn == nullptr)
     goto ERROR_0;
   return_value = fn();
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(size_t)) < 0 ||
@@ -17387,9 +16676,6 @@ int handle_cublasGetEmulationSpecialValuesSupport(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>("cublasGetEmulationSpecialValuesSupport");
   return_value = fn == nullptr ? function_not_found() : fn(handle, &mask);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mask, sizeof(cudaEmulationSpecialValuesSupport)) < 0 ||
@@ -17422,9 +16708,6 @@ int handle_cublasGetEmulationStrategy(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasGetEmulationStrategy");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, &emulationStrategy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &emulationStrategy, sizeof(cublasEmulationStrategy_t)) <
@@ -17460,9 +16743,6 @@ int handle_cublasGetFixedPointEmulationMantissaBitCountPointer(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, &mantissaBitCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mantissaBitCount, sizeof(int *)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -17494,9 +16774,6 @@ int handle_cublasGetFixedPointEmulationMantissaBitOffset(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasGetFixedPointEmulationMantissaBitOffset");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, &mantissaBitOffset);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mantissaBitOffset, sizeof(int)) < 0 ||
@@ -17531,9 +16808,6 @@ int handle_cublasGetFixedPointEmulationMantissaControl(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, &mantissaControl);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mantissaControl, sizeof(cudaEmulationMantissaControl)) <
           0 ||
@@ -17567,9 +16841,6 @@ int handle_cublasGetFixedPointEmulationMaxMantissaBitCount(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, &maxMantissaBitCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &maxMantissaBitCount, sizeof(int)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -17600,9 +16871,6 @@ int handle_cublasGetMathMode(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasGetMathMode");
   return_value = fn == nullptr ? function_not_found() : fn(handle, &mode);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasMath_t)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -17631,9 +16899,6 @@ int handle_cublasGetPointerMode_v2(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasGetPointerMode_v2");
   return_value = fn == nullptr ? function_not_found() : fn(handle, &mode);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &mode, sizeof(cublasPointerMode_t)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -17661,9 +16926,6 @@ int handle_cublasGetProperty(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>("cublasGetProperty");
   return_value = fn == nullptr ? function_not_found() : fn(type, &value);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &value, sizeof(int)) < 0 ||
@@ -17694,9 +16956,6 @@ int handle_cublasGetSmCountTarget(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, &smCountTarget);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &smCountTarget, sizeof(int)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -17725,9 +16984,6 @@ int handle_cublasGetStream_v2(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasGetStream_v2");
   return_value = fn == nullptr ? function_not_found() : fn(handle, &streamId);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &streamId, sizeof(cudaStream_t)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -17755,9 +17011,6 @@ int handle_cublasGetVersion_v2(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>("cublasGetVersion_v2");
   return_value = fn == nullptr ? function_not_found() : fn(handle, &version);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &version, sizeof(int)) < 0 ||
@@ -17844,9 +17097,6 @@ int handle_cublasHSHgemvBatched(conn_t *conn) {
                    : beta,
                yarray, incy, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -17931,9 +17181,6 @@ int handle_cublasHSHgemvBatched_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                yarray, incy, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -18027,9 +17274,6 @@ int handle_cublasHSHgemvStridedBatched(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -18121,9 +17365,6 @@ int handle_cublasHSHgemvStridedBatched_64(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -18210,9 +17451,6 @@ int handle_cublasHSSgemvBatched(conn_t *conn) {
                    : beta,
                yarray, incy, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -18297,9 +17535,6 @@ int handle_cublasHSSgemvBatched_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                yarray, incy, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -18393,9 +17628,6 @@ int handle_cublasHSSgemvStridedBatched(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -18487,9 +17719,6 @@ int handle_cublasHSSgemvStridedBatched_64(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -18578,9 +17807,6 @@ int handle_cublasHgemm(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -18668,9 +17894,6 @@ int handle_cublasHgemmBatched(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                Carray, ldc, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -18761,9 +17984,6 @@ int handle_cublasHgemmBatched_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                Carray, ldc, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -18861,9 +18081,6 @@ int handle_cublasHgemmStridedBatched(conn_t *conn) {
                    : beta,
                C, ldc, strideC, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -18960,9 +18177,6 @@ int handle_cublasHgemmStridedBatched_64(conn_t *conn) {
                    : beta,
                C, ldc, strideC, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -19052,9 +18266,6 @@ int handle_cublasHgemm_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -19104,9 +18315,6 @@ int handle_cublasIamaxEx(conn_t *conn) {
                                        result_heap, result_value,
                                        sizeof(result_value), result_width))
                                  : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -19161,9 +18369,6 @@ int handle_cublasIamaxEx_64(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -19220,9 +18425,6 @@ int handle_cublasIaminEx(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -19277,9 +18479,6 @@ int handle_cublasIaminEx_64(conn_t *conn) {
                                     sizeof(result_value), result_width))
                               : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -19333,9 +18532,6 @@ int handle_cublasIcamax_v2(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -19387,9 +18583,6 @@ int handle_cublasIcamax_v2_64(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -19444,9 +18637,6 @@ int handle_cublasIcamin_v2(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -19498,9 +18688,6 @@ int handle_cublasIcamin_v2_64(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -19555,9 +18742,6 @@ int handle_cublasIdamax_v2(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -19609,9 +18793,6 @@ int handle_cublasIdamax_v2_64(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -19666,9 +18847,6 @@ int handle_cublasIdamin_v2(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -19720,9 +18898,6 @@ int handle_cublasIdamin_v2_64(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -19777,9 +18952,6 @@ int handle_cublasIsamax_v2(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -19831,9 +19003,6 @@ int handle_cublasIsamax_v2_64(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -19888,9 +19057,6 @@ int handle_cublasIsamin_v2(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -19942,9 +19108,6 @@ int handle_cublasIsamin_v2_64(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -19999,9 +19162,6 @@ int handle_cublasIzamax_v2(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -20053,9 +19213,6 @@ int handle_cublasIzamax_v2_64(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -20110,9 +19267,6 @@ int handle_cublasIzamin_v2(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -20164,9 +19318,6 @@ int handle_cublasIzamin_v2_64(conn_t *conn) {
                                     result_heap, result_value,
                                     sizeof(result_value), result_width))
                               : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -20228,9 +19379,6 @@ int handle_cublasNrm2Ex(conn_t *conn) {
                                  : result,
                resultType, executionType);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -20289,9 +19437,6 @@ int handle_cublasNrm2Ex_64(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result,
                resultType, executionType);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -20375,9 +19520,6 @@ int handle_cublasRotEx(conn_t *conn) {
                             : s,
                csType, executiontype);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -20454,9 +19596,6 @@ int handle_cublasRotEx_64(conn_t *conn) {
                                   s_heap, s_value, sizeof(s_value), s_width))
                             : s,
                csType, executiontype);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -20541,9 +19680,6 @@ int handle_cublasRotgEx(conn_t *conn) {
                             : s,
                csType, executiontype);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (a_width != 0 &&
        rpc_write(conn,
@@ -20625,9 +19761,6 @@ int handle_cublasRotmEx(conn_t *conn) {
                    : param,
                paramType, executiontype);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -20693,9 +19826,6 @@ int handle_cublasRotmEx_64(conn_t *conn) {
                                             sizeof(param_value), param_width))
                    : param,
                paramType, executiontype);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -20813,9 +19943,6 @@ int handle_cublasRotmgEx(conn_t *conn) {
                                 : param,
                paramType, executiontype);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (d1_width != 0 &&
        rpc_write(
@@ -20882,9 +20009,6 @@ int handle_cublasSasum_v2(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -20936,9 +20060,6 @@ int handle_cublasSasum_v2_64(conn_t *conn) {
                                        result_heap, result_value,
                                        sizeof(result_value), result_width))
                                  : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -21003,9 +20124,6 @@ int handle_cublasSaxpy_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -21062,9 +20180,6 @@ int handle_cublasSaxpy_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -21127,9 +20242,6 @@ int handle_cublasScalEx(conn_t *conn) {
                    : alpha,
                alphaType, x, xType, incx, executionType);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -21190,9 +20302,6 @@ int handle_cublasScalEx_64(conn_t *conn) {
                    : alpha,
                alphaType, x, xType, incx, executionType);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -21240,9 +20349,6 @@ int handle_cublasScasum_v2(conn_t *conn) {
                                        result_heap, result_value,
                                        sizeof(result_value), result_width))
                                  : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -21295,9 +20401,6 @@ int handle_cublasScasum_v2_64(conn_t *conn) {
                                        result_heap, result_value,
                                        sizeof(result_value), result_width))
                                  : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -21352,9 +20455,6 @@ int handle_cublasScnrm2_v2(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -21407,9 +20507,6 @@ int handle_cublasScnrm2_v2_64(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -21454,9 +20551,6 @@ int handle_cublasScopy_v2(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -21494,9 +20588,6 @@ int handle_cublasScopy_v2_64(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasScopy_v2_64");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -21547,9 +20638,6 @@ int handle_cublasSdgmm(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, mode, m, n, A, lda, x, incx, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -21597,9 +20685,6 @@ int handle_cublasSdgmm_64(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, mode, m, n, A, lda, x, incx, C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -21652,9 +20737,6 @@ int handle_cublasSdot_v2(conn_t *conn) {
                                        result_heap, result_value,
                                        sizeof(result_value), result_width))
                                  : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -21712,9 +20794,6 @@ int handle_cublasSdot_v2_64(conn_t *conn) {
                                        sizeof(result_value), result_width))
                                  : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -21749,9 +20828,6 @@ int handle_cublasSetAtomicsMode(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasSetAtomicsMode");
   return_value = fn == nullptr ? function_not_found() : fn(handle, mode);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -21781,9 +20857,6 @@ int handle_cublasSetEmulationSpecialValuesSupport(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>("cublasSetEmulationSpecialValuesSupport");
   return_value = fn == nullptr ? function_not_found() : fn(handle, mask);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -21818,9 +20891,6 @@ int handle_cublasSetEmulationStrategy(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, emulationStrategy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -21853,9 +20923,6 @@ int handle_cublasSetFixedPointEmulationMantissaBitCountPointer(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, mantissaBitCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -21886,9 +20953,6 @@ int handle_cublasSetFixedPointEmulationMantissaBitOffset(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasSetFixedPointEmulationMantissaBitOffset");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, mantissaBitOffset);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -21923,9 +20987,6 @@ int handle_cublasSetFixedPointEmulationMantissaControl(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, mantissaControl);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -21957,9 +21018,6 @@ int handle_cublasSetFixedPointEmulationMaxMantissaBitCount(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, maxMantissaBitCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -21989,9 +21047,6 @@ int handle_cublasSetMathMode(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasSetMathMode");
   return_value = fn == nullptr ? function_not_found() : fn(handle, mode);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -22018,9 +21073,6 @@ int handle_cublasSetPointerMode_v2(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>("cublasSetPointerMode_v2");
   return_value = fn == nullptr ? function_not_found() : fn(handle, mode);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -22050,9 +21102,6 @@ int handle_cublasSetSmCountTarget(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, smCountTarget);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -22079,9 +21128,6 @@ int handle_cublasSetStream_v2(conn_t *conn) {
 
   fn = cublas_symbol<fn_t>("cublasSetStream_v2");
   return_value = fn == nullptr ? function_not_found() : fn(handle, streamId);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -22112,9 +21158,6 @@ int handle_cublasSetWorkspace_v2(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasSetWorkspace_v2");
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, workspace, workspaceSizeInBytes);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -22200,9 +21243,6 @@ int handle_cublasSgbmv_v2(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -22291,9 +21331,6 @@ int handle_cublasSgbmv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -22380,9 +21417,6 @@ int handle_cublasSgeam(conn_t *conn) {
                    : beta,
                B, ldb, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -22468,9 +21502,6 @@ int handle_cublasSgeam_64(conn_t *conn) {
                    : beta,
                B, ldb, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -22524,9 +21555,6 @@ int handle_cublasSgelsBatched(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, trans, m, n, nrhs, Aarray, lda, Carray, ldc,
                           &info, devInfoArray, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &info, sizeof(int)) < 0 ||
@@ -22617,9 +21645,6 @@ int handle_cublasSgemmBatched(conn_t *conn) {
                    : beta,
                Carray, ldc, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -22709,9 +21734,6 @@ int handle_cublasSgemmBatched_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                Carray, ldc, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -22807,9 +21829,6 @@ int handle_cublasSgemmEx(conn_t *conn) {
                    : beta,
                C, Ctype, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -22902,9 +21921,6 @@ int handle_cublasSgemmEx_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                C, Ctype, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -23084,9 +22100,6 @@ int handle_cublasSgemmGroupedBatched(conn_t *conn) {
                (group_count * sizeof(const int) == 0 ? nullptr : ldc_array),
                group_count,
                (group_count * sizeof(const int) == 0 ? nullptr : group_size));
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -23282,9 +22295,6 @@ int handle_cublasSgemmGroupedBatched_64(conn_t *conn) {
                (group_count * sizeof(const int64_t) == 0 ? nullptr
                                                          : group_size));
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -23399,9 +22409,6 @@ int handle_cublasSgemmStridedBatched(conn_t *conn) {
                    : beta,
                C, ldc, strideC, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -23498,9 +22505,6 @@ int handle_cublasSgemmStridedBatched_64(conn_t *conn) {
                    : beta,
                C, ldc, strideC, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -23589,9 +22593,6 @@ int handle_cublasSgemm_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -23679,9 +22680,6 @@ int handle_cublasSgemm_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -23768,9 +22766,6 @@ int handle_cublasSgemvBatched(conn_t *conn) {
                    : beta,
                yarray, incy, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -23855,9 +22850,6 @@ int handle_cublasSgemvBatched_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                yarray, incy, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -23951,9 +22943,6 @@ int handle_cublasSgemvStridedBatched(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -24045,9 +23034,6 @@ int handle_cublasSgemvStridedBatched_64(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -24130,9 +23116,6 @@ int handle_cublasSgemv_v2(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -24217,9 +23200,6 @@ int handle_cublasSgemv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -24263,9 +23243,6 @@ int handle_cublasSgeqrfBatched(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found()
                     : fn(handle, m, n, Aarray, lda, TauArray, &info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &info, sizeof(int)) < 0 ||
@@ -24331,9 +23308,6 @@ int handle_cublasSger_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -24398,9 +23372,6 @@ int handle_cublasSger_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -24441,9 +23412,6 @@ int handle_cublasSgetrfBatched(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasSgetrfBatched");
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, n, A, lda, P, info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -24489,9 +23457,6 @@ int handle_cublasSgetriBatched(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, n, A, lda, P, C, ldc, info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -24542,9 +23507,6 @@ int handle_cublasSgetrsBatched(conn_t *conn) {
                                : fn(handle, trans, n, nrhs, Aarray, lda,
                                     devIpiv, Barray, ldb, &info, batchSize);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &info, sizeof(int)) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -24587,9 +23549,6 @@ int handle_cublasSmatinvBatched(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, n, A, lda, Ainv, lda_inv, info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -24636,9 +23595,6 @@ int handle_cublasSnrm2_v2(conn_t *conn) {
                                        result_heap, result_value,
                                        sizeof(result_value), result_width))
                                  : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -24691,9 +23647,6 @@ int handle_cublasSnrm2_v2_64(conn_t *conn) {
                                        result_heap, result_value,
                                        sizeof(result_value), result_width))
                                  : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -24770,9 +23723,6 @@ int handle_cublasSrot_v2(conn_t *conn) {
                          s_heap, s_value, sizeof(s_value), s_width))
                    : s);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -24842,9 +23792,6 @@ int handle_cublasSrot_v2_64(conn_t *conn) {
                    ? reinterpret_cast<const float *>(lupine_scalar_slot(
                          s_heap, s_value, sizeof(s_value), s_width))
                    : s);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -24921,9 +23868,6 @@ int handle_cublasSrotg_v2(conn_t *conn) {
                                   s_heap, s_value, sizeof(s_value), s_width))
                             : s);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (a_width != 0 &&
        rpc_write(conn,
@@ -24996,9 +23940,6 @@ int handle_cublasSrotm_v2(conn_t *conn) {
                                             sizeof(param_value), param_width))
                    : param);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -25055,9 +23996,6 @@ int handle_cublasSrotm_v2_64(conn_t *conn) {
                          lupine_scalar_slot(param_heap, param_value,
                                             sizeof(param_value), param_width))
                    : param);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -25155,9 +24093,6 @@ int handle_cublasSrotmg_v2(conn_t *conn) {
                                       param_heap, param_value,
                                       sizeof(param_value), param_width))
                                 : param);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (d1_width != 0 &&
@@ -25260,9 +24195,6 @@ int handle_cublasSsbmv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -25346,9 +24278,6 @@ int handle_cublasSsbmv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -25403,9 +24332,6 @@ int handle_cublasSscal_v2(conn_t *conn) {
                    : alpha,
                x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -25458,9 +24384,6 @@ int handle_cublasSscal_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -25541,9 +24464,6 @@ int handle_cublasSspmv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -25622,9 +24542,6 @@ int handle_cublasSspmv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -25688,9 +24605,6 @@ int handle_cublasSspr2_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -25753,9 +24667,6 @@ int handle_cublasSspr2_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -25813,9 +24724,6 @@ int handle_cublasSspr_v2(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, AP);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -25875,9 +24783,6 @@ int handle_cublasSspr_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -25917,9 +24822,6 @@ int handle_cublasSswap_v2(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -25957,9 +24859,6 @@ int handle_cublasSswap_v2_64(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasSswap_v2_64");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -26047,9 +24946,6 @@ int handle_cublasSsymm_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -26135,9 +25031,6 @@ int handle_cublasSsymm_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -26219,9 +25112,6 @@ int handle_cublasSsymv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -26302,9 +25192,6 @@ int handle_cublasSsymv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -26370,9 +25257,6 @@ int handle_cublasSsyr2_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -26436,9 +25320,6 @@ int handle_cublasSsyr2_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -26526,9 +25407,6 @@ int handle_cublasSsyr2k_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -26614,9 +25492,6 @@ int handle_cublasSsyr2k_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -26678,9 +25553,6 @@ int handle_cublasSsyr_v2(conn_t *conn) {
                    : alpha,
                x, incx, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -26740,9 +25612,6 @@ int handle_cublasSsyr_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -26825,9 +25694,6 @@ int handle_cublasSsyrk_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -26907,9 +25773,6 @@ int handle_cublasSsyrk_v2_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -26997,9 +25860,6 @@ int handle_cublasSsyrkx(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -27085,9 +25945,6 @@ int handle_cublasSsyrkx_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -27137,9 +25994,6 @@ int handle_cublasStbmv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -27187,9 +26041,6 @@ int handle_cublasStbmv_v2_64(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -27240,9 +26091,6 @@ int handle_cublasStbsv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -27291,9 +26139,6 @@ int handle_cublasStbsv_v2_64(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -27338,9 +26183,6 @@ int handle_cublasStpmv_v2(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -27383,9 +26225,6 @@ int handle_cublasStpmv_v2_64(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasStpmv_v2_64");
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -27431,9 +26270,6 @@ int handle_cublasStpsv_v2(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -27477,9 +26313,6 @@ int handle_cublasStpsv_v2_64(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -27518,9 +26351,6 @@ int handle_cublasStpttr(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasStpttr");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, uplo, n, AP, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -27593,9 +26423,6 @@ int handle_cublasStrmm_v2(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb, C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -27670,9 +26497,6 @@ int handle_cublasStrmm_v2_64(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -27720,9 +26544,6 @@ int handle_cublasStrmv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -27768,9 +26589,6 @@ int handle_cublasStrmv_v2_64(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -27844,9 +26662,6 @@ int handle_cublasStrsmBatched(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -27918,9 +26733,6 @@ int handle_cublasStrsmBatched_64(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -27991,9 +26803,6 @@ int handle_cublasStrsm_v2(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -28063,9 +26872,6 @@ int handle_cublasStrsm_v2_64(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -28113,9 +26919,6 @@ int handle_cublasStrsv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -28162,9 +26965,6 @@ int handle_cublasStrsv_v2_64(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -28203,9 +27003,6 @@ int handle_cublasStrttp(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasStrttp");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, uplo, n, A, lda, AP);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -28248,9 +27045,6 @@ int handle_cublasSwapEx(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, n, x, xType, incx, y, yType, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -28292,9 +27086,6 @@ int handle_cublasSwapEx_64(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasSwapEx_64");
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, n, x, xType, incx, y, yType, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -28382,9 +27173,6 @@ int handle_cublasTSSgemvBatched(conn_t *conn) {
                    : beta,
                yarray, incy, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -28469,9 +27257,6 @@ int handle_cublasTSSgemvBatched_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                yarray, incy, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -28565,9 +27350,6 @@ int handle_cublasTSSgemvStridedBatched(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -28660,9 +27442,6 @@ int handle_cublasTSSgemvStridedBatched_64(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -28749,9 +27528,6 @@ int handle_cublasTSTgemvBatched(conn_t *conn) {
                    : beta,
                yarray, incy, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -28836,9 +27612,6 @@ int handle_cublasTSTgemvBatched_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                yarray, incy, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -28932,9 +27705,6 @@ int handle_cublasTSTgemvStridedBatched(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -29027,9 +27797,6 @@ int handle_cublasTSTgemvStridedBatched_64(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -29097,9 +27864,6 @@ int handle_cublasUint8gemmBias(conn_t *conn) {
                      : fn(handle, transa, transb, transc, m, n, k, A, A_bias,
                           lda, B, B_bias, ldb, C, C_bias, ldc, C_mult, C_shift);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -29156,9 +27920,6 @@ int handle_cublasZaxpy_v2(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -29218,9 +27979,6 @@ int handle_cublasZaxpy_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -29260,9 +28018,6 @@ int handle_cublasZcopy_v2(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -29301,9 +28056,6 @@ int handle_cublasZcopy_v2_64(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasZcopy_v2_64");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -29354,9 +28106,6 @@ int handle_cublasZdgmm(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, mode, m, n, A, lda, x, incx, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -29405,9 +28154,6 @@ int handle_cublasZdgmm_64(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, mode, m, n, A, lda, x, incx, C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -29462,9 +28208,6 @@ int handle_cublasZdotc_v2(conn_t *conn) {
                          lupine_scalar_slot(result_heap, result_value,
                                             sizeof(result_value), result_width))
                    : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -29523,9 +28266,6 @@ int handle_cublasZdotc_v2_64(conn_t *conn) {
                          lupine_scalar_slot(result_heap, result_value,
                                             sizeof(result_value), result_width))
                    : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -29586,9 +28326,6 @@ int handle_cublasZdotu_v2(conn_t *conn) {
                                             sizeof(result_value), result_width))
                    : result);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
        rpc_write(conn,
@@ -29646,9 +28383,6 @@ int handle_cublasZdotu_v2_64(conn_t *conn) {
                          lupine_scalar_slot(result_heap, result_value,
                                             sizeof(result_value), result_width))
                    : result);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (result_width != 0 &&
@@ -29726,9 +28460,6 @@ int handle_cublasZdrot_v2(conn_t *conn) {
                          s_heap, s_value, sizeof(s_value), s_width))
                    : s);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -29799,9 +28530,6 @@ int handle_cublasZdrot_v2_64(conn_t *conn) {
                          s_heap, s_value, sizeof(s_value), s_width))
                    : s);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -29856,9 +28584,6 @@ int handle_cublasZdscal_v2(conn_t *conn) {
                    : alpha,
                x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -29911,9 +28636,6 @@ int handle_cublasZdscal_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -30005,9 +28727,6 @@ int handle_cublasZgbmv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -30097,9 +28816,6 @@ int handle_cublasZgbmv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -30188,9 +28904,6 @@ int handle_cublasZgeam(conn_t *conn) {
                    : beta,
                B, ldb, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -30278,9 +28991,6 @@ int handle_cublasZgeam_64(conn_t *conn) {
                    : beta,
                B, ldb, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -30335,9 +29045,6 @@ int handle_cublasZgelsBatched(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, trans, m, n, nrhs, Aarray, lda, Carray, ldc,
                           &info, devInfoArray, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &info, sizeof(int)) < 0 ||
@@ -30428,9 +29135,6 @@ int handle_cublasZgemm3m(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -30519,9 +29223,6 @@ int handle_cublasZgemm3m_64(conn_t *conn) {
                                             sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -30615,9 +29316,6 @@ int handle_cublasZgemmBatched(conn_t *conn) {
                    : beta,
                Carray, ldc, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -30708,9 +29406,6 @@ int handle_cublasZgemmBatched_64(conn_t *conn) {
                                             sizeof(beta_value), beta_width))
                    : beta,
                Carray, ldc, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -30810,9 +29505,6 @@ int handle_cublasZgemmStridedBatched(conn_t *conn) {
                    : beta,
                C, ldc, strideC, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -30911,9 +29603,6 @@ int handle_cublasZgemmStridedBatched_64(conn_t *conn) {
                    : beta,
                C, ldc, strideC, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -31004,9 +29693,6 @@ int handle_cublasZgemm_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -31096,9 +29782,6 @@ int handle_cublasZgemm_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -31186,9 +29869,6 @@ int handle_cublasZgemvBatched(conn_t *conn) {
                    : beta,
                yarray, incy, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -31275,9 +29955,6 @@ int handle_cublasZgemvBatched_64(conn_t *conn) {
                                             sizeof(beta_value), beta_width))
                    : beta,
                yarray, incy, batchCount);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -31373,9 +30050,6 @@ int handle_cublasZgemvStridedBatched(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -31469,9 +30143,6 @@ int handle_cublasZgemvStridedBatched_64(conn_t *conn) {
                    : beta,
                y, incy, stridey, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -31556,9 +30227,6 @@ int handle_cublasZgemv_v2(conn_t *conn) {
                                             sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -31645,9 +30313,6 @@ int handle_cublasZgemv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -31692,9 +30357,6 @@ int handle_cublasZgeqrfBatched(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found()
                     : fn(handle, m, n, Aarray, lda, TauArray, &info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &info, sizeof(int)) < 0 ||
@@ -31761,9 +30423,6 @@ int handle_cublasZgerc_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -31828,9 +30487,6 @@ int handle_cublasZgerc_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -31898,9 +30554,6 @@ int handle_cublasZgeru_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -31966,9 +30619,6 @@ int handle_cublasZgeru_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -32009,9 +30659,6 @@ int handle_cublasZgetrfBatched(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasZgetrfBatched");
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, n, A, lda, P, info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -32057,9 +30704,6 @@ int handle_cublasZgetriBatched(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, n, A, lda, P, C, ldc, info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -32110,9 +30754,6 @@ int handle_cublasZgetrsBatched(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, trans, n, nrhs, Aarray, lda,
                                     devIpiv, Barray, ldb, &info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &info, sizeof(int)) < 0 ||
@@ -32198,9 +30839,6 @@ int handle_cublasZhbmv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -32285,9 +30923,6 @@ int handle_cublasZhbmv_v2_64(conn_t *conn) {
                                             sizeof(beta_value), beta_width))
                    : beta,
                y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -32377,9 +31012,6 @@ int handle_cublasZhemm_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -32467,9 +31099,6 @@ int handle_cublasZhemm_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -32553,9 +31182,6 @@ int handle_cublasZhemv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -32638,9 +31264,6 @@ int handle_cublasZhemv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -32707,9 +31330,6 @@ int handle_cublasZher2_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -32774,9 +31394,6 @@ int handle_cublasZher2_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -32864,9 +31481,6 @@ int handle_cublasZher2k_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -32953,9 +31567,6 @@ int handle_cublasZher2k_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -33017,9 +31628,6 @@ int handle_cublasZher_v2(conn_t *conn) {
                    : alpha,
                x, incx, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -33079,9 +31687,6 @@ int handle_cublasZher_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -33165,9 +31770,6 @@ int handle_cublasZherk_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -33248,9 +31850,6 @@ int handle_cublasZherk_v2_64(conn_t *conn) {
                          beta_heap, beta_value, sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -33338,9 +31937,6 @@ int handle_cublasZherkx(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -33427,9 +32023,6 @@ int handle_cublasZherkx_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -33511,9 +32104,6 @@ int handle_cublasZhpmv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -33594,9 +32184,6 @@ int handle_cublasZhpmv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -33661,9 +32248,6 @@ int handle_cublasZhpr2_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -33727,9 +32311,6 @@ int handle_cublasZhpr2_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -33789,9 +32370,6 @@ int handle_cublasZhpr_v2(conn_t *conn) {
                    : alpha,
                x, incx, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -33850,9 +32428,6 @@ int handle_cublasZhpr_v2_64(conn_t *conn) {
                    : alpha,
                x, incx, AP);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -33897,9 +32472,6 @@ int handle_cublasZmatinvBatched(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, n, A, lda, Ainv, lda_inv, info, batchSize);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -33970,9 +32542,6 @@ int handle_cublasZrot_v2(conn_t *conn) {
                                                      sizeof(s_value), s_width))
                             : s);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -34042,9 +32611,6 @@ int handle_cublasZrot_v2_64(conn_t *conn) {
                                   lupine_scalar_slot(s_heap, s_value,
                                                      sizeof(s_value), s_width))
                             : s);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -34125,9 +32691,6 @@ int handle_cublasZrotg_v2(conn_t *conn) {
                          s_heap, s_value, sizeof(s_value), s_width))
                    : s);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (a_width != 0 &&
        rpc_write(conn,
@@ -34196,9 +32759,6 @@ int handle_cublasZscal_v2(conn_t *conn) {
                    : alpha,
                x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -34253,9 +32813,6 @@ int handle_cublasZscal_v2_64(conn_t *conn) {
                    : alpha,
                x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -34295,9 +32852,6 @@ int handle_cublasZswap_v2(conn_t *conn) {
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -34335,9 +32889,6 @@ int handle_cublasZswap_v2_64(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasZswap_v2_64");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, n, x, incx, y, incy);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -34427,9 +32978,6 @@ int handle_cublasZsymm_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -34517,9 +33065,6 @@ int handle_cublasZsymm_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -34603,9 +33148,6 @@ int handle_cublasZsymv_v2(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -34688,9 +33230,6 @@ int handle_cublasZsymv_v2_64(conn_t *conn) {
                    : beta,
                y, incy);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -34757,9 +33296,6 @@ int handle_cublasZsyr2_v2(conn_t *conn) {
                    : alpha,
                x, incx, y, incy, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -34824,9 +33360,6 @@ int handle_cublasZsyr2_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, y, incy, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -34916,9 +33449,6 @@ int handle_cublasZsyr2k_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -35006,9 +33536,6 @@ int handle_cublasZsyr2k_v2_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -35070,9 +33597,6 @@ int handle_cublasZsyr_v2(conn_t *conn) {
                    : alpha,
                x, incx, A, lda);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -35132,9 +33656,6 @@ int handle_cublasZsyr_v2_64(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                x, incx, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -35219,9 +33740,6 @@ int handle_cublasZsyrk_v2(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -35303,9 +33821,6 @@ int handle_cublasZsyrk_v2_64(conn_t *conn) {
                                             sizeof(beta_value), beta_width))
                    : beta,
                C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -35395,9 +33910,6 @@ int handle_cublasZsyrkx(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -35485,9 +33997,6 @@ int handle_cublasZsyrkx_64(conn_t *conn) {
                    : beta,
                C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -35536,9 +34045,6 @@ int handle_cublasZtbmv_v2(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -35589,9 +34095,6 @@ int handle_cublasZtbmv_v2_64(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -35640,9 +34143,6 @@ int handle_cublasZtbsv_v2(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -35693,9 +34193,6 @@ int handle_cublasZtbsv_v2_64(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, k, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -35740,9 +34237,6 @@ int handle_cublasZtpmv_v2(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -35785,9 +34279,6 @@ int handle_cublasZtpmv_v2_64(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasZtpmv_v2_64");
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -35833,9 +34324,6 @@ int handle_cublasZtpsv_v2(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -35879,9 +34367,6 @@ int handle_cublasZtpsv_v2_64(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle, uplo, trans, diag, n, AP, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -35921,9 +34406,6 @@ int handle_cublasZtpttr(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasZtpttr");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, uplo, n, AP, A, lda);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -35997,9 +34479,6 @@ int handle_cublasZtrmm_v2(conn_t *conn) {
                                             sizeof(alpha_value), alpha_width))
                    : alpha,
                A, lda, B, ldb, C, ldc);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -36075,9 +34554,6 @@ int handle_cublasZtrmm_v2_64(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb, C, ldc);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -36125,9 +34601,6 @@ int handle_cublasZtrmv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -36173,9 +34646,6 @@ int handle_cublasZtrmv_v2_64(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
@@ -36249,9 +34719,6 @@ int handle_cublasZtrsmBatched(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -36324,9 +34791,6 @@ int handle_cublasZtrsmBatched_64(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb, batchCount);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -36397,9 +34861,6 @@ int handle_cublasZtrsm_v2(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -36469,9 +34930,6 @@ int handle_cublasZtrsm_v2_64(conn_t *conn) {
                    : alpha,
                A, lda, B, ldb);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -36519,9 +34977,6 @@ int handle_cublasZtrsv_v2(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -36568,9 +35023,6 @@ int handle_cublasZtrsv_v2_64(conn_t *conn) {
                      ? function_not_found()
                      : fn(handle, uplo, trans, diag, n, A, lda, x, incx);
 
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
-
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -36610,9 +35062,6 @@ int handle_cublasZtrttp(conn_t *conn) {
   fn = cublas_symbol<fn_t>("cublasZtrttp");
   return_value =
       fn == nullptr ? function_not_found() : fn(handle, uplo, n, A, lda, AP);
-
-  if (lupine_cublas_flush_logs(conn) < 0)
-    goto ERROR_0;
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||

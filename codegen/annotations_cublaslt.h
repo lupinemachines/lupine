@@ -113,10 +113,7 @@ cublasStatus_t cublasLtHeuristicsCacheGetCapacity(size_t *capacity);
  */
 cublasStatus_t cublasLtHeuristicsCacheSetCapacity(size_t capacity);
 cublasStatus_t cublasLtLoggerForceDisable();
-/**
- * @disabled
- */
-cublasStatus_t cublasLtLoggerOpenFile(const char *logFile);
+// cublasLtLoggerOpenFile opens a client file and delegates to SetFile.
 /**
  * @disabled
  */

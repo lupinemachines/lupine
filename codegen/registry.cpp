@@ -928,7 +928,6 @@
 #define LUPINE_CUBLASLT_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_cublasLtGetStatusName, handle_cublasLtGetStatusName, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtGetStatusString, handle_cublasLtGetStatusString, rpc_backend::cublas) \
-  HANDLER(RPC_cublasLtLoggerOpenFile, handle_cublasLtLoggerOpenFile, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtLoggerSetCallback, handle_cublasLtLoggerSetCallback, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtLoggerSetFile, handle_cublasLtLoggerSetFile, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtCreate, handle_cublasLtCreate, rpc_backend::cublas) \

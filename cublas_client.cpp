@@ -22,7 +22,6 @@
 #include "codegen/gen_rpc_ids.h"
 #include "cublas_scalar.h"
 #include "cuda_client_rpc.h"
-#include "library_logging_client.h"
 
 namespace {
 
@@ -214,8 +213,17 @@ extern "C" cublasStatus_t cublasSetLoggerCallback(cublasLogCallback callback) {
   if (callback != nullptr) {
     target = {log_callback, reinterpret_cast<void *>(callback)};
   }
-  return lupine_set_library_log_target(connection(),
-                                       RPC_cublasSetLoggerCallback, target);
+  conn_t *conn = connection();
+  cublasStatus_t status = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasSetLoggerCallback) < 0 ||
+      rpc_write(conn, &target.callback, sizeof(target.callback)) < 0 ||
+      rpc_write(conn, &target.user_data, sizeof(target.user_data)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &status, sizeof(status)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return status;
 }
 
 extern "C" cublasStatus_t
