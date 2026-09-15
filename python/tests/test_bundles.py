@@ -11,13 +11,23 @@ import pytest
 
 from lupine import _bundles
 
-NAMES = ("libcuda.so.1", "libcudart.so.13", "libnvidia-ml.so.1")
+# Only the driver and NVML sonames are stable across toolkits, so those are
+# all a client demands; a bundle carries the runtime and library shims too.
+REQUIRED = ("libcuda.so.1", "libnvidia-ml.so.1")
+NAMES = (
+    "libcuda.so.1",
+    "libcudart.so.13",
+    "libcublas.so.13",
+    "libcublasLt.so.13",
+    "libcudnn.so.9",
+    "libnvidia-ml.so.1",
+)
 
 
-def bundle_bytes(*, platforms=("linux/amd64",), extra=None):
+def bundle_bytes(*, platforms=("linux/amd64",), extra=None, names=NAMES):
     files = []
     contents = {}
-    for name in NAMES:
+    for name in names:
         contents[name] = name.encode()
         files.append(
             {
@@ -111,9 +121,10 @@ def test_resolve_downloads_verifies_and_revalidates(monkeypatch, tmp_path):
     monkeypatch.setenv("LUPINE_SESSION", "lease-test")
     monkeypatch.setattr(_bundles, "platform_name", lambda: "linux/amd64")
     with bundle_server(bundle_bytes()) as (server, etag, state):
-        directory, selected, platform_name = _bundles.resolve(
-            (server,), NAMES
+        directory, selected, platform_name, names = _bundles.resolve(
+            (server,), REQUIRED
         )
+        assert names == NAMES
         assert selected == etag
         assert platform_name == "linux/amd64"
         assert {path.name for path in directory.iterdir()} == {
@@ -123,7 +134,7 @@ def test_resolve_downloads_verifies_and_revalidates(monkeypatch, tmp_path):
         }
         assert state["requests"][0]["x-lupine-session"] == "lease-test"
 
-        again, again_etag, _ = _bundles.resolve((server,), NAMES)
+        again, again_etag, _, _ = _bundles.resolve((server,), REQUIRED)
         assert again == directory
         assert again_etag == etag
         assert state["requests"][1]["if-none-match"] == etag
@@ -133,9 +144,9 @@ def test_resolve_repairs_a_corrupt_cache(monkeypatch, tmp_path):
     monkeypatch.setenv("LUPINE_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr(_bundles, "platform_name", lambda: "linux/amd64")
     with bundle_server(bundle_bytes()) as (server, _, state):
-        directory, _, _ = _bundles.resolve((server,), NAMES)
+        directory, _, _, _ = _bundles.resolve((server,), REQUIRED)
         (directory / NAMES[0]).write_bytes(b"corrupt")
-        repaired, _, _ = _bundles.resolve((server,), NAMES)
+        repaired, _, _, _ = _bundles.resolve((server,), REQUIRED)
         assert repaired == directory
         assert (repaired / NAMES[0]).read_bytes() == NAMES[0].encode()
         assert "if-none-match" not in state["requests"][1]
@@ -149,7 +160,7 @@ def test_resolve_follows_redirect_and_preserves_session(monkeypatch, tmp_path):
         bundle_server(bundle_bytes()) as (gateway, etag, gateway_state),
         redirect_server(f"http://{gateway}") as (coordinator, coordinator_state),
     ):
-        _, selected, _ = _bundles.resolve((coordinator,), NAMES)
+        _, selected, _, _ = _bundles.resolve((coordinator,), REQUIRED)
 
     assert selected == etag
     assert coordinator_state["requests"][0]["x-lupine-session"] == "lease-redirect"
@@ -168,7 +179,7 @@ def test_resolve_rejects_mixed_server_bundles(monkeypatch, tmp_path):
         ),
         pytest.raises(ValueError, match="different client bundles"),
     ):
-        _bundles.resolve((first, second), NAMES)
+        _bundles.resolve((first, second), REQUIRED)
 
 
 def test_resolve_rejects_unsafe_archive_paths(monkeypatch, tmp_path):
@@ -178,4 +189,25 @@ def test_resolve_rejects_unsafe_archive_paths(monkeypatch, tmp_path):
         bundle_server(bundle_bytes(extra="../escape")) as (server, _, _),
         pytest.raises(ValueError, match="unsafe client bundle path"),
     ):
-        _bundles.resolve((server,), NAMES)
+        _bundles.resolve((server,), REQUIRED)
+
+
+def test_resolve_rejects_a_bundle_missing_a_required_shim(monkeypatch, tmp_path):
+    monkeypatch.setenv("LUPINE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(_bundles, "platform_name", lambda: "linux/amd64")
+    without_nvml = tuple(name for name in NAMES if name != "libnvidia-ml.so.1")
+    with (
+        bundle_server(bundle_bytes(names=without_nvml)) as (server, _, _),
+        pytest.raises(ValueError, match="missing required shims"),
+    ):
+        _bundles.resolve((server,), REQUIRED)
+
+
+def test_resolve_rejects_a_file_the_manifest_does_not_declare(monkeypatch, tmp_path):
+    monkeypatch.setenv("LUPINE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(_bundles, "platform_name", lambda: "linux/amd64")
+    with (
+        bundle_server(bundle_bytes(extra="libsmuggled.so.1")) as (server, _, _),
+        pytest.raises(ValueError, match="unexpected file set"),
+    ):
+        _bundles.resolve((server,), REQUIRED)

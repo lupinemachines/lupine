@@ -17,7 +17,8 @@
 #define LUPINE_CUDART_HOST_DEFINES_H
 
 #if defined(__CUDACC__) || defined(__CUDADEVRT_INTERNAL__)
-#error "This stub is for host-only builds; use the real toolkit headers with nvcc."
+#error                                                                         \
+    "This stub is for host-only builds; use the real toolkit headers with nvcc."
 #endif
 
 #define __host__

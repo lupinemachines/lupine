@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -107,6 +108,7 @@ def test_libdir_keeps_configured_server(monkeypatch, tmp_path):
             tmp_path,
             '"sha256:' + "a" * 64 + '"',
             "linux/amd64",
+            names,
         ),
     )
 
@@ -121,17 +123,25 @@ def test_load_missing_ok_without_libs(monkeypatch, tmp_path):
         _native.load(missing_ok=False)
 
 
+def _stage(libdir, extra=()):
+    """Write a client directory holding the required shims plus ``extra``."""
+
+    libdir.mkdir(exist_ok=True)
+    names = (*_native._REQUIRED[sys.platform], *extra)
+    for name in names:
+        (libdir / name).write_bytes(b"")
+    return names
+
+
 def test_loads_native_libraries(monkeypatch, tmp_path):
     libdir = tmp_path / "libs"
-    libdir.mkdir()
-    for name in _native._LIBS[sys.platform]:
-        (libdir / name).write_bytes(b"")
+    names = _stage(libdir)
 
     monkeypatch.setenv("LUPINE_LIBDIR", str(libdir))
     monkeypatch.delenv("TRITON_LIBCUDA_PATH", raising=False)
     monkeypatch.setattr(_native.ctypes, "CDLL", lambda path, mode=None: None)
     result = _native.load(missing_ok=False)
-    assert len(result) == len(_native._LIBS[sys.platform])
+    assert len(result) == len(names)
     if sys.platform in ("linux", "darwin"):
         assert os.environ["TRITON_LIBCUDA_PATH"] == str(libdir)
     # Idempotent: second call loads nothing new.
@@ -144,9 +154,7 @@ def test_loads_native_libraries(monkeypatch, tmp_path):
 
 def test_load_respects_existing_triton_libcuda_path(monkeypatch, tmp_path):
     libdir = tmp_path / "libs"
-    libdir.mkdir()
-    for name in _native._LIBS[sys.platform]:
-        (libdir / name).write_bytes(b"")
+    _stage(libdir)
 
     monkeypatch.setenv("LUPINE_LIBDIR", str(libdir))
     monkeypatch.setenv("TRITON_LIBCUDA_PATH", "/caller/libcuda")
@@ -156,30 +164,50 @@ def test_load_respects_existing_triton_libcuda_path(monkeypatch, tmp_path):
     assert os.environ["TRITON_LIBCUDA_PATH"] == "/caller/libcuda"
 
 
-def test_load_prefers_packaged_runtime_stub(monkeypatch, tmp_path):
-    client = tmp_path / "client"
-    packaged = tmp_path / "packaged"
-    client.mkdir()
-    packaged.mkdir()
-    names = _native._LIBS[sys.platform]
-    for name in names:
-        (client / name).write_bytes(b"")
-    (packaged / names[1]).write_bytes(b"")
+def test_loads_every_library_shim_driver_first(monkeypatch, tmp_path):
+    libdir = tmp_path / "client"
+    extra = {
+        "linux": ("libcublas.so.13", "libcudart.so.13", "libcudnn.so.9"),
+        "darwin": ("libcublas.dylib", "libcudart.dylib", "libcudnn.dylib"),
+        "win32": ("cublas64_13.dll", "cudart64_13.dll", "cudnn64_9.dll"),
+    }[sys.platform]
+    names = _stage(libdir, extra)
 
     loaded = []
     monkeypatch.setattr(_native, "_loaded", {})
-    monkeypatch.setenv("LUPINE_LIBDIR", str(client))
-    monkeypatch.setattr(_native, "_platform_dir", lambda: packaged)
+    monkeypatch.setattr(_native, "_names", ())
+    monkeypatch.setenv("LUPINE_LIBDIR", str(libdir))
     monkeypatch.setattr(
         _native.ctypes,
         "CDLL",
-        lambda path, mode=None: loaded.append(str(path)),
+        lambda path, mode=None: loaded.append(Path(path).name),
     )
 
     _native.load(missing_ok=False)
 
-    assert loaded == [
-        str(client / names[0]),
-        str(packaged / names[1]),
-        str(client / names[2]),
-    ]
+    driver = _native._DRIVER[sys.platform]
+    assert loaded[0] == driver, "the driver must load before the shims linking it"
+    assert set(loaded) == set(names)
+
+
+def test_load_uses_the_bundle_manifest_order(monkeypatch, tmp_path):
+    """A resolved bundle names its shims; a stray file must not be loaded."""
+
+    libdir = tmp_path / "client"
+    names = _stage(libdir, ("libcublas.so.13",))
+    (libdir / "libstray.so.1").write_bytes(b"")
+
+    loaded = []
+    monkeypatch.setattr(_native, "_loaded", {})
+    monkeypatch.setattr(_native, "_names", names)
+    monkeypatch.setenv("LUPINE_LIBDIR", str(libdir))
+    monkeypatch.setattr(
+        _native.ctypes,
+        "CDLL",
+        lambda path, mode=None: loaded.append(Path(path).name),
+    )
+
+    _native.load(missing_ok=False)
+
+    assert set(loaded) == set(names)
+    assert "libstray.so.1" not in loaded
