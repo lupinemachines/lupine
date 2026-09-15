@@ -27,8 +27,6 @@ on:
     branches: [main]
     paths:
       - .github/workflows/gpu-integration-gcloud.yml
-      - test/integration/Dockerfile.dependencies
-      - test/integration/dependency_cache_key.sh
       - test/run_cuda_library_samples.sh
       - test/run_cuda_python_tests.sh
   workflow_dispatch:
@@ -308,9 +306,97 @@ jobs:
             echo "GCP_ZONE=$selected_zone"
           } >> "$GITHUB_ENV"
 
-      - name: Write client image Dockerfile
+      - name: Write integration Dockerfiles
         run: |
-          cat > "${RUNNER_TEMP}/gpu-integration.Dockerfile" <<'EOF'
+          cat > "$RUNNER_TEMP/gpu-integration-dependencies.Dockerfile" <<'EOF'
+          # syntax=docker/dockerfile:1.7
+
+          ARG BASE_IMAGE
+          FROM ${BASE_IMAGE}
+
+          ARG CUDA_SAMPLES_ARCH
+          ARG CUDA_SAMPLES_REF
+          ARG PYTORCH_INDEX_URL
+          ENV DEBIAN_FRONTEND=noninteractive \
+              PIP_NO_CACHE_DIR=1 \
+              CUDA_HOME=/usr/local/cuda \
+              CUDA_LIB_DIR=/usr/local/cuda/lib64 \
+              CUDA_SAMPLES_DIR=/opt/cuda-samples-src \
+              CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build \
+              CUDA_SAMPLES_ARCH=${CUDA_SAMPLES_ARCH} \
+              CCACHE_DIR=/opt/lupine/ccache \
+              CCACHE_BASEDIR=/src \
+              CCACHE_COMPILERCHECK=content \
+              CCACHE_COMPRESS=true \
+              PATH=/usr/local/cuda/bin:$PATH
+
+          RUN apt-get update && apt-get install -y --no-install-recommends \
+                bash \
+                build-essential \
+                ca-certificates \
+                ccache \
+                cmake \
+                curl \
+                freeglut3-dev \
+                git \
+                gzip \
+                libfreeimage-dev \
+                libgl-dev \
+                libglu1-mesa-dev \
+                libnghttp2-dev \
+                libx11-dev \
+                libxi-dev \
+                libxmu-dev \
+                llvm-14-dev \
+                ninja-build \
+                openssh-client \
+                python3 \
+                python3-dev \
+                python3-pip \
+                python3-venv \
+              && rm -rf /var/lib/apt/lists/*
+
+          RUN bash <<'SCRIPT'
+          set -euo pipefail
+
+          git clone --branch "$CUDA_SAMPLES_REF" --depth 1 \
+            https://github.com/NVIDIA/cuda-samples.git "$CUDA_SAMPLES_DIR"
+          git config --global --add safe.directory "$CUDA_SAMPLES_DIR"
+
+          if [[ -n "$CUDA_SAMPLES_ARCH" ]]; then
+            find "$CUDA_SAMPLES_DIR" -name CMakeLists.txt -exec sed -i -E \
+              "s/set\(CMAKE_CUDA_ARCHITECTURES ([0-9 ]* )?$CUDA_SAMPLES_ARCH( [0-9 ]*)?\)/set(CMAKE_CUDA_ARCHITECTURES $CUDA_SAMPLES_ARCH)/" {} +
+          fi
+
+          export LLVM_HOME=/usr/lib/llvm-14
+          if [[ -f "$CUDA_SAMPLES_DIR/CMakeLists.txt" && ( -d "$CUDA_SAMPLES_DIR/cpp" || -d "$CUDA_SAMPLES_DIR/Samples" ) ]]; then
+            cmake -S "$CUDA_SAMPLES_DIR" -B "$CUDA_SAMPLES_BUILD_DIR" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared \
+              -DENABLE_CUDA_C_LINKING_SAMPLE=1
+            cmake --build "$CUDA_SAMPLES_BUILD_DIR" --parallel "$(nproc)"
+          else
+            make -C "$CUDA_SAMPLES_DIR" -j"$(nproc)" EXTRA_NVCCFLAGS="--cudart shared" ${CUDA_SAMPLES_ARCH:+SMS="$CUDA_SAMPLES_ARCH"}
+          fi
+          SCRIPT
+
+          # CUDALibrarySamples are built once here; samples the lane's toolkit
+          # cannot build are reported as SKIP:build-failed by the run step.
+          COPY test/run_cuda_library_samples.sh /opt/lupine/run_cuda_library_samples.sh
+          RUN LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples LIBRARY_SAMPLES_ARCH="$CUDA_SAMPLES_ARCH" \
+                BUILD_ONLY=1 bash /opt/lupine/run_cuda_library_samples.sh
+
+          # Python setup is part of the dependency image, before the source copy.
+          COPY test/run_cuda_python_tests.sh /opt/lupine/run_cuda_python_tests.sh
+          RUN python3 -m venv /opt/venv-pytorch && \
+              /opt/venv-pytorch/bin/pip install --upgrade pip && \
+              /opt/venv-pytorch/bin/pip install numpy && \
+              /opt/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch
+          ENV PYTHON_BIN=/opt/venv-pytorch/bin/python \
+              CUDA_PYTHON_DIR=/opt/cuda-python
+          RUN CUDA_PYTHON_SETUP_ONLY=1 bash /opt/lupine/run_cuda_python_tests.sh
+          EOF
+          cat > "$RUNNER_TEMP/gpu-integration.Dockerfile" <<'EOF'
           ARG BASE_IMAGE
           FROM ${BASE_IMAGE}
           WORKDIR /src
@@ -383,22 +469,39 @@ jobs:
             "gha@$VM_IP"
           )
 
+          dockerfile_sha="$(sha256sum "$RUNNER_TEMP/gpu-integration-dependencies.Dockerfile" | cut -d' ' -f1)"
           cache_inputs="$(
-            bash test/integration/dependency_cache_key.sh \
-              "$INTEGRATION_IMAGE_CACHE_VERSION" "${{ matrix.client_image }}" \
-              "${{ matrix.samples_ref }}" "${{ matrix.pytorch_index_url }}" "$CUDA_SAMPLES_ARCH"
+            {
+              printf '%s\n' "$INTEGRATION_IMAGE_CACHE_VERSION" \
+                "${{ matrix.client_image }}" "${{ matrix.samples_ref }}" \
+                "${{ matrix.pytorch_index_url }}" "$CUDA_SAMPLES_ARCH" "$dockerfile_sha"
+              sha256sum test/run_cuda_library_samples.sh test/run_cuda_python_tests.sh
+            } | sha256sum | cut -d' ' -f1
           )"
           dependency_image="lupine-integration-deps:${{ matrix.label }}-$cache_inputs"
           remote_cache_archive="/home/gha/lupine-integration-image-${{ matrix.label }}.tar.gz"
           cache_prefix="gpu-integration/images/$INTEGRATION_IMAGE_CACHE_VERSION/cuda-${{ matrix.cuda_version }}/sm-$CUDA_SAMPLES_ARCH"
           cache_uri="gs://$GCP_BUILD_CACHE_BUCKET/$cache_prefix/inputs-$cache_inputs.tar.gz"
           cache_hit=false
+          expected_sha="$(
+            gcloud storage objects describe "$cache_uri" \
+              --raw --format='value(metadata.sha256)' 2>/dev/null || true
+          )"
           start=$SECONDS
-          if bash test/integration/restore_dependency_image.sh \
-            "$cache_uri" "$dependency_image" "$remote_cache_archive" "${ssh_base[@]}"; then
-            cache_hit=true
-            echo "Restored dependency image in $((SECONDS - start))s: $cache_uri"
+          if [[ -n "$expected_sha" ]] && \
+            gcloud storage cp "$cache_uri" - | \
+              "${ssh_base[@]}" "cat > '$remote_cache_archive'"; then
+            if actual_sha="$("${ssh_base[@]}" "sha256sum '$remote_cache_archive' | cut -d' ' -f1")" && \
+              [[ "$actual_sha" == "$expected_sha" ]] && \
+              "${ssh_base[@]}" "sudo docker load -i '$remote_cache_archive' && sudo docker image inspect '$dependency_image' >/dev/null"; then
+              cache_hit=true
+              gcloud storage objects update "$cache_uri" \
+                --custom-time="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || \
+                echo "Could not refresh dependency-image cache lifetime: $cache_uri" >&2
+              echo "Restored dependency image in $((SECONDS - start))s: $cache_uri"
+            fi
           fi
+          "${ssh_base[@]}" "rm -f '$remote_cache_archive'"
           if [[ "$cache_hit" != "true" ]]; then
             echo "No valid dependency image at $cache_uri; building it from source"
           fi
@@ -433,7 +536,7 @@ jobs:
           if [[ "$INTEGRATION_IMAGE_CACHE_HIT" != "true" ]]; then
             DOCKER_HOST=ssh://lupine-gpu-vm docker build \
               --progress=plain \
-              --file test/integration/Dockerfile.dependencies \
+              --file "$RUNNER_TEMP/gpu-integration-dependencies.Dockerfile" \
               --tag "$DEPENDENCY_IMAGE" \
               --build-arg "BASE_IMAGE=${{ matrix.client_image }}" \
               --build-arg "CUDA_SAMPLES_REF=${{ matrix.samples_ref }}" \
