@@ -388,14 +388,14 @@ jobs:
               fi
 
           # Python setup is part of the dependency image, before the source copy.
-          COPY test/prepare_cuda_python.sh /opt/lupine/prepare_cuda_python.sh
+          COPY test/run_cuda_python_tests.sh /opt/lupine/run_cuda_python_tests.sh
           RUN python3 -m venv /opt/venv-pytorch && \
               /opt/venv-pytorch/bin/pip install --upgrade pip && \
               /opt/venv-pytorch/bin/pip install numpy && \
               /opt/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch
           ENV PYTHON_BIN=/opt/venv-pytorch/bin/python \
               CUDA_PYTHON_DIR=/opt/cuda-python
-          RUN bash /opt/lupine/prepare_cuda_python.sh
+          RUN CUDA_PYTHON_SETUP_ONLY=1 bash /opt/lupine/run_cuda_python_tests.sh
 
           WORKDIR /src
           COPY . /src

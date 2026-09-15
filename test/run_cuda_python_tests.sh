@@ -48,6 +48,7 @@ Environment:
   CUDA_PYTHON_INSTALL    auto installs the bindings matching the CUDA toolkit
                          major plus pytest into PYTHON_BIN's environment; 0 skips.
   CUDA_PYTHON_SKIP_LIST  Comma or space separated units to mark SKIP:disabled.
+  CUDA_PYTHON_SETUP_ONLY 1 prepares the environment and checkout without tests.
   LIST_TESTS             1 lists a prepared checkout without installation.
   PYTHON_BIN             Interpreter. Default: $PYTHON_BIN
   SERVER_SSH_TARGET      GPU host. Default: $SERVER_SSH_TARGET
@@ -62,10 +63,45 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-if [[ "${LIST_TESTS:-0}" != "1" && "$CUDA_PYTHON_INSTALL" != "0" ]]; then
-  PYTHON_BIN="$PYTHON_BIN" CUDA_HOME="$CUDA_HOME" CUDA_PYTHON_URL="$CUDA_PYTHON_URL" \
-    CUDA_PYTHON_REF="$CUDA_PYTHON_REF" CUDA_PYTHON_DIR="$CUDA_PYTHON_DIR" \
-    bash "$repo_root/test/prepare_cuda_python.sh"
+if [[ "${CUDA_PYTHON_SETUP_ONLY:-0}" == "1" || ( "${LIST_TESTS:-0}" != "1" && "$CUDA_PYTHON_INSTALL" != "0" ) ]]; then
+  cuda_major() {
+    local release=""
+    if [[ -x "$CUDA_HOME/bin/nvcc" ]]; then
+      release="$("$CUDA_HOME/bin/nvcc" --version | sed -nE 's/.*release ([0-9]+)\..*/\1/p' | head -n1)"
+    fi
+    if [[ -z "$release" && -f "$CUDA_HOME/version.json" ]]; then
+      release="$(sed -nE 's/.*"cuda"[^0-9]*([0-9]+)\..*/\1/p' "$CUDA_HOME/version.json" | head -n1)"
+    fi
+    printf '%s\n' "$release"
+  }
+
+  # cuda-bindings was split out of cuda-python at 12.6.1; the 11.8 line still
+  # ships as cuda-python with the cuda.cuda/cuda.cudart module layout.
+  major="$(cuda_major)"
+  case "$major" in
+    11) package=cuda-python; spec="cuda-python==11.8.*" ;;
+    12) package=cuda-bindings; spec="cuda-bindings==12.*" ;;
+    13) package=cuda-bindings; spec="cuda-bindings==13.*" ;;
+    *) echo "cannot map CUDA toolkit major '$major' to a cuda-python release" >&2; exit 1 ;;
+  esac
+
+  "$PYTHON_BIN" -m pip install --quiet "$spec" numpy pytest pytest-benchmark
+  installed="$("$PYTHON_BIN" -c "from importlib.metadata import version; print(version('$package'))")"
+  if [[ -z "$CUDA_PYTHON_REF" ]]; then
+    CUDA_PYTHON_REF="v$installed"
+  fi
+
+  mkdir -p "$(dirname "$CUDA_PYTHON_DIR")"
+  if [[ ! -d "$CUDA_PYTHON_DIR/.git" ]]; then
+    git clone --quiet --depth 1 --branch "$CUDA_PYTHON_REF" \
+      "$CUDA_PYTHON_URL" "$CUDA_PYTHON_DIR"
+  elif [[ "$(git -C "$CUDA_PYTHON_DIR" describe --tags --exact-match 2>/dev/null || true)" != "$CUDA_PYTHON_REF" ]]; then
+    git -C "$CUDA_PYTHON_DIR" fetch --quiet --depth 1 origin "refs/tags/$CUDA_PYTHON_REF:refs/tags/$CUDA_PYTHON_REF"
+    git -C "$CUDA_PYTHON_DIR" checkout --quiet "$CUDA_PYTHON_REF"
+  fi
+fi
+if [[ "${CUDA_PYTHON_SETUP_ONLY:-0}" == "1" ]]; then
+  exit 0
 fi
 
 tests_dir=""
@@ -76,7 +112,7 @@ for d in cuda_bindings/tests cuda/tests; do
   fi
 done
 if [[ -z "$tests_dir" ]]; then
-  echo "no tests directory in $CUDA_PYTHON_DIR; run test/prepare_cuda_python.sh first" >&2
+  echo "no tests directory in $CUDA_PYTHON_DIR; run CUDA_PYTHON_SETUP_ONLY=1 test/run_cuda_python_tests.sh first" >&2
   exit 1
 fi
 examples_dir=""
