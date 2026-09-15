@@ -1,31 +1,38 @@
 """Native LUPINE client library loader.
 
 LUPINE servers publish the compatible client shims for every supported
-platform. The loader downloads the exact object selected by ``LUPINE_SERVER``
-before CUDA consumers are imported. Wheels carry only LUPINE's portable CUDA
-runtime translation stubs; complete driver and NVML clients always come from a
-bound server or an explicit ``LUPINE_LIBDIR``.
+platform. The loader downloads the exact bundle selected by ``LUPINE_SERVER``
+before CUDA consumers are imported. The wheel itself is pure Python: every
+native object comes from a bound server or an explicit ``LUPINE_LIBDIR``.
 
-============ ============================== =========================== =======================
-Platform    driver shim (CUDA)             runtime shim                 NVML shim
-============ ============================== =========================== =======================
-linux-x86_64  libcuda.so.1                   libcudart.so.13              libnvidia-ml.so.1
-linux-aarch64 libcuda.so.1                   libcudart.so.13              libnvidia-ml.so.1
-macosx-*      libcuda.dylib                  libcudart.dylib              libnvidia-ml.dylib
-win-amd64     nvcuda.dll                     cudart64_13.dll              nvml.dll
-============ ============================== =========================== =======================
+A bundle always carries the driver, runtime, and NVML shims, and carries a
+library shim for each of cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE,
+cuSOLVER, cuSOLVERMg, cuSPARSELt, NVRTC, nvJitLink, nvJPEG, NPP, cuFile,
+CUPTI, NCCL, and nvSHMEM that the server was built with:
+
+============= ================== ==================== ====================
+Platform      driver shim        runtime shim         NVML shim
+============= ================== ==================== ====================
+linux-x86_64  libcuda.so.1       libcudart.so.<major> libnvidia-ml.so.1
+linux-aarch64 libcuda.so.1       libcudart.so.<major> libnvidia-ml.so.1
+macosx-*      libcuda.dylib      libcudart.dylib      libnvidia-ml.dylib
+win-*         nvcuda.dll         cudart64_<major>.dll nvml.dll
+============= ================== ==================== ====================
+
+Each library shim keeps the soname its real counterpart uses, and those
+majors move independently of the toolkit's, so the manifest — not this
+module — is authoritative for the names in a bundle.
 
 ``load()`` preloads them into the process with global visibility so that
 CUDA consumers resolve the LUPINE shims instead of (or, where a real NVIDIA
 stack exists, in front of) the real libraries:
 
-* PyTorch builds with CUDA link ``libcudart`` and load the driver lazily by
-  soname, so preloading the LUPINE ``libcuda`` routes every later driver
-  call to the LUPINE server.
-* Natively compiled CUDA code (nvcc/clang) resolves both shims directly.
+* PyTorch builds with CUDA link ``libcudart``, ``libcublas`` and friends and
+  load the driver lazily by soname, so preloading the LUPINE shims routes
+  every later call to the LUPINE server. No ``nvidia-*`` wheel is required.
+* Natively compiled CUDA code (nvcc/clang) resolves the shims directly.
 * On platforms without any NVIDIA runtime (macOS, GPU-less Windows hosts),
-  the wheel's portable ``libcudart`` translation stub supplies the runtime API
-  while the driver and NVML shims remain server-selected.
+  the server-selected shims are the only CUDA stack in the process.
 
 The loader is dependency-free (stdlib only) and never imports torch.
 """
@@ -39,46 +46,22 @@ from pathlib import Path
 
 from . import _bundles
 
-# Complete client object names. Entry 1 is the runtime translation stub that the
-# Python wheel also carries; entries 0 and 2 are always server-selected.
-_LIBS = {
-    "linux": ("libcuda.so.1", "libcudart.so.13", "libnvidia-ml.so.1"),
-    "darwin": ("libcuda.dylib", "libcudart.dylib", "libnvidia-ml.dylib"),
-    "win32": ("nvcuda.dll", "cudart64_13.dll", "nvml.dll"),
+# Shims every bundle must carry, in load order: the driver first, because the
+# runtime and library shims link against it.
+_REQUIRED = {
+    "linux": ("libcuda.so.1", "libnvidia-ml.so.1"),
+    "darwin": ("libcuda.dylib", "libnvidia-ml.dylib"),
+    "win32": ("nvcuda.dll", "nvml.dll"),
 }
 
-# Wheel platform tags for the non-standard entries (matches the artifact
-# directory names produced by CI).
-_DIR_BY_TAG = {
-    "linux-x86_64": "linux-x86_64",
-    "linux-aarch64": "linux-aarch64",
-    "macosx-universal2": "macosx-universal2",
-    "win-amd64": "win-amd64",
-    "win-arm64": "win-arm64",
-}
-
-_TAG_BY_PLATFORM = {
-    "linux/amd64": "linux-x86_64",
-    "linux/arm64": "linux-aarch64",
-    "macos/amd64": "macosx-universal2",
-    "macos/arm64": "macosx-universal2",
-    "windows/amd64": "win-amd64",
-    "windows/arm64": "win-arm64",
-}
+_DRIVER = {"linux": "libcuda.so.1", "darwin": "libcuda.dylib", "win32": "nvcuda.dll"}
 
 _loaded: dict[str, str] = {}
-
-
-def _platform_dir() -> Path | None:
-    platform_key = _bundles.platform_name()
-    tag = None if platform_key is None else _TAG_BY_PLATFORM.get(platform_key)
-    if tag is None:
-        return None
-    return Path(__file__).resolve().parent / "_libs" / _DIR_BY_TAG[tag]
+_names: tuple[str, ...] = ()
 
 
 def libdir() -> Path | None:
-    """Directory holding the selected full native client for this platform."""
+    """Directory holding the selected native client for this platform."""
 
     override = os.environ.get("LUPINE_LIBDIR")
     if override:
@@ -91,15 +74,17 @@ def libdir() -> Path | None:
     if servers:
         from . import LupineError
 
-        names = _LIBS.get(sys.platform)
-        if names is None:
+        required = _REQUIRED.get(sys.platform)
+        if required is None:
             raise LupineError(f"Unsupported LUPINE client platform: {sys.platform}")
         try:
-            directory, etag, platform_key = _bundles.resolve(servers, names)
+            directory, etag, platform_key, names = _bundles.resolve(servers, required)
         except Exception as exc:
             raise LupineError(
                 f"Could not resolve the server's LUPINE client: {exc}"
             ) from exc
+        global _names
+        _names = names
         os.environ["LUPINE_LIBDIR"] = str(directory)
         os.environ["LUPINE_CLIENT_ETAG"] = etag
         os.environ["LUPINE_CLIENT_PLATFORM"] = platform_key
@@ -107,44 +92,67 @@ def libdir() -> Path | None:
     return None
 
 
+def _shim_names(directory: Path) -> tuple[str, ...]:
+    """Every shim in the selected directory, driver first.
+
+    A resolved bundle names them in its manifest. ``LUPINE_LIBDIR`` points at
+    a plain directory instead, so fall back to its contents.
+    """
+
+    driver = _DRIVER[sys.platform]
+    if _names:
+        names = _names
+    else:
+        suffixes = {"linux": ".so", "darwin": ".dylib", "win32": ".dll"}
+        suffix = suffixes[sys.platform]
+        names = tuple(
+            sorted(
+                entry.name
+                for entry in directory.iterdir()
+                if entry.is_file() and suffix in entry.name
+            )
+        )
+    rest = [name for name in names if name != driver]
+    return (driver, *rest) if driver in names else tuple(rest)
+
+
 def load(*, missing_ok: bool = True) -> dict[str, str]:
-    """Preload the LUPINE driver, runtime, and NVML shims.
+    """Preload every LUPINE shim the selected client carries.
 
     Returns a map of library name to loaded path. Idempotent: later calls
     only load libraries not already loaded into this process. Raises
-    ``LupineError`` (from :mod:`lupine`) when a selected library is missing
+    ``LupineError`` (from :mod:`lupine`) when the client cannot be selected
     and ``missing_ok`` is false.
     """
 
     from . import LupineError
 
-    names = _LIBS.get(sys.platform)
     try:
         directory = libdir()
     except LupineError:
         if missing_ok:
             return dict(_loaded)
         raise
-    if names is None or directory is None or not directory.is_dir():
+    if sys.platform not in _REQUIRED or directory is None or not directory.is_dir():
         if missing_ok:
             return dict(_loaded)
         raise LupineError(
-            "No full LUPINE native client for this platform "
+            "No LUPINE native client for this platform "
             f"({sys.platform}); set LUPINE_SERVER or LUPINE_LIBDIR."
         )
 
-    paths = {name: directory / name for name in names}
-    packaged = _platform_dir()
-    if packaged is not None:
-        runtime = packaged / names[1]
-        if runtime.is_file():
-            paths[names[1]] = runtime
+    names = _shim_names(directory)
+    missing = [name for name in _REQUIRED[sys.platform] if name not in names]
+    if missing:
+        if missing_ok:
+            return dict(_loaded)
+        raise LupineError(f"Selected LUPINE client is missing: {sorted(missing)}")
 
     if sys.platform == "win32":
         # LoadLibrary search order includes directories added here; CUDA
         # consumers load "nvcuda.dll" by name.
         os.add_dll_directory(str(directory))
-    elif sys.platform in ("linux", "darwin") and (directory / names[0]).is_file():
+    elif (directory / _DRIVER[sys.platform]).is_file():
         # Triton compiles a small launcher against libcuda and therefore needs
         # a filesystem directory even when the shim is already RTLD_GLOBAL.
         os.environ.setdefault("TRITON_LIBCUDA_PATH", str(directory))
@@ -152,13 +160,13 @@ def load(*, missing_ok: bool = True) -> dict[str, str]:
     for name in names:
         if name in _loaded:
             continue
-        path = paths[name]
+        path = directory / name
         if not path.exists():
             if missing_ok:
                 continue
             raise LupineError(f"Selected LUPINE library missing: {path}")
         # RTLD_GLOBAL so dlopen("libcuda.so.1") from other libraries
-        # (torch's libcudart, cublas, ...) resolves to the shim.
+        # (torch's libcudart, libcublas, ...) resolves to the shim.
         ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
         _loaded[name] = str(path)
     return dict(_loaded)

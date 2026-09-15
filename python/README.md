@@ -1,12 +1,18 @@
 # lupine Python package
 
 CUDA on any host. The configured LUPINE server publishes its compatible native
-client — CUDA **driver API** (`libcuda` / `nvcuda.dll`) and **NVML**, plus the
-complete runtime set needed by non-Python clients — for Linux (x86_64,
-aarch64), macOS (universal2), and Windows (amd64, arm64). The Python wheel
-contains only the portable CUDA **runtime API** translation stubs (`libcudart`
-/ `cudart64_13.dll`) and a small PyTorch adapter. No NVIDIA software, CUDA
-toolkit, or container runtime is needed on the client.
+client for Linux (x86_64, aarch64), macOS (universal2), and Windows (amd64,
+arm64): the CUDA **driver API** (`libcuda` / `nvcuda.dll`), the CUDA
+**runtime API** (`libcudart`), **NVML**, and a shim for each companion
+library the server was built with — cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND,
+cuSPARSE, cuSPARSELt, cuSOLVER, cuSOLVERMg, NVRTC, nvJitLink, nvJPEG, NPP,
+cuFile, CUPTI, NCCL, and nvSHMEM. A CUDA-enabled PyTorch resolves every one
+of its CUDA libraries through them, with no `nvidia-*` wheel installed.
+
+The wheel itself is pure Python: a small PyTorch adapter and the loader that
+resolves that client. No NVIDIA software, CUDA toolkit, `nvidia-*` wheel, or
+container runtime is needed on the client — a CUDA-enabled PyTorch resolves
+every one of its CUDA libraries through the LUPINE shims.
 
 ```python
 import lupine
@@ -106,9 +112,11 @@ ID in `LUPINE_SESSION`.
 ```
 lupine/
   __init__.py    Session / connect() adapter
-  _native.py     platform shim discovery + preloading
-  _libs/         (in wheels) per-platform CUDA runtime stubs
+  _bundles.py    server bundle resolution, verification, and caching
+  _native.py     shim discovery + preloading
 ```
 
-The Python workflow stages one runtime stub per platform in the wheel. Server
-workflows publish complete clients separately for CMake to embed.
+No native object ships in the wheel. Server workflows publish the complete
+clients for CMake to embed, and the bundle manifest names the shims it
+carries — so a server built with more of them stays usable by an older
+client, which loads whatever arrives.
