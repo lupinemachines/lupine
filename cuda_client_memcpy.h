@@ -4,8 +4,6 @@
 #include "cuda_compat.h"
 #undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
-#include <vector>
-
 typedef struct conn_t conn_t;
 struct lupine_route;
 
@@ -50,10 +48,9 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
 extern "C" void
 lupine_mark_mapped_host_kernel_params(void *const *kernel_params,
                                       const size_t *sizes, uint32_t count);
-CUresult lupine_prepare_mapped_host_kernel_params(
-    lupine_route route, void *const *kernel_params, const size_t *sizes,
-    uint32_t count, std::vector<std::vector<unsigned char>> *storage,
-    std::vector<void *> *translated_params);
+CUresult lupine_translate_mapped_host_pointer(lupine_route route,
+                                              CUdeviceptr pointer,
+                                              CUdeviceptr *translated);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
 extern "C" int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
                                               size_t bytes);
