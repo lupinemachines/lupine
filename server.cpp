@@ -35,6 +35,7 @@ void lupine_cublas_cleanup_logs(struct conn_t *conn);
 #include "rpc_server.h"
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 #include "checkpoint.h"
+#include "codegen/gen_rpc_ids.h"
 #include "cuda_server.h"
 #include "server_checkpoint.h"
 #endif
@@ -203,6 +204,14 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
 #ifdef LUPINE_BUILD_CUDA_BACKEND
   {
     backend_name = "CUDA";
+    // Bulk sub-requests run under the gate entry of the copy RPC that waits on
+    // them: chunks touch no CUDA state, and readers copy only between that RPC
+    // publishing the copy and it seeing them finish. A gate entry of their own
+    // could block a drain on a caller that never comes.
+    if (op == LUPINE_RPC_lupineBulkChunk || op == LUPINE_RPC_lupineBulkRead) {
+      result = handler.handler(conn);
+      break;
+    }
     lupine_checkpoint::cuda_call_guard guard;
     result = handler.handler(conn);
     break;
