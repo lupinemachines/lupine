@@ -101,6 +101,7 @@ int handle_cublasLtEmulationDescGetAttribute(conn_t *conn) {
   cublasLtEmulationDescAttributes_t attr;
   size_t sizeInBytes;
   void *buf = nullptr;
+  size_t buf_size;
   size_t *sizeWritten_null_check;
   size_t sizeWritten;
   int request_id;
@@ -117,8 +118,11 @@ int handle_cublasLtEmulationDescGetAttribute(conn_t *conn) {
       rpc_read(conn, &attr, sizeof(cublasLtEmulationDescAttributes_t)) < 0 ||
       rpc_read(conn, &sizeInBytes, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  buf = (void *)malloc(sizeInBytes);
-  if ((sizeInBytes != 0 && buf == nullptr) ||
+  buf_size = sizeInBytes;
+  buf = (void *)malloc(buf_size);
+  if (buf_size != 0 && buf == nullptr)
+    goto ERROR_0;
+  if ((buf_size != 0 && rpc_read(conn, buf, buf_size) < 0) ||
       rpc_read(conn, &sizeWritten_null_check, sizeof(size_t *)) < 0 || false)
     goto ERROR_0;
 
@@ -564,6 +568,7 @@ int handle_cublasLtMatmulAlgoCapGetAttribute(conn_t *conn) {
   cublasLtMatmulAlgoCapAttributes_t attr;
   size_t sizeInBytes;
   void *buf = nullptr;
+  size_t buf_size;
   size_t *sizeWritten_null_check;
   size_t sizeWritten;
   int request_id;
@@ -576,8 +581,11 @@ int handle_cublasLtMatmulAlgoCapGetAttribute(conn_t *conn) {
       rpc_read(conn, &attr, sizeof(cublasLtMatmulAlgoCapAttributes_t)) < 0 ||
       rpc_read(conn, &sizeInBytes, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  buf = (void *)malloc(sizeInBytes);
-  if ((sizeInBytes != 0 && buf == nullptr) ||
+  buf_size = sizeInBytes;
+  buf = (void *)malloc(buf_size);
+  if (buf_size != 0 && buf == nullptr)
+    goto ERROR_0;
+  if ((buf_size != 0 && rpc_read(conn, buf, buf_size) < 0) ||
       rpc_read(conn, &sizeWritten_null_check, sizeof(size_t *)) < 0 || false)
     goto ERROR_0;
 
@@ -762,6 +770,7 @@ int handle_cublasLtMatmulAlgoConfigGetAttribute(conn_t *conn) {
   cublasLtMatmulAlgoConfigAttributes_t attr;
   size_t sizeInBytes;
   void *buf = nullptr;
+  size_t buf_size;
   size_t *sizeWritten_null_check;
   size_t sizeWritten;
   int request_id;
@@ -774,8 +783,11 @@ int handle_cublasLtMatmulAlgoConfigGetAttribute(conn_t *conn) {
       rpc_read(conn, &attr, sizeof(cublasLtMatmulAlgoConfigAttributes_t)) < 0 ||
       rpc_read(conn, &sizeInBytes, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  buf = (void *)malloc(sizeInBytes);
-  if ((sizeInBytes != 0 && buf == nullptr) ||
+  buf_size = sizeInBytes;
+  buf = (void *)malloc(buf_size);
+  if (buf_size != 0 && buf == nullptr)
+    goto ERROR_0;
+  if ((buf_size != 0 && rpc_read(conn, buf, buf_size) < 0) ||
       rpc_read(conn, &sizeWritten_null_check, sizeof(size_t *)) < 0 || false)
     goto ERROR_0;
 
@@ -866,6 +878,7 @@ int handle_cublasLtMatmulAlgoGetHeuristic(conn_t *conn) {
   cublasLtMatmulPreferenceOpaque_t preference;
   int requestedAlgoCount;
   cublasLtMatmulHeuristicResult_t *heuristicResultsArray = nullptr;
+  size_t heuristicResultsArray_size;
   int returnAlgoCount{};
   returnAlgoCount = {};
   int request_id;
@@ -907,10 +920,14 @@ int handle_cublasLtMatmulAlgoGetHeuristic(conn_t *conn) {
       rpc_read(conn, &requestedAlgoCount, sizeof(int)) < 0 ||
       requestedAlgoCount < 0 || false)
     goto ERROR_0;
-  heuristicResultsArray = (cublasLtMatmulHeuristicResult_t *)malloc(
-      requestedAlgoCount * sizeof(cublasLtMatmulHeuristicResult_t));
-  if ((requestedAlgoCount * sizeof(cublasLtMatmulHeuristicResult_t) != 0 &&
-       heuristicResultsArray == nullptr) ||
+  heuristicResultsArray_size =
+      requestedAlgoCount * sizeof(cublasLtMatmulHeuristicResult_t);
+  heuristicResultsArray =
+      (cublasLtMatmulHeuristicResult_t *)malloc(heuristicResultsArray_size);
+  if (heuristicResultsArray_size != 0 && heuristicResultsArray == nullptr)
+    goto ERROR_0;
+  if ((heuristicResultsArray_size != 0 &&
+       rpc_read(conn, heuristicResultsArray, heuristicResultsArray_size) < 0) ||
       false)
     goto ERROR_0;
 
@@ -967,6 +984,7 @@ int handle_cublasLtMatmulAlgoGetHeuristicForStream(conn_t *conn) {
   cublasLtMatmulPreferenceOpaque_t preference;
   int requestedAlgoCount;
   cublasLtMatmulHeuristicResult_t *heuristicResultsArray = nullptr;
+  size_t heuristicResultsArray_size;
   int returnAlgoCount{};
   returnAlgoCount = {};
   cudaStream_t stream;
@@ -1009,10 +1027,14 @@ int handle_cublasLtMatmulAlgoGetHeuristicForStream(conn_t *conn) {
       rpc_read(conn, &requestedAlgoCount, sizeof(int)) < 0 ||
       requestedAlgoCount < 0 || false)
     goto ERROR_0;
-  heuristicResultsArray = (cublasLtMatmulHeuristicResult_t *)malloc(
-      requestedAlgoCount * sizeof(cublasLtMatmulHeuristicResult_t));
-  if ((requestedAlgoCount * sizeof(cublasLtMatmulHeuristicResult_t) != 0 &&
-       heuristicResultsArray == nullptr) ||
+  heuristicResultsArray_size =
+      requestedAlgoCount * sizeof(cublasLtMatmulHeuristicResult_t);
+  heuristicResultsArray =
+      (cublasLtMatmulHeuristicResult_t *)malloc(heuristicResultsArray_size);
+  if (heuristicResultsArray_size != 0 && heuristicResultsArray == nullptr)
+    goto ERROR_0;
+  if ((heuristicResultsArray_size != 0 &&
+       rpc_read(conn, heuristicResultsArray, heuristicResultsArray_size) < 0) ||
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
@@ -1064,6 +1086,7 @@ int handle_cublasLtMatmulAlgoGetIds(conn_t *conn) {
   cudaDataType_t Dtype;
   int requestedAlgoCount;
   int *algoIdsArray = nullptr;
+  size_t algoIdsArray_size;
   int returnAlgoCount{};
   returnAlgoCount = {};
   int request_id;
@@ -1082,8 +1105,12 @@ int handle_cublasLtMatmulAlgoGetIds(conn_t *conn) {
       rpc_read(conn, &requestedAlgoCount, sizeof(int)) < 0 ||
       requestedAlgoCount < 0 || false)
     goto ERROR_0;
-  algoIdsArray = (int *)malloc(requestedAlgoCount * sizeof(int));
-  if ((requestedAlgoCount * sizeof(int) != 0 && algoIdsArray == nullptr) ||
+  algoIdsArray_size = requestedAlgoCount * sizeof(int);
+  algoIdsArray = (int *)malloc(algoIdsArray_size);
+  if (algoIdsArray_size != 0 && algoIdsArray == nullptr)
+    goto ERROR_0;
+  if ((algoIdsArray_size != 0 &&
+       rpc_read(conn, algoIdsArray, algoIdsArray_size) < 0) ||
       false)
     goto ERROR_0;
 
@@ -1166,6 +1193,7 @@ int handle_cublasLtMatmulDescGetAttribute(conn_t *conn) {
   cublasLtMatmulDescAttributes_t attr;
   size_t sizeInBytes;
   void *buf = nullptr;
+  size_t buf_size;
   size_t *sizeWritten_null_check;
   size_t sizeWritten;
   int request_id;
@@ -1181,8 +1209,11 @@ int handle_cublasLtMatmulDescGetAttribute(conn_t *conn) {
       rpc_read(conn, &attr, sizeof(cublasLtMatmulDescAttributes_t)) < 0 ||
       rpc_read(conn, &sizeInBytes, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  buf = (void *)malloc(sizeInBytes);
-  if ((sizeInBytes != 0 && buf == nullptr) ||
+  buf_size = sizeInBytes;
+  buf = (void *)malloc(buf_size);
+  if (buf_size != 0 && buf == nullptr)
+    goto ERROR_0;
+  if ((buf_size != 0 && rpc_read(conn, buf, buf_size) < 0) ||
       rpc_read(conn, &sizeWritten_null_check, sizeof(size_t *)) < 0 || false)
     goto ERROR_0;
 
@@ -1297,6 +1328,7 @@ int handle_cublasLtMatmulPreferenceGetAttribute(conn_t *conn) {
   cublasLtMatmulPreferenceAttributes_t attr;
   size_t sizeInBytes;
   void *buf = nullptr;
+  size_t buf_size;
   size_t *sizeWritten_null_check;
   size_t sizeWritten;
   int request_id;
@@ -1312,8 +1344,11 @@ int handle_cublasLtMatmulPreferenceGetAttribute(conn_t *conn) {
       rpc_read(conn, &attr, sizeof(cublasLtMatmulPreferenceAttributes_t)) < 0 ||
       rpc_read(conn, &sizeInBytes, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  buf = (void *)malloc(sizeInBytes);
-  if ((sizeInBytes != 0 && buf == nullptr) ||
+  buf_size = sizeInBytes;
+  buf = (void *)malloc(buf_size);
+  if (buf_size != 0 && buf == nullptr)
+    goto ERROR_0;
+  if ((buf_size != 0 && rpc_read(conn, buf, buf_size) < 0) ||
       rpc_read(conn, &sizeWritten_null_check, sizeof(size_t *)) < 0 || false)
     goto ERROR_0;
 
@@ -1422,6 +1457,7 @@ int handle_cublasLtMatrixLayoutGetAttribute(conn_t *conn) {
   cublasLtMatrixLayoutAttribute_t attr;
   size_t sizeInBytes;
   void *buf = nullptr;
+  size_t buf_size;
   size_t *sizeWritten_null_check;
   size_t sizeWritten;
   int request_id;
@@ -1437,8 +1473,11 @@ int handle_cublasLtMatrixLayoutGetAttribute(conn_t *conn) {
       rpc_read(conn, &attr, sizeof(cublasLtMatrixLayoutAttribute_t)) < 0 ||
       rpc_read(conn, &sizeInBytes, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  buf = (void *)malloc(sizeInBytes);
-  if ((sizeInBytes != 0 && buf == nullptr) ||
+  buf_size = sizeInBytes;
+  buf = (void *)malloc(buf_size);
+  if (buf_size != 0 && buf == nullptr)
+    goto ERROR_0;
+  if ((buf_size != 0 && rpc_read(conn, buf, buf_size) < 0) ||
       rpc_read(conn, &sizeWritten_null_check, sizeof(size_t *)) < 0 || false)
     goto ERROR_0;
 
@@ -1656,6 +1695,7 @@ int handle_cublasLtMatrixTransformDescGetAttribute(conn_t *conn) {
   cublasLtMatrixTransformDescAttributes_t attr;
   size_t sizeInBytes;
   void *buf = nullptr;
+  size_t buf_size;
   size_t *sizeWritten_null_check;
   size_t sizeWritten;
   int request_id;
@@ -1673,8 +1713,11 @@ int handle_cublasLtMatrixTransformDescGetAttribute(conn_t *conn) {
           0 ||
       rpc_read(conn, &sizeInBytes, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  buf = (void *)malloc(sizeInBytes);
-  if ((sizeInBytes != 0 && buf == nullptr) ||
+  buf_size = sizeInBytes;
+  buf = (void *)malloc(buf_size);
+  if (buf_size != 0 && buf == nullptr)
+    goto ERROR_0;
+  if ((buf_size != 0 && rpc_read(conn, buf, buf_size) < 0) ||
       rpc_read(conn, &sizeWritten_null_check, sizeof(size_t *)) < 0 || false)
     goto ERROR_0;
 

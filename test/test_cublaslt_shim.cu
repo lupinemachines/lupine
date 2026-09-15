@@ -52,6 +52,57 @@ static int compare(const std::vector<float> &got, const std::vector<float> &want
   return 0;
 }
 
+// The library writes only what it reports, so bytes of the caller's buffer
+// past that keep their contents: the entries past the returned algorithm
+// count, the tile list of an algorithm without tiles, and a rejected get.
+static int test_unwritten_buffers(cublasLtHandle_t handle) {
+  constexpr int kIds = 64;
+  constexpr int kUnwritten = -7;
+  int ids[kIds];
+  for (int &id : ids) {
+    id = kUnwritten;
+  }
+  int count = 0;
+  CHECK_LT(cublasLtMatmulAlgoGetIds(handle, CUBLAS_COMPUTE_32F, CUDA_R_32F,
+                                    CUDA_R_32F, CUDA_R_32F, CUDA_R_32F,
+                                    CUDA_R_32F, kIds, ids, &count));
+  EXPECT(count > 0 && count < kIds && ids[count] == kUnwritten);
+
+  int tileless = 0;
+  for (int i = 0; i < count; ++i) {
+    cublasLtMatmulAlgo_t algo;
+    if (cublasLtMatmulAlgoInit(handle, CUBLAS_COMPUTE_32F, CUDA_R_32F,
+                               CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F,
+                               ids[i], &algo) != CUBLAS_STATUS_SUCCESS) {
+      continue;
+    }
+    size_t written = 0;
+    CHECK_LT(cublasLtMatmulAlgoCapGetAttribute(
+        &algo, CUBLASLT_ALGO_CAP_TILE_IDS, nullptr, 0, &written));
+    if (written != 0) {
+      continue;
+    }
+    int tile = kUnwritten;
+    CHECK_LT(cublasLtMatmulAlgoCapGetAttribute(
+        &algo, CUBLASLT_ALGO_CAP_TILE_IDS, &tile, sizeof(tile), &written));
+    EXPECT(written == 0 && tile == kUnwritten);
+    ++tileless;
+  }
+
+  cublasLtMatmulDescOpaque_t desc;
+  CHECK_LT(cublasLtMatmulDescInit(&desc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
+  const uint64_t filled = 0x7f7f7f7f7f7f7f7fULL;
+  uint64_t wide = filled;
+  if (cublasLtMatmulDescGetAttribute(&desc, CUBLASLT_MATMUL_DESC_TRANSA, &wide,
+                                     sizeof(wide), nullptr) !=
+      CUBLAS_STATUS_SUCCESS) {
+    EXPECT(wide == filled);
+  }
+  printf("unwritten buffers: passed (%d algorithms without tiles)\n",
+         tileless);
+  return 0;
+}
+
 int main() {
   cublasLtHandle_t handle = nullptr;
   CHECK_LT(cublasLtCreate(&handle));
@@ -60,6 +111,9 @@ int main() {
                 "CUBLAS_STATUS_SUCCESS") == 0);
   printf("cuBLASLt %zu, runtime %zu\n", cublasLtGetVersion(),
          cublasLtGetCudartVersion());
+  if (test_unwritten_buffers(handle) != 0) {
+    return 1;
+  }
 
   // Column-major D = alpha * A(m x k) * B(k x n) + beta * C + bias.
   constexpr int m = 64;

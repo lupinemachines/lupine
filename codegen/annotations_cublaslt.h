@@ -56,7 +56,7 @@ unsigned cublasLtDisableCpuInstructionsSetMask(unsigned mask);
  * @guard CUBLAS_VERSION >= 130100
  * @param emulationDesc SEND_ONLY NULLABLE
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
@@ -158,7 +158,7 @@ cublasStatus_t cublasLtMatmul(
 /**
  * @param algo SEND_ONLY DEREF
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
@@ -203,7 +203,7 @@ cublasStatus_t cublasLtMatmulAlgoCheckForStream(
 /**
  * @param algo SEND_ONLY DEREF
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
@@ -229,7 +229,7 @@ cublasLtMatmulAlgoConfigSetAttribute(cublasLtMatmulAlgo_t *algo,
  * @param Ddesc SEND_ONLY NULLABLE
  * @param preference SEND_ONLY NULLABLE
  * @param requestedAlgoCount SEND_ONLY
- * @param heuristicResultsArray RECV_ONLY LENGTH:requestedAlgoCount
+ * @param heuristicResultsArray SEND_RECV LENGTH:requestedAlgoCount
  * @param returnAlgoCount RECV_ONLY
  */
 cublasStatus_t cublasLtMatmulAlgoGetHeuristic(
@@ -250,7 +250,7 @@ cublasStatus_t cublasLtMatmulAlgoGetHeuristic(
  * @param Ddesc SEND_ONLY NULLABLE
  * @param preference SEND_ONLY NULLABLE
  * @param requestedAlgoCount SEND_ONLY
- * @param heuristicResultsArray RECV_ONLY LENGTH:requestedAlgoCount
+ * @param heuristicResultsArray SEND_RECV LENGTH:requestedAlgoCount
  * @param returnAlgoCount RECV_ONLY
  * @param stream SEND_ONLY
  */
@@ -271,7 +271,7 @@ cublasStatus_t cublasLtMatmulAlgoGetHeuristicForStream(
  * @param Ctype SEND_ONLY
  * @param Dtype SEND_ONLY
  * @param requestedAlgoCount SEND_ONLY
- * @param algoIdsArray RECV_ONLY LENGTH:requestedAlgoCount
+ * @param algoIdsArray SEND_RECV LENGTH:requestedAlgoCount
  * @param returnAlgoCount RECV_ONLY
  */
 cublasStatus_t cublasLtMatmulAlgoGetIds(
@@ -298,7 +298,7 @@ cublasStatus_t cublasLtMatmulAlgoInit(
 /**
  * @param matmulDesc SEND_ONLY NULLABLE
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
@@ -343,7 +343,7 @@ cublasStatus_t cublasLtMatmulDescSetAttribute(
 /**
  * @param pref SEND_ONLY NULLABLE
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
@@ -372,7 +372,7 @@ cublasLtMatmulPreferenceSetAttribute(cublasLtMatmulPreferenceOpaque_t *pref,
 /**
  * @param matLayout SEND_ONLY NULLABLE
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
@@ -425,7 +425,7 @@ cublasStatus_t cublasLtMatrixTransform(
 /**
  * @param transformDesc SEND_ONLY NULLABLE
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
