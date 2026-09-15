@@ -27,6 +27,19 @@ RUN cmake \
       -DLUPINE_PRECOMPILED_OPS=/opt/lupine-precompiled-ops \
       -P /opt/lupine/ops/precompile.cmake
 
+FROM cuda-sdk AS cudnn-headers
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG CUDA_VERSION
+
+# cuDNN ships outside the toolkit. Its headers come from the release series the
+# server image installs for this CUDA major.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends "libcudnn9-headers-cuda-${CUDA_VERSION%%.*}" \
+    && mkdir -p /opt/cudnn/include \
+    && cp -L /usr/include/*-linux-gnu/cudnn*.h /opt/cudnn/include/ \
+    && rm -rf /var/lib/apt/lists/*
+
 FROM ubuntu:${UBUNTU_VERSION} AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -38,6 +51,7 @@ ARG CUDA_VERSION
 # needs only API headers, link-time stubs, and the combined operation directory,
 # so CUDA and ROCm compiler SDKs never have to coexist here.
 COPY --from=cuda-sdk /usr/local/cuda/include/ /usr/local/cuda/include/
+COPY --from=cudnn-headers /opt/cudnn/include/ /usr/local/cuda/include/
 COPY --from=cuda-sdk /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so
 COPY --from=cuda-ops /opt/lupine-precompiled-ops/ /opt/lupine-precompiled-ops/
 COPY --from=rocm-sdk /opt/rocm/include/ /opt/rocm/include/
@@ -71,7 +85,7 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
 FROM builder AS client-build
 
 RUN cmake --build /opt/lupine/build --parallel \
-      --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_cublaslt_client lupine_cufft_client lupine_nvml_client lupine_hip_client
+      --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_cublaslt_client lupine_cufft_client lupine_cudnn_client lupine_nvml_client lupine_hip_client
 
 FROM builder AS server-build
 
@@ -91,7 +105,7 @@ ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
 LABEL org.opencontainers.image.title="lupine-client"
-LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, NVML, and HIP shims"
+LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, NVML, and HIP shims"
 LABEL org.opencontainers.image.source="https://github.com/lupinemachines/lupine"
 LABEL org.opencontainers.image.version="${CUDA_VERSION}-rocm-${ROCM_VERSION}-ubuntu${UBUNTU_VERSION}"
 
@@ -138,6 +152,7 @@ COPY --from=client-build /opt/lupine/build/libcudart.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcublas.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcublasLt.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcufft.so* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libcudnn.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1
 COPY --from=client-build /opt/lupine/build/libamdhip64.so.1 /opt/lupine/lib/libamdhip64.so.1
 
@@ -193,6 +208,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends /tmp/cuda-keyring.deb \
     && apt-get update \
     && apt-get install -y --no-install-recommends "cuda-compat-${cuda_series}" "cuda-cudart-${cuda_series}" "libcublas-${cuda_series}" "libcufft-${cuda_series}" \
+         "libcudnn9-cuda-${CUDA_VERSION%%.*}" \
     && cuda_series_dot="$(printf '%s' "${CUDA_VERSION}" | awk -F. '{print $1 "." $2}')" \
     && ln -sfn "cuda-${cuda_series_dot}" /usr/local/cuda \
     && if [ "$arch" = amd64 ]; then \

@@ -13,6 +13,9 @@
 #ifdef LUPINE_BUILD_CUFFT_BACKEND
 #include <cufftXt.h>
 #endif
+#ifdef LUPINE_BUILD_CUDNN_BACKEND
+#include <cudnn.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -1014,6 +1017,219 @@
   HANDLER(RPC_cufftXtSetCallbackSharedSize, handle_cufftXtSetCallbackSharedSize, rpc_backend::cufft) \
   HANDLER(RPC_cufftXtSetGPUs, handle_cufftXtSetGPUs, rpc_backend::cufft) \
   HANDLER(RPC_cufftXtSetWorkAreaPolicy, handle_cufftXtSetWorkAreaPolicy, rpc_backend::cufft)
+#define LUPINE_CUDNN_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cudnnGetErrorString, handle_cudnnGetErrorString, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendSetAttribute, handle_cudnnBackendSetAttribute, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendGetAttribute, handle_cudnnBackendGetAttribute, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnMultiHeadAttnForward, handle_cudnnMultiHeadAttnForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnMultiHeadAttnBackwardData, handle_cudnnMultiHeadAttnBackwardData, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCTCLoss, handle_cudnnCTCLoss, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCTCLossWorkspaceSize, handle_cudnnGetCTCLossWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetVersion, handle_cudnnGetVersion, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetMaxDeviceVersion, handle_cudnnGetMaxDeviceVersion, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCudartVersion, handle_cudnnGetCudartVersion, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetLastErrorString, handle_cudnnGetLastErrorString, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnQueryRuntimeError, handle_cudnnQueryRuntimeError, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetProperty, handle_cudnnGetProperty, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreate, handle_cudnnCreate, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroy, handle_cudnnDestroy, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetStream, handle_cudnnSetStream, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetStream, handle_cudnnGetStream, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGraphVersionCheck, handle_cudnnGraphVersionCheck, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendCreateDescriptor, handle_cudnnBackendCreateDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendDestroyDescriptor, handle_cudnnBackendDestroyDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendInitialize, handle_cudnnBackendInitialize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendFinalize, handle_cudnnBackendFinalize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendExecute, handle_cudnnBackendExecute, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateTensorDescriptor, handle_cudnnCreateTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetTensor4dDescriptor, handle_cudnnSetTensor4dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetTensor4dDescriptorEx, handle_cudnnSetTensor4dDescriptorEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetTensor4dDescriptor, handle_cudnnGetTensor4dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetTensorNdDescriptor, handle_cudnnSetTensorNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetTensorNdDescriptorEx, handle_cudnnSetTensorNdDescriptorEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetTensorNdDescriptor, handle_cudnnGetTensorNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetTensorSizeInBytes, handle_cudnnGetTensorSizeInBytes, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyTensorDescriptor, handle_cudnnDestroyTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnInitTransformDest, handle_cudnnInitTransformDest, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateTensorTransformDescriptor, handle_cudnnCreateTensorTransformDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetTensorTransformDescriptor, handle_cudnnSetTensorTransformDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetTensorTransformDescriptor, handle_cudnnGetTensorTransformDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyTensorTransformDescriptor, handle_cudnnDestroyTensorTransformDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnTransformTensor, handle_cudnnTransformTensor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnTransformTensorEx, handle_cudnnTransformTensorEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnAddTensor, handle_cudnnAddTensor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateOpTensorDescriptor, handle_cudnnCreateOpTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetOpTensorDescriptor, handle_cudnnSetOpTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetOpTensorDescriptor, handle_cudnnGetOpTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyOpTensorDescriptor, handle_cudnnDestroyOpTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnOpTensor, handle_cudnnOpTensor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateReduceTensorDescriptor, handle_cudnnCreateReduceTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetReduceTensorDescriptor, handle_cudnnSetReduceTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetReduceTensorDescriptor, handle_cudnnGetReduceTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyReduceTensorDescriptor, handle_cudnnDestroyReduceTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetReductionIndicesSize, handle_cudnnGetReductionIndicesSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetReductionWorkspaceSize, handle_cudnnGetReductionWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnReduceTensor, handle_cudnnReduceTensor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetTensor, handle_cudnnSetTensor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnScaleTensor, handle_cudnnScaleTensor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateFilterDescriptor, handle_cudnnCreateFilterDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetFilter4dDescriptor, handle_cudnnSetFilter4dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetFilter4dDescriptor, handle_cudnnGetFilter4dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetFilterNdDescriptor, handle_cudnnSetFilterNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetFilterNdDescriptor, handle_cudnnGetFilterNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetFilterSizeInBytes, handle_cudnnGetFilterSizeInBytes, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnTransformFilter, handle_cudnnTransformFilter, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyFilterDescriptor, handle_cudnnDestroyFilterDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSoftmaxForward, handle_cudnnSoftmaxForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreatePoolingDescriptor, handle_cudnnCreatePoolingDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetPooling2dDescriptor, handle_cudnnSetPooling2dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetPooling2dDescriptor, handle_cudnnGetPooling2dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetPoolingNdDescriptor, handle_cudnnSetPoolingNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetPoolingNdDescriptor, handle_cudnnGetPoolingNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetPoolingNdForwardOutputDim, handle_cudnnGetPoolingNdForwardOutputDim, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetPooling2dForwardOutputDim, handle_cudnnGetPooling2dForwardOutputDim, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyPoolingDescriptor, handle_cudnnDestroyPoolingDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnPoolingForward, handle_cudnnPoolingForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateActivationDescriptor, handle_cudnnCreateActivationDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetActivationDescriptor, handle_cudnnSetActivationDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetActivationDescriptor, handle_cudnnGetActivationDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetActivationDescriptorSwishBeta, handle_cudnnSetActivationDescriptorSwishBeta, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetActivationDescriptorSwishBeta, handle_cudnnGetActivationDescriptorSwishBeta, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyActivationDescriptor, handle_cudnnDestroyActivationDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnActivationForward, handle_cudnnActivationForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateLRNDescriptor, handle_cudnnCreateLRNDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetLRNDescriptor, handle_cudnnSetLRNDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetLRNDescriptor, handle_cudnnGetLRNDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyLRNDescriptor, handle_cudnnDestroyLRNDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnLRNCrossChannelForward, handle_cudnnLRNCrossChannelForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDivisiveNormalizationForward, handle_cudnnDivisiveNormalizationForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDeriveBNTensorDescriptor, handle_cudnnDeriveBNTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBatchNormalizationForwardInference, handle_cudnnBatchNormalizationForwardInference, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDeriveNormTensorDescriptor, handle_cudnnDeriveNormTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnNormalizationForwardInference, handle_cudnnNormalizationForwardInference, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateSpatialTransformerDescriptor, handle_cudnnCreateSpatialTransformerDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetSpatialTransformerNdDescriptor, handle_cudnnSetSpatialTransformerNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroySpatialTransformerDescriptor, handle_cudnnDestroySpatialTransformerDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSpatialTfGridGeneratorForward, handle_cudnnSpatialTfGridGeneratorForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSpatialTfSamplerForward, handle_cudnnSpatialTfSamplerForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateDropoutDescriptor, handle_cudnnCreateDropoutDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyDropoutDescriptor, handle_cudnnDestroyDropoutDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDropoutGetStatesSize, handle_cudnnDropoutGetStatesSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDropoutGetReserveSpaceSize, handle_cudnnDropoutGetReserveSpaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetDropoutDescriptor, handle_cudnnSetDropoutDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRestoreDropoutDescriptor, handle_cudnnRestoreDropoutDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetDropoutDescriptor, handle_cudnnGetDropoutDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDropoutForward, handle_cudnnDropoutForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnOpsVersionCheck, handle_cudnnOpsVersionCheck, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSoftmaxBackward, handle_cudnnSoftmaxBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnPoolingBackward, handle_cudnnPoolingBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnActivationBackward, handle_cudnnActivationBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnLRNCrossChannelBackward, handle_cudnnLRNCrossChannelBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDivisiveNormalizationBackward, handle_cudnnDivisiveNormalizationBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetBatchNormalizationForwardTrainingExWorkspaceSize, handle_cudnnGetBatchNormalizationForwardTrainingExWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetBatchNormalizationBackwardExWorkspaceSize, handle_cudnnGetBatchNormalizationBackwardExWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetBatchNormalizationTrainingExReserveSpaceSize, handle_cudnnGetBatchNormalizationTrainingExReserveSpaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBatchNormalizationForwardTraining, handle_cudnnBatchNormalizationForwardTraining, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBatchNormalizationForwardTrainingEx, handle_cudnnBatchNormalizationForwardTrainingEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBatchNormalizationBackward, handle_cudnnBatchNormalizationBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBatchNormalizationBackwardEx, handle_cudnnBatchNormalizationBackwardEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetNormalizationForwardTrainingWorkspaceSize, handle_cudnnGetNormalizationForwardTrainingWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetNormalizationBackwardWorkspaceSize, handle_cudnnGetNormalizationBackwardWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetNormalizationTrainingReserveSpaceSize, handle_cudnnGetNormalizationTrainingReserveSpaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnNormalizationForwardTraining, handle_cudnnNormalizationForwardTraining, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnNormalizationBackward, handle_cudnnNormalizationBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSpatialTfGridGeneratorBackward, handle_cudnnSpatialTfGridGeneratorBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSpatialTfSamplerBackward, handle_cudnnSpatialTfSamplerBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDropoutBackward, handle_cudnnDropoutBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateConvolutionDescriptor, handle_cudnnCreateConvolutionDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyConvolutionDescriptor, handle_cudnnDestroyConvolutionDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetConvolutionMathType, handle_cudnnSetConvolutionMathType, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionMathType, handle_cudnnGetConvolutionMathType, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetConvolutionGroupCount, handle_cudnnSetConvolutionGroupCount, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionGroupCount, handle_cudnnGetConvolutionGroupCount, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetConvolutionReorderType, handle_cudnnSetConvolutionReorderType, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionReorderType, handle_cudnnGetConvolutionReorderType, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetConvolution2dDescriptor, handle_cudnnSetConvolution2dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolution2dDescriptor, handle_cudnnGetConvolution2dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetConvolutionNdDescriptor, handle_cudnnSetConvolutionNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionNdDescriptor, handle_cudnnGetConvolutionNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolution2dForwardOutputDim, handle_cudnnGetConvolution2dForwardOutputDim, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionNdForwardOutputDim, handle_cudnnGetConvolutionNdForwardOutputDim, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionForwardAlgorithmMaxCount, handle_cudnnGetConvolutionForwardAlgorithmMaxCount, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionForwardAlgorithm_v7, handle_cudnnGetConvolutionForwardAlgorithm_v7, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFindConvolutionForwardAlgorithm, handle_cudnnFindConvolutionForwardAlgorithm, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFindConvolutionForwardAlgorithmEx, handle_cudnnFindConvolutionForwardAlgorithmEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnIm2Col, handle_cudnnIm2Col, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnReorderFilterAndBias, handle_cudnnReorderFilterAndBias, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionForwardWorkspaceSize, handle_cudnnGetConvolutionForwardWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnConvolutionForward, handle_cudnnConvolutionForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnConvolutionBiasActivationForward, handle_cudnnConvolutionBiasActivationForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionBackwardDataAlgorithmMaxCount, handle_cudnnGetConvolutionBackwardDataAlgorithmMaxCount, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFindConvolutionBackwardDataAlgorithm, handle_cudnnFindConvolutionBackwardDataAlgorithm, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFindConvolutionBackwardDataAlgorithmEx, handle_cudnnFindConvolutionBackwardDataAlgorithmEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionBackwardDataAlgorithm_v7, handle_cudnnGetConvolutionBackwardDataAlgorithm_v7, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionBackwardDataWorkspaceSize, handle_cudnnGetConvolutionBackwardDataWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnConvolutionBackwardData, handle_cudnnConvolutionBackwardData, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetFoldedConvBackwardDataDescriptors, handle_cudnnGetFoldedConvBackwardDataDescriptors, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCnnVersionCheck, handle_cudnnCnnVersionCheck, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionBackwardFilterAlgorithmMaxCount, handle_cudnnGetConvolutionBackwardFilterAlgorithmMaxCount, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFindConvolutionBackwardFilterAlgorithm, handle_cudnnFindConvolutionBackwardFilterAlgorithm, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFindConvolutionBackwardFilterAlgorithmEx, handle_cudnnFindConvolutionBackwardFilterAlgorithmEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionBackwardFilterAlgorithm_v7, handle_cudnnGetConvolutionBackwardFilterAlgorithm_v7, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionBackwardFilterWorkspaceSize, handle_cudnnGetConvolutionBackwardFilterWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnConvolutionBackwardFilter, handle_cudnnConvolutionBackwardFilter, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnConvolutionBackwardBias, handle_cudnnConvolutionBackwardBias, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateFusedOpsConstParamPack, handle_cudnnCreateFusedOpsConstParamPack, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyFusedOpsConstParamPack, handle_cudnnDestroyFusedOpsConstParamPack, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateFusedOpsVariantParamPack, handle_cudnnCreateFusedOpsVariantParamPack, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyFusedOpsVariantParamPack, handle_cudnnDestroyFusedOpsVariantParamPack, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateFusedOpsPlan, handle_cudnnCreateFusedOpsPlan, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyFusedOpsPlan, handle_cudnnDestroyFusedOpsPlan, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnMakeFusedOpsPlan, handle_cudnnMakeFusedOpsPlan, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFusedOpsExecute, handle_cudnnFusedOpsExecute, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateRNNDescriptor, handle_cudnnCreateRNNDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyRNNDescriptor, handle_cudnnDestroyRNNDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetRNNDescriptor_v8, handle_cudnnSetRNNDescriptor_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetRNNDescriptor_v8, handle_cudnnGetRNNDescriptor_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNSetClip_v8, handle_cudnnRNNSetClip_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNSetClip_v9, handle_cudnnRNNSetClip_v9, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNGetClip_v8, handle_cudnnRNNGetClip_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNGetClip_v9, handle_cudnnRNNGetClip_v9, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBuildRNNDynamic, handle_cudnnBuildRNNDynamic, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetRNNTempSpaceSizes, handle_cudnnGetRNNTempSpaceSizes, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetRNNWeightSpaceSize, handle_cudnnGetRNNWeightSpaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetRNNWeightParams, handle_cudnnGetRNNWeightParams, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateRNNDataDescriptor, handle_cudnnCreateRNNDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyRNNDataDescriptor, handle_cudnnDestroyRNNDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetRNNDataDescriptor, handle_cudnnSetRNNDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetRNNDataDescriptor, handle_cudnnGetRNNDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNForward, handle_cudnnRNNForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateSeqDataDescriptor, handle_cudnnCreateSeqDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroySeqDataDescriptor, handle_cudnnDestroySeqDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetSeqDataDescriptor, handle_cudnnSetSeqDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetSeqDataDescriptor, handle_cudnnGetSeqDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateAttnDescriptor, handle_cudnnCreateAttnDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyAttnDescriptor, handle_cudnnDestroyAttnDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetAttnDescriptor, handle_cudnnSetAttnDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetAttnDescriptor, handle_cudnnGetAttnDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetMultiHeadAttnBuffers, handle_cudnnGetMultiHeadAttnBuffers, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetMultiHeadAttnWeights, handle_cudnnGetMultiHeadAttnWeights, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnAdvVersionCheck, handle_cudnnAdvVersionCheck, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNBackwardData_v8, handle_cudnnRNNBackwardData_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNBackwardWeights_v8, handle_cudnnRNNBackwardWeights_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnMultiHeadAttnBackwardWeights, handle_cudnnMultiHeadAttnBackwardWeights, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateCTCLossDescriptor, handle_cudnnCreateCTCLossDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetCTCLossDescriptor, handle_cudnnSetCTCLossDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetCTCLossDescriptorEx, handle_cudnnSetCTCLossDescriptorEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetCTCLossDescriptor_v8, handle_cudnnSetCTCLossDescriptor_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetCTCLossDescriptor_v9, handle_cudnnSetCTCLossDescriptor_v9, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCTCLossDescriptor, handle_cudnnGetCTCLossDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCTCLossDescriptorEx, handle_cudnnGetCTCLossDescriptorEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCTCLossDescriptor_v8, handle_cudnnGetCTCLossDescriptor_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCTCLossDescriptor_v9, handle_cudnnGetCTCLossDescriptor_v9, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyCTCLossDescriptor, handle_cudnnDestroyCTCLossDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCTCLoss_v8, handle_cudnnCTCLoss_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCTCLossWorkspaceSize_v8, handle_cudnnGetCTCLossWorkspaceSize_v8, rpc_backend::cudnn)
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
@@ -2916,6 +3132,82 @@ LUPINE_DECLARE_HANDLER(RPC_cufftSetPlanPropertyInt64,
                        handle_cufftSetPlanPropertyInt64, rpc_backend::cufft)
 #endif
 #endif
+#ifdef LUPINE_BUILD_CUDNN_BACKEND
+LUPINE_CUDNN_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if CUDNN_VERSION >= 92300
+LUPINE_DECLARE_HANDLER(RPC_cudnnGetExecutionPlanWorkspaceSize,
+                       handle_cudnnGetExecutionPlanWorkspaceSize,
+                       rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 90500
+LUPINE_DECLARE_HANDLER(RPC_cudnnBackendPopulateCudaGraph,
+                       handle_cudnnBackendPopulateCudaGraph, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 90500
+LUPINE_DECLARE_HANDLER(RPC_cudnnBackendUpdateCudaGraph,
+                       handle_cudnnBackendUpdateCudaGraph, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92200
+LUPINE_DECLARE_HANDLER(RPC_cudnnSubquadraticOpsVersionCheck,
+                       handle_cudnnSubquadraticOpsVersionCheck,
+                       rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92200
+LUPINE_DECLARE_HANDLER(RPC_cudnnCausalConv1dForward,
+                       handle_cudnnCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92200
+LUPINE_DECLARE_HANDLER(RPC_cudnnCausalConv1dBackward,
+                       handle_cudnnCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+LUPINE_DECLARE_HANDLER(RPC_cudnnCausalConv1dNwhForward,
+                       handle_cudnnCausalConv1dNwhForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+LUPINE_DECLARE_HANDLER(RPC_cudnnCausalConv1dNwhBackward,
+                       handle_cudnnCausalConv1dNwhBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+LUPINE_DECLARE_HANDLER(RPC_cudnnB2BCausalConv1dForward,
+                       handle_cudnnB2BCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+LUPINE_DECLARE_HANDLER(RPC_cudnnB2BCausalConv1dBackward,
+                       handle_cudnnB2BCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnFFTCausalConv1dForward,
+                       handle_cudnnFFTCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnFFTCausalConv1dBackward,
+                       handle_cudnnFFTCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnLongFFTCausalConv1dGetBufferSizes,
+                       handle_cudnnLongFFTCausalConv1dGetBufferSizes,
+                       rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnLongFFTCausalConv1dForward,
+                       handle_cudnnLongFFTCausalConv1dForward,
+                       rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnLongFFTCausalConv1dBackward,
+                       handle_cudnnLongFFTCausalConv1dBackward,
+                       rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnGnnAggSimpleForward,
+                       handle_cudnnGnnAggSimpleForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnGnnAggSimpleBackward,
+                       handle_cudnnGnnAggSimpleBackward, rpc_backend::cudnn)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
@@ -4080,6 +4372,60 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_REGISTER_HANDLER(RPC_cufftSetPlanPropertyInt64, handle_cufftSetPlanPropertyInt64, rpc_backend::cufft)
 #endif
 #endif
+#ifdef LUPINE_BUILD_CUDNN_BACKEND
+      LUPINE_CUDNN_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if CUDNN_VERSION >= 92300
+      LUPINE_REGISTER_HANDLER(RPC_cudnnGetExecutionPlanWorkspaceSize, handle_cudnnGetExecutionPlanWorkspaceSize, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 90500
+      LUPINE_REGISTER_HANDLER(RPC_cudnnBackendPopulateCudaGraph, handle_cudnnBackendPopulateCudaGraph, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 90500
+      LUPINE_REGISTER_HANDLER(RPC_cudnnBackendUpdateCudaGraph, handle_cudnnBackendUpdateCudaGraph, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92200
+      LUPINE_REGISTER_HANDLER(RPC_cudnnSubquadraticOpsVersionCheck, handle_cudnnSubquadraticOpsVersionCheck, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92200
+      LUPINE_REGISTER_HANDLER(RPC_cudnnCausalConv1dForward, handle_cudnnCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92200
+      LUPINE_REGISTER_HANDLER(RPC_cudnnCausalConv1dBackward, handle_cudnnCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+      LUPINE_REGISTER_HANDLER(RPC_cudnnCausalConv1dNwhForward, handle_cudnnCausalConv1dNwhForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+      LUPINE_REGISTER_HANDLER(RPC_cudnnCausalConv1dNwhBackward, handle_cudnnCausalConv1dNwhBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+      LUPINE_REGISTER_HANDLER(RPC_cudnnB2BCausalConv1dForward, handle_cudnnB2BCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+      LUPINE_REGISTER_HANDLER(RPC_cudnnB2BCausalConv1dBackward, handle_cudnnB2BCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnFFTCausalConv1dForward, handle_cudnnFFTCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnFFTCausalConv1dBackward, handle_cudnnFFTCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnLongFFTCausalConv1dGetBufferSizes, handle_cudnnLongFFTCausalConv1dGetBufferSizes, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnLongFFTCausalConv1dForward, handle_cudnnLongFFTCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnLongFFTCausalConv1dBackward, handle_cudnnLongFFTCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnGnnAggSimpleForward, handle_cudnnGnnAggSimpleForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnGnnAggSimpleBackward, handle_cudnnGnnAggSimpleBackward, rpc_backend::cudnn)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
@@ -4099,5 +4445,6 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #undef LUPINE_CUBLAS_RPC_HANDLERS
 #undef LUPINE_CUBLASLT_RPC_HANDLERS
 #undef LUPINE_CUFFT_RPC_HANDLERS
+#undef LUPINE_CUDNN_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS

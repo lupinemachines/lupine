@@ -573,6 +573,63 @@ if(LUPINE_BUILD_CUFFT)
     add_custom_target(lupine_cufft DEPENDS lupine_cufft_client)
 endif()
 
+if(LUPINE_BUILD_CUDA)
+    # cuDNN ships outside the toolkit, from its own packages or wheels. Point
+    # LUPINE_CUDNN_INCLUDE_DIR at a cuDNN 9 include directory when it is not
+    # beside the toolkit's headers; without one the shim is left out.
+    find_path(LUPINE_CUDNN_INCLUDE_DIR cudnn_version.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} ENV CUDNN_PATH
+        PATH_SUFFIXES include)
+    if(LUPINE_CUDNN_INCLUDE_DIR)
+        file(STRINGS ${LUPINE_CUDNN_INCLUDE_DIR}/cudnn_version.h
+             LUPINE_CUDNN_MAJOR_LINE REGEX "^#define CUDNN_MAJOR ")
+        string(REGEX REPLACE "^#define CUDNN_MAJOR ([0-9]+).*" "\\1"
+               LUPINE_CUDNN_SOVERSION "${LUPINE_CUDNN_MAJOR_LINE}")
+        if(LUPINE_CUDNN_SOVERSION GREATER_EQUAL 9)
+            set(LUPINE_BUILD_CUDNN ON)
+        endif()
+    endif()
+endif()
+
+if(LUPINE_BUILD_CUDNN)
+    # Named like NVIDIA's (libcudnn.so.9, cudnn64_9.dll) with the matching ELF
+    # version node. Consumers link only libcudnn, which exports the whole API;
+    # the operation sublibraries it loads are the server's concern. It runs on
+    # the runtime shim's current device, so it links both sibling shims.
+    configure_file(cudnn.exports.in cudnn.exports @ONLY)
+    add_library(lupine_cudnn_client SHARED cudnn_client.cpp)
+    target_include_directories(lupine_cudnn_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen
+        ${LUPINE_CUDNN_INCLUDE_DIR})
+    target_link_libraries(lupine_cudnn_client PRIVATE
+        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
+    set_target_properties(lupine_cudnn_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+    lupine_manylinux2014_client(lupine_cudnn_client)
+    if(WIN32)
+        target_compile_options(lupine_cudnn_client PRIVATE /wd4996)
+        set_target_properties(lupine_cudnn_client PROPERTIES
+            OUTPUT_NAME cudnn64_${LUPINE_CUDNN_SOVERSION}
+            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        target_compile_options(lupine_cudnn_client PRIVATE
+            -Wno-deprecated-declarations)
+        set_target_properties(lupine_cudnn_client PROPERTIES OUTPUT_NAME cudnn)
+        if(APPLE)
+            set_target_properties(lupine_cudnn_client PROPERTIES
+                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+        else()
+            target_link_options(lupine_cudnn_client PRIVATE
+                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/cudnn.exports")
+            set_target_properties(lupine_cudnn_client PROPERTIES
+                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+                VERSION ${LUPINE_CUDNN_SOVERSION}
+                SOVERSION ${LUPINE_CUDNN_SOVERSION})
+        endif()
+    endif()
+    add_custom_target(lupine_cudnn DEPENDS lupine_cudnn_client)
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -680,6 +737,16 @@ if(LUPINE_BUILD_SERVER)
             target_include_directories(lupine_cufft_server PRIVATE
                 ${CUDAToolkit_INCLUDE_DIRS})
             target_link_libraries(lupine_cufft_server PRIVATE
+                lupine_server_core ${CMAKE_DL_LIBS})
+        endif()
+
+        if(LUPINE_BUILD_CUDNN)
+            add_library(lupine_cudnn_server STATIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/cudnn_server.cpp)
+            lupine_internal_target(lupine_cudnn_server)
+            target_include_directories(lupine_cudnn_server PRIVATE
+                ${CUDAToolkit_INCLUDE_DIRS} ${LUPINE_CUDNN_INCLUDE_DIR})
+            target_link_libraries(lupine_cudnn_server PRIVATE
                 lupine_server_core ${CMAKE_DL_LIBS})
         endif()
     endif()
@@ -791,6 +858,14 @@ if(LUPINE_BUILD_SERVER)
                 LUPINE_BUILD_CUFFT_BACKEND)
             target_link_libraries(lupine_driver_server PRIVATE
                 lupine_cufft_server)
+        endif()
+        if(LUPINE_BUILD_CUDNN)
+            target_compile_definitions(lupine_driver_server PRIVATE
+                LUPINE_BUILD_CUDNN_BACKEND)
+            target_include_directories(lupine_driver_server PRIVATE
+                ${LUPINE_CUDNN_INCLUDE_DIR})
+            target_link_libraries(lupine_driver_server PRIVATE
+                lupine_cudnn_server)
         endif()
     endif()
     if(LUPINE_BUILD_NVML)
@@ -959,6 +1034,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "nm -D \"$<TARGET_FILE:lupine_cufft_client>\" | grep -q cufftPlanMany && nm -D \"$<TARGET_FILE:lupine_cufft_client>\" | grep -q cufftExecC2C && nm -D \"$<TARGET_FILE:lupine_cufft_client>\" | grep -q cufftXtMemcpy")
     endif()
 
+    if(TARGET lupine_cudnn_client)
+        add_test(NAME cudnn_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_cudnn_client>\" | grep -q cudnnConvolutionForward && nm -D \"$<TARGET_FILE:lupine_cudnn_client>\" | grep -q cudnnBackendSetAttribute && nm -D \"$<TARGET_FILE:lupine_cudnn_client>\" | grep -q cudnnMultiHeadAttnForward")
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -981,6 +1062,10 @@ endif()
 if(TARGET lupine_cufft_client)
     message(STATUS
         "Building cuFFT client: lupine_cufft_client (libcufft.so.${LUPINE_CUFFT_SOVERSION})")
+endif()
+if(TARGET lupine_cudnn_client)
+    message(STATUS
+        "Building cuDNN client: lupine_cudnn_client (libcudnn.so.${LUPINE_CUDNN_SOVERSION})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS

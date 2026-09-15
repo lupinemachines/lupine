@@ -28,6 +28,9 @@ CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 NVCC="${NVCC:-$CUDA_HOME/bin/nvcc}"
 CUDA_SAMPLES_ARCH="${CUDA_SAMPLES_ARCH:-}"
+# cuDNN ships outside the toolkit: a directory with its include/ and lib/, such
+# as an nvidia-cudnn wheel's nvidia/cudnn.
+CUDNN_HOME="${CUDNN_HOME:-}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 BUILD_TESTS="${BUILD_TESTS:-1}"
 if [[ -n "${BUILD_DIR:-}" ]]; then
@@ -123,12 +126,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
+cudnn_args=()
+if grep -q '#include <cudnn.h>' "$src"; then
+  cudnn_lib=""
+  if [[ -n "$CUDNN_HOME" ]]; then
+    cudnn_lib="$(ls "$CUDNN_HOME"/lib/libcudnn.so.[0-9]* 2>/dev/null | head -n 1 || true)"
+  fi
+  if [[ -z "$cudnn_lib" ]]; then
+    echo "SKIP: $name needs cuDNN; set CUDNN_HOME"
+    exit 0
+  fi
+  cudnn_args=(-I"$CUDNN_HOME/include" -L"$CUDNN_HOME/lib" -l:"$(basename "$cudnn_lib")")
+fi
+
 if [[ "$BUILD_TESTS" == "1" ]]; then
   mkdir -p "$BUILD_DIR"
   arch_arg="-arch=all"
   [[ -n "$CUDA_SAMPLES_ARCH" ]] && arch_arg="-arch=sm_$CUDA_SAMPLES_ARCH"
   "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$arch_arg" \
-    "$src" -o "$exe" -lcuda -lcublas -lcublasLt -lcufft -ldl -L"$CUDA_HOME/lib64/stubs"
+    "$src" -o "$exe" -lcuda -lcublas -lcublasLt -lcufft -ldl -L"$CUDA_HOME/lib64/stubs" \
+    "${cudnn_args[@]}"
 fi
 [[ -x "$exe" ]] || { echo "missing custom test executable: $exe" >&2; exit 1; }
 if [[ "$BUILD_ONLY" == "1" ]]; then
@@ -138,9 +155,9 @@ fi
 start_remote_server "$pidfile" "$server_log" "$port"
 if [[ -n "${RESULTS_DIR:-}" ]]; then
   mkdir -p "$RESULTS_DIR"
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
+  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${LD_LIBRARY_PATH:-}" \
     LUPINE_SERVER="$SERVER_HOST:$port" "$exe" 2>&1 | tee "$RESULTS_DIR/client.log"
 else
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
+  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${LD_LIBRARY_PATH:-}" \
     LUPINE_SERVER="$SERVER_HOST:$port" "$exe"
 fi

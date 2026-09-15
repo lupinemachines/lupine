@@ -667,6 +667,9 @@ jobs:
               /tmp/venv-pytorch/bin/pip install numpy >/dev/null
               /tmp/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch >/dev/null
               export PYTHON_BIN=/tmp/venv-pytorch/bin/python
+              # PyTorch brings a cuDNN wheel; the cuDNN custom test builds
+              # against it and runs it through the driver and runtime shims.
+              export CUDNN_HOME="$("$PYTHON_BIN" -c "import nvidia.cudnn; print(list(nvidia.cudnn.__path__)[0])")"
 
               cmake -S /src -B "$LUPINE_BUILD_DIR" \
                 -G Ninja \

@@ -91,6 +91,7 @@ jobs:
               test -e /opt/lupine/lib/libcublas.so
               test -e /opt/lupine/lib/libcublasLt.so
               test -e /opt/lupine/lib/libcufft.so
+              test -e /opt/lupine/lib/libcudnn.so
               test -e /opt/lupine/lib/libnvidia-ml.so.1
               test -e /opt/lupine/lib/libamdhip64.so.1
               test -x /usr/bin/nvidia-smi
@@ -134,6 +135,9 @@ jobs:
           # cuFFT's major is its own, not the toolkit's.
           cufft_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libcufft.so.[0-9]*')"
           docker cp "$container:$cufft_lib" "$out/$(basename "$cufft_lib")"
+          # So is cuDNN's.
+          cudnn_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libcudnn.so.[0-9]*')"
+          docker cp "$container:$cudnn_lib" "$out/$(basename "$cudnn_lib")"
           docker cp "$container:/opt/lupine/lib/libnvidia-ml.so.1" "$out/libnvidia-ml.so.1"
           docker cp "$container:/opt/lupine/lib/libamdhip64.so.1" "$out/libamdhip64.so.1"
           cp "$out/libcuda.so.1" "$out/libcuda.so"
@@ -141,9 +145,10 @@ jobs:
           cp "$out/libcublas.so.${cuda_major}" "$out/libcublas.so"
           cp "$out/libcublasLt.so.${cuda_major}" "$out/libcublasLt.so"
           cp "$out/$(basename "$cufft_lib")" "$out/libcufft.so"
+          cp "$out/$(basename "$cudnn_lib")" "$out/libcudnn.so"
           cp "$out/libnvidia-ml.so.1" "$out/libnvidia-ml.so"
           cp "$out/libamdhip64.so.1" "$out/libamdhip64.so"
-          (cd "$out" && sha256sum libcuda.so libcuda.so.1 libcudart.so "$runtime_soname" libcublas.so "libcublas.so.${cuda_major}" libcublasLt.so "libcublasLt.so.${cuda_major}" libcufft.so "$(basename "$cufft_lib")" libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
+          (cd "$out" && sha256sum libcuda.so libcuda.so.1 libcudart.so "$runtime_soname" libcublas.so "libcublas.so.${cuda_major}" libcublasLt.so "libcublasLt.so.${cuda_major}" libcufft.so "$(basename "$cufft_lib")" libcudnn.so "$(basename "$cudnn_lib")" libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
           (cd "$out" && zip -r "../$(basename "$archive")" .)
 
       - name: Collect server artifacts
