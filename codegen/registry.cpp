@@ -19,6 +19,9 @@
 #ifdef LUPINE_BUILD_CURAND_BACKEND
 #include <curand.h>
 #endif
+#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
+#include <cusparse.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -1314,6 +1317,400 @@
   HANDLER(RPC_curandGeneratePoisson, handle_curandGeneratePoisson, rpc_backend::curand) \
   HANDLER(RPC_curandGeneratePoissonMethod, handle_curandGeneratePoissonMethod, rpc_backend::curand) \
   HANDLER(RPC_curandGenerateSeeds, handle_curandGenerateSeeds, rpc_backend::curand)
+#define LUPINE_CUSPARSE_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cusparseGetErrorName, handle_cusparseGetErrorName, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetErrorString, handle_cusparseGetErrorString, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreate, handle_cusparseCreate, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroy, handle_cusparseDestroy, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetVersion, handle_cusparseGetVersion, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetProperty, handle_cusparseGetProperty, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSetStream, handle_cusparseSetStream, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetStream, handle_cusparseGetStream, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetPointerMode, handle_cusparseGetPointerMode, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSetPointerMode, handle_cusparseSetPointerMode, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseLoggerOpenFile, handle_cusparseLoggerOpenFile, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseLoggerSetLevel, handle_cusparseLoggerSetLevel, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseLoggerSetMask, handle_cusparseLoggerSetMask, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseLoggerForceDisable, handle_cusparseLoggerForceDisable, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateMatDescr, handle_cusparseCreateMatDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyMatDescr, handle_cusparseDestroyMatDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSetMatType, handle_cusparseSetMatType, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetMatType, handle_cusparseGetMatType, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSetMatFillMode, handle_cusparseSetMatFillMode, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetMatFillMode, handle_cusparseGetMatFillMode, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSetMatDiagType, handle_cusparseSetMatDiagType, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetMatDiagType, handle_cusparseGetMatDiagType, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSetMatIndexBase, handle_cusparseSetMatIndexBase, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetMatIndexBase, handle_cusparseGetMatIndexBase, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateCsric02Info, handle_cusparseCreateCsric02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyCsric02Info, handle_cusparseDestroyCsric02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateBsric02Info, handle_cusparseCreateBsric02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyBsric02Info, handle_cusparseDestroyBsric02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateCsrilu02Info, handle_cusparseCreateCsrilu02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyCsrilu02Info, handle_cusparseDestroyCsrilu02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateBsrilu02Info, handle_cusparseCreateBsrilu02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyBsrilu02Info, handle_cusparseDestroyBsrilu02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateBsrsv2Info, handle_cusparseCreateBsrsv2Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyBsrsv2Info, handle_cusparseDestroyBsrsv2Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateBsrsm2Info, handle_cusparseCreateBsrsm2Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyBsrsm2Info, handle_cusparseDestroyBsrsm2Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateCsru2csrInfo, handle_cusparseCreateCsru2csrInfo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyCsru2csrInfo, handle_cusparseDestroyCsru2csrInfo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateColorInfo, handle_cusparseCreateColorInfo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyColorInfo, handle_cusparseDestroyColorInfo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreatePruneInfo, handle_cusparseCreatePruneInfo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyPruneInfo, handle_cusparseDestroyPruneInfo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgemvi, handle_cusparseSgemvi, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgemvi_bufferSize, handle_cusparseSgemvi_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgemvi, handle_cusparseDgemvi, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgemvi_bufferSize, handle_cusparseDgemvi_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgemvi, handle_cusparseCgemvi, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgemvi_bufferSize, handle_cusparseCgemvi_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgemvi, handle_cusparseZgemvi, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgemvi_bufferSize, handle_cusparseZgemvi_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrmv, handle_cusparseSbsrmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrmv, handle_cusparseDbsrmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrmv, handle_cusparseCbsrmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrmv, handle_cusparseZbsrmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrxmv, handle_cusparseSbsrxmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrxmv, handle_cusparseDbsrxmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrxmv, handle_cusparseCbsrxmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrxmv, handle_cusparseZbsrxmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXbsrsv2_zeroPivot, handle_cusparseXbsrsv2_zeroPivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrsv2_bufferSize, handle_cusparseSbsrsv2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrsv2_bufferSize, handle_cusparseDbsrsv2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrsv2_bufferSize, handle_cusparseCbsrsv2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrsv2_bufferSize, handle_cusparseZbsrsv2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrsv2_analysis, handle_cusparseSbsrsv2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrsv2_analysis, handle_cusparseDbsrsv2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrsv2_analysis, handle_cusparseCbsrsv2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrsv2_analysis, handle_cusparseZbsrsv2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrsv2_solve, handle_cusparseSbsrsv2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrsv2_solve, handle_cusparseDbsrsv2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrsv2_solve, handle_cusparseCbsrsv2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrsv2_solve, handle_cusparseZbsrsv2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrmm, handle_cusparseSbsrmm, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrmm, handle_cusparseDbsrmm, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrmm, handle_cusparseCbsrmm, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrmm, handle_cusparseZbsrmm, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXbsrsm2_zeroPivot, handle_cusparseXbsrsm2_zeroPivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrsm2_bufferSize, handle_cusparseSbsrsm2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrsm2_bufferSize, handle_cusparseDbsrsm2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrsm2_bufferSize, handle_cusparseCbsrsm2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrsm2_bufferSize, handle_cusparseZbsrsm2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrsm2_analysis, handle_cusparseSbsrsm2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrsm2_analysis, handle_cusparseDbsrsm2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrsm2_analysis, handle_cusparseCbsrsm2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrsm2_analysis, handle_cusparseZbsrsm2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrsm2_solve, handle_cusparseSbsrsm2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrsm2_solve, handle_cusparseDbsrsm2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrsm2_solve, handle_cusparseCbsrsm2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrsm2_solve, handle_cusparseZbsrsm2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrilu02_numericBoost, handle_cusparseScsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrilu02_numericBoost, handle_cusparseDcsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrilu02_numericBoost, handle_cusparseCcsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrilu02_numericBoost, handle_cusparseZcsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsrilu02_zeroPivot, handle_cusparseXcsrilu02_zeroPivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrilu02_bufferSize, handle_cusparseScsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrilu02_bufferSize, handle_cusparseDcsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrilu02_bufferSize, handle_cusparseCcsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrilu02_bufferSize, handle_cusparseZcsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrilu02_analysis, handle_cusparseScsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrilu02_analysis, handle_cusparseDcsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrilu02_analysis, handle_cusparseCcsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrilu02_analysis, handle_cusparseZcsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrilu02, handle_cusparseScsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrilu02, handle_cusparseDcsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrilu02, handle_cusparseCcsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrilu02, handle_cusparseZcsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrilu02_numericBoost, handle_cusparseSbsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrilu02_numericBoost, handle_cusparseDbsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrilu02_numericBoost, handle_cusparseCbsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrilu02_numericBoost, handle_cusparseZbsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXbsrilu02_zeroPivot, handle_cusparseXbsrilu02_zeroPivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrilu02_bufferSize, handle_cusparseSbsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrilu02_bufferSize, handle_cusparseDbsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrilu02_bufferSize, handle_cusparseCbsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrilu02_bufferSize, handle_cusparseZbsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrilu02_analysis, handle_cusparseSbsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrilu02_analysis, handle_cusparseDbsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrilu02_analysis, handle_cusparseCbsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrilu02_analysis, handle_cusparseZbsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrilu02, handle_cusparseSbsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrilu02, handle_cusparseDbsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrilu02, handle_cusparseCbsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrilu02, handle_cusparseZbsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsric02_zeroPivot, handle_cusparseXcsric02_zeroPivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsric02_bufferSize, handle_cusparseScsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsric02_bufferSize, handle_cusparseDcsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsric02_bufferSize, handle_cusparseCcsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsric02_bufferSize, handle_cusparseZcsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsric02_analysis, handle_cusparseScsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsric02_analysis, handle_cusparseDcsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsric02_analysis, handle_cusparseCcsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsric02_analysis, handle_cusparseZcsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsric02, handle_cusparseScsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsric02, handle_cusparseDcsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsric02, handle_cusparseCcsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsric02, handle_cusparseZcsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXbsric02_zeroPivot, handle_cusparseXbsric02_zeroPivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsric02_bufferSize, handle_cusparseSbsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsric02_bufferSize, handle_cusparseDbsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsric02_bufferSize, handle_cusparseCbsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsric02_bufferSize, handle_cusparseZbsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsric02_analysis, handle_cusparseSbsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsric02_analysis, handle_cusparseDbsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsric02_analysis, handle_cusparseCbsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsric02_analysis, handle_cusparseZbsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsric02, handle_cusparseSbsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsric02, handle_cusparseDbsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsric02, handle_cusparseCbsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsric02, handle_cusparseZbsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsv2_bufferSizeExt, handle_cusparseSgtsv2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsv2_bufferSizeExt, handle_cusparseDgtsv2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsv2_bufferSizeExt, handle_cusparseCgtsv2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsv2_bufferSizeExt, handle_cusparseZgtsv2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsv2, handle_cusparseSgtsv2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsv2, handle_cusparseDgtsv2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsv2, handle_cusparseCgtsv2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsv2, handle_cusparseZgtsv2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsv2_nopivot_bufferSizeExt, handle_cusparseSgtsv2_nopivot_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsv2_nopivot_bufferSizeExt, handle_cusparseDgtsv2_nopivot_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsv2_nopivot_bufferSizeExt, handle_cusparseCgtsv2_nopivot_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsv2_nopivot_bufferSizeExt, handle_cusparseZgtsv2_nopivot_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsv2_nopivot, handle_cusparseSgtsv2_nopivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsv2_nopivot, handle_cusparseDgtsv2_nopivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsv2_nopivot, handle_cusparseCgtsv2_nopivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsv2_nopivot, handle_cusparseZgtsv2_nopivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsv2StridedBatch_bufferSizeExt, handle_cusparseSgtsv2StridedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsv2StridedBatch_bufferSizeExt, handle_cusparseDgtsv2StridedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsv2StridedBatch_bufferSizeExt, handle_cusparseCgtsv2StridedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsv2StridedBatch_bufferSizeExt, handle_cusparseZgtsv2StridedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsv2StridedBatch, handle_cusparseSgtsv2StridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsv2StridedBatch, handle_cusparseDgtsv2StridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsv2StridedBatch, handle_cusparseCgtsv2StridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsv2StridedBatch, handle_cusparseZgtsv2StridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsvInterleavedBatch_bufferSizeExt, handle_cusparseSgtsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsvInterleavedBatch_bufferSizeExt, handle_cusparseDgtsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsvInterleavedBatch_bufferSizeExt, handle_cusparseCgtsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsvInterleavedBatch_bufferSizeExt, handle_cusparseZgtsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsvInterleavedBatch, handle_cusparseSgtsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsvInterleavedBatch, handle_cusparseDgtsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsvInterleavedBatch, handle_cusparseCgtsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsvInterleavedBatch, handle_cusparseZgtsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgpsvInterleavedBatch_bufferSizeExt, handle_cusparseSgpsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgpsvInterleavedBatch_bufferSizeExt, handle_cusparseDgpsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgpsvInterleavedBatch_bufferSizeExt, handle_cusparseCgpsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgpsvInterleavedBatch_bufferSizeExt, handle_cusparseZgpsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgpsvInterleavedBatch, handle_cusparseSgpsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgpsvInterleavedBatch, handle_cusparseDgpsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgpsvInterleavedBatch, handle_cusparseCgpsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgpsvInterleavedBatch, handle_cusparseZgpsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrgeam2_bufferSizeExt, handle_cusparseScsrgeam2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrgeam2_bufferSizeExt, handle_cusparseDcsrgeam2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrgeam2_bufferSizeExt, handle_cusparseCcsrgeam2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrgeam2_bufferSizeExt, handle_cusparseZcsrgeam2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsrgeam2Nnz, handle_cusparseXcsrgeam2Nnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrgeam2, handle_cusparseScsrgeam2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrgeam2, handle_cusparseDcsrgeam2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrgeam2, handle_cusparseCcsrgeam2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrgeam2, handle_cusparseZcsrgeam2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrcolor, handle_cusparseScsrcolor, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrcolor, handle_cusparseDcsrcolor, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrcolor, handle_cusparseCcsrcolor, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrcolor, handle_cusparseZcsrcolor, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSnnz, handle_cusparseSnnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnnz, handle_cusparseDnnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCnnz, handle_cusparseCnnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZnnz, handle_cusparseZnnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSnnz_compress, handle_cusparseSnnz_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnnz_compress, handle_cusparseDnnz_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCnnz_compress, handle_cusparseCnnz_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZnnz_compress, handle_cusparseZnnz_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsr2csr_compress, handle_cusparseScsr2csr_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsr2csr_compress, handle_cusparseDcsr2csr_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsr2csr_compress, handle_cusparseCcsr2csr_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsr2csr_compress, handle_cusparseZcsr2csr_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcoo2csr, handle_cusparseXcoo2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsr2coo, handle_cusparseXcsr2coo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsr2bsrNnz, handle_cusparseXcsr2bsrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsr2bsr, handle_cusparseScsr2bsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsr2bsr, handle_cusparseDcsr2bsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsr2bsr, handle_cusparseCcsr2bsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsr2bsr, handle_cusparseZcsr2bsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsr2csr, handle_cusparseSbsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsr2csr, handle_cusparseDbsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsr2csr, handle_cusparseCbsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsr2csr, handle_cusparseZbsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgebsr2gebsc_bufferSize, handle_cusparseSgebsr2gebsc_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgebsr2gebsc_bufferSize, handle_cusparseDgebsr2gebsc_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgebsr2gebsc_bufferSize, handle_cusparseCgebsr2gebsc_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgebsr2gebsc_bufferSize, handle_cusparseZgebsr2gebsc_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgebsr2gebsc, handle_cusparseSgebsr2gebsc, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgebsr2gebsc, handle_cusparseDgebsr2gebsc, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgebsr2gebsc, handle_cusparseCgebsr2gebsc, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgebsr2gebsc, handle_cusparseZgebsr2gebsc, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgebsr2csr, handle_cusparseSgebsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgebsr2csr, handle_cusparseDgebsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgebsr2csr, handle_cusparseCgebsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgebsr2csr, handle_cusparseZgebsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsr2gebsr_bufferSize, handle_cusparseScsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsr2gebsr_bufferSize, handle_cusparseDcsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsr2gebsr_bufferSize, handle_cusparseCcsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsr2gebsr_bufferSize, handle_cusparseZcsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsr2gebsrNnz, handle_cusparseXcsr2gebsrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsr2gebsr, handle_cusparseScsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsr2gebsr, handle_cusparseDcsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsr2gebsr, handle_cusparseCcsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsr2gebsr, handle_cusparseZcsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgebsr2gebsr_bufferSize, handle_cusparseSgebsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgebsr2gebsr_bufferSize, handle_cusparseDgebsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgebsr2gebsr_bufferSize, handle_cusparseCgebsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgebsr2gebsr_bufferSize, handle_cusparseZgebsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXgebsr2gebsrNnz, handle_cusparseXgebsr2gebsrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgebsr2gebsr, handle_cusparseSgebsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgebsr2gebsr, handle_cusparseDgebsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgebsr2gebsr, handle_cusparseCgebsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgebsr2gebsr, handle_cusparseZgebsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateIdentityPermutation, handle_cusparseCreateIdentityPermutation, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcoosort_bufferSizeExt, handle_cusparseXcoosort_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcoosortByRow, handle_cusparseXcoosortByRow, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcoosortByColumn, handle_cusparseXcoosortByColumn, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsrsort_bufferSizeExt, handle_cusparseXcsrsort_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsrsort, handle_cusparseXcsrsort, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcscsort_bufferSizeExt, handle_cusparseXcscsort_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcscsort, handle_cusparseXcscsort, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsru2csr_bufferSizeExt, handle_cusparseScsru2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsru2csr_bufferSizeExt, handle_cusparseDcsru2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsru2csr_bufferSizeExt, handle_cusparseCcsru2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsru2csr_bufferSizeExt, handle_cusparseZcsru2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsru2csr, handle_cusparseScsru2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsru2csr, handle_cusparseDcsru2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsru2csr, handle_cusparseCcsru2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsru2csr, handle_cusparseZcsru2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsr2csru, handle_cusparseScsr2csru, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsr2csru, handle_cusparseDcsr2csru, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsr2csru, handle_cusparseCcsr2csru, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsr2csru, handle_cusparseZcsr2csru, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneDense2csr_bufferSizeExt, handle_cusparseHpruneDense2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneDense2csr_bufferSizeExt, handle_cusparseSpruneDense2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneDense2csr_bufferSizeExt, handle_cusparseDpruneDense2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneDense2csrNnz, handle_cusparseHpruneDense2csrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneDense2csrNnz, handle_cusparseSpruneDense2csrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneDense2csrNnz, handle_cusparseDpruneDense2csrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneDense2csr, handle_cusparseHpruneDense2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneDense2csr, handle_cusparseSpruneDense2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneDense2csr, handle_cusparseDpruneDense2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneCsr2csr_bufferSizeExt, handle_cusparseHpruneCsr2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneCsr2csr_bufferSizeExt, handle_cusparseSpruneCsr2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneCsr2csr_bufferSizeExt, handle_cusparseDpruneCsr2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneCsr2csrNnz, handle_cusparseHpruneCsr2csrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneCsr2csrNnz, handle_cusparseSpruneCsr2csrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneCsr2csrNnz, handle_cusparseDpruneCsr2csrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneCsr2csr, handle_cusparseHpruneCsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneCsr2csr, handle_cusparseSpruneCsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneCsr2csr, handle_cusparseDpruneCsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneDense2csrByPercentage_bufferSizeExt, handle_cusparseHpruneDense2csrByPercentage_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneDense2csrByPercentage_bufferSizeExt, handle_cusparseSpruneDense2csrByPercentage_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneDense2csrByPercentage_bufferSizeExt, handle_cusparseDpruneDense2csrByPercentage_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneDense2csrNnzByPercentage, handle_cusparseHpruneDense2csrNnzByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneDense2csrNnzByPercentage, handle_cusparseSpruneDense2csrNnzByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneDense2csrNnzByPercentage, handle_cusparseDpruneDense2csrNnzByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneDense2csrByPercentage, handle_cusparseHpruneDense2csrByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneDense2csrByPercentage, handle_cusparseSpruneDense2csrByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneDense2csrByPercentage, handle_cusparseDpruneDense2csrByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneCsr2csrByPercentage_bufferSizeExt, handle_cusparseHpruneCsr2csrByPercentage_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneCsr2csrByPercentage_bufferSizeExt, handle_cusparseSpruneCsr2csrByPercentage_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneCsr2csrByPercentage_bufferSizeExt, handle_cusparseDpruneCsr2csrByPercentage_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneCsr2csrNnzByPercentage, handle_cusparseHpruneCsr2csrNnzByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneCsr2csrNnzByPercentage, handle_cusparseSpruneCsr2csrNnzByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneCsr2csrNnzByPercentage, handle_cusparseDpruneCsr2csrNnzByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneCsr2csrByPercentage, handle_cusparseHpruneCsr2csrByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneCsr2csrByPercentage, handle_cusparseSpruneCsr2csrByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneCsr2csrByPercentage, handle_cusparseDpruneCsr2csrByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCsr2cscEx2, handle_cusparseCsr2cscEx2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCsr2cscEx2_bufferSize, handle_cusparseCsr2cscEx2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateSpVec, handle_cusparseCreateSpVec, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroySpVec, handle_cusparseDestroySpVec, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpVecGet, handle_cusparseSpVecGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpVecGetIndexBase, handle_cusparseSpVecGetIndexBase, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpVecGetValues, handle_cusparseSpVecGetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpVecSetValues, handle_cusparseSpVecSetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateDnVec, handle_cusparseCreateDnVec, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyDnVec, handle_cusparseDestroyDnVec, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnVecGet, handle_cusparseDnVecGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnVecGetValues, handle_cusparseDnVecGetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnVecSetValues, handle_cusparseDnVecSetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroySpMat, handle_cusparseDestroySpMat, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatGetFormat, handle_cusparseSpMatGetFormat, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatGetIndexBase, handle_cusparseSpMatGetIndexBase, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatGetValues, handle_cusparseSpMatGetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatSetValues, handle_cusparseSpMatSetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatGetSize, handle_cusparseSpMatGetSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatGetStridedBatch, handle_cusparseSpMatGetStridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCooSetStridedBatch, handle_cusparseCooSetStridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCsrSetStridedBatch, handle_cusparseCsrSetStridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatGetAttribute, handle_cusparseSpMatGetAttribute, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatSetAttribute, handle_cusparseSpMatSetAttribute, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateCsr, handle_cusparseCreateCsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateCsc, handle_cusparseCreateCsc, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCsrGet, handle_cusparseCsrGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCscGet, handle_cusparseCscGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCsrSetPointers, handle_cusparseCsrSetPointers, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCscSetPointers, handle_cusparseCscSetPointers, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateCoo, handle_cusparseCreateCoo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCooGet, handle_cusparseCooGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCooSetPointers, handle_cusparseCooSetPointers, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateBlockedEll, handle_cusparseCreateBlockedEll, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseBlockedEllGet, handle_cusparseBlockedEllGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateDnMat, handle_cusparseCreateDnMat, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyDnMat, handle_cusparseDestroyDnMat, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnMatGet, handle_cusparseDnMatGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnMatGetValues, handle_cusparseDnMatGetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnMatSetValues, handle_cusparseDnMatSetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnMatSetStridedBatch, handle_cusparseDnMatSetStridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnMatGetStridedBatch, handle_cusparseDnMatGetStridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseAxpby, handle_cusparseAxpby, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGather, handle_cusparseGather, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScatter, handle_cusparseScatter, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseRot, handle_cusparseRot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpVV_bufferSize, handle_cusparseSpVV_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpVV, handle_cusparseSpVV, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSparseToDense_bufferSize, handle_cusparseSparseToDense_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSparseToDense, handle_cusparseSparseToDense, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDenseToSparse_bufferSize, handle_cusparseDenseToSparse_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDenseToSparse_analysis, handle_cusparseDenseToSparse_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDenseToSparse_convert, handle_cusparseDenseToSparse_convert, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMV, handle_cusparseSpMV, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMV_bufferSize, handle_cusparseSpMV_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSV_createDescr, handle_cusparseSpSV_createDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSV_destroyDescr, handle_cusparseSpSV_destroyDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSV_bufferSize, handle_cusparseSpSV_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSV_analysis, handle_cusparseSpSV_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSV_solve, handle_cusparseSpSV_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSM_createDescr, handle_cusparseSpSM_createDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSM_destroyDescr, handle_cusparseSpSM_destroyDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSM_bufferSize, handle_cusparseSpSM_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSM_analysis, handle_cusparseSpSM_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSM_solve, handle_cusparseSpSM_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMM_bufferSize, handle_cusparseSpMM_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMM_preprocess, handle_cusparseSpMM_preprocess, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMM, handle_cusparseSpMM, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMM_createDescr, handle_cusparseSpGEMM_createDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMM_destroyDescr, handle_cusparseSpGEMM_destroyDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMM_workEstimation, handle_cusparseSpGEMM_workEstimation, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMM_compute, handle_cusparseSpGEMM_compute, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMM_copy, handle_cusparseSpGEMM_copy, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMMreuse_workEstimation, handle_cusparseSpGEMMreuse_workEstimation, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMMreuse_nnz, handle_cusparseSpGEMMreuse_nnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMMreuse_copy, handle_cusparseSpGEMMreuse_copy, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMMreuse_compute, handle_cusparseSpGEMMreuse_compute, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSDDMM_bufferSize, handle_cusparseSDDMM_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSDDMM_preprocess, handle_cusparseSDDMM_preprocess, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSDDMM, handle_cusparseSDDMM, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMMOp_createPlan, handle_cusparseSpMMOp_createPlan, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMMOp, handle_cusparseSpMMOp, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMMOp_destroyPlan, handle_cusparseSpMMOp_destroyPlan, rpc_backend::cusparse)
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
@@ -3300,6 +3697,180 @@ LUPINE_DECLARE_HANDLER(RPC_cudnnGnnAggSimpleBackward,
 LUPINE_CURAND_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
 #endif
+#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
+LUPINE_CUSPARSE_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstSpVec,
+                       handle_cusparseCreateConstSpVec, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstSpVecGet, handle_cusparseConstSpVecGet,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstSpVecGetValues,
+                       handle_cusparseConstSpVecGetValues,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstDnVec,
+                       handle_cusparseCreateConstDnVec, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstDnVecGet, handle_cusparseConstDnVecGet,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstDnVecGetValues,
+                       handle_cusparseConstDnVecGetValues,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstSpMatGetValues,
+                       handle_cusparseConstSpMatGetValues,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusparseBsrSetStridedBatch,
+                       handle_cusparseBsrSetStridedBatch, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstCsr,
+                       handle_cusparseCreateConstCsr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstCsc,
+                       handle_cusparseCreateConstCsc, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstCsrGet, handle_cusparseConstCsrGet,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstCscGet, handle_cusparseConstCscGet,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateBsr, handle_cusparseCreateBsr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstBsr,
+                       handle_cusparseCreateConstBsr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstCoo,
+                       handle_cusparseCreateConstCoo, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstCooGet, handle_cusparseConstCooGet,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstBlockedEll,
+                       handle_cusparseCreateConstBlockedEll,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstBlockedEllGet,
+                       handle_cusparseConstBlockedEllGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateSlicedEll,
+                       handle_cusparseCreateSlicedEll, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12102
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstSlicedEll,
+                       handle_cusparseCreateConstSlicedEll,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstDnMat,
+                       handle_cusparseCreateConstDnMat, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstDnMatGet, handle_cusparseConstDnMatGet,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstDnMatGetValues,
+                       handle_cusparseConstDnMatGetValues,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12300
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMV_preprocess,
+                       handle_cusparseSpMV_preprocess, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp_bufferSize,
+                       handle_cusparseSpMVOp_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp_createDescr,
+                       handle_cusparseSpMVOp_createDescr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp_destroyDescr,
+                       handle_cusparseSpMVOp_destroyDescr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp_createPlan,
+                       handle_cusparseSpMVOp_createPlan, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp_destroyPlan,
+                       handle_cusparseSpMVOp_destroyPlan, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp_setGlobalUserData,
+                       handle_cusparseSpMVOp_setGlobalUserData,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp, handle_cusparseSpMVOp,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpSV_updateMatrix,
+                       handle_cusparseSpSV_updateMatrix, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12300
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpSM_updateMatrix,
+                       handle_cusparseSpSM_updateMatrix, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEMM_getNumProducts,
+                       handle_cusparseSpGEMM_getNumProducts,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEMM_estimateMemory,
+                       handle_cusparseSpGEMM_estimateMemory,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEAM_createDescr,
+                       handle_cusparseSpGEAM_createDescr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEAM_destroyDescr,
+                       handle_cusparseSpGEAM_destroyDescr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEAM_bufferSize,
+                       handle_cusparseSpGEAM_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEAM_nnz, handle_cusparseSpGEAM_nnz,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEAM, handle_cusparseSpGEAM,
+                       rpc_backend::cusparse)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
@@ -4525,6 +5096,129 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_CURAND_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
 #endif
+#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
+      LUPINE_CUSPARSE_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstSpVec, handle_cusparseCreateConstSpVec, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstSpVecGet, handle_cusparseConstSpVecGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstSpVecGetValues, handle_cusparseConstSpVecGetValues, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstDnVec, handle_cusparseCreateConstDnVec, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstDnVecGet, handle_cusparseConstDnVecGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstDnVecGetValues, handle_cusparseConstDnVecGetValues, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstSpMatGetValues, handle_cusparseConstSpMatGetValues, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusparseBsrSetStridedBatch, handle_cusparseBsrSetStridedBatch, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstCsr, handle_cusparseCreateConstCsr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstCsc, handle_cusparseCreateConstCsc, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstCsrGet, handle_cusparseConstCsrGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstCscGet, handle_cusparseConstCscGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateBsr, handle_cusparseCreateBsr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstBsr, handle_cusparseCreateConstBsr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstCoo, handle_cusparseCreateConstCoo, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstCooGet, handle_cusparseConstCooGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstBlockedEll, handle_cusparseCreateConstBlockedEll, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstBlockedEllGet, handle_cusparseConstBlockedEllGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateSlicedEll, handle_cusparseCreateSlicedEll, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12102
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstSlicedEll, handle_cusparseCreateConstSlicedEll, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstDnMat, handle_cusparseCreateConstDnMat, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstDnMatGet, handle_cusparseConstDnMatGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstDnMatGetValues, handle_cusparseConstDnMatGetValues, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12300
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMV_preprocess, handle_cusparseSpMV_preprocess, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp_bufferSize, handle_cusparseSpMVOp_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp_createDescr, handle_cusparseSpMVOp_createDescr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp_destroyDescr, handle_cusparseSpMVOp_destroyDescr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp_createPlan, handle_cusparseSpMVOp_createPlan, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp_destroyPlan, handle_cusparseSpMVOp_destroyPlan, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp_setGlobalUserData, handle_cusparseSpMVOp_setGlobalUserData, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp, handle_cusparseSpMVOp, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpSV_updateMatrix, handle_cusparseSpSV_updateMatrix, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12300
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpSM_updateMatrix, handle_cusparseSpSM_updateMatrix, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEMM_getNumProducts, handle_cusparseSpGEMM_getNumProducts, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEMM_estimateMemory, handle_cusparseSpGEMM_estimateMemory, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEAM_createDescr, handle_cusparseSpGEAM_createDescr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEAM_destroyDescr, handle_cusparseSpGEAM_destroyDescr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEAM_bufferSize, handle_cusparseSpGEAM_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEAM_nnz, handle_cusparseSpGEAM_nnz, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEAM, handle_cusparseSpGEAM, rpc_backend::cusparse)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
@@ -4546,5 +5240,6 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #undef LUPINE_CUFFT_RPC_HANDLERS
 #undef LUPINE_CUDNN_RPC_HANDLERS
 #undef LUPINE_CURAND_RPC_HANDLERS
+#undef LUPINE_CUSPARSE_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS

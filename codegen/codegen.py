@@ -258,6 +258,9 @@ REGISTRY_CPP_TEMPLATE = Template(
 #ifdef LUPINE_BUILD_CURAND_BACKEND
 #include <curand.h>
 #endif
+#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
+#include <cusparse.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -275,6 +278,8 @@ $cufft_registry_entries
 $cudnn_registry_entries
 #define LUPINE_CURAND_RPC_HANDLERS(HANDLER) \
 $curand_registry_entries
+#define LUPINE_CUSPARSE_RPC_HANDLERS(HANDLER) \
+$cusparse_registry_entries
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
 $nvml_registry_entries
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
@@ -308,6 +313,10 @@ $cudnn_guarded_declarations
 #ifdef LUPINE_BUILD_CURAND_BACKEND
 LUPINE_CURAND_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $curand_guarded_declarations
+#endif
+#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
+LUPINE_CUSPARSE_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$cusparse_guarded_declarations
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -352,6 +361,10 @@ $cudnn_guarded_handlers
       LUPINE_CURAND_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $curand_guarded_handlers
 #endif
+#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
+      LUPINE_CUSPARSE_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$cusparse_guarded_handlers
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvml_guarded_handlers
@@ -373,6 +386,7 @@ $hip_guarded_handlers
 #undef LUPINE_CUFFT_RPC_HANDLERS
 #undef LUPINE_CUDNN_RPC_HANDLERS
 #undef LUPINE_CURAND_RPC_HANDLERS
+#undef LUPINE_CUSPARSE_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
 '''
@@ -400,6 +414,7 @@ SERVER_BACKENDS = {
     "CUFFT": "rpc_backend::cufft",
     "CUDNN": "rpc_backend::cudnn",
     "CURAND": "rpc_backend::curand",
+    "CUSPARSE": "rpc_backend::cusparse",
     "NVML": "rpc_backend::nvml",
     "HIP": "rpc_backend::hip",
 }
@@ -548,6 +563,15 @@ CURAND = Backend(
     not_supported="CURAND_STATUS_ARCH_MISMATCH",
 )
 
+CUSPARSE = Backend(
+    result="cusparseStatus_t",
+    invalid_argument="CUSPARSE_STATUS_INVALID_VALUE",
+    device_routing_kind="DEVICE",
+    symbol_lookup="cusparse_symbol",
+    guard_null_conn=True,
+    not_supported="CUSPARSE_STATUS_NOT_SUPPORTED",
+)
+
 ANNOTATION_FILES = {
     "cuda": "annotations_cuda.h",
     "cudart": "annotations_cudart.h",
@@ -556,6 +580,7 @@ ANNOTATION_FILES = {
     "cufft": "annotations_cufft.h",
     "cudnn": "annotations_cudnn.h",
     "curand": "annotations_curand.h",
+    "cusparse": "annotations_cusparse.h",
     "nvml": "annotations_nvml.h",
     "hip": "annotations_hip.h",
 }
@@ -574,6 +599,45 @@ def annotation_param(params: list[Parameter], name: str) -> Parameter:
         return next(p for p in params if p.name == name)
     except StopIteration:
         raise NotImplementedError(f"Parameter {name} not found")
+
+
+# Types whose value is an address or id in one server's library. cuSPARSE
+# descriptors, plans and infos route this way too, since many calls take one
+# without a handle beside it.
+LIBRARY_HANDLES = {
+    "cublasHandle_t",
+    "cublasXtHandle_t",
+    "cublasLtHandle_t",
+    "cufftHandle",
+    "curandGenerator_t",
+    "curandDiscreteDistribution_t",
+    "cusparseHandle_t",
+    "cusparseMatDescr_t",
+    "cusparseSpVecDescr_t",
+    "cusparseConstSpVecDescr_t",
+    "cusparseDnVecDescr_t",
+    "cusparseConstDnVecDescr_t",
+    "cusparseSpMatDescr_t",
+    "cusparseConstSpMatDescr_t",
+    "cusparseDnMatDescr_t",
+    "cusparseConstDnMatDescr_t",
+    "cusparseSpSVDescr_t",
+    "cusparseSpSMDescr_t",
+    "cusparseSpGEMMDescr_t",
+    "cusparseSpGEAMDescr_t",
+    "cusparseSpMMOpPlan_t",
+    "cusparseSpMVOpDescr_t",
+    "cusparseSpMVOpPlan_t",
+    "cusparseColorInfo_t",
+    "csric02Info_t",
+    "bsric02Info_t",
+    "csrilu02Info_t",
+    "bsrilu02Info_t",
+    "bsrsv2Info_t",
+    "bsrsm2Info_t",
+    "csru2csrInfo_t",
+    "pruneInfo_t",
+}
 
 
 def infer_routing_key(
@@ -611,14 +675,7 @@ def infer_routing_key(
             return "DEVICEPTR", param
         # A library handle is created on one server and routes every later
         # call there.
-        if type_name in (
-            "cublasHandle_t",
-            "cublasXtHandle_t",
-            "cublasLtHandle_t",
-            "cufftHandle",
-            "curandGenerator_t",
-            "curandDiscreteDistribution_t",
-        ):
+        if type_name in LIBRARY_HANDLES:
             return "HANDLE", param
         if type_name.startswith("cudnn") and type_name.endswith(
             ("Handle_t", "Descriptor_t", "ParamPack_t", "Plan_t")
@@ -1801,6 +1858,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 curand_registry_entries=" \\\n".join(
                     registry_entries["CURAND"]
                 ),
+                cusparse_registry_entries=" \\\n".join(
+                    registry_entries["CUSPARSE"]
+                ),
                 nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
                 hip_registry_entries=" \\\n".join(registry_entries["HIP"]),
                 cuda_guarded_declarations="\n".join(
@@ -1824,6 +1884,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 curand_guarded_declarations="\n".join(
                     guarded_declarations["CURAND"]
                 ),
+                cusparse_guarded_declarations="\n".join(
+                    guarded_declarations["CUSPARSE"]
+                ),
                 nvml_guarded_declarations="\n".join(
                     guarded_declarations["NVML"]
                 ),
@@ -1839,6 +1902,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 cufft_guarded_handlers="\n".join(guarded_handlers["CUFFT"]),
                 cudnn_guarded_handlers="\n".join(guarded_handlers["CUDNN"]),
                 curand_guarded_handlers="\n".join(guarded_handlers["CURAND"]),
+                cusparse_guarded_handlers="\n".join(
+                    guarded_handlers["CUSPARSE"]
+                ),
                 nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
             )
@@ -1856,7 +1922,12 @@ def main():
             # cublas_api.h refuses direct inclusion until its umbrella
             # header has defined this marker; cufft.h's is a visibility
             # attribute the parser does not read.
-            defines=["__HIP_PLATFORM_AMD__", "CUBLASAPI=", "CUFFTAPI="],
+            defines=[
+                "__HIP_PLATFORM_AMD__",
+                "CUBLASAPI=",
+                "CUFFTAPI=",
+                "DISABLE_CUSPARSE_DEPRECATED",
+            ],
             include_paths=[cuda_include_dir, hip_include_dir],
         ),
     )
@@ -2045,6 +2116,10 @@ def main():
         annotations_by_target["curand"],
         client_call_templates=client_call_templates_by_target["curand"],
     )
+    cusparse_functions_with_annotations = collect_backend_functions(
+        annotations_by_target["cusparse"],
+        client_call_templates=client_call_templates_by_target["cusparse"],
+    )
 
     annotated_names = sorted(
         {function.name.format() for function in cuda_annotations.namespace.functions}
@@ -2064,7 +2139,8 @@ def main():
         + cublaslt_functions_with_annotations
         + cufft_functions_with_annotations
         + cudnn_functions_with_annotations
-        + curand_functions_with_annotations,
+        + curand_functions_with_annotations
+        + cusparse_functions_with_annotations,
     )
 
     with open("gen_nvml_client.inc", "w") as f:
@@ -2171,6 +2247,7 @@ def main():
         (CUFFT, "cufft", cufft_functions_with_annotations),
         (CUDNN, "cudnn", cudnn_functions_with_annotations),
         (CURAND, "curand", curand_functions_with_annotations),
+        (CUSPARSE, "cusparse", cusparse_functions_with_annotations),
     ):
         with open(f"gen_{target}_client.inc", "w") as f:
             f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
@@ -2256,6 +2333,7 @@ def main():
         ("CUFFT", cufft_functions_with_annotations),
         ("CUDNN", cudnn_functions_with_annotations),
         ("CURAND", curand_functions_with_annotations),
+        ("CUSPARSE", cusparse_functions_with_annotations),
     ):
         generated_bindings.extend(
             ServerBinding(
@@ -2343,6 +2421,9 @@ def main():
             "gen_curand_client.inc",
             "gen_curand_server.inc",
             "gen_curand_server.h",
+            "gen_cusparse_client.inc",
+            "gen_cusparse_server.inc",
+            "gen_cusparse_server.h",
         ],
         check=True,
     )
@@ -2391,6 +2472,11 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_curand_server.inc",
             "gen_curand_server.h",
         ],
+        "cusparse": [
+            "gen_cusparse_client.inc",
+            "gen_cusparse_server.inc",
+            "gen_cusparse_server.h",
+        ],
     }
     forbidden = {
         "cuda": ["nvml", "hip"],
@@ -2400,6 +2486,7 @@ def verify_backend_boundaries(backend: str) -> None:
         "cufft": ["nvml", "hip"],
         "cudnn": ["nvml", "hip"],
         "curand": ["nvml", "hip"],
+        "cusparse": ["nvml", "hip"],
         "nvml": ["cuda_compat", "<cuda.h>", "handle_cu", "hip"],
         "hip": ["cuda", "nvml"],
     }
@@ -2420,7 +2507,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--verify-backend",
-        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "nvml", "hip"),
+        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "nvml", "hip"),
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()

@@ -686,6 +686,60 @@ if(LUPINE_BUILD_CURAND)
     add_custom_target(lupine_curand DEPENDS lupine_curand_client)
 endif()
 
+if(LUPINE_BUILD_CUDA)
+    # The cuSPARSE shim needs the library's own header, which the runtime
+    # header wheels the native client builds use do not carry; without it the
+    # shim is left out of the build.
+    find_path(LUPINE_CUSPARSE_INCLUDE_DIR cusparse.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
+    if(LUPINE_CUSPARSE_INCLUDE_DIR)
+        file(STRINGS ${LUPINE_CUSPARSE_INCLUDE_DIR}/cusparse.h
+             LUPINE_CUSPARSE_MAJOR_LINE REGEX "^#define CUSPARSE_VER_MAJOR ")
+        string(REGEX REPLACE "^#define CUSPARSE_VER_MAJOR ([0-9]+).*" "\\1"
+               LUPINE_CUSPARSE_SOVERSION "${LUPINE_CUSPARSE_MAJOR_LINE}")
+        set(LUPINE_BUILD_CUSPARSE ON)
+    endif()
+endif()
+
+if(LUPINE_BUILD_CUSPARSE)
+    # Named like NVIDIA's (libcusparse.so.12, cusparse64_12.dll) with the
+    # matching ELF version node; cuSPARSE's major is its own, not the
+    # toolkit's. It runs on the runtime shim's current device, so it links both
+    # sibling shims.
+    configure_file(cusparse.exports.in cusparse.exports @ONLY)
+    add_library(lupine_cusparse_client SHARED cusparse_client.cpp)
+    target_include_directories(lupine_cusparse_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
+    target_link_libraries(lupine_cusparse_client PRIVATE
+        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
+    set_target_properties(lupine_cusparse_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+    lupine_manylinux2014_client(lupine_cusparse_client)
+    if(WIN32)
+        target_compile_options(lupine_cusparse_client PRIVATE /wd4996)
+        set_target_properties(lupine_cusparse_client PROPERTIES
+            OUTPUT_NAME cusparse64_${LUPINE_CUSPARSE_SOVERSION}
+            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        target_compile_options(lupine_cusparse_client PRIVATE
+            -Wno-deprecated-declarations)
+        set_target_properties(lupine_cusparse_client PROPERTIES
+            OUTPUT_NAME cusparse)
+        if(APPLE)
+            set_target_properties(lupine_cusparse_client PROPERTIES
+                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+        else()
+            target_link_options(lupine_cusparse_client PRIVATE
+                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/cusparse.exports")
+            set_target_properties(lupine_cusparse_client PROPERTIES
+                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+                VERSION ${LUPINE_CUSPARSE_SOVERSION}
+                SOVERSION ${LUPINE_CUSPARSE_SOVERSION})
+        endif()
+    endif()
+    add_custom_target(lupine_cusparse DEPENDS lupine_cusparse_client)
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -815,6 +869,19 @@ if(LUPINE_BUILD_SERVER)
             target_link_libraries(lupine_curand_server PRIVATE
                 lupine_server_core ${CMAKE_DL_LIBS})
         endif()
+
+        if(LUPINE_BUILD_CUSPARSE)
+            add_library(lupine_cusparse_server STATIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/cusparse_server.cpp)
+            lupine_internal_target(lupine_cusparse_server)
+            # The handlers forward the deprecated legacy calls as well.
+            target_compile_definitions(lupine_cusparse_server PRIVATE
+                DISABLE_CUSPARSE_DEPRECATED)
+            target_include_directories(lupine_cusparse_server PRIVATE
+                ${CUDAToolkit_INCLUDE_DIRS})
+            target_link_libraries(lupine_cusparse_server PRIVATE
+                lupine_server_core ${CMAKE_DL_LIBS})
+        endif()
     endif()
 
     if(LUPINE_BUILD_NVML)
@@ -938,6 +1005,12 @@ if(LUPINE_BUILD_SERVER)
                 LUPINE_BUILD_CURAND_BACKEND)
             target_link_libraries(lupine_driver_server PRIVATE
                 lupine_curand_server)
+        endif()
+        if(LUPINE_BUILD_CUSPARSE)
+            target_compile_definitions(lupine_driver_server PRIVATE
+                LUPINE_BUILD_CUSPARSE_BACKEND)
+            target_link_libraries(lupine_driver_server PRIVATE
+                lupine_cusparse_server)
         endif()
     endif()
     if(LUPINE_BUILD_NVML)
@@ -1124,6 +1197,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "nm -D \"$<TARGET_FILE:lupine_curand_client>\" | grep -q ' T curandCreateGeneratorHost@@libcurand.so.${LUPINE_CURAND_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_curand_client>\" | grep -q ' T curandGenerateNormal@@libcurand.so.${LUPINE_CURAND_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_curand_client>\" | grep -q ' T curandGetDirectionVectors64@@libcurand.so.${LUPINE_CURAND_SOVERSION}$'")
     endif()
 
+    if(TARGET lupine_cusparse_client)
+        add_test(NAME cusparse_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseSpMV@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseCreateCsr@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseXcsrsort@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseGetErrorString@'")
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -1154,6 +1233,10 @@ endif()
 if(TARGET lupine_curand_client)
     message(STATUS
         "Building cuRAND client: lupine_curand_client (libcurand.so.${LUPINE_CURAND_SOVERSION})")
+endif()
+if(TARGET lupine_cusparse_client)
+    message(STATUS
+        "Building cuSPARSE client: lupine_cusparse_client (libcusparse.so.${LUPINE_CUSPARSE_SOVERSION})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS
