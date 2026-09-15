@@ -28,6 +28,9 @@ CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 NVCC="${NVCC:-$CUDA_HOME/bin/nvcc}"
 CUDA_SAMPLES_ARCH="${CUDA_SAMPLES_ARCH:-}"
+# cuDNN ships outside the toolkit: a directory with its include/ and lib/, such
+# as an nvidia-cudnn wheel's nvidia/cudnn.
+CUDNN_HOME="${CUDNN_HOME:-}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 BUILD_TESTS="${BUILD_TESTS:-1}"
 if [[ -n "${BUILD_DIR:-}" ]]; then
@@ -41,59 +44,8 @@ for f in "$SERVER_LOCAL_BIN" "$LUPINE_LIB"; do
   [[ -e "$f" ]] || { echo "missing build artifact: $f (build lupine first)" >&2; exit 1; }
 done
 
-ssh_with_timeout() {
-  timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
-    ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "$@"
-}
-
-stop_remote_server() {
-  local pidfile="$1"
-  local server_log="$2"
-
-  ssh_with_timeout "
-    if [ -f '$pidfile' ]; then
-      pid=\$(cat '$pidfile' 2>/dev/null || true)
-      if [ -n \"\$pid\" ]; then
-        kill \"\$pid\" >/dev/null 2>&1 || true
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-          kill -0 \"\$pid\" >/dev/null 2>&1 || break
-          sleep 0.1
-        done
-        kill -9 \"\$pid\" >/dev/null 2>&1 || true
-      fi
-    fi
-    rm -f '$pidfile' '$server_log'
-  " >/dev/null 2>&1 || true
-}
-
-start_remote_server() {
-  local pidfile="$1"
-  local server_log="$2"
-  local port="$3"
-  local attempt
-  local server_environment="LUPINE_PORT=$port"
-
-  if [[ -n "$SERVER_LD_LIBRARY_PATH" ]]; then
-    printf -v server_environment 'LD_LIBRARY_PATH=%q %s' \
-      "$SERVER_LD_LIBRARY_PATH" "$server_environment"
-  fi
-
-  for attempt in 1 2 3; do
-    stop_remote_server "$pidfile" "$server_log"
-    if ssh_with_timeout "
-      rm -f '$server_log' '$pidfile'
-      $server_environment nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null &
-      echo \$! >'$pidfile'
-      sleep 0.5
-      test -s '$pidfile'
-    "; then
-      return 0
-    fi
-    sleep "$attempt"
-  done
-
-  return 1
-}
+# shellcheck source=test/integration/remote_server.sh
+source "$repo_root/test/integration/remote_server.sh"
 
 if [[ "$SERVER_UPLOAD" == "1" && "$BUILD_ONLY" != "1" ]]; then
   timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
@@ -123,12 +75,26 @@ cleanup() {
 }
 trap cleanup EXIT
 
+cudnn_args=()
+if grep -q '#include <cudnn.h>' "$src"; then
+  cudnn_lib=""
+  if [[ -n "$CUDNN_HOME" ]]; then
+    cudnn_lib="$(ls "$CUDNN_HOME"/lib/libcudnn.so.[0-9]* 2>/dev/null | head -n 1 || true)"
+  fi
+  if [[ -z "$cudnn_lib" ]]; then
+    echo "SKIP: $name needs cuDNN; set CUDNN_HOME"
+    exit 0
+  fi
+  cudnn_args=(-I"$CUDNN_HOME/include" -L"$CUDNN_HOME/lib" -l:"$(basename "$cudnn_lib")")
+fi
+
 if [[ "$BUILD_TESTS" == "1" ]]; then
   mkdir -p "$BUILD_DIR"
   arch_arg="-arch=all"
   [[ -n "$CUDA_SAMPLES_ARCH" ]] && arch_arg="-arch=sm_$CUDA_SAMPLES_ARCH"
   "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$arch_arg" \
-    "$src" -o "$exe" -lcuda -lcublas -ldl -L"$CUDA_HOME/lib64/stubs"
+    "$src" -o "$exe" -lcuda -lcublas -lcublasLt -lcufft -lcusolver -lcurand -lnvrtc -lcusparse -ldl -L"$CUDA_HOME/lib64/stubs" \
+    "${cudnn_args[@]}"
 fi
 [[ -x "$exe" ]] || { echo "missing custom test executable: $exe" >&2; exit 1; }
 if [[ "$BUILD_ONLY" == "1" ]]; then
@@ -138,9 +104,9 @@ fi
 start_remote_server "$pidfile" "$server_log" "$port"
 if [[ -n "${RESULTS_DIR:-}" ]]; then
   mkdir -p "$RESULTS_DIR"
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
+  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${LD_LIBRARY_PATH:-}" \
     LUPINE_SERVER="$SERVER_HOST:$port" "$exe" 2>&1 | tee "$RESULTS_DIR/client.log"
 else
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
+  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${LD_LIBRARY_PATH:-}" \
     LUPINE_SERVER="$SERVER_HOST:$port" "$exe"
 fi

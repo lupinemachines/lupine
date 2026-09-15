@@ -47,9 +47,6 @@ endif()
 
 function(add_suite suite script)
     set(list_env ${ARGN})
-    if(suite STREQUAL "cuda-python")
-        set(list_env)
-    endif()
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E env LIST_TESTS=1 SERVER_UPLOAD=0
                 ${list_env} "${script}"

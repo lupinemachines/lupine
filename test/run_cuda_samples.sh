@@ -618,10 +618,8 @@ if [[ ! -x "$SERVER_LOCAL_BIN" ]]; then
   exit 1
 fi
 
-ssh_with_timeout() {
-  timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
-    ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "$@"
-}
+# shellcheck source=test/integration/remote_server.sh
+source "$repo_root/test/integration/remote_server.sh"
 
 sample_disabled() {
   local sample="$1"
@@ -650,55 +648,6 @@ cleanup_remote_bin() {
   fi
 }
 trap cleanup_remote_bin EXIT
-
-stop_remote_server() {
-  local pidfile="$1"
-  local server_log="$2"
-
-  ssh_with_timeout "
-    if [ -f '$pidfile' ]; then
-      pid=\$(cat '$pidfile' 2>/dev/null || true)
-      if [ -n \"\$pid\" ]; then
-        kill \"\$pid\" >/dev/null 2>&1 || true
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-          kill -0 \"\$pid\" >/dev/null 2>&1 || break
-          sleep 0.1
-        done
-        kill -9 \"\$pid\" >/dev/null 2>&1 || true
-      fi
-    fi
-    rm -f '$pidfile' '$server_log'
-  " >/dev/null 2>&1 || true
-}
-
-start_remote_server() {
-  local pidfile="$1"
-  local server_log="$2"
-  local port="$3"
-  local attempt
-  local server_environment="LUPINE_PORT=$port"
-
-  if [[ -n "$SERVER_LD_LIBRARY_PATH" ]]; then
-    printf -v server_environment 'LD_LIBRARY_PATH=%q %s' \
-      "$SERVER_LD_LIBRARY_PATH" "$server_environment"
-  fi
-
-  for attempt in 1 2 3; do
-    stop_remote_server "$pidfile" "$server_log"
-    if ssh_with_timeout "
-      rm -f '$server_log' '$pidfile'
-      $server_environment nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null &
-      echo \$! >'$pidfile'
-      sleep 0.5
-      test -s '$pidfile'
-    "; then
-      return 0
-    fi
-    sleep "$attempt"
-  done
-
-  return 1
-}
 
 sample_timeout() {
   case "$1" in

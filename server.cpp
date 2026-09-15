@@ -1,3 +1,6 @@
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+void lupine_cublas_cleanup_logs(struct conn_t *conn);
+#endif
 #include <atomic>
 #include <cerrno>
 #include <cstdlib>
@@ -211,6 +214,61 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
 #ifdef LUPINE_BUILD_CUDART_BACKEND
   {
     backend_name = "CUDART";
+    lupine_checkpoint::cuda_call_guard guard;
+    result = handler.handler(conn);
+    break;
+  }
+#else
+    break;
+#endif
+  case rpc_backend::cublas:
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+  {
+    backend_name = "cuBLAS";
+    lupine_checkpoint::cuda_call_guard guard;
+    result = handler.handler(conn);
+    break;
+  }
+#else
+    break;
+#endif
+  case rpc_backend::cufft:
+#ifdef LUPINE_BUILD_CUFFT_BACKEND
+  {
+    backend_name = "cuFFT";
+    lupine_checkpoint::cuda_call_guard guard;
+    result = handler.handler(conn);
+    break;
+  }
+#else
+    break;
+#endif
+  case rpc_backend::cudnn:
+#ifdef LUPINE_BUILD_CUDNN_BACKEND
+  {
+    backend_name = "cuDNN";
+    lupine_checkpoint::cuda_call_guard guard;
+    result = handler.handler(conn);
+    break;
+  }
+#else
+    break;
+#endif
+  case rpc_backend::curand:
+#ifdef LUPINE_BUILD_CURAND_BACKEND
+  {
+    backend_name = "cuRAND";
+    lupine_checkpoint::cuda_call_guard guard;
+    result = handler.handler(conn);
+    break;
+  }
+#else
+    break;
+#endif
+  case rpc_backend::cusparse:
+#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
+  {
+    backend_name = "cuSPARSE";
     lupine_checkpoint::cuda_call_guard guard;
     result = handler.handler(conn);
     break;
@@ -436,6 +494,9 @@ int client_handler(lupine_socket_t connfd) {
 #ifdef LUPINE_BUILD_CUDA_BACKEND
   // Finish checkpointing before releasing per-connection CUDA resources.
   checkpoint_result = lupine_server_checkpoint_child_finish();
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+  lupine_cublas_cleanup_logs(&conn);
+#endif
   lupine_server_cleanup_connection(&conn);
   lupine_server_cleanup_identity_allocations(&conn);
 #endif

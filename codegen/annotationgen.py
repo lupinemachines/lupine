@@ -25,7 +25,10 @@ def main(target: str):
     annotations_path = ANNOTATION_FILES[target]
     options = ParserOptions(
         preprocessor=make_gcc_preprocessor(
-            defines=["__HIP_PLATFORM_AMD__"],
+            # cublas_api.h refuses direct inclusion until its umbrella
+            # header has defined this marker; cufft.h's is a visibility
+            # attribute the parser does not read.
+            defines=["__HIP_PLATFORM_AMD__", "CUBLASAPI=", "CUFFTAPI="],
             # HIP declarations are included as <hip/...>, so search the
             # header's parent directory as well as its own.
             include_paths=[
