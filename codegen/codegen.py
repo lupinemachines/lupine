@@ -233,6 +233,8 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineMemcpyDtoHAsyncPinned",
     "lupineBulkChunk",
     "lupineMemcpyHtoDBulk",
+    "lupineBulkRead",
+    "lupineMemcpyDtoHBulk",
     "lupineStreamPoolInit",
 ]
 

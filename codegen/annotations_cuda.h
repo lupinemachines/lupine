@@ -3348,4 +3348,8 @@ void lupineDeviceSnapshot();
 void lupineBulkChunk();
 /** @disabled */
 void lupineMemcpyHtoDBulk();
+/** @disabled */
+void lupineBulkRead();
+/** @disabled */
+void lupineMemcpyDtoHBulk();
 #endif

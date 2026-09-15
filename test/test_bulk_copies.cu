@@ -1,10 +1,11 @@
 #include <cuda.h>
 
-// Synchronous HtoD copies at and above the bulk-connection threshold: odd
-// sizes, two threads striping at once, and a copy queued right behind a
-// memset of its destination on the legacy stream, which the striped path must
-// still order after. This file is auto-discovered by test/run_custom_tests.sh.
+// HtoD and DtoH copies at and above the bulk-connection threshold: odd sizes,
+// two threads striping at once, and copies queued right behind a memset on the
+// same stream, which the striped path must still order after. This file is
+// auto-discovered by test/run_custom_tests.sh.
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -55,12 +56,48 @@ bool round_trip(CUcontext context, size_t bytes, unsigned int seed,
     ok = check(cuMemsetD8Async(device, 0xff, bytes, CU_STREAM_LEGACY),
                "cuMemsetD8Async");
   }
-  ok = ok && check(cuMemcpyHtoD(device, source.data(), bytes), "cuMemcpyHtoD") &&
+  ok = ok &&
+       check(cuMemcpyHtoD(device, source.data(), bytes), "cuMemcpyHtoD") &&
        check(cuMemcpyDtoH(readback.data(), device, bytes), "cuMemcpyDtoH");
   if (ok && std::memcmp(source.data(), readback.data(), bytes) != 0) {
     std::fprintf(stderr, "readback mismatch for %zu bytes (seed %u)\n", bytes,
                  seed);
     ok = false;
+  }
+  (void)cuMemFree(device);
+  return ok;
+}
+
+// A read queued behind a memset on a stream must see the memset, both through
+// the synchronous copy and an async copy into pageable memory.
+bool read_after_memset(CUcontext context, size_t bytes) {
+  if (!check(cuCtxSetCurrent(context), "cuCtxSetCurrent")) {
+    return false;
+  }
+  CUdeviceptr device = 0;
+  CUstream stream = nullptr;
+  if (!check(cuMemAlloc(&device, bytes), "cuMemAlloc")) {
+    return false;
+  }
+  bool ok = check(cuStreamCreate(&stream, 0), "cuStreamCreate");
+  std::vector<unsigned char> readback(bytes, 0);
+  ok = ok &&
+       check(cuMemsetD8Async(device, 0x5a, bytes, CU_STREAM_LEGACY),
+             "cuMemsetD8Async") &&
+       check(cuMemcpyDtoH(readback.data(), device, bytes), "cuMemcpyDtoH");
+  ok = ok && std::all_of(readback.begin(), readback.end(),
+                         [](unsigned char b) { return b == 0x5a; });
+  ok = ok &&
+       check(cuMemsetD8Async(device, 0xa5, bytes, stream), "cuMemsetD8Async") &&
+       check(cuMemcpyDtoHAsync(readback.data(), device, bytes, stream),
+             "cuMemcpyDtoHAsync");
+  ok = ok && std::all_of(readback.begin(), readback.end(),
+                         [](unsigned char b) { return b == 0xa5; });
+  if (!ok) {
+    std::fprintf(stderr, "read after memset failed for %zu bytes\n", bytes);
+  }
+  if (stream != nullptr) {
+    (void)cuStreamDestroy(stream);
   }
   (void)cuMemFree(device);
   return ok;
@@ -84,7 +121,8 @@ int main() {
   for (size_t bytes : sizes) {
     if (!round_trip(context, bytes, static_cast<unsigned int>(bytes), false) ||
         !round_trip(context, bytes, static_cast<unsigned int>(bytes) + 7,
-                    true)) {
+                    true) ||
+        !read_after_memset(context, bytes)) {
       return 1;
     }
   }
@@ -107,6 +145,6 @@ int main() {
   if (failed.load()) {
     return 1;
   }
-  std::printf("PASS: bulk HtoD copies round trip in order\n");
+  std::printf("PASS: bulk copies round trip in order\n");
   return 0;
 }
