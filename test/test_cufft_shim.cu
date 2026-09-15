@@ -1,11 +1,13 @@
 // Exercises the cuFFT shim end to end against the remote device: plan
 // creation in every style, the optional layout arrays, work area management,
-// streams, the Xt entry points and, when two GPUs are present, a multi-GPU
-// descriptor, each transform checked against a CPU DFT.
+// streams, the Xt entry points and multi-GPU descriptors on one device named
+// twice and, when two GPUs are present, on both, each transform checked against
+// a CPU DFT.
 #include <cuda_runtime.h>
 #include <cufftXt.h>
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -302,15 +304,20 @@ static int test_xt_plan_2d() {
   return 0;
 }
 
-// A multi-GPU descriptor: the client's copy reports the layout, and the host
-// copies round-trip the signal through the transform. Skipped when the server
-// has one device or the pair cannot share a plan.
-static int test_xt_multi_gpu() {
-  int device_count = 0;
-  CHECK_CUDA(cudaGetDeviceCount(&device_count));
-  if (device_count < 2) {
-    printf("multi-GPU descriptor: skipped, one device\n");
-    return 0;
+// A multi-GPU descriptor: the plan reports one work size per GPU, the client's
+// copy of the descriptor reports the layout, and the host copies round-trip the
+// signal through the transform. Two distinct devices are skipped when the
+// server has one or the pair cannot share a plan; a device named twice, as
+// single-GPU callers do, always runs.
+static int test_xt_multi_gpu(int first, int second) {
+  const bool distinct = first != second;
+  if (distinct) {
+    int device_count = 0;
+    CHECK_CUDA(cudaGetDeviceCount(&device_count));
+    if (device_count < 2) {
+      printf("multi-GPU descriptor: skipped, one device\n");
+      return 0;
+    }
   }
   const int n = 256;
   const std::vector<cufftComplex> signal = random_signal(n, 9);
@@ -318,20 +325,27 @@ static int test_xt_multi_gpu() {
 
   cufftHandle plan = 0;
   CHECK_CUFFT(cufftCreate(&plan));
-  int gpus[2] = {0, 1};
-  if (cufftXtSetGPUs(plan, 2, gpus) != CUFFT_SUCCESS) {
+  int gpus[2] = {first, second};
+  cufftResult set = cufftXtSetGPUs(plan, 2, gpus);
+  if (distinct && set != CUFFT_SUCCESS) {
     printf("multi-GPU descriptor: skipped, devices cannot share a plan\n");
     CHECK_CUFFT(cufftDestroy(plan));
     return 0;
   }
-  size_t work_sizes[2] = {0, 0};
+  CHECK_CUFFT(set);
+  size_t work_sizes[2] = {SIZE_MAX, SIZE_MAX};
   cufftResult made = cufftMakePlan1d(plan, n, CUFFT_C2C, 1, work_sizes);
-  if (made != CUFFT_SUCCESS) {
+  if (distinct && made != CUFFT_SUCCESS) {
     printf("multi-GPU descriptor: skipped, plan not supported (%d)\n",
            static_cast<int>(made));
     CHECK_CUFFT(cufftDestroy(plan));
     return 0;
   }
+  CHECK_CUFFT(made);
+  EXPECT(work_sizes[0] != SIZE_MAX && work_sizes[1] != SIZE_MAX);
+  size_t queried[2] = {SIZE_MAX, SIZE_MAX};
+  CHECK_CUFFT(cufftGetSize(plan, queried));
+  EXPECT(queried[0] == work_sizes[0] && queried[1] == work_sizes[1]);
 
   cudaLibXtDesc *descriptor = nullptr;
   CHECK_CUFFT(cufftXtMalloc(plan, &descriptor, CUFFT_XT_FORMAT_INPLACE));
@@ -352,7 +366,7 @@ static int test_xt_multi_gpu() {
   }
   CHECK_CUFFT(cufftXtFree(descriptor));
   CHECK_CUFFT(cufftDestroy(plan));
-  printf("multi-GPU descriptor: passed\n");
+  printf("multi-GPU descriptor on devices %d and %d: passed\n", first, second);
   return 0;
 }
 
@@ -382,7 +396,7 @@ int main() {
 
   if (test_plan1d_c2c() || test_plan_many_r2c_c2r() ||
       test_work_area_and_stream_z2z() || test_xt_plan_2d() ||
-      test_xt_multi_gpu()) {
+      test_xt_multi_gpu(0, 0) || test_xt_multi_gpu(0, 1)) {
     return 1;
   }
   printf("cufft shim: all checks passed (cuFFT %d)\n", version);

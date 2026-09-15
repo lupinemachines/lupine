@@ -82,6 +82,15 @@ int plan_gpu_count(cufftHandle plan) {
   return it == plans.end() ? 1 : it->second.gpus;
 }
 
+// A plan's work sizes hold one entry per GPU of the plan, which the library
+// writes whatever the caller's array holds; they travel as a host scalar of
+// that width.
+size_t work_size_bytes(cufftHandle plan) {
+  return plan_gpu_count(plan) * sizeof(size_t);
+}
+
+bool scalar_on_host(cufftHandle, const char *) { return true; }
+
 // ---------------------------------------------------------------------------
 // Multi-GPU descriptors
 // ---------------------------------------------------------------------------

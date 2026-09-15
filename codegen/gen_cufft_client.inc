@@ -360,10 +360,17 @@ extern "C" cufftResult cufftGetProperty(libraryPropertyType type, int *value) {
 static cufftResult lupine_rpc_cufftGetSize(conn_t *conn, cufftHandle handle,
                                            size_t *workSize) {
   cufftResult return_value = rpc_error();
+  uint32_t workSize_width =
+      workSize != nullptr && scalar_on_host(handle, "workSize")
+          ? static_cast<uint32_t>(work_size_bytes(handle))
+          : 0;
   if (conn == nullptr || rpc_write_start_request(conn, RPC_cufftGetSize) < 0 ||
       rpc_write(conn, &handle, sizeof(cufftHandle)) < 0 ||
+      rpc_write(conn, &workSize_width, sizeof(workSize_width)) < 0 ||
+      (workSize_width == 0 &&
+       rpc_write(conn, &workSize, sizeof(workSize)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, workSize, sizeof(size_t)) < 0 ||
+      (workSize_width != 0 && rpc_read(conn, workSize, workSize_width) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -372,9 +379,6 @@ static cufftResult lupine_rpc_cufftGetSize(conn_t *conn, cufftHandle handle,
 }
 
 extern "C" cufftResult cufftGetSize(cufftHandle handle, size_t *workSize) {
-  if (workSize == nullptr) {
-    return CUFFT_INVALID_VALUE;
-  }
   conn_t *conn = connection_for_handle(handle);
   return lupine_rpc_cufftGetSize(conn, handle, workSize);
 }
@@ -383,14 +387,21 @@ static cufftResult lupine_rpc_cufftGetSize1d(conn_t *conn, cufftHandle handle,
                                              int nx, cufftType type, int batch,
                                              size_t *workSize) {
   cufftResult return_value = rpc_error();
+  uint32_t workSize_width =
+      workSize != nullptr && scalar_on_host(handle, "workSize")
+          ? static_cast<uint32_t>(work_size_bytes(handle))
+          : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cufftGetSize1d) < 0 ||
       rpc_write(conn, &handle, sizeof(cufftHandle)) < 0 ||
       rpc_write(conn, &nx, sizeof(int)) < 0 ||
       rpc_write(conn, &type, sizeof(cufftType)) < 0 ||
       rpc_write(conn, &batch, sizeof(int)) < 0 ||
+      rpc_write(conn, &workSize_width, sizeof(workSize_width)) < 0 ||
+      (workSize_width == 0 &&
+       rpc_write(conn, &workSize, sizeof(workSize)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, workSize, sizeof(size_t)) < 0 ||
+      (workSize_width != 0 && rpc_read(conn, workSize, workSize_width) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -401,9 +412,6 @@ static cufftResult lupine_rpc_cufftGetSize1d(conn_t *conn, cufftHandle handle,
 extern "C" cufftResult cufftGetSize1d(cufftHandle handle, int nx,
                                       cufftType type, int batch,
                                       size_t *workSize) {
-  if (workSize == nullptr) {
-    return CUFFT_INVALID_VALUE;
-  }
   conn_t *conn = connection_for_handle(handle);
   return lupine_rpc_cufftGetSize1d(conn, handle, nx, type, batch, workSize);
 }
@@ -412,14 +420,21 @@ static cufftResult lupine_rpc_cufftGetSize2d(conn_t *conn, cufftHandle handle,
                                              int nx, int ny, cufftType type,
                                              size_t *workSize) {
   cufftResult return_value = rpc_error();
+  uint32_t workSize_width =
+      workSize != nullptr && scalar_on_host(handle, "workSize")
+          ? static_cast<uint32_t>(work_size_bytes(handle))
+          : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cufftGetSize2d) < 0 ||
       rpc_write(conn, &handle, sizeof(cufftHandle)) < 0 ||
       rpc_write(conn, &nx, sizeof(int)) < 0 ||
       rpc_write(conn, &ny, sizeof(int)) < 0 ||
       rpc_write(conn, &type, sizeof(cufftType)) < 0 ||
+      rpc_write(conn, &workSize_width, sizeof(workSize_width)) < 0 ||
+      (workSize_width == 0 &&
+       rpc_write(conn, &workSize, sizeof(workSize)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, workSize, sizeof(size_t)) < 0 ||
+      (workSize_width != 0 && rpc_read(conn, workSize, workSize_width) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -429,9 +444,6 @@ static cufftResult lupine_rpc_cufftGetSize2d(conn_t *conn, cufftHandle handle,
 
 extern "C" cufftResult cufftGetSize2d(cufftHandle handle, int nx, int ny,
                                       cufftType type, size_t *workSize) {
-  if (workSize == nullptr) {
-    return CUFFT_INVALID_VALUE;
-  }
   conn_t *conn = connection_for_handle(handle);
   return lupine_rpc_cufftGetSize2d(conn, handle, nx, ny, type, workSize);
 }
@@ -440,6 +452,10 @@ static cufftResult lupine_rpc_cufftGetSize3d(conn_t *conn, cufftHandle handle,
                                              int nx, int ny, int nz,
                                              cufftType type, size_t *workSize) {
   cufftResult return_value = rpc_error();
+  uint32_t workSize_width =
+      workSize != nullptr && scalar_on_host(handle, "workSize")
+          ? static_cast<uint32_t>(work_size_bytes(handle))
+          : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cufftGetSize3d) < 0 ||
       rpc_write(conn, &handle, sizeof(cufftHandle)) < 0 ||
@@ -447,8 +463,11 @@ static cufftResult lupine_rpc_cufftGetSize3d(conn_t *conn, cufftHandle handle,
       rpc_write(conn, &ny, sizeof(int)) < 0 ||
       rpc_write(conn, &nz, sizeof(int)) < 0 ||
       rpc_write(conn, &type, sizeof(cufftType)) < 0 ||
+      rpc_write(conn, &workSize_width, sizeof(workSize_width)) < 0 ||
+      (workSize_width == 0 &&
+       rpc_write(conn, &workSize, sizeof(workSize)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, workSize, sizeof(size_t)) < 0 ||
+      (workSize_width != 0 && rpc_read(conn, workSize, workSize_width) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -459,9 +478,6 @@ static cufftResult lupine_rpc_cufftGetSize3d(conn_t *conn, cufftHandle handle,
 extern "C" cufftResult cufftGetSize3d(cufftHandle handle, int nx, int ny,
                                       int nz, cufftType type,
                                       size_t *workSize) {
-  if (workSize == nullptr) {
-    return CUFFT_INVALID_VALUE;
-  }
   conn_t *conn = connection_for_handle(handle);
   return lupine_rpc_cufftGetSize3d(conn, handle, nx, ny, nz, type, workSize);
 }
@@ -475,6 +491,10 @@ static cufftResult lupine_rpc_cufftGetSizeMany(conn_t *conn, cufftHandle handle,
   cufftResult return_value = rpc_error();
   uint8_t inembed_null = inembed == nullptr ? 1 : 0;
   uint8_t onembed_null = onembed == nullptr ? 1 : 0;
+  uint32_t workArea_width =
+      workArea != nullptr && scalar_on_host(handle, "workArea")
+          ? static_cast<uint32_t>(work_size_bytes(handle))
+          : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cufftGetSizeMany) < 0 ||
       rpc_write(conn, &handle, sizeof(cufftHandle)) < 0 ||
@@ -492,8 +512,11 @@ static cufftResult lupine_rpc_cufftGetSizeMany(conn_t *conn, cufftHandle handle,
       rpc_write(conn, &odist, sizeof(int)) < 0 ||
       rpc_write(conn, &type, sizeof(cufftType)) < 0 ||
       rpc_write(conn, &batch, sizeof(int)) < 0 ||
+      rpc_write(conn, &workArea_width, sizeof(workArea_width)) < 0 ||
+      (workArea_width == 0 &&
+       rpc_write(conn, &workArea, sizeof(workArea)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, workArea, sizeof(size_t)) < 0 ||
+      (workArea_width != 0 && rpc_read(conn, workArea, workArea_width) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -507,7 +530,7 @@ extern "C" cufftResult cufftGetSizeMany(cufftHandle handle, int rank, int *n,
                                         cufftType type, int batch,
                                         size_t *workArea) {
   if (rank < 0 || rank < 0 || rank < 0 ||
-      (rank * sizeof(int) != 0 && n == nullptr) || workArea == nullptr) {
+      (rank * sizeof(int) != 0 && n == nullptr)) {
     return CUFFT_INVALID_VALUE;
   }
   conn_t *conn = connection_for_handle(handle);
@@ -524,6 +547,10 @@ static cufftResult lupine_rpc_cufftGetSizeMany64(
   cufftResult return_value = rpc_error();
   uint8_t inembed_null = inembed == nullptr ? 1 : 0;
   uint8_t onembed_null = onembed == nullptr ? 1 : 0;
+  uint32_t workSize_width =
+      workSize != nullptr && scalar_on_host(plan, "workSize")
+          ? static_cast<uint32_t>(work_size_bytes(plan))
+          : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cufftGetSizeMany64) < 0 ||
       rpc_write(conn, &plan, sizeof(cufftHandle)) < 0 ||
@@ -541,8 +568,11 @@ static cufftResult lupine_rpc_cufftGetSizeMany64(
       rpc_write(conn, &odist, sizeof(long long int)) < 0 ||
       rpc_write(conn, &type, sizeof(cufftType)) < 0 ||
       rpc_write(conn, &batch, sizeof(long long int)) < 0 ||
+      rpc_write(conn, &workSize_width, sizeof(workSize_width)) < 0 ||
+      (workSize_width == 0 &&
+       rpc_write(conn, &workSize, sizeof(workSize)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, workSize, sizeof(size_t)) < 0 ||
+      (workSize_width != 0 && rpc_read(conn, workSize, workSize_width) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -557,8 +587,7 @@ cufftGetSizeMany64(cufftHandle plan, int rank, long long int *n,
                    long long int ostride, long long int odist, cufftType type,
                    long long int batch, size_t *workSize) {
   if (rank < 0 || rank < 0 || rank < 0 ||
-      (rank * sizeof(long long int) != 0 && n == nullptr) ||
-      workSize == nullptr) {
+      (rank * sizeof(long long int) != 0 && n == nullptr)) {
     return CUFFT_INVALID_VALUE;
   }
   conn_t *conn = connection_for_handle(plan);
@@ -592,14 +621,21 @@ static cufftResult lupine_rpc_cufftMakePlan1d(conn_t *conn, cufftHandle plan,
                                               int nx, cufftType type, int batch,
                                               size_t *workSize) {
   cufftResult return_value = rpc_error();
+  uint32_t workSize_width =
+      workSize != nullptr && scalar_on_host(plan, "workSize")
+          ? static_cast<uint32_t>(work_size_bytes(plan))
+          : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cufftMakePlan1d) < 0 ||
       rpc_write(conn, &plan, sizeof(cufftHandle)) < 0 ||
       rpc_write(conn, &nx, sizeof(int)) < 0 ||
       rpc_write(conn, &type, sizeof(cufftType)) < 0 ||
       rpc_write(conn, &batch, sizeof(int)) < 0 ||
+      rpc_write(conn, &workSize_width, sizeof(workSize_width)) < 0 ||
+      (workSize_width == 0 &&
+       rpc_write(conn, &workSize, sizeof(workSize)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, workSize, sizeof(size_t)) < 0 ||
+      (workSize_width != 0 && rpc_read(conn, workSize, workSize_width) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -609,9 +645,6 @@ static cufftResult lupine_rpc_cufftMakePlan1d(conn_t *conn, cufftHandle plan,
 
 extern "C" cufftResult cufftMakePlan1d(cufftHandle plan, int nx, cufftType type,
                                        int batch, size_t *workSize) {
-  if (workSize == nullptr) {
-    return CUFFT_INVALID_VALUE;
-  }
   conn_t *conn = connection_for_handle(plan);
   return lupine_rpc_cufftMakePlan1d(conn, plan, nx, type, batch, workSize);
 }
@@ -620,14 +653,21 @@ static cufftResult lupine_rpc_cufftMakePlan2d(conn_t *conn, cufftHandle plan,
                                               int nx, int ny, cufftType type,
                                               size_t *workSize) {
   cufftResult return_value = rpc_error();
+  uint32_t workSize_width =
+      workSize != nullptr && scalar_on_host(plan, "workSize")
+          ? static_cast<uint32_t>(work_size_bytes(plan))
+          : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cufftMakePlan2d) < 0 ||
       rpc_write(conn, &plan, sizeof(cufftHandle)) < 0 ||
       rpc_write(conn, &nx, sizeof(int)) < 0 ||
       rpc_write(conn, &ny, sizeof(int)) < 0 ||
       rpc_write(conn, &type, sizeof(cufftType)) < 0 ||
+      rpc_write(conn, &workSize_width, sizeof(workSize_width)) < 0 ||
+      (workSize_width == 0 &&
+       rpc_write(conn, &workSize, sizeof(workSize)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, workSize, sizeof(size_t)) < 0 ||
+      (workSize_width != 0 && rpc_read(conn, workSize, workSize_width) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -637,9 +677,6 @@ static cufftResult lupine_rpc_cufftMakePlan2d(conn_t *conn, cufftHandle plan,
 
 extern "C" cufftResult cufftMakePlan2d(cufftHandle plan, int nx, int ny,
                                        cufftType type, size_t *workSize) {
-  if (workSize == nullptr) {
-    return CUFFT_INVALID_VALUE;
-  }
   conn_t *conn = connection_for_handle(plan);
   return lupine_rpc_cufftMakePlan2d(conn, plan, nx, ny, type, workSize);
 }
@@ -649,6 +686,10 @@ static cufftResult lupine_rpc_cufftMakePlan3d(conn_t *conn, cufftHandle plan,
                                               cufftType type,
                                               size_t *workSize) {
   cufftResult return_value = rpc_error();
+  uint32_t workSize_width =
+      workSize != nullptr && scalar_on_host(plan, "workSize")
+          ? static_cast<uint32_t>(work_size_bytes(plan))
+          : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cufftMakePlan3d) < 0 ||
       rpc_write(conn, &plan, sizeof(cufftHandle)) < 0 ||
@@ -656,8 +697,11 @@ static cufftResult lupine_rpc_cufftMakePlan3d(conn_t *conn, cufftHandle plan,
       rpc_write(conn, &ny, sizeof(int)) < 0 ||
       rpc_write(conn, &nz, sizeof(int)) < 0 ||
       rpc_write(conn, &type, sizeof(cufftType)) < 0 ||
+      rpc_write(conn, &workSize_width, sizeof(workSize_width)) < 0 ||
+      (workSize_width == 0 &&
+       rpc_write(conn, &workSize, sizeof(workSize)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, workSize, sizeof(size_t)) < 0 ||
+      (workSize_width != 0 && rpc_read(conn, workSize, workSize_width) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -667,9 +711,6 @@ static cufftResult lupine_rpc_cufftMakePlan3d(conn_t *conn, cufftHandle plan,
 
 extern "C" cufftResult cufftMakePlan3d(cufftHandle plan, int nx, int ny, int nz,
                                        cufftType type, size_t *workSize) {
-  if (workSize == nullptr) {
-    return CUFFT_INVALID_VALUE;
-  }
   conn_t *conn = connection_for_handle(plan);
   return lupine_rpc_cufftMakePlan3d(conn, plan, nx, ny, nz, type, workSize);
 }
@@ -683,6 +724,10 @@ static cufftResult lupine_rpc_cufftMakePlanMany(conn_t *conn, cufftHandle plan,
   cufftResult return_value = rpc_error();
   uint8_t inembed_null = inembed == nullptr ? 1 : 0;
   uint8_t onembed_null = onembed == nullptr ? 1 : 0;
+  uint32_t workSize_width =
+      workSize != nullptr && scalar_on_host(plan, "workSize")
+          ? static_cast<uint32_t>(work_size_bytes(plan))
+          : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cufftMakePlanMany) < 0 ||
       rpc_write(conn, &plan, sizeof(cufftHandle)) < 0 ||
@@ -700,8 +745,11 @@ static cufftResult lupine_rpc_cufftMakePlanMany(conn_t *conn, cufftHandle plan,
       rpc_write(conn, &odist, sizeof(int)) < 0 ||
       rpc_write(conn, &type, sizeof(cufftType)) < 0 ||
       rpc_write(conn, &batch, sizeof(int)) < 0 ||
+      rpc_write(conn, &workSize_width, sizeof(workSize_width)) < 0 ||
+      (workSize_width == 0 &&
+       rpc_write(conn, &workSize, sizeof(workSize)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, workSize, sizeof(size_t)) < 0 ||
+      (workSize_width != 0 && rpc_read(conn, workSize, workSize_width) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -715,7 +763,7 @@ extern "C" cufftResult cufftMakePlanMany(cufftHandle plan, int rank, int *n,
                                          cufftType type, int batch,
                                          size_t *workSize) {
   if (rank < 0 || rank < 0 || rank < 0 ||
-      (rank * sizeof(int) != 0 && n == nullptr) || workSize == nullptr) {
+      (rank * sizeof(int) != 0 && n == nullptr)) {
     return CUFFT_INVALID_VALUE;
   }
   conn_t *conn = connection_for_handle(plan);
@@ -732,6 +780,10 @@ static cufftResult lupine_rpc_cufftMakePlanMany64(
   cufftResult return_value = rpc_error();
   uint8_t inembed_null = inembed == nullptr ? 1 : 0;
   uint8_t onembed_null = onembed == nullptr ? 1 : 0;
+  uint32_t workSize_width =
+      workSize != nullptr && scalar_on_host(plan, "workSize")
+          ? static_cast<uint32_t>(work_size_bytes(plan))
+          : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cufftMakePlanMany64) < 0 ||
       rpc_write(conn, &plan, sizeof(cufftHandle)) < 0 ||
@@ -749,8 +801,11 @@ static cufftResult lupine_rpc_cufftMakePlanMany64(
       rpc_write(conn, &odist, sizeof(long long int)) < 0 ||
       rpc_write(conn, &type, sizeof(cufftType)) < 0 ||
       rpc_write(conn, &batch, sizeof(long long int)) < 0 ||
+      rpc_write(conn, &workSize_width, sizeof(workSize_width)) < 0 ||
+      (workSize_width == 0 &&
+       rpc_write(conn, &workSize, sizeof(workSize)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, workSize, sizeof(size_t)) < 0 ||
+      (workSize_width != 0 && rpc_read(conn, workSize, workSize_width) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -765,8 +820,7 @@ cufftMakePlanMany64(cufftHandle plan, int rank, long long int *n,
                     long long int ostride, long long int odist, cufftType type,
                     long long int batch, size_t *workSize) {
   if (rank < 0 || rank < 0 || rank < 0 ||
-      (rank * sizeof(long long int) != 0 && n == nullptr) ||
-      workSize == nullptr) {
+      (rank * sizeof(long long int) != 0 && n == nullptr)) {
     return CUFFT_INVALID_VALUE;
   }
   conn_t *conn = connection_for_handle(plan);
@@ -1217,6 +1271,10 @@ static cufftResult lupine_rpc_cufftXtGetSizeMany(
   cufftResult return_value = rpc_error();
   uint8_t inembed_null = inembed == nullptr ? 1 : 0;
   uint8_t onembed_null = onembed == nullptr ? 1 : 0;
+  uint32_t workSize_width =
+      workSize != nullptr && scalar_on_host(plan, "workSize")
+          ? static_cast<uint32_t>(work_size_bytes(plan))
+          : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cufftXtGetSizeMany) < 0 ||
       rpc_write(conn, &plan, sizeof(cufftHandle)) < 0 ||
@@ -1235,9 +1293,12 @@ static cufftResult lupine_rpc_cufftXtGetSizeMany(
       rpc_write(conn, &odist, sizeof(long long int)) < 0 ||
       rpc_write(conn, &outputtype, sizeof(cudaDataType)) < 0 ||
       rpc_write(conn, &batch, sizeof(long long int)) < 0 ||
+      rpc_write(conn, &workSize_width, sizeof(workSize_width)) < 0 ||
+      (workSize_width == 0 &&
+       rpc_write(conn, &workSize, sizeof(workSize)) < 0) ||
       rpc_write(conn, &executiontype, sizeof(cudaDataType)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, workSize, sizeof(size_t)) < 0 ||
+      (workSize_width != 0 && rpc_read(conn, workSize, workSize_width) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -1252,8 +1313,7 @@ extern "C" cufftResult cufftXtGetSizeMany(
     cudaDataType outputtype, long long int batch, size_t *workSize,
     cudaDataType executiontype) {
   if (rank < 0 || rank < 0 || rank < 0 ||
-      (rank * sizeof(long long int) != 0 && n == nullptr) ||
-      workSize == nullptr) {
+      (rank * sizeof(long long int) != 0 && n == nullptr)) {
     return CUFFT_INVALID_VALUE;
   }
   conn_t *conn = connection_for_handle(plan);
@@ -1271,6 +1331,10 @@ static cufftResult lupine_rpc_cufftXtMakePlanMany(
   cufftResult return_value = rpc_error();
   uint8_t inembed_null = inembed == nullptr ? 1 : 0;
   uint8_t onembed_null = onembed == nullptr ? 1 : 0;
+  uint32_t workSize_width =
+      workSize != nullptr && scalar_on_host(plan, "workSize")
+          ? static_cast<uint32_t>(work_size_bytes(plan))
+          : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_cufftXtMakePlanMany) < 0 ||
       rpc_write(conn, &plan, sizeof(cufftHandle)) < 0 ||
@@ -1289,9 +1353,12 @@ static cufftResult lupine_rpc_cufftXtMakePlanMany(
       rpc_write(conn, &odist, sizeof(long long int)) < 0 ||
       rpc_write(conn, &outputtype, sizeof(cudaDataType)) < 0 ||
       rpc_write(conn, &batch, sizeof(long long int)) < 0 ||
+      rpc_write(conn, &workSize_width, sizeof(workSize_width)) < 0 ||
+      (workSize_width == 0 &&
+       rpc_write(conn, &workSize, sizeof(workSize)) < 0) ||
       rpc_write(conn, &executiontype, sizeof(cudaDataType)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, workSize, sizeof(size_t)) < 0 ||
+      (workSize_width != 0 && rpc_read(conn, workSize, workSize_width) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -1306,8 +1373,7 @@ extern "C" cufftResult cufftXtMakePlanMany(
     cudaDataType outputtype, long long int batch, size_t *workSize,
     cudaDataType executiontype) {
   if (rank < 0 || rank < 0 || rank < 0 ||
-      (rank * sizeof(long long int) != 0 && n == nullptr) ||
-      workSize == nullptr) {
+      (rank * sizeof(long long int) != 0 && n == nullptr)) {
     return CUFFT_INVALID_VALUE;
   }
   conn_t *conn = connection_for_handle(plan);
