@@ -511,3 +511,261 @@ int handle_cusparseSDDMM(conn_t *conn);
 int handle_cusparseSpMMOp_createPlan(conn_t *conn);
 int handle_cusparseSpMMOp(conn_t *conn);
 int handle_cusparseSpMMOp_destroyPlan(conn_t *conn);
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCaxpyi(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsc2dense(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsr2dense(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrgemm2(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrgemm2_bufferSizeExt(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrsm2_analysis(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrsm2_bufferSizeExt(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrsm2_solve(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrsv2_analysis(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrsv2_bufferSize(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrsv2_solve(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCdense2csc(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCdense2csr(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCgemmi(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCgthr(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCgthrz(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseConstrainedGeMM(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseConstrainedGeMM_bufferSize(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCooAoSGet(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCreateCooAoS(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCreateCsrgemm2Info(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCreateCsrsm2Info(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCreateCsrsv2Info(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCsctr(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCsrmvEx(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCsrmvEx_bufferSize(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDaxpyi(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsc2dense(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsr2dense(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrgemm2(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrgemm2_bufferSizeExt(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrsm2_analysis(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrsm2_bufferSizeExt(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrsm2_solve(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrsv2_analysis(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrsv2_bufferSize(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrsv2_solve(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDdense2csc(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDdense2csr(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDestroyCsrgemm2Info(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDestroyCsrsm2Info(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDestroyCsrsv2Info(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDgemmi(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDgthr(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDgthrz(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDroti(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDsctr(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSaxpyi(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsc2dense(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsr2dense(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrgemm2(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrgemm2_bufferSizeExt(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrsm2_analysis(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrsm2_bufferSizeExt(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrsm2_solve(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrsv2_analysis(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrsv2_bufferSize(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrsv2_solve(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSdense2csc(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSdense2csr(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSgemmi(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSgthr(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSgthrz(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSpMatSetStridedBatch(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSroti(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSsctr(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseXcsrgemm2Nnz(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseXcsrsm2_zeroPivot(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseXcsrsv2_zeroPivot(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZaxpyi(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsc2dense(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsr2dense(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrgemm2(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrgemm2_bufferSizeExt(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrsm2_analysis(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrsm2_bufferSizeExt(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrsm2_solve(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrsv2_analysis(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrsv2_bufferSize(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrsv2_solve(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZdense2csc(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZdense2csr(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZgemmi(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZgthr(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZgthrz(conn_t *conn);
+#endif
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZsctr(conn_t *conn);
+#endif

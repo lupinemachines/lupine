@@ -504,6 +504,95 @@ static int test_legacy(cusparseHandle_t handle) {
 
 // One handle per device; a descriptor made on one device answers its getters
 // after the current device moves away.
+#if CUSPARSE_VER_MAJOR < 12
+// Calls cuSPARSE 12.0 removed: a csrsv2 lower-triangular solve checked against
+// forward substitution, then a scatter of part of the solution.
+static int test_removed_legacy(cusparseHandle_t handle) {
+  const std::vector<int> row = {0, 1, 3, 5, 8};
+  const std::vector<int> col = {0, 0, 1, 1, 2, 0, 2, 3};
+  const std::vector<double> val = {2, 1, 3, 4, 5, 6, 7, 8};
+  const std::vector<double> f = {2, 5, 9, 21};
+  const int nnz = static_cast<int>(val.size());
+  const double alpha = 2.0;
+
+  std::vector<double> want(kRows, 0.0);
+  for (int i = 0; i < kRows; ++i) {
+    double sum = alpha * f[i];
+    double diagonal = 1.0;
+    for (int k = row[i]; k < row[i + 1]; ++k) {
+      if (col[k] == i) {
+        diagonal = val[k];
+      } else {
+        sum -= val[k] * want[col[k]];
+      }
+    }
+    want[i] = sum / diagonal;
+  }
+
+  cusparseMatDescr_t descr = nullptr;
+  CHECK_CUSPARSE(cusparseCreateMatDescr(&descr));
+  CHECK_CUSPARSE(cusparseSetMatFillMode(descr, CUSPARSE_FILL_MODE_LOWER));
+  CHECK_CUSPARSE(cusparseSetMatDiagType(descr, CUSPARSE_DIAG_TYPE_NON_UNIT));
+  int *d_row = upload(row);
+  int *d_col = upload(col);
+  double *d_val = upload(val);
+  double *d_f = upload(f);
+  double *d_x = upload(std::vector<double>(kRows, 0.0));
+  EXPECT(d_row && d_col && d_val && d_f && d_x);
+
+  csrsv2Info_t info = nullptr;
+  CHECK_CUSPARSE(cusparseCreateCsrsv2Info(&info));
+  int buffer_size = 0;
+  CHECK_CUSPARSE(cusparseDcsrsv2_bufferSize(
+      handle, CUSPARSE_OPERATION_NON_TRANSPOSE, kRows, nnz, descr, d_val, d_row,
+      d_col, info, &buffer_size));
+  EXPECT(buffer_size > 0);
+  void *buffer = nullptr;
+  CHECK_CUDA(cudaMalloc(&buffer, buffer_size));
+  CHECK_CUSPARSE(cusparseDcsrsv2_analysis(
+      handle, CUSPARSE_OPERATION_NON_TRANSPOSE, kRows, nnz, descr, d_val, d_row,
+      d_col, info, CUSPARSE_SOLVE_POLICY_NO_LEVEL, buffer));
+  int pivot = -2;
+  CHECK_CUSPARSE(cusparseXcsrsv2_zeroPivot(handle, info, &pivot));
+  EXPECT(pivot == -1);
+  CHECK_CUSPARSE(cusparseDcsrsv2_solve(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                       kRows, nnz, &alpha, descr, d_val, d_row,
+                                       d_col, info, d_f, d_x,
+                                       CUSPARSE_SOLVE_POLICY_NO_LEVEL, buffer));
+  const std::vector<double> x = download(d_x, kRows);
+  for (int i = 0; i < kRows; ++i) {
+    if (near(x[i], want[i], "csrsv2")) {
+      return 1;
+    }
+  }
+
+  const std::vector<int> index = {1, 3};
+  int *d_index = upload(index);
+  double *d_sparse = upload(std::vector<double>{x[1], x[3]});
+  double *d_y = upload(std::vector<double>(kRows, 0.0));
+  EXPECT(d_index && d_sparse && d_y);
+  CHECK_CUSPARSE(cusparseDsctr(handle, 2, d_sparse, d_index, d_y,
+                               CUSPARSE_INDEX_BASE_ZERO));
+  const std::vector<double> y = download(d_y, kRows);
+  EXPECT(y[0] == 0.0 && y[2] == 0.0);
+  if (near(y[1], x[1], "sctr") || near(y[3], x[3], "sctr")) {
+    return 1;
+  }
+
+  CHECK_CUSPARSE(cusparseDestroyCsrsv2Info(info));
+  CHECK_CUSPARSE(cusparseDestroyMatDescr(descr));
+  for (void *allocation :
+       {static_cast<void *>(d_row), static_cast<void *>(d_col),
+        static_cast<void *>(d_val), static_cast<void *>(d_f),
+        static_cast<void *>(d_x), buffer, static_cast<void *>(d_index),
+        static_cast<void *>(d_sparse), static_cast<void *>(d_y)}) {
+    CHECK_CUDA(cudaFree(allocation));
+  }
+  printf("csrsv2 and sctr: passed\n");
+  return 0;
+}
+#endif
+
 static int test_multi_device() {
   int device_count = 0;
   CHECK_CUDA(cudaGetDeviceCount(&device_count));
@@ -573,6 +662,11 @@ int main() {
       test_spgemm(handle) || test_legacy(handle)) {
     return 1;
   }
+#if CUSPARSE_VER_MAJOR < 12
+  if (test_removed_legacy(handle)) {
+    return 1;
+  }
+#endif
   CHECK_CUDA(cudaStreamSynchronize(stream));
   CHECK_CUSPARSE(cusparseDestroy(handle));
   CHECK_CUDA(cudaStreamDestroy(stream));

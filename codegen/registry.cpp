@@ -3875,6 +3875,361 @@ LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEAM_nnz, handle_cusparseSpGEAM_nnz,
 LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEAM, handle_cusparseSpGEAM,
                        rpc_backend::cusparse)
 #endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCaxpyi, handle_cusparseCaxpyi,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCcsc2dense, handle_cusparseCcsc2dense,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCcsr2dense, handle_cusparseCcsr2dense,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCcsrgemm2, handle_cusparseCcsrgemm2,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCcsrgemm2_bufferSizeExt,
+                       handle_cusparseCcsrgemm2_bufferSizeExt,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCcsrsm2_analysis,
+                       handle_cusparseCcsrsm2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCcsrsm2_bufferSizeExt,
+                       handle_cusparseCcsrsm2_bufferSizeExt,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCcsrsm2_solve, handle_cusparseCcsrsm2_solve,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCcsrsv2_analysis,
+                       handle_cusparseCcsrsv2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCcsrsv2_bufferSize,
+                       handle_cusparseCcsrsv2_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCcsrsv2_solve, handle_cusparseCcsrsv2_solve,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCdense2csc, handle_cusparseCdense2csc,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCdense2csr, handle_cusparseCdense2csr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCgemmi, handle_cusparseCgemmi,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCgthr, handle_cusparseCgthr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCgthrz, handle_cusparseCgthrz,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstrainedGeMM,
+                       handle_cusparseConstrainedGeMM, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstrainedGeMM_bufferSize,
+                       handle_cusparseConstrainedGeMM_bufferSize,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCooAoSGet, handle_cusparseCooAoSGet,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateCooAoS, handle_cusparseCreateCooAoS,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateCsrgemm2Info,
+                       handle_cusparseCreateCsrgemm2Info, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateCsrsm2Info,
+                       handle_cusparseCreateCsrsm2Info, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateCsrsv2Info,
+                       handle_cusparseCreateCsrsv2Info, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCsctr, handle_cusparseCsctr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCsrmvEx, handle_cusparseCsrmvEx,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCsrmvEx_bufferSize,
+                       handle_cusparseCsrmvEx_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDaxpyi, handle_cusparseDaxpyi,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDcsc2dense, handle_cusparseDcsc2dense,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDcsr2dense, handle_cusparseDcsr2dense,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDcsrgemm2, handle_cusparseDcsrgemm2,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDcsrgemm2_bufferSizeExt,
+                       handle_cusparseDcsrgemm2_bufferSizeExt,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDcsrsm2_analysis,
+                       handle_cusparseDcsrsm2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDcsrsm2_bufferSizeExt,
+                       handle_cusparseDcsrsm2_bufferSizeExt,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDcsrsm2_solve, handle_cusparseDcsrsm2_solve,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDcsrsv2_analysis,
+                       handle_cusparseDcsrsv2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDcsrsv2_bufferSize,
+                       handle_cusparseDcsrsv2_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDcsrsv2_solve, handle_cusparseDcsrsv2_solve,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDdense2csc, handle_cusparseDdense2csc,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDdense2csr, handle_cusparseDdense2csr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDestroyCsrgemm2Info,
+                       handle_cusparseDestroyCsrgemm2Info,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDestroyCsrsm2Info,
+                       handle_cusparseDestroyCsrsm2Info, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDestroyCsrsv2Info,
+                       handle_cusparseDestroyCsrsv2Info, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDgemmi, handle_cusparseDgemmi,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDgthr, handle_cusparseDgthr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDgthrz, handle_cusparseDgthrz,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDroti, handle_cusparseDroti,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseDsctr, handle_cusparseDsctr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseSaxpyi, handle_cusparseSaxpyi,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseScsc2dense, handle_cusparseScsc2dense,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseScsr2dense, handle_cusparseScsr2dense,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseScsrgemm2, handle_cusparseScsrgemm2,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseScsrgemm2_bufferSizeExt,
+                       handle_cusparseScsrgemm2_bufferSizeExt,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseScsrsm2_analysis,
+                       handle_cusparseScsrsm2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseScsrsm2_bufferSizeExt,
+                       handle_cusparseScsrsm2_bufferSizeExt,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseScsrsm2_solve, handle_cusparseScsrsm2_solve,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseScsrsv2_analysis,
+                       handle_cusparseScsrsv2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseScsrsv2_bufferSize,
+                       handle_cusparseScsrsv2_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseScsrsv2_solve, handle_cusparseScsrsv2_solve,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseSdense2csc, handle_cusparseSdense2csc,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseSdense2csr, handle_cusparseSdense2csr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseSgemmi, handle_cusparseSgemmi,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseSgthr, handle_cusparseSgthr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseSgthrz, handle_cusparseSgthrz,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMatSetStridedBatch,
+                       handle_cusparseSpMatSetStridedBatch,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseSroti, handle_cusparseSroti,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseSsctr, handle_cusparseSsctr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseXcsrgemm2Nnz, handle_cusparseXcsrgemm2Nnz,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseXcsrsm2_zeroPivot,
+                       handle_cusparseXcsrsm2_zeroPivot, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseXcsrsv2_zeroPivot,
+                       handle_cusparseXcsrsv2_zeroPivot, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZaxpyi, handle_cusparseZaxpyi,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZcsc2dense, handle_cusparseZcsc2dense,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZcsr2dense, handle_cusparseZcsr2dense,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZcsrgemm2, handle_cusparseZcsrgemm2,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZcsrgemm2_bufferSizeExt,
+                       handle_cusparseZcsrgemm2_bufferSizeExt,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZcsrsm2_analysis,
+                       handle_cusparseZcsrsm2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZcsrsm2_bufferSizeExt,
+                       handle_cusparseZcsrsm2_bufferSizeExt,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZcsrsm2_solve, handle_cusparseZcsrsm2_solve,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZcsrsv2_analysis,
+                       handle_cusparseZcsrsv2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZcsrsv2_bufferSize,
+                       handle_cusparseZcsrsv2_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZcsrsv2_solve, handle_cusparseZcsrsv2_solve,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZdense2csc, handle_cusparseZdense2csc,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZdense2csr, handle_cusparseZdense2csr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZgemmi, handle_cusparseZgemmi,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZgthr, handle_cusparseZgthr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZgthrz, handle_cusparseZgthrz,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseZsctr, handle_cusparseZsctr,
+                       rpc_backend::cusparse)
+#endif
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -5225,6 +5580,264 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #if CUSPARSE_VERSION >= 12801
       LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEAM, handle_cusparseSpGEAM, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCaxpyi, handle_cusparseCaxpyi, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCcsc2dense, handle_cusparseCcsc2dense, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCcsr2dense, handle_cusparseCcsr2dense, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCcsrgemm2, handle_cusparseCcsrgemm2, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCcsrgemm2_bufferSizeExt, handle_cusparseCcsrgemm2_bufferSizeExt, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCcsrsm2_analysis, handle_cusparseCcsrsm2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCcsrsm2_bufferSizeExt, handle_cusparseCcsrsm2_bufferSizeExt, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCcsrsm2_solve, handle_cusparseCcsrsm2_solve, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCcsrsv2_analysis, handle_cusparseCcsrsv2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCcsrsv2_bufferSize, handle_cusparseCcsrsv2_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCcsrsv2_solve, handle_cusparseCcsrsv2_solve, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCdense2csc, handle_cusparseCdense2csc, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCdense2csr, handle_cusparseCdense2csr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCgemmi, handle_cusparseCgemmi, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCgthr, handle_cusparseCgthr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCgthrz, handle_cusparseCgthrz, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstrainedGeMM, handle_cusparseConstrainedGeMM, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstrainedGeMM_bufferSize, handle_cusparseConstrainedGeMM_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCooAoSGet, handle_cusparseCooAoSGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateCooAoS, handle_cusparseCreateCooAoS, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateCsrgemm2Info, handle_cusparseCreateCsrgemm2Info, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateCsrsm2Info, handle_cusparseCreateCsrsm2Info, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateCsrsv2Info, handle_cusparseCreateCsrsv2Info, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCsctr, handle_cusparseCsctr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCsrmvEx, handle_cusparseCsrmvEx, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCsrmvEx_bufferSize, handle_cusparseCsrmvEx_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDaxpyi, handle_cusparseDaxpyi, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDcsc2dense, handle_cusparseDcsc2dense, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDcsr2dense, handle_cusparseDcsr2dense, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDcsrgemm2, handle_cusparseDcsrgemm2, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDcsrgemm2_bufferSizeExt, handle_cusparseDcsrgemm2_bufferSizeExt, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDcsrsm2_analysis, handle_cusparseDcsrsm2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDcsrsm2_bufferSizeExt, handle_cusparseDcsrsm2_bufferSizeExt, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDcsrsm2_solve, handle_cusparseDcsrsm2_solve, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDcsrsv2_analysis, handle_cusparseDcsrsv2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDcsrsv2_bufferSize, handle_cusparseDcsrsv2_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDcsrsv2_solve, handle_cusparseDcsrsv2_solve, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDdense2csc, handle_cusparseDdense2csc, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDdense2csr, handle_cusparseDdense2csr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDestroyCsrgemm2Info, handle_cusparseDestroyCsrgemm2Info, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDestroyCsrsm2Info, handle_cusparseDestroyCsrsm2Info, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDestroyCsrsv2Info, handle_cusparseDestroyCsrsv2Info, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDgemmi, handle_cusparseDgemmi, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDgthr, handle_cusparseDgthr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDgthrz, handle_cusparseDgthrz, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDroti, handle_cusparseDroti, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseDsctr, handle_cusparseDsctr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSaxpyi, handle_cusparseSaxpyi, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseScsc2dense, handle_cusparseScsc2dense, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseScsr2dense, handle_cusparseScsr2dense, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseScsrgemm2, handle_cusparseScsrgemm2, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseScsrgemm2_bufferSizeExt, handle_cusparseScsrgemm2_bufferSizeExt, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseScsrsm2_analysis, handle_cusparseScsrsm2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseScsrsm2_bufferSizeExt, handle_cusparseScsrsm2_bufferSizeExt, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseScsrsm2_solve, handle_cusparseScsrsm2_solve, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseScsrsv2_analysis, handle_cusparseScsrsv2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseScsrsv2_bufferSize, handle_cusparseScsrsv2_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseScsrsv2_solve, handle_cusparseScsrsv2_solve, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSdense2csc, handle_cusparseSdense2csc, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSdense2csr, handle_cusparseSdense2csr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSgemmi, handle_cusparseSgemmi, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSgthr, handle_cusparseSgthr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSgthrz, handle_cusparseSgthrz, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMatSetStridedBatch, handle_cusparseSpMatSetStridedBatch, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSroti, handle_cusparseSroti, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSsctr, handle_cusparseSsctr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseXcsrgemm2Nnz, handle_cusparseXcsrgemm2Nnz, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseXcsrsm2_zeroPivot, handle_cusparseXcsrsm2_zeroPivot, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseXcsrsv2_zeroPivot, handle_cusparseXcsrsv2_zeroPivot, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZaxpyi, handle_cusparseZaxpyi, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZcsc2dense, handle_cusparseZcsc2dense, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZcsr2dense, handle_cusparseZcsr2dense, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZcsrgemm2, handle_cusparseZcsrgemm2, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZcsrgemm2_bufferSizeExt, handle_cusparseZcsrgemm2_bufferSizeExt, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZcsrsm2_analysis, handle_cusparseZcsrsm2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZcsrsm2_bufferSizeExt, handle_cusparseZcsrsm2_bufferSizeExt, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZcsrsm2_solve, handle_cusparseZcsrsm2_solve, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZcsrsv2_analysis, handle_cusparseZcsrsv2_analysis, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZcsrsv2_bufferSize, handle_cusparseZcsrsv2_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZcsrsv2_solve, handle_cusparseZcsrsv2_solve, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZdense2csc, handle_cusparseZdense2csc, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZdense2csr, handle_cusparseZdense2csr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZgemmi, handle_cusparseZgemmi, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZgthr, handle_cusparseZgthr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZgthrz, handle_cusparseZgthrz, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseZsctr, handle_cusparseZsctr, rpc_backend::cusparse)
 #endif
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND

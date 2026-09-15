@@ -23187,3 +23187,5551 @@ int handle_cusparseSpMMOp_destroyPlan(conn_t *conn) {
 ERROR_0:
   return -1;
 }
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCaxpyi(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuComplex *alpha = nullptr;
+  const cuComplex *xVal;
+  const int *xInd;
+  cuComplex *y;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, const cuComplex *,
+                                    const cuComplex *, const int *, cuComplex *,
+                                    cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &xVal, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCaxpyi");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               xVal, xInd, y, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsc2dense(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const cuComplex *cscSortedValA;
+  const int *cscSortedRowIndA;
+  const int *cscSortedColPtrA;
+  cuComplex *A;
+  int lda;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, int,
+                                    const cusparseMatDescr_t, const cuComplex *,
+                                    const int *, const int *, cuComplex *, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &cscSortedValA, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &cscSortedRowIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &cscSortedColPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &A, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCcsc2dense");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, m, n, descrA, cscSortedValA,
+                                    cscSortedRowIndA, cscSortedColPtrA, A, lda);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsr2dense(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const cuComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  cuComplex *A;
+  int lda;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, int,
+                                    const cusparseMatDescr_t, const cuComplex *,
+                                    const int *, const int *, cuComplex *, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &A, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCcsr2dense");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, m, n, descrA, csrSortedValA,
+                                    csrSortedRowPtrA, csrSortedColIndA, A, lda);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrgemm2(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  int k;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuComplex *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  int nnzA;
+  const cuComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  cusparseMatDescr_t descrB;
+  int nnzB;
+  const cuComplex *csrSortedValB;
+  const int *csrSortedRowPtrB;
+  const int *csrSortedColIndB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const cuComplex *beta = nullptr;
+  cusparseMatDescr_t descrD;
+  int nnzD;
+  const cuComplex *csrSortedValD;
+  const int *csrSortedRowPtrD;
+  const int *csrSortedColIndD;
+  cusparseMatDescr_t descrC;
+  cuComplex *csrSortedValC;
+  const int *csrSortedRowPtrC;
+  int *csrSortedColIndC;
+  csrgemm2Info_t info;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, int, const cuComplex *,
+      const cusparseMatDescr_t, int, const cuComplex *, const int *,
+      const int *, const cusparseMatDescr_t, int, const cuComplex *,
+      const int *, const int *, const cuComplex *, const cusparseMatDescr_t,
+      int, const cuComplex *, const int *, const int *,
+      const cusparseMatDescr_t, cuComplex *, const int *, int *,
+      const csrgemm2Info_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &k, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzA, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrB, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzB, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedValB, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &descrD, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzD, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedValD, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrC, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValC, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrC, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndC, sizeof(int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(const csrgemm2Info_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCcsrgemm2");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n, k,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, nnzA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA,
+               descrB, nnzB, csrSortedValB, csrSortedRowPtrB, csrSortedColIndB,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
+               descrD, nnzD, csrSortedValD, csrSortedRowPtrD, csrSortedColIndD,
+               descrC, csrSortedValC, csrSortedRowPtrC, csrSortedColIndC, info,
+               pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrgemm2_bufferSizeExt(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  int k;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuComplex *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  int nnzA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  cusparseMatDescr_t descrB;
+  int nnzB;
+  const int *csrSortedRowPtrB;
+  const int *csrSortedColIndB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const cuComplex *beta = nullptr;
+  cusparseMatDescr_t descrD;
+  int nnzD;
+  const int *csrSortedRowPtrD;
+  const int *csrSortedColIndD;
+  csrgemm2Info_t info;
+  size_t pBufferSizeInBytes{};
+  pBufferSizeInBytes = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, int, const cuComplex *,
+      const cusparseMatDescr_t, int, const int *, const int *,
+      const cusparseMatDescr_t, int, const int *, const int *,
+      const cuComplex *, const cusparseMatDescr_t, int, const int *,
+      const int *, csrgemm2Info_t, size_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &k, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzA, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrB, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzB, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &descrD, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzD, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrgemm2Info_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCcsrgemm2_bufferSizeExt");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n, k,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, nnzA, csrSortedRowPtrA, csrSortedColIndA, descrB, nnzB,
+               csrSortedRowPtrB, csrSortedColIndB,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
+               descrD, nnzD, csrSortedRowPtrD, csrSortedColIndD, info,
+               &pBufferSizeInBytes);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pBufferSizeInBytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrsm2_analysis(conn_t *conn) {
+  cusparseHandle_t handle;
+  int algo;
+  cusparseOperation_t transA;
+  cusparseOperation_t transB;
+  int m;
+  int nrhs;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuComplex *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const cuComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  const cuComplex *B;
+  int ldb;
+  csrsm2Info_t info;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, cusparseOperation_t, cusparseOperation_t, int, int,
+      int, const cuComplex *, const cusparseMatDescr_t, const cuComplex *,
+      const int *, const int *, const cuComplex *, int, csrsm2Info_t,
+      cusparseSolvePolicy_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &algo, sizeof(int)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &transB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nrhs, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &ldb, sizeof(int)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCcsrsm2_analysis");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, algo, transA, transB, m, nrhs, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, B,
+               ldb, info, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrsm2_bufferSizeExt(conn_t *conn) {
+  cusparseHandle_t handle;
+  int algo;
+  cusparseOperation_t transA;
+  cusparseOperation_t transB;
+  int m;
+  int nrhs;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuComplex *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const cuComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  const cuComplex *B;
+  int ldb;
+  csrsm2Info_t info;
+  cusparseSolvePolicy_t policy;
+  size_t pBufferSize{};
+  pBufferSize = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, cusparseOperation_t, cusparseOperation_t, int, int,
+      int, const cuComplex *, const cusparseMatDescr_t, const cuComplex *,
+      const int *, const int *, const cuComplex *, int, csrsm2Info_t,
+      cusparseSolvePolicy_t, size_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &algo, sizeof(int)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &transB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nrhs, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &B, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &ldb, sizeof(int)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCcsrsm2_bufferSizeExt");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, algo, transA, transB, m, nrhs, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, B,
+               ldb, info, policy, &pBufferSize);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pBufferSize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrsm2_solve(conn_t *conn) {
+  cusparseHandle_t handle;
+  int algo;
+  cusparseOperation_t transA;
+  cusparseOperation_t transB;
+  int m;
+  int nrhs;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuComplex *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const cuComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  cuComplex *B;
+  int ldb;
+  csrsm2Info_t info;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, cusparseOperation_t, cusparseOperation_t, int, int,
+      int, const cuComplex *, const cusparseMatDescr_t, const cuComplex *,
+      const int *, const int *, cuComplex *, int, csrsm2Info_t,
+      cusparseSolvePolicy_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &algo, sizeof(int)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &transB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nrhs, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &B, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &ldb, sizeof(int)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCcsrsm2_solve");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, algo, transA, transB, m, nrhs, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, B,
+               ldb, info, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrsv2_analysis(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t transA;
+  int m;
+  int nnz;
+  cusparseMatDescr_t descrA;
+  const cuComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  csrsv2Info_t info;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, int, int, const cusparseMatDescr_t,
+      const cuComplex *, const int *, const int *, csrsv2Info_t,
+      cusparseSolvePolicy_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCcsrsv2_analysis");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, transA, m, nnz, descrA,
+                                    csrSortedValA, csrSortedRowPtrA,
+                                    csrSortedColIndA, info, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrsv2_bufferSize(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t transA;
+  int m;
+  int nnz;
+  cusparseMatDescr_t descrA;
+  cuComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  csrsv2Info_t info;
+  int pBufferSizeInBytes{};
+  pBufferSizeInBytes = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, int, int, const cusparseMatDescr_t,
+      cuComplex *, const int *, const int *, csrsv2Info_t, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCcsrsv2_bufferSize");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, transA, m, nnz, descrA, csrSortedValA, csrSortedRowPtrA,
+               csrSortedColIndA, info, &pBufferSizeInBytes);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pBufferSizeInBytes, sizeof(int)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCcsrsv2_solve(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t transA;
+  int m;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuComplex *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const cuComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  csrsv2Info_t info;
+  const cuComplex *f;
+  cuComplex *x;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, int, int, const cuComplex *,
+      const cusparseMatDescr_t, const cuComplex *, const int *, const int *,
+      csrsv2Info_t, const cuComplex *, cuComplex *, cusparseSolvePolicy_t,
+      void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 ||
+      rpc_read(conn, &f, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &x, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCcsrsv2_solve");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, transA, m, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, info,
+               f, x, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCdense2csc(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const cuComplex *A;
+  int lda;
+  const int *nnzPerCol;
+  cuComplex *cscSortedValA;
+  int *cscSortedRowIndA;
+  int *cscSortedColPtrA;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, const cusparseMatDescr_t, const cuComplex *,
+      int, const int *, cuComplex *, int *, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnzPerCol, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &cscSortedValA, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &cscSortedRowIndA, sizeof(int *)) < 0 ||
+      rpc_read(conn, &cscSortedColPtrA, sizeof(int *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCdense2csc");
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, m, n, descrA, A, lda, nnzPerCol,
+                          cscSortedValA, cscSortedRowIndA, cscSortedColPtrA);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCdense2csr(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const cuComplex *A;
+  int lda;
+  const int *nnzPerRow;
+  cuComplex *csrSortedValA;
+  int *csrSortedRowPtrA;
+  int *csrSortedColIndA;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, const cusparseMatDescr_t, const cuComplex *,
+      int, const int *, cuComplex *, int *, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnzPerRow, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(int *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCdense2csr");
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, m, n, descrA, A, lda, nnzPerRow,
+                          csrSortedValA, csrSortedRowPtrA, csrSortedColIndA);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCgemmi(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  int k;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuComplex *alpha = nullptr;
+  const cuComplex *A;
+  int lda;
+  const cuComplex *cscValB;
+  const int *cscColPtrB;
+  const int *cscRowIndB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const cuComplex *beta = nullptr;
+  cuComplex *C;
+  int ldc;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, int, int, int,
+                                    const cuComplex *, const cuComplex *, int,
+                                    const cuComplex *, const int *, const int *,
+                                    const cuComplex *, cuComplex *, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &k, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &A, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 ||
+      rpc_read(conn, &cscValB, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &cscColPtrB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &cscRowIndB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &C, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCgemmi");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n, k, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               A, lda, cscValB, cscColPtrB, cscRowIndB,
+               beta_width != 0
+                   ? reinterpret_cast<const cuComplex *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
+               C, ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCgthr(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  const cuComplex *y;
+  cuComplex *xVal;
+  const int *xInd;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t =
+      cusparseStatus_t (*)(cusparseHandle_t, int, const cuComplex *,
+                           cuComplex *, const int *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &y, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCgthr");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, nnz, y, xVal, xInd, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCgthrz(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  cuComplex *y;
+  cuComplex *xVal;
+  const int *xInd;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t =
+      cusparseStatus_t (*)(cusparseHandle_t, int, cuComplex *, cuComplex *,
+                           const int *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCgthrz");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, nnz, y, xVal, xInd, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseConstrainedGeMM(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t opA;
+  cusparseOperation_t opB;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const void *alpha = nullptr;
+  cusparseDnMatDescr_t matA;
+  cusparseDnMatDescr_t matB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const void *beta = nullptr;
+  cusparseSpMatDescr_t matC;
+  cudaDataType computeType;
+  void *externalBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, cusparseOperation_t, const void *,
+      cusparseDnMatDescr_t, cusparseDnMatDescr_t, const void *,
+      cusparseSpMatDescr_t, cudaDataType, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &opA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &opB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &matA, sizeof(cusparseDnMatDescr_t)) < 0 ||
+      rpc_read(conn, &matB, sizeof(cusparseDnMatDescr_t)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &matC, sizeof(cusparseSpMatDescr_t)) < 0 ||
+      rpc_read(conn, &computeType, sizeof(cudaDataType)) < 0 ||
+      rpc_read(conn, &externalBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseConstrainedGeMM");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, opA, opB,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               matA, matB,
+               beta_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
+               matC, computeType, externalBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseConstrainedGeMM_bufferSize(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t opA;
+  cusparseOperation_t opB;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const void *alpha = nullptr;
+  cusparseDnMatDescr_t matA;
+  cusparseDnMatDescr_t matB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const void *beta = nullptr;
+  cusparseSpMatDescr_t matC;
+  cudaDataType computeType;
+  size_t bufferSize{};
+  bufferSize = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, cusparseOperation_t, const void *,
+      cusparseDnMatDescr_t, cusparseDnMatDescr_t, const void *,
+      cusparseSpMatDescr_t, cudaDataType, size_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &opA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &opB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &matA, sizeof(cusparseDnMatDescr_t)) < 0 ||
+      rpc_read(conn, &matB, sizeof(cusparseDnMatDescr_t)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &matC, sizeof(cusparseSpMatDescr_t)) < 0 ||
+      rpc_read(conn, &computeType, sizeof(cudaDataType)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseConstrainedGeMM_bufferSize");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, opA, opB,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               matA, matB,
+               beta_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
+               matC, computeType, &bufferSize);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &bufferSize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCooAoSGet(conn_t *conn) {
+  cusparseSpMatDescr_t spMatDescr;
+  int64_t rows{};
+  rows = {};
+  int64_t cols{};
+  cols = {};
+  int64_t nnz{};
+  nnz = {};
+  void *cooInd{};
+  cooInd = {};
+  void *cooValues{};
+  cooValues = {};
+  cusparseIndexType_t idxType{};
+  idxType = {};
+  cusparseIndexBase_t idxBase{};
+  idxBase = {};
+  cudaDataType valueType{};
+  valueType = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseSpMatDescr_t, int64_t *, int64_t *, int64_t *, void **, void **,
+      cusparseIndexType_t *, cusparseIndexBase_t *, cudaDataType *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &spMatDescr, sizeof(cusparseSpMatDescr_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCooAoSGet");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(spMatDescr, &rows, &cols, &nnz, &cooInd,
+                                    &cooValues, &idxType, &idxBase, &valueType);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &rows, sizeof(int64_t)) < 0 ||
+      rpc_write(conn, &cols, sizeof(int64_t)) < 0 ||
+      rpc_write(conn, &nnz, sizeof(int64_t)) < 0 ||
+      rpc_write(conn, &cooInd, sizeof(void *)) < 0 ||
+      rpc_write(conn, &cooValues, sizeof(void *)) < 0 ||
+      rpc_write(conn, &idxType, sizeof(cusparseIndexType_t)) < 0 ||
+      rpc_write(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 ||
+      rpc_write(conn, &valueType, sizeof(cudaDataType)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCreateCooAoS(conn_t *conn) {
+  cusparseSpMatDescr_t spMatDescr{};
+  spMatDescr = {};
+  int64_t rows;
+  int64_t cols;
+  int64_t nnz;
+  void *cooInd;
+  void *cooValues;
+  cusparseIndexType_t cooIdxType;
+  cusparseIndexBase_t idxBase;
+  cudaDataType valueType;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseSpMatDescr_t *, int64_t, int64_t, int64_t, void *, void *,
+      cusparseIndexType_t, cusparseIndexBase_t, cudaDataType);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &rows, sizeof(int64_t)) < 0 ||
+      rpc_read(conn, &cols, sizeof(int64_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int64_t)) < 0 ||
+      rpc_read(conn, &cooInd, sizeof(void *)) < 0 ||
+      rpc_read(conn, &cooValues, sizeof(void *)) < 0 ||
+      rpc_read(conn, &cooIdxType, sizeof(cusparseIndexType_t)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 ||
+      rpc_read(conn, &valueType, sizeof(cudaDataType)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCreateCooAoS");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(&spMatDescr, rows, cols, nnz, cooInd,
+                                    cooValues, cooIdxType, idxBase, valueType);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &spMatDescr, sizeof(cusparseSpMatDescr_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCreateCsrgemm2Info(conn_t *conn) {
+  csrgemm2Info_t info{};
+  info = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(csrgemm2Info_t *);
+  fn_t fn = nullptr;
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCreateCsrgemm2Info");
+  return_value = fn == nullptr ? function_not_found() : fn(&info);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &info, sizeof(csrgemm2Info_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCreateCsrsm2Info(conn_t *conn) {
+  csrsm2Info_t info{};
+  info = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(csrsm2Info_t *);
+  fn_t fn = nullptr;
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCreateCsrsm2Info");
+  return_value = fn == nullptr ? function_not_found() : fn(&info);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCreateCsrsv2Info(conn_t *conn) {
+  csrsv2Info_t info{};
+  info = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(csrsv2Info_t *);
+  fn_t fn = nullptr;
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCreateCsrsv2Info");
+  return_value = fn == nullptr ? function_not_found() : fn(&info);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &info, sizeof(csrsv2Info_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCsctr(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  const cuComplex *xVal;
+  const int *xInd;
+  cuComplex *y;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t =
+      cusparseStatus_t (*)(cusparseHandle_t, int, const cuComplex *,
+                           const int *, cuComplex *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(const cuComplex *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &y, sizeof(cuComplex *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCsctr");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, nnz, xVal, xInd, y, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCsrmvEx(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseAlgMode_t alg;
+  cusparseOperation_t transA;
+  int m;
+  int n;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const void *alpha = nullptr;
+  cudaDataType alphatype;
+  cusparseMatDescr_t descrA;
+  const void *csrValA;
+  cudaDataType csrValAtype;
+  const int *csrRowPtrA;
+  const int *csrColIndA;
+  const void *x;
+  cudaDataType xtype;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const void *beta = nullptr;
+  cudaDataType betatype;
+  void *y;
+  cudaDataType ytype;
+  cudaDataType executiontype;
+  void *buffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseAlgMode_t, cusparseOperation_t, int, int, int,
+      const void *, cudaDataType, const cusparseMatDescr_t, const void *,
+      cudaDataType, const int *, const int *, const void *, cudaDataType,
+      const void *, cudaDataType, void *, cudaDataType, cudaDataType, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &alg, sizeof(cusparseAlgMode_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &alphatype, sizeof(cudaDataType)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrValA, sizeof(const void *)) < 0 ||
+      rpc_read(conn, &csrValAtype, sizeof(cudaDataType)) < 0 ||
+      rpc_read(conn, &csrRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &x, sizeof(const void *)) < 0 ||
+      rpc_read(conn, &xtype, sizeof(cudaDataType)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &betatype, sizeof(cudaDataType)) < 0 ||
+      rpc_read(conn, &y, sizeof(void *)) < 0 ||
+      rpc_read(conn, &ytype, sizeof(cudaDataType)) < 0 ||
+      rpc_read(conn, &executiontype, sizeof(cudaDataType)) < 0 ||
+      rpc_read(conn, &buffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCsrmvEx");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, alg, transA, m, n, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               alphatype, descrA, csrValA, csrValAtype, csrRowPtrA, csrColIndA,
+               x, xtype,
+               beta_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
+               betatype, y, ytype, executiontype, buffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseCsrmvEx_bufferSize(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseAlgMode_t alg;
+  cusparseOperation_t transA;
+  int m;
+  int n;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const void *alpha = nullptr;
+  cudaDataType alphatype;
+  cusparseMatDescr_t descrA;
+  const void *csrValA;
+  cudaDataType csrValAtype;
+  const int *csrRowPtrA;
+  const int *csrColIndA;
+  const void *x;
+  cudaDataType xtype;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const void *beta = nullptr;
+  cudaDataType betatype;
+  void *y;
+  cudaDataType ytype;
+  cudaDataType executiontype;
+  size_t bufferSizeInBytes{};
+  bufferSizeInBytes = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseAlgMode_t, cusparseOperation_t, int, int, int,
+      const void *, cudaDataType, const cusparseMatDescr_t, const void *,
+      cudaDataType, const int *, const int *, const void *, cudaDataType,
+      const void *, cudaDataType, void *, cudaDataType, cudaDataType, size_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &alg, sizeof(cusparseAlgMode_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &alphatype, sizeof(cudaDataType)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrValA, sizeof(const void *)) < 0 ||
+      rpc_read(conn, &csrValAtype, sizeof(cudaDataType)) < 0 ||
+      rpc_read(conn, &csrRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &x, sizeof(const void *)) < 0 ||
+      rpc_read(conn, &xtype, sizeof(cudaDataType)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &betatype, sizeof(cudaDataType)) < 0 ||
+      rpc_read(conn, &y, sizeof(void *)) < 0 ||
+      rpc_read(conn, &ytype, sizeof(cudaDataType)) < 0 ||
+      rpc_read(conn, &executiontype, sizeof(cudaDataType)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseCsrmvEx_bufferSize");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, alg, transA, m, n, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const void *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               alphatype, descrA, csrValA, csrValAtype, csrRowPtrA, csrColIndA,
+               x, xtype,
+               beta_width != 0
+                   ? reinterpret_cast<const void *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
+               betatype, y, ytype, executiontype, &bufferSizeInBytes);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &bufferSizeInBytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDaxpyi(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const double *alpha = nullptr;
+  const double *xVal;
+  const int *xInd;
+  double *y;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, const double *,
+                                    const double *, const int *, double *,
+                                    cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &xVal, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &y, sizeof(double *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDaxpyi");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               xVal, xInd, y, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsc2dense(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const double *cscSortedValA;
+  const int *cscSortedRowIndA;
+  const int *cscSortedColPtrA;
+  double *A;
+  int lda;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, int,
+                                    const cusparseMatDescr_t, const double *,
+                                    const int *, const int *, double *, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &cscSortedValA, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &cscSortedRowIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &cscSortedColPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &A, sizeof(double *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDcsc2dense");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, m, n, descrA, cscSortedValA,
+                                    cscSortedRowIndA, cscSortedColPtrA, A, lda);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsr2dense(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const double *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  double *A;
+  int lda;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, int,
+                                    const cusparseMatDescr_t, const double *,
+                                    const int *, const int *, double *, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &A, sizeof(double *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDcsr2dense");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, m, n, descrA, csrSortedValA,
+                                    csrSortedRowPtrA, csrSortedColIndA, A, lda);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrgemm2(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  int k;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const double *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  int nnzA;
+  const double *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  cusparseMatDescr_t descrB;
+  int nnzB;
+  const double *csrSortedValB;
+  const int *csrSortedRowPtrB;
+  const int *csrSortedColIndB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const double *beta = nullptr;
+  cusparseMatDescr_t descrD;
+  int nnzD;
+  const double *csrSortedValD;
+  const int *csrSortedRowPtrD;
+  const int *csrSortedColIndD;
+  cusparseMatDescr_t descrC;
+  double *csrSortedValC;
+  const int *csrSortedRowPtrC;
+  int *csrSortedColIndC;
+  csrgemm2Info_t info;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, int, const double *, const cusparseMatDescr_t,
+      int, const double *, const int *, const int *, const cusparseMatDescr_t,
+      int, const double *, const int *, const int *, const double *,
+      const cusparseMatDescr_t, int, const double *, const int *, const int *,
+      const cusparseMatDescr_t, double *, const int *, int *,
+      const csrgemm2Info_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &k, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzA, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrB, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzB, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedValB, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &descrD, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzD, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedValD, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrC, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValC, sizeof(double *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrC, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndC, sizeof(int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(const csrgemm2Info_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDcsrgemm2");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n, k,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, nnzA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA,
+               descrB, nnzB, csrSortedValB, csrSortedRowPtrB, csrSortedColIndB,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
+               descrD, nnzD, csrSortedValD, csrSortedRowPtrD, csrSortedColIndD,
+               descrC, csrSortedValC, csrSortedRowPtrC, csrSortedColIndC, info,
+               pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrgemm2_bufferSizeExt(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  int k;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const double *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  int nnzA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  cusparseMatDescr_t descrB;
+  int nnzB;
+  const int *csrSortedRowPtrB;
+  const int *csrSortedColIndB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const double *beta = nullptr;
+  cusparseMatDescr_t descrD;
+  int nnzD;
+  const int *csrSortedRowPtrD;
+  const int *csrSortedColIndD;
+  csrgemm2Info_t info;
+  size_t pBufferSizeInBytes{};
+  pBufferSizeInBytes = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, int, const double *, const cusparseMatDescr_t,
+      int, const int *, const int *, const cusparseMatDescr_t, int, const int *,
+      const int *, const double *, const cusparseMatDescr_t, int, const int *,
+      const int *, csrgemm2Info_t, size_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &k, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzA, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrB, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzB, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &descrD, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzD, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrgemm2Info_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDcsrgemm2_bufferSizeExt");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n, k,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, nnzA, csrSortedRowPtrA, csrSortedColIndA, descrB, nnzB,
+               csrSortedRowPtrB, csrSortedColIndB,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
+               descrD, nnzD, csrSortedRowPtrD, csrSortedColIndD, info,
+               &pBufferSizeInBytes);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pBufferSizeInBytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrsm2_analysis(conn_t *conn) {
+  cusparseHandle_t handle;
+  int algo;
+  cusparseOperation_t transA;
+  cusparseOperation_t transB;
+  int m;
+  int nrhs;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const double *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const double *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  const double *B;
+  int ldb;
+  csrsm2Info_t info;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, cusparseOperation_t, cusparseOperation_t, int, int,
+      int, const double *, const cusparseMatDescr_t, const double *,
+      const int *, const int *, const double *, int, csrsm2Info_t,
+      cusparseSolvePolicy_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &algo, sizeof(int)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &transB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nrhs, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &B, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &ldb, sizeof(int)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDcsrsm2_analysis");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, algo, transA, transB, m, nrhs, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, B,
+               ldb, info, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrsm2_bufferSizeExt(conn_t *conn) {
+  cusparseHandle_t handle;
+  int algo;
+  cusparseOperation_t transA;
+  cusparseOperation_t transB;
+  int m;
+  int nrhs;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const double *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const double *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  const double *B;
+  int ldb;
+  csrsm2Info_t info;
+  cusparseSolvePolicy_t policy;
+  size_t pBufferSize{};
+  pBufferSize = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, cusparseOperation_t, cusparseOperation_t, int, int,
+      int, const double *, const cusparseMatDescr_t, const double *,
+      const int *, const int *, const double *, int, csrsm2Info_t,
+      cusparseSolvePolicy_t, size_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &algo, sizeof(int)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &transB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nrhs, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &B, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &ldb, sizeof(int)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDcsrsm2_bufferSizeExt");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, algo, transA, transB, m, nrhs, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, B,
+               ldb, info, policy, &pBufferSize);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pBufferSize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrsm2_solve(conn_t *conn) {
+  cusparseHandle_t handle;
+  int algo;
+  cusparseOperation_t transA;
+  cusparseOperation_t transB;
+  int m;
+  int nrhs;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const double *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const double *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  double *B;
+  int ldb;
+  csrsm2Info_t info;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, cusparseOperation_t, cusparseOperation_t, int, int,
+      int, const double *, const cusparseMatDescr_t, const double *,
+      const int *, const int *, double *, int, csrsm2Info_t,
+      cusparseSolvePolicy_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &algo, sizeof(int)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &transB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nrhs, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &B, sizeof(double *)) < 0 ||
+      rpc_read(conn, &ldb, sizeof(int)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDcsrsm2_solve");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, algo, transA, transB, m, nrhs, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, B,
+               ldb, info, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrsv2_analysis(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t transA;
+  int m;
+  int nnz;
+  cusparseMatDescr_t descrA;
+  const double *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  csrsv2Info_t info;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, int, int, const cusparseMatDescr_t,
+      const double *, const int *, const int *, csrsv2Info_t,
+      cusparseSolvePolicy_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDcsrsv2_analysis");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, transA, m, nnz, descrA,
+                                    csrSortedValA, csrSortedRowPtrA,
+                                    csrSortedColIndA, info, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrsv2_bufferSize(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t transA;
+  int m;
+  int nnz;
+  cusparseMatDescr_t descrA;
+  double *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  csrsv2Info_t info;
+  int pBufferSizeInBytes{};
+  pBufferSizeInBytes = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, int, int, const cusparseMatDescr_t,
+      double *, const int *, const int *, csrsv2Info_t, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(double *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDcsrsv2_bufferSize");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, transA, m, nnz, descrA, csrSortedValA, csrSortedRowPtrA,
+               csrSortedColIndA, info, &pBufferSizeInBytes);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pBufferSizeInBytes, sizeof(int)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDcsrsv2_solve(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t transA;
+  int m;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const double *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const double *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  csrsv2Info_t info;
+  const double *f;
+  double *x;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, int, int, const double *,
+      const cusparseMatDescr_t, const double *, const int *, const int *,
+      csrsv2Info_t, const double *, double *, cusparseSolvePolicy_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 ||
+      rpc_read(conn, &f, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &x, sizeof(double *)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDcsrsv2_solve");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, transA, m, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, info,
+               f, x, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDdense2csc(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const double *A;
+  int lda;
+  const int *nnzPerCol;
+  double *cscSortedValA;
+  int *cscSortedRowIndA;
+  int *cscSortedColPtrA;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, int,
+                                    const cusparseMatDescr_t, const double *,
+                                    int, const int *, double *, int *, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &A, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnzPerCol, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &cscSortedValA, sizeof(double *)) < 0 ||
+      rpc_read(conn, &cscSortedRowIndA, sizeof(int *)) < 0 ||
+      rpc_read(conn, &cscSortedColPtrA, sizeof(int *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDdense2csc");
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, m, n, descrA, A, lda, nnzPerCol,
+                          cscSortedValA, cscSortedRowIndA, cscSortedColPtrA);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDdense2csr(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const double *A;
+  int lda;
+  const int *nnzPerRow;
+  double *csrSortedValA;
+  int *csrSortedRowPtrA;
+  int *csrSortedColIndA;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, int,
+                                    const cusparseMatDescr_t, const double *,
+                                    int, const int *, double *, int *, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &A, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnzPerRow, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(double *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(int *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDdense2csr");
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, m, n, descrA, A, lda, nnzPerRow,
+                          csrSortedValA, csrSortedRowPtrA, csrSortedColIndA);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDestroyCsrgemm2Info(conn_t *conn) {
+  csrgemm2Info_t info;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(csrgemm2Info_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &info, sizeof(csrgemm2Info_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDestroyCsrgemm2Info");
+  return_value = fn == nullptr ? function_not_found() : fn(info);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDestroyCsrsm2Info(conn_t *conn) {
+  csrsm2Info_t info;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(csrsm2Info_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDestroyCsrsm2Info");
+  return_value = fn == nullptr ? function_not_found() : fn(info);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDestroyCsrsv2Info(conn_t *conn) {
+  csrsv2Info_t info;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(csrsv2Info_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDestroyCsrsv2Info");
+  return_value = fn == nullptr ? function_not_found() : fn(info);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDgemmi(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  int k;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const double *alpha = nullptr;
+  const double *A;
+  int lda;
+  const double *cscValB;
+  const int *cscColPtrB;
+  const int *cscRowIndB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const double *beta = nullptr;
+  double *C;
+  int ldc;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, int, int, const double *, const double *, int,
+      const double *, const int *, const int *, const double *, double *, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &k, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &A, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 ||
+      rpc_read(conn, &cscValB, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &cscColPtrB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &cscRowIndB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &C, sizeof(double *)) < 0 ||
+      rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDgemmi");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n, k, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const double *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               A, lda, cscValB, cscColPtrB, cscRowIndB,
+               beta_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
+               C, ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDgthr(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  const double *y;
+  double *xVal;
+  const int *xInd;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, const double *,
+                                    double *, const int *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &y, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(double *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDgthr");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, nnz, y, xVal, xInd, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDgthrz(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  double *y;
+  double *xVal;
+  const int *xInd;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, double *, double *,
+                                    const int *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &y, sizeof(double *)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(double *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDgthrz");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, nnz, y, xVal, xInd, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDroti(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  double *xVal;
+  const int *xInd;
+  double *y;
+  uint32_t c_width;
+  alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
+  const double *c = nullptr;
+  uint32_t s_width;
+  alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
+  const double *s = nullptr;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, double *,
+                                    const int *, double *, const double *,
+                                    const double *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(double *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &y, sizeof(double *)) < 0 ||
+      rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
+      (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
+      rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
+      (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDroti");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, nnz, xVal, xInd, y,
+               c_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0
+                   ? reinterpret_cast<const double *>(lupine_scalar_slot(
+                         s_heap, s_value, sizeof(s_value), s_width))
+                   : s,
+               idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseDsctr(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  const double *xVal;
+  const int *xInd;
+  double *y;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, const double *,
+                                    const int *, double *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(const double *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &y, sizeof(double *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseDsctr");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, nnz, xVal, xInd, y, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSaxpyi(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const float *alpha = nullptr;
+  const float *xVal;
+  const int *xInd;
+  float *y;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t =
+      cusparseStatus_t (*)(cusparseHandle_t, int, const float *, const float *,
+                           const int *, float *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &xVal, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &y, sizeof(float *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseSaxpyi");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               xVal, xInd, y, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsc2dense(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const float *cscSortedValA;
+  const int *cscSortedRowIndA;
+  const int *cscSortedColPtrA;
+  float *A;
+  int lda;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, int,
+                                    const cusparseMatDescr_t, const float *,
+                                    const int *, const int *, float *, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &cscSortedValA, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &cscSortedRowIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &cscSortedColPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &A, sizeof(float *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseScsc2dense");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, m, n, descrA, cscSortedValA,
+                                    cscSortedRowIndA, cscSortedColPtrA, A, lda);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsr2dense(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const float *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  float *A;
+  int lda;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, int,
+                                    const cusparseMatDescr_t, const float *,
+                                    const int *, const int *, float *, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &A, sizeof(float *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseScsr2dense");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, m, n, descrA, csrSortedValA,
+                                    csrSortedRowPtrA, csrSortedColIndA, A, lda);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrgemm2(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  int k;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const float *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  int nnzA;
+  const float *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  cusparseMatDescr_t descrB;
+  int nnzB;
+  const float *csrSortedValB;
+  const int *csrSortedRowPtrB;
+  const int *csrSortedColIndB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const float *beta = nullptr;
+  cusparseMatDescr_t descrD;
+  int nnzD;
+  const float *csrSortedValD;
+  const int *csrSortedRowPtrD;
+  const int *csrSortedColIndD;
+  cusparseMatDescr_t descrC;
+  float *csrSortedValC;
+  const int *csrSortedRowPtrC;
+  int *csrSortedColIndC;
+  csrgemm2Info_t info;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, int, const float *, const cusparseMatDescr_t,
+      int, const float *, const int *, const int *, const cusparseMatDescr_t,
+      int, const float *, const int *, const int *, const float *,
+      const cusparseMatDescr_t, int, const float *, const int *, const int *,
+      const cusparseMatDescr_t, float *, const int *, int *,
+      const csrgemm2Info_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &k, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzA, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrB, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzB, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedValB, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &descrD, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzD, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedValD, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrC, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValC, sizeof(float *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrC, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndC, sizeof(int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(const csrgemm2Info_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseScsrgemm2");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n, k,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, nnzA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA,
+               descrB, nnzB, csrSortedValB, csrSortedRowPtrB, csrSortedColIndB,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
+               descrD, nnzD, csrSortedValD, csrSortedRowPtrD, csrSortedColIndD,
+               descrC, csrSortedValC, csrSortedRowPtrC, csrSortedColIndC, info,
+               pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrgemm2_bufferSizeExt(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  int k;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const float *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  int nnzA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  cusparseMatDescr_t descrB;
+  int nnzB;
+  const int *csrSortedRowPtrB;
+  const int *csrSortedColIndB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const float *beta = nullptr;
+  cusparseMatDescr_t descrD;
+  int nnzD;
+  const int *csrSortedRowPtrD;
+  const int *csrSortedColIndD;
+  csrgemm2Info_t info;
+  size_t pBufferSizeInBytes{};
+  pBufferSizeInBytes = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, int, const float *, const cusparseMatDescr_t,
+      int, const int *, const int *, const cusparseMatDescr_t, int, const int *,
+      const int *, const float *, const cusparseMatDescr_t, int, const int *,
+      const int *, csrgemm2Info_t, size_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &k, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzA, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrB, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzB, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &descrD, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzD, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrgemm2Info_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseScsrgemm2_bufferSizeExt");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n, k,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, nnzA, csrSortedRowPtrA, csrSortedColIndA, descrB, nnzB,
+               csrSortedRowPtrB, csrSortedColIndB,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
+               descrD, nnzD, csrSortedRowPtrD, csrSortedColIndD, info,
+               &pBufferSizeInBytes);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pBufferSizeInBytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrsm2_analysis(conn_t *conn) {
+  cusparseHandle_t handle;
+  int algo;
+  cusparseOperation_t transA;
+  cusparseOperation_t transB;
+  int m;
+  int nrhs;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const float *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const float *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  const float *B;
+  int ldb;
+  csrsm2Info_t info;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, cusparseOperation_t, cusparseOperation_t, int, int,
+      int, const float *, const cusparseMatDescr_t, const float *, const int *,
+      const int *, const float *, int, csrsm2Info_t, cusparseSolvePolicy_t,
+      void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &algo, sizeof(int)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &transB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nrhs, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &B, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &ldb, sizeof(int)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseScsrsm2_analysis");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, algo, transA, transB, m, nrhs, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, B,
+               ldb, info, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrsm2_bufferSizeExt(conn_t *conn) {
+  cusparseHandle_t handle;
+  int algo;
+  cusparseOperation_t transA;
+  cusparseOperation_t transB;
+  int m;
+  int nrhs;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const float *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const float *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  const float *B;
+  int ldb;
+  csrsm2Info_t info;
+  cusparseSolvePolicy_t policy;
+  size_t pBufferSize{};
+  pBufferSize = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, cusparseOperation_t, cusparseOperation_t, int, int,
+      int, const float *, const cusparseMatDescr_t, const float *, const int *,
+      const int *, const float *, int, csrsm2Info_t, cusparseSolvePolicy_t,
+      size_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &algo, sizeof(int)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &transB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nrhs, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &B, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &ldb, sizeof(int)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseScsrsm2_bufferSizeExt");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, algo, transA, transB, m, nrhs, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, B,
+               ldb, info, policy, &pBufferSize);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pBufferSize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrsm2_solve(conn_t *conn) {
+  cusparseHandle_t handle;
+  int algo;
+  cusparseOperation_t transA;
+  cusparseOperation_t transB;
+  int m;
+  int nrhs;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const float *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const float *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  float *B;
+  int ldb;
+  csrsm2Info_t info;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, cusparseOperation_t, cusparseOperation_t, int, int,
+      int, const float *, const cusparseMatDescr_t, const float *, const int *,
+      const int *, float *, int, csrsm2Info_t, cusparseSolvePolicy_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &algo, sizeof(int)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &transB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nrhs, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &B, sizeof(float *)) < 0 ||
+      rpc_read(conn, &ldb, sizeof(int)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseScsrsm2_solve");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, algo, transA, transB, m, nrhs, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, B,
+               ldb, info, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrsv2_analysis(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t transA;
+  int m;
+  int nnz;
+  cusparseMatDescr_t descrA;
+  const float *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  csrsv2Info_t info;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, int, int, const cusparseMatDescr_t,
+      const float *, const int *, const int *, csrsv2Info_t,
+      cusparseSolvePolicy_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseScsrsv2_analysis");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, transA, m, nnz, descrA,
+                                    csrSortedValA, csrSortedRowPtrA,
+                                    csrSortedColIndA, info, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrsv2_bufferSize(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t transA;
+  int m;
+  int nnz;
+  cusparseMatDescr_t descrA;
+  float *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  csrsv2Info_t info;
+  int pBufferSizeInBytes{};
+  pBufferSizeInBytes = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, int, int, const cusparseMatDescr_t,
+      float *, const int *, const int *, csrsv2Info_t, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(float *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseScsrsv2_bufferSize");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, transA, m, nnz, descrA, csrSortedValA, csrSortedRowPtrA,
+               csrSortedColIndA, info, &pBufferSizeInBytes);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pBufferSizeInBytes, sizeof(int)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseScsrsv2_solve(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t transA;
+  int m;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const float *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const float *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  csrsv2Info_t info;
+  const float *f;
+  float *x;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, int, int, const float *,
+      const cusparseMatDescr_t, const float *, const int *, const int *,
+      csrsv2Info_t, const float *, float *, cusparseSolvePolicy_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 ||
+      rpc_read(conn, &f, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &x, sizeof(float *)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseScsrsv2_solve");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, transA, m, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, info,
+               f, x, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSdense2csc(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const float *A;
+  int lda;
+  const int *nnzPerCol;
+  float *cscSortedValA;
+  int *cscSortedRowIndA;
+  int *cscSortedColPtrA;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, int,
+                                    const cusparseMatDescr_t, const float *,
+                                    int, const int *, float *, int *, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &A, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnzPerCol, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &cscSortedValA, sizeof(float *)) < 0 ||
+      rpc_read(conn, &cscSortedRowIndA, sizeof(int *)) < 0 ||
+      rpc_read(conn, &cscSortedColPtrA, sizeof(int *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseSdense2csc");
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, m, n, descrA, A, lda, nnzPerCol,
+                          cscSortedValA, cscSortedRowIndA, cscSortedColPtrA);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSdense2csr(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const float *A;
+  int lda;
+  const int *nnzPerRow;
+  float *csrSortedValA;
+  int *csrSortedRowPtrA;
+  int *csrSortedColIndA;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, int,
+                                    const cusparseMatDescr_t, const float *,
+                                    int, const int *, float *, int *, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &A, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnzPerRow, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(float *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(int *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseSdense2csr");
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, m, n, descrA, A, lda, nnzPerRow,
+                          csrSortedValA, csrSortedRowPtrA, csrSortedColIndA);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSgemmi(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  int k;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const float *alpha = nullptr;
+  const float *A;
+  int lda;
+  const float *cscValB;
+  const int *cscColPtrB;
+  const int *cscRowIndB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const float *beta = nullptr;
+  float *C;
+  int ldc;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, int, int, const float *, const float *, int,
+      const float *, const int *, const int *, const float *, float *, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &k, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &A, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 ||
+      rpc_read(conn, &cscValB, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &cscColPtrB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &cscRowIndB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &C, sizeof(float *)) < 0 ||
+      rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseSgemmi");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n, k, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const float *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               A, lda, cscValB, cscColPtrB, cscRowIndB,
+               beta_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         beta_heap, beta_value, sizeof(beta_value), beta_width))
+                   : beta,
+               C, ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSgthr(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  const float *y;
+  float *xVal;
+  const int *xInd;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, const float *,
+                                    float *, const int *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &y, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(float *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseSgthr");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, nnz, y, xVal, xInd, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSgthrz(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  float *y;
+  float *xVal;
+  const int *xInd;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, float *, float *,
+                                    const int *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &y, sizeof(float *)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(float *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseSgthrz");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, nnz, y, xVal, xInd, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSpMatSetStridedBatch(conn_t *conn) {
+  cusparseSpMatDescr_t spMatDescr;
+  int batchCount;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseSpMatDescr_t, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &spMatDescr, sizeof(cusparseSpMatDescr_t)) < 0 ||
+      rpc_read(conn, &batchCount, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseSpMatSetStridedBatch");
+  return_value =
+      fn == nullptr ? function_not_found() : fn(spMatDescr, batchCount);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSroti(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  float *xVal;
+  const int *xInd;
+  float *y;
+  uint32_t c_width;
+  alignas(16) unsigned char c_value[64];
+  std::vector<unsigned char> c_heap;
+  const float *c = nullptr;
+  uint32_t s_width;
+  alignas(16) unsigned char s_value[64];
+  std::vector<unsigned char> s_heap;
+  const float *s = nullptr;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t =
+      cusparseStatus_t (*)(cusparseHandle_t, int, float *, const int *, float *,
+                           const float *, const float *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(float *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &y, sizeof(float *)) < 0 ||
+      rpc_read(conn, &c_width, sizeof(c_width)) < 0 ||
+      (c_width == 0 && rpc_read(conn, &c, sizeof(c)) < 0) ||
+      (c_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(c_heap, c_value, sizeof(c_value), c_width),
+                c_width) < 0) ||
+      rpc_read(conn, &s_width, sizeof(s_width)) < 0 ||
+      (s_width == 0 && rpc_read(conn, &s, sizeof(s)) < 0) ||
+      (s_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(s_heap, s_value, sizeof(s_value), s_width),
+                s_width) < 0) ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseSroti");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, nnz, xVal, xInd, y,
+               c_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         c_heap, c_value, sizeof(c_value), c_width))
+                   : c,
+               s_width != 0
+                   ? reinterpret_cast<const float *>(lupine_scalar_slot(
+                         s_heap, s_value, sizeof(s_value), s_width))
+                   : s,
+               idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseSsctr(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  const float *xVal;
+  const int *xInd;
+  float *y;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, int, const float *,
+                                    const int *, float *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(const float *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &y, sizeof(float *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseSsctr");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, nnz, xVal, xInd, y, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseXcsrgemm2Nnz(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  int k;
+  cusparseMatDescr_t descrA;
+  int nnzA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  cusparseMatDescr_t descrB;
+  int nnzB;
+  const int *csrSortedRowPtrB;
+  const int *csrSortedColIndB;
+  cusparseMatDescr_t descrD;
+  int nnzD;
+  const int *csrSortedRowPtrD;
+  const int *csrSortedColIndD;
+  cusparseMatDescr_t descrC;
+  int *csrSortedRowPtrC;
+  uint32_t nnzTotalDevHostPtr_width;
+  alignas(16) unsigned char nnzTotalDevHostPtr_value[64];
+  std::vector<unsigned char> nnzTotalDevHostPtr_heap;
+  int *nnzTotalDevHostPtr = nullptr;
+  csrgemm2Info_t info;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, int, const cusparseMatDescr_t, int,
+      const int *, const int *, const cusparseMatDescr_t, int, const int *,
+      const int *, const cusparseMatDescr_t, int, const int *, const int *,
+      const cusparseMatDescr_t, int *, int *, const csrgemm2Info_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &k, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzA, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrB, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzB, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrD, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzD, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrC, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrC, sizeof(int *)) < 0 ||
+      rpc_read(conn, &nnzTotalDevHostPtr_width,
+               sizeof(nnzTotalDevHostPtr_width)) < 0 ||
+      (nnzTotalDevHostPtr_width == 0 &&
+       rpc_read(conn, &nnzTotalDevHostPtr, sizeof(nnzTotalDevHostPtr)) < 0) ||
+      rpc_read(conn, &info, sizeof(const csrgemm2Info_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseXcsrgemm2Nnz");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n, k, descrA, nnzA, csrSortedRowPtrA,
+               csrSortedColIndA, descrB, nnzB, csrSortedRowPtrB,
+               csrSortedColIndB, descrD, nnzD, csrSortedRowPtrD,
+               csrSortedColIndD, descrC, csrSortedRowPtrC,
+               nnzTotalDevHostPtr_width != 0
+                   ? reinterpret_cast<int *>(lupine_scalar_slot(
+                         nnzTotalDevHostPtr_heap, nnzTotalDevHostPtr_value,
+                         sizeof(nnzTotalDevHostPtr_value),
+                         nnzTotalDevHostPtr_width))
+                   : nnzTotalDevHostPtr,
+               info, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (nnzTotalDevHostPtr_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(nnzTotalDevHostPtr_heap,
+                                    nnzTotalDevHostPtr_value,
+                                    sizeof(nnzTotalDevHostPtr_value),
+                                    nnzTotalDevHostPtr_width),
+                 nnzTotalDevHostPtr_width) < 0) ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseXcsrsm2_zeroPivot(conn_t *conn) {
+  cusparseHandle_t handle;
+  csrsm2Info_t info;
+  uint32_t position_width;
+  alignas(16) unsigned char position_value[64];
+  std::vector<unsigned char> position_heap;
+  int *position = nullptr;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, csrsm2Info_t, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_read(conn, &position_width, sizeof(position_width)) < 0 ||
+      (position_width == 0 &&
+       rpc_read(conn, &position, sizeof(position)) < 0) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseXcsrsm2_zeroPivot");
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, info,
+                          position_width != 0
+                              ? reinterpret_cast<int *>(lupine_scalar_slot(
+                                    position_heap, position_value,
+                                    sizeof(position_value), position_width))
+                              : position);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (position_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(position_heap, position_value,
+                                    sizeof(position_value), position_width),
+                 position_width) < 0) ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseXcsrsv2_zeroPivot(conn_t *conn) {
+  cusparseHandle_t handle;
+  csrsv2Info_t info;
+  uint32_t position_width;
+  alignas(16) unsigned char position_value[64];
+  std::vector<unsigned char> position_heap;
+  int *position = nullptr;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(cusparseHandle_t, csrsv2Info_t, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 ||
+      rpc_read(conn, &position_width, sizeof(position_width)) < 0 ||
+      (position_width == 0 &&
+       rpc_read(conn, &position, sizeof(position)) < 0) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseXcsrsv2_zeroPivot");
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, info,
+                          position_width != 0
+                              ? reinterpret_cast<int *>(lupine_scalar_slot(
+                                    position_heap, position_value,
+                                    sizeof(position_value), position_width))
+                              : position);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (position_width != 0 &&
+       rpc_write(conn,
+                 lupine_scalar_slot(position_heap, position_value,
+                                    sizeof(position_value), position_width),
+                 position_width) < 0) ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZaxpyi(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuDoubleComplex *alpha = nullptr;
+  const cuDoubleComplex *xVal;
+  const int *xInd;
+  cuDoubleComplex *y;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, const cuDoubleComplex *, const cuDoubleComplex *,
+      const int *, cuDoubleComplex *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &xVal, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZaxpyi");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               xVal, xInd, y, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsc2dense(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const cuDoubleComplex *cscSortedValA;
+  const int *cscSortedRowIndA;
+  const int *cscSortedColPtrA;
+  cuDoubleComplex *A;
+  int lda;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t =
+      cusparseStatus_t (*)(cusparseHandle_t, int, int, const cusparseMatDescr_t,
+                           const cuDoubleComplex *, const int *, const int *,
+                           cuDoubleComplex *, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &cscSortedValA, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &cscSortedRowIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &cscSortedColPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &A, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZcsc2dense");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, m, n, descrA, cscSortedValA,
+                                    cscSortedRowIndA, cscSortedColPtrA, A, lda);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsr2dense(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const cuDoubleComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  cuDoubleComplex *A;
+  int lda;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t =
+      cusparseStatus_t (*)(cusparseHandle_t, int, int, const cusparseMatDescr_t,
+                           const cuDoubleComplex *, const int *, const int *,
+                           cuDoubleComplex *, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &A, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZcsr2dense");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, m, n, descrA, csrSortedValA,
+                                    csrSortedRowPtrA, csrSortedColIndA, A, lda);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrgemm2(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  int k;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuDoubleComplex *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  int nnzA;
+  const cuDoubleComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  cusparseMatDescr_t descrB;
+  int nnzB;
+  const cuDoubleComplex *csrSortedValB;
+  const int *csrSortedRowPtrB;
+  const int *csrSortedColIndB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const cuDoubleComplex *beta = nullptr;
+  cusparseMatDescr_t descrD;
+  int nnzD;
+  const cuDoubleComplex *csrSortedValD;
+  const int *csrSortedRowPtrD;
+  const int *csrSortedColIndD;
+  cusparseMatDescr_t descrC;
+  cuDoubleComplex *csrSortedValC;
+  const int *csrSortedRowPtrC;
+  int *csrSortedColIndC;
+  csrgemm2Info_t info;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, int, const cuDoubleComplex *,
+      const cusparseMatDescr_t, int, const cuDoubleComplex *, const int *,
+      const int *, const cusparseMatDescr_t, int, const cuDoubleComplex *,
+      const int *, const int *, const cuDoubleComplex *,
+      const cusparseMatDescr_t, int, const cuDoubleComplex *, const int *,
+      const int *, const cusparseMatDescr_t, cuDoubleComplex *, const int *,
+      int *, const csrgemm2Info_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &k, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzA, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrB, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzB, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedValB, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &descrD, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzD, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedValD, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrC, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValC, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrC, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndC, sizeof(int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(const csrgemm2Info_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZcsrgemm2");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n, k,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, nnzA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA,
+               descrB, nnzB, csrSortedValB, csrSortedRowPtrB, csrSortedColIndB,
+               beta_width != 0
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
+                   : beta,
+               descrD, nnzD, csrSortedValD, csrSortedRowPtrD, csrSortedColIndD,
+               descrC, csrSortedValC, csrSortedRowPtrC, csrSortedColIndC, info,
+               pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrgemm2_bufferSizeExt(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  int k;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuDoubleComplex *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  int nnzA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  cusparseMatDescr_t descrB;
+  int nnzB;
+  const int *csrSortedRowPtrB;
+  const int *csrSortedColIndB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const cuDoubleComplex *beta = nullptr;
+  cusparseMatDescr_t descrD;
+  int nnzD;
+  const int *csrSortedRowPtrD;
+  const int *csrSortedColIndD;
+  csrgemm2Info_t info;
+  size_t pBufferSizeInBytes{};
+  pBufferSizeInBytes = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, int, const cuDoubleComplex *,
+      const cusparseMatDescr_t, int, const int *, const int *,
+      const cusparseMatDescr_t, int, const int *, const int *,
+      const cuDoubleComplex *, const cusparseMatDescr_t, int, const int *,
+      const int *, csrgemm2Info_t, size_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &k, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzA, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &descrB, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzB, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &descrD, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &nnzD, sizeof(int)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndD, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrgemm2Info_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZcsrgemm2_bufferSizeExt");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n, k,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, nnzA, csrSortedRowPtrA, csrSortedColIndA, descrB, nnzB,
+               csrSortedRowPtrB, csrSortedColIndB,
+               beta_width != 0
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
+                   : beta,
+               descrD, nnzD, csrSortedRowPtrD, csrSortedColIndD, info,
+               &pBufferSizeInBytes);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pBufferSizeInBytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrsm2_analysis(conn_t *conn) {
+  cusparseHandle_t handle;
+  int algo;
+  cusparseOperation_t transA;
+  cusparseOperation_t transB;
+  int m;
+  int nrhs;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuDoubleComplex *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const cuDoubleComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  const cuDoubleComplex *B;
+  int ldb;
+  csrsm2Info_t info;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, cusparseOperation_t, cusparseOperation_t, int, int,
+      int, const cuDoubleComplex *, const cusparseMatDescr_t,
+      const cuDoubleComplex *, const int *, const int *,
+      const cuDoubleComplex *, int, csrsm2Info_t, cusparseSolvePolicy_t,
+      void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &algo, sizeof(int)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &transB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nrhs, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &ldb, sizeof(int)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZcsrsm2_analysis");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, algo, transA, transB, m, nrhs, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, B,
+               ldb, info, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrsm2_bufferSizeExt(conn_t *conn) {
+  cusparseHandle_t handle;
+  int algo;
+  cusparseOperation_t transA;
+  cusparseOperation_t transB;
+  int m;
+  int nrhs;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuDoubleComplex *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const cuDoubleComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  const cuDoubleComplex *B;
+  int ldb;
+  csrsm2Info_t info;
+  cusparseSolvePolicy_t policy;
+  size_t pBufferSize{};
+  pBufferSize = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, cusparseOperation_t, cusparseOperation_t, int, int,
+      int, const cuDoubleComplex *, const cusparseMatDescr_t,
+      const cuDoubleComplex *, const int *, const int *,
+      const cuDoubleComplex *, int, csrsm2Info_t, cusparseSolvePolicy_t,
+      size_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &algo, sizeof(int)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &transB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nrhs, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &B, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &ldb, sizeof(int)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZcsrsm2_bufferSizeExt");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, algo, transA, transB, m, nrhs, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, B,
+               ldb, info, policy, &pBufferSize);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pBufferSize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrsm2_solve(conn_t *conn) {
+  cusparseHandle_t handle;
+  int algo;
+  cusparseOperation_t transA;
+  cusparseOperation_t transB;
+  int m;
+  int nrhs;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuDoubleComplex *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const cuDoubleComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  cuDoubleComplex *B;
+  int ldb;
+  csrsm2Info_t info;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, cusparseOperation_t, cusparseOperation_t, int, int,
+      int, const cuDoubleComplex *, const cusparseMatDescr_t,
+      const cuDoubleComplex *, const int *, const int *, cuDoubleComplex *, int,
+      csrsm2Info_t, cusparseSolvePolicy_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &algo, sizeof(int)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &transB, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nrhs, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &B, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &ldb, sizeof(int)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsm2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZcsrsm2_solve");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, algo, transA, transB, m, nrhs, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, B,
+               ldb, info, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrsv2_analysis(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t transA;
+  int m;
+  int nnz;
+  cusparseMatDescr_t descrA;
+  const cuDoubleComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  csrsv2Info_t info;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, int, int, const cusparseMatDescr_t,
+      const cuDoubleComplex *, const int *, const int *, csrsv2Info_t,
+      cusparseSolvePolicy_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZcsrsv2_analysis");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, transA, m, nnz, descrA,
+                                    csrSortedValA, csrSortedRowPtrA,
+                                    csrSortedColIndA, info, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrsv2_bufferSize(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t transA;
+  int m;
+  int nnz;
+  cusparseMatDescr_t descrA;
+  cuDoubleComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  csrsv2Info_t info;
+  int pBufferSizeInBytes{};
+  pBufferSizeInBytes = {};
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, int, int, const cusparseMatDescr_t,
+      cuDoubleComplex *, const int *, const int *, csrsv2Info_t, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZcsrsv2_bufferSize");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, transA, m, nnz, descrA, csrSortedValA, csrSortedRowPtrA,
+               csrSortedColIndA, info, &pBufferSizeInBytes);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &pBufferSizeInBytes, sizeof(int)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZcsrsv2_solve(conn_t *conn) {
+  cusparseHandle_t handle;
+  cusparseOperation_t transA;
+  int m;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuDoubleComplex *alpha = nullptr;
+  cusparseMatDescr_t descrA;
+  const cuDoubleComplex *csrSortedValA;
+  const int *csrSortedRowPtrA;
+  const int *csrSortedColIndA;
+  csrsv2Info_t info;
+  const cuDoubleComplex *f;
+  cuDoubleComplex *x;
+  cusparseSolvePolicy_t policy;
+  void *pBuffer;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, cusparseOperation_t, int, int, const cuDoubleComplex *,
+      const cusparseMatDescr_t, const cuDoubleComplex *, const int *,
+      const int *, csrsv2Info_t, const cuDoubleComplex *, cuDoubleComplex *,
+      cusparseSolvePolicy_t, void *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &transA, sizeof(cusparseOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &info, sizeof(csrsv2Info_t)) < 0 ||
+      rpc_read(conn, &f, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &x, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &policy, sizeof(cusparseSolvePolicy_t)) < 0 ||
+      rpc_read(conn, &pBuffer, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZcsrsv2_solve");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, transA, m, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               descrA, csrSortedValA, csrSortedRowPtrA, csrSortedColIndA, info,
+               f, x, policy, pBuffer);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZdense2csc(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const cuDoubleComplex *A;
+  int lda;
+  const int *nnzPerCol;
+  cuDoubleComplex *cscSortedValA;
+  int *cscSortedRowIndA;
+  int *cscSortedColPtrA;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t =
+      cusparseStatus_t (*)(cusparseHandle_t, int, int, const cusparseMatDescr_t,
+                           const cuDoubleComplex *, int, const int *,
+                           cuDoubleComplex *, int *, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnzPerCol, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &cscSortedValA, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &cscSortedRowIndA, sizeof(int *)) < 0 ||
+      rpc_read(conn, &cscSortedColPtrA, sizeof(int *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZdense2csc");
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, m, n, descrA, A, lda, nnzPerCol,
+                          cscSortedValA, cscSortedRowIndA, cscSortedColPtrA);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZdense2csr(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  cusparseMatDescr_t descrA;
+  const cuDoubleComplex *A;
+  int lda;
+  const int *nnzPerRow;
+  cuDoubleComplex *csrSortedValA;
+  int *csrSortedRowPtrA;
+  int *csrSortedColIndA;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t =
+      cusparseStatus_t (*)(cusparseHandle_t, int, int, const cusparseMatDescr_t,
+                           const cuDoubleComplex *, int, const int *,
+                           cuDoubleComplex *, int *, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &descrA, sizeof(const cusparseMatDescr_t)) < 0 ||
+      rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnzPerRow, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &csrSortedValA, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &csrSortedRowPtrA, sizeof(int *)) < 0 ||
+      rpc_read(conn, &csrSortedColIndA, sizeof(int *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZdense2csr");
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, m, n, descrA, A, lda, nnzPerRow,
+                          csrSortedValA, csrSortedRowPtrA, csrSortedColIndA);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZgemmi(conn_t *conn) {
+  cusparseHandle_t handle;
+  int m;
+  int n;
+  int k;
+  int nnz;
+  uint32_t alpha_width;
+  alignas(16) unsigned char alpha_value[64];
+  std::vector<unsigned char> alpha_heap;
+  const cuDoubleComplex *alpha = nullptr;
+  const cuDoubleComplex *A;
+  int lda;
+  const cuDoubleComplex *cscValB;
+  const int *cscColPtrB;
+  const int *cscRowIndB;
+  uint32_t beta_width;
+  alignas(16) unsigned char beta_value[64];
+  std::vector<unsigned char> beta_heap;
+  const cuDoubleComplex *beta = nullptr;
+  cuDoubleComplex *C;
+  int ldc;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t = cusparseStatus_t (*)(
+      cusparseHandle_t, int, int, int, int, const cuDoubleComplex *,
+      const cuDoubleComplex *, int, const cuDoubleComplex *, const int *,
+      const int *, const cuDoubleComplex *, cuDoubleComplex *, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(int)) < 0 ||
+      rpc_read(conn, &n, sizeof(int)) < 0 ||
+      rpc_read(conn, &k, sizeof(int)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &alpha_width, sizeof(alpha_width)) < 0 ||
+      (alpha_width == 0 && rpc_read(conn, &alpha, sizeof(alpha)) < 0) ||
+      (alpha_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(alpha_heap, alpha_value, sizeof(alpha_value),
+                                   alpha_width),
+                alpha_width) < 0) ||
+      rpc_read(conn, &A, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &lda, sizeof(int)) < 0 ||
+      rpc_read(conn, &cscValB, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &cscColPtrB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &cscRowIndB, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &beta_width, sizeof(beta_width)) < 0 ||
+      (beta_width == 0 && rpc_read(conn, &beta, sizeof(beta)) < 0) ||
+      (beta_width != 0 &&
+       rpc_read(conn,
+                lupine_scalar_slot(beta_heap, beta_value, sizeof(beta_value),
+                                   beta_width),
+                beta_width) < 0) ||
+      rpc_read(conn, &C, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &ldc, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZgemmi");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, m, n, k, nnz,
+               alpha_width != 0
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(alpha_heap, alpha_value,
+                                            sizeof(alpha_value), alpha_width))
+                   : alpha,
+               A, lda, cscValB, cscColPtrB, cscRowIndB,
+               beta_width != 0
+                   ? reinterpret_cast<const cuDoubleComplex *>(
+                         lupine_scalar_slot(beta_heap, beta_value,
+                                            sizeof(beta_value), beta_width))
+                   : beta,
+               C, ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZgthr(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  const cuDoubleComplex *y;
+  cuDoubleComplex *xVal;
+  const int *xInd;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t =
+      cusparseStatus_t (*)(cusparseHandle_t, int, const cuDoubleComplex *,
+                           cuDoubleComplex *, const int *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &y, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZgthr");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, nnz, y, xVal, xInd, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZgthrz(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  cuDoubleComplex *y;
+  cuDoubleComplex *xVal;
+  const int *xInd;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t =
+      cusparseStatus_t (*)(cusparseHandle_t, int, cuDoubleComplex *,
+                           cuDoubleComplex *, const int *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZgthrz");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, nnz, y, xVal, xInd, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if CUSPARSE_VERSION < 12000
+int handle_cusparseZsctr(conn_t *conn) {
+  cusparseHandle_t handle;
+  int nnz;
+  const cuDoubleComplex *xVal;
+  const int *xInd;
+  cuDoubleComplex *y;
+  cusparseIndexBase_t idxBase;
+  int request_id;
+  cusparseStatus_t return_value;
+  using fn_t =
+      cusparseStatus_t (*)(cusparseHandle_t, int, const cuDoubleComplex *,
+                           const int *, cuDoubleComplex *, cusparseIndexBase_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cusparseHandle_t)) < 0 ||
+      rpc_read(conn, &nnz, sizeof(int)) < 0 ||
+      rpc_read(conn, &xVal, sizeof(const cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &xInd, sizeof(const int *)) < 0 ||
+      rpc_read(conn, &y, sizeof(cuDoubleComplex *)) < 0 ||
+      rpc_read(conn, &idxBase, sizeof(cusparseIndexBase_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cusparse_symbol<fn_t>("cusparseZsctr");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(handle, nnz, xVal, xInd, y, idxBase);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cusparseStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif

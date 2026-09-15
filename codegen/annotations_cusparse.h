@@ -26,6 +26,10 @@
 // Each @guard names the first cuSPARSE release with that signature. The 12.0
 // headers retyped read-only descriptor parameters as const; the shim aliases
 // those names on 11.x, so the retyped calls carry no guard.
+//
+// The calls at the end of this file are the ones cuSPARSE 12.0 removed. They
+// are declared here as the 11.x headers declare them, since this file is read
+// against a newer header that no longer does, and each is guarded to 11.x.
 
 /**
  * @param handle RECV_ONLY
@@ -7425,3 +7429,1737 @@ cusparseStatus_t cusparseSpMMOp_destroyPlan(cusparseSpMMOpPlan_t plan) {
   return return_value;
 }
 // clang-format on
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param y SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseCaxpyi(cusparseHandle_t handle, int nnz,
+                                const cuComplex *alpha, const cuComplex *xVal,
+                                const int *xInd, cuComplex *y,
+                                cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param cscSortedValA SEND_ONLY
+ * @param cscSortedRowIndA SEND_ONLY
+ * @param cscSortedColPtrA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ */
+cusparseStatus_t cusparseCcsc2dense(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const cuComplex *cscSortedValA,
+                                    const int *cscSortedRowIndA,
+                                    const int *cscSortedColPtrA, cuComplex *A,
+                                    int lda);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ */
+cusparseStatus_t cusparseCcsr2dense(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const cuComplex *csrSortedValA,
+                                    const int *csrSortedRowPtrA,
+                                    const int *csrSortedColIndA, cuComplex *A,
+                                    int lda);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param nnzA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param descrB SEND_ONLY
+ * @param nnzB SEND_ONLY
+ * @param csrSortedValB SEND_ONLY
+ * @param csrSortedRowPtrB SEND_ONLY
+ * @param csrSortedColIndB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR
+ * @param descrD SEND_ONLY
+ * @param nnzD SEND_ONLY
+ * @param csrSortedValD SEND_ONLY
+ * @param csrSortedRowPtrD SEND_ONLY
+ * @param csrSortedColIndD SEND_ONLY
+ * @param descrC SEND_ONLY
+ * @param csrSortedValC SEND_ONLY
+ * @param csrSortedRowPtrC SEND_ONLY
+ * @param csrSortedColIndC SEND_ONLY
+ * @param info SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseCcsrgemm2(
+    cusparseHandle_t handle, int m, int n, int k, const cuComplex *alpha,
+    const cusparseMatDescr_t descrA, int nnzA, const cuComplex *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA,
+    const cusparseMatDescr_t descrB, int nnzB, const cuComplex *csrSortedValB,
+    const int *csrSortedRowPtrB, const int *csrSortedColIndB,
+    const cuComplex *beta, const cusparseMatDescr_t descrD, int nnzD,
+    const cuComplex *csrSortedValD, const int *csrSortedRowPtrD,
+    const int *csrSortedColIndD, const cusparseMatDescr_t descrC,
+    cuComplex *csrSortedValC, const int *csrSortedRowPtrC,
+    int *csrSortedColIndC, const csrgemm2Info_t info, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param nnzA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param descrB SEND_ONLY
+ * @param nnzB SEND_ONLY
+ * @param csrSortedRowPtrB SEND_ONLY
+ * @param csrSortedColIndB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR
+ * @param descrD SEND_ONLY
+ * @param nnzD SEND_ONLY
+ * @param csrSortedRowPtrD SEND_ONLY
+ * @param csrSortedColIndD SEND_ONLY
+ * @param info SEND_ONLY
+ * @param pBufferSizeInBytes RECV_ONLY
+ */
+cusparseStatus_t cusparseCcsrgemm2_bufferSizeExt(
+    cusparseHandle_t handle, int m, int n, int k, const cuComplex *alpha,
+    const cusparseMatDescr_t descrA, int nnzA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, const cusparseMatDescr_t descrB, int nnzB,
+    const int *csrSortedRowPtrB, const int *csrSortedColIndB,
+    const cuComplex *beta, const cusparseMatDescr_t descrD, int nnzD,
+    const int *csrSortedRowPtrD, const int *csrSortedColIndD,
+    csrgemm2Info_t info, size_t *pBufferSizeInBytes);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param algo SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param transB SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nrhs SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param B SEND_ONLY
+ * @param ldb SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseCcsrsm2_analysis(
+    cusparseHandle_t handle, int algo, cusparseOperation_t transA,
+    cusparseOperation_t transB, int m, int nrhs, int nnz,
+    const cuComplex *alpha, const cusparseMatDescr_t descrA,
+    const cuComplex *csrSortedValA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, const cuComplex *B, int ldb, csrsm2Info_t info,
+    cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param algo SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param transB SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nrhs SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param B SEND_ONLY
+ * @param ldb SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBufferSize RECV_ONLY
+ */
+cusparseStatus_t cusparseCcsrsm2_bufferSizeExt(
+    cusparseHandle_t handle, int algo, cusparseOperation_t transA,
+    cusparseOperation_t transB, int m, int nrhs, int nnz,
+    const cuComplex *alpha, const cusparseMatDescr_t descrA,
+    const cuComplex *csrSortedValA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, const cuComplex *B, int ldb, csrsm2Info_t info,
+    cusparseSolvePolicy_t policy, size_t *pBufferSize);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param algo SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param transB SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nrhs SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param B SEND_ONLY
+ * @param ldb SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseCcsrsm2_solve(
+    cusparseHandle_t handle, int algo, cusparseOperation_t transA,
+    cusparseOperation_t transB, int m, int nrhs, int nnz,
+    const cuComplex *alpha, const cusparseMatDescr_t descrA,
+    const cuComplex *csrSortedValA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, cuComplex *B, int ldb, csrsm2Info_t info,
+    cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseCcsrsv2_analysis(
+    cusparseHandle_t handle, cusparseOperation_t transA, int m, int nnz,
+    const cusparseMatDescr_t descrA, const cuComplex *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA, csrsv2Info_t info,
+    cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param info SEND_ONLY
+ * @param pBufferSizeInBytes RECV_ONLY
+ */
+cusparseStatus_t cusparseCcsrsv2_bufferSize(
+    cusparseHandle_t handle, cusparseOperation_t transA, int m, int nnz,
+    const cusparseMatDescr_t descrA, cuComplex *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA, csrsv2Info_t info,
+    int *pBufferSizeInBytes);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param info SEND_ONLY
+ * @param f SEND_ONLY
+ * @param x SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseCcsrsv2_solve(
+    cusparseHandle_t handle, cusparseOperation_t transA, int m, int nnz,
+    const cuComplex *alpha, const cusparseMatDescr_t descrA,
+    const cuComplex *csrSortedValA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, csrsv2Info_t info, const cuComplex *f,
+    cuComplex *x, cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ * @param nnzPerCol SEND_ONLY
+ * @param cscSortedValA SEND_ONLY
+ * @param cscSortedRowIndA SEND_ONLY
+ * @param cscSortedColPtrA SEND_ONLY
+ */
+cusparseStatus_t
+cusparseCdense2csc(cusparseHandle_t handle, int m, int n,
+                   const cusparseMatDescr_t descrA, const cuComplex *A, int lda,
+                   const int *nnzPerCol, cuComplex *cscSortedValA,
+                   int *cscSortedRowIndA, int *cscSortedColPtrA);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ * @param nnzPerRow SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ */
+cusparseStatus_t
+cusparseCdense2csr(cusparseHandle_t handle, int m, int n,
+                   const cusparseMatDescr_t descrA, const cuComplex *A, int lda,
+                   const int *nnzPerRow, cuComplex *csrSortedValA,
+                   int *csrSortedRowPtrA, int *csrSortedColIndA);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ * @param cscValB SEND_ONLY
+ * @param cscColPtrB SEND_ONLY
+ * @param cscRowIndB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR
+ * @param C SEND_ONLY
+ * @param ldc SEND_ONLY
+ */
+cusparseStatus_t cusparseCgemmi(cusparseHandle_t handle, int m, int n, int k,
+                                int nnz, const cuComplex *alpha,
+                                const cuComplex *A, int lda,
+                                const cuComplex *cscValB, const int *cscColPtrB,
+                                const int *cscRowIndB, const cuComplex *beta,
+                                cuComplex *C, int ldc);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param y SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseCgthr(cusparseHandle_t handle, int nnz,
+                               const cuComplex *y, cuComplex *xVal,
+                               const int *xInd, cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param y SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseCgthrz(cusparseHandle_t handle, int nnz, cuComplex *y,
+                                cuComplex *xVal, const int *xInd,
+                                cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param opA SEND_ONLY
+ * @param opB SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR SIZE:data_type_width(computeType)
+ * @param matA SEND_ONLY
+ * @param matB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR SIZE:data_type_width(computeType)
+ * @param matC SEND_ONLY
+ * @param computeType SEND_ONLY
+ * @param externalBuffer SEND_ONLY
+ */
+cusparseStatus_t
+cusparseConstrainedGeMM(cusparseHandle_t handle, cusparseOperation_t opA,
+                        cusparseOperation_t opB, const void *alpha,
+                        cusparseDnMatDescr_t matA, cusparseDnMatDescr_t matB,
+                        const void *beta, cusparseSpMatDescr_t matC,
+                        cudaDataType computeType, void *externalBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param opA SEND_ONLY
+ * @param opB SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR SIZE:data_type_width(computeType)
+ * @param matA SEND_ONLY
+ * @param matB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR SIZE:data_type_width(computeType)
+ * @param matC SEND_ONLY
+ * @param computeType SEND_ONLY
+ * @param bufferSize RECV_ONLY
+ */
+cusparseStatus_t cusparseConstrainedGeMM_bufferSize(
+    cusparseHandle_t handle, cusparseOperation_t opA, cusparseOperation_t opB,
+    const void *alpha, cusparseDnMatDescr_t matA, cusparseDnMatDescr_t matB,
+    const void *beta, cusparseSpMatDescr_t matC, cudaDataType computeType,
+    size_t *bufferSize);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param spMatDescr SEND_ONLY
+ * @param rows RECV_ONLY
+ * @param cols RECV_ONLY
+ * @param nnz RECV_ONLY
+ * @param cooInd RECV_ONLY
+ * @param cooValues RECV_ONLY
+ * @param idxType RECV_ONLY
+ * @param idxBase RECV_ONLY
+ * @param valueType RECV_ONLY
+ */
+cusparseStatus_t cusparseCooAoSGet(cusparseSpMatDescr_t spMatDescr,
+                                   int64_t *rows, int64_t *cols, int64_t *nnz,
+                                   void **cooInd, void **cooValues,
+                                   cusparseIndexType_t *idxType,
+                                   cusparseIndexBase_t *idxBase,
+                                   cudaDataType *valueType);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param spMatDescr RECV_ONLY
+ * @param rows SEND_ONLY
+ * @param cols SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param cooInd SEND_ONLY
+ * @param cooValues SEND_ONLY
+ * @param cooIdxType SEND_ONLY
+ * @param idxBase SEND_ONLY
+ * @param valueType SEND_ONLY
+ */
+// clang-format off
+cusparseStatus_t cusparseCreateCooAoS(cusparseSpMatDescr_t* spMatDescr, int64_t rows, int64_t cols, int64_t nnz, void* cooInd, void* cooValues, cusparseIndexType_t cooIdxType, cusparseIndexBase_t idxBase, cudaDataType valueType) {
+  cusparseStatus_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUSPARSE_STATUS_SUCCESS) {
+    note_handle_owner(conn, *spMatDescr, valueType);
+  }
+  return return_value;
+}
+// clang-format on
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param info RECV_ONLY
+ */
+// clang-format off
+cusparseStatus_t cusparseCreateCsrgemm2Info(csrgemm2Info_t* info) {
+  cusparseStatus_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUSPARSE_STATUS_SUCCESS) {
+    note_handle_owner(conn, *info);
+  }
+  return return_value;
+}
+// clang-format on
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param info RECV_ONLY
+ */
+// clang-format off
+cusparseStatus_t cusparseCreateCsrsm2Info(csrsm2Info_t* info) {
+  cusparseStatus_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUSPARSE_STATUS_SUCCESS) {
+    note_handle_owner(conn, *info);
+  }
+  return return_value;
+}
+// clang-format on
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param info RECV_ONLY
+ */
+// clang-format off
+cusparseStatus_t cusparseCreateCsrsv2Info(csrsv2Info_t* info) {
+  cusparseStatus_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUSPARSE_STATUS_SUCCESS) {
+    note_handle_owner(conn, *info);
+  }
+  return return_value;
+}
+// clang-format on
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param y SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseCsctr(cusparseHandle_t handle, int nnz,
+                               const cuComplex *xVal, const int *xInd,
+                               cuComplex *y, cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param alg SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR SIZE:data_type_width(alphatype)
+ * @param alphatype SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrValA SEND_ONLY
+ * @param csrValAtype SEND_ONLY
+ * @param csrRowPtrA SEND_ONLY
+ * @param csrColIndA SEND_ONLY
+ * @param x SEND_ONLY
+ * @param xtype SEND_ONLY
+ * @param beta SEND_ONLY SCALAR SIZE:data_type_width(betatype)
+ * @param betatype SEND_ONLY
+ * @param y SEND_ONLY
+ * @param ytype SEND_ONLY
+ * @param executiontype SEND_ONLY
+ * @param buffer SEND_ONLY
+ */
+cusparseStatus_t cusparseCsrmvEx(
+    cusparseHandle_t handle, cusparseAlgMode_t alg, cusparseOperation_t transA,
+    int m, int n, int nnz, const void *alpha, cudaDataType alphatype,
+    const cusparseMatDescr_t descrA, const void *csrValA,
+    cudaDataType csrValAtype, const int *csrRowPtrA, const int *csrColIndA,
+    const void *x, cudaDataType xtype, const void *beta, cudaDataType betatype,
+    void *y, cudaDataType ytype, cudaDataType executiontype, void *buffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param alg SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR SIZE:data_type_width(alphatype)
+ * @param alphatype SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrValA SEND_ONLY
+ * @param csrValAtype SEND_ONLY
+ * @param csrRowPtrA SEND_ONLY
+ * @param csrColIndA SEND_ONLY
+ * @param x SEND_ONLY
+ * @param xtype SEND_ONLY
+ * @param beta SEND_ONLY SCALAR SIZE:data_type_width(betatype)
+ * @param betatype SEND_ONLY
+ * @param y SEND_ONLY
+ * @param ytype SEND_ONLY
+ * @param executiontype SEND_ONLY
+ * @param bufferSizeInBytes RECV_ONLY
+ */
+cusparseStatus_t cusparseCsrmvEx_bufferSize(
+    cusparseHandle_t handle, cusparseAlgMode_t alg, cusparseOperation_t transA,
+    int m, int n, int nnz, const void *alpha, cudaDataType alphatype,
+    const cusparseMatDescr_t descrA, const void *csrValA,
+    cudaDataType csrValAtype, const int *csrRowPtrA, const int *csrColIndA,
+    const void *x, cudaDataType xtype, const void *beta, cudaDataType betatype,
+    void *y, cudaDataType ytype, cudaDataType executiontype,
+    size_t *bufferSizeInBytes);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param y SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseDaxpyi(cusparseHandle_t handle, int nnz,
+                                const double *alpha, const double *xVal,
+                                const int *xInd, double *y,
+                                cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param cscSortedValA SEND_ONLY
+ * @param cscSortedRowIndA SEND_ONLY
+ * @param cscSortedColPtrA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ */
+cusparseStatus_t cusparseDcsc2dense(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const double *cscSortedValA,
+                                    const int *cscSortedRowIndA,
+                                    const int *cscSortedColPtrA, double *A,
+                                    int lda);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ */
+cusparseStatus_t cusparseDcsr2dense(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const double *csrSortedValA,
+                                    const int *csrSortedRowPtrA,
+                                    const int *csrSortedColIndA, double *A,
+                                    int lda);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param nnzA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param descrB SEND_ONLY
+ * @param nnzB SEND_ONLY
+ * @param csrSortedValB SEND_ONLY
+ * @param csrSortedRowPtrB SEND_ONLY
+ * @param csrSortedColIndB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR
+ * @param descrD SEND_ONLY
+ * @param nnzD SEND_ONLY
+ * @param csrSortedValD SEND_ONLY
+ * @param csrSortedRowPtrD SEND_ONLY
+ * @param csrSortedColIndD SEND_ONLY
+ * @param descrC SEND_ONLY
+ * @param csrSortedValC SEND_ONLY
+ * @param csrSortedRowPtrC SEND_ONLY
+ * @param csrSortedColIndC SEND_ONLY
+ * @param info SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseDcsrgemm2(
+    cusparseHandle_t handle, int m, int n, int k, const double *alpha,
+    const cusparseMatDescr_t descrA, int nnzA, const double *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA,
+    const cusparseMatDescr_t descrB, int nnzB, const double *csrSortedValB,
+    const int *csrSortedRowPtrB, const int *csrSortedColIndB,
+    const double *beta, const cusparseMatDescr_t descrD, int nnzD,
+    const double *csrSortedValD, const int *csrSortedRowPtrD,
+    const int *csrSortedColIndD, const cusparseMatDescr_t descrC,
+    double *csrSortedValC, const int *csrSortedRowPtrC, int *csrSortedColIndC,
+    const csrgemm2Info_t info, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param nnzA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param descrB SEND_ONLY
+ * @param nnzB SEND_ONLY
+ * @param csrSortedRowPtrB SEND_ONLY
+ * @param csrSortedColIndB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR
+ * @param descrD SEND_ONLY
+ * @param nnzD SEND_ONLY
+ * @param csrSortedRowPtrD SEND_ONLY
+ * @param csrSortedColIndD SEND_ONLY
+ * @param info SEND_ONLY
+ * @param pBufferSizeInBytes RECV_ONLY
+ */
+cusparseStatus_t cusparseDcsrgemm2_bufferSizeExt(
+    cusparseHandle_t handle, int m, int n, int k, const double *alpha,
+    const cusparseMatDescr_t descrA, int nnzA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, const cusparseMatDescr_t descrB, int nnzB,
+    const int *csrSortedRowPtrB, const int *csrSortedColIndB,
+    const double *beta, const cusparseMatDescr_t descrD, int nnzD,
+    const int *csrSortedRowPtrD, const int *csrSortedColIndD,
+    csrgemm2Info_t info, size_t *pBufferSizeInBytes);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param algo SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param transB SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nrhs SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param B SEND_ONLY
+ * @param ldb SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseDcsrsm2_analysis(
+    cusparseHandle_t handle, int algo, cusparseOperation_t transA,
+    cusparseOperation_t transB, int m, int nrhs, int nnz, const double *alpha,
+    const cusparseMatDescr_t descrA, const double *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA, const double *B,
+    int ldb, csrsm2Info_t info, cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param algo SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param transB SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nrhs SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param B SEND_ONLY
+ * @param ldb SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBufferSize RECV_ONLY
+ */
+cusparseStatus_t cusparseDcsrsm2_bufferSizeExt(
+    cusparseHandle_t handle, int algo, cusparseOperation_t transA,
+    cusparseOperation_t transB, int m, int nrhs, int nnz, const double *alpha,
+    const cusparseMatDescr_t descrA, const double *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA, const double *B,
+    int ldb, csrsm2Info_t info, cusparseSolvePolicy_t policy,
+    size_t *pBufferSize);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param algo SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param transB SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nrhs SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param B SEND_ONLY
+ * @param ldb SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseDcsrsm2_solve(
+    cusparseHandle_t handle, int algo, cusparseOperation_t transA,
+    cusparseOperation_t transB, int m, int nrhs, int nnz, const double *alpha,
+    const cusparseMatDescr_t descrA, const double *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA, double *B,
+    int ldb, csrsm2Info_t info, cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseDcsrsv2_analysis(
+    cusparseHandle_t handle, cusparseOperation_t transA, int m, int nnz,
+    const cusparseMatDescr_t descrA, const double *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA, csrsv2Info_t info,
+    cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param info SEND_ONLY
+ * @param pBufferSizeInBytes RECV_ONLY
+ */
+cusparseStatus_t
+cusparseDcsrsv2_bufferSize(cusparseHandle_t handle, cusparseOperation_t transA,
+                           int m, int nnz, const cusparseMatDescr_t descrA,
+                           double *csrSortedValA, const int *csrSortedRowPtrA,
+                           const int *csrSortedColIndA, csrsv2Info_t info,
+                           int *pBufferSizeInBytes);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param info SEND_ONLY
+ * @param f SEND_ONLY
+ * @param x SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseDcsrsv2_solve(
+    cusparseHandle_t handle, cusparseOperation_t transA, int m, int nnz,
+    const double *alpha, const cusparseMatDescr_t descrA,
+    const double *csrSortedValA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, csrsv2Info_t info, const double *f, double *x,
+    cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ * @param nnzPerCol SEND_ONLY
+ * @param cscSortedValA SEND_ONLY
+ * @param cscSortedRowIndA SEND_ONLY
+ * @param cscSortedColPtrA SEND_ONLY
+ */
+cusparseStatus_t cusparseDdense2csc(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const double *A, int lda,
+                                    const int *nnzPerCol, double *cscSortedValA,
+                                    int *cscSortedRowIndA,
+                                    int *cscSortedColPtrA);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ * @param nnzPerRow SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ */
+cusparseStatus_t cusparseDdense2csr(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const double *A, int lda,
+                                    const int *nnzPerRow, double *csrSortedValA,
+                                    int *csrSortedRowPtrA,
+                                    int *csrSortedColIndA);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param info SEND_ONLY
+ */
+// clang-format off
+cusparseStatus_t cusparseDestroyCsrgemm2Info(csrgemm2Info_t info) {
+  cusparseStatus_t return_value = LUPINE_GENERATED_CALL();
+  forget_handle_owner(info);
+  return return_value;
+}
+// clang-format on
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param info SEND_ONLY
+ */
+// clang-format off
+cusparseStatus_t cusparseDestroyCsrsm2Info(csrsm2Info_t info) {
+  cusparseStatus_t return_value = LUPINE_GENERATED_CALL();
+  forget_handle_owner(info);
+  return return_value;
+}
+// clang-format on
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param info SEND_ONLY
+ */
+// clang-format off
+cusparseStatus_t cusparseDestroyCsrsv2Info(csrsv2Info_t info) {
+  cusparseStatus_t return_value = LUPINE_GENERATED_CALL();
+  forget_handle_owner(info);
+  return return_value;
+}
+// clang-format on
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ * @param cscValB SEND_ONLY
+ * @param cscColPtrB SEND_ONLY
+ * @param cscRowIndB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR
+ * @param C SEND_ONLY
+ * @param ldc SEND_ONLY
+ */
+cusparseStatus_t cusparseDgemmi(cusparseHandle_t handle, int m, int n, int k,
+                                int nnz, const double *alpha, const double *A,
+                                int lda, const double *cscValB,
+                                const int *cscColPtrB, const int *cscRowIndB,
+                                const double *beta, double *C, int ldc);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param y SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseDgthr(cusparseHandle_t handle, int nnz,
+                               const double *y, double *xVal, const int *xInd,
+                               cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param y SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseDgthrz(cusparseHandle_t handle, int nnz, double *y,
+                                double *xVal, const int *xInd,
+                                cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param y SEND_ONLY
+ * @param c SEND_ONLY SCALAR
+ * @param s SEND_ONLY SCALAR
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseDroti(cusparseHandle_t handle, int nnz, double *xVal,
+                               const int *xInd, double *y, const double *c,
+                               const double *s, cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param y SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseDsctr(cusparseHandle_t handle, int nnz,
+                               const double *xVal, const int *xInd, double *y,
+                               cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param y SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseSaxpyi(cusparseHandle_t handle, int nnz,
+                                const float *alpha, const float *xVal,
+                                const int *xInd, float *y,
+                                cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param cscSortedValA SEND_ONLY
+ * @param cscSortedRowIndA SEND_ONLY
+ * @param cscSortedColPtrA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ */
+cusparseStatus_t cusparseScsc2dense(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const float *cscSortedValA,
+                                    const int *cscSortedRowIndA,
+                                    const int *cscSortedColPtrA, float *A,
+                                    int lda);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ */
+cusparseStatus_t cusparseScsr2dense(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const float *csrSortedValA,
+                                    const int *csrSortedRowPtrA,
+                                    const int *csrSortedColIndA, float *A,
+                                    int lda);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param nnzA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param descrB SEND_ONLY
+ * @param nnzB SEND_ONLY
+ * @param csrSortedValB SEND_ONLY
+ * @param csrSortedRowPtrB SEND_ONLY
+ * @param csrSortedColIndB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR
+ * @param descrD SEND_ONLY
+ * @param nnzD SEND_ONLY
+ * @param csrSortedValD SEND_ONLY
+ * @param csrSortedRowPtrD SEND_ONLY
+ * @param csrSortedColIndD SEND_ONLY
+ * @param descrC SEND_ONLY
+ * @param csrSortedValC SEND_ONLY
+ * @param csrSortedRowPtrC SEND_ONLY
+ * @param csrSortedColIndC SEND_ONLY
+ * @param info SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseScsrgemm2(
+    cusparseHandle_t handle, int m, int n, int k, const float *alpha,
+    const cusparseMatDescr_t descrA, int nnzA, const float *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA,
+    const cusparseMatDescr_t descrB, int nnzB, const float *csrSortedValB,
+    const int *csrSortedRowPtrB, const int *csrSortedColIndB, const float *beta,
+    const cusparseMatDescr_t descrD, int nnzD, const float *csrSortedValD,
+    const int *csrSortedRowPtrD, const int *csrSortedColIndD,
+    const cusparseMatDescr_t descrC, float *csrSortedValC,
+    const int *csrSortedRowPtrC, int *csrSortedColIndC,
+    const csrgemm2Info_t info, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param nnzA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param descrB SEND_ONLY
+ * @param nnzB SEND_ONLY
+ * @param csrSortedRowPtrB SEND_ONLY
+ * @param csrSortedColIndB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR
+ * @param descrD SEND_ONLY
+ * @param nnzD SEND_ONLY
+ * @param csrSortedRowPtrD SEND_ONLY
+ * @param csrSortedColIndD SEND_ONLY
+ * @param info SEND_ONLY
+ * @param pBufferSizeInBytes RECV_ONLY
+ */
+cusparseStatus_t cusparseScsrgemm2_bufferSizeExt(
+    cusparseHandle_t handle, int m, int n, int k, const float *alpha,
+    const cusparseMatDescr_t descrA, int nnzA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, const cusparseMatDescr_t descrB, int nnzB,
+    const int *csrSortedRowPtrB, const int *csrSortedColIndB, const float *beta,
+    const cusparseMatDescr_t descrD, int nnzD, const int *csrSortedRowPtrD,
+    const int *csrSortedColIndD, csrgemm2Info_t info,
+    size_t *pBufferSizeInBytes);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param algo SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param transB SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nrhs SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param B SEND_ONLY
+ * @param ldb SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseScsrsm2_analysis(
+    cusparseHandle_t handle, int algo, cusparseOperation_t transA,
+    cusparseOperation_t transB, int m, int nrhs, int nnz, const float *alpha,
+    const cusparseMatDescr_t descrA, const float *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA, const float *B,
+    int ldb, csrsm2Info_t info, cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param algo SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param transB SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nrhs SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param B SEND_ONLY
+ * @param ldb SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBufferSize RECV_ONLY
+ */
+cusparseStatus_t cusparseScsrsm2_bufferSizeExt(
+    cusparseHandle_t handle, int algo, cusparseOperation_t transA,
+    cusparseOperation_t transB, int m, int nrhs, int nnz, const float *alpha,
+    const cusparseMatDescr_t descrA, const float *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA, const float *B,
+    int ldb, csrsm2Info_t info, cusparseSolvePolicy_t policy,
+    size_t *pBufferSize);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param algo SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param transB SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nrhs SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param B SEND_ONLY
+ * @param ldb SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseScsrsm2_solve(
+    cusparseHandle_t handle, int algo, cusparseOperation_t transA,
+    cusparseOperation_t transB, int m, int nrhs, int nnz, const float *alpha,
+    const cusparseMatDescr_t descrA, const float *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA, float *B, int ldb,
+    csrsm2Info_t info, cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseScsrsv2_analysis(
+    cusparseHandle_t handle, cusparseOperation_t transA, int m, int nnz,
+    const cusparseMatDescr_t descrA, const float *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA, csrsv2Info_t info,
+    cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param info SEND_ONLY
+ * @param pBufferSizeInBytes RECV_ONLY
+ */
+cusparseStatus_t
+cusparseScsrsv2_bufferSize(cusparseHandle_t handle, cusparseOperation_t transA,
+                           int m, int nnz, const cusparseMatDescr_t descrA,
+                           float *csrSortedValA, const int *csrSortedRowPtrA,
+                           const int *csrSortedColIndA, csrsv2Info_t info,
+                           int *pBufferSizeInBytes);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param info SEND_ONLY
+ * @param f SEND_ONLY
+ * @param x SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseScsrsv2_solve(
+    cusparseHandle_t handle, cusparseOperation_t transA, int m, int nnz,
+    const float *alpha, const cusparseMatDescr_t descrA,
+    const float *csrSortedValA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, csrsv2Info_t info, const float *f, float *x,
+    cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ * @param nnzPerCol SEND_ONLY
+ * @param cscSortedValA SEND_ONLY
+ * @param cscSortedRowIndA SEND_ONLY
+ * @param cscSortedColPtrA SEND_ONLY
+ */
+cusparseStatus_t cusparseSdense2csc(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const float *A, int lda,
+                                    const int *nnzPerCol, float *cscSortedValA,
+                                    int *cscSortedRowIndA,
+                                    int *cscSortedColPtrA);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ * @param nnzPerRow SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ */
+cusparseStatus_t cusparseSdense2csr(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const float *A, int lda,
+                                    const int *nnzPerRow, float *csrSortedValA,
+                                    int *csrSortedRowPtrA,
+                                    int *csrSortedColIndA);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ * @param cscValB SEND_ONLY
+ * @param cscColPtrB SEND_ONLY
+ * @param cscRowIndB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR
+ * @param C SEND_ONLY
+ * @param ldc SEND_ONLY
+ */
+cusparseStatus_t cusparseSgemmi(cusparseHandle_t handle, int m, int n, int k,
+                                int nnz, const float *alpha, const float *A,
+                                int lda, const float *cscValB,
+                                const int *cscColPtrB, const int *cscRowIndB,
+                                const float *beta, float *C, int ldc);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param y SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseSgthr(cusparseHandle_t handle, int nnz, const float *y,
+                               float *xVal, const int *xInd,
+                               cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param y SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseSgthrz(cusparseHandle_t handle, int nnz, float *y,
+                                float *xVal, const int *xInd,
+                                cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param spMatDescr SEND_ONLY
+ * @param batchCount SEND_ONLY
+ */
+cusparseStatus_t cusparseSpMatSetStridedBatch(cusparseSpMatDescr_t spMatDescr,
+                                              int batchCount);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param y SEND_ONLY
+ * @param c SEND_ONLY SCALAR
+ * @param s SEND_ONLY SCALAR
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseSroti(cusparseHandle_t handle, int nnz, float *xVal,
+                               const int *xInd, float *y, const float *c,
+                               const float *s, cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param y SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseSsctr(cusparseHandle_t handle, int nnz,
+                               const float *xVal, const int *xInd, float *y,
+                               cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param nnzA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param descrB SEND_ONLY
+ * @param nnzB SEND_ONLY
+ * @param csrSortedRowPtrB SEND_ONLY
+ * @param csrSortedColIndB SEND_ONLY
+ * @param descrD SEND_ONLY
+ * @param nnzD SEND_ONLY
+ * @param csrSortedRowPtrD SEND_ONLY
+ * @param csrSortedColIndD SEND_ONLY
+ * @param descrC SEND_ONLY
+ * @param csrSortedRowPtrC SEND_ONLY
+ * @param nnzTotalDevHostPtr RECV_ONLY SCALAR
+ * @param info SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseXcsrgemm2Nnz(
+    cusparseHandle_t handle, int m, int n, int k,
+    const cusparseMatDescr_t descrA, int nnzA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, const cusparseMatDescr_t descrB, int nnzB,
+    const int *csrSortedRowPtrB, const int *csrSortedColIndB,
+    const cusparseMatDescr_t descrD, int nnzD, const int *csrSortedRowPtrD,
+    const int *csrSortedColIndD, const cusparseMatDescr_t descrC,
+    int *csrSortedRowPtrC, int *nnzTotalDevHostPtr, const csrgemm2Info_t info,
+    void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param info SEND_ONLY
+ * @param position RECV_ONLY SCALAR
+ */
+cusparseStatus_t cusparseXcsrsm2_zeroPivot(cusparseHandle_t handle,
+                                           csrsm2Info_t info, int *position);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param info SEND_ONLY
+ * @param position RECV_ONLY SCALAR
+ */
+cusparseStatus_t cusparseXcsrsv2_zeroPivot(cusparseHandle_t handle,
+                                           csrsv2Info_t info, int *position);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param y SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseZaxpyi(cusparseHandle_t handle, int nnz,
+                                const cuDoubleComplex *alpha,
+                                const cuDoubleComplex *xVal, const int *xInd,
+                                cuDoubleComplex *y,
+                                cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param cscSortedValA SEND_ONLY
+ * @param cscSortedRowIndA SEND_ONLY
+ * @param cscSortedColPtrA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ */
+cusparseStatus_t cusparseZcsc2dense(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const cuDoubleComplex *cscSortedValA,
+                                    const int *cscSortedRowIndA,
+                                    const int *cscSortedColPtrA,
+                                    cuDoubleComplex *A, int lda);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ */
+cusparseStatus_t cusparseZcsr2dense(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const cuDoubleComplex *csrSortedValA,
+                                    const int *csrSortedRowPtrA,
+                                    const int *csrSortedColIndA,
+                                    cuDoubleComplex *A, int lda);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param nnzA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param descrB SEND_ONLY
+ * @param nnzB SEND_ONLY
+ * @param csrSortedValB SEND_ONLY
+ * @param csrSortedRowPtrB SEND_ONLY
+ * @param csrSortedColIndB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR
+ * @param descrD SEND_ONLY
+ * @param nnzD SEND_ONLY
+ * @param csrSortedValD SEND_ONLY
+ * @param csrSortedRowPtrD SEND_ONLY
+ * @param csrSortedColIndD SEND_ONLY
+ * @param descrC SEND_ONLY
+ * @param csrSortedValC SEND_ONLY
+ * @param csrSortedRowPtrC SEND_ONLY
+ * @param csrSortedColIndC SEND_ONLY
+ * @param info SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseZcsrgemm2(
+    cusparseHandle_t handle, int m, int n, int k, const cuDoubleComplex *alpha,
+    const cusparseMatDescr_t descrA, int nnzA,
+    const cuDoubleComplex *csrSortedValA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, const cusparseMatDescr_t descrB, int nnzB,
+    const cuDoubleComplex *csrSortedValB, const int *csrSortedRowPtrB,
+    const int *csrSortedColIndB, const cuDoubleComplex *beta,
+    const cusparseMatDescr_t descrD, int nnzD,
+    const cuDoubleComplex *csrSortedValD, const int *csrSortedRowPtrD,
+    const int *csrSortedColIndD, const cusparseMatDescr_t descrC,
+    cuDoubleComplex *csrSortedValC, const int *csrSortedRowPtrC,
+    int *csrSortedColIndC, const csrgemm2Info_t info, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param nnzA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param descrB SEND_ONLY
+ * @param nnzB SEND_ONLY
+ * @param csrSortedRowPtrB SEND_ONLY
+ * @param csrSortedColIndB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR
+ * @param descrD SEND_ONLY
+ * @param nnzD SEND_ONLY
+ * @param csrSortedRowPtrD SEND_ONLY
+ * @param csrSortedColIndD SEND_ONLY
+ * @param info SEND_ONLY
+ * @param pBufferSizeInBytes RECV_ONLY
+ */
+cusparseStatus_t cusparseZcsrgemm2_bufferSizeExt(
+    cusparseHandle_t handle, int m, int n, int k, const cuDoubleComplex *alpha,
+    const cusparseMatDescr_t descrA, int nnzA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, const cusparseMatDescr_t descrB, int nnzB,
+    const int *csrSortedRowPtrB, const int *csrSortedColIndB,
+    const cuDoubleComplex *beta, const cusparseMatDescr_t descrD, int nnzD,
+    const int *csrSortedRowPtrD, const int *csrSortedColIndD,
+    csrgemm2Info_t info, size_t *pBufferSizeInBytes);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param algo SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param transB SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nrhs SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param B SEND_ONLY
+ * @param ldb SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseZcsrsm2_analysis(
+    cusparseHandle_t handle, int algo, cusparseOperation_t transA,
+    cusparseOperation_t transB, int m, int nrhs, int nnz,
+    const cuDoubleComplex *alpha, const cusparseMatDescr_t descrA,
+    const cuDoubleComplex *csrSortedValA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, const cuDoubleComplex *B, int ldb,
+    csrsm2Info_t info, cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param algo SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param transB SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nrhs SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param B SEND_ONLY
+ * @param ldb SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBufferSize RECV_ONLY
+ */
+cusparseStatus_t cusparseZcsrsm2_bufferSizeExt(
+    cusparseHandle_t handle, int algo, cusparseOperation_t transA,
+    cusparseOperation_t transB, int m, int nrhs, int nnz,
+    const cuDoubleComplex *alpha, const cusparseMatDescr_t descrA,
+    const cuDoubleComplex *csrSortedValA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, const cuDoubleComplex *B, int ldb,
+    csrsm2Info_t info, cusparseSolvePolicy_t policy, size_t *pBufferSize);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param algo SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param transB SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nrhs SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param B SEND_ONLY
+ * @param ldb SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseZcsrsm2_solve(
+    cusparseHandle_t handle, int algo, cusparseOperation_t transA,
+    cusparseOperation_t transB, int m, int nrhs, int nnz,
+    const cuDoubleComplex *alpha, const cusparseMatDescr_t descrA,
+    const cuDoubleComplex *csrSortedValA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, cuDoubleComplex *B, int ldb, csrsm2Info_t info,
+    cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param info SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseZcsrsv2_analysis(
+    cusparseHandle_t handle, cusparseOperation_t transA, int m, int nnz,
+    const cusparseMatDescr_t descrA, const cuDoubleComplex *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA, csrsv2Info_t info,
+    cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param info SEND_ONLY
+ * @param pBufferSizeInBytes RECV_ONLY
+ */
+cusparseStatus_t cusparseZcsrsv2_bufferSize(
+    cusparseHandle_t handle, cusparseOperation_t transA, int m, int nnz,
+    const cusparseMatDescr_t descrA, cuDoubleComplex *csrSortedValA,
+    const int *csrSortedRowPtrA, const int *csrSortedColIndA, csrsv2Info_t info,
+    int *pBufferSizeInBytes);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param transA SEND_ONLY
+ * @param m SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param descrA SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ * @param info SEND_ONLY
+ * @param f SEND_ONLY
+ * @param x SEND_ONLY
+ * @param policy SEND_ONLY
+ * @param pBuffer SEND_ONLY
+ */
+cusparseStatus_t cusparseZcsrsv2_solve(
+    cusparseHandle_t handle, cusparseOperation_t transA, int m, int nnz,
+    const cuDoubleComplex *alpha, const cusparseMatDescr_t descrA,
+    const cuDoubleComplex *csrSortedValA, const int *csrSortedRowPtrA,
+    const int *csrSortedColIndA, csrsv2Info_t info, const cuDoubleComplex *f,
+    cuDoubleComplex *x, cusparseSolvePolicy_t policy, void *pBuffer);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ * @param nnzPerCol SEND_ONLY
+ * @param cscSortedValA SEND_ONLY
+ * @param cscSortedRowIndA SEND_ONLY
+ * @param cscSortedColPtrA SEND_ONLY
+ */
+cusparseStatus_t cusparseZdense2csc(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const cuDoubleComplex *A, int lda,
+                                    const int *nnzPerCol,
+                                    cuDoubleComplex *cscSortedValA,
+                                    int *cscSortedRowIndA,
+                                    int *cscSortedColPtrA);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param descrA SEND_ONLY
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ * @param nnzPerRow SEND_ONLY
+ * @param csrSortedValA SEND_ONLY
+ * @param csrSortedRowPtrA SEND_ONLY
+ * @param csrSortedColIndA SEND_ONLY
+ */
+cusparseStatus_t cusparseZdense2csr(cusparseHandle_t handle, int m, int n,
+                                    const cusparseMatDescr_t descrA,
+                                    const cuDoubleComplex *A, int lda,
+                                    const int *nnzPerRow,
+                                    cuDoubleComplex *csrSortedValA,
+                                    int *csrSortedRowPtrA,
+                                    int *csrSortedColIndA);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param alpha SEND_ONLY SCALAR
+ * @param A SEND_ONLY
+ * @param lda SEND_ONLY
+ * @param cscValB SEND_ONLY
+ * @param cscColPtrB SEND_ONLY
+ * @param cscRowIndB SEND_ONLY
+ * @param beta SEND_ONLY SCALAR
+ * @param C SEND_ONLY
+ * @param ldc SEND_ONLY
+ */
+cusparseStatus_t cusparseZgemmi(cusparseHandle_t handle, int m, int n, int k,
+                                int nnz, const cuDoubleComplex *alpha,
+                                const cuDoubleComplex *A, int lda,
+                                const cuDoubleComplex *cscValB,
+                                const int *cscColPtrB, const int *cscRowIndB,
+                                const cuDoubleComplex *beta, cuDoubleComplex *C,
+                                int ldc);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param y SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseZgthr(cusparseHandle_t handle, int nnz,
+                               const cuDoubleComplex *y, cuDoubleComplex *xVal,
+                               const int *xInd, cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param y SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseZgthrz(cusparseHandle_t handle, int nnz,
+                                cuDoubleComplex *y, cuDoubleComplex *xVal,
+                                const int *xInd, cusparseIndexBase_t idxBase);
+/**
+ * @guard CUSPARSE_VERSION < 12000
+ * @param handle SEND_ONLY
+ * @param nnz SEND_ONLY
+ * @param xVal SEND_ONLY
+ * @param xInd SEND_ONLY
+ * @param y SEND_ONLY
+ * @param idxBase SEND_ONLY
+ */
+cusparseStatus_t cusparseZsctr(cusparseHandle_t handle, int nnz,
+                               const cuDoubleComplex *xVal, const int *xInd,
+                               cuDoubleComplex *y, cusparseIndexBase_t idxBase);

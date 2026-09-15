@@ -1198,9 +1198,14 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
 
     if(TARGET lupine_cusparse_client)
+        set(lupine_cusparse_removed_check "true")
+        if(LUPINE_CUSPARSE_SOVERSION LESS 12)
+            set(lupine_cusparse_removed_check
+                "nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseScsrsv2_bufferSize@@libcusparse.so.${LUPINE_CUSPARSE_SOVERSION}$'")
+        endif()
         add_test(NAME cusparse_exports
             COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseSpMV@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseCreateCsr@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseXcsrsort@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseGetErrorString@'")
+                "${lupine_cusparse_removed_check} && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseSpMV@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseCreateCsr@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseXcsrsort@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseGetErrorString@'")
     endif()
 
     if(TARGET lupine_nvml_client)
