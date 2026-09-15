@@ -5635,7 +5635,7 @@ static CUresult lupine_read_kernel_param_sizes(CUkernel kernel,
 }
 
 struct lupine_kernel_params {
-  std::vector<std::vector<unsigned char>> storage;
+  std::vector<CUdeviceptr> translated_pointers;
   std::vector<void *> pointers;
   std::vector<rpc_write_cursor> cursors;
 };
@@ -5643,23 +5643,22 @@ struct lupine_kernel_params {
 static CUresult lupine_kernel_param_cursors(
     lupine_route route, void *const *kernel_params,
     const std::vector<size_t> &sizes, lupine_kernel_params *params) {
-  params->storage.resize(sizes.size());
+  params->translated_pointers.resize(sizes.size());
   params->pointers.resize(sizes.size());
   params->cursors.reserve(sizes.size());
   for (size_t i = 0; i < sizes.size(); ++i) {
-    auto *begin = static_cast<unsigned char *>(kernel_params[i]);
-    params->storage[i].assign(begin, begin + sizes[i]);
+    params->pointers[i] = kernel_params[i];
     if (sizes[i] == sizeof(CUdeviceptr)) {
-      CUdeviceptr pointer = 0;
-      memcpy(&pointer, begin, sizeof(pointer));
-      CUresult result =
-          lupine_translate_mapped_host_pointer(route, pointer, &pointer);
+      memcpy(&params->translated_pointers[i], kernel_params[i],
+             sizeof(CUdeviceptr));
+      CUresult result = lupine_translate_mapped_host_pointer(
+          route, params->translated_pointers[i],
+          &params->translated_pointers[i]);
       if (result != CUDA_SUCCESS) {
         return result;
       }
-      memcpy(params->storage[i].data(), &pointer, sizeof(pointer));
+      params->pointers[i] = &params->translated_pointers[i];
     }
-    params->pointers[i] = params->storage[i].data();
     params->cursors.emplace_back(params->pointers[i], sizes[i]);
   }
   return CUDA_SUCCESS;
