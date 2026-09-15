@@ -442,7 +442,7 @@ jobs:
               .
           fi
           # Always layer the current checkout over the dependency image.
-          # Cached images contain no project sources or build outputs.
+          # The cache excludes /src and Lupine build outputs.
           DOCKER_HOST=ssh://lupine-gpu-vm docker build \
             --progress=plain \
             --file "${RUNNER_TEMP}/gpu-integration.Dockerfile" \

@@ -3,8 +3,7 @@
 The GCE workflow keeps a dependency image in the existing GCS cache bucket. It
 contains the CUDA toolkit, system packages, compiled NVIDIA samples, PyTorch,
 CUDA Python, and its matching upstream test checkout. Each job builds a separate
-final image that copies the current repository into `/src`; project sources and
-Lupine binaries are never restored from the dependency cache.
+final image that copies the current repository into `/src`; `/src` and Lupine binaries are never restored from the dependency cache.
 
 The key includes the dependency Dockerfile, the two sample/preparation runners,
 CUDA base image, sample ref, PyTorch index, GPU architecture, and cache version.
