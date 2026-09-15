@@ -23,7 +23,8 @@ enum class rpc_backend {
   nvrtc,
   nccl,
   nvjitlink,
-  nvjpeg
+  nvjpeg,
+  npp
 };
 
 struct rpc_handler {

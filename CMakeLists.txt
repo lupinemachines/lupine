@@ -1029,6 +1029,76 @@ if(LUPINE_BUILD_NVJPEG)
     add_custom_target(lupine_nvjpeg DEPENDS lupine_nvjpeg_client)
 endif()
 
+set(LUPINE_NPP_LIBRARIES
+    nppc nppial nppicc nppidei nppif nppig nppim nppist nppisu nppitc npps)
+
+if(LUPINE_BUILD_CUDA)
+    # The NPP shims need the libraries' own headers, which the runtime header
+    # wheels the native client builds use do not carry; without them the shims
+    # are left out of the build.
+    find_path(LUPINE_NPP_INCLUDE_DIR nppcore.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
+    if(LUPINE_NPP_INCLUDE_DIR)
+        file(STRINGS ${LUPINE_NPP_INCLUDE_DIR}/npp.h
+             LUPINE_NPP_MAJOR_LINE REGEX "#[ ]*define NPP_VER_MAJOR ")
+        string(REGEX REPLACE ".*define NPP_VER_MAJOR ([0-9]+).*" "\\1"
+               LUPINE_NPP_SOVERSION "${LUPINE_NPP_MAJOR_LINE}")
+        set(LUPINE_BUILD_NPP ON)
+    endif()
+endif()
+
+if(LUPINE_BUILD_NPP)
+    # Named like NVIDIA's (libnppial.so.13, nppial64_13.dll) with the matching
+    # ELF version nodes; NPP's major is its own, not the toolkit's. They run on
+    # the runtime shim's current device, so each links both sibling shims, and
+    # each image and signal library needs the core one as NVIDIA's do.
+    foreach(LUPINE_NPP_LIBRARY IN LISTS LUPINE_NPP_LIBRARIES)
+        set(target lupine_${LUPINE_NPP_LIBRARY}_client)
+        configure_file(npp.exports.in ${LUPINE_NPP_LIBRARY}.exports @ONLY)
+        if(LUPINE_NPP_LIBRARY STREQUAL nppc)
+            add_library(${target} SHARED nppc_client.cpp)
+        else()
+            add_library(${target} SHARED npp_client.cpp)
+            target_compile_definitions(${target} PRIVATE
+                LUPINE_NPP_CLIENT_INC="codegen/gen_${LUPINE_NPP_LIBRARY}_client.inc")
+            target_link_libraries(${target} PRIVATE lupine_nppc_client)
+            if(NOT WIN32 AND NOT APPLE)
+                # NVIDIA's image and signal libraries need libnppc even
+                # where they call nothing in it.
+                target_link_options(${target} PRIVATE "LINKER:--no-as-needed")
+            endif()
+        endif()
+        target_include_directories(${target} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
+        target_link_libraries(${target} PRIVATE
+            lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
+        set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        lupine_manylinux2014_client(${target})
+        if(WIN32)
+            target_compile_options(${target} PRIVATE /wd4996)
+            set_target_properties(${target} PROPERTIES
+                OUTPUT_NAME ${LUPINE_NPP_LIBRARY}64_${LUPINE_NPP_SOVERSION}
+                PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
+        else()
+            target_compile_options(${target} PRIVATE -Wno-deprecated-declarations)
+            set_target_properties(${target} PROPERTIES
+                OUTPUT_NAME ${LUPINE_NPP_LIBRARY})
+            if(APPLE)
+                set_target_properties(${target} PROPERTIES
+                    BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+            else()
+                target_link_options(${target} PRIVATE
+                    "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/${LUPINE_NPP_LIBRARY}.exports")
+                set_target_properties(${target} PROPERTIES
+                    BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+                    VERSION ${LUPINE_NPP_SOVERSION}
+                    SOVERSION ${LUPINE_NPP_SOVERSION})
+            endif()
+        endif()
+        add_custom_target(lupine_${LUPINE_NPP_LIBRARY} DEPENDS ${target})
+    endforeach()
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -1088,7 +1158,7 @@ endif()
 # Every CUDA runtime and library client shim, so a consumer can load them all
 # in place of NVIDIA's without naming each one.
 get_property(lupine_runtime_client_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_(cu[a-z]+|nvrtc|nccl|nvjitlink|nvjpeg)_client$")
+list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_(cu[a-z]+|nvrtc|nccl|nvjitlink|nvjpeg|npp[a-z]*)_client$")
 list(REMOVE_ITEM lupine_runtime_client_targets lupine_cuda_client)
 add_custom_target(lupine_runtime_clients)
 if(lupine_runtime_client_targets)
@@ -1233,6 +1303,34 @@ if(LUPINE_BUILD_SERVER)
             target_include_directories(lupine_nvjpeg_server PRIVATE
                 ${CUDAToolkit_INCLUDE_DIRS})
             target_link_libraries(lupine_nvjpeg_server PRIVATE
+                lupine_server_core ${CMAKE_DL_LIBS})
+        endif()
+
+        if(LUPINE_BUILD_NPP)
+            # One translation unit per NPP library, so each compiles on its own.
+            add_library(lupine_npp_server STATIC)
+            lupine_internal_target(lupine_npp_server)
+            foreach(library IN LISTS LUPINE_NPP_LIBRARIES)
+                if(library STREQUAL nppc)
+                    add_library(lupine_${library}_server OBJECT
+                        ${CMAKE_CURRENT_SOURCE_DIR}/nppc_server.cpp)
+                else()
+                    add_library(lupine_${library}_server OBJECT
+                        ${CMAKE_CURRENT_SOURCE_DIR}/npp_server.cpp)
+                    target_compile_definitions(lupine_${library}_server PRIVATE
+                        LUPINE_NPP_SERVER_INC="codegen/gen_${library}_server.inc")
+                endif()
+                lupine_internal_target(lupine_${library}_server)
+                target_compile_definitions(lupine_${library}_server PRIVATE
+                    LUPINE_NPP_LIBRARY="${library}")
+                target_include_directories(lupine_${library}_server PRIVATE
+                    ${CUDAToolkit_INCLUDE_DIRS})
+                target_link_libraries(lupine_${library}_server PRIVATE
+                    lupine_server_core)
+                target_sources(lupine_npp_server PRIVATE
+                    $<TARGET_OBJECTS:lupine_${library}_server>)
+            endforeach()
+            target_link_libraries(lupine_npp_server PRIVATE
                 lupine_server_core ${CMAKE_DL_LIBS})
         endif()
     endif()
@@ -1396,6 +1494,12 @@ if(LUPINE_BUILD_SERVER)
                 LUPINE_BUILD_NVJPEG_BACKEND)
             target_link_libraries(lupine_driver_server PRIVATE
                 lupine_nvjpeg_server)
+        endif()
+        if(LUPINE_BUILD_NPP)
+            target_compile_definitions(lupine_driver_server PRIVATE
+                LUPINE_BUILD_NPP_BACKEND)
+            target_link_libraries(lupine_driver_server PRIVATE
+                lupine_npp_server)
         endif()
     endif()
     if(LUPINE_BUILD_NVML)
@@ -1623,6 +1727,25 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "nm -D \"$<TARGET_FILE:lupine_nvjpeg_client>\" | grep -q ' T nvjpegDecode@@libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjpeg_client>\" | grep -q ' T nvjpegDecodeBatchedEx@@libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjpeg_client>\" | grep -q ' T nvjpegEncodeRetrieveBitstream@@libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION}$'")
     endif()
 
+    if(TARGET lupine_nppc_client)
+        # One representative export per library, each on its library's node.
+        set(npp_export_checks
+            "nppc:nppGetStreamContext" "nppial:nppiAdd_8u_C1RSfs_Ctx"
+            "nppicc:nppiRGBToGray_8u_C3C1R_Ctx" "nppidei:nppiCopy_8u_C1R_Ctx"
+            "nppif:nppiFilterBoxBorder_8u_C1R_Ctx" "nppig:nppiResize_8u_C1R_Ctx"
+            "nppim:nppiDilate3x3_8u_C1R_Ctx" "nppist:nppiMean_StdDev_8u_C1R_Ctx"
+            "nppisu:nppiMalloc_8u_C1" "nppitc:nppiThreshold_8u_C1R_Ctx"
+            "npps:nppsSum_32f_Ctx")
+        foreach(check IN LISTS npp_export_checks)
+            string(REPLACE ":" ";" check "${check}")
+            list(GET check 0 library)
+            list(GET check 1 symbol)
+            add_test(NAME ${library}_exports
+                COMMAND bash -c
+                    "nm -D \"$<TARGET_FILE:lupine_${library}_client>\" | grep -q ' T ${symbol}@@lib${library}.so.${LUPINE_NPP_SOVERSION}$'")
+        endforeach()
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -1677,6 +1800,10 @@ endif()
 if(TARGET lupine_nvjpeg_client)
     message(STATUS
         "Building nvJPEG client: lupine_nvjpeg_client (libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION})")
+endif()
+if(TARGET lupine_nppc_client)
+    message(STATUS
+        "Building NPP clients: lupine_nppc_client and its image and signal libraries (libnppc.so.${LUPINE_NPP_SOVERSION})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS

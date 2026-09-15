@@ -3,7 +3,7 @@ infer what parameters should be sent and received so we instead have a two-step 
 
 First, `annotationgen.py` reads an SDK header such as `cuda.h` or `nvml.h` and copies its function signatures
 into that target's annotation file (`annotations_cuda.h`, `annotations_cudart.h`, `annotations_cublas.h`,
-`annotations_cublaslt.h`, `annotations_cufft.h`, `annotations_cudnn.h`, `annotations_curand.h`, `annotations_cusparse.h`, `annotations_cusolver.h`, `annotations_cusolvermg.h`, `annotations_nvrtc.h`, `annotations_nccl.h`, `annotations_nvjitlink.h`, `annotations_nvjpeg.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
+`annotations_cublaslt.h`, `annotations_cufft.h`, `annotations_cudnn.h`, `annotations_curand.h`, `annotations_cusparse.h`, `annotations_cusolver.h`, `annotations_cusolvermg.h`, `annotations_nvrtc.h`, `annotations_nccl.h`, `annotations_nvjitlink.h`, `annotations_nvjpeg.h`, `annotations_npp<library>.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
 have significant meanings.
 
 Specifically, the order of `@param` annotations indicates the order in which the parameters are sent or received.
@@ -46,6 +46,11 @@ the client addresses named in `CLEARED:<member>,...`. A member some supported
 headers lack takes `MEMBERGUARD:<member>=<condition>`; its length still travels,
 so client and server built against different headers share one wire format.
 
+A parameter declared as a fixed-size C array (`const Npp32f aTwist[3][4]`)
+needs no size. Marked `DEREF`, its elements travel, both ways when it is
+`SEND_RECV` and not const; unmarked, it is device memory and only its address
+travels.
+
 `@async` on a forwarding backend that sets `async_success` makes the call's
 submission a choice: the generated wrapper asks `submit_async(conn)` and, when
 it says yes, sends the call fire-and-forget with an async ticket and returns
@@ -69,7 +74,8 @@ with `note_handle_owner`.
 Forwarding backends also accept `@routingkey EVENT <param>`. Their client must
 provide `connection_for_event(event)`, which selects the connection without
 changing the event handle sent to the server.
-Likewise, `@routingkey STREAM <param>` uses `connection_for_stream(stream)`.
+Likewise, `@routingkey STREAM <param>` uses `connection_for_stream(stream)`,
+which a by-value `NppStreamContext` infers.
 The backend helper handles default streams; the stream argument is sent
 unchanged.
 
@@ -118,7 +124,8 @@ handler calls CUDA.
 
 Functions that need custom client-side code around the generated call may be
 written as definitions instead of declarations. The body must contain one
-explicitly typed generated-call placeholder and end by returning its result:
+explicitly typed generated-call placeholder and end by returning its result
+(a `void` call has a bare `LUPINE_GENERATED_CALL();` and no return):
 
 ```cpp
 CUresult cuExample(CUdeviceptr ptr) {

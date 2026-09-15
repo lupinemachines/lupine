@@ -36,6 +36,7 @@ from emit import (
 from ops import (
     NullableOperation,
     ArrayOperation,
+    FixedArrayOperation,
     InOutCountOperation,
     NullableArrayOperation,
     DeepStructOperation,
@@ -284,6 +285,9 @@ REGISTRY_CPP_TEMPLATE = Template(
 #ifdef LUPINE_BUILD_NVJPEG_BACKEND
 #include <nvjpeg.h>
 #endif
+#ifdef LUPINE_BUILD_NPP_BACKEND
+#include <npp.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -315,6 +319,8 @@ $nccl_registry_entries
 $nvjitlink_registry_entries
 #define LUPINE_NVJPEG_RPC_HANDLERS(HANDLER) \
 $nvjpeg_registry_entries
+#define LUPINE_NPP_RPC_HANDLERS(HANDLER) \
+$npp_registry_entries
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
 $nvml_registry_entries
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
@@ -374,6 +380,10 @@ $nvjitlink_guarded_declarations
 #ifdef LUPINE_BUILD_NVJPEG_BACKEND
 LUPINE_NVJPEG_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $nvjpeg_guarded_declarations
+#endif
+#ifdef LUPINE_BUILD_NPP_BACKEND
+LUPINE_NPP_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$npp_guarded_declarations
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -444,6 +454,10 @@ $nvjitlink_guarded_handlers
       LUPINE_NVJPEG_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvjpeg_guarded_handlers
 #endif
+#ifdef LUPINE_BUILD_NPP_BACKEND
+      LUPINE_NPP_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$npp_guarded_handlers
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvml_guarded_handlers
@@ -472,6 +486,7 @@ $hip_guarded_handlers
 #undef LUPINE_NCCL_RPC_HANDLERS
 #undef LUPINE_NVJITLINK_RPC_HANDLERS
 #undef LUPINE_NVJPEG_RPC_HANDLERS
+#undef LUPINE_NPP_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
 '''
@@ -507,6 +522,8 @@ SERVER_BACKENDS = {
     "NCCL": "rpc_backend::nccl",
     "NVJITLINK": "rpc_backend::nvjitlink",
     "NVJPEG": "rpc_backend::nvjpeg",
+    # Every NPP library runs in one server child.
+    "NPP": "rpc_backend::npp",
     "NVML": "rpc_backend::nvml",
     "HIP": "rpc_backend::hip",
 }
@@ -728,6 +745,33 @@ NVJPEG = Backend(
     not_supported="NVJPEG_STATUS_IMPLEMENTATION_NOT_SUPPORTED",
 )
 
+# NVIDIA Performance Primitives: one target per NVIDIA library, so each client
+# library carries only its own calls and each server translation unit compiles
+# on its own. They share a backend, since every call is the same kind of
+# forward.
+NPP_TARGETS = (
+    "nppc",
+    "nppial",
+    "nppicc",
+    "nppidei",
+    "nppif",
+    "nppig",
+    "nppim",
+    "nppist",
+    "nppisu",
+    "nppitc",
+    "npps",
+)
+
+NPP = Backend(
+    result="NppStatus",
+    invalid_argument="NPP_NULL_POINTER_ERROR",
+    device_routing_kind="DEVICE",
+    symbol_lookup="npp_symbol",
+    guard_null_conn=True,
+    not_supported="NPP_NOT_IMPLEMENTED_ERROR",
+)
+
 ANNOTATION_FILES = {
     "cuda": "annotations_cuda.h",
     "cudart": "annotations_cudart.h",
@@ -743,6 +787,7 @@ ANNOTATION_FILES = {
     "nccl": "annotations_nccl.h",
     "nvjitlink": "annotations_nvjitlink.h",
     "nvjpeg": "annotations_nvjpeg.h",
+    **{target: f"annotations_{target}.h" for target in NPP_TARGETS},
     "nvml": "annotations_nvml.h",
     "hip": "annotations_hip.h",
 }
@@ -853,7 +898,7 @@ def infer_routing_key(
             return "LIBRARY", param
         if type_name == "CUfunction":
             return "FUNCTION", param
-        if type_name == "CUstream":
+        if type_name in ("CUstream", "NppStreamContext"):
             return "STREAM", param
         if type_name == "CUevent":
             return "EVENT", param
@@ -1273,6 +1318,19 @@ def parse_annotation(
                         recv=recv,
                         parameter=param,
                         type_=param.type,
+                    )
+                )
+            elif isinstance(param.type, Array) and length_arg is None:
+                element = param.type
+                while isinstance(element, Array):
+                    element = element.array_of
+                operations.append(
+                    FixedArrayOperation(
+                        send=send,
+                        recv=recv and not element.const,
+                        parameter=param,
+                        array=param.type,
+                        contents="DEREF" in args,
                     )
                 )
             elif isinstance(param.type, Array):
@@ -2103,6 +2161,7 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 nvjpeg_registry_entries=" \\\n".join(
                     registry_entries["NVJPEG"]
                 ),
+                npp_registry_entries=" \\\n".join(registry_entries["NPP"]),
                 nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
                 hip_registry_entries=" \\\n".join(registry_entries["HIP"]),
                 cuda_guarded_declarations="\n".join(
@@ -2147,6 +2206,7 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 nvjpeg_guarded_declarations="\n".join(
                     guarded_declarations["NVJPEG"]
                 ),
+                npp_guarded_declarations="\n".join(guarded_declarations["NPP"]),
                 nvml_guarded_declarations="\n".join(
                     guarded_declarations["NVML"]
                 ),
@@ -2183,6 +2243,7 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 nvjpeg_guarded_handlers="\n".join(
                     guarded_handlers["NVJPEG"]
                 ),
+                npp_guarded_handlers="\n".join(guarded_handlers["NPP"]),
                 nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
             )
@@ -2246,7 +2307,8 @@ def main():
     server_bindings = {}
     # A handler belongs to the backend whose annotation file declares it.
     for target, path in ANNOTATION_FILES.items():
-        for name, binding in collect_server_bindings(path, target.upper()).items():
+        backend = "NPP" if target in NPP_TARGETS else target.upper()
+        for name, binding in collect_server_bindings(path, backend).items():
             if name in server_bindings and server_bindings[name] != binding:
                 raise RuntimeError(f"Conflicting @disabled for {name}")
             server_bindings[name] = binding
@@ -2427,6 +2489,13 @@ def main():
         annotations_by_target["nvjpeg"],
         client_call_templates=client_call_templates_by_target["nvjpeg"],
     )
+    npp_functions_by_target = {
+        target: collect_backend_functions(
+            annotations_by_target[target],
+            client_call_templates=client_call_templates_by_target[target],
+        )
+        for target in NPP_TARGETS
+    }
 
     annotated_names = sorted(
         {function.name.format() for function in cuda_annotations.namespace.functions}
@@ -2453,7 +2522,8 @@ def main():
         + nvrtc_functions_with_annotations
         + nccl_functions_with_annotations
         + nvjitlink_functions_with_annotations
-        + nvjpeg_functions_with_annotations,
+        + nvjpeg_functions_with_annotations
+        + sum(npp_functions_by_target.values(), []),
     )
 
     with open("gen_nvml_client.inc", "w") as f:
@@ -2567,6 +2637,7 @@ def main():
         (NCCL, "nccl", nccl_functions_with_annotations),
         (NVJITLINK, "nvjitlink", nvjitlink_functions_with_annotations),
         (NVJPEG, "nvjpeg", nvjpeg_functions_with_annotations),
+        *((NPP, target, npp_functions_by_target[target]) for target in NPP_TARGETS),
     ):
         with open(f"gen_{target}_client.inc", "w") as f:
             f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
@@ -2661,6 +2732,7 @@ def main():
         ("NCCL", nccl_functions_with_annotations),
         ("NVJITLINK", nvjitlink_functions_with_annotations),
         ("NVJPEG", nvjpeg_functions_with_annotations),
+        *(("NPP", npp_functions_by_target[target]) for target in NPP_TARGETS),
     ):
         generated_bindings.extend(
             ServerBinding(
@@ -2769,6 +2841,11 @@ def main():
             "gen_nvjpeg_client.inc",
             "gen_nvjpeg_server.inc",
             "gen_nvjpeg_server.h",
+            *(
+                f"gen_{target}_{suffix}"
+                for target in NPP_TARGETS
+                for suffix in ("client.inc", "server.inc", "server.h")
+            ),
         ],
         check=True,
     )
@@ -2852,6 +2929,14 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_nvjpeg_server.inc",
             "gen_nvjpeg_server.h",
         ],
+        **{
+            target: [
+                f"gen_{target}_client.inc",
+                f"gen_{target}_server.inc",
+                f"gen_{target}_server.h",
+            ]
+            for target in NPP_TARGETS
+        },
     }
     forbidden = {
         "cuda": ["nvml", "hip"],
@@ -2868,6 +2953,7 @@ def verify_backend_boundaries(backend: str) -> None:
         "nccl": ["nvml", "hip"],
         "nvjitlink": ["nvml", "hip"],
         "nvjpeg": ["nvml", "hip"],
+        **{target: ["nvml", "hip"] for target in NPP_TARGETS},
         "nvml": ["cuda_compat", "<cuda.h>", "handle_cu", "hip"],
         "hip": ["cuda", "nvml"],
     }
@@ -2888,7 +2974,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--verify-backend",
-        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "cusolver", "cusolvermg", "nvrtc", "nccl", "nvjitlink", "nvjpeg", "nvml", "hip"),
+        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "cusolver", "cusolvermg", "nvrtc", "nccl", "nvjitlink", "nvjpeg", *NPP_TARGETS, "nvml", "hip"),
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()

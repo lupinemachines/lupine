@@ -1252,9 +1252,99 @@ class VersionedStructOperation:
         return
 
 
+def format_array(array: Array, name: str = "") -> str:
+    """`T name[3][4]`, or the type `T[3][4]` without a name.
+
+    cxxheaderparser writes a nested array's dimensions innermost first.
+    """
+    dims = ""
+    element = array
+    while isinstance(element, Array):
+        dims += f"[{element.size.format()}]"
+        element = element.array_of
+    return f"{element.format()} {name}{dims}" if name else f"{element.format()}{dims}"
+
+
+@dataclass
+class FixedArrayOperation:
+    """
+    A parameter declared as a C array of fixed dimensions (`aTwist[3][4]`).
+    With `contents` (DEREF) its elements travel, however many dimensions it
+    has; without, it is an address in device memory and only that travels.
+    """
+
+    send: bool
+    recv: bool
+    parameter: Parameter
+    array: Array
+    contents: bool
+
+    def byte_size_expr(self) -> str:
+        dims = []
+        element = self.array
+        while isinstance(element, Array):
+            dims.append(element.size.format())
+            element = element.array_of
+        return " * ".join([f"sizeof({element.format()})", *dims])
+
+    def client_rpc_write(self, f):
+        name = self.parameter.name
+        if not self.send:
+            return
+        if self.contents:
+            f.write(
+                f"        rpc_write(conn, {name}, {self.byte_size_expr()}) < 0 ||\n"
+            )
+        else:
+            f.write(f"        rpc_write(conn, &{name}, sizeof(void *)) < 0 ||\n")
+
+    @property
+    def server_declaration(self) -> str:
+        name = self.parameter.name
+        if not self.contents:
+            return f"    {self.array.array_of.format()} *{name} = nullptr;\n"
+        # The server's copy is written into, so the elements lose their const.
+        element = self.array
+        while isinstance(element, Array):
+            element = element.array_of
+        const = element.const
+        element.const = False
+        declaration = format_array(self.array, name)
+        element.const = const
+        return f"    {declaration}{{}};\n"
+
+    def server_rpc_read(self, f):
+        name = self.parameter.name
+        if not self.send:
+            return
+        if self.contents:
+            f.write(
+                f"        rpc_read(conn, {name}, {self.byte_size_expr()}) < 0 ||\n"
+            )
+        else:
+            f.write(f"        rpc_read(conn, &{name}, sizeof(void *)) < 0 ||\n")
+
+    @property
+    def server_reference(self) -> str:
+        return self.parameter.name
+
+    def server_rpc_write(self, f):
+        if self.recv:
+            f.write(
+                f"        rpc_write(conn, {self.parameter.name}, {self.byte_size_expr()}) < 0 ||\n"
+            )
+
+    def client_rpc_read(self, f):
+        if self.recv:
+            f.write(
+                f"        rpc_read(conn, {self.parameter.name}, {self.byte_size_expr()}) < 0 ||\n"
+            )
+
+
 Operation = Union[
     NullableOperation,
     ArrayOperation,
+    FixedArrayOperation,
     NullTerminatedOperation,
     OpaqueTypeOperation,
     DereferenceOperation,

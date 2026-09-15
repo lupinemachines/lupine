@@ -100,6 +100,8 @@ jobs:
               test -e /opt/lupine/lib/libnccl.so.2
               case "${{ matrix.cuda }}" in 11.*) ;; *) test -e /opt/lupine/lib/libnvJitLink.so ;; esac
               test -e /opt/lupine/lib/libnvjpeg.so
+              test -e /opt/lupine/lib/libnppc.so
+              test -e /opt/lupine/lib/libnppig.so
               test -e /opt/lupine/lib/libnvidia-ml.so.1
               test -e /opt/lupine/lib/libamdhip64.so.1
               test -x /usr/bin/nvidia-smi
@@ -171,6 +173,14 @@ jobs:
           nvjpeg_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libnvjpeg.so.[0-9]*')"
           docker cp "$container:$nvjpeg_lib" "$out/$(basename "$nvjpeg_lib")"
           cp "$out/$(basename "$nvjpeg_lib")" "$out/libnvjpeg.so"
+          # NPP's major is its own too, and every NPP library shares it.
+          npp_files=()
+          for npp in nppc nppial nppicc nppidei nppif nppig nppim nppist nppisu nppitc npps; do
+            npp_lib="$(docker run --rm --entrypoint sh "$image" -c "ls /opt/lupine/lib/lib${npp}.so.[0-9]*")"
+            docker cp "$container:$npp_lib" "$out/$(basename "$npp_lib")"
+            cp "$out/$(basename "$npp_lib")" "$out/lib${npp}.so"
+            npp_files+=("lib${npp}.so" "$(basename "$npp_lib")")
+          done
           docker cp "$container:/opt/lupine/lib/libnvidia-ml.so.1" "$out/libnvidia-ml.so.1"
           docker cp "$container:/opt/lupine/lib/libamdhip64.so.1" "$out/libamdhip64.so.1"
           cp "$out/libcuda.so.1" "$out/libcuda.so"
@@ -187,7 +197,7 @@ jobs:
           cp "$out/libnccl.so.2" "$out/libnccl.so"
           cp "$out/libnvidia-ml.so.1" "$out/libnvidia-ml.so"
           cp "$out/libamdhip64.so.1" "$out/libamdhip64.so"
-          (cd "$out" && sha256sum libcuda.so libcuda.so.1 libcudart.so "$runtime_soname" libcublas.so "libcublas.so.${cuda_major}" libcublasLt.so "libcublasLt.so.${cuda_major}" libcufft.so "$(basename "$cufft_lib")" libcudnn.so "$(basename "$cudnn_lib")" libcurand.so "$(basename "$curand_lib")" libcusparse.so "$(basename "$cusparse_lib")" libcusolver.so "$(basename "$cusolver_lib")" libcusolverMg.so "$(basename "$cusolvermg_lib")" libnvrtc.so "$(basename "$nvrtc_lib")" libnccl.so libnccl.so.2 "${nvjitlink_libs[@]}" libnvjpeg.so "$(basename "$nvjpeg_lib")" libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
+          (cd "$out" && sha256sum libcuda.so libcuda.so.1 libcudart.so "$runtime_soname" libcublas.so "libcublas.so.${cuda_major}" libcublasLt.so "libcublasLt.so.${cuda_major}" libcufft.so "$(basename "$cufft_lib")" libcudnn.so "$(basename "$cudnn_lib")" libcurand.so "$(basename "$curand_lib")" libcusparse.so "$(basename "$cusparse_lib")" libcusolver.so "$(basename "$cusolver_lib")" libcusolverMg.so "$(basename "$cusolvermg_lib")" libnvrtc.so "$(basename "$nvrtc_lib")" libnccl.so libnccl.so.2 "${nvjitlink_libs[@]}" libnvjpeg.so "$(basename "$nvjpeg_lib")" "${npp_files[@]}" libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
           (cd "$out" && zip -r "../$(basename "$archive")" .)
 
       - name: Collect server artifacts

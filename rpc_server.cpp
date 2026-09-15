@@ -17,6 +17,7 @@ bool rpc_server_validate(const rpc_handler_registry &handlers) {
     case rpc_backend::nccl:
     case rpc_backend::nvjitlink:
     case rpc_backend::nvjpeg:
+    case rpc_backend::npp:
     case rpc_backend::nvml:
     case rpc_backend::hip:
     case rpc_backend::cudart:

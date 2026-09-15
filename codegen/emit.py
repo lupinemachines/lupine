@@ -8,7 +8,7 @@ nothing here asks which one it is writing.
 from dataclasses import dataclass
 import textwrap
 
-from cxxheaderparser.types import Function, FunctionType, Parameter, Pointer
+from cxxheaderparser.types import Array, Function, FunctionType, Parameter, Pointer
 
 from ops import (
     ArrayOperation,
@@ -19,6 +19,7 @@ from ops import (
     NullTerminatedOperation,
     ScalarOperation,
     VersionedStructOperation,
+    format_array,
 )
 
 
@@ -75,6 +76,8 @@ def format_function_params(function: Function) -> list[str]:
                     name=param.name + "[]",
                 )
             )
+        elif param.name and isinstance(param.type, Array):
+            params.append(format_array(param.type, param.name))
         elif param.name and isinstance(param.type, Pointer) and isinstance(
             param.type.ptr_to, FunctionType
         ):
@@ -293,7 +296,11 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
     else:
         raise RuntimeError(f"{name}: unsupported routing key {metadata.routing_kind}")
     template = metadata.client_call_template
-    if template is not None:
+    if template is not None and result == "void":
+        f.write(textwrap.indent(template.before_call, "  "))
+        f.write(f"  {call};\n")
+        f.write(textwrap.indent(template.after_call, "  "))
+    elif template is not None:
         f.write(textwrap.indent(template.before_call, "  "))
         f.write(f"  {result} return_value = {call};\n")
         f.write(textwrap.indent(template.after_call, "  "))
@@ -340,7 +347,10 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write(f"  {result} return_value;\n")
     if backend.symbol_lookup:
         fn_params = ", ".join(
-            parameter.type.format() for parameter in function.parameters
+            format_array(parameter.type)
+            if isinstance(parameter.type, Array)
+            else parameter.type.format()
+            for parameter in function.parameters
         )
         f.write(f"  using fn_t = {result} (*)({fn_params});\n")
         f.write("  fn_t fn = nullptr;\n")
