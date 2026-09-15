@@ -22332,3 +22332,2424 @@ extern "C" cublasStatus_t cublasZtrttp(cublasHandle_t handle,
   conn_t *conn = connection_for_handle(handle);
   return lupine_rpc_cublasZtrttp(conn, handle, uplo, n, A, lda, AP);
 }
+
+static cublasStatus_t lupine_rpc_cublasXtCreate(conn_t *conn,
+                                                cublasXtHandle_t *handle) {
+  cublasStatus_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtCreate) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t cublasXtCreate(cublasXtHandle_t *handle) {
+  if (handle == nullptr) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection();
+  cublasStatus_t return_value = lupine_rpc_cublasXtCreate(conn, handle);
+  if (return_value == CUBLAS_STATUS_SUCCESS) {
+    note_handle_owner(conn, *handle);
+  }
+  return return_value;
+}
+
+static cublasStatus_t lupine_rpc_cublasXtDestroy(conn_t *conn,
+                                                 cublasXtHandle_t handle) {
+  cublasStatus_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtDestroy) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t cublasXtDestroy(cublasXtHandle_t handle) {
+  conn_t *conn = connection_for_handle(handle);
+  cublasStatus_t return_value = lupine_rpc_cublasXtDestroy(conn, handle);
+  forget_handle(handle);
+  return return_value;
+}
+
+static cublasStatus_t lupine_rpc_cublasXtGetNumBoards(conn_t *conn,
+                                                      int nbDevices,
+                                                      int *deviceId,
+                                                      int *nbBoards) {
+  cublasStatus_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtGetNumBoards) < 0 ||
+      rpc_write(conn, &nbDevices, sizeof(int)) < 0 ||
+      rpc_write(conn, deviceId, nbDevices * sizeof(int)) < 0 ||
+      rpc_write(conn, nbBoards, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, nbBoards, sizeof(int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+static cublasStatus_t lupine_rpc_cublasXtMaxBoards(conn_t *conn,
+                                                   int *nbGpuBoards) {
+  cublasStatus_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtMaxBoards) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, nbGpuBoards, sizeof(int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t cublasXtMaxBoards(int *nbGpuBoards) {
+  if (nbGpuBoards == nullptr) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection();
+  return lupine_rpc_cublasXtMaxBoards(conn, nbGpuBoards);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtDeviceSelect(conn_t *conn,
+                                                      cublasXtHandle_t handle,
+                                                      int nbDevices,
+                                                      int *deviceId) {
+  cublasStatus_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtDeviceSelect) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &nbDevices, sizeof(int)) < 0 ||
+      rpc_write(conn, deviceId, nbDevices * sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+static cublasStatus_t lupine_rpc_cublasXtSetBlockDim(conn_t *conn,
+                                                     cublasXtHandle_t handle,
+                                                     int blockDim) {
+  cublasStatus_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtSetBlockDim) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &blockDim, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t cublasXtSetBlockDim(cublasXtHandle_t handle,
+                                              int blockDim) {
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtSetBlockDim(conn, handle, blockDim);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtGetBlockDim(conn_t *conn,
+                                                     cublasXtHandle_t handle,
+                                                     int *blockDim) {
+  cublasStatus_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtGetBlockDim) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, blockDim, sizeof(int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t cublasXtGetBlockDim(cublasXtHandle_t handle,
+                                              int *blockDim) {
+  if (blockDim == nullptr) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtGetBlockDim(conn, handle, blockDim);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtGetPinningMemMode(conn_t *conn, cublasXtHandle_t handle,
+                                     cublasXtPinnedMemMode_t *mode) {
+  cublasStatus_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtGetPinningMemMode) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, mode, sizeof(cublasXtPinnedMemMode_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtGetPinningMemMode(cublasXtHandle_t handle,
+                          cublasXtPinnedMemMode_t *mode) {
+  if (mode == nullptr) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtGetPinningMemMode(conn, handle, mode);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtSetPinningMemMode(conn_t *conn, cublasXtHandle_t handle,
+                                     cublasXtPinnedMemMode_t mode) {
+  cublasStatus_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtSetPinningMemMode) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &mode, sizeof(cublasXtPinnedMemMode_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtSetPinningMemMode(cublasXtHandle_t handle,
+                          cublasXtPinnedMemMode_t mode) {
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtSetPinningMemMode(conn, handle, mode);
+}
+
+extern "C" cublasStatus_t cublasXtSetCpuRoutine(cublasXtHandle_t handle,
+                                                cublasXtBlasOp_t blasOp,
+                                                cublasXtOpType_t type,
+                                                void *blasFunctor) {
+  (void)handle;
+  (void)blasOp;
+  (void)type;
+  (void)blasFunctor;
+  return CUBLAS_STATUS_NOT_SUPPORTED;
+}
+
+static cublasStatus_t lupine_rpc_cublasXtSetCpuRatio(conn_t *conn,
+                                                     cublasXtHandle_t handle,
+                                                     cublasXtBlasOp_t blasOp,
+                                                     cublasXtOpType_t type,
+                                                     float ratio) {
+  cublasStatus_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtSetCpuRatio) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &blasOp, sizeof(cublasXtBlasOp_t)) < 0 ||
+      rpc_write(conn, &type, sizeof(cublasXtOpType_t)) < 0 ||
+      rpc_write(conn, &ratio, sizeof(float)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t cublasXtSetCpuRatio(cublasXtHandle_t handle,
+                                              cublasXtBlasOp_t blasOp,
+                                              cublasXtOpType_t type,
+                                              float ratio) {
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtSetCpuRatio(conn, handle, blasOp, type, ratio);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtSgemm(conn_t *conn, cublasXtHandle_t handle,
+                         cublasOperation_t transa, cublasOperation_t transb,
+                         size_t m, size_t n, size_t k, const float *alpha,
+                         const float *A, size_t lda, const float *B, size_t ldb,
+                         const float *beta, float *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(transa, m, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(transb, k, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtSgemm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const float)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const float) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const float) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const float)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(float) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(float)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(float) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(float)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtSgemm(cublasXtHandle_t handle, cublasOperation_t transa,
+              cublasOperation_t transb, size_t m, size_t n, size_t k,
+              const float *alpha, const float *A, size_t lda, const float *B,
+              size_t ldb, const float *beta, float *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(transa, m, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(transb, k, n, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtSgemm(conn, handle, transa, transb, m, n, k, alpha,
+                                  A, lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtDgemm(
+    conn_t *conn, cublasXtHandle_t handle, cublasOperation_t transa,
+    cublasOperation_t transb, size_t m, size_t n, size_t k, const double *alpha,
+    const double *A, size_t lda, const double *B, size_t ldb,
+    const double *beta, double *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(transa, m, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(transb, k, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtDgemm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const double)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const double) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const double) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const double)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(double) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(double)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(double) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(double)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtDgemm(cublasXtHandle_t handle, cublasOperation_t transa,
+              cublasOperation_t transb, size_t m, size_t n, size_t k,
+              const double *alpha, const double *A, size_t lda, const double *B,
+              size_t ldb, const double *beta, double *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(transa, m, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(transb, k, n, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtDgemm(conn, handle, transa, transb, m, n, k, alpha,
+                                  A, lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtCgemm(
+    conn_t *conn, cublasXtHandle_t handle, cublasOperation_t transa,
+    cublasOperation_t transb, size_t m, size_t n, size_t k,
+    const cuComplex *alpha, const cuComplex *A, size_t lda, const cuComplex *B,
+    size_t ldb, const cuComplex *beta, cuComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(transa, m, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(transb, k, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtCgemm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtCgemm(cublasXtHandle_t handle, cublasOperation_t transa,
+              cublasOperation_t transb, size_t m, size_t n, size_t k,
+              const cuComplex *alpha, const cuComplex *A, size_t lda,
+              const cuComplex *B, size_t ldb, const cuComplex *beta,
+              cuComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(transa, m, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(transb, k, n, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtCgemm(conn, handle, transa, transb, m, n, k, alpha,
+                                  A, lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtZgemm(
+    conn_t *conn, cublasXtHandle_t handle, cublasOperation_t transa,
+    cublasOperation_t transb, size_t m, size_t n, size_t k,
+    const cuDoubleComplex *alpha, const cuDoubleComplex *A, size_t lda,
+    const cuDoubleComplex *B, size_t ldb, const cuDoubleComplex *beta,
+    cuDoubleComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(transa, m, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(transb, k, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtZgemm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtZgemm(cublasXtHandle_t handle, cublasOperation_t transa,
+              cublasOperation_t transb, size_t m, size_t n, size_t k,
+              const cuDoubleComplex *alpha, const cuDoubleComplex *A,
+              size_t lda, const cuDoubleComplex *B, size_t ldb,
+              const cuDoubleComplex *beta, cuDoubleComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(transa, m, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(transb, k, n, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtZgemm(conn, handle, transa, transb, m, n, k, alpha,
+                                  A, lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtSsyrk(conn_t *conn, cublasXtHandle_t handle,
+                         cublasFillMode_t uplo, cublasOperation_t trans,
+                         size_t n, size_t k, const float *alpha, const float *A,
+                         size_t lda, const float *beta, float *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtSsyrk) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const float)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const float) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const float)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(float) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(float)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(float) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(float)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtSsyrk(cublasXtHandle_t handle, cublasFillMode_t uplo,
+              cublasOperation_t trans, size_t n, size_t k, const float *alpha,
+              const float *A, size_t lda, const float *beta, float *C,
+              size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtSsyrk(conn, handle, uplo, trans, n, k, alpha, A,
+                                  lda, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtDsyrk(
+    conn_t *conn, cublasXtHandle_t handle, cublasFillMode_t uplo,
+    cublasOperation_t trans, size_t n, size_t k, const double *alpha,
+    const double *A, size_t lda, const double *beta, double *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtDsyrk) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const double)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const double) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const double)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(double) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(double)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(double) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(double)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtDsyrk(cublasXtHandle_t handle, cublasFillMode_t uplo,
+              cublasOperation_t trans, size_t n, size_t k, const double *alpha,
+              const double *A, size_t lda, const double *beta, double *C,
+              size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtDsyrk(conn, handle, uplo, trans, n, k, alpha, A,
+                                  lda, beta, C, ldc);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtCsyrk(conn_t *conn, cublasXtHandle_t handle,
+                         cublasFillMode_t uplo, cublasOperation_t trans,
+                         size_t n, size_t k, const cuComplex *alpha,
+                         const cuComplex *A, size_t lda, const cuComplex *beta,
+                         cuComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtCsyrk) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtCsyrk(cublasXtHandle_t handle, cublasFillMode_t uplo,
+              cublasOperation_t trans, size_t n, size_t k,
+              const cuComplex *alpha, const cuComplex *A, size_t lda,
+              const cuComplex *beta, cuComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtCsyrk(conn, handle, uplo, trans, n, k, alpha, A,
+                                  lda, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtZsyrk(
+    conn_t *conn, cublasXtHandle_t handle, cublasFillMode_t uplo,
+    cublasOperation_t trans, size_t n, size_t k, const cuDoubleComplex *alpha,
+    const cuDoubleComplex *A, size_t lda, const cuDoubleComplex *beta,
+    cuDoubleComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtZsyrk) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t cublasXtZsyrk(
+    cublasXtHandle_t handle, cublasFillMode_t uplo, cublasOperation_t trans,
+    size_t n, size_t k, const cuDoubleComplex *alpha, const cuDoubleComplex *A,
+    size_t lda, const cuDoubleComplex *beta, cuDoubleComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtZsyrk(conn, handle, uplo, trans, n, k, alpha, A,
+                                  lda, beta, C, ldc);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtCherk(conn_t *conn, cublasXtHandle_t handle,
+                         cublasFillMode_t uplo, cublasOperation_t trans,
+                         size_t n, size_t k, const float *alpha,
+                         const cuComplex *A, size_t lda, const float *beta,
+                         cuComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtCherk) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const float)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const float)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtCherk(cublasXtHandle_t handle, cublasFillMode_t uplo,
+              cublasOperation_t trans, size_t n, size_t k, const float *alpha,
+              const cuComplex *A, size_t lda, const float *beta, cuComplex *C,
+              size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtCherk(conn, handle, uplo, trans, n, k, alpha, A,
+                                  lda, beta, C, ldc);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtZherk(conn_t *conn, cublasXtHandle_t handle,
+                         cublasFillMode_t uplo, cublasOperation_t trans,
+                         size_t n, size_t k, const double *alpha,
+                         const cuDoubleComplex *A, size_t lda,
+                         const double *beta, cuDoubleComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtZherk) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const double)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const double)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtZherk(cublasXtHandle_t handle, cublasFillMode_t uplo,
+              cublasOperation_t trans, size_t n, size_t k, const double *alpha,
+              const cuDoubleComplex *A, size_t lda, const double *beta,
+              cuDoubleComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtZherk(conn, handle, uplo, trans, n, k, alpha, A,
+                                  lda, beta, C, ldc);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtSsyr2k(conn_t *conn, cublasXtHandle_t handle,
+                          cublasFillMode_t uplo, cublasOperation_t trans,
+                          size_t n, size_t k, const float *alpha,
+                          const float *A, size_t lda, const float *B,
+                          size_t ldb, const float *beta, float *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtSsyr2k) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const float)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const float) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const float) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const float)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(float) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(float)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(float) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(float)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtSsyr2k(cublasXtHandle_t handle, cublasFillMode_t uplo,
+               cublasOperation_t trans, size_t n, size_t k, const float *alpha,
+               const float *A, size_t lda, const float *B, size_t ldb,
+               const float *beta, float *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(trans, n, k, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtSsyr2k(conn, handle, uplo, trans, n, k, alpha, A,
+                                   lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtDsyr2k(
+    conn_t *conn, cublasXtHandle_t handle, cublasFillMode_t uplo,
+    cublasOperation_t trans, size_t n, size_t k, const double *alpha,
+    const double *A, size_t lda, const double *B, size_t ldb,
+    const double *beta, double *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtDsyr2k) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const double)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const double) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const double) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const double)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(double) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(double)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(double) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(double)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtDsyr2k(cublasXtHandle_t handle, cublasFillMode_t uplo,
+               cublasOperation_t trans, size_t n, size_t k, const double *alpha,
+               const double *A, size_t lda, const double *B, size_t ldb,
+               const double *beta, double *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(trans, n, k, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtDsyr2k(conn, handle, uplo, trans, n, k, alpha, A,
+                                   lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtCsyr2k(
+    conn_t *conn, cublasXtHandle_t handle, cublasFillMode_t uplo,
+    cublasOperation_t trans, size_t n, size_t k, const cuComplex *alpha,
+    const cuComplex *A, size_t lda, const cuComplex *B, size_t ldb,
+    const cuComplex *beta, cuComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtCsyr2k) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtCsyr2k(cublasXtHandle_t handle, cublasFillMode_t uplo,
+               cublasOperation_t trans, size_t n, size_t k,
+               const cuComplex *alpha, const cuComplex *A, size_t lda,
+               const cuComplex *B, size_t ldb, const cuComplex *beta,
+               cuComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(trans, n, k, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtCsyr2k(conn, handle, uplo, trans, n, k, alpha, A,
+                                   lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtZsyr2k(
+    conn_t *conn, cublasXtHandle_t handle, cublasFillMode_t uplo,
+    cublasOperation_t trans, size_t n, size_t k, const cuDoubleComplex *alpha,
+    const cuDoubleComplex *A, size_t lda, const cuDoubleComplex *B, size_t ldb,
+    const cuDoubleComplex *beta, cuDoubleComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtZsyr2k) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtZsyr2k(cublasXtHandle_t handle, cublasFillMode_t uplo,
+               cublasOperation_t trans, size_t n, size_t k,
+               const cuDoubleComplex *alpha, const cuDoubleComplex *A,
+               size_t lda, const cuDoubleComplex *B, size_t ldb,
+               const cuDoubleComplex *beta, cuDoubleComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(trans, n, k, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtZsyr2k(conn, handle, uplo, trans, n, k, alpha, A,
+                                   lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtCherkx(
+    conn_t *conn, cublasXtHandle_t handle, cublasFillMode_t uplo,
+    cublasOperation_t trans, size_t n, size_t k, const cuComplex *alpha,
+    const cuComplex *A, size_t lda, const cuComplex *B, size_t ldb,
+    const float *beta, cuComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtCherkx) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const float)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtCherkx(cublasXtHandle_t handle, cublasFillMode_t uplo,
+               cublasOperation_t trans, size_t n, size_t k,
+               const cuComplex *alpha, const cuComplex *A, size_t lda,
+               const cuComplex *B, size_t ldb, const float *beta, cuComplex *C,
+               size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(trans, n, k, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtCherkx(conn, handle, uplo, trans, n, k, alpha, A,
+                                   lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtZherkx(
+    conn_t *conn, cublasXtHandle_t handle, cublasFillMode_t uplo,
+    cublasOperation_t trans, size_t n, size_t k, const cuDoubleComplex *alpha,
+    const cuDoubleComplex *A, size_t lda, const cuDoubleComplex *B, size_t ldb,
+    const double *beta, cuDoubleComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtZherkx) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const double)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtZherkx(cublasXtHandle_t handle, cublasFillMode_t uplo,
+               cublasOperation_t trans, size_t n, size_t k,
+               const cuDoubleComplex *alpha, const cuDoubleComplex *A,
+               size_t lda, const cuDoubleComplex *B, size_t ldb,
+               const double *beta, cuDoubleComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(trans, n, k, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtZherkx(conn, handle, uplo, trans, n, k, alpha, A,
+                                   lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtStrsm(conn_t *conn, cublasXtHandle_t handle,
+                         cublasSideMode_t side, cublasFillMode_t uplo,
+                         cublasOperation_t trans, cublasDiagType_t diag,
+                         size_t m, size_t n, const float *alpha, const float *A,
+                         size_t lda, float *B, size_t ldb) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtStrsm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const float)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const float) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(float) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(float)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (B_count * sizeof(float) != 0 &&
+       rpc_read(conn, B, B_count * sizeof(float)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtStrsm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, cublasOperation_t trans,
+              cublasDiagType_t diag, size_t m, size_t n, const float *alpha,
+              const float *A, size_t lda, float *B, size_t ldb) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtStrsm(conn, handle, side, uplo, trans, diag, m, n,
+                                  alpha, A, lda, B, ldb);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtDtrsm(conn_t *conn, cublasXtHandle_t handle,
+                         cublasSideMode_t side, cublasFillMode_t uplo,
+                         cublasOperation_t trans, cublasDiagType_t diag,
+                         size_t m, size_t n, const double *alpha,
+                         const double *A, size_t lda, double *B, size_t ldb) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtDtrsm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const double)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const double) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(double) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(double)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (B_count * sizeof(double) != 0 &&
+       rpc_read(conn, B, B_count * sizeof(double)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtDtrsm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, cublasOperation_t trans,
+              cublasDiagType_t diag, size_t m, size_t n, const double *alpha,
+              const double *A, size_t lda, double *B, size_t ldb) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtDtrsm(conn, handle, side, uplo, trans, diag, m, n,
+                                  alpha, A, lda, B, ldb);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtCtrsm(
+    conn_t *conn, cublasXtHandle_t handle, cublasSideMode_t side,
+    cublasFillMode_t uplo, cublasOperation_t trans, cublasDiagType_t diag,
+    size_t m, size_t n, const cuComplex *alpha, const cuComplex *A, size_t lda,
+    cuComplex *B, size_t ldb) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtCtrsm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(cuComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(cuComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (B_count * sizeof(cuComplex) != 0 &&
+       rpc_read(conn, B, B_count * sizeof(cuComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtCtrsm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, cublasOperation_t trans,
+              cublasDiagType_t diag, size_t m, size_t n, const cuComplex *alpha,
+              const cuComplex *A, size_t lda, cuComplex *B, size_t ldb) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtCtrsm(conn, handle, side, uplo, trans, diag, m, n,
+                                  alpha, A, lda, B, ldb);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtZtrsm(
+    conn_t *conn, cublasXtHandle_t handle, cublasSideMode_t side,
+    cublasFillMode_t uplo, cublasOperation_t trans, cublasDiagType_t diag,
+    size_t m, size_t n, const cuDoubleComplex *alpha, const cuDoubleComplex *A,
+    size_t lda, cuDoubleComplex *B, size_t ldb) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtZtrsm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (B_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_read(conn, B, B_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtZtrsm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, cublasOperation_t trans,
+              cublasDiagType_t diag, size_t m, size_t n,
+              const cuDoubleComplex *alpha, const cuDoubleComplex *A,
+              size_t lda, cuDoubleComplex *B, size_t ldb) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtZtrsm(conn, handle, side, uplo, trans, diag, m, n,
+                                  alpha, A, lda, B, ldb);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtSsymm(conn_t *conn, cublasXtHandle_t handle,
+                         cublasSideMode_t side, cublasFillMode_t uplo, size_t m,
+                         size_t n, const float *alpha, const float *A,
+                         size_t lda, const float *B, size_t ldb,
+                         const float *beta, float *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtSsymm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const float)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const float) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const float) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const float)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(float) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(float)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(float) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(float)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtSsymm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, size_t m, size_t n, const float *alpha,
+              const float *A, size_t lda, const float *B, size_t ldb,
+              const float *beta, float *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) || beta == nullptr ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtSsymm(conn, handle, side, uplo, m, n, alpha, A, lda,
+                                  B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtDsymm(conn_t *conn, cublasXtHandle_t handle,
+                         cublasSideMode_t side, cublasFillMode_t uplo, size_t m,
+                         size_t n, const double *alpha, const double *A,
+                         size_t lda, const double *B, size_t ldb,
+                         const double *beta, double *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtDsymm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const double)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const double) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const double) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const double)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(double) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(double)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(double) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(double)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtDsymm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, size_t m, size_t n, const double *alpha,
+              const double *A, size_t lda, const double *B, size_t ldb,
+              const double *beta, double *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) || beta == nullptr ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtDsymm(conn, handle, side, uplo, m, n, alpha, A, lda,
+                                  B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtCsymm(conn_t *conn, cublasXtHandle_t handle,
+                         cublasSideMode_t side, cublasFillMode_t uplo, size_t m,
+                         size_t n, const cuComplex *alpha, const cuComplex *A,
+                         size_t lda, const cuComplex *B, size_t ldb,
+                         const cuComplex *beta, cuComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtCsymm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtCsymm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, size_t m, size_t n, const cuComplex *alpha,
+              const cuComplex *A, size_t lda, const cuComplex *B, size_t ldb,
+              const cuComplex *beta, cuComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) || beta == nullptr ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtCsymm(conn, handle, side, uplo, m, n, alpha, A, lda,
+                                  B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtZsymm(
+    conn_t *conn, cublasXtHandle_t handle, cublasSideMode_t side,
+    cublasFillMode_t uplo, size_t m, size_t n, const cuDoubleComplex *alpha,
+    const cuDoubleComplex *A, size_t lda, const cuDoubleComplex *B, size_t ldb,
+    const cuDoubleComplex *beta, cuDoubleComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtZsymm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtZsymm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, size_t m, size_t n,
+              const cuDoubleComplex *alpha, const cuDoubleComplex *A,
+              size_t lda, const cuDoubleComplex *B, size_t ldb,
+              const cuDoubleComplex *beta, cuDoubleComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) || beta == nullptr ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtZsymm(conn, handle, side, uplo, m, n, alpha, A, lda,
+                                  B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtChemm(conn_t *conn, cublasXtHandle_t handle,
+                         cublasSideMode_t side, cublasFillMode_t uplo, size_t m,
+                         size_t n, const cuComplex *alpha, const cuComplex *A,
+                         size_t lda, const cuComplex *B, size_t ldb,
+                         const cuComplex *beta, cuComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtChemm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtChemm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, size_t m, size_t n, const cuComplex *alpha,
+              const cuComplex *A, size_t lda, const cuComplex *B, size_t ldb,
+              const cuComplex *beta, cuComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) || beta == nullptr ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtChemm(conn, handle, side, uplo, m, n, alpha, A, lda,
+                                  B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtZhemm(
+    conn_t *conn, cublasXtHandle_t handle, cublasSideMode_t side,
+    cublasFillMode_t uplo, size_t m, size_t n, const cuDoubleComplex *alpha,
+    const cuDoubleComplex *A, size_t lda, const cuDoubleComplex *B, size_t ldb,
+    const cuDoubleComplex *beta, cuDoubleComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtZhemm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtZhemm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, size_t m, size_t n,
+              const cuDoubleComplex *alpha, const cuDoubleComplex *A,
+              size_t lda, const cuDoubleComplex *B, size_t ldb,
+              const cuDoubleComplex *beta, cuDoubleComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) || beta == nullptr ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtZhemm(conn, handle, side, uplo, m, n, alpha, A, lda,
+                                  B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtSsyrkx(conn_t *conn, cublasXtHandle_t handle,
+                          cublasFillMode_t uplo, cublasOperation_t trans,
+                          size_t n, size_t k, const float *alpha,
+                          const float *A, size_t lda, const float *B,
+                          size_t ldb, const float *beta, float *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtSsyrkx) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const float)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const float) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const float) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const float)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(float) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(float)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(float) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(float)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtSsyrkx(cublasXtHandle_t handle, cublasFillMode_t uplo,
+               cublasOperation_t trans, size_t n, size_t k, const float *alpha,
+               const float *A, size_t lda, const float *B, size_t ldb,
+               const float *beta, float *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(trans, n, k, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtSsyrkx(conn, handle, uplo, trans, n, k, alpha, A,
+                                   lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtDsyrkx(
+    conn_t *conn, cublasXtHandle_t handle, cublasFillMode_t uplo,
+    cublasOperation_t trans, size_t n, size_t k, const double *alpha,
+    const double *A, size_t lda, const double *B, size_t ldb,
+    const double *beta, double *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtDsyrkx) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const double)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const double) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const double) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const double)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(double) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(double)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(double) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(double)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtDsyrkx(cublasXtHandle_t handle, cublasFillMode_t uplo,
+               cublasOperation_t trans, size_t n, size_t k, const double *alpha,
+               const double *A, size_t lda, const double *B, size_t ldb,
+               const double *beta, double *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(trans, n, k, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtDsyrkx(conn, handle, uplo, trans, n, k, alpha, A,
+                                   lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtCsyrkx(
+    conn_t *conn, cublasXtHandle_t handle, cublasFillMode_t uplo,
+    cublasOperation_t trans, size_t n, size_t k, const cuComplex *alpha,
+    const cuComplex *A, size_t lda, const cuComplex *B, size_t ldb,
+    const cuComplex *beta, cuComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtCsyrkx) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtCsyrkx(cublasXtHandle_t handle, cublasFillMode_t uplo,
+               cublasOperation_t trans, size_t n, size_t k,
+               const cuComplex *alpha, const cuComplex *A, size_t lda,
+               const cuComplex *B, size_t ldb, const cuComplex *beta,
+               cuComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(trans, n, k, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtCsyrkx(conn, handle, uplo, trans, n, k, alpha, A,
+                                   lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtZsyrkx(
+    conn_t *conn, cublasXtHandle_t handle, cublasFillMode_t uplo,
+    cublasOperation_t trans, size_t n, size_t k, const cuDoubleComplex *alpha,
+    const cuDoubleComplex *A, size_t lda, const cuDoubleComplex *B, size_t ldb,
+    const cuDoubleComplex *beta, cuDoubleComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtZsyrkx) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtZsyrkx(cublasXtHandle_t handle, cublasFillMode_t uplo,
+               cublasOperation_t trans, size_t n, size_t k,
+               const cuDoubleComplex *alpha, const cuDoubleComplex *A,
+               size_t lda, const cuDoubleComplex *B, size_t ldb,
+               const cuDoubleComplex *beta, cuDoubleComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(trans, n, k, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtZsyrkx(conn, handle, uplo, trans, n, k, alpha, A,
+                                   lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtCher2k(
+    conn_t *conn, cublasXtHandle_t handle, cublasFillMode_t uplo,
+    cublasOperation_t trans, size_t n, size_t k, const cuComplex *alpha,
+    const cuComplex *A, size_t lda, const cuComplex *B, size_t ldb,
+    const float *beta, cuComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtCher2k) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const float)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtCher2k(cublasXtHandle_t handle, cublasFillMode_t uplo,
+               cublasOperation_t trans, size_t n, size_t k,
+               const cuComplex *alpha, const cuComplex *A, size_t lda,
+               const cuComplex *B, size_t ldb, const float *beta, cuComplex *C,
+               size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(trans, n, k, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtCher2k(conn, handle, uplo, trans, n, k, alpha, A,
+                                   lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtZher2k(
+    conn_t *conn, cublasXtHandle_t handle, cublasFillMode_t uplo,
+    cublasOperation_t trans, size_t n, size_t k, const cuDoubleComplex *alpha,
+    const cuDoubleComplex *A, size_t lda, const cuDoubleComplex *B, size_t ldb,
+    const double *beta, cuDoubleComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_op_matrix(trans, n, k, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(n, n, ldc));
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasXtZher2k) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const double)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtZher2k(cublasXtHandle_t handle, cublasFillMode_t uplo,
+               cublasOperation_t trans, size_t n, size_t k,
+               const cuDoubleComplex *alpha, const cuDoubleComplex *A,
+               size_t lda, const cuDoubleComplex *B, size_t ldb,
+               const double *beta, cuDoubleComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_op_matrix(trans, n, k, lda) != 0 && A == nullptr) ||
+      (xt_op_matrix(trans, n, k, ldb) != 0 && B == nullptr) ||
+      beta == nullptr || (xt_matrix(n, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtZher2k(conn, handle, uplo, trans, n, k, alpha, A,
+                                   lda, B, ldb, beta, C, ldc);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtSspmm(conn_t *conn, cublasXtHandle_t handle,
+                         cublasSideMode_t side, cublasFillMode_t uplo, size_t m,
+                         size_t n, const float *alpha, const float *AP,
+                         const float *B, size_t ldb, const float *beta,
+                         float *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t AP_count = static_cast<uint64_t>(xt_packed(side, m, n));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtSspmm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const float)) < 0 ||
+      rpc_write(conn, &AP_count, sizeof(AP_count)) < 0 ||
+      (AP_count * sizeof(const float) != 0 &&
+       rpc_write(conn, AP, AP_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const float) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const float)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(float) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(float)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(float) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(float)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtSspmm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, size_t m, size_t n, const float *alpha,
+              const float *AP, const float *B, size_t ldb, const float *beta,
+              float *C, size_t ldc) {
+  if (alpha == nullptr || (xt_packed(side, m, n) != 0 && AP == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) || beta == nullptr ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtSspmm(conn, handle, side, uplo, m, n, alpha, AP, B,
+                                  ldb, beta, C, ldc);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtDspmm(conn_t *conn, cublasXtHandle_t handle,
+                         cublasSideMode_t side, cublasFillMode_t uplo, size_t m,
+                         size_t n, const double *alpha, const double *AP,
+                         const double *B, size_t ldb, const double *beta,
+                         double *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t AP_count = static_cast<uint64_t>(xt_packed(side, m, n));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtDspmm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const double)) < 0 ||
+      rpc_write(conn, &AP_count, sizeof(AP_count)) < 0 ||
+      (AP_count * sizeof(const double) != 0 &&
+       rpc_write(conn, AP, AP_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const double) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const double)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(double) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(double)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(double) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(double)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtDspmm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, size_t m, size_t n, const double *alpha,
+              const double *AP, const double *B, size_t ldb, const double *beta,
+              double *C, size_t ldc) {
+  if (alpha == nullptr || (xt_packed(side, m, n) != 0 && AP == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) || beta == nullptr ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtDspmm(conn, handle, side, uplo, m, n, alpha, AP, B,
+                                  ldb, beta, C, ldc);
+}
+
+static cublasStatus_t
+lupine_rpc_cublasXtCspmm(conn_t *conn, cublasXtHandle_t handle,
+                         cublasSideMode_t side, cublasFillMode_t uplo, size_t m,
+                         size_t n, const cuComplex *alpha, const cuComplex *AP,
+                         const cuComplex *B, size_t ldb, const cuComplex *beta,
+                         cuComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t AP_count = static_cast<uint64_t>(xt_packed(side, m, n));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtCspmm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &AP_count, sizeof(AP_count)) < 0 ||
+      (AP_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, AP, AP_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtCspmm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, size_t m, size_t n, const cuComplex *alpha,
+              const cuComplex *AP, const cuComplex *B, size_t ldb,
+              const cuComplex *beta, cuComplex *C, size_t ldc) {
+  if (alpha == nullptr || (xt_packed(side, m, n) != 0 && AP == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) || beta == nullptr ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtCspmm(conn, handle, side, uplo, m, n, alpha, AP, B,
+                                  ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtZspmm(
+    conn_t *conn, cublasXtHandle_t handle, cublasSideMode_t side,
+    cublasFillMode_t uplo, size_t m, size_t n, const cuDoubleComplex *alpha,
+    const cuDoubleComplex *AP, const cuDoubleComplex *B, size_t ldb,
+    const cuDoubleComplex *beta, cuDoubleComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t AP_count = static_cast<uint64_t>(xt_packed(side, m, n));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtZspmm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &AP_count, sizeof(AP_count)) < 0 ||
+      (AP_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, AP, AP_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtZspmm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, size_t m, size_t n,
+              const cuDoubleComplex *alpha, const cuDoubleComplex *AP,
+              const cuDoubleComplex *B, size_t ldb, const cuDoubleComplex *beta,
+              cuDoubleComplex *C, size_t ldc) {
+  if (alpha == nullptr || (xt_packed(side, m, n) != 0 && AP == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) || beta == nullptr ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtZspmm(conn, handle, side, uplo, m, n, alpha, AP, B,
+                                  ldb, beta, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtStrmm(
+    conn_t *conn, cublasXtHandle_t handle, cublasSideMode_t side,
+    cublasFillMode_t uplo, cublasOperation_t trans, cublasDiagType_t diag,
+    size_t m, size_t n, const float *alpha, const float *A, size_t lda,
+    const float *B, size_t ldb, float *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtStrmm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const float)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const float) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const float) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const float)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(float) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(float)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtStrmm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, cublasOperation_t trans,
+              cublasDiagType_t diag, size_t m, size_t n, const float *alpha,
+              const float *A, size_t lda, const float *B, size_t ldb, float *C,
+              size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtStrmm(conn, handle, side, uplo, trans, diag, m, n,
+                                  alpha, A, lda, B, ldb, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtDtrmm(
+    conn_t *conn, cublasXtHandle_t handle, cublasSideMode_t side,
+    cublasFillMode_t uplo, cublasOperation_t trans, cublasDiagType_t diag,
+    size_t m, size_t n, const double *alpha, const double *A, size_t lda,
+    const double *B, size_t ldb, double *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtDtrmm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const double)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const double) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const double) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const double)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(double) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(double)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtDtrmm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, cublasOperation_t trans,
+              cublasDiagType_t diag, size_t m, size_t n, const double *alpha,
+              const double *A, size_t lda, const double *B, size_t ldb,
+              double *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtDtrmm(conn, handle, side, uplo, trans, diag, m, n,
+                                  alpha, A, lda, B, ldb, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtCtrmm(
+    conn_t *conn, cublasXtHandle_t handle, cublasSideMode_t side,
+    cublasFillMode_t uplo, cublasOperation_t trans, cublasDiagType_t diag,
+    size_t m, size_t n, const cuComplex *alpha, const cuComplex *A, size_t lda,
+    const cuComplex *B, size_t ldb, cuComplex *C, size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtCtrmm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t
+cublasXtCtrmm(cublasXtHandle_t handle, cublasSideMode_t side,
+              cublasFillMode_t uplo, cublasOperation_t trans,
+              cublasDiagType_t diag, size_t m, size_t n, const cuComplex *alpha,
+              const cuComplex *A, size_t lda, const cuComplex *B, size_t ldb,
+              cuComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtCtrmm(conn, handle, side, uplo, trans, diag, m, n,
+                                  alpha, A, lda, B, ldb, C, ldc);
+}
+
+static cublasStatus_t lupine_rpc_cublasXtZtrmm(
+    conn_t *conn, cublasXtHandle_t handle, cublasSideMode_t side,
+    cublasFillMode_t uplo, cublasOperation_t trans, cublasDiagType_t diag,
+    size_t m, size_t n, const cuDoubleComplex *alpha, const cuDoubleComplex *A,
+    size_t lda, const cuDoubleComplex *B, size_t ldb, cuDoubleComplex *C,
+    size_t ldc) {
+  cublasStatus_t return_value = rpc_error();
+  uint64_t A_count = static_cast<uint64_t>(xt_side_matrix(side, m, n, lda));
+  uint64_t B_count = static_cast<uint64_t>(xt_matrix(m, n, ldb));
+  uint64_t C_count = static_cast<uint64_t>(xt_matrix(m, n, ldc));
+  if (conn == nullptr || rpc_write_start_request(conn, RPC_cublasXtZtrmm) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_write(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_write(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_write(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_write(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_write(conn, alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &A_count, sizeof(A_count)) < 0 ||
+      (A_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, A, A_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &B_count, sizeof(B_count)) < 0 ||
+      (B_count * sizeof(const cuDoubleComplex) != 0 &&
+       rpc_write(conn, B, B_count * sizeof(const cuDoubleComplex)) < 0) ||
+      rpc_write(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &C_count, sizeof(C_count)) < 0 ||
+      rpc_write(conn, &ldc, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (C_count * sizeof(cuDoubleComplex) != 0 &&
+       rpc_read(conn, C, C_count * sizeof(cuDoubleComplex)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t cublasXtZtrmm(
+    cublasXtHandle_t handle, cublasSideMode_t side, cublasFillMode_t uplo,
+    cublasOperation_t trans, cublasDiagType_t diag, size_t m, size_t n,
+    const cuDoubleComplex *alpha, const cuDoubleComplex *A, size_t lda,
+    const cuDoubleComplex *B, size_t ldb, cuDoubleComplex *C, size_t ldc) {
+  if (alpha == nullptr ||
+      (xt_side_matrix(side, m, n, lda) != 0 && A == nullptr) ||
+      (xt_matrix(m, n, ldb) != 0 && B == nullptr) ||
+      (xt_matrix(m, n, ldc) != 0 && C == nullptr)) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasXtZtrmm(conn, handle, side, uplo, trans, diag, m, n,
+                                  alpha, A, lda, B, ldb, C, ldc);
+}

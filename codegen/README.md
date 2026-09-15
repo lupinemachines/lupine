@@ -11,6 +11,9 @@ Specifically, the order of `@param` annotations indicates the order in which the
 available are `NULL_TERMINATED` (to indicate that this is a null-terminated string), or `LENGTH:<param>` and
 `SIZE:<value>` to specify the size (aka width) of the parameter. If `LENGTH:<param>` is specified, `<param>` must
 be placed in front of the parameter referencing it, otherwise the generated code will not compile.
+`LENGTH:<expr>`, where `<expr>` names no single parameter, is an element count the client computes
+from the call's other parameters (a cuBLASXt host matrix's accessed region). It must not contain spaces.
+The count travels ahead of the array as a `uint64_t`, so the server never evaluates the expression.
 `NULLABLE` marks a pointer that may be null. It composes with `LENGTH` on a
 `RECV_ONLY` pointer to declare an optional out-array, and on a `SEND_ONLY`
 pointer to declare an optional in-array the caller may leave null

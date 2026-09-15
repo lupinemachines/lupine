@@ -555,7 +555,12 @@ def infer_routing_key(
             return "DEVICEPTR", param
         # A library handle is created on one server and routes every later
         # call there.
-        if type_name in ("cublasHandle_t", "cublasLtHandle_t", "cufftHandle"):
+        if type_name in (
+            "cublasHandle_t",
+            "cublasXtHandle_t",
+            "cublasLtHandle_t",
+            "cufftHandle",
+        ):
             return "HANDLE", param
     return None, None
 
@@ -786,10 +791,28 @@ def parse_annotation(
                     )
                 elif length_arg:
                     # if it has a length, it's an array operation with variable length
+                    length_name = length_arg.split(":", 1)[1]
                     length_param = next(
-                        p for p in params if p.name == length_arg.split(":")[1]
+                        (p for p in params if p.name == length_name), None
                     )
-                    if nullable and send:
+                    if length_param is None:
+                        # LENGTH:<expr>: an element count the client computes
+                        # from other parameters (a BLAS matrix's accessed
+                        # region); it travels ahead of the array.
+                        if nullable:
+                            raise NotImplementedError(
+                                "NULLABLE LENGTH needs a count parameter"
+                            )
+                        operations.append(
+                            ArrayOperation(
+                                send=send,
+                                recv=recv,
+                                parameter=param,
+                                ptr=param.type,
+                                length=length_name,
+                            )
+                        )
+                    elif nullable and send:
                         # SEND_ONLY NULLABLE LENGTH: an optional in-array the
                         # caller may leave null (cufftPlanMany's embeds).
                         if recv:

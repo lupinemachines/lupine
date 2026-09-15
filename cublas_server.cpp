@@ -1,5 +1,6 @@
 // cublas_v2.h defines the marker cublas_api.h wants before including it, and
 // the runtime header supplies the stream type the copies take.
+#include <cublasXt.h>
 #include <cublas_v2.h>
 #include <cuda_runtime_api.h>
 

@@ -35071,3 +35071,3744 @@ int handle_cublasZtrttp(conn_t *conn) {
 ERROR_0:
   return -1;
 }
+
+int handle_cublasXtCreate(conn_t *conn) {
+  cublasXtHandle_t handle{};
+  handle = {};
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(cublasXtHandle_t *);
+  fn_t fn = nullptr;
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtCreate");
+  return_value = fn == nullptr ? function_not_found() : fn(&handle);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cublasXtDestroy(conn_t *conn) {
+  cublasXtHandle_t handle;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(cublasXtHandle_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtDestroy");
+  return_value = fn == nullptr ? function_not_found() : fn(handle);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cublasXtGetNumBoards(conn_t *conn) {
+  int nbDevices;
+  int *deviceId = nullptr;
+  size_t deviceId_size;
+  int nbBoards{};
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(int, int *, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &nbDevices, sizeof(int)) < 0 || nbDevices < 0 || false)
+    goto ERROR_0;
+  deviceId_size = nbDevices * sizeof(int);
+  deviceId = (int *)malloc(deviceId_size);
+  if (deviceId_size != 0 && deviceId == nullptr)
+    goto ERROR_0;
+  if ((deviceId_size != 0 && rpc_read(conn, deviceId, deviceId_size) < 0) ||
+      rpc_read(conn, &nbBoards, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtGetNumBoards");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(nbDevices, (nbDevices * sizeof(int) == 0 ? nullptr : deviceId),
+               &nbBoards);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &nbBoards, sizeof(int)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)deviceId);
+  return 0;
+ERROR_0:
+  free((void *)deviceId);
+  return -1;
+}
+
+int handle_cublasXtMaxBoards(conn_t *conn) {
+  int nbGpuBoards{};
+  nbGpuBoards = {};
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(int *);
+  fn_t fn = nullptr;
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtMaxBoards");
+  return_value = fn == nullptr ? function_not_found() : fn(&nbGpuBoards);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &nbGpuBoards, sizeof(int)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cublasXtDeviceSelect(conn_t *conn) {
+  cublasXtHandle_t handle;
+  int nbDevices;
+  int *deviceId = nullptr;
+  size_t deviceId_size;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(cublasXtHandle_t, int, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &nbDevices, sizeof(int)) < 0 || nbDevices < 0 || false)
+    goto ERROR_0;
+  deviceId_size = nbDevices * sizeof(int);
+  deviceId = (int *)malloc(deviceId_size);
+  if (deviceId_size != 0 && deviceId == nullptr)
+    goto ERROR_0;
+  if ((deviceId_size != 0 && rpc_read(conn, deviceId, deviceId_size) < 0) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtDeviceSelect");
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(handle, nbDevices,
+                          (nbDevices * sizeof(int) == 0 ? nullptr : deviceId));
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)deviceId);
+  return 0;
+ERROR_0:
+  free((void *)deviceId);
+  return -1;
+}
+
+int handle_cublasXtSetBlockDim(conn_t *conn) {
+  cublasXtHandle_t handle;
+  int blockDim;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(cublasXtHandle_t, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &blockDim, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtSetBlockDim");
+  return_value = fn == nullptr ? function_not_found() : fn(handle, blockDim);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cublasXtGetBlockDim(conn_t *conn) {
+  cublasXtHandle_t handle;
+  int blockDim{};
+  blockDim = {};
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(cublasXtHandle_t, int *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtGetBlockDim");
+  return_value = fn == nullptr ? function_not_found() : fn(handle, &blockDim);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &blockDim, sizeof(int)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cublasXtGetPinningMemMode(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasXtPinnedMemMode_t mode{};
+  mode = {};
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(cublasXtHandle_t, cublasXtPinnedMemMode_t *);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtGetPinningMemMode");
+  return_value = fn == nullptr ? function_not_found() : fn(handle, &mode);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &mode, sizeof(cublasXtPinnedMemMode_t)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cublasXtSetPinningMemMode(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasXtPinnedMemMode_t mode;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(cublasXtHandle_t, cublasXtPinnedMemMode_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &mode, sizeof(cublasXtPinnedMemMode_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtSetPinningMemMode");
+  return_value = fn == nullptr ? function_not_found() : fn(handle, mode);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cublasXtSetCpuRatio(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasXtBlasOp_t blasOp;
+  cublasXtOpType_t type;
+  float ratio;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(cublasXtHandle_t, cublasXtBlasOp_t,
+                                  cublasXtOpType_t, float);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &blasOp, sizeof(cublasXtBlasOp_t)) < 0 ||
+      rpc_read(conn, &type, sizeof(cublasXtOpType_t)) < 0 ||
+      rpc_read(conn, &ratio, sizeof(float)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtSetCpuRatio");
+  return_value =
+      fn == nullptr ? function_not_found() : fn(handle, blasOp, type, ratio);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cublasXtSgemm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasOperation_t transa;
+  cublasOperation_t transb;
+  size_t m;
+  size_t n;
+  size_t k;
+  float alpha{};
+  float *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  float *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  float beta{};
+  float *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasOperation_t, cublasOperation_t, size_t, size_t,
+      size_t, const float *, const float *, size_t, const float *, size_t,
+      const float *, float *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const float)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const float);
+  A = (float *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const float);
+  B = (float *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const float)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(float);
+  C = (float *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtSgemm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, transa, transb, m, n, k, &alpha,
+               (A_count * sizeof(const float) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const float) == 0 ? nullptr : B), ldb, &beta,
+               (C_count * sizeof(float) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(float)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtDgemm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasOperation_t transa;
+  cublasOperation_t transb;
+  size_t m;
+  size_t n;
+  size_t k;
+  double alpha{};
+  double *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  double *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  double beta{};
+  double *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasOperation_t, cublasOperation_t, size_t, size_t,
+      size_t, const double *, const double *, size_t, const double *, size_t,
+      const double *, double *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const double)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const double);
+  A = (double *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const double);
+  B = (double *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const double)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(double);
+  C = (double *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtDgemm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, transa, transb, m, n, k, &alpha,
+               (A_count * sizeof(const double) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const double) == 0 ? nullptr : B), ldb, &beta,
+               (C_count * sizeof(double) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(double)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtCgemm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasOperation_t transa;
+  cublasOperation_t transb;
+  size_t m;
+  size_t n;
+  size_t k;
+  cuComplex alpha{};
+  cuComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuComplex beta{};
+  cuComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasOperation_t, cublasOperation_t, size_t, size_t,
+      size_t, const cuComplex *, const cuComplex *, size_t, const cuComplex *,
+      size_t, const cuComplex *, cuComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuComplex);
+  A = (cuComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuComplex);
+  B = (cuComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuComplex);
+  C = (cuComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtCgemm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, transa, transb, m, n, k, &alpha,
+               (A_count * sizeof(const cuComplex) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const cuComplex) == 0 ? nullptr : B), ldb,
+               &beta, (C_count * sizeof(cuComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtZgemm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasOperation_t transa;
+  cublasOperation_t transb;
+  size_t m;
+  size_t n;
+  size_t k;
+  cuDoubleComplex alpha{};
+  cuDoubleComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuDoubleComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuDoubleComplex beta{};
+  cuDoubleComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasOperation_t, cublasOperation_t, size_t, size_t,
+      size_t, const cuDoubleComplex *, const cuDoubleComplex *, size_t,
+      const cuDoubleComplex *, size_t, const cuDoubleComplex *,
+      cuDoubleComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &transa, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &transb, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuDoubleComplex);
+  A = (cuDoubleComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuDoubleComplex);
+  B = (cuDoubleComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuDoubleComplex);
+  C = (cuDoubleComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtZgemm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, transa, transb, m, n, k, &alpha,
+               (A_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : A),
+               lda,
+               (B_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : B),
+               ldb, &beta,
+               (C_count * sizeof(cuDoubleComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtSsyrk(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  float alpha{};
+  float *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  float beta{};
+  float *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const float *, const float *, size_t, const float *, float *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const float)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const float);
+  A = (float *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const float)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(float);
+  C = (float *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtSsyrk");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const float) == 0 ? nullptr : A), lda, &beta,
+               (C_count * sizeof(float) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(float)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtDsyrk(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  double alpha{};
+  double *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  double beta{};
+  double *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const double *, const double *, size_t, const double *, double *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const double)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const double);
+  A = (double *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const double)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(double);
+  C = (double *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtDsyrk");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const double) == 0 ? nullptr : A), lda, &beta,
+               (C_count * sizeof(double) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(double)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtCsyrk(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  cuComplex alpha{};
+  cuComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuComplex beta{};
+  cuComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t =
+      cublasStatus_t (*)(cublasXtHandle_t, cublasFillMode_t, cublasOperation_t,
+                         size_t, size_t, const cuComplex *, const cuComplex *,
+                         size_t, const cuComplex *, cuComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuComplex);
+  A = (cuComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuComplex);
+  C = (cuComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtCsyrk");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const cuComplex) == 0 ? nullptr : A), lda,
+               &beta, (C_count * sizeof(cuComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtZsyrk(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  cuDoubleComplex alpha{};
+  cuDoubleComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuDoubleComplex beta{};
+  cuDoubleComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const cuDoubleComplex *, const cuDoubleComplex *, size_t,
+      const cuDoubleComplex *, cuDoubleComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuDoubleComplex);
+  A = (cuDoubleComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuDoubleComplex);
+  C = (cuDoubleComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtZsyrk");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : A),
+               lda, &beta,
+               (C_count * sizeof(cuDoubleComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtCherk(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  float alpha{};
+  cuComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  float beta{};
+  cuComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t =
+      cublasStatus_t (*)(cublasXtHandle_t, cublasFillMode_t, cublasOperation_t,
+                         size_t, size_t, const float *, const cuComplex *,
+                         size_t, const float *, cuComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const float)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuComplex);
+  A = (cuComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const float)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuComplex);
+  C = (cuComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtCherk");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const cuComplex) == 0 ? nullptr : A), lda,
+               &beta, (C_count * sizeof(cuComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtZherk(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  double alpha{};
+  cuDoubleComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  double beta{};
+  cuDoubleComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const double *, const cuDoubleComplex *, size_t, const double *,
+      cuDoubleComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const double)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuDoubleComplex);
+  A = (cuDoubleComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const double)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuDoubleComplex);
+  C = (cuDoubleComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtZherk");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : A),
+               lda, &beta,
+               (C_count * sizeof(cuDoubleComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtSsyr2k(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  float alpha{};
+  float *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  float *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  float beta{};
+  float *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t =
+      cublasStatus_t (*)(cublasXtHandle_t, cublasFillMode_t, cublasOperation_t,
+                         size_t, size_t, const float *, const float *, size_t,
+                         const float *, size_t, const float *, float *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const float)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const float);
+  A = (float *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const float);
+  B = (float *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const float)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(float);
+  C = (float *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtSsyr2k");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const float) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const float) == 0 ? nullptr : B), ldb, &beta,
+               (C_count * sizeof(float) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(float)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtDsyr2k(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  double alpha{};
+  double *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  double *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  double beta{};
+  double *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const double *, const double *, size_t, const double *, size_t,
+      const double *, double *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const double)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const double);
+  A = (double *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const double);
+  B = (double *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const double)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(double);
+  C = (double *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtDsyr2k");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const double) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const double) == 0 ? nullptr : B), ldb, &beta,
+               (C_count * sizeof(double) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(double)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtCsyr2k(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  cuComplex alpha{};
+  cuComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuComplex beta{};
+  cuComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const cuComplex *, const cuComplex *, size_t, const cuComplex *, size_t,
+      const cuComplex *, cuComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuComplex);
+  A = (cuComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuComplex);
+  B = (cuComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuComplex);
+  C = (cuComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtCsyr2k");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const cuComplex) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const cuComplex) == 0 ? nullptr : B), ldb,
+               &beta, (C_count * sizeof(cuComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtZsyr2k(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  cuDoubleComplex alpha{};
+  cuDoubleComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuDoubleComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuDoubleComplex beta{};
+  cuDoubleComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const cuDoubleComplex *, const cuDoubleComplex *, size_t,
+      const cuDoubleComplex *, size_t, const cuDoubleComplex *,
+      cuDoubleComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuDoubleComplex);
+  A = (cuDoubleComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuDoubleComplex);
+  B = (cuDoubleComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuDoubleComplex);
+  C = (cuDoubleComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtZsyr2k");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : A),
+               lda,
+               (B_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : B),
+               ldb, &beta,
+               (C_count * sizeof(cuDoubleComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtCherkx(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  cuComplex alpha{};
+  cuComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  float beta{};
+  cuComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const cuComplex *, const cuComplex *, size_t, const cuComplex *, size_t,
+      const float *, cuComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuComplex);
+  A = (cuComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuComplex);
+  B = (cuComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const float)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuComplex);
+  C = (cuComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtCherkx");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const cuComplex) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const cuComplex) == 0 ? nullptr : B), ldb,
+               &beta, (C_count * sizeof(cuComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtZherkx(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  cuDoubleComplex alpha{};
+  cuDoubleComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuDoubleComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  double beta{};
+  cuDoubleComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const cuDoubleComplex *, const cuDoubleComplex *, size_t,
+      const cuDoubleComplex *, size_t, const double *, cuDoubleComplex *,
+      size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuDoubleComplex);
+  A = (cuDoubleComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuDoubleComplex);
+  B = (cuDoubleComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const double)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuDoubleComplex);
+  C = (cuDoubleComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtZherkx");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : A),
+               lda,
+               (B_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : B),
+               ldb, &beta,
+               (C_count * sizeof(cuDoubleComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtStrsm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  cublasDiagType_t diag;
+  size_t m;
+  size_t n;
+  float alpha{};
+  float *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  float *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t =
+      cublasStatus_t (*)(cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t,
+                         cublasOperation_t, cublasDiagType_t, size_t, size_t,
+                         const float *, const float *, size_t, float *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const float)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const float);
+  A = (float *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(float);
+  B = (float *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtStrsm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n, &alpha,
+               (A_count * sizeof(const float) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(float) == 0 ? nullptr : B), ldb);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, B, B_count * sizeof(float)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtDtrsm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  cublasDiagType_t diag;
+  size_t m;
+  size_t n;
+  double alpha{};
+  double *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  double *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, cublasOperation_t,
+      cublasDiagType_t, size_t, size_t, const double *, const double *, size_t,
+      double *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const double)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const double);
+  A = (double *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(double);
+  B = (double *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtDtrsm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n, &alpha,
+               (A_count * sizeof(const double) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(double) == 0 ? nullptr : B), ldb);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, B, B_count * sizeof(double)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtCtrsm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  cublasDiagType_t diag;
+  size_t m;
+  size_t n;
+  cuComplex alpha{};
+  cuComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, cublasOperation_t,
+      cublasDiagType_t, size_t, size_t, const cuComplex *, const cuComplex *,
+      size_t, cuComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuComplex);
+  A = (cuComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(cuComplex);
+  B = (cuComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtCtrsm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n, &alpha,
+               (A_count * sizeof(const cuComplex) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(cuComplex) == 0 ? nullptr : B), ldb);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, B, B_count * sizeof(cuComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtZtrsm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  cublasDiagType_t diag;
+  size_t m;
+  size_t n;
+  cuDoubleComplex alpha{};
+  cuDoubleComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuDoubleComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, cublasOperation_t,
+      cublasDiagType_t, size_t, size_t, const cuDoubleComplex *,
+      const cuDoubleComplex *, size_t, cuDoubleComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuDoubleComplex);
+  A = (cuDoubleComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(cuDoubleComplex);
+  B = (cuDoubleComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtZtrsm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n, &alpha,
+               (A_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : A),
+               lda, (B_count * sizeof(cuDoubleComplex) == 0 ? nullptr : B),
+               ldb);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, B, B_count * sizeof(cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtSsymm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  size_t m;
+  size_t n;
+  float alpha{};
+  float *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  float *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  float beta{};
+  float *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t =
+      cublasStatus_t (*)(cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t,
+                         size_t, size_t, const float *, const float *, size_t,
+                         const float *, size_t, const float *, float *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const float)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const float);
+  A = (float *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const float);
+  B = (float *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const float)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(float);
+  C = (float *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtSsymm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, m, n, &alpha,
+               (A_count * sizeof(const float) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const float) == 0 ? nullptr : B), ldb, &beta,
+               (C_count * sizeof(float) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(float)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtDsymm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  size_t m;
+  size_t n;
+  double alpha{};
+  double *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  double *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  double beta{};
+  double *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, size_t, size_t,
+      const double *, const double *, size_t, const double *, size_t,
+      const double *, double *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const double)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const double);
+  A = (double *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const double);
+  B = (double *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const double)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(double);
+  C = (double *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtDsymm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, m, n, &alpha,
+               (A_count * sizeof(const double) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const double) == 0 ? nullptr : B), ldb, &beta,
+               (C_count * sizeof(double) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(double)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtCsymm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  size_t m;
+  size_t n;
+  cuComplex alpha{};
+  cuComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuComplex beta{};
+  cuComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, size_t, size_t,
+      const cuComplex *, const cuComplex *, size_t, const cuComplex *, size_t,
+      const cuComplex *, cuComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuComplex);
+  A = (cuComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuComplex);
+  B = (cuComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuComplex);
+  C = (cuComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtCsymm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, m, n, &alpha,
+               (A_count * sizeof(const cuComplex) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const cuComplex) == 0 ? nullptr : B), ldb,
+               &beta, (C_count * sizeof(cuComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtZsymm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  size_t m;
+  size_t n;
+  cuDoubleComplex alpha{};
+  cuDoubleComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuDoubleComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuDoubleComplex beta{};
+  cuDoubleComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, size_t, size_t,
+      const cuDoubleComplex *, const cuDoubleComplex *, size_t,
+      const cuDoubleComplex *, size_t, const cuDoubleComplex *,
+      cuDoubleComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuDoubleComplex);
+  A = (cuDoubleComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuDoubleComplex);
+  B = (cuDoubleComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuDoubleComplex);
+  C = (cuDoubleComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtZsymm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, m, n, &alpha,
+               (A_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : A),
+               lda,
+               (B_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : B),
+               ldb, &beta,
+               (C_count * sizeof(cuDoubleComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtChemm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  size_t m;
+  size_t n;
+  cuComplex alpha{};
+  cuComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuComplex beta{};
+  cuComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, size_t, size_t,
+      const cuComplex *, const cuComplex *, size_t, const cuComplex *, size_t,
+      const cuComplex *, cuComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuComplex);
+  A = (cuComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuComplex);
+  B = (cuComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuComplex);
+  C = (cuComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtChemm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, m, n, &alpha,
+               (A_count * sizeof(const cuComplex) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const cuComplex) == 0 ? nullptr : B), ldb,
+               &beta, (C_count * sizeof(cuComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtZhemm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  size_t m;
+  size_t n;
+  cuDoubleComplex alpha{};
+  cuDoubleComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuDoubleComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuDoubleComplex beta{};
+  cuDoubleComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, size_t, size_t,
+      const cuDoubleComplex *, const cuDoubleComplex *, size_t,
+      const cuDoubleComplex *, size_t, const cuDoubleComplex *,
+      cuDoubleComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuDoubleComplex);
+  A = (cuDoubleComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuDoubleComplex);
+  B = (cuDoubleComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuDoubleComplex);
+  C = (cuDoubleComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtZhemm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, m, n, &alpha,
+               (A_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : A),
+               lda,
+               (B_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : B),
+               ldb, &beta,
+               (C_count * sizeof(cuDoubleComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtSsyrkx(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  float alpha{};
+  float *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  float *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  float beta{};
+  float *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t =
+      cublasStatus_t (*)(cublasXtHandle_t, cublasFillMode_t, cublasOperation_t,
+                         size_t, size_t, const float *, const float *, size_t,
+                         const float *, size_t, const float *, float *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const float)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const float);
+  A = (float *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const float);
+  B = (float *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const float)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(float);
+  C = (float *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtSsyrkx");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const float) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const float) == 0 ? nullptr : B), ldb, &beta,
+               (C_count * sizeof(float) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(float)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtDsyrkx(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  double alpha{};
+  double *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  double *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  double beta{};
+  double *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const double *, const double *, size_t, const double *, size_t,
+      const double *, double *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const double)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const double);
+  A = (double *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const double);
+  B = (double *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const double)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(double);
+  C = (double *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtDsyrkx");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const double) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const double) == 0 ? nullptr : B), ldb, &beta,
+               (C_count * sizeof(double) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(double)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtCsyrkx(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  cuComplex alpha{};
+  cuComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuComplex beta{};
+  cuComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const cuComplex *, const cuComplex *, size_t, const cuComplex *, size_t,
+      const cuComplex *, cuComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuComplex);
+  A = (cuComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuComplex);
+  B = (cuComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuComplex);
+  C = (cuComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtCsyrkx");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const cuComplex) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const cuComplex) == 0 ? nullptr : B), ldb,
+               &beta, (C_count * sizeof(cuComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtZsyrkx(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  cuDoubleComplex alpha{};
+  cuDoubleComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuDoubleComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuDoubleComplex beta{};
+  cuDoubleComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const cuDoubleComplex *, const cuDoubleComplex *, size_t,
+      const cuDoubleComplex *, size_t, const cuDoubleComplex *,
+      cuDoubleComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuDoubleComplex);
+  A = (cuDoubleComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuDoubleComplex);
+  B = (cuDoubleComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuDoubleComplex);
+  C = (cuDoubleComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtZsyrkx");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : A),
+               lda,
+               (B_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : B),
+               ldb, &beta,
+               (C_count * sizeof(cuDoubleComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtCher2k(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  cuComplex alpha{};
+  cuComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  float beta{};
+  cuComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const cuComplex *, const cuComplex *, size_t, const cuComplex *, size_t,
+      const float *, cuComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuComplex);
+  A = (cuComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuComplex);
+  B = (cuComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const float)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuComplex);
+  C = (cuComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtCher2k");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const cuComplex) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const cuComplex) == 0 ? nullptr : B), ldb,
+               &beta, (C_count * sizeof(cuComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtZher2k(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  size_t n;
+  size_t k;
+  cuDoubleComplex alpha{};
+  cuDoubleComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuDoubleComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  double beta{};
+  cuDoubleComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasFillMode_t, cublasOperation_t, size_t, size_t,
+      const cuDoubleComplex *, const cuDoubleComplex *, size_t,
+      const cuDoubleComplex *, size_t, const double *, cuDoubleComplex *,
+      size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &k, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuDoubleComplex);
+  A = (cuDoubleComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuDoubleComplex);
+  B = (cuDoubleComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const double)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuDoubleComplex);
+  C = (cuDoubleComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtZher2k");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, uplo, trans, n, k, &alpha,
+               (A_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : A),
+               lda,
+               (B_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : B),
+               ldb, &beta,
+               (C_count * sizeof(cuDoubleComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtSspmm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  size_t m;
+  size_t n;
+  float alpha{};
+  float *AP = nullptr;
+  size_t AP_size;
+  uint64_t AP_count = 0;
+  float *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  float beta{};
+  float *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t =
+      cublasStatus_t (*)(cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t,
+                         size_t, size_t, const float *, const float *,
+                         const float *, size_t, const float *, float *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const float)) < 0 ||
+      rpc_read(conn, &AP_count, sizeof(AP_count)) < 0 || false)
+    goto ERROR_0;
+  AP_size = AP_count * sizeof(const float);
+  AP = (float *)malloc(AP_size);
+  if (AP_size != 0 && AP == nullptr)
+    goto ERROR_0;
+  if ((AP_size != 0 && rpc_read(conn, AP, AP_size) < 0) ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const float);
+  B = (float *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const float)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(float);
+  C = (float *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtSspmm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, m, n, &alpha,
+               (AP_count * sizeof(const float) == 0 ? nullptr : AP),
+               (B_count * sizeof(const float) == 0 ? nullptr : B), ldb, &beta,
+               (C_count * sizeof(float) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(float)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)AP);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)AP);
+  return -1;
+}
+
+int handle_cublasXtDspmm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  size_t m;
+  size_t n;
+  double alpha{};
+  double *AP = nullptr;
+  size_t AP_size;
+  uint64_t AP_count = 0;
+  double *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  double beta{};
+  double *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, size_t, size_t,
+      const double *, const double *, const double *, size_t, const double *,
+      double *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const double)) < 0 ||
+      rpc_read(conn, &AP_count, sizeof(AP_count)) < 0 || false)
+    goto ERROR_0;
+  AP_size = AP_count * sizeof(const double);
+  AP = (double *)malloc(AP_size);
+  if (AP_size != 0 && AP == nullptr)
+    goto ERROR_0;
+  if ((AP_size != 0 && rpc_read(conn, AP, AP_size) < 0) ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const double);
+  B = (double *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const double)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(double);
+  C = (double *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtDspmm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, m, n, &alpha,
+               (AP_count * sizeof(const double) == 0 ? nullptr : AP),
+               (B_count * sizeof(const double) == 0 ? nullptr : B), ldb, &beta,
+               (C_count * sizeof(double) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(double)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)AP);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)AP);
+  return -1;
+}
+
+int handle_cublasXtCspmm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  size_t m;
+  size_t n;
+  cuComplex alpha{};
+  cuComplex *AP = nullptr;
+  size_t AP_size;
+  uint64_t AP_count = 0;
+  cuComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuComplex beta{};
+  cuComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, size_t, size_t,
+      const cuComplex *, const cuComplex *, const cuComplex *, size_t,
+      const cuComplex *, cuComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &AP_count, sizeof(AP_count)) < 0 || false)
+    goto ERROR_0;
+  AP_size = AP_count * sizeof(const cuComplex);
+  AP = (cuComplex *)malloc(AP_size);
+  if (AP_size != 0 && AP == nullptr)
+    goto ERROR_0;
+  if ((AP_size != 0 && rpc_read(conn, AP, AP_size) < 0) ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuComplex);
+  B = (cuComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuComplex);
+  C = (cuComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtCspmm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, m, n, &alpha,
+               (AP_count * sizeof(const cuComplex) == 0 ? nullptr : AP),
+               (B_count * sizeof(const cuComplex) == 0 ? nullptr : B), ldb,
+               &beta, (C_count * sizeof(cuComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)AP);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)AP);
+  return -1;
+}
+
+int handle_cublasXtZspmm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  size_t m;
+  size_t n;
+  cuDoubleComplex alpha{};
+  cuDoubleComplex *AP = nullptr;
+  size_t AP_size;
+  uint64_t AP_count = 0;
+  cuDoubleComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuDoubleComplex beta{};
+  cuDoubleComplex *C = nullptr;
+  size_t C_size;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, size_t, size_t,
+      const cuDoubleComplex *, const cuDoubleComplex *, const cuDoubleComplex *,
+      size_t, const cuDoubleComplex *, cuDoubleComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &AP_count, sizeof(AP_count)) < 0 || false)
+    goto ERROR_0;
+  AP_size = AP_count * sizeof(const cuDoubleComplex);
+  AP = (cuDoubleComplex *)malloc(AP_size);
+  if (AP_size != 0 && AP == nullptr)
+    goto ERROR_0;
+  if ((AP_size != 0 && rpc_read(conn, AP, AP_size) < 0) ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuDoubleComplex);
+  B = (cuDoubleComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &beta, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C_size = C_count * sizeof(cuDoubleComplex);
+  C = (cuDoubleComplex *)malloc(C_size);
+  if (C_size != 0 && C == nullptr)
+    goto ERROR_0;
+  if ((C_size != 0 && rpc_read(conn, C, C_size) < 0) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtZspmm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, m, n, &alpha,
+               (AP_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : AP),
+               (B_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : B),
+               ldb, &beta,
+               (C_count * sizeof(cuDoubleComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)AP);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)AP);
+  return -1;
+}
+
+int handle_cublasXtStrmm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  cublasDiagType_t diag;
+  size_t m;
+  size_t n;
+  float alpha{};
+  float *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  float *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  float *C = nullptr;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, cublasOperation_t,
+      cublasDiagType_t, size_t, size_t, const float *, const float *, size_t,
+      const float *, size_t, float *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const float)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const float);
+  A = (float *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const float);
+  B = (float *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C = (float *)malloc(C_count * sizeof(float));
+  if ((C_count * sizeof(float) != 0 && C == nullptr) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtStrmm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n, &alpha,
+               (A_count * sizeof(const float) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const float) == 0 ? nullptr : B), ldb,
+               (C_count * sizeof(float) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(float)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtDtrmm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  cublasDiagType_t diag;
+  size_t m;
+  size_t n;
+  double alpha{};
+  double *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  double *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  double *C = nullptr;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, cublasOperation_t,
+      cublasDiagType_t, size_t, size_t, const double *, const double *, size_t,
+      const double *, size_t, double *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const double)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const double);
+  A = (double *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const double);
+  B = (double *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C = (double *)malloc(C_count * sizeof(double));
+  if ((C_count * sizeof(double) != 0 && C == nullptr) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtDtrmm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n, &alpha,
+               (A_count * sizeof(const double) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const double) == 0 ? nullptr : B), ldb,
+               (C_count * sizeof(double) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(double)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtCtrmm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  cublasDiagType_t diag;
+  size_t m;
+  size_t n;
+  cuComplex alpha{};
+  cuComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuComplex *C = nullptr;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, cublasOperation_t,
+      cublasDiagType_t, size_t, size_t, const cuComplex *, const cuComplex *,
+      size_t, const cuComplex *, size_t, cuComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuComplex);
+  A = (cuComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuComplex);
+  B = (cuComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C = (cuComplex *)malloc(C_count * sizeof(cuComplex));
+  if ((C_count * sizeof(cuComplex) != 0 && C == nullptr) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtCtrmm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n, &alpha,
+               (A_count * sizeof(const cuComplex) == 0 ? nullptr : A), lda,
+               (B_count * sizeof(const cuComplex) == 0 ? nullptr : B), ldb,
+               (C_count * sizeof(cuComplex) == 0 ? nullptr : C), ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}
+
+int handle_cublasXtZtrmm(conn_t *conn) {
+  cublasXtHandle_t handle;
+  cublasSideMode_t side;
+  cublasFillMode_t uplo;
+  cublasOperation_t trans;
+  cublasDiagType_t diag;
+  size_t m;
+  size_t n;
+  cuDoubleComplex alpha{};
+  cuDoubleComplex *A = nullptr;
+  size_t A_size;
+  uint64_t A_count = 0;
+  size_t lda;
+  cuDoubleComplex *B = nullptr;
+  size_t B_size;
+  uint64_t B_count = 0;
+  size_t ldb;
+  cuDoubleComplex *C = nullptr;
+  uint64_t C_count = 0;
+  size_t ldc;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(
+      cublasXtHandle_t, cublasSideMode_t, cublasFillMode_t, cublasOperation_t,
+      cublasDiagType_t, size_t, size_t, const cuDoubleComplex *,
+      const cuDoubleComplex *, size_t, const cuDoubleComplex *, size_t,
+      cuDoubleComplex *, size_t);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasXtHandle_t)) < 0 ||
+      rpc_read(conn, &side, sizeof(cublasSideMode_t)) < 0 ||
+      rpc_read(conn, &uplo, sizeof(cublasFillMode_t)) < 0 ||
+      rpc_read(conn, &trans, sizeof(cublasOperation_t)) < 0 ||
+      rpc_read(conn, &diag, sizeof(cublasDiagType_t)) < 0 ||
+      rpc_read(conn, &m, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &n, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &alpha, sizeof(const cuDoubleComplex)) < 0 ||
+      rpc_read(conn, &A_count, sizeof(A_count)) < 0 || false)
+    goto ERROR_0;
+  A_size = A_count * sizeof(const cuDoubleComplex);
+  A = (cuDoubleComplex *)malloc(A_size);
+  if (A_size != 0 && A == nullptr)
+    goto ERROR_0;
+  if ((A_size != 0 && rpc_read(conn, A, A_size) < 0) ||
+      rpc_read(conn, &lda, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &B_count, sizeof(B_count)) < 0 || false)
+    goto ERROR_0;
+  B_size = B_count * sizeof(const cuDoubleComplex);
+  B = (cuDoubleComplex *)malloc(B_size);
+  if (B_size != 0 && B == nullptr)
+    goto ERROR_0;
+  if ((B_size != 0 && rpc_read(conn, B, B_size) < 0) ||
+      rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
+    goto ERROR_0;
+  C = (cuDoubleComplex *)malloc(C_count * sizeof(cuDoubleComplex));
+  if ((C_count * sizeof(cuDoubleComplex) != 0 && C == nullptr) ||
+      rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasXtZtrmm");
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(handle, side, uplo, trans, diag, m, n, &alpha,
+               (A_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : A),
+               lda,
+               (B_count * sizeof(const cuDoubleComplex) == 0 ? nullptr : B),
+               ldb, (C_count * sizeof(cuDoubleComplex) == 0 ? nullptr : C),
+               ldc);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, C, C_count * sizeof(cuDoubleComplex)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return 0;
+ERROR_0:
+  free((void *)C);
+  free((void *)B);
+  free((void *)A);
+  return -1;
+}

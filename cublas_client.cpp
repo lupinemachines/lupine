@@ -9,6 +9,7 @@
 // status. A callback into the client is a generated stub that returns
 // CUBLAS_STATUS_NOT_SUPPORTED.
 
+#include <cublasXt.h>
 #include <cublas_v2.h>
 #include <cuda_runtime_api.h>
 
@@ -18,6 +19,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "codegen/gen_rpc_ids.h"
@@ -100,6 +102,24 @@ void forget_handle(cublasHandle_t handle) {
   handles.erase(handle);
 }
 
+std::unordered_map<cublasXtHandle_t, conn_t *> xt_handles;
+
+conn_t *connection_for_handle(cublasXtHandle_t handle) {
+  std::lock_guard<std::mutex> lock(handles_mutex);
+  auto it = xt_handles.find(handle);
+  return it == xt_handles.end() ? nullptr : it->second;
+}
+
+void note_handle_owner(conn_t *conn, cublasXtHandle_t handle) {
+  std::lock_guard<std::mutex> lock(handles_mutex);
+  xt_handles[handle] = conn;
+}
+
+void forget_handle(cublasXtHandle_t handle) {
+  std::lock_guard<std::mutex> lock(handles_mutex);
+  xt_handles.erase(handle);
+}
+
 // cuBLAS places alpha and beta together, so the scalar's name is unused.
 bool scalar_on_host(cublasHandle_t handle, const char *) {
   std::lock_guard<std::mutex> lock(handles_mutex);
@@ -128,9 +148,79 @@ size_t compute_scalar_width(cublasComputeType_t compute, cudaDataType c_type) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// cuBLASXt host matrices
+// ---------------------------------------------------------------------------
+
+// A matrix argument holds its whole array dimension, ld * columns elements.
+uint64_t xt_matrix(size_t rows, size_t columns, size_t ld) {
+  return rows == 0 || columns == 0 ? 0 : static_cast<uint64_t>(ld) * columns;
+}
+
+uint64_t xt_op_matrix(cublasOperation_t op, size_t m, size_t n, size_t ld) {
+  return op == CUBLAS_OP_N ? xt_matrix(m, n, ld) : xt_matrix(n, m, ld);
+}
+
+uint64_t xt_side_matrix(cublasSideMode_t side, size_t m, size_t n, size_t ld) {
+  const size_t order = side == CUBLAS_SIDE_LEFT ? m : n;
+  return xt_matrix(order, order, ld);
+}
+
+uint64_t xt_packed(cublasSideMode_t side, size_t m, size_t n) {
+  const uint64_t order = side == CUBLAS_SIDE_LEFT ? m : n;
+  return order * (order + 1) / 2;
+}
+
 } // namespace
 
 #include "codegen/gen_cublas_client.inc"
+
+// ---------------------------------------------------------------------------
+// cuBLASXt devices
+// ---------------------------------------------------------------------------
+
+// The caller names virtual device ordinals; the server's library wants its
+// own. A handle cannot span servers, so each is rewritten as if on the
+// handle's.
+extern "C" cublasStatus_t cublasXtDeviceSelect(cublasXtHandle_t handle,
+                                               int nbDevices, int *deviceId) {
+  std::vector<int> devices(deviceId, deviceId + nbDevices);
+  for (int &device : devices) {
+    lupine_rpc_conn_for_device(&device);
+  }
+  return lupine_rpc_cublasXtDeviceSelect(connection_for_handle(handle), handle,
+                                         nbDevices, devices.data());
+}
+
+// The library adds its board count to *nbBoards rather than overwriting it.
+// Boards behind different servers are different boards, so the running total
+// passes through each server that owns one of the devices.
+extern "C" cublasStatus_t cublasXtGetNumBoards(int nbDevices, int *deviceId,
+                                               int *nbBoards) {
+  std::vector<std::pair<conn_t *, std::vector<int>>> servers;
+  for (int i = 0; i < nbDevices; ++i) {
+    int device = deviceId[i];
+    conn_t *conn = lupine_rpc_conn_for_device(&device);
+    auto it = servers.begin();
+    while (it != servers.end() && it->first != conn) {
+      ++it;
+    }
+    if (it == servers.end()) {
+      servers.push_back({conn, {}});
+      it = servers.end() - 1;
+    }
+    it->second.push_back(device);
+  }
+  for (auto &server : servers) {
+    cublasStatus_t status = lupine_rpc_cublasXtGetNumBoards(
+        server.first, static_cast<int>(server.second.size()),
+        server.second.data(), nbBoards);
+    if (status != CUBLAS_STATUS_SUCCESS) {
+      return status;
+    }
+  }
+  return CUBLAS_STATUS_SUCCESS;
+}
 
 // ---------------------------------------------------------------------------
 // Static strings

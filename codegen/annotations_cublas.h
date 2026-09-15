@@ -1,3 +1,4 @@
+#include <cublasXt.h>
 #include <cublas_api.h>
 
 // cuBLAS API. The client forwards each call over the CUDA driver shim's
@@ -9364,3 +9365,895 @@ cublasStatus_t cublasZtrsv_v2_64(cublasHandle_t handle, cublasFillMode_t uplo,
 cublasStatus_t cublasZtrttp(cublasHandle_t handle, cublasFillMode_t uplo, int n,
                             const cuDoubleComplex *A, int lda,
                             cuDoubleComplex *AP);
+// cuBLASXt. Its matrices are host memory the library tiles across GPUs, so
+// each travels as an array holding the reference BLAS array dimension
+// (ld * columns) and an output comes back over the caller's copy. Alpha and
+// beta are always host scalars. A cuBLASXt handle routes to the connection
+// that created it and cannot span servers: cublasXtDeviceSelect and
+// cublasXtGetNumBoards rewrite virtual device ordinals by hand. A CPU routine
+// is a client function, so cublasXtSetCpuRoutine is a stub.
+
+/**
+ * @param handle RECV_ONLY
+ */
+// clang-format off
+cublasStatus_t cublasXtCreate(cublasXtHandle_t *handle) {
+  cublasStatus_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUBLAS_STATUS_SUCCESS) {
+    note_handle_owner(conn, *handle);
+  }
+  return return_value;
+}
+// clang-format on
+/**
+ * @param handle SEND_ONLY
+ */
+// clang-format off
+cublasStatus_t cublasXtDestroy(cublasXtHandle_t handle) {
+  cublasStatus_t return_value = LUPINE_GENERATED_CALL();
+  forget_handle(handle);
+  return return_value;
+}
+// clang-format on
+/**
+ * @disabled client
+ * @param nbDevices SEND_ONLY
+ * @param deviceId SEND_ONLY LENGTH:nbDevices
+ * @param nbBoards SEND_RECV
+ */
+cublasStatus_t cublasXtGetNumBoards(int nbDevices, int *deviceId,
+                                    int *nbBoards);
+/**
+ * @param nbGpuBoards RECV_ONLY
+ */
+cublasStatus_t cublasXtMaxBoards(int *nbGpuBoards);
+/**
+ * @disabled client
+ * @param handle SEND_ONLY
+ * @param nbDevices SEND_ONLY
+ * @param deviceId SEND_ONLY LENGTH:nbDevices
+ */
+cublasStatus_t cublasXtDeviceSelect(cublasXtHandle_t handle, int nbDevices,
+                                    int *deviceId);
+/**
+ * @param handle SEND_ONLY
+ * @param blockDim SEND_ONLY
+ */
+cublasStatus_t cublasXtSetBlockDim(cublasXtHandle_t handle, int blockDim);
+/**
+ * @param handle SEND_ONLY
+ * @param blockDim RECV_ONLY
+ */
+cublasStatus_t cublasXtGetBlockDim(cublasXtHandle_t handle, int *blockDim);
+/**
+ * @param handle SEND_ONLY
+ * @param mode RECV_ONLY
+ */
+cublasStatus_t cublasXtGetPinningMemMode(cublasXtHandle_t handle,
+                                         cublasXtPinnedMemMode_t *mode);
+/**
+ * @param handle SEND_ONLY
+ * @param mode SEND_ONLY
+ */
+cublasStatus_t cublasXtSetPinningMemMode(cublasXtHandle_t handle,
+                                         cublasXtPinnedMemMode_t mode);
+cublasStatus_t cublasXtSetCpuRoutine(cublasXtHandle_t handle,
+                                     cublasXtBlasOp_t blasOp,
+                                     cublasXtOpType_t type, void *blasFunctor);
+/**
+ * @param handle SEND_ONLY
+ * @param blasOp SEND_ONLY
+ * @param type SEND_ONLY
+ * @param ratio SEND_ONLY
+ */
+cublasStatus_t cublasXtSetCpuRatio(cublasXtHandle_t handle,
+                                   cublasXtBlasOp_t blasOp,
+                                   cublasXtOpType_t type, float ratio);
+/**
+ * @param handle SEND_ONLY
+ * @param transa SEND_ONLY
+ * @param transb SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(transa,m,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(transb,k,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtSgemm(cublasXtHandle_t handle, cublasOperation_t transa,
+                             cublasOperation_t transb, size_t m, size_t n,
+                             size_t k, const float *alpha, const float *A,
+                             size_t lda, const float *B, size_t ldb,
+                             const float *beta, float *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param transa SEND_ONLY
+ * @param transb SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(transa,m,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(transb,k,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtDgemm(cublasXtHandle_t handle, cublasOperation_t transa,
+                             cublasOperation_t transb, size_t m, size_t n,
+                             size_t k, const double *alpha, const double *A,
+                             size_t lda, const double *B, size_t ldb,
+                             const double *beta, double *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param transa SEND_ONLY
+ * @param transb SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(transa,m,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(transb,k,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtCgemm(cublasXtHandle_t handle, cublasOperation_t transa,
+                             cublasOperation_t transb, size_t m, size_t n,
+                             size_t k, const cuComplex *alpha,
+                             const cuComplex *A, size_t lda, const cuComplex *B,
+                             size_t ldb, const cuComplex *beta, cuComplex *C,
+                             size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param transa SEND_ONLY
+ * @param transb SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(transa,m,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(transb,k,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtZgemm(cublasXtHandle_t handle, cublasOperation_t transa,
+                             cublasOperation_t transb, size_t m, size_t n,
+                             size_t k, const cuDoubleComplex *alpha,
+                             const cuDoubleComplex *A, size_t lda,
+                             const cuDoubleComplex *B, size_t ldb,
+                             const cuDoubleComplex *beta, cuDoubleComplex *C,
+                             size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtSsyrk(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                             cublasOperation_t trans, size_t n, size_t k,
+                             const float *alpha, const float *A, size_t lda,
+                             const float *beta, float *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtDsyrk(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                             cublasOperation_t trans, size_t n, size_t k,
+                             const double *alpha, const double *A, size_t lda,
+                             const double *beta, double *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtCsyrk(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                             cublasOperation_t trans, size_t n, size_t k,
+                             const cuComplex *alpha, const cuComplex *A,
+                             size_t lda, const cuComplex *beta, cuComplex *C,
+                             size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtZsyrk(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                             cublasOperation_t trans, size_t n, size_t k,
+                             const cuDoubleComplex *alpha,
+                             const cuDoubleComplex *A, size_t lda,
+                             const cuDoubleComplex *beta, cuDoubleComplex *C,
+                             size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtCherk(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                             cublasOperation_t trans, size_t n, size_t k,
+                             const float *alpha, const cuComplex *A, size_t lda,
+                             const float *beta, cuComplex *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtZherk(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                             cublasOperation_t trans, size_t n, size_t k,
+                             const double *alpha, const cuDoubleComplex *A,
+                             size_t lda, const double *beta, cuDoubleComplex *C,
+                             size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtSsyr2k(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                              cublasOperation_t trans, size_t n, size_t k,
+                              const float *alpha, const float *A, size_t lda,
+                              const float *B, size_t ldb, const float *beta,
+                              float *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtDsyr2k(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                              cublasOperation_t trans, size_t n, size_t k,
+                              const double *alpha, const double *A, size_t lda,
+                              const double *B, size_t ldb, const double *beta,
+                              double *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtCsyr2k(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                              cublasOperation_t trans, size_t n, size_t k,
+                              const cuComplex *alpha, const cuComplex *A,
+                              size_t lda, const cuComplex *B, size_t ldb,
+                              const cuComplex *beta, cuComplex *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtZsyr2k(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                              cublasOperation_t trans, size_t n, size_t k,
+                              const cuDoubleComplex *alpha,
+                              const cuDoubleComplex *A, size_t lda,
+                              const cuDoubleComplex *B, size_t ldb,
+                              const cuDoubleComplex *beta, cuDoubleComplex *C,
+                              size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtCherkx(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                              cublasOperation_t trans, size_t n, size_t k,
+                              const cuComplex *alpha, const cuComplex *A,
+                              size_t lda, const cuComplex *B, size_t ldb,
+                              const float *beta, cuComplex *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtZherkx(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                              cublasOperation_t trans, size_t n, size_t k,
+                              const cuDoubleComplex *alpha,
+                              const cuDoubleComplex *A, size_t lda,
+                              const cuDoubleComplex *B, size_t ldb,
+                              const double *beta, cuDoubleComplex *C,
+                              size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param diag SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_RECV LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ */
+cublasStatus_t cublasXtStrsm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, cublasOperation_t trans,
+                             cublasDiagType_t diag, size_t m, size_t n,
+                             const float *alpha, const float *A, size_t lda,
+                             float *B, size_t ldb);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param diag SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_RECV LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ */
+cublasStatus_t cublasXtDtrsm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, cublasOperation_t trans,
+                             cublasDiagType_t diag, size_t m, size_t n,
+                             const double *alpha, const double *A, size_t lda,
+                             double *B, size_t ldb);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param diag SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_RECV LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ */
+cublasStatus_t cublasXtCtrsm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, cublasOperation_t trans,
+                             cublasDiagType_t diag, size_t m, size_t n,
+                             const cuComplex *alpha, const cuComplex *A,
+                             size_t lda, cuComplex *B, size_t ldb);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param diag SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_RECV LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ */
+cublasStatus_t cublasXtZtrsm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, cublasOperation_t trans,
+                             cublasDiagType_t diag, size_t m, size_t n,
+                             const cuDoubleComplex *alpha,
+                             const cuDoubleComplex *A, size_t lda,
+                             cuDoubleComplex *B, size_t ldb);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtSsymm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, size_t m, size_t n,
+                             const float *alpha, const float *A, size_t lda,
+                             const float *B, size_t ldb, const float *beta,
+                             float *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtDsymm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, size_t m, size_t n,
+                             const double *alpha, const double *A, size_t lda,
+                             const double *B, size_t ldb, const double *beta,
+                             double *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtCsymm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, size_t m, size_t n,
+                             const cuComplex *alpha, const cuComplex *A,
+                             size_t lda, const cuComplex *B, size_t ldb,
+                             const cuComplex *beta, cuComplex *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtZsymm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, size_t m, size_t n,
+                             const cuDoubleComplex *alpha,
+                             const cuDoubleComplex *A, size_t lda,
+                             const cuDoubleComplex *B, size_t ldb,
+                             const cuDoubleComplex *beta, cuDoubleComplex *C,
+                             size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtChemm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, size_t m, size_t n,
+                             const cuComplex *alpha, const cuComplex *A,
+                             size_t lda, const cuComplex *B, size_t ldb,
+                             const cuComplex *beta, cuComplex *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtZhemm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, size_t m, size_t n,
+                             const cuDoubleComplex *alpha,
+                             const cuDoubleComplex *A, size_t lda,
+                             const cuDoubleComplex *B, size_t ldb,
+                             const cuDoubleComplex *beta, cuDoubleComplex *C,
+                             size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtSsyrkx(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                              cublasOperation_t trans, size_t n, size_t k,
+                              const float *alpha, const float *A, size_t lda,
+                              const float *B, size_t ldb, const float *beta,
+                              float *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtDsyrkx(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                              cublasOperation_t trans, size_t n, size_t k,
+                              const double *alpha, const double *A, size_t lda,
+                              const double *B, size_t ldb, const double *beta,
+                              double *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtCsyrkx(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                              cublasOperation_t trans, size_t n, size_t k,
+                              const cuComplex *alpha, const cuComplex *A,
+                              size_t lda, const cuComplex *B, size_t ldb,
+                              const cuComplex *beta, cuComplex *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtZsyrkx(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                              cublasOperation_t trans, size_t n, size_t k,
+                              const cuDoubleComplex *alpha,
+                              const cuDoubleComplex *A, size_t lda,
+                              const cuDoubleComplex *B, size_t ldb,
+                              const cuDoubleComplex *beta, cuDoubleComplex *C,
+                              size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtCher2k(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                              cublasOperation_t trans, size_t n, size_t k,
+                              const cuComplex *alpha, const cuComplex *A,
+                              size_t lda, const cuComplex *B, size_t ldb,
+                              const float *beta, cuComplex *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param n SEND_ONLY
+ * @param k SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_op_matrix(trans,n,k,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(n,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtZher2k(cublasXtHandle_t handle, cublasFillMode_t uplo,
+                              cublasOperation_t trans, size_t n, size_t k,
+                              const cuDoubleComplex *alpha,
+                              const cuDoubleComplex *A, size_t lda,
+                              const cuDoubleComplex *B, size_t ldb,
+                              const double *beta, cuDoubleComplex *C,
+                              size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param AP SEND_ONLY LENGTH:xt_packed(side,m,n)
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtSspmm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, size_t m, size_t n,
+                             const float *alpha, const float *AP,
+                             const float *B, size_t ldb, const float *beta,
+                             float *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param AP SEND_ONLY LENGTH:xt_packed(side,m,n)
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtDspmm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, size_t m, size_t n,
+                             const double *alpha, const double *AP,
+                             const double *B, size_t ldb, const double *beta,
+                             double *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param AP SEND_ONLY LENGTH:xt_packed(side,m,n)
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtCspmm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, size_t m, size_t n,
+                             const cuComplex *alpha, const cuComplex *AP,
+                             const cuComplex *B, size_t ldb,
+                             const cuComplex *beta, cuComplex *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param AP SEND_ONLY LENGTH:xt_packed(side,m,n)
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param beta SEND_ONLY DEREF
+ * @param C SEND_RECV LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtZspmm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, size_t m, size_t n,
+                             const cuDoubleComplex *alpha,
+                             const cuDoubleComplex *AP,
+                             const cuDoubleComplex *B, size_t ldb,
+                             const cuDoubleComplex *beta, cuDoubleComplex *C,
+                             size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param diag SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param C RECV_ONLY LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtStrmm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, cublasOperation_t trans,
+                             cublasDiagType_t diag, size_t m, size_t n,
+                             const float *alpha, const float *A, size_t lda,
+                             const float *B, size_t ldb, float *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param diag SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param C RECV_ONLY LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtDtrmm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, cublasOperation_t trans,
+                             cublasDiagType_t diag, size_t m, size_t n,
+                             const double *alpha, const double *A, size_t lda,
+                             const double *B, size_t ldb, double *C,
+                             size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param diag SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param C RECV_ONLY LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtCtrmm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, cublasOperation_t trans,
+                             cublasDiagType_t diag, size_t m, size_t n,
+                             const cuComplex *alpha, const cuComplex *A,
+                             size_t lda, const cuComplex *B, size_t ldb,
+                             cuComplex *C, size_t ldc);
+/**
+ * @param handle SEND_ONLY
+ * @param side SEND_ONLY
+ * @param uplo SEND_ONLY
+ * @param trans SEND_ONLY
+ * @param diag SEND_ONLY
+ * @param m SEND_ONLY
+ * @param n SEND_ONLY
+ * @param alpha SEND_ONLY DEREF
+ * @param A SEND_ONLY LENGTH:xt_side_matrix(side,m,n,lda)
+ * @param lda SEND_ONLY
+ * @param B SEND_ONLY LENGTH:xt_matrix(m,n,ldb)
+ * @param ldb SEND_ONLY
+ * @param C RECV_ONLY LENGTH:xt_matrix(m,n,ldc)
+ * @param ldc SEND_ONLY
+ */
+cublasStatus_t cublasXtZtrmm(cublasXtHandle_t handle, cublasSideMode_t side,
+                             cublasFillMode_t uplo, cublasOperation_t trans,
+                             cublasDiagType_t diag, size_t m, size_t n,
+                             const cuDoubleComplex *alpha,
+                             const cuDoubleComplex *A, size_t lda,
+                             const cuDoubleComplex *B, size_t ldb,
+                             cuDoubleComplex *C, size_t ldc);

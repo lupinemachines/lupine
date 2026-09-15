@@ -115,8 +115,10 @@ class ArrayOperation:
     recv: bool
     parameter: Parameter
     ptr: Pointer
-    # if int, it's a constant length, if Parameter, it's a variable length.
-    length: Union[int, Parameter]
+    # if int, it's a constant length, if Parameter, it's a variable length,
+    # and if str, a count expression the client evaluates and sends ahead of
+    # the array as a uint64_t.
+    length: Union[int, Parameter, str]
     # A SEND_ONLY NULLABLE LENGTH array the caller may leave null; a presence
     # byte leads it on the wire.
     nullable: bool = False
@@ -125,9 +127,15 @@ class ArrayOperation:
     def is_void_bytes(self) -> bool:
         return self.ptr.ptr_to.format() in ("void", "const void")
 
+    @property
+    def counted(self) -> bool:
+        return isinstance(self.length, str)
+
     def byte_count_expr(self) -> str:
         if isinstance(self.length, int):
             return str(self.length)
+        if self.counted:
+            return f"{self.parameter.name}_count"
         if isinstance(self.length.type, Pointer):
             return f"*{self.length.name}"
         return self.length.name
@@ -135,6 +143,8 @@ class ArrayOperation:
     def element_count_expr(self) -> str:
         if isinstance(self.length, int):
             return str(self.length)
+        if self.counted:
+            return f"{self.parameter.name}_count"
         if isinstance(self.length.type, Pointer):
             return f"*{self.length.name}"
         return self.length.name
@@ -147,6 +157,8 @@ class ArrayOperation:
     def server_element_count_expr(self) -> str:
         if isinstance(self.length, int):
             return str(self.length)
+        if self.counted:
+            return f"{self.parameter.name}_count"
         # Pointer length parameters are unmarshalled into scalar server locals.
         return self.length.name
 
@@ -184,6 +196,17 @@ class ArrayOperation:
                 f"        return {error_return};\n"
         )
     def client_rpc_write(self, f):
+        if self.counted:
+            name = self.parameter.name
+            f.write(
+                f"        rpc_write(conn, &{name}_count, sizeof({name}_count)) < 0 ||\n"
+            )
+            if self.send:
+                f.write(
+                    f"        ({self.transfer_size_expr()} != 0 && "
+                    f"rpc_write(conn, {name}, {self.transfer_size_expr()}) < 0) ||\n"
+                )
+            return
         if not self.send:
             return
         if self.nullable:
@@ -265,6 +288,8 @@ class ArrayOperation:
             s = f"    {self.ptr.format()} {self.parameter.name} = nullptr;\n"
             if self.send:
                 s += f"    size_t {self.parameter.name}_size;\n"
+            if self.counted:
+                s += f"    uint64_t {self.parameter.name}_count = 0;\n"
             if self.nullable:
                 s += f"    uint8_t {self.parameter.name}_null = 0;\n"
             self.ptr.ptr_to.const = c
@@ -272,6 +297,8 @@ class ArrayOperation:
 
     def client_declaration(self) -> str:
         name = self.parameter.name
+        if self.counted:
+            return f"    uint64_t {name}_count = static_cast<uint64_t>({self.length});\n"
         return f"    uint8_t {name}_null = {name} == nullptr ? 1 : 0;\n"
 
     def server_rpc_read(self, f) -> Optional[str]:
@@ -296,6 +323,11 @@ class ArrayOperation:
                 f"rpc_read(conn, {name}, {name}_size) < 0) ||\n"
             )
             return name
+        if self.counted:
+            f.write(
+                f"        rpc_read(conn, &{self.parameter.name}_count, "
+                f"sizeof({self.parameter.name}_count)) < 0 ||\n"
+            )
         if not self.send:
             # if this parameter is recv only and it's a type pointer, it needs to be malloc'd.
             if isinstance(self.ptr, Pointer):

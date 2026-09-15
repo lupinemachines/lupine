@@ -925,7 +925,57 @@
   HANDLER(RPC_cublasZtrsmBatched, handle_cublasZtrsmBatched, rpc_backend::cublas) \
   HANDLER(RPC_cublasZtrsm_v2, handle_cublasZtrsm_v2, rpc_backend::cublas) \
   HANDLER(RPC_cublasZtrsv_v2, handle_cublasZtrsv_v2, rpc_backend::cublas) \
-  HANDLER(RPC_cublasZtrttp, handle_cublasZtrttp, rpc_backend::cublas)
+  HANDLER(RPC_cublasZtrttp, handle_cublasZtrttp, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCreate, handle_cublasXtCreate, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDestroy, handle_cublasXtDestroy, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtGetNumBoards, handle_cublasXtGetNumBoards, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtMaxBoards, handle_cublasXtMaxBoards, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDeviceSelect, handle_cublasXtDeviceSelect, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSetBlockDim, handle_cublasXtSetBlockDim, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtGetBlockDim, handle_cublasXtGetBlockDim, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtGetPinningMemMode, handle_cublasXtGetPinningMemMode, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSetPinningMemMode, handle_cublasXtSetPinningMemMode, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSetCpuRatio, handle_cublasXtSetCpuRatio, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSgemm, handle_cublasXtSgemm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDgemm, handle_cublasXtDgemm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCgemm, handle_cublasXtCgemm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZgemm, handle_cublasXtZgemm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSsyrk, handle_cublasXtSsyrk, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDsyrk, handle_cublasXtDsyrk, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCsyrk, handle_cublasXtCsyrk, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZsyrk, handle_cublasXtZsyrk, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCherk, handle_cublasXtCherk, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZherk, handle_cublasXtZherk, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSsyr2k, handle_cublasXtSsyr2k, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDsyr2k, handle_cublasXtDsyr2k, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCsyr2k, handle_cublasXtCsyr2k, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZsyr2k, handle_cublasXtZsyr2k, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCherkx, handle_cublasXtCherkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZherkx, handle_cublasXtZherkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtStrsm, handle_cublasXtStrsm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDtrsm, handle_cublasXtDtrsm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCtrsm, handle_cublasXtCtrsm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZtrsm, handle_cublasXtZtrsm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSsymm, handle_cublasXtSsymm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDsymm, handle_cublasXtDsymm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCsymm, handle_cublasXtCsymm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZsymm, handle_cublasXtZsymm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtChemm, handle_cublasXtChemm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZhemm, handle_cublasXtZhemm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSsyrkx, handle_cublasXtSsyrkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDsyrkx, handle_cublasXtDsyrkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCsyrkx, handle_cublasXtCsyrkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZsyrkx, handle_cublasXtZsyrkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCher2k, handle_cublasXtCher2k, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZher2k, handle_cublasXtZher2k, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSspmm, handle_cublasXtSspmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDspmm, handle_cublasXtDspmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCspmm, handle_cublasXtCspmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZspmm, handle_cublasXtZspmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtStrmm, handle_cublasXtStrmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDtrmm, handle_cublasXtDtrmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCtrmm, handle_cublasXtCtrmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZtrmm, handle_cublasXtZtrmm, rpc_backend::cublas)
 #define LUPINE_CUBLASLT_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_cublasLtGetStatusName, handle_cublasLtGetStatusName, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtGetStatusString, handle_cublasLtGetStatusString, rpc_backend::cublas) \
