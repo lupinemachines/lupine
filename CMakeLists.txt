@@ -1099,6 +1099,79 @@ if(LUPINE_BUILD_NPP)
     endforeach()
 endif()
 
+if(LUPINE_BUILD_CUDA AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # cuFile is Linux-only and ships with the toolkit or in its own wheel.
+    # Point LUPINE_CUFILE_INCLUDE_DIR at an include directory holding cufile.h
+    # when it is not beside the toolkit's headers; without one the shim is left
+    # out. cufile.h carries no version macro, so the entry points it declares
+    # decide what the shim defines.
+    find_path(LUPINE_CUFILE_INCLUDE_DIR cufile.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} ENV CUFILE_HOME
+        PATH_SUFFIXES include)
+    if(LUPINE_CUFILE_INCLUDE_DIR)
+        file(READ ${LUPINE_CUFILE_INCLUDE_DIR}/cufile.h LUPINE_CUFILE_HEADER)
+        set(LUPINE_CUFILE_DEFINITIONS)
+        set(lupine_cufile_features
+            ASYNC cuFileReadAsync
+            VERSION cuFileGetVersion
+            PARAMETERS cuFileGetParameterSizeT
+            PARAMETER_RANGE cuFileGetParameterMinMaxValue
+            STATS cuFileGetStatsL1
+            SLAB_ARRAYS cuFileSetParameterPosixPoolSlabArray
+            P2P_FLAGS cuFileDriverGetP2PFlags
+            BAR_SIZE cuFileGetBARSizeInKB
+            TOPOLOGY cuFileExportPCIeTopology)
+        while(lupine_cufile_features)
+            list(POP_FRONT lupine_cufile_features
+                 lupine_cufile_feature lupine_cufile_symbol)
+            set(lupine_cufile_present 0)
+            if(LUPINE_CUFILE_HEADER MATCHES "${lupine_cufile_symbol}")
+                set(lupine_cufile_present 1)
+            endif()
+            list(APPEND LUPINE_CUFILE_DEFINITIONS
+                 LUPINE_CUFILE_HAS_${lupine_cufile_feature}=${lupine_cufile_present})
+        endwhile()
+        # cuFileGetVersion has no header constant to report. The oldest release
+        # that declares everything this header does is the answer that never
+        # promises a caller an entry point the shim does not define.
+        set(LUPINE_CUFILE_VERSION 1070)
+        if(LUPINE_CUFILE_HEADER MATCHES "cuFileGetParameterSizeT")
+            set(LUPINE_CUFILE_VERSION 1140)
+        endif()
+        if(LUPINE_CUFILE_HEADER MATCHES "cuFileGetStatsL1")
+            set(LUPINE_CUFILE_VERSION 1180)
+        endif()
+        list(APPEND LUPINE_CUFILE_DEFINITIONS
+             LUPINE_CUFILE_VERSION=${LUPINE_CUFILE_VERSION})
+        set(LUPINE_BUILD_CUFILE ON)
+    endif()
+endif()
+
+if(LUPINE_BUILD_CUFILE)
+    # Named like NVIDIA's (libcufile.so.0, whose SONAME major is 0 for every
+    # cuFile release), and its symbols carry no version node either. The file
+    # is read on this side and the bytes move over the driver shim's
+    # connections, so it links that shim and no server library.
+    add_library(lupine_cufile_client SHARED cufile_client.cpp)
+    target_include_directories(lupine_cufile_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen
+        ${LUPINE_CUFILE_INCLUDE_DIR})
+    target_compile_definitions(lupine_cufile_client PRIVATE
+        ${LUPINE_CUFILE_DEFINITIONS})
+    target_link_libraries(lupine_cufile_client PRIVATE
+        lupine_cudart_headers lupine_cuda_client)
+    target_link_options(lupine_cufile_client PRIVATE
+        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cufile.exports")
+    set_target_properties(lupine_cufile_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        OUTPUT_NAME cufile
+        BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+        VERSION 0
+        SOVERSION 0)
+    lupine_manylinux2014_client(lupine_cufile_client)
+    add_custom_target(lupine_cufile DEPENDS lupine_cufile_client)
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -1746,6 +1819,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         endforeach()
     endif()
 
+    if(TARGET lupine_cufile_client)
+        add_test(NAME cufile_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileHandleRegister$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileRead$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileWrite$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileDriverClose$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileDriverClose_v2$'")
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -1804,6 +1883,10 @@ endif()
 if(TARGET lupine_nppc_client)
     message(STATUS
         "Building NPP clients: lupine_nppc_client and its image and signal libraries (libnppc.so.${LUPINE_NPP_SOVERSION})")
+endif()
+if(TARGET lupine_cufile_client)
+    message(STATUS
+        "Building cuFile client: lupine_cufile_client (libcufile.so.0, reporting version ${LUPINE_CUFILE_VERSION})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS

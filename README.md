@@ -233,7 +233,7 @@ docker pull ghcr.io/lupinemachines/lupine-client:cuda-12.4.1-ubuntu22.04
 docker pull ghcr.io/lupinemachines/lupine-server:cuda-12.4.1-ubuntu22.04
 ```
 
-Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, NVML, and HIP shims, their runtime dependencies,
+Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, NVML, and HIP shims, their runtime dependencies,
 and `nvidia-smi`. They are based on Ubuntu and contain neither the CUDA nor ROCm
 SDK. The `-slim` tags remain available as compatibility aliases with the same
 SDK-free contents, for example
@@ -338,7 +338,9 @@ toolkit's library headers are
 present; nvJitLink needs CUDA 12.4 or newer), the cuDNN shim at `build/libcudnn.so.9` (when cuDNN 9 headers are found beside
 the toolkit's or through `-DLUPINE_CUDNN_INCLUDE_DIR=<dir>`), the NCCL shim at
 `build/libnccl.so.2` on Linux (when NCCL 2.14.3 or newer headers are found
-beside the toolkit's or through `-DLUPINE_NCCL_INCLUDE_DIR=<dir>`), the NVML
+beside the toolkit's or through `-DLUPINE_NCCL_INCLUDE_DIR=<dir>`), the cuFile
+shim at `build/libcufile.so.0` on Linux (when `cufile.h` is found beside the
+toolkit's or through `-DLUPINE_CUFILE_INCLUDE_DIR=<dir>`), the NVML
 shim at `build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and
 the server at `build/lupine_driver_server`. The runtime and library shims cover
 their whole APIs: they forward `cuda*`, `cublas*`, `cublasLt*`, `cufft*`,
@@ -357,6 +359,17 @@ images, scratch buffers and results must be device memory on that server. The
 contour calls that fill host lists sized by an earlier call's outputs
 (`nppiCompressedMarkerLabelsUFInfo_32u_C1R_Ctx` and its geometry list and
 interpolation calls) return `NPP_NOT_IMPLEMENTED_ERROR`.
+
+cuFile is the exception to that forwarding. GPUDirect Storage moves bytes
+between a storage device and GPU memory without the host, and no DMA spans a
+client and a server, so the shim runs the compatibility path cuFile itself
+falls back to without nvidia-fs, with its halves on the two machines: the
+client reads the file and the driver shim moves the staging buffer. `cuFileRead`
+and `cuFileWrite` keep their contract, the transfer being staged rather than
+direct, while `cuFileDriverGetProperties` reports no GPUDirect capability and
+the nvidia-fs tunables return `CU_FILE_PLATFORM_NOT_SUPPORTED`, so a program
+asking what the platform supports is told. Nothing reaches the server but the
+copies, and it needs no `libcufile` of its own.
 
 A communicator whose ranks sit behind different servers needs those servers to
 reach each other: NCCL's bootstrap and transport run between the server
