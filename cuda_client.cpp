@@ -5738,12 +5738,6 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
                    << " grid=(" << gridDimX << "," << gridDimY << ","
                    << gridDimZ << ") block=(" << blockDimX << "," << blockDimY
                    << "," << blockDimZ << ")");
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn(
-        "cuLaunchKernel", f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
-        blockDimZ, sharedMemBytes, hStream, kernelParams, extra);
-  }
-
   std::vector<size_t> param_sizes;
   status = kernel_handle ? lupine_read_kernel_param_sizes(
                                reinterpret_cast<CUkernel>(f), &param_sizes)
@@ -5762,10 +5756,21 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   }
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
-  lupine_mark_mapped_host_kernel_params(kernelParams, param_sizes.data(),
-                                        param_count);
+  std::vector<std::vector<unsigned char>> translated_storage;
+  std::vector<void *> translated_params;
+  status = lupine_prepare_mapped_host_kernel_params(
+      route, kernelParams, param_sizes.data(), param_count,
+      &translated_storage, &translated_params);
+  if (status != CUDA_SUCCESS) {
+    return status;
+  }
   std::vector<rpc_write_cursor> rpc_params =
-      lupine_kernel_param_cursors(kernelParams, param_sizes);
+      lupine_kernel_param_cursors(translated_params.data(), param_sizes);
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn(
+        "cuLaunchKernel", f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
+        blockDimZ, sharedMemBytes, hStream, translated_params.data(), extra);
+  }
   bool sync_after_launch =
       (lupine_managed_kernel_requires_launch_sync(requested_function) ||
        lupine_managed_kernel_requires_launch_sync(route_function) ||
@@ -5824,11 +5829,6 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   }
 
   lupine_route route = lupine_route_for_function(f);
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn<CUDA_ERROR_NOT_SUPPORTED>(
-        "cuLaunchKernelEx", config, f, kernelParams, extra);
-  }
-
   std::vector<size_t> param_sizes;
   status = kernel_handle ? lupine_read_kernel_param_sizes(
                                reinterpret_cast<CUkernel>(f), &param_sizes)
@@ -5847,10 +5847,20 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   }
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
-  lupine_mark_mapped_host_kernel_params(kernelParams, param_sizes.data(),
-                                        param_count);
+  std::vector<std::vector<unsigned char>> translated_storage;
+  std::vector<void *> translated_params;
+  status = lupine_prepare_mapped_host_kernel_params(
+      route, kernelParams, param_sizes.data(), param_count,
+      &translated_storage, &translated_params);
+  if (status != CUDA_SUCCESS) {
+    return status;
+  }
   std::vector<rpc_write_cursor> rpc_params =
-      lupine_kernel_param_cursors(kernelParams, param_sizes);
+      lupine_kernel_param_cursors(translated_params.data(), param_sizes);
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn<CUDA_ERROR_NOT_SUPPORTED>(
+        "cuLaunchKernelEx", config, f, translated_params.data(), extra);
+  }
   bool sync_after_launch =
       (lupine_managed_kernel_requires_launch_sync(requested_function) ||
        lupine_managed_kernel_requires_launch_sync(route_function) ||
@@ -5906,12 +5916,6 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
   f = lupine_translate_private_function(f);
 
   lupine_route route = lupine_route_for_function(f);
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn(
-        "cuLaunchCooperativeKernel", f, gridDimX, gridDimY, gridDimZ, blockDimX,
-        blockDimY, blockDimZ, sharedMemBytes, hStream, kernelParams);
-  }
-
   std::vector<size_t> param_sizes;
   CUresult status = kernel_handle
                         ? lupine_read_kernel_param_sizes(
@@ -5928,10 +5932,22 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
   }
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
-  lupine_mark_mapped_host_kernel_params(kernelParams, param_sizes.data(),
-                                        param_count);
+  std::vector<std::vector<unsigned char>> translated_storage;
+  std::vector<void *> translated_params;
+  status = lupine_prepare_mapped_host_kernel_params(
+      route, kernelParams, param_sizes.data(), param_count,
+      &translated_storage, &translated_params);
+  if (status != CUDA_SUCCESS) {
+    return status;
+  }
   std::vector<rpc_write_cursor> rpc_params =
-      lupine_kernel_param_cursors(kernelParams, param_sizes);
+      lupine_kernel_param_cursors(translated_params.data(), param_sizes);
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn(
+        "cuLaunchCooperativeKernel", f, gridDimX, gridDimY, gridDimZ, blockDimX,
+        blockDimY, blockDimZ, sharedMemBytes, hStream,
+        translated_params.data());
+  }
 
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
