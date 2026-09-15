@@ -1,9 +1,9 @@
 """PyTorch adapter for LUPINE-backed CUDA devices.
 
 ``lupine.connect(...)`` points the process at one or more LUPINE GPU
-servers and preloads the server-selected native shims (driver API, runtime API,
-NVML) so ordinary CUDA consumers — PyTorch included — transparently run on
-the remote GPUs:
+servers and preloads the server-selected native shims (driver API, runtime
+API, NVML, and the math libraries) so ordinary CUDA consumers — PyTorch
+included — transparently run on the remote GPUs:
 
 .. code-block:: python
 
@@ -17,9 +17,9 @@ the remote GPUs:
 
 The adapter returns ordinary ``torch.device("cuda:N")`` objects; PyTorch
 keeps its built-in CUDA dispatch path while the LUPINE shims handle the
-driver and runtime calls underneath it. No NVIDIA software is required on
-the client — the wheel supplies the portable runtime stub and the bound
-server supplies its compatible full client.
+driver, runtime, and math-library calls underneath it. No NVIDIA software is
+required on the client: the wheel is pure Python and the bound server
+supplies its compatible full client.
 """
 
 from __future__ import annotations

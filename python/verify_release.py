@@ -13,13 +13,6 @@ from pathlib import Path
 import tomllib
 
 ROOT = Path(__file__).resolve().parent
-RUNTIME_STUBS = {
-    "lupine/_libs/linux-x86_64/libcudart.so.13",
-    "lupine/_libs/linux-aarch64/libcudart.so.13",
-    "lupine/_libs/macosx-universal2/libcudart.dylib",
-    "lupine/_libs/win-amd64/cudart64_13.dll",
-    "lupine/_libs/win-arm64/cudart64_13.dll",
-}
 
 
 def _project(path: Path) -> dict:
@@ -96,11 +89,9 @@ def verify_wheels(directory: Path, version: str) -> None:
             )
         if not any(req.split(";", 1)[0].strip() == requirement for req in requirements):
             raise ValueError(f"{name} wheel must require {requirement}")
-        expected_native = RUNTIME_STUBS if name == "lupine" else set()
-        if native_files != expected_native:
+        if native_files:
             raise ValueError(
-                f"{name} wheel native files differ: "
-                f"found {sorted(native_files)}, expected {sorted(expected_native)}"
+                f"{name} wheel must be pure Python, found {sorted(native_files)}"
             )
 
 

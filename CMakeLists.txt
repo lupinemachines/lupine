@@ -425,7 +425,7 @@ if(LUPINE_BUILD_CUDA)
     find_path(LUPINE_CUDA_CRT_INCLUDE_DIR crt/host_defines.h
         HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
     if(NOT LUPINE_CUDA_CRT_INCLUDE_DIR)
-        configure_file(python/cudart/host_defines_stub.h
+        configure_file(host_defines_stub.h
             cudart-headers/crt/host_defines.h COPYONLY)
         target_include_directories(lupine_cudart_headers BEFORE INTERFACE
             ${CMAKE_CURRENT_BINARY_DIR}/cudart-headers)
@@ -1283,10 +1283,25 @@ if(LUPINE_BUILD_SERVER)
         set(LUPINE_CLIENT_BUNDLE_GENERATED_DIR
             ${CMAKE_CURRENT_BINARY_DIR}/client-bundles)
 
+        # The staging directory holds exactly the shims the client build
+        # produced, and each library shim keeps its real counterpart's soname,
+        # whose major moves independently of the toolkit's. Take the names from
+        # the directory rather than restating them here, and require only the
+        # three every client must have.
         function(lupine_embed_client_bundle tag platforms)
-            set(files ${ARGN})
             set(input_dir
                 ${LUPINE_CLIENT_BUNDLE_INPUT}/lupine-client-${tag})
+            file(GLOB staged RELATIVE ${input_dir}
+                ${input_dir}/*.so ${input_dir}/*.so.*
+                ${input_dir}/*.dylib ${input_dir}/*.dll)
+            list(SORT staged)
+            set(files ${staged})
+            foreach(required IN LISTS ARGN)
+                if(NOT required IN_LIST files)
+                    message(FATAL_ERROR
+                        "${tag} client bundle is missing ${required} in ${input_dir}")
+                endif()
+            endforeach()
             set(output_dir ${LUPINE_CLIENT_BUNDLE_GENERATED_DIR}/${tag})
             set(archive ${output_dir}/client.zip)
             set(source ${LUPINE_CLIENT_BUNDLE_GENERATED_DIR}/${tag}.cpp)
@@ -1309,17 +1324,20 @@ if(LUPINE_BUILD_SERVER)
             target_sources(lupine_driver_server PRIVATE ${source})
         endfunction()
 
+        # Only the driver and NVML sonames are stable across toolkits; the
+        # runtime's tracks the CUDA major (11 ships libcudart.so.11.0), so it
+        # arrives through the glob like every library shim.
         lupine_embed_client_bundle(linux-x86_64 "linux/amd64"
-            libcuda.so.1 libcudart.so.13 libnvidia-ml.so.1)
+            libcuda.so.1 libnvidia-ml.so.1)
         lupine_embed_client_bundle(linux-aarch64 "linux/arm64"
-            libcuda.so.1 libcudart.so.13 libnvidia-ml.so.1)
+            libcuda.so.1 libnvidia-ml.so.1)
         lupine_embed_client_bundle(macosx-universal2
             "macos/amd64;macos/arm64"
-            libcuda.dylib libcudart.dylib libnvidia-ml.dylib)
+            libcuda.dylib libnvidia-ml.dylib)
         lupine_embed_client_bundle(win-amd64 "windows/amd64"
-            nvcuda.dll cudart64_13.dll nvml.dll)
+            nvcuda.dll nvml.dll)
         lupine_embed_client_bundle(win-arm64 "windows/arm64"
-            nvcuda.dll cudart64_13.dll nvml.dll)
+            nvcuda.dll nvml.dll)
         target_compile_definitions(lupine_driver_server PRIVATE
             LUPINE_EMBED_CLIENT_BUNDLES)
         message(STATUS
