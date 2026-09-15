@@ -277,6 +277,10 @@ REGISTRY_CPP_TEMPLATE = Template(
 #ifdef LUPINE_BUILD_NCCL_BACKEND
 #include <nccl.h>
 #endif
+#ifdef LUPINE_BUILD_NVJITLINK_BACKEND
+#define NVJITLINK_NO_INLINE
+#include <nvJitLink.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -304,6 +308,8 @@ $cusolvermg_registry_entries
 $nvrtc_registry_entries
 #define LUPINE_NCCL_RPC_HANDLERS(HANDLER) \
 $nccl_registry_entries
+#define LUPINE_NVJITLINK_RPC_HANDLERS(HANDLER) \
+$nvjitlink_registry_entries
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
 $nvml_registry_entries
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
@@ -355,6 +361,10 @@ $nvrtc_guarded_declarations
 #ifdef LUPINE_BUILD_NCCL_BACKEND
 LUPINE_NCCL_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $nccl_guarded_declarations
+#endif
+#ifdef LUPINE_BUILD_NVJITLINK_BACKEND
+LUPINE_NVJITLINK_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$nvjitlink_guarded_declarations
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -417,6 +427,10 @@ $nvrtc_guarded_handlers
       LUPINE_NCCL_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nccl_guarded_handlers
 #endif
+#ifdef LUPINE_BUILD_NVJITLINK_BACKEND
+      LUPINE_NVJITLINK_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$nvjitlink_guarded_handlers
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvml_guarded_handlers
@@ -443,6 +457,7 @@ $hip_guarded_handlers
 #undef LUPINE_CUSOLVERMG_RPC_HANDLERS
 #undef LUPINE_NVRTC_RPC_HANDLERS
 #undef LUPINE_NCCL_RPC_HANDLERS
+#undef LUPINE_NVJITLINK_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
 '''
@@ -476,6 +491,7 @@ SERVER_BACKENDS = {
     "CUSOLVERMG": "rpc_backend::cusolver",
     "NVRTC": "rpc_backend::nvrtc",
     "NCCL": "rpc_backend::nccl",
+    "NVJITLINK": "rpc_backend::nvjitlink",
     "NVML": "rpc_backend::nvml",
     "HIP": "rpc_backend::hip",
 }
@@ -676,6 +692,16 @@ NCCL = Backend(
     alias_prefix="p",
 )
 
+# nvJitLink has no status for an unreachable server or a missing library; both
+# report an internal error.
+NVJITLINK = Backend(
+    result="nvJitLinkResult",
+    invalid_argument="NVJITLINK_ERROR_NULL_INPUT",
+    device_routing_kind="DEVICE",
+    symbol_lookup="nvjitlink_symbol",
+    guard_null_conn=True,
+)
+
 ANNOTATION_FILES = {
     "cuda": "annotations_cuda.h",
     "cudart": "annotations_cudart.h",
@@ -689,6 +715,7 @@ ANNOTATION_FILES = {
     "cusolvermg": "annotations_cusolvermg.h",
     "nvrtc": "annotations_nvrtc.h",
     "nccl": "annotations_nccl.h",
+    "nvjitlink": "annotations_nvjitlink.h",
     "nvml": "annotations_nvml.h",
     "hip": "annotations_hip.h",
 }
@@ -767,6 +794,7 @@ LIBRARY_HANDLES = {
     "nvrtcProgram",
     "ncclComm_t",
     "ncclParamHandle_t",
+    "nvJitLinkHandle",
 }
 
 
@@ -2033,6 +2061,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 nccl_registry_entries=" \\\n".join(
                     registry_entries["NCCL"]
                 ),
+                nvjitlink_registry_entries=" \\\n".join(
+                    registry_entries["NVJITLINK"]
+                ),
                 nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
                 hip_registry_entries=" \\\n".join(registry_entries["HIP"]),
                 cuda_guarded_declarations="\n".join(
@@ -2071,6 +2102,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 nccl_guarded_declarations="\n".join(
                     guarded_declarations["NCCL"]
                 ),
+                nvjitlink_guarded_declarations="\n".join(
+                    guarded_declarations["NVJITLINK"]
+                ),
                 nvml_guarded_declarations="\n".join(
                     guarded_declarations["NVML"]
                 ),
@@ -2101,6 +2135,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 nccl_guarded_handlers="\n".join(
                     guarded_handlers["NCCL"]
                 ),
+                nvjitlink_guarded_handlers="\n".join(
+                    guarded_handlers["NVJITLINK"]
+                ),
                 nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
             )
@@ -2127,6 +2164,7 @@ def main():
                 "DISABLE_CUSOLVERMG_DEPRECATED",
                 # nccl.h declares ncclResetDebugInit only for Linux builds.
                 "NCCL_OS_LINUX",
+                "NVJITLINK_NO_INLINE",
             ],
             include_paths=[cuda_include_dir, hip_include_dir],
         ),
@@ -2336,6 +2374,10 @@ def main():
         annotations_by_target["nccl"],
         client_call_templates=client_call_templates_by_target["nccl"],
     )
+    nvjitlink_functions_with_annotations = collect_backend_functions(
+        annotations_by_target["nvjitlink"],
+        client_call_templates=client_call_templates_by_target["nvjitlink"],
+    )
 
     annotated_names = sorted(
         {function.name.format() for function in cuda_annotations.namespace.functions}
@@ -2360,7 +2402,8 @@ def main():
         + cusolver_functions_with_annotations
         + cusolvermg_functions_with_annotations
         + nvrtc_functions_with_annotations
-        + nccl_functions_with_annotations,
+        + nccl_functions_with_annotations
+        + nvjitlink_functions_with_annotations,
     )
 
     with open("gen_nvml_client.inc", "w") as f:
@@ -2472,6 +2515,7 @@ def main():
         (CUSOLVERMG, "cusolvermg", cusolvermg_functions_with_annotations),
         (NVRTC, "nvrtc", nvrtc_functions_with_annotations),
         (NCCL, "nccl", nccl_functions_with_annotations),
+        (NVJITLINK, "nvjitlink", nvjitlink_functions_with_annotations),
     ):
         with open(f"gen_{target}_client.inc", "w") as f:
             f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
@@ -2564,6 +2608,7 @@ def main():
         ("CUSOLVERMG", cusolvermg_functions_with_annotations),
         ("NVRTC", nvrtc_functions_with_annotations),
         ("NCCL", nccl_functions_with_annotations),
+        ("NVJITLINK", nvjitlink_functions_with_annotations),
     ):
         generated_bindings.extend(
             ServerBinding(
@@ -2666,6 +2711,9 @@ def main():
             "gen_nccl_client.inc",
             "gen_nccl_server.inc",
             "gen_nccl_server.h",
+            "gen_nvjitlink_client.inc",
+            "gen_nvjitlink_server.inc",
+            "gen_nvjitlink_server.h",
         ],
         check=True,
     )
@@ -2739,6 +2787,11 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_nccl_server.inc",
             "gen_nccl_server.h",
         ],
+        "nvjitlink": [
+            "gen_nvjitlink_client.inc",
+            "gen_nvjitlink_server.inc",
+            "gen_nvjitlink_server.h",
+        ],
     }
     forbidden = {
         "cuda": ["nvml", "hip"],
@@ -2753,6 +2806,7 @@ def verify_backend_boundaries(backend: str) -> None:
         "cusolvermg": ["nvml", "hip"],
         "nvrtc": ["nvml", "hip"],
         "nccl": ["nvml", "hip"],
+        "nvjitlink": ["nvml", "hip"],
         "nvml": ["cuda_compat", "<cuda.h>", "handle_cu", "hip"],
         "hip": ["cuda", "nvml"],
     }
@@ -2773,7 +2827,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--verify-backend",
-        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "cusolver", "cusolvermg", "nvrtc", "nccl", "nvml", "hip"),
+        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "cusolver", "cusolvermg", "nvrtc", "nccl", "nvjitlink", "nvml", "hip"),
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()

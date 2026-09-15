@@ -3237,6 +3237,22 @@
 #define RPC_ncclParamGetParameter 1039902765
 #define RPC_ncclParamGetAllParameterKeys 757121552
 #define RPC_ncclParamDumpAll 8880191
+#define RPC_nvJitLinkCreate 399448270
+#define RPC_nvJitLinkDestroy 711023520
+#define RPC_nvJitLinkAddData 903109236
+#define RPC_nvJitLinkAddFile 347643655
+#define RPC_nvJitLinkComplete 1395716258
+#define RPC_nvJitLinkGetLinkedCubinSize 1636358200
+#define RPC_nvJitLinkGetLinkedCubin 1737950274
+#define RPC_nvJitLinkGetLinkedPtxSize 1091620040
+#define RPC_nvJitLinkGetLinkedPtx 1505972264
+#define RPC_nvJitLinkGetLinkedLTOIRSize 1190821324
+#define RPC_nvJitLinkGetLinkedLTOIR 2000148062
+#define RPC_nvJitLinkGetErrorLogSize 28607073
+#define RPC_nvJitLinkGetErrorLog 1183981588
+#define RPC_nvJitLinkGetInfoLogSize 807181770
+#define RPC_nvJitLinkGetInfoLog 700479588
+#define RPC_nvJitLinkVersion 1765215768
 
 #define LUPINE_RPC_cuGetExportTableMetadata 565915314
 #define LUPINE_RPC_cuGraphConditionalHandleCreate 1689373620

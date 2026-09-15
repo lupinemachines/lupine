@@ -902,6 +902,80 @@ if(LUPINE_BUILD_NCCL)
     add_custom_target(lupine_nccl DEPENDS lupine_nccl_client)
 endif()
 
+if(LUPINE_BUILD_CUDA)
+    # The nvJitLink shim needs the library's own header, from 12.4 on: earlier
+    # headers define the calls only as inline wrappers, which the shim cannot
+    # replace. The header's release names the release-suffixed symbols the
+    # shim exports, as NVIDIA's library does.
+    find_path(LUPINE_NVJITLINK_INCLUDE_DIR nvJitLink.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
+    if(LUPINE_NVJITLINK_INCLUDE_DIR)
+        file(READ ${LUPINE_NVJITLINK_INCLUDE_DIR}/nvJitLink.h
+             LUPINE_NVJITLINK_HEADER)
+        string(REGEX MATCH "__nvJitLinkCreate_([0-9]+)_([0-9]+)" _
+               "${LUPINE_NVJITLINK_HEADER}")
+        set(LUPINE_NVJITLINK_MAJOR ${CMAKE_MATCH_1})
+        set(LUPINE_NVJITLINK_MINOR ${CMAKE_MATCH_2})
+        string(FIND "${LUPINE_NVJITLINK_HEADER}" "NVJITLINK_NO_INLINE"
+               LUPINE_NVJITLINK_NO_INLINE)
+        string(FIND "${LUPINE_NVJITLINK_HEADER}" "nvJitLinkGetLinkedLTOIR"
+               LUPINE_NVJITLINK_LTOIR)
+        set(LUPINE_NVJITLINK_HAS_LTOIR 0)
+        if(LUPINE_NVJITLINK_LTOIR GREATER -1)
+            set(LUPINE_NVJITLINK_HAS_LTOIR 1)
+        endif()
+        if(LUPINE_NVJITLINK_MAJOR AND LUPINE_NVJITLINK_NO_INLINE GREATER -1)
+            set(LUPINE_NVJITLINK_SOVERSION ${LUPINE_NVJITLINK_MAJOR})
+            set(LUPINE_NVJITLINK_DEFINITIONS
+                NVJITLINK_NO_INLINE
+                LUPINE_NVJITLINK_MAJOR=${LUPINE_NVJITLINK_MAJOR}
+                LUPINE_NVJITLINK_MINOR=${LUPINE_NVJITLINK_MINOR}
+                LUPINE_NVJITLINK_HAS_LTOIR=${LUPINE_NVJITLINK_HAS_LTOIR})
+            set(LUPINE_BUILD_NVJITLINK ON)
+        endif()
+    endif()
+endif()
+
+if(LUPINE_BUILD_NVJITLINK)
+    # Named like NVIDIA's (libnvJitLink.so.13, nvJitLink_130_0.dll) with the
+    # matching ELF version node. It runs on the runtime shim's current device,
+    # so it links both sibling shims.
+    configure_file(nvjitlink.exports.in nvjitlink.exports @ONLY)
+    add_library(lupine_nvjitlink_client SHARED nvjitlink_client.cpp)
+    target_include_directories(lupine_nvjitlink_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
+    target_compile_definitions(lupine_nvjitlink_client PRIVATE
+        ${LUPINE_NVJITLINK_DEFINITIONS})
+    target_link_libraries(lupine_nvjitlink_client PRIVATE
+        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
+    set_target_properties(lupine_nvjitlink_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+    lupine_manylinux2014_client(lupine_nvjitlink_client)
+    if(WIN32)
+        target_compile_options(lupine_nvjitlink_client PRIVATE /wd4996)
+        set_target_properties(lupine_nvjitlink_client PROPERTIES
+            OUTPUT_NAME nvJitLink_${LUPINE_NVJITLINK_MAJOR}0_0
+            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        target_compile_options(lupine_nvjitlink_client PRIVATE
+            -Wno-deprecated-declarations)
+        set_target_properties(lupine_nvjitlink_client PROPERTIES
+            OUTPUT_NAME nvJitLink)
+        if(APPLE)
+            set_target_properties(lupine_nvjitlink_client PROPERTIES
+                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+        else()
+            target_link_options(lupine_nvjitlink_client PRIVATE
+                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/nvjitlink.exports")
+            set_target_properties(lupine_nvjitlink_client PROPERTIES
+                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+                VERSION ${LUPINE_NVJITLINK_SOVERSION}
+                SOVERSION ${LUPINE_NVJITLINK_SOVERSION})
+        endif()
+    endif()
+    add_custom_target(lupine_nvjitlink DEPENDS lupine_nvjitlink_client)
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -961,7 +1035,7 @@ endif()
 # Every CUDA runtime and library client shim, so a consumer can load them all
 # in place of NVIDIA's without naming each one.
 get_property(lupine_runtime_client_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_(cu[a-z]+|nvrtc|nccl)_client$")
+list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_(cu[a-z]+|nvrtc|nccl|nvjitlink)_client$")
 list(REMOVE_ITEM lupine_runtime_client_targets lupine_cuda_client)
 add_custom_target(lupine_runtime_clients)
 if(lupine_runtime_client_targets)
@@ -1084,6 +1158,18 @@ if(LUPINE_BUILD_SERVER)
             target_include_directories(lupine_nccl_server PRIVATE
                 ${CUDAToolkit_INCLUDE_DIRS} ${LUPINE_NCCL_INCLUDE_DIR})
             target_link_libraries(lupine_nccl_server PRIVATE
+                lupine_server_core ${CMAKE_DL_LIBS})
+        endif()
+
+        if(LUPINE_BUILD_NVJITLINK)
+            add_library(lupine_nvjitlink_server STATIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/nvjitlink_server.cpp)
+            lupine_internal_target(lupine_nvjitlink_server)
+            target_compile_definitions(lupine_nvjitlink_server PRIVATE
+                ${LUPINE_NVJITLINK_DEFINITIONS})
+            target_include_directories(lupine_nvjitlink_server PRIVATE
+                ${CUDAToolkit_INCLUDE_DIRS})
+            target_link_libraries(lupine_nvjitlink_server PRIVATE
                 lupine_server_core ${CMAKE_DL_LIBS})
         endif()
     endif()
@@ -1235,6 +1321,12 @@ if(LUPINE_BUILD_SERVER)
                 ${LUPINE_NCCL_INCLUDE_DIR})
             target_link_libraries(lupine_driver_server PRIVATE
                 lupine_nccl_server)
+        endif()
+        if(LUPINE_BUILD_NVJITLINK)
+            target_compile_definitions(lupine_driver_server PRIVATE
+                LUPINE_BUILD_NVJITLINK_BACKEND ${LUPINE_NVJITLINK_DEFINITIONS})
+            target_link_libraries(lupine_driver_server PRIVATE
+                lupine_nvjitlink_server)
         endif()
     endif()
     if(LUPINE_BUILD_NVML)
@@ -1450,6 +1542,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclAllReduce$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T pncclAllReduce$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclGroupEnd$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclCommInitRank$'")
     endif()
 
+    if(TARGET lupine_nvjitlink_client)
+        add_test(NAME nvjitlink_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T nvJitLinkCreate@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T __nvJitLinkCreate_${LUPINE_NVJITLINK_MAJOR}_${LUPINE_NVJITLINK_MINOR}@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T __nvJitLinkGetLinkedPtx_${LUPINE_NVJITLINK_MAJOR}_0@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T nvJitLinkVersion@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$'")
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -1496,6 +1594,10 @@ endif()
 if(TARGET lupine_nccl_client)
     message(STATUS
         "Building NCCL client: lupine_nccl_client (libnccl.so.${LUPINE_NCCL_SOVERSION})")
+endif()
+if(TARGET lupine_nvjitlink_client)
+    message(STATUS
+        "Building nvJitLink client: lupine_nvjitlink_client (libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}, release ${LUPINE_NVJITLINK_MAJOR}.${LUPINE_NVJITLINK_MINOR})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS

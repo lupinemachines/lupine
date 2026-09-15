@@ -97,13 +97,22 @@ if grep -q '#include <nccl.h>' "$src"; then
   cudnn_args+=(-I"$NCCL_HOME/include" -L"$NCCL_HOME/lib" -l:libnccl.so.2)
 fi
 
+nvjitlink_args=()
+if grep -q '#include <nvJitLink.h>' "$src"; then
+  if [[ ! -e "$CUDA_HOME/lib64/libnvJitLink.so" ]]; then
+    echo "SKIP: $name needs nvJitLink, which this toolkit does not have"
+    exit 0
+  fi
+  nvjitlink_args=(-lnvJitLink)
+fi
+
 if [[ "$BUILD_TESTS" == "1" ]]; then
   mkdir -p "$BUILD_DIR"
   arch_arg="-arch=all"
   [[ -n "$CUDA_SAMPLES_ARCH" ]] && arch_arg="-arch=sm_$CUDA_SAMPLES_ARCH"
   "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$arch_arg" \
     "$src" -o "$exe" -lcuda -lcublas -lcublasLt -lcufft -lcusolver -lcusolverMg -lcurand -lnvrtc -lcusparse -ldl -L"$CUDA_HOME/lib64/stubs" \
-    "${cudnn_args[@]}"
+    "${cudnn_args[@]}" "${nvjitlink_args[@]}"
 fi
 [[ -x "$exe" ]] || { echo "missing custom test executable: $exe" >&2; exit 1; }
 if [[ "$BUILD_ONLY" == "1" ]]; then

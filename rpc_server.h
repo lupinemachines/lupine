@@ -21,7 +21,8 @@ enum class rpc_backend {
   cusparse,
   cusolver,
   nvrtc,
-  nccl
+  nccl,
+  nvjitlink
 };
 
 struct rpc_handler {

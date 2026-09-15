@@ -101,8 +101,10 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
 
 FROM builder AS client-build
 
-RUN cmake --build /opt/lupine/build --parallel \
-      --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_cublaslt_client lupine_cufft_client lupine_cudnn_client lupine_curand_client lupine_cusparse_client lupine_cusolver_client lupine_cusolvermg_client lupine_nvrtc_client lupine_nccl_client lupine_nvml_client lupine_hip_client
+# nvJitLink exists only from CUDA 12.4, where its header gained NVJITLINK_NO_INLINE.
+RUN nvjitlink_client="$(ninja -C /opt/lupine/build -t targets all | grep -o '^lupine_nvjitlink_client:' | tr -d :)" \
+    && cmake --build /opt/lupine/build --parallel \
+      --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_cublaslt_client lupine_cufft_client lupine_cudnn_client lupine_curand_client lupine_cusparse_client lupine_cusolver_client lupine_cusolvermg_client lupine_nvrtc_client lupine_nccl_client $nvjitlink_client lupine_nvml_client lupine_hip_client
 
 FROM builder AS server-build
 
@@ -122,7 +124,7 @@ ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
 LABEL org.opencontainers.image.title="lupine-client"
-LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, NVML, and HIP shims"
+LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, NVML, and HIP shims"
 LABEL org.opencontainers.image.source="https://github.com/lupinemachines/lupine"
 LABEL org.opencontainers.image.version="${CUDA_VERSION}-rocm-${ROCM_VERSION}-ubuntu${UBUNTU_VERSION}"
 
@@ -174,7 +176,8 @@ COPY --from=client-build /opt/lupine/build/libcurand.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcusparse.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcusolver.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcusolverMg.so* /opt/lupine/lib/
-COPY --from=client-build /opt/lupine/build/libnvrtc.so* /opt/lupine/lib/
+# The bracket keeps the COPY valid on toolkits without an nvJitLink shim.
+COPY --from=client-build /opt/lupine/build/libnvrtc.so* /opt/lupine/build/libnvJitLin[k].so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnccl.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1
 COPY --from=client-build /opt/lupine/build/libamdhip64.so.1 /opt/lupine/lib/libamdhip64.so.1
@@ -232,7 +235,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update \
     && nccl_version="$(apt-cache madison libnccl2 | awk -v s="+cuda$(printf '%s' "${CUDA_VERSION}" | awk -F. '{print $1 "." $2}')" 'index($3, s) {print $3; exit}')" \
     && apt-get install -y --no-install-recommends "cuda-compat-${cuda_series}" "cuda-cudart-${cuda_series}" "libcublas-${cuda_series}" "libcufft-${cuda_series}" "libcurand-${cuda_series}" "libcusparse-${cuda_series}" "libcusolver-${cuda_series}" "cuda-nvrtc-${cuda_series}" \
-         "libcudnn9-cuda-${CUDA_VERSION%%.*}" "libnccl2=${nccl_version}" \
+         "libcudnn9-cuda-${CUDA_VERSION%%.*}" "libnccl2=${nccl_version}" $(test "${CUDA_VERSION%%.*}" -lt 12 || echo "libnvjitlink-${cuda_series}") \
     && cuda_series_dot="$(printf '%s' "${CUDA_VERSION}" | awk -F. '{print $1 "." $2}')" \
     && ln -sfn "cuda-${cuda_series_dot}" /usr/local/cuda \
     && if [ "$arch" = amd64 ]; then \

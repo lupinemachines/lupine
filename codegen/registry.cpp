@@ -31,6 +31,10 @@
 #ifdef LUPINE_BUILD_NCCL_BACKEND
 #include <nccl.h>
 #endif
+#ifdef LUPINE_BUILD_NVJITLINK_BACKEND
+#define NVJITLINK_NO_INLINE
+#include <nvJitLink.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -2347,6 +2351,21 @@
   HANDLER(RPC_ncclRecv, handle_ncclRecv, rpc_backend::nccl) \
   HANDLER(RPC_ncclGroupStart, handle_ncclGroupStart, rpc_backend::nccl) \
   HANDLER(RPC_ncclGroupEnd, handle_ncclGroupEnd, rpc_backend::nccl)
+#define LUPINE_NVJITLINK_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_nvJitLinkCreate, handle_nvJitLinkCreate, rpc_backend::nvjitlink) \
+  HANDLER(RPC_nvJitLinkAddData, handle_nvJitLinkAddData, rpc_backend::nvjitlink) \
+  HANDLER(RPC_nvJitLinkAddFile, handle_nvJitLinkAddFile, rpc_backend::nvjitlink) \
+  HANDLER(RPC_nvJitLinkGetLinkedCubin, handle_nvJitLinkGetLinkedCubin, rpc_backend::nvjitlink) \
+  HANDLER(RPC_nvJitLinkGetLinkedPtx, handle_nvJitLinkGetLinkedPtx, rpc_backend::nvjitlink) \
+  HANDLER(RPC_nvJitLinkGetErrorLog, handle_nvJitLinkGetErrorLog, rpc_backend::nvjitlink) \
+  HANDLER(RPC_nvJitLinkGetInfoLog, handle_nvJitLinkGetInfoLog, rpc_backend::nvjitlink) \
+  HANDLER(RPC_nvJitLinkDestroy, handle_nvJitLinkDestroy, rpc_backend::nvjitlink) \
+  HANDLER(RPC_nvJitLinkComplete, handle_nvJitLinkComplete, rpc_backend::nvjitlink) \
+  HANDLER(RPC_nvJitLinkGetLinkedCubinSize, handle_nvJitLinkGetLinkedCubinSize, rpc_backend::nvjitlink) \
+  HANDLER(RPC_nvJitLinkGetLinkedPtxSize, handle_nvJitLinkGetLinkedPtxSize, rpc_backend::nvjitlink) \
+  HANDLER(RPC_nvJitLinkGetErrorLogSize, handle_nvJitLinkGetErrorLogSize, rpc_backend::nvjitlink) \
+  HANDLER(RPC_nvJitLinkGetInfoLogSize, handle_nvJitLinkGetInfoLogSize, rpc_backend::nvjitlink) \
+  HANDLER(RPC_nvJitLinkVersion, handle_nvJitLinkVersion, rpc_backend::nvjitlink)
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
@@ -5246,6 +5265,18 @@ LUPINE_DECLARE_HANDLER(RPC_ncclParamDumpAll, handle_ncclParamDumpAll,
                        rpc_backend::nccl)
 #endif
 #endif
+#ifdef LUPINE_BUILD_NVJITLINK_BACKEND
+LUPINE_NVJITLINK_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if LUPINE_NVJITLINK_HAS_LTOIR
+LUPINE_DECLARE_HANDLER(RPC_nvJitLinkGetLinkedLTOIR,
+                       handle_nvJitLinkGetLinkedLTOIR, rpc_backend::nvjitlink)
+#endif
+#if LUPINE_NVJITLINK_HAS_LTOIR
+LUPINE_DECLARE_HANDLER(RPC_nvJitLinkGetLinkedLTOIRSize,
+                       handle_nvJitLinkGetLinkedLTOIRSize,
+                       rpc_backend::nvjitlink)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
@@ -7133,6 +7164,15 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_REGISTER_HANDLER(RPC_ncclParamDumpAll, handle_ncclParamDumpAll, rpc_backend::nccl)
 #endif
 #endif
+#ifdef LUPINE_BUILD_NVJITLINK_BACKEND
+      LUPINE_NVJITLINK_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if LUPINE_NVJITLINK_HAS_LTOIR
+      LUPINE_REGISTER_HANDLER(RPC_nvJitLinkGetLinkedLTOIR, handle_nvJitLinkGetLinkedLTOIR, rpc_backend::nvjitlink)
+#endif
+#if LUPINE_NVJITLINK_HAS_LTOIR
+      LUPINE_REGISTER_HANDLER(RPC_nvJitLinkGetLinkedLTOIRSize, handle_nvJitLinkGetLinkedLTOIRSize, rpc_backend::nvjitlink)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
@@ -7159,5 +7199,6 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #undef LUPINE_CUSOLVERMG_RPC_HANDLERS
 #undef LUPINE_NVRTC_RPC_HANDLERS
 #undef LUPINE_NCCL_RPC_HANDLERS
+#undef LUPINE_NVJITLINK_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
