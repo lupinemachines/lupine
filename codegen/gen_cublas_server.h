@@ -600,6 +600,9 @@ int handle_cublasSetEmulationSpecialValuesSupport(conn_t *conn);
 #if CUBLAS_VERSION >= 120900
 int handle_cublasSetEmulationStrategy(conn_t *conn);
 #endif
+#if CUBLAS_VERSION >= 120900
+int handle_cublasSetEnvironmentMode(conn_t *conn);
+#endif
 #if CUBLAS_VERSION >= 130100
 int handle_cublasSetFixedPointEmulationMantissaBitCountPointer(conn_t *conn);
 #endif

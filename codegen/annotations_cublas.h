@@ -5517,6 +5517,17 @@ cublasStatus_t
 cublasSetEmulationStrategy(cublasHandle_t handle,
                            cublasEmulationStrategy_t emulationStrategy);
 #endif
+#if CUBLAS_VERSION >= 120900
+// Exported since cuBLAS 12.9 but declared by no header: cusolverDnCreate and
+// libcusolverMg call it with mode 1 on the handle they create, so a consumer
+// of cuSOLVER needs the symbol. The library accepts modes 0 and 1.
+/**
+ * @guard CUBLAS_VERSION >= 120900
+ * @param handle SEND_ONLY
+ * @param mode SEND_ONLY
+ */
+cublasStatus_t cublasSetEnvironmentMode(cublasHandle_t handle, int mode);
+#endif
 #if CUBLAS_VERSION >= 130100
 /**
  * @guard CUBLAS_VERSION >= 130100

@@ -2747,6 +2747,10 @@ LUPINE_DECLARE_HANDLER(RPC_cublasSetEmulationSpecialValuesSupport,
 LUPINE_DECLARE_HANDLER(RPC_cublasSetEmulationStrategy,
                        handle_cublasSetEmulationStrategy, rpc_backend::cublas)
 #endif
+#if CUBLAS_VERSION >= 120900
+LUPINE_DECLARE_HANDLER(RPC_cublasSetEnvironmentMode,
+                       handle_cublasSetEnvironmentMode, rpc_backend::cublas)
+#endif
 #if CUBLAS_VERSION >= 130100
 LUPINE_DECLARE_HANDLER(
     RPC_cublasSetFixedPointEmulationMantissaBitCountPointer,
@@ -4104,6 +4108,9 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #if CUBLAS_VERSION >= 120900
       LUPINE_REGISTER_HANDLER(RPC_cublasSetEmulationStrategy, handle_cublasSetEmulationStrategy, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120900
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetEnvironmentMode, handle_cublasSetEnvironmentMode, rpc_backend::cublas)
 #endif
 #if CUBLAS_VERSION >= 130100
       LUPINE_REGISTER_HANDLER(RPC_cublasSetFixedPointEmulationMantissaBitCountPointer, handle_cublasSetFixedPointEmulationMantissaBitCountPointer, rpc_backend::cublas)

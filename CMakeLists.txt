@@ -474,6 +474,10 @@ if(LUPINE_BUILD_CUDA)
              LUPINE_CUBLAS_MAJOR_LINE REGEX "^#define CUBLAS_VER_MAJOR ")
         string(REGEX REPLACE "^#define CUBLAS_VER_MAJOR ([0-9]+).*" "\\1"
                LUPINE_CUBLAS_SOVERSION "${LUPINE_CUBLAS_MAJOR_LINE}")
+        file(STRINGS ${LUPINE_CUBLAS_INCLUDE_DIR}/cublas_api.h
+             LUPINE_CUBLAS_MINOR_LINE REGEX "^#define CUBLAS_VER_MINOR ")
+        string(REGEX REPLACE "^#define CUBLAS_VER_MINOR ([0-9]+).*" "\\1"
+               LUPINE_CUBLAS_MINOR "${LUPINE_CUBLAS_MINOR_LINE}")
         set(LUPINE_BUILD_CUBLAS ON)
     endif()
 endif()
@@ -1017,9 +1021,15 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
 
     if(TARGET lupine_cublas_client)
+        # cuSOLVER imports this undeclared export from cuBLAS 12.9 on.
+        set(lupine_cublas_undeclared_check "true")
+        if("${LUPINE_CUBLAS_SOVERSION}.${LUPINE_CUBLAS_MINOR}" VERSION_GREATER_EQUAL 12.9)
+            set(lupine_cublas_undeclared_check
+                "nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q ' T cublasSetEnvironmentMode@@libcublas.so.${LUPINE_CUBLAS_SOVERSION}$'")
+        endif()
         add_test(NAME cublas_exports
             COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSgemm_v2 && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasGemmEx && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSetMatrix && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasXtSgemm && nm -D \"$<TARGET_FILE:lupine_cublaslt_client>\" | grep -q cublasLtMatmul && nm -D \"$<TARGET_FILE:lupine_cublaslt_client>\" | grep -q cublasLtMatmulDescCreate")
+                "${lupine_cublas_undeclared_check} && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSgemm_v2 && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasGemmEx && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSetMatrix && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasXtSgemm && nm -D \"$<TARGET_FILE:lupine_cublaslt_client>\" | grep -q cublasLtMatmul && nm -D \"$<TARGET_FILE:lupine_cublaslt_client>\" | grep -q cublasLtMatmulDescCreate")
     endif()
 
     if(TARGET lupine_hip_client)

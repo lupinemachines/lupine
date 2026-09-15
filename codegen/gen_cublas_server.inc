@@ -20902,6 +20902,36 @@ ERROR_0:
 
 #endif
 
+#if CUBLAS_VERSION >= 120900
+int handle_cublasSetEnvironmentMode(conn_t *conn) {
+  cublasHandle_t handle;
+  int mode;
+  int request_id;
+  cublasStatus_t return_value;
+  using fn_t = cublasStatus_t (*)(cublasHandle_t, int);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+      rpc_read(conn, &mode, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = cublas_symbol<fn_t>("cublasSetEnvironmentMode");
+  return_value = fn == nullptr ? function_not_found() : fn(handle, mode);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(cublasStatus_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
 #if CUBLAS_VERSION >= 130100
 int handle_cublasSetFixedPointEmulationMantissaBitCountPointer(conn_t *conn) {
   cublasHandle_t handle;

@@ -13256,6 +13256,31 @@ cublasSetEmulationStrategy(cublasHandle_t handle,
 
 #endif
 
+#if CUBLAS_VERSION >= 120900
+static cublasStatus_t lupine_rpc_cublasSetEnvironmentMode(conn_t *conn,
+                                                          cublasHandle_t handle,
+                                                          int mode) {
+  cublasStatus_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasSetEnvironmentMode) < 0 ||
+      rpc_write(conn, &handle, sizeof(cublasHandle_t)) < 0 ||
+      rpc_write(conn, &mode, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" cublasStatus_t cublasSetEnvironmentMode(cublasHandle_t handle,
+                                                   int mode) {
+  conn_t *conn = connection_for_handle(handle);
+  return lupine_rpc_cublasSetEnvironmentMode(conn, handle, mode);
+}
+
+#endif
+
 #if CUBLAS_VERSION >= 130100
 static cublasStatus_t
 lupine_rpc_cublasSetFixedPointEmulationMantissaBitCountPointer(

@@ -1388,6 +1388,7 @@
 #define RPC_cublasSetAtomicsMode 989644447
 #define RPC_cublasSetEmulationSpecialValuesSupport 357324678
 #define RPC_cublasSetEmulationStrategy 535395481
+#define RPC_cublasSetEnvironmentMode 1558722084
 #define RPC_cublasSetFixedPointEmulationMantissaBitCountPointer 1691146546
 #define RPC_cublasSetFixedPointEmulationMantissaBitOffset 1473356800
 #define RPC_cublasSetFixedPointEmulationMantissaControl 681823814
