@@ -25,7 +25,7 @@ void check(bool ok, const char *what) {
 
 constexpr char kPreface[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 constexpr size_t kPrefaceLength = sizeof(kPreface) - 1;
-const rpc_http2_server_metadata kMetadata = {"13.0-test", nullptr, 0};
+const rpc_http2_server_metadata kMetadata = {"13.0-test", nullptr};
 
 std::string test_metrics() { return "test_metric 1\n"; }
 
@@ -195,7 +195,7 @@ const lupine_client_bundle_entry kBundleEntries[] = {
     {"linux/amd64", &kBundle},
 };
 const lupine_client_bundle_registry kBundles = {kBundleEntries, 1};
-const rpc_http2_server_metadata kBundleMetadata = {"13.0-test", &kBundles, 0};
+const rpc_http2_server_metadata kBundleMetadata = {"13.0-test", &kBundles};
 
 std::string bundle_request(const rpc_http2_server_metadata *metadata,
                            const std::string &request) {

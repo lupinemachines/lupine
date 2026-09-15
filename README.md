@@ -69,9 +69,6 @@ the mapping between client identity, the Lupine connection child, and the host
 PID reported by NVML. Values are collected when `/metrics` is requested, so
 the server does no background NVML polling.
 
-Client metadata is optional. Servers advertise support during the HTTP/2
-handshake, and clients skip the report when that capability is absent.
-
 ## Client compatibility
 
 Each production server executable embeds the matching Linux, macOS, and

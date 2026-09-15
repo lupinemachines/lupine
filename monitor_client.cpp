@@ -93,11 +93,6 @@ template <size_t N> void fill_process_name(char (&destination)[N]) {
 } // namespace
 
 int lupine_report_client_metadata(conn_t *conn, const char *connection_kind) {
-  if (!rpc_http2_peer_supports(conn,
-                               LUPINE_SERVER_CAPABILITY_CLIENT_METADATA)) {
-    return 0;
-  }
-
   lupine_client_metadata_header header = {
       LUPINE_CLIENT_METADATA_VERSION,
       static_cast<uint32_t>(sizeof(lupine_client_metadata)),

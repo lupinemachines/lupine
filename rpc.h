@@ -281,13 +281,10 @@ struct lupine_client_bundle_registry;
 struct rpc_http2_server_metadata {
   const char *backend_version = nullptr;
   const lupine_client_bundle_registry *client_bundles = nullptr;
-  uint64_t capabilities = 0;
   const char *bulk_token = nullptr;
 };
-constexpr uint64_t LUPINE_SERVER_CAPABILITY_CLIENT_METADATA = UINT64_C(1);
 // The server routes extra TCP connections that open with the bulk preamble
 // into the session named by the token it handed out in its handshake response.
-constexpr uint64_t LUPINE_SERVER_CAPABILITY_BULK_CONNECTIONS = UINT64_C(2);
 // A bulk connection opens with this magic and the 32-hex-digit session token,
 // then continues as an ordinary HTTP/2 RPC connection.
 constexpr char LUPINE_BULK_PREAMBLE_MAGIC[] = "LUPBULK\n";
@@ -299,8 +296,6 @@ constexpr size_t LUPINE_BULK_PREAMBLE_BYTES =
 // The returned pointer remains valid until rpc_http2_destroy() or
 // rpc_conn_destroy(); the probe connection must not be reused for RPC.
 extern const char *rpc_http2_client_probe(conn_t *conn);
-// Returns true when the server advertised every requested capability bit.
-extern bool rpc_http2_peer_supports(conn_t *conn, uint64_t capabilities);
 // The bulk-connection token the server handed out, or nullptr. Valid until
 // rpc_http2_destroy().
 extern const char *rpc_http2_peer_bulk_token(conn_t *conn);

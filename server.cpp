@@ -67,8 +67,7 @@ const lupine_client_bundle_registry lupine_embedded_client_bundles = {
     kClientBundles, sizeof(kClientBundles) / sizeof(kClientBundles[0])};
 #endif
 
-// Empty where bulk connections are unsupported, so the capability is not
-// advertised.
+// Empty where bulk connections are unsupported, so no token is handed out.
 static std::string lupine_child_bulk_token;
 
 #ifndef _WIN32
@@ -184,11 +183,9 @@ struct lupine_lane {
 int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
                         int op) {
   LUPINE_TRACE_LOG("LUPINE server handling op " << op);
-#ifdef LUPINE_MONITORING_ENABLED
   if (op == LUPINE_RPC_CLIENT_METADATA) {
     return handle_lupine_client_metadata(conn);
   }
-#endif
   auto it = handlers.find(op);
   if (it == handlers.end()) {
     LUPINE_LOG_ERROR("No RPC handler for op " << op << "; closing client.");
@@ -349,12 +346,6 @@ int client_handler(lupine_socket_t connfd) {
 #else
       nullptr,
 #endif
-#ifdef LUPINE_MONITORING_ENABLED
-      LUPINE_SERVER_CAPABILITY_CLIENT_METADATA |
-#endif
-          (lupine_child_bulk_token.empty()
-               ? 0
-               : LUPINE_SERVER_CAPABILITY_BULK_CONNECTIONS),
       lupine_child_bulk_token.empty() ? nullptr
                                       : lupine_child_bulk_token.c_str(),
   };

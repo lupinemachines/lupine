@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
-#include <cstring>
 #include <thread>
 #include <vector>
 
@@ -320,12 +319,7 @@ void dial_bulk_lanes(client_transport_state &state, conn_t *conn,
   unsigned int count =
       configured == nullptr ? 4 : static_cast<unsigned int>(atoi(configured));
   count = std::min(count, LUPINE_BULK_CONNECTIONS_MAX);
-  if (token == nullptr ||
-      strlen(token) !=
-          LUPINE_BULK_PREAMBLE_BYTES - LUPINE_BULK_PREAMBLE_MAGIC_BYTES ||
-      state.endpoints[index].tls || count == 0 ||
-      !rpc_http2_peer_supports(conn,
-                               LUPINE_SERVER_CAPABILITY_BULK_CONNECTIONS)) {
+  if (token == nullptr || state.endpoints[index].tls || count == 0) {
     return;
   }
   std::string preamble(LUPINE_BULK_PREAMBLE_MAGIC,
