@@ -25,6 +25,9 @@
 #ifdef LUPINE_BUILD_CUSOLVER_BACKEND
 #include <cusolver_common.h>
 #endif
+#ifdef LUPINE_BUILD_NVRTC_BACKEND
+#include <nvrtc.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -2298,6 +2301,22 @@
   HANDLER(RPC_cusolverMgPotrs, handle_cusolverMgPotrs, rpc_backend::cusolver) \
   HANDLER(RPC_cusolverMgPotri_bufferSize, handle_cusolverMgPotri_bufferSize, rpc_backend::cusolver) \
   HANDLER(RPC_cusolverMgPotri, handle_cusolverMgPotri, rpc_backend::cusolver)
+#define LUPINE_NVRTC_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_nvrtcGetErrorString, handle_nvrtcGetErrorString, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcGetSupportedArchs, handle_nvrtcGetSupportedArchs, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcCreateProgram, handle_nvrtcCreateProgram, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcCompileProgram, handle_nvrtcCompileProgram, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcGetPTX, handle_nvrtcGetPTX, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcGetCUBIN, handle_nvrtcGetCUBIN, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcGetProgramLog, handle_nvrtcGetProgramLog, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcGetLoweredName, handle_nvrtcGetLoweredName, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcVersion, handle_nvrtcVersion, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcGetNumSupportedArchs, handle_nvrtcGetNumSupportedArchs, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcDestroyProgram, handle_nvrtcDestroyProgram, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcGetPTXSize, handle_nvrtcGetPTXSize, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcGetCUBINSize, handle_nvrtcGetCUBINSize, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcGetProgramLogSize, handle_nvrtcGetProgramLogSize, rpc_backend::nvrtc) \
+  HANDLER(RPC_nvrtcAddNameExpression, handle_nvrtcAddNameExpression, rpc_backend::nvrtc)
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
@@ -4955,6 +4974,69 @@ LUPINE_DECLARE_HANDLER(RPC_cusolverDnXpolar, handle_cusolverDnXpolar,
 LUPINE_CUSOLVERMG_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
 #endif
+#ifdef LUPINE_BUILD_NVRTC_BACKEND
+LUPINE_NVRTC_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if CUDA_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_nvrtcGetLTOIR, handle_nvrtcGetLTOIR,
+                       rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_nvrtcGetOptiXIR, handle_nvrtcGetOptiXIR,
+                       rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION < 13000
+LUPINE_DECLARE_HANDLER(RPC_nvrtcGetNVVM, handle_nvrtcGetNVVM,
+                       rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 13020
+LUPINE_DECLARE_HANDLER(RPC_nvrtcGetTileIR, handle_nvrtcGetTileIR,
+                       rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(RPC_nvrtcInstallBundledHeaders,
+                       handle_nvrtcInstallBundledHeaders, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(RPC_nvrtcGetBundledHeadersInfo,
+                       handle_nvrtcGetBundledHeadersInfo, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 13030
+LUPINE_DECLARE_HANDLER(RPC_nvrtcRemoveBundledHeaders,
+                       handle_nvrtcRemoveBundledHeaders, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_nvrtcGetLTOIRSize, handle_nvrtcGetLTOIRSize,
+                       rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_nvrtcGetOptiXIRSize, handle_nvrtcGetOptiXIRSize,
+                       rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION < 13000
+LUPINE_DECLARE_HANDLER(RPC_nvrtcGetNVVMSize, handle_nvrtcGetNVVMSize,
+                       rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12080
+LUPINE_DECLARE_HANDLER(RPC_nvrtcGetPCHHeapSize, handle_nvrtcGetPCHHeapSize,
+                       rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12080
+LUPINE_DECLARE_HANDLER(RPC_nvrtcSetPCHHeapSize, handle_nvrtcSetPCHHeapSize,
+                       rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12080
+LUPINE_DECLARE_HANDLER(RPC_nvrtcGetPCHCreateStatus,
+                       handle_nvrtcGetPCHCreateStatus, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12080
+LUPINE_DECLARE_HANDLER(RPC_nvrtcGetPCHHeapSizeRequired,
+                       handle_nvrtcGetPCHHeapSizeRequired, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 13020
+LUPINE_DECLARE_HANDLER(RPC_nvrtcGetTileIRSize, handle_nvrtcGetTileIRSize,
+                       rpc_backend::nvrtc)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
@@ -6653,6 +6735,54 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_CUSOLVERMG_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
 #endif
+#ifdef LUPINE_BUILD_NVRTC_BACKEND
+      LUPINE_NVRTC_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if CUDA_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcGetLTOIR, handle_nvrtcGetLTOIR, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcGetOptiXIR, handle_nvrtcGetOptiXIR, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION < 13000
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcGetNVVM, handle_nvrtcGetNVVM, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 13020
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcGetTileIR, handle_nvrtcGetTileIR, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcInstallBundledHeaders, handle_nvrtcInstallBundledHeaders, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcGetBundledHeadersInfo, handle_nvrtcGetBundledHeadersInfo, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 13030
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcRemoveBundledHeaders, handle_nvrtcRemoveBundledHeaders, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcGetLTOIRSize, handle_nvrtcGetLTOIRSize, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcGetOptiXIRSize, handle_nvrtcGetOptiXIRSize, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION < 13000
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcGetNVVMSize, handle_nvrtcGetNVVMSize, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12080
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcGetPCHHeapSize, handle_nvrtcGetPCHHeapSize, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12080
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcSetPCHHeapSize, handle_nvrtcSetPCHHeapSize, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12080
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcGetPCHCreateStatus, handle_nvrtcGetPCHCreateStatus, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 12080
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcGetPCHHeapSizeRequired, handle_nvrtcGetPCHHeapSizeRequired, rpc_backend::nvrtc)
+#endif
+#if CUDA_VERSION >= 13020
+      LUPINE_REGISTER_HANDLER(RPC_nvrtcGetTileIRSize, handle_nvrtcGetTileIRSize, rpc_backend::nvrtc)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
@@ -6677,5 +6807,6 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #undef LUPINE_CUSPARSE_RPC_HANDLERS
 #undef LUPINE_CUSOLVER_RPC_HANDLERS
 #undef LUPINE_CUSOLVERMG_RPC_HANDLERS
+#undef LUPINE_NVRTC_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS

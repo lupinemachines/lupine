@@ -296,6 +296,17 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
 #else
     break;
 #endif
+  case rpc_backend::nvrtc:
+#ifdef LUPINE_BUILD_NVRTC_BACKEND
+  {
+    backend_name = "NVRTC";
+    lupine_checkpoint::cuda_call_guard guard;
+    result = handler.handler(conn);
+    break;
+  }
+#else
+    break;
+#endif
   case rpc_backend::nvml:
 #ifdef LUPINE_BUILD_NVML_BACKEND
     backend_name = "NVML";

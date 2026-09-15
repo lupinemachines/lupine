@@ -8,7 +8,7 @@ nothing here asks which one it is writing.
 from dataclasses import dataclass
 import textwrap
 
-from cxxheaderparser.types import Function, Parameter, Pointer
+from cxxheaderparser.types import Function, FunctionType, Parameter, Pointer
 
 from ops import (
     ArrayOperation,
@@ -63,6 +63,10 @@ def format_function_params(function: Function) -> list[str]:
                     name=param.name + "[]",
                 )
             )
+        elif param.name and isinstance(param.type, Pointer) and isinstance(
+            param.type.ptr_to, FunctionType
+        ):
+            params.append(param.type.format_decl(param.name))
         elif param.name:
             params.append(
                 f"{param.type.format()} {param.name}"

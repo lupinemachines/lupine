@@ -96,6 +96,7 @@ jobs:
               test -e /opt/lupine/lib/libcusparse.so
               test -e /opt/lupine/lib/libcusolver.so
               test -e /opt/lupine/lib/libcusolverMg.so
+              test -e /opt/lupine/lib/libnvrtc.so
               test -e /opt/lupine/lib/libnvidia-ml.so.1
               test -e /opt/lupine/lib/libamdhip64.so.1
               test -x /usr/bin/nvidia-smi
@@ -153,6 +154,9 @@ jobs:
           docker cp "$container:$cusolver_lib" "$out/$(basename "$cusolver_lib")"
           cusolvermg_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libcusolverMg.so.[0-9]*')"
           docker cp "$container:$cusolvermg_lib" "$out/$(basename "$cusolvermg_lib")"
+          # NVRTC 11.x kept the 11.2 soname.
+          nvrtc_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libnvrtc.so.[0-9]*')"
+          docker cp "$container:$nvrtc_lib" "$out/$(basename "$nvrtc_lib")"
           docker cp "$container:/opt/lupine/lib/libnvidia-ml.so.1" "$out/libnvidia-ml.so.1"
           docker cp "$container:/opt/lupine/lib/libamdhip64.so.1" "$out/libamdhip64.so.1"
           cp "$out/libcuda.so.1" "$out/libcuda.so"
@@ -165,9 +169,10 @@ jobs:
           cp "$out/$(basename "$cusparse_lib")" "$out/libcusparse.so"
           cp "$out/$(basename "$cusolver_lib")" "$out/libcusolver.so"
           cp "$out/$(basename "$cusolvermg_lib")" "$out/libcusolverMg.so"
+          cp "$out/$(basename "$nvrtc_lib")" "$out/libnvrtc.so"
           cp "$out/libnvidia-ml.so.1" "$out/libnvidia-ml.so"
           cp "$out/libamdhip64.so.1" "$out/libamdhip64.so"
-          (cd "$out" && sha256sum libcuda.so libcuda.so.1 libcudart.so "$runtime_soname" libcublas.so "libcublas.so.${cuda_major}" libcublasLt.so "libcublasLt.so.${cuda_major}" libcufft.so "$(basename "$cufft_lib")" libcudnn.so "$(basename "$cudnn_lib")" libcurand.so "$(basename "$curand_lib")" libcusparse.so "$(basename "$cusparse_lib")" libcusolver.so "$(basename "$cusolver_lib")" libcusolverMg.so "$(basename "$cusolvermg_lib")" libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
+          (cd "$out" && sha256sum libcuda.so libcuda.so.1 libcudart.so "$runtime_soname" libcublas.so "libcublas.so.${cuda_major}" libcublasLt.so "libcublasLt.so.${cuda_major}" libcufft.so "$(basename "$cufft_lib")" libcudnn.so "$(basename "$cudnn_lib")" libcurand.so "$(basename "$curand_lib")" libcusparse.so "$(basename "$cusparse_lib")" libcusolver.so "$(basename "$cusolver_lib")" libcusolverMg.so "$(basename "$cusolvermg_lib")" libnvrtc.so "$(basename "$nvrtc_lib")" libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
           (cd "$out" && zip -r "../$(basename "$archive")" .)
 
       - name: Collect server artifacts

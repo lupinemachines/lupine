@@ -268,6 +268,9 @@ REGISTRY_CPP_TEMPLATE = Template(
 #ifdef LUPINE_BUILD_CUSOLVER_BACKEND
 #include <cusolver_common.h>
 #endif
+#ifdef LUPINE_BUILD_NVRTC_BACKEND
+#include <nvrtc.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -291,6 +294,8 @@ $cusparse_registry_entries
 $cusolver_registry_entries
 #define LUPINE_CUSOLVERMG_RPC_HANDLERS(HANDLER) \
 $cusolvermg_registry_entries
+#define LUPINE_NVRTC_RPC_HANDLERS(HANDLER) \
+$nvrtc_registry_entries
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
 $nvml_registry_entries
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
@@ -334,6 +339,10 @@ LUPINE_CUSOLVER_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $cusolver_guarded_declarations
 LUPINE_CUSOLVERMG_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $cusolvermg_guarded_declarations
+#endif
+#ifdef LUPINE_BUILD_NVRTC_BACKEND
+LUPINE_NVRTC_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$nvrtc_guarded_declarations
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -388,6 +397,10 @@ $cusolver_guarded_handlers
       LUPINE_CUSOLVERMG_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $cusolvermg_guarded_handlers
 #endif
+#ifdef LUPINE_BUILD_NVRTC_BACKEND
+      LUPINE_NVRTC_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$nvrtc_guarded_handlers
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvml_guarded_handlers
@@ -412,6 +425,7 @@ $hip_guarded_handlers
 #undef LUPINE_CUSPARSE_RPC_HANDLERS
 #undef LUPINE_CUSOLVER_RPC_HANDLERS
 #undef LUPINE_CUSOLVERMG_RPC_HANDLERS
+#undef LUPINE_NVRTC_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
 '''
@@ -443,6 +457,7 @@ SERVER_BACKENDS = {
     "CUSOLVER": "rpc_backend::cusolver",
     # cuSOLVERMg ships with cuSOLVER and runs in the same server child.
     "CUSOLVERMG": "rpc_backend::cusolver",
+    "NVRTC": "rpc_backend::nvrtc",
     "NVML": "rpc_backend::nvml",
     "HIP": "rpc_backend::hip",
 }
@@ -618,6 +633,17 @@ CUSOLVERMG = Backend(
     not_supported="CUSOLVER_STATUS_NOT_SUPPORTED",
 )
 
+# NVRTC has no not-supported status; its only stub is documented to return
+# NVRTC_ERROR_INVALID_INPUT.
+NVRTC = Backend(
+    result="nvrtcResult",
+    invalid_argument="NVRTC_ERROR_INVALID_INPUT",
+    device_routing_kind="DEVICE",
+    symbol_lookup="nvrtc_symbol",
+    guard_null_conn=True,
+    not_supported="NVRTC_ERROR_INVALID_INPUT",
+)
+
 ANNOTATION_FILES = {
     "cuda": "annotations_cuda.h",
     "cudart": "annotations_cudart.h",
@@ -629,6 +655,7 @@ ANNOTATION_FILES = {
     "cusparse": "annotations_cusparse.h",
     "cusolver": "annotations_cusolver.h",
     "cusolvermg": "annotations_cusolvermg.h",
+    "nvrtc": "annotations_nvrtc.h",
     "nvml": "annotations_nvml.h",
     "hip": "annotations_hip.h",
 }
@@ -704,6 +731,7 @@ LIBRARY_HANDLES = {
     "cusolverMgHandle_t",
     "cudaLibMgGrid_t",
     "cudaLibMgMatrixDesc_t",
+    "nvrtcProgram",
 }
 
 
@@ -1934,6 +1962,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 cusolvermg_registry_entries=" \\\n".join(
                     registry_entries["CUSOLVERMG"]
                 ),
+                nvrtc_registry_entries=" \\\n".join(
+                    registry_entries["NVRTC"]
+                ),
                 nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
                 hip_registry_entries=" \\\n".join(registry_entries["HIP"]),
                 cuda_guarded_declarations="\n".join(
@@ -1966,6 +1997,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 cusolvermg_guarded_declarations="\n".join(
                     guarded_declarations["CUSOLVERMG"]
                 ),
+                nvrtc_guarded_declarations="\n".join(
+                    guarded_declarations["NVRTC"]
+                ),
                 nvml_guarded_declarations="\n".join(
                     guarded_declarations["NVML"]
                 ),
@@ -1989,6 +2023,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 ),
                 cusolvermg_guarded_handlers="\n".join(
                     guarded_handlers["CUSOLVERMG"]
+                ),
+                nvrtc_guarded_handlers="\n".join(
+                    guarded_handlers["NVRTC"]
                 ),
                 nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
@@ -2215,6 +2252,10 @@ def main():
         annotations_by_target["cusolvermg"],
         client_call_templates=client_call_templates_by_target["cusolvermg"],
     )
+    nvrtc_functions_with_annotations = collect_backend_functions(
+        annotations_by_target["nvrtc"],
+        client_call_templates=client_call_templates_by_target["nvrtc"],
+    )
 
     annotated_names = sorted(
         {function.name.format() for function in cuda_annotations.namespace.functions}
@@ -2237,7 +2278,8 @@ def main():
         + curand_functions_with_annotations
         + cusparse_functions_with_annotations
         + cusolver_functions_with_annotations
-        + cusolvermg_functions_with_annotations,
+        + cusolvermg_functions_with_annotations
+        + nvrtc_functions_with_annotations,
     )
 
     with open("gen_nvml_client.inc", "w") as f:
@@ -2347,6 +2389,7 @@ def main():
         (CUSPARSE, "cusparse", cusparse_functions_with_annotations),
         (CUSOLVER, "cusolver", cusolver_functions_with_annotations),
         (CUSOLVERMG, "cusolvermg", cusolvermg_functions_with_annotations),
+        (NVRTC, "nvrtc", nvrtc_functions_with_annotations),
     ):
         with open(f"gen_{target}_client.inc", "w") as f:
             f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
@@ -2435,6 +2478,7 @@ def main():
         ("CUSPARSE", cusparse_functions_with_annotations),
         ("CUSOLVER", cusolver_functions_with_annotations),
         ("CUSOLVERMG", cusolvermg_functions_with_annotations),
+        ("NVRTC", nvrtc_functions_with_annotations),
     ):
         generated_bindings.extend(
             ServerBinding(
@@ -2531,6 +2575,9 @@ def main():
             "gen_cusolvermg_client.inc",
             "gen_cusolvermg_server.inc",
             "gen_cusolvermg_server.h",
+            "gen_nvrtc_client.inc",
+            "gen_nvrtc_server.inc",
+            "gen_nvrtc_server.h",
         ],
         check=True,
     )
@@ -2594,6 +2641,11 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_cusolvermg_server.inc",
             "gen_cusolvermg_server.h",
         ],
+        "nvrtc": [
+            "gen_nvrtc_client.inc",
+            "gen_nvrtc_server.inc",
+            "gen_nvrtc_server.h",
+        ],
     }
     forbidden = {
         "cuda": ["nvml", "hip"],
@@ -2606,6 +2658,7 @@ def verify_backend_boundaries(backend: str) -> None:
         "cusparse": ["nvml", "hip"],
         "cusolver": ["nvml", "hip"],
         "cusolvermg": ["nvml", "hip"],
+        "nvrtc": ["nvml", "hip"],
         "nvml": ["cuda_compat", "<cuda.h>", "handle_cu", "hip"],
         "hip": ["cuda", "nvml"],
     }
@@ -2626,7 +2679,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--verify-backend",
-        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "cusolver", "cusolvermg", "nvml", "hip"),
+        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "cusolver", "cusolvermg", "nvrtc", "nvml", "hip"),
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()

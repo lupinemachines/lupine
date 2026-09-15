@@ -798,6 +798,61 @@ if(LUPINE_BUILD_CUSOLVER)
     endforeach()
 endif()
 
+if(LUPINE_BUILD_CUDA)
+    # The NVRTC shim needs the library's own header, which the runtime header
+    # wheels the native client builds use do not carry; without it it is left
+    # out of the build.
+    find_path(LUPINE_NVRTC_INCLUDE_DIR nvrtc.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
+    if(LUPINE_NVRTC_INCLUDE_DIR)
+        # NVRTC 11.x kept the 11.2 soname across every 11 release.
+        set(LUPINE_NVRTC_SOVERSION ${LUPINE_CUDART_MAJOR})
+        math(EXPR LUPINE_NVRTC_DLL_SUFFIX "${LUPINE_CUDART_MAJOR} * 10")
+        if(LUPINE_CUDART_MAJOR EQUAL 11)
+            set(LUPINE_NVRTC_SOVERSION 11.2)
+            set(LUPINE_NVRTC_DLL_SUFFIX 112)
+        endif()
+        set(LUPINE_BUILD_NVRTC ON)
+    endif()
+endif()
+
+if(LUPINE_BUILD_NVRTC)
+    # Named like NVIDIA's (libnvrtc.so.13, nvrtc64_130_0.dll) with the matching
+    # ELF version node. It runs on the runtime shim's current device, so it
+    # links both sibling shims.
+    configure_file(nvrtc.exports.in nvrtc.exports @ONLY)
+    add_library(lupine_nvrtc_client SHARED nvrtc_client.cpp)
+    target_include_directories(lupine_nvrtc_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
+    target_link_libraries(lupine_nvrtc_client PRIVATE
+        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
+    set_target_properties(lupine_nvrtc_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+    lupine_manylinux2014_client(lupine_nvrtc_client)
+    if(WIN32)
+        target_compile_options(lupine_nvrtc_client PRIVATE /wd4996)
+        set_target_properties(lupine_nvrtc_client PROPERTIES
+            OUTPUT_NAME nvrtc64_${LUPINE_NVRTC_DLL_SUFFIX}_0
+            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        target_compile_options(lupine_nvrtc_client PRIVATE
+            -Wno-deprecated-declarations)
+        set_target_properties(lupine_nvrtc_client PROPERTIES OUTPUT_NAME nvrtc)
+        if(APPLE)
+            set_target_properties(lupine_nvrtc_client PROPERTIES
+                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+        else()
+            target_link_options(lupine_nvrtc_client PRIVATE
+                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/nvrtc.exports")
+            set_target_properties(lupine_nvrtc_client PROPERTIES
+                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+                VERSION ${LUPINE_NVRTC_SOVERSION}
+                SOVERSION ${LUPINE_NVRTC_SOVERSION})
+        endif()
+    endif()
+    add_custom_target(lupine_nvrtc DEPENDS lupine_nvrtc_client)
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -857,7 +912,7 @@ endif()
 # Every CUDA runtime and library client shim, so a consumer can load them all
 # in place of NVIDIA's without naming each one.
 get_property(lupine_runtime_client_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_cu[a-z]+_client$")
+list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_(cu[a-z]+|nvrtc)_client$")
 list(REMOVE_ITEM lupine_runtime_client_targets lupine_cuda_client)
 add_custom_target(lupine_runtime_clients)
 if(lupine_runtime_client_targets)
@@ -959,6 +1014,16 @@ if(LUPINE_BUILD_SERVER)
             target_include_directories(lupine_cusolver_server PRIVATE
                 ${CUDAToolkit_INCLUDE_DIRS})
             target_link_libraries(lupine_cusolver_server PRIVATE
+                lupine_server_core ${CMAKE_DL_LIBS})
+        endif()
+
+        if(LUPINE_BUILD_NVRTC)
+            add_library(lupine_nvrtc_server STATIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/nvrtc_server.cpp)
+            lupine_internal_target(lupine_nvrtc_server)
+            target_include_directories(lupine_nvrtc_server PRIVATE
+                ${CUDAToolkit_INCLUDE_DIRS})
+            target_link_libraries(lupine_nvrtc_server PRIVATE
                 lupine_server_core ${CMAKE_DL_LIBS})
         endif()
     endif()
@@ -1096,6 +1161,12 @@ if(LUPINE_BUILD_SERVER)
                 LUPINE_BUILD_CUSOLVER_BACKEND)
             target_link_libraries(lupine_driver_server PRIVATE
                 lupine_cusolver_server)
+        endif()
+        if(LUPINE_BUILD_NVRTC)
+            target_compile_definitions(lupine_driver_server PRIVATE
+                LUPINE_BUILD_NVRTC_BACKEND)
+            target_link_libraries(lupine_driver_server PRIVATE
+                lupine_nvrtc_server)
         endif()
     endif()
     if(LUPINE_BUILD_NVML)
@@ -1299,6 +1370,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "nm -D \"$<TARGET_FILE:lupine_cusolver_client>\" | grep -q ' T cusolverDnXgetrf@@libcusolver.so.${LUPINE_CUSOLVER_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_cusolver_client>\" | grep -q ' T cusolverSpDcsrqrsvBatched@@libcusolver.so.${LUPINE_CUSOLVER_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_cusolver_client>\" | grep -q ' T cusolverRfRefactor@@libcusolver.so.${LUPINE_CUSOLVER_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_cusolvermg_client>\" | grep -q ' T cusolverMgSyevd@@libcusolverMg.so.${LUPINE_CUSOLVER_SOVERSION}$'")
     endif()
 
+    if(TARGET lupine_nvrtc_client)
+        add_test(NAME nvrtc_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_nvrtc_client>\" | grep -q ' T nvrtcCompileProgram@@libnvrtc.so.${LUPINE_NVRTC_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvrtc_client>\" | grep -q ' T nvrtcGetLoweredName@@libnvrtc.so.${LUPINE_NVRTC_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvrtc_client>\" | grep -q ' T nvrtcGetPTX@@libnvrtc.so.${LUPINE_NVRTC_SOVERSION}$'")
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -1337,6 +1414,10 @@ endif()
 if(TARGET lupine_cusolver_client)
     message(STATUS
         "Building cuSOLVER clients: lupine_cusolver_client, lupine_cusolvermg_client (libcusolver.so.${LUPINE_CUSOLVER_SOVERSION})")
+endif()
+if(TARGET lupine_nvrtc_client)
+    message(STATUS
+        "Building NVRTC client: lupine_nvrtc_client (libnvrtc.so.${LUPINE_NVRTC_SOVERSION})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS
