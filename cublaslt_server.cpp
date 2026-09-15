@@ -5,8 +5,10 @@
 
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
@@ -201,5 +203,47 @@ void lupine_cublaslt_cleanup_logs(conn_t *conn) {
     }
   }
 }
+
+#if CUBLAS_VERSION >= 130100
+namespace {
+
+// The emulation descriptors clients attach to matmul descriptors, by the
+// client's address. A matmul descriptor holds its copy's address, so a copy is
+// refreshed in place and kept for the life of the connection process.
+std::mutex emulation_copies_mutex;
+std::unordered_map<uint64_t, std::unique_ptr<cublasLtEmulationDescOpaque_t>>
+    emulation_copies;
+
+} // namespace
+
+int handle_lupineCublasLtEmulationDescCopy(conn_t *conn) {
+  uint64_t original;
+  cublasLtEmulationDescOpaque_t contents;
+  if (rpc_read(conn, &original, sizeof(original)) < 0 ||
+      rpc_read(conn, &contents, sizeof(contents)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  cublasLtEmulationDescOpaque_t *copy;
+  {
+    std::lock_guard<std::mutex> lock(emulation_copies_mutex);
+    std::unique_ptr<cublasLtEmulationDescOpaque_t> &slot =
+        emulation_copies[original];
+    if (!slot) {
+      slot.reset(new cublasLtEmulationDescOpaque_t());
+    }
+    *slot = contents;
+    copy = slot.get();
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &copy, sizeof(copy)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+#endif
 
 #include "codegen/gen_cublaslt_server.inc"

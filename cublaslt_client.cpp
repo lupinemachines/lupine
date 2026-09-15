@@ -148,6 +148,92 @@ void note_attribute(cublasLtMatrixTransformDescOpaque_t *desc,
                  size);
 }
 
+#if CUBLAS_VERSION >= 130100
+// A matmul descriptor refers to its emulation descriptor by address, which
+// means nothing to the server. The server keeps a copy of each emulation
+// descriptor attached to a matmul descriptor, the matmul descriptor holds the
+// copy's address, and these maps translate between the two.
+std::mutex emulation_copies_mutex;
+std::unordered_map<cublasLtEmulationDesc_t, cublasLtEmulationDesc_t>
+    emulation_copies;
+std::unordered_map<cublasLtEmulationDesc_t, cublasLtEmulationDesc_t>
+    emulation_originals;
+
+cublasLtEmulationDesc_t
+copy_emulation_descriptor(cublasLtEmulationDesc_t desc) {
+  conn_t *conn = connection();
+  cublasLtEmulationDesc_t copy = nullptr;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_lupineCublasLtEmulationDescCopy) < 0 ||
+      rpc_write(conn, &desc, sizeof(desc)) < 0 ||
+      rpc_write(conn, desc, sizeof(*desc)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &copy, sizeof(copy)) < 0 || rpc_read_end(conn) < 0) {
+    return nullptr;
+  }
+  std::lock_guard<std::mutex> lock(emulation_copies_mutex);
+  emulation_copies[desc] = copy;
+  emulation_originals[copy] = desc;
+  return copy;
+}
+
+// The attached copy follows later changes to the caller's descriptor, as the
+// library would see them through the address.
+void refresh_emulation_copy(cublasLtEmulationDesc_t desc) {
+  {
+    std::lock_guard<std::mutex> lock(emulation_copies_mutex);
+    if (emulation_copies.count(desc) == 0) {
+      return;
+    }
+  }
+  copy_emulation_descriptor(desc);
+}
+#endif
+
+// The value the server's library is given for a matmul descriptor attribute:
+// an emulation descriptor becomes the server's copy, held in `copy`.
+const void *server_attribute(cublasLtMatmulDescAttributes_t attr,
+                             const void *buf, size_t size, void **copy) {
+#if CUBLAS_VERSION >= 130100
+  cublasLtEmulationDesc_t desc = nullptr;
+  if (attr == CUBLASLT_MATMUL_DESC_EMULATION_DESCRIPTOR &&
+      size == sizeof(desc)) {
+    std::memcpy(&desc, buf, sizeof(desc));
+    if (desc != nullptr) {
+      *copy = copy_emulation_descriptor(desc);
+      return copy;
+    }
+  }
+#else
+  (void)attr;
+  (void)size;
+  (void)copy;
+#endif
+  return buf;
+}
+
+// The reverse for a get: the caller reads back its own emulation descriptor.
+void client_attribute(cublasLtMatmulDescAttributes_t attr, void *buf,
+                      size_t size) {
+#if CUBLAS_VERSION >= 130100
+  cublasLtEmulationDesc_t copy = nullptr;
+  if (attr != CUBLASLT_MATMUL_DESC_EMULATION_DESCRIPTOR ||
+      size < sizeof(copy)) {
+    return;
+  }
+  std::memcpy(&copy, buf, sizeof(copy));
+  std::lock_guard<std::mutex> lock(emulation_copies_mutex);
+  auto it = emulation_originals.find(copy);
+  if (it != emulation_originals.end()) {
+    std::memcpy(buf, &it->second, sizeof(copy));
+  }
+#else
+  (void)attr;
+  (void)buf;
+  (void)size;
+#endif
+}
+
 // The vector modes place alpha on the device and beta on the host or nowhere.
 bool scalar_on_host(const void *desc, const char *name) {
   const cublasLtPointerMode_t mode = descriptor(desc).pointer_mode;

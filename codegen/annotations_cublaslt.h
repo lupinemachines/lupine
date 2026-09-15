@@ -84,10 +84,18 @@ cublasLtEmulationDescInit_internal(cublasLtEmulationDescOpaque_t *emulationDesc,
  * @param buf SEND_ONLY LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  */
-cublasStatus_t
-cublasLtEmulationDescSetAttribute(cublasLtEmulationDescOpaque_t *emulationDesc,
-                                  cublasLtEmulationDescAttributes_t attr,
-                                  const void *buf, size_t sizeInBytes);
+// clang-format off
+cublasStatus_t cublasLtEmulationDescSetAttribute(
+    cublasLtEmulationDescOpaque_t *emulationDesc,
+    cublasLtEmulationDescAttributes_t attr, const void *buf,
+    size_t sizeInBytes) {
+  cublasStatus_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUBLAS_STATUS_SUCCESS) {
+    refresh_emulation_copy(emulationDesc);
+  }
+  return return_value;
+}
+// clang-format on
 #endif
 size_t cublasLtGetCudartVersion();
 /**
@@ -302,10 +310,17 @@ cublasStatus_t cublasLtMatmulAlgoInit(
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
-cublasStatus_t
-cublasLtMatmulDescGetAttribute(cublasLtMatmulDescOpaque_t *matmulDesc,
-                               cublasLtMatmulDescAttributes_t attr, void *buf,
-                               size_t sizeInBytes, size_t *sizeWritten);
+// clang-format off
+cublasStatus_t cublasLtMatmulDescGetAttribute(
+    cublasLtMatmulDescOpaque_t *matmulDesc, cublasLtMatmulDescAttributes_t attr,
+    void *buf, size_t sizeInBytes, size_t *sizeWritten) {
+  cublasStatus_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUBLAS_STATUS_SUCCESS) {
+    client_attribute(attr, buf, sizeInBytes);
+  }
+  return return_value;
+}
+// clang-format on
 /**
  * @param matmulDesc RECV_ONLY
  * @param size SEND_ONLY
@@ -333,6 +348,8 @@ cublasStatus_t cublasLtMatmulDescInit_internal(
 cublasStatus_t cublasLtMatmulDescSetAttribute(
     cublasLtMatmulDescOpaque_t *matmulDesc, cublasLtMatmulDescAttributes_t attr,
     const void *buf, size_t sizeInBytes) {
+  void *copy = nullptr;
+  buf = server_attribute(attr, buf, sizeInBytes, &copy);
   cublasStatus_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == CUBLAS_STATUS_SUCCESS) {
     note_attribute(matmulDesc, attr, buf, sizeInBytes);
@@ -467,3 +484,12 @@ cublasStatus_t cublasLtMatrixTransformDescSetAttribute(
   return return_value;
 }
 // clang-format on
+#if CUBLAS_VERSION >= 130100
+// Sends an emulation descriptor's bytes and returns the address of the
+// server's copy, which a matmul descriptor then refers to.
+/**
+ * @guard CUBLAS_VERSION >= 130100
+ * @disabled
+ */
+void lupineCublasLtEmulationDescCopy();
+#endif

@@ -1696,6 +1696,7 @@
 #define RPC_cublasLtMatrixTransformDescGetAttribute 1097335613
 #define RPC_cublasLtMatrixTransformDescInit_internal 207967890
 #define RPC_cublasLtMatrixTransformDescSetAttribute 1316410814
+#define RPC_lupineCublasLtEmulationDescCopy 196242584
 #define RPC_cufftCreate 716435021
 #define RPC_cufftDestroy 1584264652
 #define RPC_cufftEstimate1d 2091673453

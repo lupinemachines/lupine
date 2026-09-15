@@ -179,8 +179,12 @@ cublasLtEmulationDescSetAttribute(cublasLtEmulationDescOpaque_t *emulationDesc,
     return CUBLAS_STATUS_INVALID_VALUE;
   }
   conn_t *conn = connection();
-  return lupine_rpc_cublasLtEmulationDescSetAttribute(conn, emulationDesc, attr,
-                                                      buf, sizeInBytes);
+  cublasStatus_t return_value = lupine_rpc_cublasLtEmulationDescSetAttribute(
+      conn, emulationDesc, attr, buf, sizeInBytes);
+  if (return_value == CUBLAS_STATUS_SUCCESS) {
+    refresh_emulation_copy(emulationDesc);
+  }
+  return return_value;
 }
 
 #endif
@@ -892,8 +896,12 @@ cublasLtMatmulDescGetAttribute(cublasLtMatmulDescOpaque_t *matmulDesc,
     return CUBLAS_STATUS_INVALID_VALUE;
   }
   conn_t *conn = connection();
-  return lupine_rpc_cublasLtMatmulDescGetAttribute(conn, matmulDesc, attr, buf,
-                                                   sizeInBytes, sizeWritten);
+  cublasStatus_t return_value = lupine_rpc_cublasLtMatmulDescGetAttribute(
+      conn, matmulDesc, attr, buf, sizeInBytes, sizeWritten);
+  if (return_value == CUBLAS_STATUS_SUCCESS) {
+    client_attribute(attr, buf, sizeInBytes);
+  }
+  return return_value;
 }
 
 static cublasStatus_t lupine_rpc_cublasLtMatmulDescInit_internal(
@@ -957,6 +965,8 @@ cublasLtMatmulDescSetAttribute(cublasLtMatmulDescOpaque_t *matmulDesc,
     return CUBLAS_STATUS_INVALID_VALUE;
   }
   conn_t *conn = connection();
+  void *copy = nullptr;
+  buf = server_attribute(attr, buf, sizeInBytes, &copy);
   cublasStatus_t return_value = lupine_rpc_cublasLtMatmulDescSetAttribute(
       conn, matmulDesc, attr, buf, sizeInBytes);
   if (return_value == CUBLAS_STATUS_SUCCESS) {
