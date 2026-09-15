@@ -37,10 +37,17 @@ cufftResult cufftCreate(cufftHandle *handle) {
 }
 // clang-format on
 /**
- * @disabled client
+ * @disabled server
  * @param plan SEND_ONLY
  */
-cufftResult cufftDestroy(cufftHandle plan);
+// clang-format off
+cufftResult cufftDestroy(cufftHandle plan) {
+  cufftResult return_value = LUPINE_GENERATED_CALL();
+  std::lock_guard<std::mutex> lock(plans_mutex);
+  plans.erase(plan);
+  return return_value;
+}
+// clang-format on
 /**
  * @param nx SEND_ONLY
  * @param type SEND_ONLY

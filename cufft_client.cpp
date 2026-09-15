@@ -136,14 +136,6 @@ size_t descriptor_bytes(const descriptor_mirror *mirror) {
 // Plan state the client mirrors
 // ---------------------------------------------------------------------------
 
-extern "C" cufftResult cufftDestroy(cufftHandle plan) {
-  conn_t *conn = connection_for_handle(plan);
-  cufftResult status = lupine_rpc_cufftDestroy(conn, plan);
-  std::lock_guard<std::mutex> lock(plans_mutex);
-  plans.erase(plan);
-  return status;
-}
-
 // The caller names virtual device ordinals; the server's library wants its
 // own. A plan cannot span servers, so each is rewritten as if on the plan's.
 extern "C" cufftResult cufftXtSetGPUs(cufftHandle handle, int nGPUs,

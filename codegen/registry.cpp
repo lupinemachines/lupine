@@ -1021,13 +1021,13 @@
   HANDLER(RPC_cublasLtMatrixTransformDescInit_internal, handle_cublasLtMatrixTransformDescInit_internal, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtMatrixTransformDescSetAttribute, handle_cublasLtMatrixTransformDescSetAttribute, rpc_backend::cublas)
 #define LUPINE_CUFFT_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cufftDestroy, handle_cufftDestroy, rpc_backend::cufft) \
   HANDLER(RPC_cufftXtFree, handle_cufftXtFree, rpc_backend::cufft) \
   HANDLER(RPC_cufftXtMalloc, handle_cufftXtMalloc, rpc_backend::cufft) \
   HANDLER(RPC_cufftXtMemcpy, handle_cufftXtMemcpy, rpc_backend::cufft) \
   HANDLER(RPC_cufftXtSetCallback, handle_cufftXtSetCallback, rpc_backend::cufft) \
   HANDLER(RPC_cufftXtSetWorkArea, handle_cufftXtSetWorkArea, rpc_backend::cufft) \
   HANDLER(RPC_cufftCreate, handle_cufftCreate, rpc_backend::cufft) \
-  HANDLER(RPC_cufftDestroy, handle_cufftDestroy, rpc_backend::cufft) \
   HANDLER(RPC_cufftEstimate1d, handle_cufftEstimate1d, rpc_backend::cufft) \
   HANDLER(RPC_cufftEstimate2d, handle_cufftEstimate2d, rpc_backend::cufft) \
   HANDLER(RPC_cufftEstimate3d, handle_cufftEstimate3d, rpc_backend::cufft) \

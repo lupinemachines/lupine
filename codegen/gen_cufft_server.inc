@@ -39,31 +39,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cufftDestroy(conn_t *conn) {
-  cufftHandle plan;
-  int request_id;
-  cufftResult return_value;
-  using fn_t = cufftResult (*)(cufftHandle);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &plan, sizeof(cufftHandle)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = cufft_symbol<fn_t>("cufftDestroy");
-  return_value = fn == nullptr ? function_not_found() : fn(plan);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(cufftResult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cufftEstimate1d(conn_t *conn) {
   int nx;
   cufftType type;

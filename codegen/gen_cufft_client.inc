@@ -36,6 +36,14 @@ static cufftResult lupine_rpc_cufftDestroy(conn_t *conn, cufftHandle plan) {
   return return_value;
 }
 
+extern "C" cufftResult cufftDestroy(cufftHandle plan) {
+  conn_t *conn = connection_for_handle(plan);
+  cufftResult return_value = lupine_rpc_cufftDestroy(conn, plan);
+  std::lock_guard<std::mutex> lock(plans_mutex);
+  plans.erase(plan);
+  return return_value;
+}
+
 static cufftResult lupine_rpc_cufftEstimate1d(conn_t *conn, int nx,
                                               cufftType type, int batch,
                                               size_t *workSize) {
