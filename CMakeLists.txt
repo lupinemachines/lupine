@@ -854,6 +854,16 @@ if(NOT WIN32 AND LUPINE_BUILD_HIP)
     add_custom_target(lupine_hip DEPENDS lupine_hip_client)
 endif()
 
+# Every CUDA runtime and library client shim, so a consumer can load them all
+# in place of NVIDIA's without naming each one.
+get_property(lupine_runtime_client_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_cu[a-z]+_client$")
+list(REMOVE_ITEM lupine_runtime_client_targets lupine_cuda_client)
+add_custom_target(lupine_runtime_clients)
+if(lupine_runtime_client_targets)
+    add_dependencies(lupine_runtime_clients ${lupine_runtime_client_targets})
+endif()
+
 if(LUPINE_BUILD_SERVER)
     if(LUPINE_BUILD_CUDA)
         add_library(lupine_cuda_server STATIC

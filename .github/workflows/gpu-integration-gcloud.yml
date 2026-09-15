@@ -710,10 +710,11 @@ jobs:
                 -DCMAKE_BUILD_TYPE=Release \
                 -DCUDAToolkit_ROOT="$CUDA_HOME" \
                 -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs" \
+                -DLUPINE_CUDNN_INCLUDE_DIR="$CUDNN_HOME/include" \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
               cmake --build "$LUPINE_BUILD_DIR" --parallel \
-                --target lupine_cuda_client lupine_cudart_client lupine_nvml_client lupine_driver_server
+                --target lupine_cuda_client lupine_runtime_clients lupine_nvml_client lupine_driver_server
               ln -sf libcuda.so.1 "$LUPINE_BUILD_DIR/libcuda.so"
               ln -sf libnvidia-ml.so.1 "$LUPINE_BUILD_DIR/libnvidia-ml.so"
 
@@ -723,13 +724,38 @@ jobs:
                 scp -q "${ssh_args[@]}" "$SERVER_LOCAL_BIN" \
                   "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
 
-              # Load the same vendor runtime on the GPU server as in this lane.
+              # The server loads the NVIDIA library each runtime or library shim
+              # forwards to, by the same SONAME; send the copies from this lane.
               # The client keeps its two shim search paths separate below.
               server_runtime_dir="${SERVER_REMOTE_BIN}-runtime"
+              vendor_libs=()
+              for shim in "$LUPINE_BUILD_DIR"/libcu*.so.*; do
+                name="$(basename "$shim")"
+                [[ "$name" == libcuda.so.* ]] && continue
+                if [[ "$name" == libcudnn.so.* ]]; then
+                  # cuDNN comes from the PyTorch wheel, and libcudnn loads its
+                  # operation sublibraries from its own directory.
+                  vendor_libs+=("$CUDNN_HOME"/lib/libcudnn*.so.*)
+                else
+                  vendor_libs+=("$CUDA_LIB_DIR/$name")
+                fi
+              done
+              # cuFFT and cuBLASLt load NVRTC and nvJitLink at run time for JIT
+              # kernels and LTO callbacks; send each once, by SONAME.
+              declare -A jit_sonames=()
+              for lib in "$CUDA_LIB_DIR"/libnvrtc.so.* "$CUDA_LIB_DIR"/libnvrtc-builtins.so.* "$CUDA_LIB_DIR"/libnvJitLink.so.*; do
+                [[ -e "$lib" ]] || continue
+                soname="$(readelf -d "$lib" | grep SONAME)" || continue
+                soname="${soname##*[}"
+                jit_sonames["${soname%]*}"]=1
+              done
+              for soname in "${!jit_sonames[@]}"; do
+                vendor_libs+=("$CUDA_LIB_DIR/$soname")
+              done
               timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
                 ssh "${ssh_args[@]}" "$SERVER_SSH_TARGET" "mkdir -p $server_runtime_dir"
               timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
-                scp -q "${ssh_args[@]}" "$CUDA_LIB_DIR"/libcudart.so* \
+                scp -q "${ssh_args[@]}" "${vendor_libs[@]}" \
                   "$SERVER_SSH_TARGET:$server_runtime_dir/"
               export SERVER_LD_LIBRARY_PATH="${SERVER_LD_LIBRARY_PATH:+$SERVER_LD_LIBRARY_PATH:}$server_runtime_dir"
 

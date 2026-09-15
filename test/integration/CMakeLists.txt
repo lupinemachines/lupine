@@ -8,14 +8,19 @@ if(NOT LUPINE_LIB)
 endif()
 get_filename_component(LUPINE_LIB "${LUPINE_LIB}" ABSOLUTE)
 get_filename_component(shim_dir "${LUPINE_LIB}" DIRECTORY)
-file(GLOB runtime_libs "${shim_dir}/libcudart.so*")
+# The runtime and library shims (libcudart, libcublas, libcufft, ...) all share
+# the libcu prefix with the driver shim.
+file(GLOB runtime_libs "${shim_dir}/libcu*.so*")
+list(FILTER runtime_libs EXCLUDE REGEX "/libcuda\\.so")
 file(GLOB nvml_libs "${shim_dir}/libnvidia-ml.so*")
 if(NOT EXISTS "${LUPINE_LIB}" OR NOT EXISTS "${shim_dir}/libcudart.so")
-    message(FATAL_ERROR "Build lupine_cuda_client and lupine_cudart_client before configuring integration tests")
+    message(FATAL_ERROR "Build lupine_cuda_client and lupine_runtime_clients before configuring integration tests")
 endif()
 
-# Both variants use one build. Never put its full library directory on the
-# driver-only search path: that would also expose the CUDART shim.
+# Both variants use one build. driver-only loads the driver shim with NVIDIA's
+# runtime and libraries; driver-runtime also loads every runtime and library
+# shim. Never put the full build directory on the driver-only search path: that
+# would expose the other shims too.
 set(variants driver-only driver-runtime)
 foreach(variant IN LISTS variants)
     set(lib_dir "${CMAKE_CURRENT_BINARY_DIR}/${variant}/lib")
