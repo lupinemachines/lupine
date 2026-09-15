@@ -14,6 +14,7 @@ bool rpc_server_validate(const rpc_handler_registry &handlers) {
     case rpc_backend::cusparse:
     case rpc_backend::cusolver:
     case rpc_backend::nvrtc:
+    case rpc_backend::nccl:
     case rpc_backend::nvml:
     case rpc_backend::hip:
     case rpc_backend::cudart:

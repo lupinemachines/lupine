@@ -31,6 +31,8 @@ CUDA_SAMPLES_ARCH="${CUDA_SAMPLES_ARCH:-}"
 # cuDNN ships outside the toolkit: a directory with its include/ and lib/, such
 # as an nvidia-cudnn wheel's nvidia/cudnn.
 CUDNN_HOME="${CUDNN_HOME:-}"
+# NCCL too, such as an nvidia-nccl wheel's nvidia/nccl.
+NCCL_HOME="${NCCL_HOME:-}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 BUILD_TESTS="${BUILD_TESTS:-1}"
 if [[ -n "${BUILD_DIR:-}" ]]; then
@@ -87,6 +89,13 @@ if grep -q '#include <cudnn.h>' "$src"; then
   fi
   cudnn_args=(-I"$CUDNN_HOME/include" -L"$CUDNN_HOME/lib" -l:"$(basename "$cudnn_lib")")
 fi
+if grep -q '#include <nccl.h>' "$src"; then
+  if [[ -z "$NCCL_HOME" || ! -e "$NCCL_HOME/lib/libnccl.so.2" ]]; then
+    echo "SKIP: $name needs NCCL; set NCCL_HOME"
+    exit 0
+  fi
+  cudnn_args+=(-I"$NCCL_HOME/include" -L"$NCCL_HOME/lib" -l:libnccl.so.2)
+fi
 
 if [[ "$BUILD_TESTS" == "1" ]]; then
   mkdir -p "$BUILD_DIR"
@@ -100,13 +109,19 @@ fi
 if [[ "$BUILD_ONLY" == "1" ]]; then
   exit 0
 fi
+if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <nccl.h>' "$src"; then
+  # NVIDIA's libnccl on a GPU-less client crashes over the driver shim alone,
+  # zeroing the host memory ncclCommInitRank allocates; only the NCCL shim runs.
+  echo "SKIP: $name runs NCCL on the client, which needs more than the driver shim"
+  exit 0
+fi
 
 start_remote_server "$pidfile" "$server_log" "$port"
 if [[ -n "${RESULTS_DIR:-}" ]]; then
   mkdir -p "$RESULTS_DIR"
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${LD_LIBRARY_PATH:-}" \
+  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${LD_LIBRARY_PATH:-}" \
     LUPINE_SERVER="$SERVER_HOST:$port" "$exe" 2>&1 | tee "$RESULTS_DIR/client.log"
 else
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${LD_LIBRARY_PATH:-}" \
+  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${LD_LIBRARY_PATH:-}" \
     LUPINE_SERVER="$SERVER_HOST:$port" "$exe"
 fi

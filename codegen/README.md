@@ -3,7 +3,7 @@ infer what parameters should be sent and received so we instead have a two-step 
 
 First, `annotationgen.py` reads an SDK header such as `cuda.h` or `nvml.h` and copies its function signatures
 into that target's annotation file (`annotations_cuda.h`, `annotations_cudart.h`, `annotations_cublas.h`,
-`annotations_cublaslt.h`, `annotations_cufft.h`, `annotations_cudnn.h`, `annotations_curand.h`, `annotations_cusparse.h`, `annotations_cusolver.h`, `annotations_cusolvermg.h`, `annotations_nvrtc.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
+`annotations_cublaslt.h`, `annotations_cufft.h`, `annotations_cudnn.h`, `annotations_curand.h`, `annotations_cusparse.h`, `annotations_cusolver.h`, `annotations_cusolvermg.h`, `annotations_nvrtc.h`, `annotations_nccl.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
 have significant meanings.
 
 Specifically, the order of `@param` annotations indicates the order in which the parameters are sent or received.
@@ -38,6 +38,21 @@ evaluates over the call's arguments (`SIZE:data_type_width(resultType)`); a
 typed scalar wider than its pointee spells that out the same way
 (`SIZE:5*sizeof(float)`).
 
+`VERSIONED` marks an optional pointer to a size-led, append-only configuration
+struct (NCCL's `ncclConfig_t`). The caller's `size` bytes travel, then each
+member named in `STRINGS:<member>,...` as its length and text; the server widens
+the struct to its own size and points those members at its copies, and nulls
+the client addresses named in `CLEARED:<member>,...`. A member some supported
+headers lack takes `MEMBERGUARD:<member>=<condition>`; its length still travels,
+so client and server built against different headers share one wire format.
+
+`@async` on a forwarding backend that sets `async_success` makes the call's
+submission a choice: the generated wrapper asks `submit_async(conn)` and, when
+it says yes, sends the call fire-and-forget with an async ticket and returns
+that status; otherwise it sends an ordinary request that carries the all-ones
+ticket and waits for the library's result. NCCL uses this for calls inside a
+group, which the library only queues.
+
 Client routing can also be annotated for handles that belong to a specific LUPINE
 server connection. `@routingkey <kind> <param>` selects the connection for the
 generated client wrapper before it writes the RPC. Supported kinds are
@@ -47,7 +62,7 @@ generated client wrapper before it writes the RPC. Supported kinds are
 owner. `DEVICE` and `CONTEXT` routing is inferred from the first non-pointer
 `CUdevice` or `CUcontext` parameter, so those annotations are only needed when
 the routing key is not the first matching parameter. A by-value
-`cublasHandle_t`, `cublasLtHandle_t`, `cufftHandle`, `curandGenerator_t`, `curandDiscreteDistribution_t`, a cuSPARSE handle, descriptor, plan or info, an `nvrtcProgram`, a cuSOLVER or cuSOLVERMg handle, parameter set, info, IRS object, grid or matrix descriptor, or a cuDNN handle, descriptor, parameter pack or plan infers `HANDLE` routing to the
+`cublasHandle_t`, `cublasLtHandle_t`, `cufftHandle`, `curandGenerator_t`, `curandDiscreteDistribution_t`, a cuSPARSE handle, descriptor, plan or info, an `nvrtcProgram`, an `ncclComm_t` or `ncclParamHandle_t`, a cuSOLVER or cuSOLVERMg handle, parameter set, info, IRS object, grid or matrix descriptor, or a cuDNN handle, descriptor, parameter pack or plan infers `HANDLE` routing to the
 connection the handle was created on, which the creating call's body records
 with `note_handle_owner`.
 

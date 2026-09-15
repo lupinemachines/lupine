@@ -38,4 +38,7 @@ codegen/gen_cusolvermg_server.inc linguist-generated=true
 codegen/gen_nvrtc_client.inc linguist-generated=true
 codegen/gen_nvrtc_server.h linguist-generated=true
 codegen/gen_nvrtc_server.inc linguist-generated=true
+codegen/gen_nccl_client.inc linguist-generated=true
+codegen/gen_nccl_server.h linguist-generated=true
+codegen/gen_nccl_server.inc linguist-generated=true
 codegen/registry.cpp linguist-generated=true

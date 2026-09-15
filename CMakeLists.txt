@@ -853,6 +853,55 @@ if(LUPINE_BUILD_NVRTC)
     add_custom_target(lupine_nvrtc DEPENDS lupine_nvrtc_client)
 endif()
 
+if(LUPINE_BUILD_CUDA AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # NCCL ships outside the toolkit, from its own packages or wheels. Point
+    # LUPINE_NCCL_INCLUDE_DIR at an include directory holding nccl.h when it
+    # is not beside the toolkit's headers; without one the shim is left out.
+    find_path(LUPINE_NCCL_INCLUDE_DIR nccl.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} ENV NCCL_HOME
+        PATH_SUFFIXES include)
+    if(LUPINE_NCCL_INCLUDE_DIR)
+        file(STRINGS ${LUPINE_NCCL_INCLUDE_DIR}/nccl.h
+             LUPINE_NCCL_MAJOR_LINE REGEX "^#define NCCL_MAJOR ")
+        string(REGEX REPLACE "^#define NCCL_MAJOR ([0-9]+).*" "\\1"
+               LUPINE_NCCL_SOVERSION "${LUPINE_NCCL_MAJOR_LINE}")
+        file(STRINGS ${LUPINE_NCCL_INCLUDE_DIR}/nccl.h
+             LUPINE_NCCL_CODE_LINE REGEX "^#define NCCL_VERSION_CODE ")
+        string(REGEX REPLACE "^#define NCCL_VERSION_CODE ([0-9]+).*" "\\1"
+               LUPINE_NCCL_VERSION_CODE "${LUPINE_NCCL_CODE_LINE}")
+        # 2.14.3 brings the configuration struct and ncclInProgress.
+        if(LUPINE_NCCL_VERSION_CODE GREATER_EQUAL 21403)
+            set(LUPINE_BUILD_NCCL ON)
+        endif()
+    endif()
+endif()
+
+if(LUPINE_BUILD_NCCL)
+    # Named like NVIDIA's (libnccl.so.2), whose symbols carry no version node.
+    # It runs on the runtime shim's current device, so it links both sibling
+    # shims. nccl.h declares ncclResetDebugInit only for Linux builds.
+    configure_file(nccl.exports.in nccl.exports @ONLY)
+    add_library(lupine_nccl_client SHARED nccl_client.cpp)
+    target_include_directories(lupine_nccl_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen
+        ${LUPINE_NCCL_INCLUDE_DIR})
+    target_compile_definitions(lupine_nccl_client PRIVATE NCCL_OS_LINUX)
+    target_link_libraries(lupine_nccl_client PRIVATE
+        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
+    target_compile_options(lupine_nccl_client PRIVATE
+        -Wno-deprecated-declarations)
+    target_link_options(lupine_nccl_client PRIVATE
+        "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/nccl.exports")
+    set_target_properties(lupine_nccl_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        OUTPUT_NAME nccl
+        BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+        VERSION ${LUPINE_NCCL_SOVERSION}
+        SOVERSION ${LUPINE_NCCL_SOVERSION})
+    lupine_manylinux2014_client(lupine_nccl_client)
+    add_custom_target(lupine_nccl DEPENDS lupine_nccl_client)
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -912,7 +961,7 @@ endif()
 # Every CUDA runtime and library client shim, so a consumer can load them all
 # in place of NVIDIA's without naming each one.
 get_property(lupine_runtime_client_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_(cu[a-z]+|nvrtc)_client$")
+list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_(cu[a-z]+|nvrtc|nccl)_client$")
 list(REMOVE_ITEM lupine_runtime_client_targets lupine_cuda_client)
 add_custom_target(lupine_runtime_clients)
 if(lupine_runtime_client_targets)
@@ -1024,6 +1073,17 @@ if(LUPINE_BUILD_SERVER)
             target_include_directories(lupine_nvrtc_server PRIVATE
                 ${CUDAToolkit_INCLUDE_DIRS})
             target_link_libraries(lupine_nvrtc_server PRIVATE
+                lupine_server_core ${CMAKE_DL_LIBS})
+        endif()
+
+        if(LUPINE_BUILD_NCCL)
+            add_library(lupine_nccl_server STATIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/nccl_server.cpp)
+            lupine_internal_target(lupine_nccl_server)
+            target_compile_definitions(lupine_nccl_server PRIVATE NCCL_OS_LINUX)
+            target_include_directories(lupine_nccl_server PRIVATE
+                ${CUDAToolkit_INCLUDE_DIRS} ${LUPINE_NCCL_INCLUDE_DIR})
+            target_link_libraries(lupine_nccl_server PRIVATE
                 lupine_server_core ${CMAKE_DL_LIBS})
         endif()
     endif()
@@ -1167,6 +1227,14 @@ if(LUPINE_BUILD_SERVER)
                 LUPINE_BUILD_NVRTC_BACKEND)
             target_link_libraries(lupine_driver_server PRIVATE
                 lupine_nvrtc_server)
+        endif()
+        if(LUPINE_BUILD_NCCL)
+            target_compile_definitions(lupine_driver_server PRIVATE
+                LUPINE_BUILD_NCCL_BACKEND NCCL_OS_LINUX)
+            target_include_directories(lupine_driver_server PRIVATE
+                ${LUPINE_NCCL_INCLUDE_DIR})
+            target_link_libraries(lupine_driver_server PRIVATE
+                lupine_nccl_server)
         endif()
     endif()
     if(LUPINE_BUILD_NVML)
@@ -1376,6 +1444,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "nm -D \"$<TARGET_FILE:lupine_nvrtc_client>\" | grep -q ' T nvrtcCompileProgram@@libnvrtc.so.${LUPINE_NVRTC_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvrtc_client>\" | grep -q ' T nvrtcGetLoweredName@@libnvrtc.so.${LUPINE_NVRTC_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvrtc_client>\" | grep -q ' T nvrtcGetPTX@@libnvrtc.so.${LUPINE_NVRTC_SOVERSION}$'")
     endif()
 
+    if(TARGET lupine_nccl_client)
+        add_test(NAME nccl_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclAllReduce$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T pncclAllReduce$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclGroupEnd$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclCommInitRank$'")
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -1418,6 +1492,10 @@ endif()
 if(TARGET lupine_nvrtc_client)
     message(STATUS
         "Building NVRTC client: lupine_nvrtc_client (libnvrtc.so.${LUPINE_NVRTC_SOVERSION})")
+endif()
+if(TARGET lupine_nccl_client)
+    message(STATUS
+        "Building NCCL client: lupine_nccl_client (libnccl.so.${LUPINE_NCCL_SOVERSION})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS

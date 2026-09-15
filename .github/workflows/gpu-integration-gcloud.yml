@@ -704,6 +704,8 @@ jobs:
               # PyTorch brings a cuDNN wheel; the cuDNN custom test builds
               # against it and runs it through the driver and runtime shims.
               export CUDNN_HOME="$("$PYTHON_BIN" -c "import nvidia.cudnn; print(list(nvidia.cudnn.__path__)[0])")"
+              # Its NCCL wheel serves the NCCL shim and its test the same way.
+              export NCCL_HOME="$("$PYTHON_BIN" -c "import nvidia.nccl; print(list(nvidia.nccl.__path__)[0])")"
 
               cmake -S /src -B "$LUPINE_BUILD_DIR" \
                 -G Ninja \
@@ -711,6 +713,7 @@ jobs:
                 -DCUDAToolkit_ROOT="$CUDA_HOME" \
                 -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs" \
                 -DLUPINE_CUDNN_INCLUDE_DIR="$CUDNN_HOME/include" \
+                -DLUPINE_NCCL_INCLUDE_DIR="$NCCL_HOME/include" \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
               cmake --build "$LUPINE_BUILD_DIR" --parallel \
@@ -739,6 +742,9 @@ jobs:
                 else
                   vendor_libs+=("$CUDA_LIB_DIR/$name")
                 fi
+              done
+              for shim in "$LUPINE_BUILD_DIR"/libnccl.so.*; do
+                [[ -e "$shim" ]] && vendor_libs+=("$NCCL_HOME/lib/$(basename "$shim")")
               done
               # cuFFT and cuBLASLt load NVRTC and nvJitLink at run time for JIT
               # kernels and LTO callbacks; send each once, by SONAME.

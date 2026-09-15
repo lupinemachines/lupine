@@ -28,6 +28,9 @@
 #ifdef LUPINE_BUILD_NVRTC_BACKEND
 #include <nvrtc.h>
 #endif
+#ifdef LUPINE_BUILD_NCCL_BACKEND
+#include <nccl.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -2317,6 +2320,33 @@
   HANDLER(RPC_nvrtcGetCUBINSize, handle_nvrtcGetCUBINSize, rpc_backend::nvrtc) \
   HANDLER(RPC_nvrtcGetProgramLogSize, handle_nvrtcGetProgramLogSize, rpc_backend::nvrtc) \
   HANDLER(RPC_nvrtcAddNameExpression, handle_nvrtcAddNameExpression, rpc_backend::nvrtc)
+#define LUPINE_NCCL_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_ncclGetErrorString, handle_ncclGetErrorString, rpc_backend::nccl) \
+  HANDLER(RPC_ncclGetLastError, handle_ncclGetLastError, rpc_backend::nccl) \
+  HANDLER(RPC_ncclGetVersion, handle_ncclGetVersion, rpc_backend::nccl) \
+  HANDLER(RPC_ncclGetUniqueId, handle_ncclGetUniqueId, rpc_backend::nccl) \
+  HANDLER(RPC_ncclCommInitRankConfig, handle_ncclCommInitRankConfig, rpc_backend::nccl) \
+  HANDLER(RPC_ncclCommInitRank, handle_ncclCommInitRank, rpc_backend::nccl) \
+  HANDLER(RPC_ncclCommInitAll, handle_ncclCommInitAll, rpc_backend::nccl) \
+  HANDLER(RPC_ncclCommFinalize, handle_ncclCommFinalize, rpc_backend::nccl) \
+  HANDLER(RPC_ncclCommDestroy, handle_ncclCommDestroy, rpc_backend::nccl) \
+  HANDLER(RPC_ncclCommAbort, handle_ncclCommAbort, rpc_backend::nccl) \
+  HANDLER(RPC_ncclCommGetAsyncError, handle_ncclCommGetAsyncError, rpc_backend::nccl) \
+  HANDLER(RPC_ncclCommCount, handle_ncclCommCount, rpc_backend::nccl) \
+  HANDLER(RPC_ncclCommCuDevice, handle_ncclCommCuDevice, rpc_backend::nccl) \
+  HANDLER(RPC_ncclCommUserRank, handle_ncclCommUserRank, rpc_backend::nccl) \
+  HANDLER(RPC_ncclRedOpCreatePreMulSum, handle_ncclRedOpCreatePreMulSum, rpc_backend::nccl) \
+  HANDLER(RPC_ncclRedOpDestroy, handle_ncclRedOpDestroy, rpc_backend::nccl) \
+  HANDLER(RPC_ncclReduce, handle_ncclReduce, rpc_backend::nccl) \
+  HANDLER(RPC_ncclBcast, handle_ncclBcast, rpc_backend::nccl) \
+  HANDLER(RPC_ncclBroadcast, handle_ncclBroadcast, rpc_backend::nccl) \
+  HANDLER(RPC_ncclAllReduce, handle_ncclAllReduce, rpc_backend::nccl) \
+  HANDLER(RPC_ncclReduceScatter, handle_ncclReduceScatter, rpc_backend::nccl) \
+  HANDLER(RPC_ncclAllGather, handle_ncclAllGather, rpc_backend::nccl) \
+  HANDLER(RPC_ncclSend, handle_ncclSend, rpc_backend::nccl) \
+  HANDLER(RPC_ncclRecv, handle_ncclRecv, rpc_backend::nccl) \
+  HANDLER(RPC_ncclGroupStart, handle_ncclGroupStart, rpc_backend::nccl) \
+  HANDLER(RPC_ncclGroupEnd, handle_ncclGroupEnd, rpc_backend::nccl)
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
@@ -5037,6 +5067,185 @@ LUPINE_DECLARE_HANDLER(RPC_nvrtcGetTileIRSize, handle_nvrtcGetTileIRSize,
                        rpc_backend::nvrtc)
 #endif
 #endif
+#ifdef LUPINE_BUILD_NCCL_BACKEND
+LUPINE_NCCL_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamGetStr, handle_ncclParamGetStr,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamGetParameter, handle_ncclParamGetParameter,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamGetAllParameterKeys,
+                       handle_ncclParamGetAllParameterKeys, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 21903
+LUPINE_DECLARE_HANDLER(RPC_ncclMemAlloc, handle_ncclMemAlloc, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 21903
+LUPINE_DECLARE_HANDLER(RPC_ncclMemFree, handle_ncclMemFree, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22807
+LUPINE_DECLARE_HANDLER(RPC_ncclCommRevoke, handle_ncclCommRevoke,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 21801
+LUPINE_DECLARE_HANDLER(RPC_ncclCommSplit, handle_ncclCommSplit,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22703
+LUPINE_DECLARE_HANDLER(RPC_ncclCommShrink, handle_ncclCommShrink,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22902
+LUPINE_DECLARE_HANDLER(RPC_ncclCommGetUniqueId, handle_ncclCommGetUniqueId,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22902
+LUPINE_DECLARE_HANDLER(RPC_ncclCommGrow, handle_ncclCommGrow, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22304
+LUPINE_DECLARE_HANDLER(RPC_ncclCommInitRankScalable,
+                       handle_ncclCommInitRankScalable, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22403
+LUPINE_DECLARE_HANDLER(RPC_ncclResetDebugInit, handle_ncclResetDebugInit,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 21903
+LUPINE_DECLARE_HANDLER(RPC_ncclCommRegister, handle_ncclCommRegister,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 21903
+LUPINE_DECLARE_HANDLER(RPC_ncclCommDeregister, handle_ncclCommDeregister,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22907
+LUPINE_DECLARE_HANDLER(RPC_ncclCommSuspend, handle_ncclCommSuspend,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22907
+LUPINE_DECLARE_HANDLER(RPC_ncclCommResume, handle_ncclCommResume,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22907
+LUPINE_DECLARE_HANDLER(RPC_ncclCommMemStats, handle_ncclCommMemStats,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22703
+LUPINE_DECLARE_HANDLER(RPC_ncclCommWindowRegister,
+                       handle_ncclCommWindowRegister, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22703
+LUPINE_DECLARE_HANDLER(RPC_ncclCommWindowDeregister,
+                       handle_ncclCommWindowDeregister, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22902
+LUPINE_DECLARE_HANDLER(RPC_ncclWinGetUserPtr, handle_ncclWinGetUserPtr,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22803
+LUPINE_DECLARE_HANDLER(RPC_ncclAlltoAll, handle_ncclAlltoAll, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22803
+LUPINE_DECLARE_HANDLER(RPC_ncclGather, handle_ncclGather, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22803
+LUPINE_DECLARE_HANDLER(RPC_ncclScatter, handle_ncclScatter, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+LUPINE_DECLARE_HANDLER(RPC_ncclAllReduceConfig, handle_ncclAllReduceConfig,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+LUPINE_DECLARE_HANDLER(RPC_ncclBroadcastConfig, handle_ncclBroadcastConfig,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+LUPINE_DECLARE_HANDLER(RPC_ncclReduceConfig, handle_ncclReduceConfig,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+LUPINE_DECLARE_HANDLER(RPC_ncclAllGatherConfig, handle_ncclAllGatherConfig,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+LUPINE_DECLARE_HANDLER(RPC_ncclReduceScatterConfig,
+                       handle_ncclReduceScatterConfig, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+LUPINE_DECLARE_HANDLER(RPC_ncclAlltoAllConfig, handle_ncclAlltoAllConfig,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+LUPINE_DECLARE_HANDLER(RPC_ncclGatherConfig, handle_ncclGatherConfig,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+LUPINE_DECLARE_HANDLER(RPC_ncclScatterConfig, handle_ncclScatterConfig,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22902
+LUPINE_DECLARE_HANDLER(RPC_ncclPutSignal, handle_ncclPutSignal,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22902
+LUPINE_DECLARE_HANDLER(RPC_ncclSignal, handle_ncclSignal, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22902
+LUPINE_DECLARE_HANDLER(RPC_ncclWaitSignal, handle_ncclWaitSignal,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22203
+LUPINE_DECLARE_HANDLER(RPC_ncclGroupSimulateEnd, handle_ncclGroupSimulateEnd,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamBind, handle_ncclParamBind,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamGetI8, handle_ncclParamGetI8,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamGetI16, handle_ncclParamGetI16,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamGetI32, handle_ncclParamGetI32,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamGetI64, handle_ncclParamGetI64,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamGetU8, handle_ncclParamGetU8,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamGetU16, handle_ncclParamGetU16,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamGetU32, handle_ncclParamGetU32,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamGetU64, handle_ncclParamGetU64,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamGet, handle_ncclParamGet, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+LUPINE_DECLARE_HANDLER(RPC_ncclParamDumpAll, handle_ncclParamDumpAll,
+                       rpc_backend::nccl)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
@@ -6783,6 +6992,147 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_REGISTER_HANDLER(RPC_nvrtcGetTileIRSize, handle_nvrtcGetTileIRSize, rpc_backend::nvrtc)
 #endif
 #endif
+#ifdef LUPINE_BUILD_NCCL_BACKEND
+      LUPINE_NCCL_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamGetStr, handle_ncclParamGetStr, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamGetParameter, handle_ncclParamGetParameter, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamGetAllParameterKeys, handle_ncclParamGetAllParameterKeys, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 21903
+      LUPINE_REGISTER_HANDLER(RPC_ncclMemAlloc, handle_ncclMemAlloc, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 21903
+      LUPINE_REGISTER_HANDLER(RPC_ncclMemFree, handle_ncclMemFree, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22807
+      LUPINE_REGISTER_HANDLER(RPC_ncclCommRevoke, handle_ncclCommRevoke, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 21801
+      LUPINE_REGISTER_HANDLER(RPC_ncclCommSplit, handle_ncclCommSplit, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22703
+      LUPINE_REGISTER_HANDLER(RPC_ncclCommShrink, handle_ncclCommShrink, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22902
+      LUPINE_REGISTER_HANDLER(RPC_ncclCommGetUniqueId, handle_ncclCommGetUniqueId, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22902
+      LUPINE_REGISTER_HANDLER(RPC_ncclCommGrow, handle_ncclCommGrow, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22304
+      LUPINE_REGISTER_HANDLER(RPC_ncclCommInitRankScalable, handle_ncclCommInitRankScalable, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22403
+      LUPINE_REGISTER_HANDLER(RPC_ncclResetDebugInit, handle_ncclResetDebugInit, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 21903
+      LUPINE_REGISTER_HANDLER(RPC_ncclCommRegister, handle_ncclCommRegister, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 21903
+      LUPINE_REGISTER_HANDLER(RPC_ncclCommDeregister, handle_ncclCommDeregister, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22907
+      LUPINE_REGISTER_HANDLER(RPC_ncclCommSuspend, handle_ncclCommSuspend, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22907
+      LUPINE_REGISTER_HANDLER(RPC_ncclCommResume, handle_ncclCommResume, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22907
+      LUPINE_REGISTER_HANDLER(RPC_ncclCommMemStats, handle_ncclCommMemStats, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22703
+      LUPINE_REGISTER_HANDLER(RPC_ncclCommWindowRegister, handle_ncclCommWindowRegister, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22703
+      LUPINE_REGISTER_HANDLER(RPC_ncclCommWindowDeregister, handle_ncclCommWindowDeregister, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22902
+      LUPINE_REGISTER_HANDLER(RPC_ncclWinGetUserPtr, handle_ncclWinGetUserPtr, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22803
+      LUPINE_REGISTER_HANDLER(RPC_ncclAlltoAll, handle_ncclAlltoAll, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22803
+      LUPINE_REGISTER_HANDLER(RPC_ncclGather, handle_ncclGather, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22803
+      LUPINE_REGISTER_HANDLER(RPC_ncclScatter, handle_ncclScatter, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+      LUPINE_REGISTER_HANDLER(RPC_ncclAllReduceConfig, handle_ncclAllReduceConfig, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+      LUPINE_REGISTER_HANDLER(RPC_ncclBroadcastConfig, handle_ncclBroadcastConfig, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+      LUPINE_REGISTER_HANDLER(RPC_ncclReduceConfig, handle_ncclReduceConfig, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+      LUPINE_REGISTER_HANDLER(RPC_ncclAllGatherConfig, handle_ncclAllGatherConfig, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+      LUPINE_REGISTER_HANDLER(RPC_ncclReduceScatterConfig, handle_ncclReduceScatterConfig, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+      LUPINE_REGISTER_HANDLER(RPC_ncclAlltoAllConfig, handle_ncclAlltoAllConfig, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+      LUPINE_REGISTER_HANDLER(RPC_ncclGatherConfig, handle_ncclGatherConfig, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23102
+      LUPINE_REGISTER_HANDLER(RPC_ncclScatterConfig, handle_ncclScatterConfig, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22902
+      LUPINE_REGISTER_HANDLER(RPC_ncclPutSignal, handle_ncclPutSignal, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22902
+      LUPINE_REGISTER_HANDLER(RPC_ncclSignal, handle_ncclSignal, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22902
+      LUPINE_REGISTER_HANDLER(RPC_ncclWaitSignal, handle_ncclWaitSignal, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22203
+      LUPINE_REGISTER_HANDLER(RPC_ncclGroupSimulateEnd, handle_ncclGroupSimulateEnd, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamBind, handle_ncclParamBind, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamGetI8, handle_ncclParamGetI8, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamGetI16, handle_ncclParamGetI16, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamGetI32, handle_ncclParamGetI32, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamGetI64, handle_ncclParamGetI64, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamGetU8, handle_ncclParamGetU8, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamGetU16, handle_ncclParamGetU16, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamGetU32, handle_ncclParamGetU32, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamGetU64, handle_ncclParamGetU64, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamGet, handle_ncclParamGet, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 23007
+      LUPINE_REGISTER_HANDLER(RPC_ncclParamDumpAll, handle_ncclParamDumpAll, rpc_backend::nccl)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
@@ -6808,5 +7158,6 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #undef LUPINE_CUSOLVER_RPC_HANDLERS
 #undef LUPINE_CUSOLVERMG_RPC_HANDLERS
 #undef LUPINE_NVRTC_RPC_HANDLERS
+#undef LUPINE_NCCL_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS

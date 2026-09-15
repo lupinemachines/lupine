@@ -30,6 +30,8 @@ from emit import (
     unsupported,
     write_scalar_slot,
     write_stub,
+    write_profiling_aliases,
+    write_versioned_struct_helper,
 )
 from ops import (
     NullableOperation,
@@ -41,6 +43,7 @@ from ops import (
     OpaqueTypeOperation,
     DereferenceOperation,
     ScalarOperation,
+    VersionedStructOperation,
     Operation,
     OwnerAnnotation,
     RetainAnnotation,
@@ -271,6 +274,9 @@ REGISTRY_CPP_TEMPLATE = Template(
 #ifdef LUPINE_BUILD_NVRTC_BACKEND
 #include <nvrtc.h>
 #endif
+#ifdef LUPINE_BUILD_NCCL_BACKEND
+#include <nccl.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -296,6 +302,8 @@ $cusolver_registry_entries
 $cusolvermg_registry_entries
 #define LUPINE_NVRTC_RPC_HANDLERS(HANDLER) \
 $nvrtc_registry_entries
+#define LUPINE_NCCL_RPC_HANDLERS(HANDLER) \
+$nccl_registry_entries
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
 $nvml_registry_entries
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
@@ -343,6 +351,10 @@ $cusolvermg_guarded_declarations
 #ifdef LUPINE_BUILD_NVRTC_BACKEND
 LUPINE_NVRTC_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $nvrtc_guarded_declarations
+#endif
+#ifdef LUPINE_BUILD_NCCL_BACKEND
+LUPINE_NCCL_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$nccl_guarded_declarations
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -401,6 +413,10 @@ $cusolvermg_guarded_handlers
       LUPINE_NVRTC_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvrtc_guarded_handlers
 #endif
+#ifdef LUPINE_BUILD_NCCL_BACKEND
+      LUPINE_NCCL_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$nccl_guarded_handlers
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvml_guarded_handlers
@@ -426,6 +442,7 @@ $hip_guarded_handlers
 #undef LUPINE_CUSOLVER_RPC_HANDLERS
 #undef LUPINE_CUSOLVERMG_RPC_HANDLERS
 #undef LUPINE_NVRTC_RPC_HANDLERS
+#undef LUPINE_NCCL_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
 '''
@@ -458,6 +475,7 @@ SERVER_BACKENDS = {
     # cuSOLVERMg ships with cuSOLVER and runs in the same server child.
     "CUSOLVERMG": "rpc_backend::cusolver",
     "NVRTC": "rpc_backend::nvrtc",
+    "NCCL": "rpc_backend::nccl",
     "NVML": "rpc_backend::nvml",
     "HIP": "rpc_backend::hip",
 }
@@ -644,6 +662,20 @@ NVRTC = Backend(
     not_supported="NVRTC_ERROR_INVALID_INPUT",
 )
 
+# A communicator is a pointer the server's library hands out and routes to
+# the connection that created it. Collectives submitted inside a group are
+# fire-and-forget: NCCL only queues them until ncclGroupEnd.
+NCCL = Backend(
+    result="ncclResult_t",
+    invalid_argument="ncclInvalidArgument",
+    device_routing_kind="DEVICE",
+    symbol_lookup="nccl_symbol",
+    guard_null_conn=True,
+    not_supported="ncclInvalidUsage",
+    async_success="ncclSuccess",
+    alias_prefix="p",
+)
+
 ANNOTATION_FILES = {
     "cuda": "annotations_cuda.h",
     "cudart": "annotations_cudart.h",
@@ -656,6 +688,7 @@ ANNOTATION_FILES = {
     "cusolver": "annotations_cusolver.h",
     "cusolvermg": "annotations_cusolvermg.h",
     "nvrtc": "annotations_nvrtc.h",
+    "nccl": "annotations_nccl.h",
     "nvml": "annotations_nvml.h",
     "hip": "annotations_hip.h",
 }
@@ -732,6 +765,8 @@ LIBRARY_HANDLES = {
     "cudaLibMgGrid_t",
     "cudaLibMgMatrixDesc_t",
     "nvrtcProgram",
+    "ncclComm_t",
+    "ncclParamHandle_t",
 }
 
 
@@ -944,6 +979,36 @@ def parse_annotation(
                 scalar_arg = next(
                     (arg for arg in args if arg.split(":")[0] == "SCALAR"), None
                 )
+
+                if "VERSIONED" in args:
+                    # VERSIONED [STRINGS:<member>,...] [CLEARED:<member>,...]
+                    # [MEMBERGUARD:<member>=<condition>...]:
+                    # an optional size-led configuration struct whose string
+                    # members travel as text.
+                    if not send or recv:
+                        raise NotImplementedError("VERSIONED is SEND_ONLY")
+
+                    def members(prefix):
+                        arg = next((a for a in args if a.startswith(prefix)), None)
+                        return tuple(arg.split(":", 1)[1].split(",")) if arg else ()
+
+                    # MEMBERGUARD:<member>=<condition> names the preprocessor
+                    # condition under which the struct declares the member.
+                    member_guards = dict(
+                        a.split(":", 1)[1].split("=", 1)
+                        for a in args
+                        if a.startswith("MEMBERGUARD:")
+                    )
+                    operations.append(
+                        VersionedStructOperation(
+                            parameter=param,
+                            ptr=param.type,
+                            strings=members("STRINGS:"),
+                            cleared=members("CLEARED:"),
+                            member_guards=member_guards,
+                        )
+                    )
+                    continue
 
                 if scalar_arg is not None:
                     # SCALAR[:<owner>]: a pointer-mode scalar, sized by
@@ -1965,6 +2030,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 nvrtc_registry_entries=" \\\n".join(
                     registry_entries["NVRTC"]
                 ),
+                nccl_registry_entries=" \\\n".join(
+                    registry_entries["NCCL"]
+                ),
                 nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
                 hip_registry_entries=" \\\n".join(registry_entries["HIP"]),
                 cuda_guarded_declarations="\n".join(
@@ -2000,6 +2068,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 nvrtc_guarded_declarations="\n".join(
                     guarded_declarations["NVRTC"]
                 ),
+                nccl_guarded_declarations="\n".join(
+                    guarded_declarations["NCCL"]
+                ),
                 nvml_guarded_declarations="\n".join(
                     guarded_declarations["NVML"]
                 ),
@@ -2027,6 +2098,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 nvrtc_guarded_handlers="\n".join(
                     guarded_handlers["NVRTC"]
                 ),
+                nccl_guarded_handlers="\n".join(
+                    guarded_handlers["NCCL"]
+                ),
                 nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
             )
@@ -2051,6 +2125,8 @@ def main():
                 "DISABLE_CUSPARSE_DEPRECATED",
                 "DISABLE_CUSOLVER_DEPRECATED",
                 "DISABLE_CUSOLVERMG_DEPRECATED",
+                # nccl.h declares ncclResetDebugInit only for Linux builds.
+                "NCCL_OS_LINUX",
             ],
             include_paths=[cuda_include_dir, hip_include_dir],
         ),
@@ -2256,6 +2332,10 @@ def main():
         annotations_by_target["nvrtc"],
         client_call_templates=client_call_templates_by_target["nvrtc"],
     )
+    nccl_functions_with_annotations = collect_backend_functions(
+        annotations_by_target["nccl"],
+        client_call_templates=client_call_templates_by_target["nccl"],
+    )
 
     annotated_names = sorted(
         {function.name.format() for function in cuda_annotations.namespace.functions}
@@ -2279,7 +2359,8 @@ def main():
         + cusparse_functions_with_annotations
         + cusolver_functions_with_annotations
         + cusolvermg_functions_with_annotations
-        + nvrtc_functions_with_annotations,
+        + nvrtc_functions_with_annotations
+        + nccl_functions_with_annotations,
     )
 
     with open("gen_nvml_client.inc", "w") as f:
@@ -2390,6 +2471,7 @@ def main():
         (CUSOLVER, "cusolver", cusolver_functions_with_annotations),
         (CUSOLVERMG, "cusolvermg", cusolvermg_functions_with_annotations),
         (NVRTC, "nvrtc", nvrtc_functions_with_annotations),
+        (NCCL, "nccl", nccl_functions_with_annotations),
     ):
         with open(f"gen_{target}_client.inc", "w") as f:
             f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
@@ -2405,10 +2487,12 @@ def main():
                     write_client_wrapper(f, backend, function, operations, metadata)
                 if metadata.guard is not None:
                     f.write("#endif\n\n")
+            write_profiling_aliases(f, backend, functions)
 
         with open(f"gen_{target}_server.inc", "w") as f:
             f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
             write_scalar_slot(f, functions)
+            write_versioned_struct_helper(f, functions)
             for function, _, operations, metadata in functions:
                 if metadata.disabled_server or unsupported(function, metadata):
                     continue
@@ -2479,6 +2563,7 @@ def main():
         ("CUSOLVER", cusolver_functions_with_annotations),
         ("CUSOLVERMG", cusolvermg_functions_with_annotations),
         ("NVRTC", nvrtc_functions_with_annotations),
+        ("NCCL", nccl_functions_with_annotations),
     ):
         generated_bindings.extend(
             ServerBinding(
@@ -2578,6 +2663,9 @@ def main():
             "gen_nvrtc_client.inc",
             "gen_nvrtc_server.inc",
             "gen_nvrtc_server.h",
+            "gen_nccl_client.inc",
+            "gen_nccl_server.inc",
+            "gen_nccl_server.h",
         ],
         check=True,
     )
@@ -2646,6 +2734,11 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_nvrtc_server.inc",
             "gen_nvrtc_server.h",
         ],
+        "nccl": [
+            "gen_nccl_client.inc",
+            "gen_nccl_server.inc",
+            "gen_nccl_server.h",
+        ],
     }
     forbidden = {
         "cuda": ["nvml", "hip"],
@@ -2659,6 +2752,7 @@ def verify_backend_boundaries(backend: str) -> None:
         "cusolver": ["nvml", "hip"],
         "cusolvermg": ["nvml", "hip"],
         "nvrtc": ["nvml", "hip"],
+        "nccl": ["nvml", "hip"],
         "nvml": ["cuda_compat", "<cuda.h>", "handle_cu", "hip"],
         "hip": ["cuda", "nvml"],
     }
@@ -2679,7 +2773,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--verify-backend",
-        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "cusolver", "cusolvermg", "nvrtc", "nvml", "hip"),
+        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "cusolver", "cusolvermg", "nvrtc", "nccl", "nvml", "hip"),
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()

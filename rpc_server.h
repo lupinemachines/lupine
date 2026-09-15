@@ -20,7 +20,8 @@ enum class rpc_backend {
   curand,
   cusparse,
   cusolver,
-  nvrtc
+  nvrtc,
+  nccl
 };
 
 struct rpc_handler {

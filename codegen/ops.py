@@ -1128,6 +1128,130 @@ class ScalarOperation:
         )
 
 
+@dataclass
+class VersionedStructOperation:
+    """
+    An optional pointer to a versioned, append-only configuration struct whose
+    leading `size` member says how many bytes the caller's header defines (an
+    NCCL `ncclConfig_t`). The caller's bytes travel, then each string member's
+    length and text; the server widens the struct to its own size and points
+    the string members at its copies. Members named in `cleared` are client
+    addresses the library ignores, so the server nulls them. A member is
+    patched only when it lies within the caller's size. A member some headers
+    lack names the preprocessor condition that declares it in
+    `member_guards`; its length still travels, so builds against different
+    headers keep one wire format.
+    """
+
+    parameter: Parameter
+    ptr: Pointer
+    strings: tuple[str, ...]
+    cleared: tuple[str, ...]
+    member_guards: dict
+    send: bool = True
+    recv: bool = False
+
+    def struct_type(self) -> str:
+        c = self.ptr.ptr_to.const
+        self.ptr.ptr_to.const = False
+        name = self.ptr.ptr_to.format()
+        self.ptr.ptr_to.const = c
+        return name
+
+    def guarded(self, member: str, text: str) -> str:
+        guard = self.member_guards.get(member)
+        return f"#if {guard}\n{text}#endif\n" if guard else text
+
+    def client_declaration(self) -> str:
+        name = self.parameter.name
+        type_ = self.struct_type()
+        s = f"    uint64_t {name}_size = {name} != nullptr ? {name}->size : 0;\n"
+        for member in self.strings:
+            s += f"    uint32_t {name}_{member}_len = 0;\n"
+            s += self.guarded(
+                member,
+                f"    if (offsetof({type_}, {member}) + sizeof(char *) <= {name}_size &&\n"
+                f"        {name}->{member} != nullptr)\n"
+                f"        {name}_{member}_len = static_cast<uint32_t>(std::strlen({name}->{member}) + 1);\n",
+            )
+        return s
+
+    def client_rpc_write(self, f):
+        name = self.parameter.name
+        f.write(f"        rpc_write(conn, &{name}_size, sizeof({name}_size)) < 0 ||\n")
+        f.write(
+            f"        ({name}_size != 0 && rpc_write(conn, {name}, {name}_size) < 0) ||\n"
+        )
+        for member in self.strings:
+            f.write(
+                f"        rpc_write(conn, &{name}_{member}_len, sizeof(uint32_t)) < 0 ||\n"
+            )
+            f.write(
+                self.guarded(
+                    member,
+                    f"        ({name}_{member}_len != 0 &&\n"
+                    f"         rpc_write(conn, {name}->{member}, {name}_{member}_len) < 0) ||\n",
+                )
+            )
+
+    def client_rpc_read(self, f):
+        return
+
+    @property
+    def server_declaration(self) -> str:
+        name = self.parameter.name
+        s = (
+            f"    uint64_t {name}_size = 0;\n"
+            f"    std::vector<unsigned char> {name}_bytes;\n"
+        )
+        for member in self.strings:
+            s += (
+                f"    uint32_t {name}_{member}_len = 0;\n"
+                f"    std::string {name}_{member};\n"
+            )
+        return s
+
+    def server_rpc_read(self, f):
+        name = self.parameter.name
+        type_ = self.struct_type()
+        f.write(
+            f"        rpc_read(conn, &{name}_size, sizeof({name}_size)) < 0 ||\n"
+            f"        ({name}_bytes.assign(std::max<uint64_t>({name}_size, sizeof({type_})), 0),\n"
+            f"         {name}_size != 0 && rpc_read(conn, {name}_bytes.data(), {name}_size) < 0) ||\n"
+        )
+        for member in self.strings:
+            f.write(
+                f"        rpc_read(conn, &{name}_{member}_len, sizeof(uint32_t)) < 0 ||\n"
+                f"        ({name}_{member}.resize({name}_{member}_len),\n"
+                f"         {name}_{member}_len != 0 &&\n"
+                f"             rpc_read(conn, &{name}_{member}[0], {name}_{member}_len) < 0) ||\n"
+            )
+        return None
+
+    @property
+    def server_reference(self) -> str:
+        name = self.parameter.name
+        type_ = self.struct_type()
+        strings = "".join(
+            self.guarded(
+                member,
+                f"{{offsetof({type_}, {member}), {name}_{member}_len != 0 ? {name}_{member}.c_str() : nullptr}},\n",
+            )
+            for member in self.strings
+        )
+        cleared = "".join(
+            self.guarded(member, f"offsetof({type_}, {member}),\n")
+            for member in self.cleared
+        )
+        return (
+            f"lupine_versioned_struct<{type_}>({name}_bytes, {name}_size,\n"
+            f"{{\n{strings}}},\n{{\n{cleared}}})"
+        )
+
+    def server_rpc_write(self, f):
+        return
+
+
 Operation = Union[
     NullableOperation,
     ArrayOperation,
@@ -1135,6 +1259,7 @@ Operation = Union[
     OpaqueTypeOperation,
     DereferenceOperation,
     ScalarOperation,
+    VersionedStructOperation,
 ]
 
 

@@ -40,6 +40,22 @@ RUN apt-get update \
     && cp -L /usr/include/*-linux-gnu/cudnn*.h /opt/cudnn/include/ \
     && rm -rf /var/lib/apt/lists/*
 
+FROM cuda-sdk AS nccl-headers
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG CUDA_VERSION
+
+# NCCL ships outside the toolkit too. Its header comes from the newest release
+# built for this CUDA series, the one the server image installs.
+RUN apt-get update \
+    && cuda_series_dot="$(printf '%s' "${CUDA_VERSION}" | awk -F. '{print $1 "." $2}')" \
+    && nccl_version="$(apt-cache madison libnccl-dev | awk -v s="+cuda${cuda_series_dot}" 'index($3, s) {print $3; exit}')" \
+    && apt-get install -y --no-install-recommends --allow-downgrades --allow-change-held-packages \
+         "libnccl2=${nccl_version}" "libnccl-dev=${nccl_version}" \
+    && mkdir -p /opt/nccl/include \
+    && cp -L /usr/include/nccl.h /opt/nccl/include/ \
+    && rm -rf /var/lib/apt/lists/*
+
 FROM ubuntu:${UBUNTU_VERSION} AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -52,6 +68,7 @@ ARG CUDA_VERSION
 # so CUDA and ROCm compiler SDKs never have to coexist here.
 COPY --from=cuda-sdk /usr/local/cuda/include/ /usr/local/cuda/include/
 COPY --from=cudnn-headers /opt/cudnn/include/ /usr/local/cuda/include/
+COPY --from=nccl-headers /opt/nccl/include/ /usr/local/cuda/include/
 COPY --from=cuda-sdk /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so
 COPY --from=cuda-ops /opt/lupine-precompiled-ops/ /opt/lupine-precompiled-ops/
 COPY --from=rocm-sdk /opt/rocm/include/ /opt/rocm/include/
@@ -85,7 +102,7 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
 FROM builder AS client-build
 
 RUN cmake --build /opt/lupine/build --parallel \
-      --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_cublaslt_client lupine_cufft_client lupine_cudnn_client lupine_curand_client lupine_cusparse_client lupine_cusolver_client lupine_cusolvermg_client lupine_nvrtc_client lupine_nvml_client lupine_hip_client
+      --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_cublaslt_client lupine_cufft_client lupine_cudnn_client lupine_curand_client lupine_cusparse_client lupine_cusolver_client lupine_cusolvermg_client lupine_nvrtc_client lupine_nccl_client lupine_nvml_client lupine_hip_client
 
 FROM builder AS server-build
 
@@ -105,7 +122,7 @@ ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
 LABEL org.opencontainers.image.title="lupine-client"
-LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NVML, and HIP shims"
+LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, NVML, and HIP shims"
 LABEL org.opencontainers.image.source="https://github.com/lupinemachines/lupine"
 LABEL org.opencontainers.image.version="${CUDA_VERSION}-rocm-${ROCM_VERSION}-ubuntu${UBUNTU_VERSION}"
 
@@ -158,6 +175,7 @@ COPY --from=client-build /opt/lupine/build/libcusparse.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcusolver.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcusolverMg.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnvrtc.so* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libnccl.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1
 COPY --from=client-build /opt/lupine/build/libamdhip64.so.1 /opt/lupine/lib/libamdhip64.so.1
 
@@ -212,8 +230,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
          -O /tmp/cuda-keyring.deb \
     && apt-get install -y --no-install-recommends /tmp/cuda-keyring.deb \
     && apt-get update \
+    && nccl_version="$(apt-cache madison libnccl2 | awk -v s="+cuda$(printf '%s' "${CUDA_VERSION}" | awk -F. '{print $1 "." $2}')" 'index($3, s) {print $3; exit}')" \
     && apt-get install -y --no-install-recommends "cuda-compat-${cuda_series}" "cuda-cudart-${cuda_series}" "libcublas-${cuda_series}" "libcufft-${cuda_series}" "libcurand-${cuda_series}" "libcusparse-${cuda_series}" "libcusolver-${cuda_series}" "cuda-nvrtc-${cuda_series}" \
-         "libcudnn9-cuda-${CUDA_VERSION%%.*}" \
+         "libcudnn9-cuda-${CUDA_VERSION%%.*}" "libnccl2=${nccl_version}" \
     && cuda_series_dot="$(printf '%s' "${CUDA_VERSION}" | awk -F. '{print $1 "." $2}')" \
     && ln -sfn "cuda-${cuda_series_dot}" /usr/local/cuda \
     && if [ "$arch" = amd64 ]; then \
