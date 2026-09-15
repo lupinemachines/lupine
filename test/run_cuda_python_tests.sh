@@ -30,7 +30,6 @@ SERVER_REMOTE_CLEANUP="${SERVER_REMOTE_CLEANUP:-1}"
 SERVER_LD_LIBRARY_PATH="${SERVER_LD_LIBRARY_PATH:-}"
 
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
-LUPINE_LIB_DIR="$(cd "$(dirname "$LUPINE_LIB")" && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-$repo_root/.venv-pytorch312/bin/python}"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
@@ -49,6 +48,7 @@ Environment:
   CUDA_PYTHON_INSTALL    auto installs the bindings matching the CUDA toolkit
                          major plus pytest into PYTHON_BIN's environment; 0 skips.
   CUDA_PYTHON_SKIP_LIST  Comma or space separated units to mark SKIP:disabled.
+  LIST_TESTS             1 lists a prepared checkout without installation.
   PYTHON_BIN             Interpreter. Default: $PYTHON_BIN
   SERVER_SSH_TARGET      GPU host. Default: $SERVER_SSH_TARGET
   SERVER_PORT_BASE       First per-unit server port. Default: $SERVER_PORT_BASE
@@ -62,55 +62,10 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-for f in "$SERVER_LOCAL_BIN" "$LUPINE_LIB"; do
-  [[ -e "$f" ]] || { echo "missing build artifact: $f (build lupine first)" >&2; exit 1; }
-done
-if [[ ! -x "$PYTHON_BIN" ]]; then
-  echo "missing python: $PYTHON_BIN" >&2
-  exit 1
-fi
-
-cuda_major() {
-  local release=""
-  if [[ -x "$CUDA_HOME/bin/nvcc" ]]; then
-    release="$("$CUDA_HOME/bin/nvcc" --version | sed -nE 's/.*release ([0-9]+)\..*/\1/p' | head -n1)"
-  fi
-  if [[ -z "$release" && -f "$CUDA_HOME/version.json" ]]; then
-    release="$(sed -nE 's/.*"cuda"[^0-9]*([0-9]+)\..*/\1/p' "$CUDA_HOME/version.json" | head -n1)"
-  fi
-  printf '%s\n' "$release"
-}
-
-# cuda-bindings was split out of cuda-python at 12.6.1; the 11.8 line still
-# ships as cuda-python with the cuda.cuda/cuda.cudart module layout.
-major="$(cuda_major)"
-case "$major" in
-  11) package=cuda-python; spec="cuda-python==11.8.*" ;;
-  12) package=cuda-bindings; spec="cuda-bindings==12.*" ;;
-  13) package=cuda-bindings; spec="cuda-bindings==13.*" ;;
-  *) echo "cannot map CUDA toolkit major '$major' to a cuda-python release" >&2; exit 1 ;;
-esac
-
-if [[ "$CUDA_PYTHON_INSTALL" != "0" ]]; then
-  "$PYTHON_BIN" -m pip install --quiet "$spec" numpy pytest pytest-benchmark
-fi
-installed="$("$PYTHON_BIN" -c "from importlib.metadata import version; print(version('$package'))")"
-if [[ -z "$CUDA_PYTHON_REF" ]]; then
-  CUDA_PYTHON_REF="v$installed"
-fi
-
-mkdir -p "$RESULTS_DIR"
-if [[ "$CUDA_PYTHON_INSTALL" != "0" ]]; then
-  mkdir -p "$(dirname "$CUDA_PYTHON_DIR")"
-  if [[ ! -d "$CUDA_PYTHON_DIR/.git" ]]; then
-    rm -rf "$CUDA_PYTHON_DIR"
-    git clone --quiet "$CUDA_PYTHON_URL" "$CUDA_PYTHON_DIR"
-  fi
-  git config --global --add safe.directory "$CUDA_PYTHON_DIR"
-  if [[ "$(git -C "$CUDA_PYTHON_DIR" describe --tags --exact-match 2>/dev/null || true)" != "$CUDA_PYTHON_REF" ]]; then
-    git -C "$CUDA_PYTHON_DIR" fetch --quiet --tags origin
-    git -C "$CUDA_PYTHON_DIR" checkout --quiet "$CUDA_PYTHON_REF"
-  fi
+if [[ "${LIST_TESTS:-0}" != "1" && "$CUDA_PYTHON_INSTALL" != "0" ]]; then
+  PYTHON_BIN="$PYTHON_BIN" CUDA_HOME="$CUDA_HOME" CUDA_PYTHON_URL="$CUDA_PYTHON_URL" \
+    CUDA_PYTHON_REF="$CUDA_PYTHON_REF" CUDA_PYTHON_DIR="$CUDA_PYTHON_DIR" \
+    bash "$repo_root/test/prepare_cuda_python.sh"
 fi
 
 tests_dir=""
@@ -121,7 +76,7 @@ for d in cuda_bindings/tests cuda/tests; do
   fi
 done
 if [[ -z "$tests_dir" ]]; then
-  echo "no tests directory in $CUDA_PYTHON_DIR at $CUDA_PYTHON_REF" >&2
+  echo "no tests directory in $CUDA_PYTHON_DIR; run test/prepare_cuda_python.sh first" >&2
   exit 1
 fi
 examples_dir=""
@@ -160,6 +115,17 @@ if [[ "${LIST_TESTS:-0}" == "1" ]]; then
   printf '%s\n' "${UNITS[@]}"
   exit 0
 fi
+
+for f in "$SERVER_LOCAL_BIN" "$LUPINE_LIB"; do
+  [[ -e "$f" ]] || { echo "missing build artifact: $f (build lupine first)" >&2; exit 1; }
+done
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  echo "missing python: $PYTHON_BIN" >&2
+  exit 1
+fi
+
+LUPINE_LIB_DIR="$(cd "$(dirname "$LUPINE_LIB")" && pwd)"
+mkdir -p "$RESULTS_DIR"
 
 ssh_with_timeout() {
   timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
@@ -217,7 +183,7 @@ pass=0
 fail=0
 skip=0
 
-echo "cuda-python $CUDA_PYTHON_REF ($package $installed), ${#UNITS[@]} units" >&2
+echo "cuda-python tests in $CUDA_PYTHON_DIR, ${#UNITS[@]} units" >&2
 
 for i in "${!UNITS[@]}"; do
   unit="${UNITS[$i]}"

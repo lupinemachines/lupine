@@ -308,6 +308,7 @@ jobs:
 
           ARG INTEGRATION_BINARY_CACHE_HIT=false
           ARG CUDA_SAMPLES_ARCH
+          ARG PYTORCH_INDEX_URL
           ENV DEBIAN_FRONTEND=noninteractive \
               CUDA_HOME=/usr/local/cuda \
               CUDA_LIB_DIR=/usr/local/cuda/lib64 \
@@ -385,6 +386,16 @@ jobs:
                 LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples LIBRARY_SAMPLES_ARCH="$CUDA_SAMPLES_ARCH" \
                   BUILD_ONLY=1 bash /opt/lupine/run_cuda_library_samples.sh; \
               fi
+
+          # Python setup is part of the dependency image, before the source copy.
+          COPY test/prepare_cuda_python.sh /opt/lupine/prepare_cuda_python.sh
+          RUN python3 -m venv /opt/venv-pytorch && \
+              /opt/venv-pytorch/bin/pip install --upgrade pip && \
+              /opt/venv-pytorch/bin/pip install numpy && \
+              /opt/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch
+          ENV PYTHON_BIN=/opt/venv-pytorch/bin/python \
+              CUDA_PYTHON_DIR=/opt/cuda-python
+          RUN bash /opt/lupine/prepare_cuda_python.sh
 
           WORKDIR /src
           COPY . /src
@@ -546,6 +557,7 @@ jobs:
             --file "${RUNNER_TEMP}/gpu-integration.Dockerfile" \
             --tag "$CLIENT_IMAGE" \
             --build-arg "BASE_IMAGE=${{ matrix.client_image }}" \
+            --build-arg "PYTORCH_INDEX_URL=${{ matrix.pytorch_index_url }}" \
             --build-arg "CUDA_SAMPLES_ARCH=$CUDA_SAMPLES_ARCH" \
             --build-arg "INTEGRATION_BINARY_CACHE_HIT=$INTEGRATION_BINARY_CACHE_HIT" \
             .
@@ -659,14 +671,11 @@ jobs:
               export LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT"
               export CUDA_SAMPLES_DIR=/opt/cuda-samples-src
               export CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build
-              export CUDA_PYTHON_DIR=/tmp/cuda-python
+              export CUDA_PYTHON_DIR=/opt/cuda-python
               export LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples
 
-              python3 -m venv /tmp/venv-pytorch
-              /tmp/venv-pytorch/bin/pip install --upgrade pip >/dev/null
-              /tmp/venv-pytorch/bin/pip install numpy >/dev/null
-              /tmp/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch >/dev/null
-              export PYTHON_BIN=/tmp/venv-pytorch/bin/python
+              export PYTHON_BIN=/opt/venv-pytorch/bin/python
+              export CUDA_PYTHON_INSTALL=0
               # PyTorch brings a cuDNN wheel; the cuDNN custom test builds
               # against it and runs it through the driver and runtime shims.
               export CUDNN_HOME="$("$PYTHON_BIN" -c "import nvidia.cudnn; print(list(nvidia.cudnn.__path__)[0])")"
