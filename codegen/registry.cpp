@@ -22,6 +22,9 @@
 #ifdef LUPINE_BUILD_CUSPARSE_BACKEND
 #include <cusparse.h>
 #endif
+#ifdef LUPINE_BUILD_CUSOLVER_BACKEND
+#include <cusolver_common.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -1711,6 +1714,586 @@
   HANDLER(RPC_cusparseSpMMOp_createPlan, handle_cusparseSpMMOp_createPlan, rpc_backend::cusparse) \
   HANDLER(RPC_cusparseSpMMOp, handle_cusparseSpMMOp, rpc_backend::cusparse) \
   HANDLER(RPC_cusparseSpMMOp_destroyPlan, handle_cusparseSpMMOp_destroyPlan, rpc_backend::cusparse)
+#define LUPINE_CUSOLVER_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cusolverDnIRSInfosGetResidualHistory, handle_cusolverDnIRSInfosGetResidualHistory, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfExtractBundledFactorsHost, handle_cusolverRfExtractBundledFactorsHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfExtractSplitFactorsHost, handle_cusolverRfExtractSplitFactorsHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfBatchSetupHost, handle_cusolverRfBatchSetupHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverGetProperty, handle_cusolverGetProperty, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverGetVersion, handle_cusolverGetVersion, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCreate, handle_cusolverDnCreate, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDestroy, handle_cusolverDnDestroy, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSetStream, handle_cusolverDnSetStream, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnGetStream, handle_cusolverDnGetStream, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSParamsCreate, handle_cusolverDnIRSParamsCreate, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSParamsDestroy, handle_cusolverDnIRSParamsDestroy, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSParamsSetRefinementSolver, handle_cusolverDnIRSParamsSetRefinementSolver, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSParamsSetSolverMainPrecision, handle_cusolverDnIRSParamsSetSolverMainPrecision, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSParamsSetSolverLowestPrecision, handle_cusolverDnIRSParamsSetSolverLowestPrecision, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSParamsSetSolverPrecisions, handle_cusolverDnIRSParamsSetSolverPrecisions, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSParamsSetTol, handle_cusolverDnIRSParamsSetTol, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSParamsSetTolInner, handle_cusolverDnIRSParamsSetTolInner, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSParamsSetMaxIters, handle_cusolverDnIRSParamsSetMaxIters, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSParamsSetMaxItersInner, handle_cusolverDnIRSParamsSetMaxItersInner, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSParamsGetMaxIters, handle_cusolverDnIRSParamsGetMaxIters, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSParamsEnableFallback, handle_cusolverDnIRSParamsEnableFallback, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSParamsDisableFallback, handle_cusolverDnIRSParamsDisableFallback, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSInfosDestroy, handle_cusolverDnIRSInfosDestroy, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSInfosCreate, handle_cusolverDnIRSInfosCreate, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSInfosGetNiters, handle_cusolverDnIRSInfosGetNiters, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSInfosGetOuterNiters, handle_cusolverDnIRSInfosGetOuterNiters, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSInfosRequestResidual, handle_cusolverDnIRSInfosRequestResidual, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSInfosGetMaxIters, handle_cusolverDnIRSInfosGetMaxIters, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZZgesv, handle_cusolverDnZZgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZCgesv, handle_cusolverDnZCgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZKgesv, handle_cusolverDnZKgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZEgesv, handle_cusolverDnZEgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZYgesv, handle_cusolverDnZYgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCCgesv, handle_cusolverDnCCgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCEgesv, handle_cusolverDnCEgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCKgesv, handle_cusolverDnCKgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCYgesv, handle_cusolverDnCYgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDDgesv, handle_cusolverDnDDgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDSgesv, handle_cusolverDnDSgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDHgesv, handle_cusolverDnDHgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDBgesv, handle_cusolverDnDBgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDXgesv, handle_cusolverDnDXgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSSgesv, handle_cusolverDnSSgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSHgesv, handle_cusolverDnSHgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSBgesv, handle_cusolverDnSBgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSXgesv, handle_cusolverDnSXgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZZgesv_bufferSize, handle_cusolverDnZZgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZCgesv_bufferSize, handle_cusolverDnZCgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZKgesv_bufferSize, handle_cusolverDnZKgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZEgesv_bufferSize, handle_cusolverDnZEgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZYgesv_bufferSize, handle_cusolverDnZYgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCCgesv_bufferSize, handle_cusolverDnCCgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCKgesv_bufferSize, handle_cusolverDnCKgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCEgesv_bufferSize, handle_cusolverDnCEgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCYgesv_bufferSize, handle_cusolverDnCYgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDDgesv_bufferSize, handle_cusolverDnDDgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDSgesv_bufferSize, handle_cusolverDnDSgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDHgesv_bufferSize, handle_cusolverDnDHgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDBgesv_bufferSize, handle_cusolverDnDBgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDXgesv_bufferSize, handle_cusolverDnDXgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSSgesv_bufferSize, handle_cusolverDnSSgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSHgesv_bufferSize, handle_cusolverDnSHgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSBgesv_bufferSize, handle_cusolverDnSBgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSXgesv_bufferSize, handle_cusolverDnSXgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZZgels, handle_cusolverDnZZgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZCgels, handle_cusolverDnZCgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZKgels, handle_cusolverDnZKgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZEgels, handle_cusolverDnZEgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZYgels, handle_cusolverDnZYgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCCgels, handle_cusolverDnCCgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCKgels, handle_cusolverDnCKgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCEgels, handle_cusolverDnCEgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCYgels, handle_cusolverDnCYgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDDgels, handle_cusolverDnDDgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDSgels, handle_cusolverDnDSgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDHgels, handle_cusolverDnDHgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDBgels, handle_cusolverDnDBgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDXgels, handle_cusolverDnDXgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSSgels, handle_cusolverDnSSgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSHgels, handle_cusolverDnSHgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSBgels, handle_cusolverDnSBgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSXgels, handle_cusolverDnSXgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZZgels_bufferSize, handle_cusolverDnZZgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZCgels_bufferSize, handle_cusolverDnZCgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZKgels_bufferSize, handle_cusolverDnZKgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZEgels_bufferSize, handle_cusolverDnZEgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZYgels_bufferSize, handle_cusolverDnZYgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCCgels_bufferSize, handle_cusolverDnCCgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCKgels_bufferSize, handle_cusolverDnCKgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCEgels_bufferSize, handle_cusolverDnCEgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCYgels_bufferSize, handle_cusolverDnCYgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDDgels_bufferSize, handle_cusolverDnDDgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDSgels_bufferSize, handle_cusolverDnDSgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDHgels_bufferSize, handle_cusolverDnDHgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDBgels_bufferSize, handle_cusolverDnDBgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDXgels_bufferSize, handle_cusolverDnDXgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSSgels_bufferSize, handle_cusolverDnSSgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSHgels_bufferSize, handle_cusolverDnSHgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSBgels_bufferSize, handle_cusolverDnSBgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSXgels_bufferSize, handle_cusolverDnSXgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSXgesv, handle_cusolverDnIRSXgesv, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSXgesv_bufferSize, handle_cusolverDnIRSXgesv_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSXgels, handle_cusolverDnIRSXgels, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnIRSXgels_bufferSize, handle_cusolverDnIRSXgels_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSpotrf_bufferSize, handle_cusolverDnSpotrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDpotrf_bufferSize, handle_cusolverDnDpotrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCpotrf_bufferSize, handle_cusolverDnCpotrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZpotrf_bufferSize, handle_cusolverDnZpotrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSpotrf, handle_cusolverDnSpotrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDpotrf, handle_cusolverDnDpotrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCpotrf, handle_cusolverDnCpotrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZpotrf, handle_cusolverDnZpotrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSpotrs, handle_cusolverDnSpotrs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDpotrs, handle_cusolverDnDpotrs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCpotrs, handle_cusolverDnCpotrs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZpotrs, handle_cusolverDnZpotrs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSpotrfBatched, handle_cusolverDnSpotrfBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDpotrfBatched, handle_cusolverDnDpotrfBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCpotrfBatched, handle_cusolverDnCpotrfBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZpotrfBatched, handle_cusolverDnZpotrfBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSpotrsBatched, handle_cusolverDnSpotrsBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDpotrsBatched, handle_cusolverDnDpotrsBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCpotrsBatched, handle_cusolverDnCpotrsBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZpotrsBatched, handle_cusolverDnZpotrsBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSpotri_bufferSize, handle_cusolverDnSpotri_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDpotri_bufferSize, handle_cusolverDnDpotri_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCpotri_bufferSize, handle_cusolverDnCpotri_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZpotri_bufferSize, handle_cusolverDnZpotri_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSpotri, handle_cusolverDnSpotri, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDpotri, handle_cusolverDnDpotri, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCpotri, handle_cusolverDnCpotri, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZpotri, handle_cusolverDnZpotri, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXtrtri_bufferSize, handle_cusolverDnXtrtri_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXtrtri, handle_cusolverDnXtrtri, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSlauum_bufferSize, handle_cusolverDnSlauum_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDlauum_bufferSize, handle_cusolverDnDlauum_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnClauum_bufferSize, handle_cusolverDnClauum_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZlauum_bufferSize, handle_cusolverDnZlauum_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSlauum, handle_cusolverDnSlauum, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDlauum, handle_cusolverDnDlauum, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnClauum, handle_cusolverDnClauum, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZlauum, handle_cusolverDnZlauum, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgetrf_bufferSize, handle_cusolverDnSgetrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgetrf_bufferSize, handle_cusolverDnDgetrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgetrf_bufferSize, handle_cusolverDnCgetrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgetrf_bufferSize, handle_cusolverDnZgetrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgetrf, handle_cusolverDnSgetrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgetrf, handle_cusolverDnDgetrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgetrf, handle_cusolverDnCgetrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgetrf, handle_cusolverDnZgetrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSlaswp, handle_cusolverDnSlaswp, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDlaswp, handle_cusolverDnDlaswp, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnClaswp, handle_cusolverDnClaswp, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZlaswp, handle_cusolverDnZlaswp, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgetrs, handle_cusolverDnSgetrs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgetrs, handle_cusolverDnDgetrs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgetrs, handle_cusolverDnCgetrs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgetrs, handle_cusolverDnZgetrs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgeqrf_bufferSize, handle_cusolverDnSgeqrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgeqrf_bufferSize, handle_cusolverDnDgeqrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgeqrf_bufferSize, handle_cusolverDnCgeqrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgeqrf_bufferSize, handle_cusolverDnZgeqrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgeqrf, handle_cusolverDnSgeqrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgeqrf, handle_cusolverDnDgeqrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgeqrf, handle_cusolverDnCgeqrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgeqrf, handle_cusolverDnZgeqrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSorgqr_bufferSize, handle_cusolverDnSorgqr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDorgqr_bufferSize, handle_cusolverDnDorgqr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCungqr_bufferSize, handle_cusolverDnCungqr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZungqr_bufferSize, handle_cusolverDnZungqr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSorgqr, handle_cusolverDnSorgqr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDorgqr, handle_cusolverDnDorgqr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCungqr, handle_cusolverDnCungqr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZungqr, handle_cusolverDnZungqr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSormqr_bufferSize, handle_cusolverDnSormqr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDormqr_bufferSize, handle_cusolverDnDormqr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCunmqr_bufferSize, handle_cusolverDnCunmqr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZunmqr_bufferSize, handle_cusolverDnZunmqr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSormqr, handle_cusolverDnSormqr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDormqr, handle_cusolverDnDormqr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCunmqr, handle_cusolverDnCunmqr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZunmqr, handle_cusolverDnZunmqr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsytrf_bufferSize, handle_cusolverDnSsytrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsytrf_bufferSize, handle_cusolverDnDsytrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCsytrf_bufferSize, handle_cusolverDnCsytrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZsytrf_bufferSize, handle_cusolverDnZsytrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsytrf, handle_cusolverDnSsytrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsytrf, handle_cusolverDnDsytrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCsytrf, handle_cusolverDnCsytrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZsytrf, handle_cusolverDnZsytrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXsytrs_bufferSize, handle_cusolverDnXsytrs_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXsytrs, handle_cusolverDnXsytrs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsytri_bufferSize, handle_cusolverDnSsytri_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsytri_bufferSize, handle_cusolverDnDsytri_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCsytri_bufferSize, handle_cusolverDnCsytri_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZsytri_bufferSize, handle_cusolverDnZsytri_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsytri, handle_cusolverDnSsytri, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsytri, handle_cusolverDnDsytri, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCsytri, handle_cusolverDnCsytri, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZsytri, handle_cusolverDnZsytri, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgebrd_bufferSize, handle_cusolverDnSgebrd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgebrd_bufferSize, handle_cusolverDnDgebrd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgebrd_bufferSize, handle_cusolverDnCgebrd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgebrd_bufferSize, handle_cusolverDnZgebrd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgebrd, handle_cusolverDnSgebrd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgebrd, handle_cusolverDnDgebrd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgebrd, handle_cusolverDnCgebrd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgebrd, handle_cusolverDnZgebrd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSorgbr_bufferSize, handle_cusolverDnSorgbr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDorgbr_bufferSize, handle_cusolverDnDorgbr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCungbr_bufferSize, handle_cusolverDnCungbr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZungbr_bufferSize, handle_cusolverDnZungbr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSorgbr, handle_cusolverDnSorgbr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDorgbr, handle_cusolverDnDorgbr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCungbr, handle_cusolverDnCungbr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZungbr, handle_cusolverDnZungbr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsytrd_bufferSize, handle_cusolverDnSsytrd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsytrd_bufferSize, handle_cusolverDnDsytrd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnChetrd_bufferSize, handle_cusolverDnChetrd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZhetrd_bufferSize, handle_cusolverDnZhetrd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsytrd, handle_cusolverDnSsytrd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsytrd, handle_cusolverDnDsytrd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnChetrd, handle_cusolverDnChetrd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZhetrd, handle_cusolverDnZhetrd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSorgtr_bufferSize, handle_cusolverDnSorgtr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDorgtr_bufferSize, handle_cusolverDnDorgtr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCungtr_bufferSize, handle_cusolverDnCungtr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZungtr_bufferSize, handle_cusolverDnZungtr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSorgtr, handle_cusolverDnSorgtr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDorgtr, handle_cusolverDnDorgtr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCungtr, handle_cusolverDnCungtr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZungtr, handle_cusolverDnZungtr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSormtr_bufferSize, handle_cusolverDnSormtr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDormtr_bufferSize, handle_cusolverDnDormtr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCunmtr_bufferSize, handle_cusolverDnCunmtr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZunmtr_bufferSize, handle_cusolverDnZunmtr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSormtr, handle_cusolverDnSormtr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDormtr, handle_cusolverDnDormtr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCunmtr, handle_cusolverDnCunmtr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZunmtr, handle_cusolverDnZunmtr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgesvd_bufferSize, handle_cusolverDnSgesvd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgesvd_bufferSize, handle_cusolverDnDgesvd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgesvd_bufferSize, handle_cusolverDnCgesvd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgesvd_bufferSize, handle_cusolverDnZgesvd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgesvd, handle_cusolverDnSgesvd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgesvd, handle_cusolverDnDgesvd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgesvd, handle_cusolverDnCgesvd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgesvd, handle_cusolverDnZgesvd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsyevd_bufferSize, handle_cusolverDnSsyevd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsyevd_bufferSize, handle_cusolverDnDsyevd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCheevd_bufferSize, handle_cusolverDnCheevd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZheevd_bufferSize, handle_cusolverDnZheevd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsyevd, handle_cusolverDnSsyevd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsyevd, handle_cusolverDnDsyevd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCheevd, handle_cusolverDnCheevd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZheevd, handle_cusolverDnZheevd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsyevdx_bufferSize, handle_cusolverDnSsyevdx_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsyevdx_bufferSize, handle_cusolverDnDsyevdx_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCheevdx_bufferSize, handle_cusolverDnCheevdx_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZheevdx_bufferSize, handle_cusolverDnZheevdx_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsyevdx, handle_cusolverDnSsyevdx, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsyevdx, handle_cusolverDnDsyevdx, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCheevdx, handle_cusolverDnCheevdx, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZheevdx, handle_cusolverDnZheevdx, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsygvdx_bufferSize, handle_cusolverDnSsygvdx_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsygvdx_bufferSize, handle_cusolverDnDsygvdx_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnChegvdx_bufferSize, handle_cusolverDnChegvdx_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZhegvdx_bufferSize, handle_cusolverDnZhegvdx_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsygvdx, handle_cusolverDnSsygvdx, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsygvdx, handle_cusolverDnDsygvdx, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnChegvdx, handle_cusolverDnChegvdx, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZhegvdx, handle_cusolverDnZhegvdx, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsygvd_bufferSize, handle_cusolverDnSsygvd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsygvd_bufferSize, handle_cusolverDnDsygvd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnChegvd_bufferSize, handle_cusolverDnChegvd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZhegvd_bufferSize, handle_cusolverDnZhegvd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsygvd, handle_cusolverDnSsygvd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsygvd, handle_cusolverDnDsygvd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnChegvd, handle_cusolverDnChegvd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZhegvd, handle_cusolverDnZhegvd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCreateSyevjInfo, handle_cusolverDnCreateSyevjInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDestroySyevjInfo, handle_cusolverDnDestroySyevjInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXsyevjSetTolerance, handle_cusolverDnXsyevjSetTolerance, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXsyevjSetMaxSweeps, handle_cusolverDnXsyevjSetMaxSweeps, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXsyevjSetSortEig, handle_cusolverDnXsyevjSetSortEig, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXsyevjGetResidual, handle_cusolverDnXsyevjGetResidual, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXsyevjGetSweeps, handle_cusolverDnXsyevjGetSweeps, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsyevjBatched_bufferSize, handle_cusolverDnSsyevjBatched_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsyevjBatched_bufferSize, handle_cusolverDnDsyevjBatched_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCheevjBatched_bufferSize, handle_cusolverDnCheevjBatched_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZheevjBatched_bufferSize, handle_cusolverDnZheevjBatched_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsyevjBatched, handle_cusolverDnSsyevjBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsyevjBatched, handle_cusolverDnDsyevjBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCheevjBatched, handle_cusolverDnCheevjBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZheevjBatched, handle_cusolverDnZheevjBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsyevj_bufferSize, handle_cusolverDnSsyevj_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsyevj_bufferSize, handle_cusolverDnDsyevj_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCheevj_bufferSize, handle_cusolverDnCheevj_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZheevj_bufferSize, handle_cusolverDnZheevj_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsyevj, handle_cusolverDnSsyevj, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsyevj, handle_cusolverDnDsyevj, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCheevj, handle_cusolverDnCheevj, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZheevj, handle_cusolverDnZheevj, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsygvj_bufferSize, handle_cusolverDnSsygvj_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsygvj_bufferSize, handle_cusolverDnDsygvj_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnChegvj_bufferSize, handle_cusolverDnChegvj_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZhegvj_bufferSize, handle_cusolverDnZhegvj_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSsygvj, handle_cusolverDnSsygvj, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDsygvj, handle_cusolverDnDsygvj, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnChegvj, handle_cusolverDnChegvj, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZhegvj, handle_cusolverDnZhegvj, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCreateGesvdjInfo, handle_cusolverDnCreateGesvdjInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDestroyGesvdjInfo, handle_cusolverDnDestroyGesvdjInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgesvdjSetTolerance, handle_cusolverDnXgesvdjSetTolerance, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgesvdjSetMaxSweeps, handle_cusolverDnXgesvdjSetMaxSweeps, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgesvdjSetSortEig, handle_cusolverDnXgesvdjSetSortEig, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgesvdjGetResidual, handle_cusolverDnXgesvdjGetResidual, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgesvdjGetSweeps, handle_cusolverDnXgesvdjGetSweeps, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgesvdjBatched_bufferSize, handle_cusolverDnSgesvdjBatched_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgesvdjBatched_bufferSize, handle_cusolverDnDgesvdjBatched_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgesvdjBatched_bufferSize, handle_cusolverDnCgesvdjBatched_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgesvdjBatched_bufferSize, handle_cusolverDnZgesvdjBatched_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgesvdjBatched, handle_cusolverDnSgesvdjBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgesvdjBatched, handle_cusolverDnDgesvdjBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgesvdjBatched, handle_cusolverDnCgesvdjBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgesvdjBatched, handle_cusolverDnZgesvdjBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgesvdj_bufferSize, handle_cusolverDnSgesvdj_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgesvdj_bufferSize, handle_cusolverDnDgesvdj_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgesvdj_bufferSize, handle_cusolverDnCgesvdj_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgesvdj_bufferSize, handle_cusolverDnZgesvdj_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgesvdj, handle_cusolverDnSgesvdj, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgesvdj, handle_cusolverDnDgesvdj, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgesvdj, handle_cusolverDnCgesvdj, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgesvdj, handle_cusolverDnZgesvdj, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgesvdaStridedBatched_bufferSize, handle_cusolverDnSgesvdaStridedBatched_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgesvdaStridedBatched_bufferSize, handle_cusolverDnDgesvdaStridedBatched_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgesvdaStridedBatched_bufferSize, handle_cusolverDnCgesvdaStridedBatched_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgesvdaStridedBatched_bufferSize, handle_cusolverDnZgesvdaStridedBatched_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSgesvdaStridedBatched, handle_cusolverDnSgesvdaStridedBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDgesvdaStridedBatched, handle_cusolverDnDgesvdaStridedBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCgesvdaStridedBatched, handle_cusolverDnCgesvdaStridedBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnZgesvdaStridedBatched, handle_cusolverDnZgesvdaStridedBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnCreateParams, handle_cusolverDnCreateParams, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnDestroyParams, handle_cusolverDnDestroyParams, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnSetAdvOptions, handle_cusolverDnSetAdvOptions, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXpotrf_bufferSize, handle_cusolverDnXpotrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXpotrf, handle_cusolverDnXpotrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXpotrs, handle_cusolverDnXpotrs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgeqrf_bufferSize, handle_cusolverDnXgeqrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgeqrf, handle_cusolverDnXgeqrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgetrf_bufferSize, handle_cusolverDnXgetrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgetrf, handle_cusolverDnXgetrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgetrs, handle_cusolverDnXgetrs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXsyevd_bufferSize, handle_cusolverDnXsyevd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXsyevd, handle_cusolverDnXsyevd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXsyevdx_bufferSize, handle_cusolverDnXsyevdx_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXsyevdx, handle_cusolverDnXsyevdx, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgesvd_bufferSize, handle_cusolverDnXgesvd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgesvd, handle_cusolverDnXgesvd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgesvdp_bufferSize, handle_cusolverDnXgesvdp_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgesvdp, handle_cusolverDnXgesvdp, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgesvdr_bufferSize, handle_cusolverDnXgesvdr_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverDnXgesvdr, handle_cusolverDnXgesvdr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCreate, handle_cusolverSpCreate, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDestroy, handle_cusolverSpDestroy, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpSetStream, handle_cusolverSpSetStream, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpGetStream, handle_cusolverSpGetStream, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrissymHost, handle_cusolverSpXcsrissymHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrlsvluHost, handle_cusolverSpScsrlsvluHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrlsvluHost, handle_cusolverSpDcsrlsvluHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrlsvluHost, handle_cusolverSpCcsrlsvluHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrlsvluHost, handle_cusolverSpZcsrlsvluHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrlsvqr, handle_cusolverSpScsrlsvqr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrlsvqr, handle_cusolverSpDcsrlsvqr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrlsvqr, handle_cusolverSpCcsrlsvqr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrlsvqr, handle_cusolverSpZcsrlsvqr, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrlsvqrHost, handle_cusolverSpScsrlsvqrHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrlsvqrHost, handle_cusolverSpDcsrlsvqrHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrlsvqrHost, handle_cusolverSpCcsrlsvqrHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrlsvqrHost, handle_cusolverSpZcsrlsvqrHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrlsvcholHost, handle_cusolverSpScsrlsvcholHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrlsvcholHost, handle_cusolverSpDcsrlsvcholHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrlsvcholHost, handle_cusolverSpCcsrlsvcholHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrlsvcholHost, handle_cusolverSpZcsrlsvcholHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrlsvchol, handle_cusolverSpScsrlsvchol, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrlsvchol, handle_cusolverSpDcsrlsvchol, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrlsvchol, handle_cusolverSpCcsrlsvchol, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrlsvchol, handle_cusolverSpZcsrlsvchol, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrlsqvqrHost, handle_cusolverSpScsrlsqvqrHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrlsqvqrHost, handle_cusolverSpDcsrlsqvqrHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrlsqvqrHost, handle_cusolverSpCcsrlsqvqrHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrlsqvqrHost, handle_cusolverSpZcsrlsqvqrHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsreigvsiHost, handle_cusolverSpScsreigvsiHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsreigvsiHost, handle_cusolverSpDcsreigvsiHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsreigvsiHost, handle_cusolverSpCcsreigvsiHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsreigvsiHost, handle_cusolverSpZcsreigvsiHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsreigvsi, handle_cusolverSpScsreigvsi, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsreigvsi, handle_cusolverSpDcsreigvsi, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsreigvsi, handle_cusolverSpCcsreigvsi, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsreigvsi, handle_cusolverSpZcsreigvsi, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsreigsHost, handle_cusolverSpScsreigsHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsreigsHost, handle_cusolverSpDcsreigsHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsreigsHost, handle_cusolverSpCcsreigsHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsreigsHost, handle_cusolverSpZcsreigsHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrsymrcmHost, handle_cusolverSpXcsrsymrcmHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrsymmdqHost, handle_cusolverSpXcsrsymmdqHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrsymamdHost, handle_cusolverSpXcsrsymamdHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrmetisndHost, handle_cusolverSpXcsrmetisndHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrzfdHost, handle_cusolverSpScsrzfdHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrzfdHost, handle_cusolverSpDcsrzfdHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrzfdHost, handle_cusolverSpCcsrzfdHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrzfdHost, handle_cusolverSpZcsrzfdHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrperm_bufferSizeHost, handle_cusolverSpXcsrperm_bufferSizeHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrpermHost, handle_cusolverSpXcsrpermHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCreateCsrqrInfo, handle_cusolverSpCreateCsrqrInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDestroyCsrqrInfo, handle_cusolverSpDestroyCsrqrInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrqrAnalysisBatched, handle_cusolverSpXcsrqrAnalysisBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrqrBufferInfoBatched, handle_cusolverSpScsrqrBufferInfoBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrqrBufferInfoBatched, handle_cusolverSpDcsrqrBufferInfoBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrqrBufferInfoBatched, handle_cusolverSpCcsrqrBufferInfoBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrqrBufferInfoBatched, handle_cusolverSpZcsrqrBufferInfoBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrqrsvBatched, handle_cusolverSpScsrqrsvBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrqrsvBatched, handle_cusolverSpDcsrqrsvBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrqrsvBatched, handle_cusolverSpCcsrqrsvBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrqrsvBatched, handle_cusolverSpZcsrqrsvBatched, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCreateCsrluInfoHost, handle_cusolverSpCreateCsrluInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDestroyCsrluInfoHost, handle_cusolverSpDestroyCsrluInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrluAnalysisHost, handle_cusolverSpXcsrluAnalysisHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrluBufferInfoHost, handle_cusolverSpScsrluBufferInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrluBufferInfoHost, handle_cusolverSpDcsrluBufferInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrluBufferInfoHost, handle_cusolverSpCcsrluBufferInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrluBufferInfoHost, handle_cusolverSpZcsrluBufferInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrluFactorHost, handle_cusolverSpScsrluFactorHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrluFactorHost, handle_cusolverSpDcsrluFactorHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrluFactorHost, handle_cusolverSpCcsrluFactorHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrluFactorHost, handle_cusolverSpZcsrluFactorHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrluZeroPivotHost, handle_cusolverSpScsrluZeroPivotHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrluZeroPivotHost, handle_cusolverSpDcsrluZeroPivotHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrluZeroPivotHost, handle_cusolverSpCcsrluZeroPivotHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrluZeroPivotHost, handle_cusolverSpZcsrluZeroPivotHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrluSolveHost, handle_cusolverSpScsrluSolveHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrluSolveHost, handle_cusolverSpDcsrluSolveHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrluSolveHost, handle_cusolverSpCcsrluSolveHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrluSolveHost, handle_cusolverSpZcsrluSolveHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrluNnzHost, handle_cusolverSpXcsrluNnzHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrluExtractHost, handle_cusolverSpScsrluExtractHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrluExtractHost, handle_cusolverSpDcsrluExtractHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrluExtractHost, handle_cusolverSpCcsrluExtractHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrluExtractHost, handle_cusolverSpZcsrluExtractHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCreateCsrqrInfoHost, handle_cusolverSpCreateCsrqrInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDestroyCsrqrInfoHost, handle_cusolverSpDestroyCsrqrInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrqrAnalysisHost, handle_cusolverSpXcsrqrAnalysisHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrqrBufferInfoHost, handle_cusolverSpScsrqrBufferInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrqrBufferInfoHost, handle_cusolverSpDcsrqrBufferInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrqrBufferInfoHost, handle_cusolverSpCcsrqrBufferInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrqrBufferInfoHost, handle_cusolverSpZcsrqrBufferInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrqrSetupHost, handle_cusolverSpScsrqrSetupHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrqrSetupHost, handle_cusolverSpDcsrqrSetupHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrqrSetupHost, handle_cusolverSpCcsrqrSetupHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrqrSetupHost, handle_cusolverSpZcsrqrSetupHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrqrFactorHost, handle_cusolverSpScsrqrFactorHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrqrFactorHost, handle_cusolverSpDcsrqrFactorHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrqrFactorHost, handle_cusolverSpCcsrqrFactorHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrqrFactorHost, handle_cusolverSpZcsrqrFactorHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrqrZeroPivotHost, handle_cusolverSpScsrqrZeroPivotHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrqrZeroPivotHost, handle_cusolverSpDcsrqrZeroPivotHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrqrZeroPivotHost, handle_cusolverSpCcsrqrZeroPivotHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrqrZeroPivotHost, handle_cusolverSpZcsrqrZeroPivotHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrqrSolveHost, handle_cusolverSpScsrqrSolveHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrqrSolveHost, handle_cusolverSpDcsrqrSolveHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrqrSolveHost, handle_cusolverSpCcsrqrSolveHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrqrSolveHost, handle_cusolverSpZcsrqrSolveHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrqrAnalysis, handle_cusolverSpXcsrqrAnalysis, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrqrBufferInfo, handle_cusolverSpScsrqrBufferInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrqrBufferInfo, handle_cusolverSpDcsrqrBufferInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrqrBufferInfo, handle_cusolverSpCcsrqrBufferInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrqrBufferInfo, handle_cusolverSpZcsrqrBufferInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrqrSetup, handle_cusolverSpScsrqrSetup, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrqrSetup, handle_cusolverSpDcsrqrSetup, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrqrSetup, handle_cusolverSpCcsrqrSetup, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrqrSetup, handle_cusolverSpZcsrqrSetup, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrqrFactor, handle_cusolverSpScsrqrFactor, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrqrFactor, handle_cusolverSpDcsrqrFactor, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrqrFactor, handle_cusolverSpCcsrqrFactor, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrqrFactor, handle_cusolverSpZcsrqrFactor, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrqrZeroPivot, handle_cusolverSpScsrqrZeroPivot, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrqrZeroPivot, handle_cusolverSpDcsrqrZeroPivot, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrqrZeroPivot, handle_cusolverSpCcsrqrZeroPivot, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrqrZeroPivot, handle_cusolverSpZcsrqrZeroPivot, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrqrSolve, handle_cusolverSpScsrqrSolve, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrqrSolve, handle_cusolverSpDcsrqrSolve, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrqrSolve, handle_cusolverSpCcsrqrSolve, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrqrSolve, handle_cusolverSpZcsrqrSolve, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCreateCsrcholInfoHost, handle_cusolverSpCreateCsrcholInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDestroyCsrcholInfoHost, handle_cusolverSpDestroyCsrcholInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrcholAnalysisHost, handle_cusolverSpXcsrcholAnalysisHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrcholBufferInfoHost, handle_cusolverSpScsrcholBufferInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrcholBufferInfoHost, handle_cusolverSpDcsrcholBufferInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrcholBufferInfoHost, handle_cusolverSpCcsrcholBufferInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrcholBufferInfoHost, handle_cusolverSpZcsrcholBufferInfoHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrcholFactorHost, handle_cusolverSpScsrcholFactorHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrcholFactorHost, handle_cusolverSpDcsrcholFactorHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrcholFactorHost, handle_cusolverSpCcsrcholFactorHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrcholFactorHost, handle_cusolverSpZcsrcholFactorHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrcholZeroPivotHost, handle_cusolverSpScsrcholZeroPivotHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrcholZeroPivotHost, handle_cusolverSpDcsrcholZeroPivotHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrcholZeroPivotHost, handle_cusolverSpCcsrcholZeroPivotHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrcholZeroPivotHost, handle_cusolverSpZcsrcholZeroPivotHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrcholSolveHost, handle_cusolverSpScsrcholSolveHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrcholSolveHost, handle_cusolverSpDcsrcholSolveHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrcholSolveHost, handle_cusolverSpCcsrcholSolveHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrcholSolveHost, handle_cusolverSpZcsrcholSolveHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCreateCsrcholInfo, handle_cusolverSpCreateCsrcholInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDestroyCsrcholInfo, handle_cusolverSpDestroyCsrcholInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpXcsrcholAnalysis, handle_cusolverSpXcsrcholAnalysis, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrcholBufferInfo, handle_cusolverSpScsrcholBufferInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrcholBufferInfo, handle_cusolverSpDcsrcholBufferInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrcholBufferInfo, handle_cusolverSpCcsrcholBufferInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrcholBufferInfo, handle_cusolverSpZcsrcholBufferInfo, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrcholFactor, handle_cusolverSpScsrcholFactor, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrcholFactor, handle_cusolverSpDcsrcholFactor, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrcholFactor, handle_cusolverSpCcsrcholFactor, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrcholFactor, handle_cusolverSpZcsrcholFactor, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrcholZeroPivot, handle_cusolverSpScsrcholZeroPivot, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrcholZeroPivot, handle_cusolverSpDcsrcholZeroPivot, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrcholZeroPivot, handle_cusolverSpCcsrcholZeroPivot, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrcholZeroPivot, handle_cusolverSpZcsrcholZeroPivot, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrcholSolve, handle_cusolverSpScsrcholSolve, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrcholSolve, handle_cusolverSpDcsrcholSolve, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrcholSolve, handle_cusolverSpCcsrcholSolve, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrcholSolve, handle_cusolverSpZcsrcholSolve, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpScsrcholDiag, handle_cusolverSpScsrcholDiag, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpDcsrcholDiag, handle_cusolverSpDcsrcholDiag, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpCcsrcholDiag, handle_cusolverSpCcsrcholDiag, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverSpZcsrcholDiag, handle_cusolverSpZcsrcholDiag, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfCreate, handle_cusolverRfCreate, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfDestroy, handle_cusolverRfDestroy, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfGetMatrixFormat, handle_cusolverRfGetMatrixFormat, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfSetMatrixFormat, handle_cusolverRfSetMatrixFormat, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfSetNumericProperties, handle_cusolverRfSetNumericProperties, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfGetNumericProperties, handle_cusolverRfGetNumericProperties, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfGetNumericBoostReport, handle_cusolverRfGetNumericBoostReport, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfSetAlgs, handle_cusolverRfSetAlgs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfGetAlgs, handle_cusolverRfGetAlgs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfGetResetValuesFastMode, handle_cusolverRfGetResetValuesFastMode, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfSetResetValuesFastMode, handle_cusolverRfSetResetValuesFastMode, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfSetupHost, handle_cusolverRfSetupHost, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfSetupDevice, handle_cusolverRfSetupDevice, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfResetValues, handle_cusolverRfResetValues, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfAnalyze, handle_cusolverRfAnalyze, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfRefactor, handle_cusolverRfRefactor, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfAccessBundledFactorsDevice, handle_cusolverRfAccessBundledFactorsDevice, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfSolve, handle_cusolverRfSolve, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfBatchResetValues, handle_cusolverRfBatchResetValues, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfBatchAnalyze, handle_cusolverRfBatchAnalyze, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfBatchRefactor, handle_cusolverRfBatchRefactor, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfBatchSolve, handle_cusolverRfBatchSolve, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverRfBatchZeroPivot, handle_cusolverRfBatchZeroPivot, rpc_backend::cusolver)
+#define LUPINE_CUSOLVERMG_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cusolverMgCreate, handle_cusolverMgCreate, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgDestroy, handle_cusolverMgDestroy, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgDeviceSelect, handle_cusolverMgDeviceSelect, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgCreateDeviceGrid, handle_cusolverMgCreateDeviceGrid, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgDestroyGrid, handle_cusolverMgDestroyGrid, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgCreateMatrixDesc, handle_cusolverMgCreateMatrixDesc, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgDestroyMatrixDesc, handle_cusolverMgDestroyMatrixDesc, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgSyevd_bufferSize, handle_cusolverMgSyevd_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgSyevd, handle_cusolverMgSyevd, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgGetrf_bufferSize, handle_cusolverMgGetrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgGetrf, handle_cusolverMgGetrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgGetrs_bufferSize, handle_cusolverMgGetrs_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgGetrs, handle_cusolverMgGetrs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgPotrf_bufferSize, handle_cusolverMgPotrf_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgPotrf, handle_cusolverMgPotrf, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgPotrs_bufferSize, handle_cusolverMgPotrs_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgPotrs, handle_cusolverMgPotrs, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgPotri_bufferSize, handle_cusolverMgPotri_bufferSize, rpc_backend::cusolver) \
+  HANDLER(RPC_cusolverMgPotri, handle_cusolverMgPotri, rpc_backend::cusolver)
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
@@ -4231,6 +4814,143 @@ LUPINE_DECLARE_HANDLER(RPC_cusparseZsctr, handle_cusparseZsctr,
                        rpc_backend::cusparse)
 #endif
 #endif
+#ifdef LUPINE_BUILD_CUSOLVER_BACKEND
+LUPINE_CUSOLVER_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if CUSOLVER_VERSION >= 11500
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnSetDeterministicMode,
+                       handle_cusolverDnSetDeterministicMode,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11500
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnGetDeterministicMode,
+                       handle_cusolverDnGetDeterministicMode,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12003
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnSetMathMode, handle_cusolverDnSetMathMode,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12003
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnGetMathMode, handle_cusolverDnGetMathMode,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12003
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnSetEmulationStrategy,
+                       handle_cusolverDnSetEmulationStrategy,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12003
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnGetEmulationStrategy,
+                       handle_cusolverDnGetEmulationStrategy,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnSetFixedPointEmulationMantissaControl,
+                       handle_cusolverDnSetFixedPointEmulationMantissaControl,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnGetFixedPointEmulationMantissaControl,
+                       handle_cusolverDnGetFixedPointEmulationMantissaControl,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(
+    RPC_cusolverDnSetFixedPointEmulationMaxMantissaBitCount,
+    handle_cusolverDnSetFixedPointEmulationMaxMantissaBitCount,
+    rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(
+    RPC_cusolverDnGetFixedPointEmulationMaxMantissaBitCount,
+    handle_cusolverDnGetFixedPointEmulationMaxMantissaBitCount,
+    rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnSetFixedPointEmulationMantissaBitOffset,
+                       handle_cusolverDnSetFixedPointEmulationMantissaBitOffset,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnGetFixedPointEmulationMantissaBitOffset,
+                       handle_cusolverDnGetFixedPointEmulationMantissaBitOffset,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnSetEmulationSpecialValuesSupport,
+                       handle_cusolverDnSetEmulationSpecialValuesSupport,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnGetEmulationSpecialValuesSupport,
+                       handle_cusolverDnGetEmulationSpecialValuesSupport,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXsygvd_bufferSize,
+                       handle_cusolverDnXsygvd_bufferSize,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXsygvd, handle_cusolverDnXsygvd,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXsygvdx_bufferSize,
+                       handle_cusolverDnXsygvdx_bufferSize,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXsygvdx, handle_cusolverDnXsygvdx,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12200
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXstedc_bufferSize,
+                       handle_cusolverDnXstedc_bufferSize,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12200
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXstedc, handle_cusolverDnXstedc,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11701
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXsyevBatched_bufferSize,
+                       handle_cusolverDnXsyevBatched_bufferSize,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11701
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXsyevBatched,
+                       handle_cusolverDnXsyevBatched, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11701
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXgeev_bufferSize,
+                       handle_cusolverDnXgeev_bufferSize, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11701
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXgeev, handle_cusolverDnXgeev,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11600
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXlarft_bufferSize,
+                       handle_cusolverDnXlarft_bufferSize,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11600
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXlarft, handle_cusolverDnXlarft,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12200
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXpolar_bufferSize,
+                       handle_cusolverDnXpolar_bufferSize,
+                       rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12200
+LUPINE_DECLARE_HANDLER(RPC_cusolverDnXpolar, handle_cusolverDnXpolar,
+                       rpc_backend::cusolver)
+#endif
+LUPINE_CUSOLVERMG_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
@@ -5840,6 +6560,95 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_REGISTER_HANDLER(RPC_cusparseZsctr, handle_cusparseZsctr, rpc_backend::cusparse)
 #endif
 #endif
+#ifdef LUPINE_BUILD_CUSOLVER_BACKEND
+      LUPINE_CUSOLVER_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if CUSOLVER_VERSION >= 11500
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnSetDeterministicMode, handle_cusolverDnSetDeterministicMode, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11500
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnGetDeterministicMode, handle_cusolverDnGetDeterministicMode, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12003
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnSetMathMode, handle_cusolverDnSetMathMode, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12003
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnGetMathMode, handle_cusolverDnGetMathMode, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12003
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnSetEmulationStrategy, handle_cusolverDnSetEmulationStrategy, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12003
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnGetEmulationStrategy, handle_cusolverDnGetEmulationStrategy, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnSetFixedPointEmulationMantissaControl, handle_cusolverDnSetFixedPointEmulationMantissaControl, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnGetFixedPointEmulationMantissaControl, handle_cusolverDnGetFixedPointEmulationMantissaControl, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnSetFixedPointEmulationMaxMantissaBitCount, handle_cusolverDnSetFixedPointEmulationMaxMantissaBitCount, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnGetFixedPointEmulationMaxMantissaBitCount, handle_cusolverDnGetFixedPointEmulationMaxMantissaBitCount, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnSetFixedPointEmulationMantissaBitOffset, handle_cusolverDnSetFixedPointEmulationMantissaBitOffset, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnGetFixedPointEmulationMantissaBitOffset, handle_cusolverDnGetFixedPointEmulationMantissaBitOffset, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnSetEmulationSpecialValuesSupport, handle_cusolverDnSetEmulationSpecialValuesSupport, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnGetEmulationSpecialValuesSupport, handle_cusolverDnGetEmulationSpecialValuesSupport, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXsygvd_bufferSize, handle_cusolverDnXsygvd_bufferSize, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXsygvd, handle_cusolverDnXsygvd, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXsygvdx_bufferSize, handle_cusolverDnXsygvdx_bufferSize, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXsygvdx, handle_cusolverDnXsygvdx, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12200
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXstedc_bufferSize, handle_cusolverDnXstedc_bufferSize, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12200
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXstedc, handle_cusolverDnXstedc, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11701
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXsyevBatched_bufferSize, handle_cusolverDnXsyevBatched_bufferSize, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11701
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXsyevBatched, handle_cusolverDnXsyevBatched, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11701
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXgeev_bufferSize, handle_cusolverDnXgeev_bufferSize, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11701
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXgeev, handle_cusolverDnXgeev, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11600
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXlarft_bufferSize, handle_cusolverDnXlarft_bufferSize, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 11600
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXlarft, handle_cusolverDnXlarft, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12200
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXpolar_bufferSize, handle_cusolverDnXpolar_bufferSize, rpc_backend::cusolver)
+#endif
+#if CUSOLVER_VERSION >= 12200
+      LUPINE_REGISTER_HANDLER(RPC_cusolverDnXpolar, handle_cusolverDnXpolar, rpc_backend::cusolver)
+#endif
+      LUPINE_CUSOLVERMG_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
@@ -5862,5 +6671,7 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #undef LUPINE_CUDNN_RPC_HANDLERS
 #undef LUPINE_CURAND_RPC_HANDLERS
 #undef LUPINE_CUSPARSE_RPC_HANDLERS
+#undef LUPINE_CUSOLVER_RPC_HANDLERS
+#undef LUPINE_CUSOLVERMG_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS

@@ -18,7 +18,8 @@ enum class rpc_backend {
   cufft,
   cudnn,
   curand,
-  cusparse
+  cusparse,
+  cusolver
 };
 
 struct rpc_handler {

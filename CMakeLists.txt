@@ -740,6 +740,64 @@ if(LUPINE_BUILD_CUSPARSE)
     add_custom_target(lupine_cusparse DEPENDS lupine_cusparse_client)
 endif()
 
+if(LUPINE_BUILD_CUDA)
+    # The cuSOLVER shims need the library's own headers, which the runtime
+    # header wheels the native client builds use do not carry; without them
+    # the shims are left out of the build.
+    find_path(LUPINE_CUSOLVER_INCLUDE_DIR cusolverMg.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
+    if(LUPINE_CUSOLVER_INCLUDE_DIR)
+        file(STRINGS ${LUPINE_CUSOLVER_INCLUDE_DIR}/cusolver_common.h
+             LUPINE_CUSOLVER_MAJOR_LINE REGEX "#[ ]*define CUSOLVER_VER_MAJOR ")
+        string(REGEX REPLACE ".*define CUSOLVER_VER_MAJOR ([0-9]+).*" "\\1"
+               LUPINE_CUSOLVER_SOVERSION "${LUPINE_CUSOLVER_MAJOR_LINE}")
+        set(LUPINE_BUILD_CUSOLVER ON)
+    endif()
+endif()
+
+if(LUPINE_BUILD_CUSOLVER)
+    # Named like NVIDIA's (libcusolver.so.12, cusolver64_12.dll and the Mg
+    # pair) with the matching ELF version nodes; cuSOLVER's major is its own,
+    # not the toolkit's. They run on the runtime shim's current device, so each
+    # links both sibling shims.
+    foreach(shim IN ITEMS cusolver cusolvermg)
+        set(target lupine_${shim}_client)
+        set(output cusolver)
+        if(shim STREQUAL cusolvermg)
+            set(output cusolverMg)
+        endif()
+        configure_file(${shim}.exports.in ${shim}.exports @ONLY)
+        add_library(${target} SHARED ${shim}_client.cpp)
+        target_include_directories(${target} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
+        target_link_libraries(${target} PRIVATE
+            lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
+        set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+        lupine_manylinux2014_client(${target})
+        if(WIN32)
+            target_compile_options(${target} PRIVATE /wd4996)
+            set_target_properties(${target} PROPERTIES
+                OUTPUT_NAME ${output}64_${LUPINE_CUSOLVER_SOVERSION}
+                PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
+        else()
+            target_compile_options(${target} PRIVATE -Wno-deprecated-declarations)
+            set_target_properties(${target} PROPERTIES OUTPUT_NAME ${output})
+            if(APPLE)
+                set_target_properties(${target} PROPERTIES
+                    BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+            else()
+                target_link_options(${target} PRIVATE
+                    "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/${shim}.exports")
+                set_target_properties(${target} PROPERTIES
+                    BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+                    VERSION ${LUPINE_CUSOLVER_SOVERSION}
+                    SOVERSION ${LUPINE_CUSOLVER_SOVERSION})
+            endif()
+        endif()
+        add_custom_target(lupine_${shim} DEPENDS ${target})
+    endforeach()
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -882,6 +940,17 @@ if(LUPINE_BUILD_SERVER)
             target_link_libraries(lupine_cusparse_server PRIVATE
                 lupine_server_core ${CMAKE_DL_LIBS})
         endif()
+
+        if(LUPINE_BUILD_CUSOLVER)
+            add_library(lupine_cusolver_server STATIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/cusolver_server.cpp
+                ${CMAKE_CURRENT_SOURCE_DIR}/cusolvermg_server.cpp)
+            lupine_internal_target(lupine_cusolver_server)
+            target_include_directories(lupine_cusolver_server PRIVATE
+                ${CUDAToolkit_INCLUDE_DIRS})
+            target_link_libraries(lupine_cusolver_server PRIVATE
+                lupine_server_core ${CMAKE_DL_LIBS})
+        endif()
     endif()
 
     if(LUPINE_BUILD_NVML)
@@ -1011,6 +1080,12 @@ if(LUPINE_BUILD_SERVER)
                 LUPINE_BUILD_CUSPARSE_BACKEND)
             target_link_libraries(lupine_driver_server PRIVATE
                 lupine_cusparse_server)
+        endif()
+        if(LUPINE_BUILD_CUSOLVER)
+            target_compile_definitions(lupine_driver_server PRIVATE
+                LUPINE_BUILD_CUSOLVER_BACKEND)
+            target_link_libraries(lupine_driver_server PRIVATE
+                lupine_cusolver_server)
         endif()
     endif()
     if(LUPINE_BUILD_NVML)
@@ -1208,6 +1283,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "${lupine_cusparse_removed_check} && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseSpMV@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseCreateCsr@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseXcsrsort@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseGetErrorString@'")
     endif()
 
+    if(TARGET lupine_cusolver_client)
+        add_test(NAME cusolver_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_cusolver_client>\" | grep -q ' T cusolverDnXgetrf@@libcusolver.so.${LUPINE_CUSOLVER_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_cusolver_client>\" | grep -q ' T cusolverSpDcsrqrsvBatched@@libcusolver.so.${LUPINE_CUSOLVER_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_cusolver_client>\" | grep -q ' T cusolverRfRefactor@@libcusolver.so.${LUPINE_CUSOLVER_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_cusolvermg_client>\" | grep -q ' T cusolverMgSyevd@@libcusolverMg.so.${LUPINE_CUSOLVER_SOVERSION}$'")
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -1242,6 +1323,10 @@ endif()
 if(TARGET lupine_cusparse_client)
     message(STATUS
         "Building cuSPARSE client: lupine_cusparse_client (libcusparse.so.${LUPINE_CUSPARSE_SOVERSION})")
+endif()
+if(TARGET lupine_cusolver_client)
+    message(STATUS
+        "Building cuSOLVER clients: lupine_cusolver_client, lupine_cusolvermg_client (libcusolver.so.${LUPINE_CUSOLVER_SOVERSION})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS

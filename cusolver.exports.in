@@ -1,0 +1,9 @@
+/* The version node is literally NVIDIA's SONAME: consumers reference library
+   symbols as name@libcusolver.so.<major>. */
+libcusolver.so.@LUPINE_CUSOLVER_SOVERSION@ {
+  global:
+    cusolver[DSR]*;
+    cusolverGet*;
+  local:
+    *;
+};

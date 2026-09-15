@@ -236,7 +236,7 @@ docker pull ghcr.io/lupinemachines/lupine-client:cuda-12.4.1-ubuntu22.04
 docker pull ghcr.io/lupinemachines/lupine-server:cuda-12.4.1-ubuntu22.04
 ```
 
-Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, NVML, and HIP shims, their runtime dependencies,
+Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVML, and HIP shims, their runtime dependencies,
 and `nvidia-smi`. They are based on Ubuntu and contain neither the CUDA nor ROCm
 SDK. The `-slim` tags remain available as compatibility aliases with the same
 SDK-free contents, for example
@@ -328,17 +328,18 @@ cmake --build build
 ```
 
 CMake builds the CUDA driver shim at `build/libcuda.so.1`, the CUDA runtime shim
-at `build/libcudart.so.<major>`, the cuBLAS, cuBLASLt, cuFFT, cuRAND and
-cuSPARSE shims at `build/libcublas.so.<major>`, `build/libcublasLt.so.<major>`,
-`build/libcufft.so.<major>`, `build/libcurand.so.<major>` and
-`build/libcusparse.so.<major>` (when the toolkit's library headers are
-present), the cuDNN shim at `build/libcudnn.so.9` (when cuDNN 9 headers are found beside
+at `build/libcudart.so.<major>`, the cuBLAS, cuBLASLt, cuFFT, cuRAND,
+cuSPARSE, cuSOLVER and cuSOLVERMg shims at `build/libcublas.so.<major>`,
+`build/libcublasLt.so.<major>`, `build/libcufft.so.<major>`,
+`build/libcurand.so.<major>`, `build/libcusparse.so.<major>`,
+`build/libcusolver.so.<major>` and `build/libcusolverMg.so.<major>` (when the
+toolkit's library headers are present), the cuDNN shim at `build/libcudnn.so.9` (when cuDNN 9 headers are found beside
 the toolkit's or through `-DLUPINE_CUDNN_INCLUDE_DIR=<dir>`), the NVML shim at
 `build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and the
 server at `build/lupine_driver_server`. The runtime and library shims cover
 their whole APIs: they forward `cuda*`, `cublas*`, `cublasLt*`, `cufft*`,
-`cudnn*`, `curand*` and `cusparse*` calls on the driver shim's connections, so
-all of them must come from the same build. The server loads the machine's `libcudnn.so.9` by name.
+`cudnn*`, `curand*`, `cusparse*` and `cusolver*` calls on the driver shim's
+connections, so all of them must come from the same build. The server loads the machine's `libcudnn.so.9` by name.
 
 Redistributable server builds pass `LUPINE_CLIENT_BUNDLE_INPUT` with staged
 native client directories. CMake deterministically assembles all six platform
