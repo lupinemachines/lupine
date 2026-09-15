@@ -798,13 +798,19 @@ run_sample() {
     return 0
   fi
 
+  # Legacy IPC handles cannot export arena-backed cuMemAlloc memory.
+  local sample_env=()
+  case "$sample" in
+    simpleIPC|streamOrderedAllocationIPC) sample_env+=(LUPINE_DEVICE_ARENA=0) ;;
+  esac
+
   set +e
   (
     cd "$sample_cwd"
     timeout --kill-after=5s "$timeout_seconds" env \
       LD_LIBRARY_PATH="$(dirname "$LUPINE_LIB"):$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
       LUPINE_SERVER="$SERVER_HOST:$port" \
-      LD_PRELOAD="$LUPINE_LIB" \
+      LD_PRELOAD="$LUPINE_LIB" "${sample_env[@]}" \
       "$sample_exe" "${sample_argv[@]}"
   ) >"$log" 2>&1
   rc=$?
