@@ -1,0 +1,8 @@
+/* The version node is literally NVIDIA's SONAME: consumers reference library
+   symbols as name@libnvjpeg.so.<major>. */
+libnvjpeg.so.@LUPINE_NVJPEG_SOVERSION@ {
+  global:
+    nvjpeg*;
+  local:
+    *;
+};

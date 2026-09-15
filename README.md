@@ -233,7 +233,7 @@ docker pull ghcr.io/lupinemachines/lupine-client:cuda-12.4.1-ubuntu22.04
 docker pull ghcr.io/lupinemachines/lupine-server:cuda-12.4.1-ubuntu22.04
 ```
 
-Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, NVML, and HIP shims, their runtime dependencies,
+Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NVML, and HIP shims, their runtime dependencies,
 and `nvidia-smi`. They are based on Ubuntu and contain neither the CUDA nor ROCm
 SDK. The `-slim` tags remain available as compatibility aliases with the same
 SDK-free contents, for example
@@ -326,12 +326,13 @@ cmake --build build
 
 CMake builds the CUDA driver shim at `build/libcuda.so.1`, the CUDA runtime shim
 at `build/libcudart.so.<major>`, the cuBLAS, cuBLASLt, cuFFT, cuRAND,
-cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC and nvJitLink shims at
+cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, nvJitLink and nvJPEG shims at
 `build/libcublas.so.<major>`, `build/libcublasLt.so.<major>`,
 `build/libcufft.so.<major>`, `build/libcurand.so.<major>`,
 `build/libcusparse.so.<major>`, `build/libcusolver.so.<major>`,
-`build/libcusolverMg.so.<major>`, `build/libnvrtc.so.<major>` and
-`build/libnvJitLink.so.<major>` (when the toolkit's library headers are
+`build/libcusolverMg.so.<major>`, `build/libnvrtc.so.<major>`,
+`build/libnvJitLink.so.<major>` and `build/libnvjpeg.so.<major>` (when the
+toolkit's library headers are
 present; nvJitLink needs CUDA 12.4 or newer), the cuDNN shim at `build/libcudnn.so.9` (when cuDNN 9 headers are found beside
 the toolkit's or through `-DLUPINE_CUDNN_INCLUDE_DIR=<dir>`), the NCCL shim at
 `build/libnccl.so.2` on Linux (when NCCL 2.14.3 or newer headers are found
@@ -339,12 +340,14 @@ beside the toolkit's or through `-DLUPINE_NCCL_INCLUDE_DIR=<dir>`), the NVML
 shim at `build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and
 the server at `build/lupine_driver_server`. The runtime and library shims cover
 their whole APIs: they forward `cuda*`, `cublas*`, `cublasLt*`, `cufft*`,
-`cudnn*`, `curand*`, `cusparse*`, `cusolver*`, `nvrtc*`, `nvJitLink*` and
-`nccl*` calls on the driver shim's connections, so all of them must come from
+`cudnn*`, `curand*`, `cusparse*`, `cusolver*`, `nvrtc*`, `nvJitLink*`, `nccl*`
+and `nvjpeg*` calls on the driver shim's connections, so all of them must come from
 the same build. NVRTC compiles and nvJitLink links on the server, so their
 output matches the server's toolkit and driver; the files a program includes or
 links from the client's disk are sent along with it. The server loads the
-machine's `libcudnn.so.9` and `libnccl.so.2` by name.
+machine's `libcudnn.so.9` and `libnccl.so.2` by name. nvJPEG decodes and encodes
+on the server with the server library's default allocators, so a buffer it
+hands back through a retrieve call is a server address.
 
 A communicator whose ranks sit behind different servers needs those servers to
 reach each other: NCCL's bootstrap and transport run between the server

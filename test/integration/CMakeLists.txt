@@ -9,10 +9,11 @@ endif()
 get_filename_component(LUPINE_LIB "${LUPINE_LIB}" ABSOLUTE)
 get_filename_component(shim_dir "${LUPINE_LIB}" DIRECTORY)
 # The runtime and library shims (libcudart, libcublas, libcufft, ...) share
-# the libcu prefix with the driver shim; NVRTC, NCCL and nvJitLink are the ones
-# without it.
+# the libcu prefix with the driver shim; NVRTC, NCCL, nvJitLink and nvJPEG are
+# the ones without it.
 file(GLOB runtime_libs "${shim_dir}/libcu*.so*" "${shim_dir}/libnvrtc.so*"
-     "${shim_dir}/libnccl.so*" "${shim_dir}/libnvJitLink.so*")
+     "${shim_dir}/libnccl.so*" "${shim_dir}/libnvJitLink.so*"
+     "${shim_dir}/libnvjpeg.so*")
 list(FILTER runtime_libs EXCLUDE REGEX "/libcuda\\.so")
 file(GLOB nvml_libs "${shim_dir}/libnvidia-ml.so*")
 if(NOT EXISTS "${LUPINE_LIB}" OR NOT EXISTS "${shim_dir}/libcudart.so")

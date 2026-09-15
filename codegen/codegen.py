@@ -281,6 +281,9 @@ REGISTRY_CPP_TEMPLATE = Template(
 #define NVJITLINK_NO_INLINE
 #include <nvJitLink.h>
 #endif
+#ifdef LUPINE_BUILD_NVJPEG_BACKEND
+#include <nvjpeg.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -310,6 +313,8 @@ $nvrtc_registry_entries
 $nccl_registry_entries
 #define LUPINE_NVJITLINK_RPC_HANDLERS(HANDLER) \
 $nvjitlink_registry_entries
+#define LUPINE_NVJPEG_RPC_HANDLERS(HANDLER) \
+$nvjpeg_registry_entries
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
 $nvml_registry_entries
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
@@ -365,6 +370,10 @@ $nccl_guarded_declarations
 #ifdef LUPINE_BUILD_NVJITLINK_BACKEND
 LUPINE_NVJITLINK_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $nvjitlink_guarded_declarations
+#endif
+#ifdef LUPINE_BUILD_NVJPEG_BACKEND
+LUPINE_NVJPEG_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$nvjpeg_guarded_declarations
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -431,6 +440,10 @@ $nccl_guarded_handlers
       LUPINE_NVJITLINK_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvjitlink_guarded_handlers
 #endif
+#ifdef LUPINE_BUILD_NVJPEG_BACKEND
+      LUPINE_NVJPEG_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$nvjpeg_guarded_handlers
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvml_guarded_handlers
@@ -458,6 +471,7 @@ $hip_guarded_handlers
 #undef LUPINE_NVRTC_RPC_HANDLERS
 #undef LUPINE_NCCL_RPC_HANDLERS
 #undef LUPINE_NVJITLINK_RPC_HANDLERS
+#undef LUPINE_NVJPEG_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
 '''
@@ -492,6 +506,7 @@ SERVER_BACKENDS = {
     "NVRTC": "rpc_backend::nvrtc",
     "NCCL": "rpc_backend::nccl",
     "NVJITLINK": "rpc_backend::nvjitlink",
+    "NVJPEG": "rpc_backend::nvjpeg",
     "NVML": "rpc_backend::nvml",
     "HIP": "rpc_backend::hip",
 }
@@ -702,6 +717,17 @@ NVJITLINK = Backend(
     guard_null_conn=True,
 )
 
+# nvJPEG has no not-supported status; IMPLEMENTATION_NOT_SUPPORTED is the one it
+# documents for an unavailable feature.
+NVJPEG = Backend(
+    result="nvjpegStatus_t",
+    invalid_argument="NVJPEG_STATUS_INVALID_PARAMETER",
+    device_routing_kind="DEVICE",
+    symbol_lookup="nvjpeg_symbol",
+    guard_null_conn=True,
+    not_supported="NVJPEG_STATUS_IMPLEMENTATION_NOT_SUPPORTED",
+)
+
 ANNOTATION_FILES = {
     "cuda": "annotations_cuda.h",
     "cudart": "annotations_cudart.h",
@@ -716,6 +742,7 @@ ANNOTATION_FILES = {
     "nvrtc": "annotations_nvrtc.h",
     "nccl": "annotations_nccl.h",
     "nvjitlink": "annotations_nvjitlink.h",
+    "nvjpeg": "annotations_nvjpeg.h",
     "nvml": "annotations_nvml.h",
     "hip": "annotations_hip.h",
 }
@@ -795,6 +822,15 @@ LIBRARY_HANDLES = {
     "ncclComm_t",
     "ncclParamHandle_t",
     "nvJitLinkHandle",
+    "nvjpegHandle_t",
+    "nvjpegJpegState_t",
+    "nvjpegEncoderState_t",
+    "nvjpegEncoderParams_t",
+    "nvjpegBufferPinned_t",
+    "nvjpegBufferDevice_t",
+    "nvjpegJpegStream_t",
+    "nvjpegDecodeParams_t",
+    "nvjpegJpegDecoder_t",
 }
 
 
@@ -2064,6 +2100,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 nvjitlink_registry_entries=" \\\n".join(
                     registry_entries["NVJITLINK"]
                 ),
+                nvjpeg_registry_entries=" \\\n".join(
+                    registry_entries["NVJPEG"]
+                ),
                 nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
                 hip_registry_entries=" \\\n".join(registry_entries["HIP"]),
                 cuda_guarded_declarations="\n".join(
@@ -2105,6 +2144,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 nvjitlink_guarded_declarations="\n".join(
                     guarded_declarations["NVJITLINK"]
                 ),
+                nvjpeg_guarded_declarations="\n".join(
+                    guarded_declarations["NVJPEG"]
+                ),
                 nvml_guarded_declarations="\n".join(
                     guarded_declarations["NVML"]
                 ),
@@ -2137,6 +2179,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 ),
                 nvjitlink_guarded_handlers="\n".join(
                     guarded_handlers["NVJITLINK"]
+                ),
+                nvjpeg_guarded_handlers="\n".join(
+                    guarded_handlers["NVJPEG"]
                 ),
                 nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
@@ -2378,6 +2423,10 @@ def main():
         annotations_by_target["nvjitlink"],
         client_call_templates=client_call_templates_by_target["nvjitlink"],
     )
+    nvjpeg_functions_with_annotations = collect_backend_functions(
+        annotations_by_target["nvjpeg"],
+        client_call_templates=client_call_templates_by_target["nvjpeg"],
+    )
 
     annotated_names = sorted(
         {function.name.format() for function in cuda_annotations.namespace.functions}
@@ -2403,7 +2452,8 @@ def main():
         + cusolvermg_functions_with_annotations
         + nvrtc_functions_with_annotations
         + nccl_functions_with_annotations
-        + nvjitlink_functions_with_annotations,
+        + nvjitlink_functions_with_annotations
+        + nvjpeg_functions_with_annotations,
     )
 
     with open("gen_nvml_client.inc", "w") as f:
@@ -2516,6 +2566,7 @@ def main():
         (NVRTC, "nvrtc", nvrtc_functions_with_annotations),
         (NCCL, "nccl", nccl_functions_with_annotations),
         (NVJITLINK, "nvjitlink", nvjitlink_functions_with_annotations),
+        (NVJPEG, "nvjpeg", nvjpeg_functions_with_annotations),
     ):
         with open(f"gen_{target}_client.inc", "w") as f:
             f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
@@ -2609,6 +2660,7 @@ def main():
         ("NVRTC", nvrtc_functions_with_annotations),
         ("NCCL", nccl_functions_with_annotations),
         ("NVJITLINK", nvjitlink_functions_with_annotations),
+        ("NVJPEG", nvjpeg_functions_with_annotations),
     ):
         generated_bindings.extend(
             ServerBinding(
@@ -2714,6 +2766,9 @@ def main():
             "gen_nvjitlink_client.inc",
             "gen_nvjitlink_server.inc",
             "gen_nvjitlink_server.h",
+            "gen_nvjpeg_client.inc",
+            "gen_nvjpeg_server.inc",
+            "gen_nvjpeg_server.h",
         ],
         check=True,
     )
@@ -2792,6 +2847,11 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_nvjitlink_server.inc",
             "gen_nvjitlink_server.h",
         ],
+        "nvjpeg": [
+            "gen_nvjpeg_client.inc",
+            "gen_nvjpeg_server.inc",
+            "gen_nvjpeg_server.h",
+        ],
     }
     forbidden = {
         "cuda": ["nvml", "hip"],
@@ -2807,6 +2867,7 @@ def verify_backend_boundaries(backend: str) -> None:
         "nvrtc": ["nvml", "hip"],
         "nccl": ["nvml", "hip"],
         "nvjitlink": ["nvml", "hip"],
+        "nvjpeg": ["nvml", "hip"],
         "nvml": ["cuda_compat", "<cuda.h>", "handle_cu", "hip"],
         "hip": ["cuda", "nvml"],
     }
@@ -2827,7 +2888,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--verify-backend",
-        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "cusolver", "cusolvermg", "nvrtc", "nccl", "nvjitlink", "nvml", "hip"),
+        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "cusolver", "cusolvermg", "nvrtc", "nccl", "nvjitlink", "nvjpeg", "nvml", "hip"),
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()

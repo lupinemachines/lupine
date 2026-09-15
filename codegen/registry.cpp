@@ -35,6 +35,9 @@
 #define NVJITLINK_NO_INLINE
 #include <nvJitLink.h>
 #endif
+#ifdef LUPINE_BUILD_NVJPEG_BACKEND
+#include <nvjpeg.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -2366,6 +2369,81 @@
   HANDLER(RPC_nvJitLinkGetErrorLogSize, handle_nvJitLinkGetErrorLogSize, rpc_backend::nvjitlink) \
   HANDLER(RPC_nvJitLinkGetInfoLogSize, handle_nvJitLinkGetInfoLogSize, rpc_backend::nvjitlink) \
   HANDLER(RPC_nvJitLinkVersion, handle_nvJitLinkVersion, rpc_backend::nvjitlink)
+#define LUPINE_NVJPEG_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_nvjpegJpegStateDestroy, handle_nvjpegJpegStateDestroy, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeBatched, handle_nvjpegDecodeBatched, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeBatchedParseJpegTables, handle_nvjpegDecodeBatchedParseJpegTables, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegJpegStreamDestroy, handle_nvjpegJpegStreamDestroy, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegJpegStreamParse, handle_nvjpegJpegStreamParse, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegJpegStreamParseHeader, handle_nvjpegJpegStreamParseHeader, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegJpegStreamParseTables, handle_nvjpegJpegStreamParseTables, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeBatchedEx, handle_nvjpegDecodeBatchedEx, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegGetProperty, handle_nvjpegGetProperty, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegGetCudartProperty, handle_nvjpegGetCudartProperty, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegCreate, handle_nvjpegCreate, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegCreateSimple, handle_nvjpegCreateSimple, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegCreateEx, handle_nvjpegCreateEx, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegCreateExV2, handle_nvjpegCreateExV2, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDestroy, handle_nvjpegDestroy, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegSetDeviceMemoryPadding, handle_nvjpegSetDeviceMemoryPadding, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegGetDeviceMemoryPadding, handle_nvjpegGetDeviceMemoryPadding, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegSetPinnedMemoryPadding, handle_nvjpegSetPinnedMemoryPadding, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegGetPinnedMemoryPadding, handle_nvjpegGetPinnedMemoryPadding, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegGetHardwareDecoderInfo, handle_nvjpegGetHardwareDecoderInfo, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegJpegStateCreate, handle_nvjpegJpegStateCreate, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegGetImageInfo, handle_nvjpegGetImageInfo, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecode, handle_nvjpegDecode, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeBatchedInitialize, handle_nvjpegDecodeBatchedInitialize, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeBatchedPreAllocate, handle_nvjpegDecodeBatchedPreAllocate, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncoderStateCreate, handle_nvjpegEncoderStateCreate, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncoderStateDestroy, handle_nvjpegEncoderStateDestroy, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncoderParamsCreate, handle_nvjpegEncoderParamsCreate, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncoderParamsDestroy, handle_nvjpegEncoderParamsDestroy, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncoderParamsSetQuality, handle_nvjpegEncoderParamsSetQuality, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncoderParamsSetEncoding, handle_nvjpegEncoderParamsSetEncoding, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncoderParamsSetOptimizedHuffman, handle_nvjpegEncoderParamsSetOptimizedHuffman, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncoderParamsSetSamplingFactors, handle_nvjpegEncoderParamsSetSamplingFactors, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncodeGetBufferSize, handle_nvjpegEncodeGetBufferSize, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncodeYUV, handle_nvjpegEncodeYUV, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncodeImage, handle_nvjpegEncodeImage, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncodeRetrieveBitstreamDevice, handle_nvjpegEncodeRetrieveBitstreamDevice, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncodeRetrieveBitstream, handle_nvjpegEncodeRetrieveBitstream, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegBufferPinnedCreate, handle_nvjpegBufferPinnedCreate, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegBufferPinnedCreateV2, handle_nvjpegBufferPinnedCreateV2, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegBufferPinnedDestroy, handle_nvjpegBufferPinnedDestroy, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegBufferDeviceCreate, handle_nvjpegBufferDeviceCreate, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegBufferDeviceCreateV2, handle_nvjpegBufferDeviceCreateV2, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegBufferDeviceDestroy, handle_nvjpegBufferDeviceDestroy, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegBufferPinnedRetrieve, handle_nvjpegBufferPinnedRetrieve, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegBufferDeviceRetrieve, handle_nvjpegBufferDeviceRetrieve, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegStateAttachPinnedBuffer, handle_nvjpegStateAttachPinnedBuffer, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegStateAttachDeviceBuffer, handle_nvjpegStateAttachDeviceBuffer, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegJpegStreamCreate, handle_nvjpegJpegStreamCreate, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegJpegStreamGetJpegEncoding, handle_nvjpegJpegStreamGetJpegEncoding, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegJpegStreamGetFrameDimensions, handle_nvjpegJpegStreamGetFrameDimensions, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegJpegStreamGetComponentsNum, handle_nvjpegJpegStreamGetComponentsNum, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegJpegStreamGetComponentDimensions, handle_nvjpegJpegStreamGetComponentDimensions, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegJpegStreamGetExifOrientation, handle_nvjpegJpegStreamGetExifOrientation, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegJpegStreamGetChromaSubsampling, handle_nvjpegJpegStreamGetChromaSubsampling, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeParamsCreate, handle_nvjpegDecodeParamsCreate, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeParamsDestroy, handle_nvjpegDecodeParamsDestroy, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeParamsSetOutputFormat, handle_nvjpegDecodeParamsSetOutputFormat, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeParamsSetROI, handle_nvjpegDecodeParamsSetROI, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeParamsSetAllowCMYK, handle_nvjpegDecodeParamsSetAllowCMYK, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeParamsSetScaleFactor, handle_nvjpegDecodeParamsSetScaleFactor, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeParamsSetExifOrientation, handle_nvjpegDecodeParamsSetExifOrientation, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecoderCreate, handle_nvjpegDecoderCreate, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecoderDestroy, handle_nvjpegDecoderDestroy, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecoderJpegSupported, handle_nvjpegDecoderJpegSupported, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeBatchedSupported, handle_nvjpegDecodeBatchedSupported, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeBatchedSupportedEx, handle_nvjpegDecodeBatchedSupportedEx, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecoderStateCreate, handle_nvjpegDecoderStateCreate, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeJpeg, handle_nvjpegDecodeJpeg, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeJpegHost, handle_nvjpegDecodeJpegHost, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeJpegTransferToDevice, handle_nvjpegDecodeJpegTransferToDevice, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegDecodeJpegDevice, handle_nvjpegDecodeJpegDevice, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncoderParamsCopyMetadata, handle_nvjpegEncoderParamsCopyMetadata, rpc_backend::nvjpeg) \
+  HANDLER(RPC_nvjpegEncoderParamsCopyQuantizationTables, handle_nvjpegEncoderParamsCopyQuantizationTables, rpc_backend::nvjpeg)
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
@@ -5277,6 +5355,45 @@ LUPINE_DECLARE_HANDLER(RPC_nvJitLinkGetLinkedLTOIRSize,
                        rpc_backend::nvjitlink)
 #endif
 #endif
+#ifdef LUPINE_BUILD_NVJPEG_BACKEND
+LUPINE_NVJPEG_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1204
+LUPINE_DECLARE_HANDLER(RPC_nvjpegGetHardwareEncoderInfo,
+                       handle_nvjpegGetHardwareEncoderInfo, rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1204
+LUPINE_DECLARE_HANDLER(RPC_nvjpegEncoderStateCreateWithBackend,
+                       handle_nvjpegEncoderStateCreateWithBackend,
+                       rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1204
+LUPINE_DECLARE_HANDLER(RPC_nvjpegEncoderParamsSetRestartInterval,
+                       handle_nvjpegEncoderParamsSetRestartInterval,
+                       rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1204
+LUPINE_DECLARE_HANDLER(RPC_nvjpegEncode, handle_nvjpegEncode,
+                       rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1203
+LUPINE_DECLARE_HANDLER(RPC_nvjpegBufferPinnedResize,
+                       handle_nvjpegBufferPinnedResize, rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1203
+LUPINE_DECLARE_HANDLER(RPC_nvjpegBufferDeviceResize,
+                       handle_nvjpegBufferDeviceResize, rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1201
+LUPINE_DECLARE_HANDLER(RPC_nvjpegJpegStreamGetSamplePrecision,
+                       handle_nvjpegJpegStreamGetSamplePrecision,
+                       rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR < 13
+LUPINE_DECLARE_HANDLER(RPC_nvjpegEncoderParamsCopyHuffmanTables,
+                       handle_nvjpegEncoderParamsCopyHuffmanTables,
+                       rpc_backend::nvjpeg)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
@@ -7173,6 +7290,33 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_REGISTER_HANDLER(RPC_nvJitLinkGetLinkedLTOIRSize, handle_nvJitLinkGetLinkedLTOIRSize, rpc_backend::nvjitlink)
 #endif
 #endif
+#ifdef LUPINE_BUILD_NVJPEG_BACKEND
+      LUPINE_NVJPEG_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1204
+      LUPINE_REGISTER_HANDLER(RPC_nvjpegGetHardwareEncoderInfo, handle_nvjpegGetHardwareEncoderInfo, rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1204
+      LUPINE_REGISTER_HANDLER(RPC_nvjpegEncoderStateCreateWithBackend, handle_nvjpegEncoderStateCreateWithBackend, rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1204
+      LUPINE_REGISTER_HANDLER(RPC_nvjpegEncoderParamsSetRestartInterval, handle_nvjpegEncoderParamsSetRestartInterval, rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1204
+      LUPINE_REGISTER_HANDLER(RPC_nvjpegEncode, handle_nvjpegEncode, rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1203
+      LUPINE_REGISTER_HANDLER(RPC_nvjpegBufferPinnedResize, handle_nvjpegBufferPinnedResize, rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1203
+      LUPINE_REGISTER_HANDLER(RPC_nvjpegBufferDeviceResize, handle_nvjpegBufferDeviceResize, rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR * 100 + NVJPEG_VER_MINOR >= 1201
+      LUPINE_REGISTER_HANDLER(RPC_nvjpegJpegStreamGetSamplePrecision, handle_nvjpegJpegStreamGetSamplePrecision, rpc_backend::nvjpeg)
+#endif
+#if NVJPEG_VER_MAJOR < 13
+      LUPINE_REGISTER_HANDLER(RPC_nvjpegEncoderParamsCopyHuffmanTables, handle_nvjpegEncoderParamsCopyHuffmanTables, rpc_backend::nvjpeg)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
@@ -7200,5 +7344,6 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #undef LUPINE_NVRTC_RPC_HANDLERS
 #undef LUPINE_NCCL_RPC_HANDLERS
 #undef LUPINE_NVJITLINK_RPC_HANDLERS
+#undef LUPINE_NVJPEG_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS

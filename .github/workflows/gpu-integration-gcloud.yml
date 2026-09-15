@@ -732,7 +732,8 @@ jobs:
               # The client keeps its two shim search paths separate below.
               server_runtime_dir="${SERVER_REMOTE_BIN}-runtime"
               vendor_libs=()
-              for shim in "$LUPINE_BUILD_DIR"/libcu*.so.*; do
+              for shim in "$LUPINE_BUILD_DIR"/libcu*.so.* "$LUPINE_BUILD_DIR"/libnvjpeg.so.*; do
+                [[ -e "$shim" ]] || continue
                 name="$(basename "$shim")"
                 [[ "$name" == libcuda.so.* ]] && continue
                 if [[ "$name" == libcudnn.so.* ]]; then

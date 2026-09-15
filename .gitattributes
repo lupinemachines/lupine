@@ -44,4 +44,7 @@ codegen/gen_nccl_server.inc linguist-generated=true
 codegen/gen_nvjitlink_client.inc linguist-generated=true
 codegen/gen_nvjitlink_server.h linguist-generated=true
 codegen/gen_nvjitlink_server.inc linguist-generated=true
+codegen/gen_nvjpeg_client.inc linguist-generated=true
+codegen/gen_nvjpeg_server.h linguist-generated=true
+codegen/gen_nvjpeg_server.inc linguist-generated=true
 codegen/registry.cpp linguist-generated=true

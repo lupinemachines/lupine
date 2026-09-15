@@ -976,6 +976,59 @@ if(LUPINE_BUILD_NVJITLINK)
     add_custom_target(lupine_nvjitlink DEPENDS lupine_nvjitlink_client)
 endif()
 
+if(LUPINE_BUILD_CUDA)
+    # The nvJPEG shim needs the library's own header, which the runtime header
+    # wheels the native client builds use do not carry; without it it is left
+    # out of the build.
+    find_path(LUPINE_NVJPEG_INCLUDE_DIR nvjpeg.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
+    if(LUPINE_NVJPEG_INCLUDE_DIR)
+        file(STRINGS ${LUPINE_NVJPEG_INCLUDE_DIR}/nvjpeg.h
+             LUPINE_NVJPEG_MAJOR_LINE REGEX "#[ ]*define NVJPEG_VER_MAJOR ")
+        string(REGEX REPLACE ".*define NVJPEG_VER_MAJOR ([0-9]+).*" "\\1"
+               LUPINE_NVJPEG_SOVERSION "${LUPINE_NVJPEG_MAJOR_LINE}")
+        set(LUPINE_BUILD_NVJPEG ON)
+    endif()
+endif()
+
+if(LUPINE_BUILD_NVJPEG)
+    # Named like NVIDIA's (libnvjpeg.so.13, nvjpeg64_13.dll) with the matching
+    # ELF version node. It runs on the runtime shim's current device, so it
+    # links both sibling shims.
+    configure_file(nvjpeg.exports.in nvjpeg.exports @ONLY)
+    add_library(lupine_nvjpeg_client SHARED nvjpeg_client.cpp)
+    target_include_directories(lupine_nvjpeg_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
+    target_link_libraries(lupine_nvjpeg_client PRIVATE
+        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
+    set_target_properties(lupine_nvjpeg_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+    lupine_manylinux2014_client(lupine_nvjpeg_client)
+    if(WIN32)
+        target_compile_options(lupine_nvjpeg_client PRIVATE /wd4996)
+        set_target_properties(lupine_nvjpeg_client PROPERTIES
+            OUTPUT_NAME nvjpeg64_${LUPINE_NVJPEG_SOVERSION}
+            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        target_compile_options(lupine_nvjpeg_client PRIVATE
+            -Wno-deprecated-declarations)
+        set_target_properties(lupine_nvjpeg_client PROPERTIES
+            OUTPUT_NAME nvjpeg)
+        if(APPLE)
+            set_target_properties(lupine_nvjpeg_client PROPERTIES
+                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+        else()
+            target_link_options(lupine_nvjpeg_client PRIVATE
+                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/nvjpeg.exports")
+            set_target_properties(lupine_nvjpeg_client PROPERTIES
+                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+                VERSION ${LUPINE_NVJPEG_SOVERSION}
+                SOVERSION ${LUPINE_NVJPEG_SOVERSION})
+        endif()
+    endif()
+    add_custom_target(lupine_nvjpeg DEPENDS lupine_nvjpeg_client)
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -1035,7 +1088,7 @@ endif()
 # Every CUDA runtime and library client shim, so a consumer can load them all
 # in place of NVIDIA's without naming each one.
 get_property(lupine_runtime_client_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_(cu[a-z]+|nvrtc|nccl|nvjitlink)_client$")
+list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_(cu[a-z]+|nvrtc|nccl|nvjitlink|nvjpeg)_client$")
 list(REMOVE_ITEM lupine_runtime_client_targets lupine_cuda_client)
 add_custom_target(lupine_runtime_clients)
 if(lupine_runtime_client_targets)
@@ -1170,6 +1223,16 @@ if(LUPINE_BUILD_SERVER)
             target_include_directories(lupine_nvjitlink_server PRIVATE
                 ${CUDAToolkit_INCLUDE_DIRS})
             target_link_libraries(lupine_nvjitlink_server PRIVATE
+                lupine_server_core ${CMAKE_DL_LIBS})
+        endif()
+
+        if(LUPINE_BUILD_NVJPEG)
+            add_library(lupine_nvjpeg_server STATIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/nvjpeg_server.cpp)
+            lupine_internal_target(lupine_nvjpeg_server)
+            target_include_directories(lupine_nvjpeg_server PRIVATE
+                ${CUDAToolkit_INCLUDE_DIRS})
+            target_link_libraries(lupine_nvjpeg_server PRIVATE
                 lupine_server_core ${CMAKE_DL_LIBS})
         endif()
     endif()
@@ -1327,6 +1390,12 @@ if(LUPINE_BUILD_SERVER)
                 LUPINE_BUILD_NVJITLINK_BACKEND ${LUPINE_NVJITLINK_DEFINITIONS})
             target_link_libraries(lupine_driver_server PRIVATE
                 lupine_nvjitlink_server)
+        endif()
+        if(LUPINE_BUILD_NVJPEG)
+            target_compile_definitions(lupine_driver_server PRIVATE
+                LUPINE_BUILD_NVJPEG_BACKEND)
+            target_link_libraries(lupine_driver_server PRIVATE
+                lupine_nvjpeg_server)
         endif()
     endif()
     if(LUPINE_BUILD_NVML)
@@ -1548,6 +1617,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T nvJitLinkCreate@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T __nvJitLinkCreate_${LUPINE_NVJITLINK_MAJOR}_${LUPINE_NVJITLINK_MINOR}@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T __nvJitLinkGetLinkedPtx_${LUPINE_NVJITLINK_MAJOR}_0@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T nvJitLinkVersion@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$'")
     endif()
 
+    if(TARGET lupine_nvjpeg_client)
+        add_test(NAME nvjpeg_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_nvjpeg_client>\" | grep -q ' T nvjpegDecode@@libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjpeg_client>\" | grep -q ' T nvjpegDecodeBatchedEx@@libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjpeg_client>\" | grep -q ' T nvjpegEncodeRetrieveBitstream@@libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION}$'")
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -1598,6 +1673,10 @@ endif()
 if(TARGET lupine_nvjitlink_client)
     message(STATUS
         "Building nvJitLink client: lupine_nvjitlink_client (libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}, release ${LUPINE_NVJITLINK_MAJOR}.${LUPINE_NVJITLINK_MINOR})")
+endif()
+if(TARGET lupine_nvjpeg_client)
+    message(STATUS
+        "Building nvJPEG client: lupine_nvjpeg_client (libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS
