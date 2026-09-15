@@ -17,10 +17,16 @@ stop_remote_server() {
       pid=\$(cat '$pidfile' 2>/dev/null || true)
       if [ -n \"\$pid\" ]; then
         kill \"\$pid\" >/dev/null 2>&1 || true
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-          kill -0 \"\$pid\" >/dev/null 2>&1 || break
-          sleep 0.1
-        done
+        # pidwait wakes on process exit. Keep polling as a fallback for hosts
+        # without pidwait or kernel support, and retain the one-second grace.
+        wait_status=0
+        timeout 1s pidwait -F '$pidfile' >/dev/null 2>&1 || wait_status=\$?
+        if [ \"\$wait_status\" != 0 ] && [ \"\$wait_status\" != 124 ]; then
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 \"\$pid\" >/dev/null 2>&1 || break
+            sleep 0.1
+          done
+        fi
         kill -9 \"\$pid\" >/dev/null 2>&1 || true
       fi
     fi

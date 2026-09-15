@@ -225,7 +225,7 @@ jobs:
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl docker.io iproute2 libnghttp2-14
+          apt-get install -y --no-install-recommends ca-certificates curl docker.io iproute2 libnghttp2-14 procps
           SCRIPT
 
           if [[ -n "$CUDA_COMPAT_DEB_URL" ]]; then
