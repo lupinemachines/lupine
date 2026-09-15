@@ -4469,6 +4469,9 @@ cublasStatus_t
 cublasGetFixedPointEmulationMaxMantissaBitCount(cublasHandle_t handle,
                                                 int *maxMantissaBitCount);
 #endif
+/**
+ * @disabled
+ */
 cublasStatus_t cublasGetLoggerCallback(cublasLogCallback *userCallback);
 /**
  * @param handle SEND_ONLY
@@ -5552,6 +5555,9 @@ cublasStatus_t
 cublasSetFixedPointEmulationMaxMantissaBitCount(cublasHandle_t handle,
                                                 int maxMantissaBitCount);
 #endif
+/**
+ * @disabled
+ */
 cublasStatus_t cublasSetLoggerCallback(cublasLogCallback userCallback);
 /**
  * @param handle SEND_ONLY

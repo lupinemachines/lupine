@@ -20,7 +20,6 @@ int handle_cublasLtGetVersion(conn_t *conn);
 int handle_cublasLtHeuristicsCacheGetCapacity(conn_t *conn);
 int handle_cublasLtHeuristicsCacheSetCapacity(conn_t *conn);
 int handle_cublasLtLoggerForceDisable(conn_t *conn);
-int handle_cublasLtLoggerOpenFile(conn_t *conn);
 int handle_cublasLtLoggerSetLevel(conn_t *conn);
 int handle_cublasLtLoggerSetMask(conn_t *conn);
 int handle_cublasLtMatmul(conn_t *conn);

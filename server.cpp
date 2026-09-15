@@ -1,3 +1,6 @@
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+#include "library_logging.h"
+#endif
 #include <atomic>
 #include <cerrno>
 #include <cstdlib>
@@ -366,6 +369,9 @@ int client_handler(lupine_socket_t connfd) {
 #ifdef LUPINE_BUILD_CUDA_BACKEND
   // Finish checkpointing before releasing per-connection CUDA resources.
   checkpoint_result = lupine_server_checkpoint_child_finish();
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+  lupine_cublas_cleanup_logs(&conn);
+#endif
   lupine_server_cleanup_connection(&conn);
   lupine_server_cleanup_identity_allocations(&conn);
 #endif

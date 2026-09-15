@@ -21,6 +21,7 @@
 #include "codegen/gen_rpc_ids.h"
 #include "cublas_scalar.h"
 #include "cuda_client_rpc.h"
+#include "library_logging_client.h"
 
 namespace {
 
@@ -311,4 +312,54 @@ extern "C" const char *cublasLtGetStatusName(cublasStatus_t status) {
 
 extern "C" const char *cublasLtGetStatusString(cublasStatus_t status) {
   return status_text(RPC_cublasLtGetStatusString, status);
+}
+
+namespace {
+void log_callback(void *user_data, int level, const char *function,
+                  const char *message, size_t) {
+  reinterpret_cast<cublasLtLoggerCallback_t>(user_data)(level, function,
+                                                        message);
+}
+
+void log_file(void *user_data, int, const char *, const char *message,
+              size_t length) {
+  auto *file = static_cast<FILE *>(user_data);
+  std::fwrite(message, 1, length, file);
+  std::fflush(file);
+}
+} // namespace
+
+extern "C" cublasStatus_t
+cublasLtLoggerSetCallback(cublasLtLoggerCallback_t callback) {
+  library_log_target target;
+  if (callback != nullptr) {
+    target = {log_callback, reinterpret_cast<void *>(callback)};
+  }
+  return lupine_set_library_log_target(connection(),
+                                       RPC_cublasLtLoggerSetCallback, target);
+}
+
+extern "C" cublasStatus_t cublasLtLoggerSetFile(FILE *file) {
+  library_log_target target;
+  if (file != nullptr) {
+    target = {log_file, file};
+  }
+  return lupine_set_library_log_target(connection(), RPC_cublasLtLoggerSetFile,
+                                       target);
+}
+
+extern "C" cublasStatus_t cublasLtLoggerOpenFile(const char *logFile) {
+  uint8_t has_name = logFile != nullptr;
+  uint32_t length = has_name ? static_cast<uint32_t>(std::strlen(logFile)) : 0;
+  conn_t *conn = connection();
+  cublasStatus_t status = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasLtLoggerOpenFile) < 0 ||
+      rpc_write(conn, &has_name, sizeof(has_name)) < 0 ||
+      rpc_write(conn, &length, sizeof(length)) < 0 ||
+      rpc_write(conn, logFile, length) < 0 || rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &status, sizeof(status)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return status;
 }

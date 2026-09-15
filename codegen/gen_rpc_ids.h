@@ -1309,6 +1309,7 @@
 #define RPC_cublasGetFixedPointEmulationMantissaBitOffset 87172083
 #define RPC_cublasGetFixedPointEmulationMantissaControl 617399364
 #define RPC_cublasGetFixedPointEmulationMaxMantissaBitCount 1521697837
+#define RPC_cublasGetLoggerCallback 514492332
 #define RPC_cublasGetMathMode 1432923311
 #define RPC_cublasGetMatrix 1359813081
 #define RPC_cublasGetMatrixAsync 743593721
@@ -1391,6 +1392,7 @@
 #define RPC_cublasSetFixedPointEmulationMantissaBitOffset 1473356800
 #define RPC_cublasSetFixedPointEmulationMantissaControl 681823814
 #define RPC_cublasSetFixedPointEmulationMaxMantissaBitCount 385757747
+#define RPC_cublasSetLoggerCallback 2062760222
 #define RPC_cublasSetMathMode 1262951398
 #define RPC_cublasSetMatrix 539036324
 #define RPC_cublasSetMatrixAsync 1397548430
@@ -1617,6 +1619,8 @@
 #define RPC_cublasLtHeuristicsCacheSetCapacity 623201185
 #define RPC_cublasLtLoggerForceDisable 1053976711
 #define RPC_cublasLtLoggerOpenFile 1130133316
+#define RPC_cublasLtLoggerSetCallback 746044557
+#define RPC_cublasLtLoggerSetFile 592086259
 #define RPC_cublasLtLoggerSetLevel 600222307
 #define RPC_cublasLtLoggerSetMask 1354396115
 #define RPC_cublasLtMatmul 753914169

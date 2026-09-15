@@ -336,6 +336,16 @@ server at `build/lupine_driver_server`. The runtime and cuBLAS shims cover their
 whole APIs: they forward `cuda*`, `cublas*` and `cublasLt*` calls on the driver
 shim's connections, so all of them must come from the same build.
 
+cuBLAS and cuBLASLt logger callbacks run on the client. Logs produced during an
+API call are delivered on its calling thread before that call returns, following
+the driver log callback behavior. `cublasGetLoggerCallback` returns the client's
+registered function pointer. `cublasLtLoggerSetFile` writes the native library's
+formatted log bytes into the client's `FILE*`; pending bytes are flushed before
+user callbacks run or the file is replaced. Filename-based logging through
+`cublasLoggerConfigure` and `cublasLtLoggerOpenFile` uses the server filesystem.
+Logger settings apply to the current runtime device's server connection; configure
+each server separately when using multiple servers.
+
 Redistributable server builds pass `LUPINE_CLIENT_BUNDLE_INPUT` with staged
 native client directories. CMake deterministically assembles all six platform
 routes and links them into `lupine_driver_server`. The Docker `server` target

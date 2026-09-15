@@ -10655,12 +10655,6 @@ cublasGetFixedPointEmulationMaxMantissaBitCount(cublasHandle_t handle,
 
 #endif
 
-extern "C" cublasStatus_t
-cublasGetLoggerCallback(cublasLogCallback *userCallback) {
-  (void)userCallback;
-  return CUBLAS_STATUS_NOT_SUPPORTED;
-}
-
 static cublasStatus_t lupine_rpc_cublasGetMathMode(conn_t *conn,
                                                    cublasHandle_t handle,
                                                    cublasMath_t *mode) {
@@ -13372,12 +13366,6 @@ cublasSetFixedPointEmulationMaxMantissaBitCount(cublasHandle_t handle,
 }
 
 #endif
-
-extern "C" cublasStatus_t
-cublasSetLoggerCallback(cublasLogCallback userCallback) {
-  (void)userCallback;
-  return CUBLAS_STATUS_NOT_SUPPORTED;
-}
 
 static cublasStatus_t lupine_rpc_cublasSetMathMode(conn_t *conn,
                                                    cublasHandle_t handle,

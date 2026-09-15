@@ -350,6 +350,9 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     if metadata.clear_fields:
         write_cleared_fields(f, metadata, "  ", ".")
         f.write("\n")
+    if backend.symbol_lookup in ("cublas_symbol", "cublaslt_symbol"):
+        f.write("  if (lupine_cublas_flush_logs(conn) < 0)\n")
+        f.write("    goto ERROR_0;\n\n")
     if not metadata.async_fire_forget:
         f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
         for operation in operations:

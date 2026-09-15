@@ -634,6 +634,7 @@
   HANDLER(RPC___cudaRegisterFatBinaryEnd, handle___cudaRegisterFatBinaryEnd, rpc_backend::cudart) \
   HANDLER(RPC___cudaInitModule, handle___cudaInitModule, rpc_backend::cudart)
 #define LUPINE_CUBLAS_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cublasGetLoggerCallback, handle_cublasGetLoggerCallback, rpc_backend::cublas) \
   HANDLER(RPC_cublasGetMatrix, handle_cublasGetMatrix, rpc_backend::cublas) \
   HANDLER(RPC_cublasGetMatrixAsync, handle_cublasGetMatrixAsync, rpc_backend::cublas) \
   HANDLER(RPC_cublasGetStatusName, handle_cublasGetStatusName, rpc_backend::cublas) \
@@ -641,6 +642,7 @@
   HANDLER(RPC_cublasGetVector, handle_cublasGetVector, rpc_backend::cublas) \
   HANDLER(RPC_cublasGetVectorAsync, handle_cublasGetVectorAsync, rpc_backend::cublas) \
   HANDLER(RPC_cublasLoggerConfigure, handle_cublasLoggerConfigure, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSetLoggerCallback, handle_cublasSetLoggerCallback, rpc_backend::cublas) \
   HANDLER(RPC_cublasSetMatrix, handle_cublasSetMatrix, rpc_backend::cublas) \
   HANDLER(RPC_cublasSetMatrixAsync, handle_cublasSetMatrixAsync, rpc_backend::cublas) \
   HANDLER(RPC_cublasSetVector, handle_cublasSetVector, rpc_backend::cublas) \
@@ -926,6 +928,9 @@
 #define LUPINE_CUBLASLT_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_cublasLtGetStatusName, handle_cublasLtGetStatusName, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtGetStatusString, handle_cublasLtGetStatusString, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtLoggerOpenFile, handle_cublasLtLoggerOpenFile, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtLoggerSetCallback, handle_cublasLtLoggerSetCallback, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtLoggerSetFile, handle_cublasLtLoggerSetFile, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtCreate, handle_cublasLtCreate, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtDestroy, handle_cublasLtDestroy, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtGetCudartVersion, handle_cublasLtGetCudartVersion, rpc_backend::cublas) \
@@ -934,7 +939,6 @@
   HANDLER(RPC_cublasLtHeuristicsCacheGetCapacity, handle_cublasLtHeuristicsCacheGetCapacity, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtHeuristicsCacheSetCapacity, handle_cublasLtHeuristicsCacheSetCapacity, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtLoggerForceDisable, handle_cublasLtLoggerForceDisable, rpc_backend::cublas) \
-  HANDLER(RPC_cublasLtLoggerOpenFile, handle_cublasLtLoggerOpenFile, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtLoggerSetLevel, handle_cublasLtLoggerSetLevel, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtLoggerSetMask, handle_cublasLtLoggerSetMask, rpc_backend::cublas) \
   HANDLER(RPC_cublasLtMatmul, handle_cublasLtMatmul, rpc_backend::cublas) \

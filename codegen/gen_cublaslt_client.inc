@@ -303,41 +303,6 @@ extern "C" cublasStatus_t cublasLtLoggerForceDisable() {
   return lupine_rpc_cublasLtLoggerForceDisable(conn);
 }
 
-static cublasStatus_t lupine_rpc_cublasLtLoggerOpenFile(conn_t *conn,
-                                                        const char *logFile) {
-  cublasStatus_t return_value = rpc_error();
-  std::size_t logFile_len = static_cast<std::size_t>(std::strlen(logFile) + 1);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cublasLtLoggerOpenFile) < 0 ||
-      rpc_write(conn, &logFile_len, sizeof(std::size_t)) < 0 ||
-      rpc_write(conn, logFile, logFile_len) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-extern "C" cublasStatus_t cublasLtLoggerOpenFile(const char *logFile) {
-  if (logFile == nullptr) {
-    return CUBLAS_STATUS_INVALID_VALUE;
-  }
-  conn_t *conn = connection();
-  return lupine_rpc_cublasLtLoggerOpenFile(conn, logFile);
-}
-
-extern "C" cublasStatus_t
-cublasLtLoggerSetCallback(cublasLtLoggerCallback_t callback) {
-  (void)callback;
-  return CUBLAS_STATUS_NOT_SUPPORTED;
-}
-
-extern "C" cublasStatus_t cublasLtLoggerSetFile(FILE *file) {
-  (void)file;
-  return CUBLAS_STATUS_NOT_SUPPORTED;
-}
-
 static cublasStatus_t lupine_rpc_cublasLtLoggerSetLevel(conn_t *conn,
                                                         int level) {
   cublasStatus_t return_value = rpc_error();
