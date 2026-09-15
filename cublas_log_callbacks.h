@@ -1,5 +1,5 @@
-#ifndef LUPINE_PENDING_LOG_CALLBACKS_H
-#define LUPINE_PENDING_LOG_CALLBACKS_H
+#ifndef LUPINE_CUBLAS_LOG_CALLBACKS_H
+#define LUPINE_CUBLAS_LOG_CALLBACKS_H
 
 #include <cstdint>
 #include <functional>

@@ -1,5 +1,5 @@
 #include "lupine_platform.h"
-#include "pending_log_callbacks.h"
+#include "cublas_log_callbacks.h"
 
 #include <algorithm>
 #include <atomic>
