@@ -6,6 +6,22 @@
 #ifdef LUPINE_BUILD_CUDART_BACKEND
 #include <cuda_runtime_api.h>
 #endif
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+#include <cublasLt.h>
+#include <cublas_v2.h>
+#endif
+#ifdef LUPINE_BUILD_CUFFT_BACKEND
+#include <cufftXt.h>
+#endif
+#ifdef LUPINE_BUILD_CUDNN_BACKEND
+#include <cudnn.h>
+#endif
+#ifdef LUPINE_BUILD_CURAND_BACKEND
+#include <curand.h>
+#endif
+#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
+#include <cusparse.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -631,6 +647,1072 @@
   HANDLER(RPC___cudaPopCallConfiguration, handle___cudaPopCallConfiguration, rpc_backend::cudart) \
   HANDLER(RPC___cudaRegisterFatBinaryEnd, handle___cudaRegisterFatBinaryEnd, rpc_backend::cudart) \
   HANDLER(RPC___cudaInitModule, handle___cudaInitModule, rpc_backend::cudart)
+#define LUPINE_CUBLAS_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cublasGetLoggerCallback, handle_cublasGetLoggerCallback, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetMatrix, handle_cublasGetMatrix, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetMatrixAsync, handle_cublasGetMatrixAsync, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetStatusName, handle_cublasGetStatusName, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetStatusString, handle_cublasGetStatusString, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetVector, handle_cublasGetVector, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetVectorAsync, handle_cublasGetVectorAsync, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLoggerConfigure, handle_cublasLoggerConfigure, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSetLoggerCallback, handle_cublasSetLoggerCallback, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSetMatrix, handle_cublasSetMatrix, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSetMatrixAsync, handle_cublasSetMatrixAsync, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSetVector, handle_cublasSetVector, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSetVectorAsync, handle_cublasSetVectorAsync, rpc_backend::cublas) \
+  HANDLER(RPC_cublasAsumEx, handle_cublasAsumEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasAxpyEx, handle_cublasAxpyEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCaxpy_v2, handle_cublasCaxpy_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCcopy_v2, handle_cublasCcopy_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCdgmm, handle_cublasCdgmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCdotc_v2, handle_cublasCdotc_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCdotu_v2, handle_cublasCdotu_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgbmv_v2, handle_cublasCgbmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgeam, handle_cublasCgeam, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgelsBatched, handle_cublasCgelsBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgemm3m, handle_cublasCgemm3m, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgemm3mBatched, handle_cublasCgemm3mBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgemm3mEx, handle_cublasCgemm3mEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgemm3mStridedBatched, handle_cublasCgemm3mStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgemmBatched, handle_cublasCgemmBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgemmEx, handle_cublasCgemmEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgemmStridedBatched, handle_cublasCgemmStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgemm_v2, handle_cublasCgemm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgemvBatched, handle_cublasCgemvBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgemvStridedBatched, handle_cublasCgemvStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgemv_v2, handle_cublasCgemv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgeqrfBatched, handle_cublasCgeqrfBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgerc_v2, handle_cublasCgerc_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgeru_v2, handle_cublasCgeru_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgetrfBatched, handle_cublasCgetrfBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgetriBatched, handle_cublasCgetriBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCgetrsBatched, handle_cublasCgetrsBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasChbmv_v2, handle_cublasChbmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasChemm_v2, handle_cublasChemm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasChemv_v2, handle_cublasChemv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCher2_v2, handle_cublasCher2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCher2k_v2, handle_cublasCher2k_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCher_v2, handle_cublasCher_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCherk3mEx, handle_cublasCherk3mEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCherkEx, handle_cublasCherkEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCherk_v2, handle_cublasCherk_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCherkx, handle_cublasCherkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasChpmv_v2, handle_cublasChpmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasChpr2_v2, handle_cublasChpr2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasChpr_v2, handle_cublasChpr_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCmatinvBatched, handle_cublasCmatinvBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCopyEx, handle_cublasCopyEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCreate_v2, handle_cublasCreate_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCrot_v2, handle_cublasCrot_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCrotg_v2, handle_cublasCrotg_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCscal_v2, handle_cublasCscal_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCsrot_v2, handle_cublasCsrot_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCsscal_v2, handle_cublasCsscal_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCswap_v2, handle_cublasCswap_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCsymm_v2, handle_cublasCsymm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCsymv_v2, handle_cublasCsymv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCsyr2_v2, handle_cublasCsyr2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCsyr2k_v2, handle_cublasCsyr2k_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCsyr_v2, handle_cublasCsyr_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCsyrk3mEx, handle_cublasCsyrk3mEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCsyrkEx, handle_cublasCsyrkEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCsyrk_v2, handle_cublasCsyrk_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCsyrkx, handle_cublasCsyrkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCtbmv_v2, handle_cublasCtbmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCtbsv_v2, handle_cublasCtbsv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCtpmv_v2, handle_cublasCtpmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCtpsv_v2, handle_cublasCtpsv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCtpttr, handle_cublasCtpttr, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCtrmm_v2, handle_cublasCtrmm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCtrmv_v2, handle_cublasCtrmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCtrsmBatched, handle_cublasCtrsmBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCtrsm_v2, handle_cublasCtrsm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCtrsv_v2, handle_cublasCtrsv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasCtrttp, handle_cublasCtrttp, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDasum_v2, handle_cublasDasum_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDaxpy_v2, handle_cublasDaxpy_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDcopy_v2, handle_cublasDcopy_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDdgmm, handle_cublasDdgmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDdot_v2, handle_cublasDdot_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDestroy_v2, handle_cublasDestroy_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDgbmv_v2, handle_cublasDgbmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDgeam, handle_cublasDgeam, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDgelsBatched, handle_cublasDgelsBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDgemmBatched, handle_cublasDgemmBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDgemmStridedBatched, handle_cublasDgemmStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDgemm_v2, handle_cublasDgemm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDgemvBatched, handle_cublasDgemvBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDgemvStridedBatched, handle_cublasDgemvStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDgemv_v2, handle_cublasDgemv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDgeqrfBatched, handle_cublasDgeqrfBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDger_v2, handle_cublasDger_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDgetrfBatched, handle_cublasDgetrfBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDgetriBatched, handle_cublasDgetriBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDgetrsBatched, handle_cublasDgetrsBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDmatinvBatched, handle_cublasDmatinvBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDnrm2_v2, handle_cublasDnrm2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDotEx, handle_cublasDotEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDotcEx, handle_cublasDotcEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDrot_v2, handle_cublasDrot_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDrotg_v2, handle_cublasDrotg_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDrotm_v2, handle_cublasDrotm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDrotmg_v2, handle_cublasDrotmg_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDsbmv_v2, handle_cublasDsbmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDscal_v2, handle_cublasDscal_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDspmv_v2, handle_cublasDspmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDspr2_v2, handle_cublasDspr2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDspr_v2, handle_cublasDspr_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDswap_v2, handle_cublasDswap_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDsymm_v2, handle_cublasDsymm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDsymv_v2, handle_cublasDsymv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDsyr2_v2, handle_cublasDsyr2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDsyr2k_v2, handle_cublasDsyr2k_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDsyr_v2, handle_cublasDsyr_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDsyrk_v2, handle_cublasDsyrk_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDsyrkx, handle_cublasDsyrkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDtbmv_v2, handle_cublasDtbmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDtbsv_v2, handle_cublasDtbsv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDtpmv_v2, handle_cublasDtpmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDtpsv_v2, handle_cublasDtpsv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDtpttr, handle_cublasDtpttr, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDtrmm_v2, handle_cublasDtrmm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDtrmv_v2, handle_cublasDtrmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDtrsmBatched, handle_cublasDtrsmBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDtrsm_v2, handle_cublasDtrsm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDtrsv_v2, handle_cublasDtrsv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDtrttp, handle_cublasDtrttp, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDzasum_v2, handle_cublasDzasum_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasDznrm2_v2, handle_cublasDznrm2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGemmBatchedEx, handle_cublasGemmBatchedEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGemmEx, handle_cublasGemmEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGemmStridedBatchedEx, handle_cublasGemmStridedBatchedEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetAtomicsMode, handle_cublasGetAtomicsMode, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetCudartVersion, handle_cublasGetCudartVersion, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetMathMode, handle_cublasGetMathMode, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetPointerMode_v2, handle_cublasGetPointerMode_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetProperty, handle_cublasGetProperty, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetSmCountTarget, handle_cublasGetSmCountTarget, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetStream_v2, handle_cublasGetStream_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasGetVersion_v2, handle_cublasGetVersion_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasHSHgemvBatched, handle_cublasHSHgemvBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasHSHgemvStridedBatched, handle_cublasHSHgemvStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasHSSgemvBatched, handle_cublasHSSgemvBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasHSSgemvStridedBatched, handle_cublasHSSgemvStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasHgemm, handle_cublasHgemm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasHgemmBatched, handle_cublasHgemmBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasHgemmStridedBatched, handle_cublasHgemmStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasIamaxEx, handle_cublasIamaxEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasIaminEx, handle_cublasIaminEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasIcamax_v2, handle_cublasIcamax_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasIcamin_v2, handle_cublasIcamin_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasIdamax_v2, handle_cublasIdamax_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasIdamin_v2, handle_cublasIdamin_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasIsamax_v2, handle_cublasIsamax_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasIsamin_v2, handle_cublasIsamin_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasIzamax_v2, handle_cublasIzamax_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasIzamin_v2, handle_cublasIzamin_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasNrm2Ex, handle_cublasNrm2Ex, rpc_backend::cublas) \
+  HANDLER(RPC_cublasRotEx, handle_cublasRotEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasRotgEx, handle_cublasRotgEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasRotmEx, handle_cublasRotmEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasRotmgEx, handle_cublasRotmgEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSasum_v2, handle_cublasSasum_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSaxpy_v2, handle_cublasSaxpy_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasScalEx, handle_cublasScalEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasScasum_v2, handle_cublasScasum_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasScnrm2_v2, handle_cublasScnrm2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasScopy_v2, handle_cublasScopy_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSdgmm, handle_cublasSdgmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSdot_v2, handle_cublasSdot_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSetAtomicsMode, handle_cublasSetAtomicsMode, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSetMathMode, handle_cublasSetMathMode, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSetPointerMode_v2, handle_cublasSetPointerMode_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSetSmCountTarget, handle_cublasSetSmCountTarget, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSetStream_v2, handle_cublasSetStream_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSetWorkspace_v2, handle_cublasSetWorkspace_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgbmv_v2, handle_cublasSgbmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgeam, handle_cublasSgeam, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgelsBatched, handle_cublasSgelsBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgemmBatched, handle_cublasSgemmBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgemmEx, handle_cublasSgemmEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgemmStridedBatched, handle_cublasSgemmStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgemm_v2, handle_cublasSgemm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgemvBatched, handle_cublasSgemvBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgemvStridedBatched, handle_cublasSgemvStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgemv_v2, handle_cublasSgemv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgeqrfBatched, handle_cublasSgeqrfBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSger_v2, handle_cublasSger_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgetrfBatched, handle_cublasSgetrfBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgetriBatched, handle_cublasSgetriBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSgetrsBatched, handle_cublasSgetrsBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSmatinvBatched, handle_cublasSmatinvBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSnrm2_v2, handle_cublasSnrm2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSrot_v2, handle_cublasSrot_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSrotg_v2, handle_cublasSrotg_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSrotm_v2, handle_cublasSrotm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSrotmg_v2, handle_cublasSrotmg_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSsbmv_v2, handle_cublasSsbmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSscal_v2, handle_cublasSscal_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSspmv_v2, handle_cublasSspmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSspr2_v2, handle_cublasSspr2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSspr_v2, handle_cublasSspr_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSswap_v2, handle_cublasSswap_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSsymm_v2, handle_cublasSsymm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSsymv_v2, handle_cublasSsymv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSsyr2_v2, handle_cublasSsyr2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSsyr2k_v2, handle_cublasSsyr2k_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSsyr_v2, handle_cublasSsyr_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSsyrk_v2, handle_cublasSsyrk_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSsyrkx, handle_cublasSsyrkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasStbmv_v2, handle_cublasStbmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasStbsv_v2, handle_cublasStbsv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasStpmv_v2, handle_cublasStpmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasStpsv_v2, handle_cublasStpsv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasStpttr, handle_cublasStpttr, rpc_backend::cublas) \
+  HANDLER(RPC_cublasStrmm_v2, handle_cublasStrmm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasStrmv_v2, handle_cublasStrmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasStrsmBatched, handle_cublasStrsmBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasStrsm_v2, handle_cublasStrsm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasStrsv_v2, handle_cublasStrsv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasStrttp, handle_cublasStrttp, rpc_backend::cublas) \
+  HANDLER(RPC_cublasSwapEx, handle_cublasSwapEx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasTSSgemvBatched, handle_cublasTSSgemvBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasTSSgemvStridedBatched, handle_cublasTSSgemvStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasTSTgemvBatched, handle_cublasTSTgemvBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasTSTgemvStridedBatched, handle_cublasTSTgemvStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasUint8gemmBias, handle_cublasUint8gemmBias, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZaxpy_v2, handle_cublasZaxpy_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZcopy_v2, handle_cublasZcopy_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZdgmm, handle_cublasZdgmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZdotc_v2, handle_cublasZdotc_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZdotu_v2, handle_cublasZdotu_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZdrot_v2, handle_cublasZdrot_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZdscal_v2, handle_cublasZdscal_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgbmv_v2, handle_cublasZgbmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgeam, handle_cublasZgeam, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgelsBatched, handle_cublasZgelsBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgemm3m, handle_cublasZgemm3m, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgemmBatched, handle_cublasZgemmBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgemmStridedBatched, handle_cublasZgemmStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgemm_v2, handle_cublasZgemm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgemvBatched, handle_cublasZgemvBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgemvStridedBatched, handle_cublasZgemvStridedBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgemv_v2, handle_cublasZgemv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgeqrfBatched, handle_cublasZgeqrfBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgerc_v2, handle_cublasZgerc_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgeru_v2, handle_cublasZgeru_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgetrfBatched, handle_cublasZgetrfBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgetriBatched, handle_cublasZgetriBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZgetrsBatched, handle_cublasZgetrsBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZhbmv_v2, handle_cublasZhbmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZhemm_v2, handle_cublasZhemm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZhemv_v2, handle_cublasZhemv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZher2_v2, handle_cublasZher2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZher2k_v2, handle_cublasZher2k_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZher_v2, handle_cublasZher_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZherk_v2, handle_cublasZherk_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZherkx, handle_cublasZherkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZhpmv_v2, handle_cublasZhpmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZhpr2_v2, handle_cublasZhpr2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZhpr_v2, handle_cublasZhpr_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZmatinvBatched, handle_cublasZmatinvBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZrot_v2, handle_cublasZrot_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZrotg_v2, handle_cublasZrotg_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZscal_v2, handle_cublasZscal_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZswap_v2, handle_cublasZswap_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZsymm_v2, handle_cublasZsymm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZsymv_v2, handle_cublasZsymv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZsyr2_v2, handle_cublasZsyr2_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZsyr2k_v2, handle_cublasZsyr2k_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZsyr_v2, handle_cublasZsyr_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZsyrk_v2, handle_cublasZsyrk_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZsyrkx, handle_cublasZsyrkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZtbmv_v2, handle_cublasZtbmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZtbsv_v2, handle_cublasZtbsv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZtpmv_v2, handle_cublasZtpmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZtpsv_v2, handle_cublasZtpsv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZtpttr, handle_cublasZtpttr, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZtrmm_v2, handle_cublasZtrmm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZtrmv_v2, handle_cublasZtrmv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZtrsmBatched, handle_cublasZtrsmBatched, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZtrsm_v2, handle_cublasZtrsm_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZtrsv_v2, handle_cublasZtrsv_v2, rpc_backend::cublas) \
+  HANDLER(RPC_cublasZtrttp, handle_cublasZtrttp, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCreate, handle_cublasXtCreate, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDestroy, handle_cublasXtDestroy, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtGetNumBoards, handle_cublasXtGetNumBoards, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtMaxBoards, handle_cublasXtMaxBoards, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDeviceSelect, handle_cublasXtDeviceSelect, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSetBlockDim, handle_cublasXtSetBlockDim, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtGetBlockDim, handle_cublasXtGetBlockDim, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtGetPinningMemMode, handle_cublasXtGetPinningMemMode, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSetPinningMemMode, handle_cublasXtSetPinningMemMode, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSetCpuRatio, handle_cublasXtSetCpuRatio, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSgemm, handle_cublasXtSgemm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDgemm, handle_cublasXtDgemm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCgemm, handle_cublasXtCgemm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZgemm, handle_cublasXtZgemm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSsyrk, handle_cublasXtSsyrk, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDsyrk, handle_cublasXtDsyrk, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCsyrk, handle_cublasXtCsyrk, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZsyrk, handle_cublasXtZsyrk, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCherk, handle_cublasXtCherk, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZherk, handle_cublasXtZherk, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSsyr2k, handle_cublasXtSsyr2k, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDsyr2k, handle_cublasXtDsyr2k, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCsyr2k, handle_cublasXtCsyr2k, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZsyr2k, handle_cublasXtZsyr2k, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCherkx, handle_cublasXtCherkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZherkx, handle_cublasXtZherkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtStrsm, handle_cublasXtStrsm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDtrsm, handle_cublasXtDtrsm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCtrsm, handle_cublasXtCtrsm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZtrsm, handle_cublasXtZtrsm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSsymm, handle_cublasXtSsymm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDsymm, handle_cublasXtDsymm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCsymm, handle_cublasXtCsymm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZsymm, handle_cublasXtZsymm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtChemm, handle_cublasXtChemm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZhemm, handle_cublasXtZhemm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSsyrkx, handle_cublasXtSsyrkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDsyrkx, handle_cublasXtDsyrkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCsyrkx, handle_cublasXtCsyrkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZsyrkx, handle_cublasXtZsyrkx, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCher2k, handle_cublasXtCher2k, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZher2k, handle_cublasXtZher2k, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtSspmm, handle_cublasXtSspmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDspmm, handle_cublasXtDspmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCspmm, handle_cublasXtCspmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZspmm, handle_cublasXtZspmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtStrmm, handle_cublasXtStrmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtDtrmm, handle_cublasXtDtrmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtCtrmm, handle_cublasXtCtrmm, rpc_backend::cublas) \
+  HANDLER(RPC_cublasXtZtrmm, handle_cublasXtZtrmm, rpc_backend::cublas)
+#define LUPINE_CUBLASLT_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cublasLtGetStatusName, handle_cublasLtGetStatusName, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtGetStatusString, handle_cublasLtGetStatusString, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtLoggerSetCallback, handle_cublasLtLoggerSetCallback, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtLoggerSetFile, handle_cublasLtLoggerSetFile, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtCreate, handle_cublasLtCreate, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtDestroy, handle_cublasLtDestroy, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtGetCudartVersion, handle_cublasLtGetCudartVersion, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtGetProperty, handle_cublasLtGetProperty, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtGetVersion, handle_cublasLtGetVersion, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtHeuristicsCacheGetCapacity, handle_cublasLtHeuristicsCacheGetCapacity, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtHeuristicsCacheSetCapacity, handle_cublasLtHeuristicsCacheSetCapacity, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtLoggerForceDisable, handle_cublasLtLoggerForceDisable, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtLoggerSetLevel, handle_cublasLtLoggerSetLevel, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtLoggerSetMask, handle_cublasLtLoggerSetMask, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmul, handle_cublasLtMatmul, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmulAlgoCapGetAttribute, handle_cublasLtMatmulAlgoCapGetAttribute, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmulAlgoCheck, handle_cublasLtMatmulAlgoCheck, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmulAlgoConfigGetAttribute, handle_cublasLtMatmulAlgoConfigGetAttribute, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmulAlgoConfigSetAttribute, handle_cublasLtMatmulAlgoConfigSetAttribute, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmulAlgoGetHeuristic, handle_cublasLtMatmulAlgoGetHeuristic, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmulAlgoGetIds, handle_cublasLtMatmulAlgoGetIds, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmulAlgoInit, handle_cublasLtMatmulAlgoInit, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmulDescGetAttribute, handle_cublasLtMatmulDescGetAttribute, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmulDescInit_internal, handle_cublasLtMatmulDescInit_internal, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmulDescSetAttribute, handle_cublasLtMatmulDescSetAttribute, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmulPreferenceGetAttribute, handle_cublasLtMatmulPreferenceGetAttribute, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmulPreferenceInit_internal, handle_cublasLtMatmulPreferenceInit_internal, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatmulPreferenceSetAttribute, handle_cublasLtMatmulPreferenceSetAttribute, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatrixLayoutGetAttribute, handle_cublasLtMatrixLayoutGetAttribute, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatrixLayoutInit_internal, handle_cublasLtMatrixLayoutInit_internal, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatrixLayoutSetAttribute, handle_cublasLtMatrixLayoutSetAttribute, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatrixTransform, handle_cublasLtMatrixTransform, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatrixTransformDescGetAttribute, handle_cublasLtMatrixTransformDescGetAttribute, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatrixTransformDescInit_internal, handle_cublasLtMatrixTransformDescInit_internal, rpc_backend::cublas) \
+  HANDLER(RPC_cublasLtMatrixTransformDescSetAttribute, handle_cublasLtMatrixTransformDescSetAttribute, rpc_backend::cublas)
+#define LUPINE_CUFFT_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cufftDestroy, handle_cufftDestroy, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtFree, handle_cufftXtFree, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtMalloc, handle_cufftXtMalloc, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtMemcpy, handle_cufftXtMemcpy, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtSetCallback, handle_cufftXtSetCallback, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtSetWorkArea, handle_cufftXtSetWorkArea, rpc_backend::cufft) \
+  HANDLER(RPC_cufftCreate, handle_cufftCreate, rpc_backend::cufft) \
+  HANDLER(RPC_cufftEstimate1d, handle_cufftEstimate1d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftEstimate2d, handle_cufftEstimate2d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftEstimate3d, handle_cufftEstimate3d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftEstimateMany, handle_cufftEstimateMany, rpc_backend::cufft) \
+  HANDLER(RPC_cufftExecC2C, handle_cufftExecC2C, rpc_backend::cufft) \
+  HANDLER(RPC_cufftExecC2R, handle_cufftExecC2R, rpc_backend::cufft) \
+  HANDLER(RPC_cufftExecD2Z, handle_cufftExecD2Z, rpc_backend::cufft) \
+  HANDLER(RPC_cufftExecR2C, handle_cufftExecR2C, rpc_backend::cufft) \
+  HANDLER(RPC_cufftExecZ2D, handle_cufftExecZ2D, rpc_backend::cufft) \
+  HANDLER(RPC_cufftExecZ2Z, handle_cufftExecZ2Z, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetProperty, handle_cufftGetProperty, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetSize, handle_cufftGetSize, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetSize1d, handle_cufftGetSize1d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetSize2d, handle_cufftGetSize2d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetSize3d, handle_cufftGetSize3d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetSizeMany, handle_cufftGetSizeMany, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetSizeMany64, handle_cufftGetSizeMany64, rpc_backend::cufft) \
+  HANDLER(RPC_cufftGetVersion, handle_cufftGetVersion, rpc_backend::cufft) \
+  HANDLER(RPC_cufftMakePlan1d, handle_cufftMakePlan1d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftMakePlan2d, handle_cufftMakePlan2d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftMakePlan3d, handle_cufftMakePlan3d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftMakePlanMany, handle_cufftMakePlanMany, rpc_backend::cufft) \
+  HANDLER(RPC_cufftMakePlanMany64, handle_cufftMakePlanMany64, rpc_backend::cufft) \
+  HANDLER(RPC_cufftPlan1d, handle_cufftPlan1d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftPlan2d, handle_cufftPlan2d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftPlan3d, handle_cufftPlan3d, rpc_backend::cufft) \
+  HANDLER(RPC_cufftPlanMany, handle_cufftPlanMany, rpc_backend::cufft) \
+  HANDLER(RPC_cufftSetAutoAllocation, handle_cufftSetAutoAllocation, rpc_backend::cufft) \
+  HANDLER(RPC_cufftSetStream, handle_cufftSetStream, rpc_backend::cufft) \
+  HANDLER(RPC_cufftSetWorkArea, handle_cufftSetWorkArea, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtClearCallback, handle_cufftXtClearCallback, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExec, handle_cufftXtExec, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptor, handle_cufftXtExecDescriptor, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptorC2C, handle_cufftXtExecDescriptorC2C, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptorC2R, handle_cufftXtExecDescriptorC2R, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptorD2Z, handle_cufftXtExecDescriptorD2Z, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptorR2C, handle_cufftXtExecDescriptorR2C, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptorZ2D, handle_cufftXtExecDescriptorZ2D, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtExecDescriptorZ2Z, handle_cufftXtExecDescriptorZ2Z, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtGetSizeMany, handle_cufftXtGetSizeMany, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtMakePlanMany, handle_cufftXtMakePlanMany, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtQueryPlan, handle_cufftXtQueryPlan, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtSetCallbackSharedSize, handle_cufftXtSetCallbackSharedSize, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtSetGPUs, handle_cufftXtSetGPUs, rpc_backend::cufft) \
+  HANDLER(RPC_cufftXtSetWorkAreaPolicy, handle_cufftXtSetWorkAreaPolicy, rpc_backend::cufft)
+#define LUPINE_CUDNN_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cudnnGetErrorString, handle_cudnnGetErrorString, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendSetAttribute, handle_cudnnBackendSetAttribute, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendGetAttribute, handle_cudnnBackendGetAttribute, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnMultiHeadAttnForward, handle_cudnnMultiHeadAttnForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnMultiHeadAttnBackwardData, handle_cudnnMultiHeadAttnBackwardData, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCTCLoss, handle_cudnnCTCLoss, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCTCLossWorkspaceSize, handle_cudnnGetCTCLossWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetVersion, handle_cudnnGetVersion, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetMaxDeviceVersion, handle_cudnnGetMaxDeviceVersion, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCudartVersion, handle_cudnnGetCudartVersion, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetLastErrorString, handle_cudnnGetLastErrorString, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnQueryRuntimeError, handle_cudnnQueryRuntimeError, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetProperty, handle_cudnnGetProperty, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreate, handle_cudnnCreate, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroy, handle_cudnnDestroy, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetStream, handle_cudnnSetStream, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetStream, handle_cudnnGetStream, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGraphVersionCheck, handle_cudnnGraphVersionCheck, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendCreateDescriptor, handle_cudnnBackendCreateDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendDestroyDescriptor, handle_cudnnBackendDestroyDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendInitialize, handle_cudnnBackendInitialize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendFinalize, handle_cudnnBackendFinalize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBackendExecute, handle_cudnnBackendExecute, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateTensorDescriptor, handle_cudnnCreateTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetTensor4dDescriptor, handle_cudnnSetTensor4dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetTensor4dDescriptorEx, handle_cudnnSetTensor4dDescriptorEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetTensor4dDescriptor, handle_cudnnGetTensor4dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetTensorNdDescriptor, handle_cudnnSetTensorNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetTensorNdDescriptorEx, handle_cudnnSetTensorNdDescriptorEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetTensorNdDescriptor, handle_cudnnGetTensorNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetTensorSizeInBytes, handle_cudnnGetTensorSizeInBytes, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyTensorDescriptor, handle_cudnnDestroyTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnInitTransformDest, handle_cudnnInitTransformDest, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateTensorTransformDescriptor, handle_cudnnCreateTensorTransformDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetTensorTransformDescriptor, handle_cudnnSetTensorTransformDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetTensorTransformDescriptor, handle_cudnnGetTensorTransformDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyTensorTransformDescriptor, handle_cudnnDestroyTensorTransformDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnTransformTensor, handle_cudnnTransformTensor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnTransformTensorEx, handle_cudnnTransformTensorEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnAddTensor, handle_cudnnAddTensor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateOpTensorDescriptor, handle_cudnnCreateOpTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetOpTensorDescriptor, handle_cudnnSetOpTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetOpTensorDescriptor, handle_cudnnGetOpTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyOpTensorDescriptor, handle_cudnnDestroyOpTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnOpTensor, handle_cudnnOpTensor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateReduceTensorDescriptor, handle_cudnnCreateReduceTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetReduceTensorDescriptor, handle_cudnnSetReduceTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetReduceTensorDescriptor, handle_cudnnGetReduceTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyReduceTensorDescriptor, handle_cudnnDestroyReduceTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetReductionIndicesSize, handle_cudnnGetReductionIndicesSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetReductionWorkspaceSize, handle_cudnnGetReductionWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnReduceTensor, handle_cudnnReduceTensor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetTensor, handle_cudnnSetTensor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnScaleTensor, handle_cudnnScaleTensor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateFilterDescriptor, handle_cudnnCreateFilterDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetFilter4dDescriptor, handle_cudnnSetFilter4dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetFilter4dDescriptor, handle_cudnnGetFilter4dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetFilterNdDescriptor, handle_cudnnSetFilterNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetFilterNdDescriptor, handle_cudnnGetFilterNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetFilterSizeInBytes, handle_cudnnGetFilterSizeInBytes, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnTransformFilter, handle_cudnnTransformFilter, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyFilterDescriptor, handle_cudnnDestroyFilterDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSoftmaxForward, handle_cudnnSoftmaxForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreatePoolingDescriptor, handle_cudnnCreatePoolingDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetPooling2dDescriptor, handle_cudnnSetPooling2dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetPooling2dDescriptor, handle_cudnnGetPooling2dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetPoolingNdDescriptor, handle_cudnnSetPoolingNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetPoolingNdDescriptor, handle_cudnnGetPoolingNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetPoolingNdForwardOutputDim, handle_cudnnGetPoolingNdForwardOutputDim, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetPooling2dForwardOutputDim, handle_cudnnGetPooling2dForwardOutputDim, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyPoolingDescriptor, handle_cudnnDestroyPoolingDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnPoolingForward, handle_cudnnPoolingForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateActivationDescriptor, handle_cudnnCreateActivationDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetActivationDescriptor, handle_cudnnSetActivationDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetActivationDescriptor, handle_cudnnGetActivationDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetActivationDescriptorSwishBeta, handle_cudnnSetActivationDescriptorSwishBeta, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetActivationDescriptorSwishBeta, handle_cudnnGetActivationDescriptorSwishBeta, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyActivationDescriptor, handle_cudnnDestroyActivationDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnActivationForward, handle_cudnnActivationForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateLRNDescriptor, handle_cudnnCreateLRNDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetLRNDescriptor, handle_cudnnSetLRNDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetLRNDescriptor, handle_cudnnGetLRNDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyLRNDescriptor, handle_cudnnDestroyLRNDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnLRNCrossChannelForward, handle_cudnnLRNCrossChannelForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDivisiveNormalizationForward, handle_cudnnDivisiveNormalizationForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDeriveBNTensorDescriptor, handle_cudnnDeriveBNTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBatchNormalizationForwardInference, handle_cudnnBatchNormalizationForwardInference, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDeriveNormTensorDescriptor, handle_cudnnDeriveNormTensorDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnNormalizationForwardInference, handle_cudnnNormalizationForwardInference, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateSpatialTransformerDescriptor, handle_cudnnCreateSpatialTransformerDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetSpatialTransformerNdDescriptor, handle_cudnnSetSpatialTransformerNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroySpatialTransformerDescriptor, handle_cudnnDestroySpatialTransformerDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSpatialTfGridGeneratorForward, handle_cudnnSpatialTfGridGeneratorForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSpatialTfSamplerForward, handle_cudnnSpatialTfSamplerForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateDropoutDescriptor, handle_cudnnCreateDropoutDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyDropoutDescriptor, handle_cudnnDestroyDropoutDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDropoutGetStatesSize, handle_cudnnDropoutGetStatesSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDropoutGetReserveSpaceSize, handle_cudnnDropoutGetReserveSpaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetDropoutDescriptor, handle_cudnnSetDropoutDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRestoreDropoutDescriptor, handle_cudnnRestoreDropoutDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetDropoutDescriptor, handle_cudnnGetDropoutDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDropoutForward, handle_cudnnDropoutForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnOpsVersionCheck, handle_cudnnOpsVersionCheck, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSoftmaxBackward, handle_cudnnSoftmaxBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnPoolingBackward, handle_cudnnPoolingBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnActivationBackward, handle_cudnnActivationBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnLRNCrossChannelBackward, handle_cudnnLRNCrossChannelBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDivisiveNormalizationBackward, handle_cudnnDivisiveNormalizationBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetBatchNormalizationForwardTrainingExWorkspaceSize, handle_cudnnGetBatchNormalizationForwardTrainingExWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetBatchNormalizationBackwardExWorkspaceSize, handle_cudnnGetBatchNormalizationBackwardExWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetBatchNormalizationTrainingExReserveSpaceSize, handle_cudnnGetBatchNormalizationTrainingExReserveSpaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBatchNormalizationForwardTraining, handle_cudnnBatchNormalizationForwardTraining, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBatchNormalizationForwardTrainingEx, handle_cudnnBatchNormalizationForwardTrainingEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBatchNormalizationBackward, handle_cudnnBatchNormalizationBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBatchNormalizationBackwardEx, handle_cudnnBatchNormalizationBackwardEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetNormalizationForwardTrainingWorkspaceSize, handle_cudnnGetNormalizationForwardTrainingWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetNormalizationBackwardWorkspaceSize, handle_cudnnGetNormalizationBackwardWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetNormalizationTrainingReserveSpaceSize, handle_cudnnGetNormalizationTrainingReserveSpaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnNormalizationForwardTraining, handle_cudnnNormalizationForwardTraining, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnNormalizationBackward, handle_cudnnNormalizationBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSpatialTfGridGeneratorBackward, handle_cudnnSpatialTfGridGeneratorBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSpatialTfSamplerBackward, handle_cudnnSpatialTfSamplerBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDropoutBackward, handle_cudnnDropoutBackward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateConvolutionDescriptor, handle_cudnnCreateConvolutionDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyConvolutionDescriptor, handle_cudnnDestroyConvolutionDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetConvolutionMathType, handle_cudnnSetConvolutionMathType, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionMathType, handle_cudnnGetConvolutionMathType, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetConvolutionGroupCount, handle_cudnnSetConvolutionGroupCount, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionGroupCount, handle_cudnnGetConvolutionGroupCount, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetConvolutionReorderType, handle_cudnnSetConvolutionReorderType, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionReorderType, handle_cudnnGetConvolutionReorderType, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetConvolution2dDescriptor, handle_cudnnSetConvolution2dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolution2dDescriptor, handle_cudnnGetConvolution2dDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetConvolutionNdDescriptor, handle_cudnnSetConvolutionNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionNdDescriptor, handle_cudnnGetConvolutionNdDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolution2dForwardOutputDim, handle_cudnnGetConvolution2dForwardOutputDim, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionNdForwardOutputDim, handle_cudnnGetConvolutionNdForwardOutputDim, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionForwardAlgorithmMaxCount, handle_cudnnGetConvolutionForwardAlgorithmMaxCount, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionForwardAlgorithm_v7, handle_cudnnGetConvolutionForwardAlgorithm_v7, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFindConvolutionForwardAlgorithm, handle_cudnnFindConvolutionForwardAlgorithm, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFindConvolutionForwardAlgorithmEx, handle_cudnnFindConvolutionForwardAlgorithmEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnIm2Col, handle_cudnnIm2Col, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnReorderFilterAndBias, handle_cudnnReorderFilterAndBias, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionForwardWorkspaceSize, handle_cudnnGetConvolutionForwardWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnConvolutionForward, handle_cudnnConvolutionForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnConvolutionBiasActivationForward, handle_cudnnConvolutionBiasActivationForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionBackwardDataAlgorithmMaxCount, handle_cudnnGetConvolutionBackwardDataAlgorithmMaxCount, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFindConvolutionBackwardDataAlgorithm, handle_cudnnFindConvolutionBackwardDataAlgorithm, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFindConvolutionBackwardDataAlgorithmEx, handle_cudnnFindConvolutionBackwardDataAlgorithmEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionBackwardDataAlgorithm_v7, handle_cudnnGetConvolutionBackwardDataAlgorithm_v7, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionBackwardDataWorkspaceSize, handle_cudnnGetConvolutionBackwardDataWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnConvolutionBackwardData, handle_cudnnConvolutionBackwardData, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetFoldedConvBackwardDataDescriptors, handle_cudnnGetFoldedConvBackwardDataDescriptors, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCnnVersionCheck, handle_cudnnCnnVersionCheck, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionBackwardFilterAlgorithmMaxCount, handle_cudnnGetConvolutionBackwardFilterAlgorithmMaxCount, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFindConvolutionBackwardFilterAlgorithm, handle_cudnnFindConvolutionBackwardFilterAlgorithm, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFindConvolutionBackwardFilterAlgorithmEx, handle_cudnnFindConvolutionBackwardFilterAlgorithmEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionBackwardFilterAlgorithm_v7, handle_cudnnGetConvolutionBackwardFilterAlgorithm_v7, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetConvolutionBackwardFilterWorkspaceSize, handle_cudnnGetConvolutionBackwardFilterWorkspaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnConvolutionBackwardFilter, handle_cudnnConvolutionBackwardFilter, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnConvolutionBackwardBias, handle_cudnnConvolutionBackwardBias, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateFusedOpsConstParamPack, handle_cudnnCreateFusedOpsConstParamPack, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyFusedOpsConstParamPack, handle_cudnnDestroyFusedOpsConstParamPack, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateFusedOpsVariantParamPack, handle_cudnnCreateFusedOpsVariantParamPack, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyFusedOpsVariantParamPack, handle_cudnnDestroyFusedOpsVariantParamPack, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateFusedOpsPlan, handle_cudnnCreateFusedOpsPlan, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyFusedOpsPlan, handle_cudnnDestroyFusedOpsPlan, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnMakeFusedOpsPlan, handle_cudnnMakeFusedOpsPlan, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnFusedOpsExecute, handle_cudnnFusedOpsExecute, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateRNNDescriptor, handle_cudnnCreateRNNDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyRNNDescriptor, handle_cudnnDestroyRNNDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetRNNDescriptor_v8, handle_cudnnSetRNNDescriptor_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetRNNDescriptor_v8, handle_cudnnGetRNNDescriptor_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNSetClip_v8, handle_cudnnRNNSetClip_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNSetClip_v9, handle_cudnnRNNSetClip_v9, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNGetClip_v8, handle_cudnnRNNGetClip_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNGetClip_v9, handle_cudnnRNNGetClip_v9, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnBuildRNNDynamic, handle_cudnnBuildRNNDynamic, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetRNNTempSpaceSizes, handle_cudnnGetRNNTempSpaceSizes, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetRNNWeightSpaceSize, handle_cudnnGetRNNWeightSpaceSize, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetRNNWeightParams, handle_cudnnGetRNNWeightParams, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateRNNDataDescriptor, handle_cudnnCreateRNNDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyRNNDataDescriptor, handle_cudnnDestroyRNNDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetRNNDataDescriptor, handle_cudnnSetRNNDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetRNNDataDescriptor, handle_cudnnGetRNNDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNForward, handle_cudnnRNNForward, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateSeqDataDescriptor, handle_cudnnCreateSeqDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroySeqDataDescriptor, handle_cudnnDestroySeqDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetSeqDataDescriptor, handle_cudnnSetSeqDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetSeqDataDescriptor, handle_cudnnGetSeqDataDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateAttnDescriptor, handle_cudnnCreateAttnDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyAttnDescriptor, handle_cudnnDestroyAttnDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetAttnDescriptor, handle_cudnnSetAttnDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetAttnDescriptor, handle_cudnnGetAttnDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetMultiHeadAttnBuffers, handle_cudnnGetMultiHeadAttnBuffers, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetMultiHeadAttnWeights, handle_cudnnGetMultiHeadAttnWeights, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnAdvVersionCheck, handle_cudnnAdvVersionCheck, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNBackwardData_v8, handle_cudnnRNNBackwardData_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnRNNBackwardWeights_v8, handle_cudnnRNNBackwardWeights_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnMultiHeadAttnBackwardWeights, handle_cudnnMultiHeadAttnBackwardWeights, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCreateCTCLossDescriptor, handle_cudnnCreateCTCLossDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetCTCLossDescriptor, handle_cudnnSetCTCLossDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetCTCLossDescriptorEx, handle_cudnnSetCTCLossDescriptorEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetCTCLossDescriptor_v8, handle_cudnnSetCTCLossDescriptor_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnSetCTCLossDescriptor_v9, handle_cudnnSetCTCLossDescriptor_v9, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCTCLossDescriptor, handle_cudnnGetCTCLossDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCTCLossDescriptorEx, handle_cudnnGetCTCLossDescriptorEx, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCTCLossDescriptor_v8, handle_cudnnGetCTCLossDescriptor_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCTCLossDescriptor_v9, handle_cudnnGetCTCLossDescriptor_v9, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnDestroyCTCLossDescriptor, handle_cudnnDestroyCTCLossDescriptor, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnCTCLoss_v8, handle_cudnnCTCLoss_v8, rpc_backend::cudnn) \
+  HANDLER(RPC_cudnnGetCTCLossWorkspaceSize_v8, handle_cudnnGetCTCLossWorkspaceSize_v8, rpc_backend::cudnn)
+#define LUPINE_CURAND_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_curandGetDirectionVectors32, handle_curandGetDirectionVectors32, rpc_backend::curand) \
+  HANDLER(RPC_curandGetScrambleConstants32, handle_curandGetScrambleConstants32, rpc_backend::curand) \
+  HANDLER(RPC_curandGetDirectionVectors64, handle_curandGetDirectionVectors64, rpc_backend::curand) \
+  HANDLER(RPC_curandGetScrambleConstants64, handle_curandGetScrambleConstants64, rpc_backend::curand) \
+  HANDLER(RPC_curandCreateGenerator, handle_curandCreateGenerator, rpc_backend::curand) \
+  HANDLER(RPC_curandCreateGeneratorHost, handle_curandCreateGeneratorHost, rpc_backend::curand) \
+  HANDLER(RPC_curandDestroyGenerator, handle_curandDestroyGenerator, rpc_backend::curand) \
+  HANDLER(RPC_curandGetVersion, handle_curandGetVersion, rpc_backend::curand) \
+  HANDLER(RPC_curandGetProperty, handle_curandGetProperty, rpc_backend::curand) \
+  HANDLER(RPC_curandSetStream, handle_curandSetStream, rpc_backend::curand) \
+  HANDLER(RPC_curandSetPseudoRandomGeneratorSeed, handle_curandSetPseudoRandomGeneratorSeed, rpc_backend::curand) \
+  HANDLER(RPC_curandSetGeneratorOffset, handle_curandSetGeneratorOffset, rpc_backend::curand) \
+  HANDLER(RPC_curandSetGeneratorOrdering, handle_curandSetGeneratorOrdering, rpc_backend::curand) \
+  HANDLER(RPC_curandSetQuasiRandomGeneratorDimensions, handle_curandSetQuasiRandomGeneratorDimensions, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerate, handle_curandGenerate, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateLongLong, handle_curandGenerateLongLong, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateUniform, handle_curandGenerateUniform, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateUniformDouble, handle_curandGenerateUniformDouble, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateNormal, handle_curandGenerateNormal, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateNormalDouble, handle_curandGenerateNormalDouble, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateLogNormal, handle_curandGenerateLogNormal, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateLogNormalDouble, handle_curandGenerateLogNormalDouble, rpc_backend::curand) \
+  HANDLER(RPC_curandCreatePoissonDistribution, handle_curandCreatePoissonDistribution, rpc_backend::curand) \
+  HANDLER(RPC_curandDestroyDistribution, handle_curandDestroyDistribution, rpc_backend::curand) \
+  HANDLER(RPC_curandGeneratePoisson, handle_curandGeneratePoisson, rpc_backend::curand) \
+  HANDLER(RPC_curandGeneratePoissonMethod, handle_curandGeneratePoissonMethod, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateSeeds, handle_curandGenerateSeeds, rpc_backend::curand)
+#define LUPINE_CUSPARSE_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cusparseGetErrorName, handle_cusparseGetErrorName, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetErrorString, handle_cusparseGetErrorString, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreate, handle_cusparseCreate, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroy, handle_cusparseDestroy, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetVersion, handle_cusparseGetVersion, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetProperty, handle_cusparseGetProperty, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSetStream, handle_cusparseSetStream, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetStream, handle_cusparseGetStream, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetPointerMode, handle_cusparseGetPointerMode, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSetPointerMode, handle_cusparseSetPointerMode, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseLoggerOpenFile, handle_cusparseLoggerOpenFile, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseLoggerSetLevel, handle_cusparseLoggerSetLevel, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseLoggerSetMask, handle_cusparseLoggerSetMask, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseLoggerForceDisable, handle_cusparseLoggerForceDisable, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateMatDescr, handle_cusparseCreateMatDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyMatDescr, handle_cusparseDestroyMatDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSetMatType, handle_cusparseSetMatType, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetMatType, handle_cusparseGetMatType, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSetMatFillMode, handle_cusparseSetMatFillMode, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetMatFillMode, handle_cusparseGetMatFillMode, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSetMatDiagType, handle_cusparseSetMatDiagType, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetMatDiagType, handle_cusparseGetMatDiagType, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSetMatIndexBase, handle_cusparseSetMatIndexBase, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGetMatIndexBase, handle_cusparseGetMatIndexBase, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateCsric02Info, handle_cusparseCreateCsric02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyCsric02Info, handle_cusparseDestroyCsric02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateBsric02Info, handle_cusparseCreateBsric02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyBsric02Info, handle_cusparseDestroyBsric02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateCsrilu02Info, handle_cusparseCreateCsrilu02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyCsrilu02Info, handle_cusparseDestroyCsrilu02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateBsrilu02Info, handle_cusparseCreateBsrilu02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyBsrilu02Info, handle_cusparseDestroyBsrilu02Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateBsrsv2Info, handle_cusparseCreateBsrsv2Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyBsrsv2Info, handle_cusparseDestroyBsrsv2Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateBsrsm2Info, handle_cusparseCreateBsrsm2Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyBsrsm2Info, handle_cusparseDestroyBsrsm2Info, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateCsru2csrInfo, handle_cusparseCreateCsru2csrInfo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyCsru2csrInfo, handle_cusparseDestroyCsru2csrInfo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateColorInfo, handle_cusparseCreateColorInfo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyColorInfo, handle_cusparseDestroyColorInfo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreatePruneInfo, handle_cusparseCreatePruneInfo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyPruneInfo, handle_cusparseDestroyPruneInfo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgemvi, handle_cusparseSgemvi, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgemvi_bufferSize, handle_cusparseSgemvi_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgemvi, handle_cusparseDgemvi, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgemvi_bufferSize, handle_cusparseDgemvi_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgemvi, handle_cusparseCgemvi, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgemvi_bufferSize, handle_cusparseCgemvi_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgemvi, handle_cusparseZgemvi, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgemvi_bufferSize, handle_cusparseZgemvi_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrmv, handle_cusparseSbsrmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrmv, handle_cusparseDbsrmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrmv, handle_cusparseCbsrmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrmv, handle_cusparseZbsrmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrxmv, handle_cusparseSbsrxmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrxmv, handle_cusparseDbsrxmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrxmv, handle_cusparseCbsrxmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrxmv, handle_cusparseZbsrxmv, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXbsrsv2_zeroPivot, handle_cusparseXbsrsv2_zeroPivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrsv2_bufferSize, handle_cusparseSbsrsv2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrsv2_bufferSize, handle_cusparseDbsrsv2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrsv2_bufferSize, handle_cusparseCbsrsv2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrsv2_bufferSize, handle_cusparseZbsrsv2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrsv2_analysis, handle_cusparseSbsrsv2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrsv2_analysis, handle_cusparseDbsrsv2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrsv2_analysis, handle_cusparseCbsrsv2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrsv2_analysis, handle_cusparseZbsrsv2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrsv2_solve, handle_cusparseSbsrsv2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrsv2_solve, handle_cusparseDbsrsv2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrsv2_solve, handle_cusparseCbsrsv2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrsv2_solve, handle_cusparseZbsrsv2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrmm, handle_cusparseSbsrmm, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrmm, handle_cusparseDbsrmm, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrmm, handle_cusparseCbsrmm, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrmm, handle_cusparseZbsrmm, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXbsrsm2_zeroPivot, handle_cusparseXbsrsm2_zeroPivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrsm2_bufferSize, handle_cusparseSbsrsm2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrsm2_bufferSize, handle_cusparseDbsrsm2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrsm2_bufferSize, handle_cusparseCbsrsm2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrsm2_bufferSize, handle_cusparseZbsrsm2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrsm2_analysis, handle_cusparseSbsrsm2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrsm2_analysis, handle_cusparseDbsrsm2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrsm2_analysis, handle_cusparseCbsrsm2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrsm2_analysis, handle_cusparseZbsrsm2_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrsm2_solve, handle_cusparseSbsrsm2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrsm2_solve, handle_cusparseDbsrsm2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrsm2_solve, handle_cusparseCbsrsm2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrsm2_solve, handle_cusparseZbsrsm2_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrilu02_numericBoost, handle_cusparseScsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrilu02_numericBoost, handle_cusparseDcsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrilu02_numericBoost, handle_cusparseCcsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrilu02_numericBoost, handle_cusparseZcsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsrilu02_zeroPivot, handle_cusparseXcsrilu02_zeroPivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrilu02_bufferSize, handle_cusparseScsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrilu02_bufferSize, handle_cusparseDcsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrilu02_bufferSize, handle_cusparseCcsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrilu02_bufferSize, handle_cusparseZcsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrilu02_analysis, handle_cusparseScsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrilu02_analysis, handle_cusparseDcsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrilu02_analysis, handle_cusparseCcsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrilu02_analysis, handle_cusparseZcsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrilu02, handle_cusparseScsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrilu02, handle_cusparseDcsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrilu02, handle_cusparseCcsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrilu02, handle_cusparseZcsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrilu02_numericBoost, handle_cusparseSbsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrilu02_numericBoost, handle_cusparseDbsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrilu02_numericBoost, handle_cusparseCbsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrilu02_numericBoost, handle_cusparseZbsrilu02_numericBoost, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXbsrilu02_zeroPivot, handle_cusparseXbsrilu02_zeroPivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrilu02_bufferSize, handle_cusparseSbsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrilu02_bufferSize, handle_cusparseDbsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrilu02_bufferSize, handle_cusparseCbsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrilu02_bufferSize, handle_cusparseZbsrilu02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrilu02_analysis, handle_cusparseSbsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrilu02_analysis, handle_cusparseDbsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrilu02_analysis, handle_cusparseCbsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrilu02_analysis, handle_cusparseZbsrilu02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsrilu02, handle_cusparseSbsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsrilu02, handle_cusparseDbsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsrilu02, handle_cusparseCbsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsrilu02, handle_cusparseZbsrilu02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsric02_zeroPivot, handle_cusparseXcsric02_zeroPivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsric02_bufferSize, handle_cusparseScsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsric02_bufferSize, handle_cusparseDcsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsric02_bufferSize, handle_cusparseCcsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsric02_bufferSize, handle_cusparseZcsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsric02_analysis, handle_cusparseScsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsric02_analysis, handle_cusparseDcsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsric02_analysis, handle_cusparseCcsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsric02_analysis, handle_cusparseZcsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsric02, handle_cusparseScsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsric02, handle_cusparseDcsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsric02, handle_cusparseCcsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsric02, handle_cusparseZcsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXbsric02_zeroPivot, handle_cusparseXbsric02_zeroPivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsric02_bufferSize, handle_cusparseSbsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsric02_bufferSize, handle_cusparseDbsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsric02_bufferSize, handle_cusparseCbsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsric02_bufferSize, handle_cusparseZbsric02_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsric02_analysis, handle_cusparseSbsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsric02_analysis, handle_cusparseDbsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsric02_analysis, handle_cusparseCbsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsric02_analysis, handle_cusparseZbsric02_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsric02, handle_cusparseSbsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsric02, handle_cusparseDbsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsric02, handle_cusparseCbsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsric02, handle_cusparseZbsric02, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsv2_bufferSizeExt, handle_cusparseSgtsv2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsv2_bufferSizeExt, handle_cusparseDgtsv2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsv2_bufferSizeExt, handle_cusparseCgtsv2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsv2_bufferSizeExt, handle_cusparseZgtsv2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsv2, handle_cusparseSgtsv2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsv2, handle_cusparseDgtsv2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsv2, handle_cusparseCgtsv2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsv2, handle_cusparseZgtsv2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsv2_nopivot_bufferSizeExt, handle_cusparseSgtsv2_nopivot_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsv2_nopivot_bufferSizeExt, handle_cusparseDgtsv2_nopivot_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsv2_nopivot_bufferSizeExt, handle_cusparseCgtsv2_nopivot_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsv2_nopivot_bufferSizeExt, handle_cusparseZgtsv2_nopivot_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsv2_nopivot, handle_cusparseSgtsv2_nopivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsv2_nopivot, handle_cusparseDgtsv2_nopivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsv2_nopivot, handle_cusparseCgtsv2_nopivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsv2_nopivot, handle_cusparseZgtsv2_nopivot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsv2StridedBatch_bufferSizeExt, handle_cusparseSgtsv2StridedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsv2StridedBatch_bufferSizeExt, handle_cusparseDgtsv2StridedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsv2StridedBatch_bufferSizeExt, handle_cusparseCgtsv2StridedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsv2StridedBatch_bufferSizeExt, handle_cusparseZgtsv2StridedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsv2StridedBatch, handle_cusparseSgtsv2StridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsv2StridedBatch, handle_cusparseDgtsv2StridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsv2StridedBatch, handle_cusparseCgtsv2StridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsv2StridedBatch, handle_cusparseZgtsv2StridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsvInterleavedBatch_bufferSizeExt, handle_cusparseSgtsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsvInterleavedBatch_bufferSizeExt, handle_cusparseDgtsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsvInterleavedBatch_bufferSizeExt, handle_cusparseCgtsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsvInterleavedBatch_bufferSizeExt, handle_cusparseZgtsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgtsvInterleavedBatch, handle_cusparseSgtsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgtsvInterleavedBatch, handle_cusparseDgtsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgtsvInterleavedBatch, handle_cusparseCgtsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgtsvInterleavedBatch, handle_cusparseZgtsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgpsvInterleavedBatch_bufferSizeExt, handle_cusparseSgpsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgpsvInterleavedBatch_bufferSizeExt, handle_cusparseDgpsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgpsvInterleavedBatch_bufferSizeExt, handle_cusparseCgpsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgpsvInterleavedBatch_bufferSizeExt, handle_cusparseZgpsvInterleavedBatch_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgpsvInterleavedBatch, handle_cusparseSgpsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgpsvInterleavedBatch, handle_cusparseDgpsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgpsvInterleavedBatch, handle_cusparseCgpsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgpsvInterleavedBatch, handle_cusparseZgpsvInterleavedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrgeam2_bufferSizeExt, handle_cusparseScsrgeam2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrgeam2_bufferSizeExt, handle_cusparseDcsrgeam2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrgeam2_bufferSizeExt, handle_cusparseCcsrgeam2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrgeam2_bufferSizeExt, handle_cusparseZcsrgeam2_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsrgeam2Nnz, handle_cusparseXcsrgeam2Nnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrgeam2, handle_cusparseScsrgeam2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrgeam2, handle_cusparseDcsrgeam2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrgeam2, handle_cusparseCcsrgeam2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrgeam2, handle_cusparseZcsrgeam2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsrcolor, handle_cusparseScsrcolor, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsrcolor, handle_cusparseDcsrcolor, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsrcolor, handle_cusparseCcsrcolor, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsrcolor, handle_cusparseZcsrcolor, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSnnz, handle_cusparseSnnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnnz, handle_cusparseDnnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCnnz, handle_cusparseCnnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZnnz, handle_cusparseZnnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSnnz_compress, handle_cusparseSnnz_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnnz_compress, handle_cusparseDnnz_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCnnz_compress, handle_cusparseCnnz_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZnnz_compress, handle_cusparseZnnz_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsr2csr_compress, handle_cusparseScsr2csr_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsr2csr_compress, handle_cusparseDcsr2csr_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsr2csr_compress, handle_cusparseCcsr2csr_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsr2csr_compress, handle_cusparseZcsr2csr_compress, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcoo2csr, handle_cusparseXcoo2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsr2coo, handle_cusparseXcsr2coo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsr2bsrNnz, handle_cusparseXcsr2bsrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsr2bsr, handle_cusparseScsr2bsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsr2bsr, handle_cusparseDcsr2bsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsr2bsr, handle_cusparseCcsr2bsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsr2bsr, handle_cusparseZcsr2bsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSbsr2csr, handle_cusparseSbsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDbsr2csr, handle_cusparseDbsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCbsr2csr, handle_cusparseCbsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZbsr2csr, handle_cusparseZbsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgebsr2gebsc_bufferSize, handle_cusparseSgebsr2gebsc_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgebsr2gebsc_bufferSize, handle_cusparseDgebsr2gebsc_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgebsr2gebsc_bufferSize, handle_cusparseCgebsr2gebsc_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgebsr2gebsc_bufferSize, handle_cusparseZgebsr2gebsc_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgebsr2gebsc, handle_cusparseSgebsr2gebsc, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgebsr2gebsc, handle_cusparseDgebsr2gebsc, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgebsr2gebsc, handle_cusparseCgebsr2gebsc, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgebsr2gebsc, handle_cusparseZgebsr2gebsc, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgebsr2csr, handle_cusparseSgebsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgebsr2csr, handle_cusparseDgebsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgebsr2csr, handle_cusparseCgebsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgebsr2csr, handle_cusparseZgebsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsr2gebsr_bufferSize, handle_cusparseScsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsr2gebsr_bufferSize, handle_cusparseDcsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsr2gebsr_bufferSize, handle_cusparseCcsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsr2gebsr_bufferSize, handle_cusparseZcsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsr2gebsrNnz, handle_cusparseXcsr2gebsrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsr2gebsr, handle_cusparseScsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsr2gebsr, handle_cusparseDcsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsr2gebsr, handle_cusparseCcsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsr2gebsr, handle_cusparseZcsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgebsr2gebsr_bufferSize, handle_cusparseSgebsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgebsr2gebsr_bufferSize, handle_cusparseDgebsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgebsr2gebsr_bufferSize, handle_cusparseCgebsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgebsr2gebsr_bufferSize, handle_cusparseZgebsr2gebsr_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXgebsr2gebsrNnz, handle_cusparseXgebsr2gebsrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSgebsr2gebsr, handle_cusparseSgebsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDgebsr2gebsr, handle_cusparseDgebsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCgebsr2gebsr, handle_cusparseCgebsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZgebsr2gebsr, handle_cusparseZgebsr2gebsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateIdentityPermutation, handle_cusparseCreateIdentityPermutation, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcoosort_bufferSizeExt, handle_cusparseXcoosort_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcoosortByRow, handle_cusparseXcoosortByRow, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcoosortByColumn, handle_cusparseXcoosortByColumn, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsrsort_bufferSizeExt, handle_cusparseXcsrsort_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcsrsort, handle_cusparseXcsrsort, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcscsort_bufferSizeExt, handle_cusparseXcscsort_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseXcscsort, handle_cusparseXcscsort, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsru2csr_bufferSizeExt, handle_cusparseScsru2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsru2csr_bufferSizeExt, handle_cusparseDcsru2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsru2csr_bufferSizeExt, handle_cusparseCcsru2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsru2csr_bufferSizeExt, handle_cusparseZcsru2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsru2csr, handle_cusparseScsru2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsru2csr, handle_cusparseDcsru2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsru2csr, handle_cusparseCcsru2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsru2csr, handle_cusparseZcsru2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScsr2csru, handle_cusparseScsr2csru, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDcsr2csru, handle_cusparseDcsr2csru, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCcsr2csru, handle_cusparseCcsr2csru, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseZcsr2csru, handle_cusparseZcsr2csru, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneDense2csr_bufferSizeExt, handle_cusparseHpruneDense2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneDense2csr_bufferSizeExt, handle_cusparseSpruneDense2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneDense2csr_bufferSizeExt, handle_cusparseDpruneDense2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneDense2csrNnz, handle_cusparseHpruneDense2csrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneDense2csrNnz, handle_cusparseSpruneDense2csrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneDense2csrNnz, handle_cusparseDpruneDense2csrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneDense2csr, handle_cusparseHpruneDense2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneDense2csr, handle_cusparseSpruneDense2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneDense2csr, handle_cusparseDpruneDense2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneCsr2csr_bufferSizeExt, handle_cusparseHpruneCsr2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneCsr2csr_bufferSizeExt, handle_cusparseSpruneCsr2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneCsr2csr_bufferSizeExt, handle_cusparseDpruneCsr2csr_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneCsr2csrNnz, handle_cusparseHpruneCsr2csrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneCsr2csrNnz, handle_cusparseSpruneCsr2csrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneCsr2csrNnz, handle_cusparseDpruneCsr2csrNnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneCsr2csr, handle_cusparseHpruneCsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneCsr2csr, handle_cusparseSpruneCsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneCsr2csr, handle_cusparseDpruneCsr2csr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneDense2csrByPercentage_bufferSizeExt, handle_cusparseHpruneDense2csrByPercentage_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneDense2csrByPercentage_bufferSizeExt, handle_cusparseSpruneDense2csrByPercentage_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneDense2csrByPercentage_bufferSizeExt, handle_cusparseDpruneDense2csrByPercentage_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneDense2csrNnzByPercentage, handle_cusparseHpruneDense2csrNnzByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneDense2csrNnzByPercentage, handle_cusparseSpruneDense2csrNnzByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneDense2csrNnzByPercentage, handle_cusparseDpruneDense2csrNnzByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneDense2csrByPercentage, handle_cusparseHpruneDense2csrByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneDense2csrByPercentage, handle_cusparseSpruneDense2csrByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneDense2csrByPercentage, handle_cusparseDpruneDense2csrByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneCsr2csrByPercentage_bufferSizeExt, handle_cusparseHpruneCsr2csrByPercentage_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneCsr2csrByPercentage_bufferSizeExt, handle_cusparseSpruneCsr2csrByPercentage_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneCsr2csrByPercentage_bufferSizeExt, handle_cusparseDpruneCsr2csrByPercentage_bufferSizeExt, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneCsr2csrNnzByPercentage, handle_cusparseHpruneCsr2csrNnzByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneCsr2csrNnzByPercentage, handle_cusparseSpruneCsr2csrNnzByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneCsr2csrNnzByPercentage, handle_cusparseDpruneCsr2csrNnzByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseHpruneCsr2csrByPercentage, handle_cusparseHpruneCsr2csrByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpruneCsr2csrByPercentage, handle_cusparseSpruneCsr2csrByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDpruneCsr2csrByPercentage, handle_cusparseDpruneCsr2csrByPercentage, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCsr2cscEx2, handle_cusparseCsr2cscEx2, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCsr2cscEx2_bufferSize, handle_cusparseCsr2cscEx2_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateSpVec, handle_cusparseCreateSpVec, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroySpVec, handle_cusparseDestroySpVec, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpVecGet, handle_cusparseSpVecGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpVecGetIndexBase, handle_cusparseSpVecGetIndexBase, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpVecGetValues, handle_cusparseSpVecGetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpVecSetValues, handle_cusparseSpVecSetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateDnVec, handle_cusparseCreateDnVec, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyDnVec, handle_cusparseDestroyDnVec, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnVecGet, handle_cusparseDnVecGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnVecGetValues, handle_cusparseDnVecGetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnVecSetValues, handle_cusparseDnVecSetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroySpMat, handle_cusparseDestroySpMat, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatGetFormat, handle_cusparseSpMatGetFormat, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatGetIndexBase, handle_cusparseSpMatGetIndexBase, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatGetValues, handle_cusparseSpMatGetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatSetValues, handle_cusparseSpMatSetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatGetSize, handle_cusparseSpMatGetSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatGetStridedBatch, handle_cusparseSpMatGetStridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCooSetStridedBatch, handle_cusparseCooSetStridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCsrSetStridedBatch, handle_cusparseCsrSetStridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatGetAttribute, handle_cusparseSpMatGetAttribute, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMatSetAttribute, handle_cusparseSpMatSetAttribute, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateCsr, handle_cusparseCreateCsr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateCsc, handle_cusparseCreateCsc, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCsrGet, handle_cusparseCsrGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCscGet, handle_cusparseCscGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCsrSetPointers, handle_cusparseCsrSetPointers, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCscSetPointers, handle_cusparseCscSetPointers, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateCoo, handle_cusparseCreateCoo, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCooGet, handle_cusparseCooGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCooSetPointers, handle_cusparseCooSetPointers, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateBlockedEll, handle_cusparseCreateBlockedEll, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseBlockedEllGet, handle_cusparseBlockedEllGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseCreateDnMat, handle_cusparseCreateDnMat, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDestroyDnMat, handle_cusparseDestroyDnMat, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnMatGet, handle_cusparseDnMatGet, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnMatGetValues, handle_cusparseDnMatGetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnMatSetValues, handle_cusparseDnMatSetValues, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnMatSetStridedBatch, handle_cusparseDnMatSetStridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDnMatGetStridedBatch, handle_cusparseDnMatGetStridedBatch, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseAxpby, handle_cusparseAxpby, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseGather, handle_cusparseGather, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseScatter, handle_cusparseScatter, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseRot, handle_cusparseRot, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpVV_bufferSize, handle_cusparseSpVV_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpVV, handle_cusparseSpVV, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSparseToDense_bufferSize, handle_cusparseSparseToDense_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSparseToDense, handle_cusparseSparseToDense, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDenseToSparse_bufferSize, handle_cusparseDenseToSparse_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDenseToSparse_analysis, handle_cusparseDenseToSparse_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseDenseToSparse_convert, handle_cusparseDenseToSparse_convert, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMV, handle_cusparseSpMV, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMV_bufferSize, handle_cusparseSpMV_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSV_createDescr, handle_cusparseSpSV_createDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSV_destroyDescr, handle_cusparseSpSV_destroyDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSV_bufferSize, handle_cusparseSpSV_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSV_analysis, handle_cusparseSpSV_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSV_solve, handle_cusparseSpSV_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSM_createDescr, handle_cusparseSpSM_createDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSM_destroyDescr, handle_cusparseSpSM_destroyDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSM_bufferSize, handle_cusparseSpSM_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSM_analysis, handle_cusparseSpSM_analysis, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpSM_solve, handle_cusparseSpSM_solve, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMM_bufferSize, handle_cusparseSpMM_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMM_preprocess, handle_cusparseSpMM_preprocess, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMM, handle_cusparseSpMM, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMM_createDescr, handle_cusparseSpGEMM_createDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMM_destroyDescr, handle_cusparseSpGEMM_destroyDescr, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMM_workEstimation, handle_cusparseSpGEMM_workEstimation, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMM_compute, handle_cusparseSpGEMM_compute, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMM_copy, handle_cusparseSpGEMM_copy, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMMreuse_workEstimation, handle_cusparseSpGEMMreuse_workEstimation, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMMreuse_nnz, handle_cusparseSpGEMMreuse_nnz, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMMreuse_copy, handle_cusparseSpGEMMreuse_copy, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpGEMMreuse_compute, handle_cusparseSpGEMMreuse_compute, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSDDMM_bufferSize, handle_cusparseSDDMM_bufferSize, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSDDMM_preprocess, handle_cusparseSDDMM_preprocess, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSDDMM, handle_cusparseSDDMM, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMMOp_createPlan, handle_cusparseSpMMOp_createPlan, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMMOp, handle_cusparseSpMMOp, rpc_backend::cusparse) \
+  HANDLER(RPC_cusparseSpMMOp_destroyPlan, handle_cusparseSpMMOp_destroyPlan, rpc_backend::cusparse)
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
@@ -1469,6 +2551,1333 @@ LUPINE_DECLARE_HANDLER(RPC___cudaGetKernel, handle___cudaGetKernel,
                        rpc_backend::cudart)
 #endif
 #endif
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasGetMatrixAsync_64,
+                       handle_cublasGetMatrixAsync_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasGetMatrix_64, handle_cublasGetMatrix_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasGetVectorAsync_64,
+                       handle_cublasGetVectorAsync_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasGetVector_64, handle_cublasGetVector_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSetMatrixAsync_64,
+                       handle_cublasSetMatrixAsync_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSetMatrix_64, handle_cublasSetMatrix_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSetVectorAsync_64,
+                       handle_cublasSetVectorAsync_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSetVector_64, handle_cublasSetVector_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasAsumEx_64, handle_cublasAsumEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasAxpyEx_64, handle_cublasAxpyEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCaxpy_v2_64, handle_cublasCaxpy_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCcopy_v2_64, handle_cublasCcopy_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCdgmm_64, handle_cublasCdgmm_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCdotc_v2_64, handle_cublasCdotc_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCdotu_v2_64, handle_cublasCdotu_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgbmv_v2_64, handle_cublasCgbmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgeam_64, handle_cublasCgeam_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgemm3mBatched_64,
+                       handle_cublasCgemm3mBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgemm3mEx_64, handle_cublasCgemm3mEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgemm3mStridedBatched_64,
+                       handle_cublasCgemm3mStridedBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgemm3m_64, handle_cublasCgemm3m_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgemmBatched_64, handle_cublasCgemmBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgemmEx_64, handle_cublasCgemmEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgemmStridedBatched_64,
+                       handle_cublasCgemmStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgemm_v2_64, handle_cublasCgemm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgemvBatched_64, handle_cublasCgemvBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgemvStridedBatched_64,
+                       handle_cublasCgemvStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgemv_v2_64, handle_cublasCgemv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgerc_v2_64, handle_cublasCgerc_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCgeru_v2_64, handle_cublasCgeru_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasChbmv_v2_64, handle_cublasChbmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasChemm_v2_64, handle_cublasChemm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasChemv_v2_64, handle_cublasChemv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCher2_v2_64, handle_cublasCher2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCher2k_v2_64, handle_cublasCher2k_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCher_v2_64, handle_cublasCher_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCherk3mEx_64, handle_cublasCherk3mEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCherkEx_64, handle_cublasCherkEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCherk_v2_64, handle_cublasCherk_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCherkx_64, handle_cublasCherkx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasChpmv_v2_64, handle_cublasChpmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasChpr2_v2_64, handle_cublasChpr2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasChpr_v2_64, handle_cublasChpr_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCopyEx_64, handle_cublasCopyEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCrot_v2_64, handle_cublasCrot_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCscal_v2_64, handle_cublasCscal_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCsrot_v2_64, handle_cublasCsrot_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCsscal_v2_64, handle_cublasCsscal_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCswap_v2_64, handle_cublasCswap_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCsymm_v2_64, handle_cublasCsymm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCsymv_v2_64, handle_cublasCsymv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCsyr2_v2_64, handle_cublasCsyr2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCsyr2k_v2_64, handle_cublasCsyr2k_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCsyr_v2_64, handle_cublasCsyr_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCsyrk3mEx_64, handle_cublasCsyrk3mEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCsyrkEx_64, handle_cublasCsyrkEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCsyrk_v2_64, handle_cublasCsyrk_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCsyrkx_64, handle_cublasCsyrkx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCtbmv_v2_64, handle_cublasCtbmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCtbsv_v2_64, handle_cublasCtbsv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCtpmv_v2_64, handle_cublasCtpmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCtpsv_v2_64, handle_cublasCtpsv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCtrmm_v2_64, handle_cublasCtrmm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCtrmv_v2_64, handle_cublasCtrmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCtrsmBatched_64, handle_cublasCtrsmBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCtrsm_v2_64, handle_cublasCtrsm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasCtrsv_v2_64, handle_cublasCtrsv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDasum_v2_64, handle_cublasDasum_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDaxpy_v2_64, handle_cublasDaxpy_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDcopy_v2_64, handle_cublasDcopy_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDdgmm_64, handle_cublasDdgmm_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDdot_v2_64, handle_cublasDdot_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDgbmv_v2_64, handle_cublasDgbmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDgeam_64, handle_cublasDgeam_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDgemmBatched_64, handle_cublasDgemmBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120500
+LUPINE_DECLARE_HANDLER(RPC_cublasDgemmGroupedBatched,
+                       handle_cublasDgemmGroupedBatched, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120500
+LUPINE_DECLARE_HANDLER(RPC_cublasDgemmGroupedBatched_64,
+                       handle_cublasDgemmGroupedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDgemmStridedBatched_64,
+                       handle_cublasDgemmStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDgemm_v2_64, handle_cublasDgemm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDgemvBatched_64, handle_cublasDgemvBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDgemvStridedBatched_64,
+                       handle_cublasDgemvStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDgemv_v2_64, handle_cublasDgemv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDger_v2_64, handle_cublasDger_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDnrm2_v2_64, handle_cublasDnrm2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDotEx_64, handle_cublasDotEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDotcEx_64, handle_cublasDotcEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDrot_v2_64, handle_cublasDrot_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDrotm_v2_64, handle_cublasDrotm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDsbmv_v2_64, handle_cublasDsbmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDscal_v2_64, handle_cublasDscal_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDspmv_v2_64, handle_cublasDspmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDspr2_v2_64, handle_cublasDspr2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDspr_v2_64, handle_cublasDspr_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDswap_v2_64, handle_cublasDswap_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDsymm_v2_64, handle_cublasDsymm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDsymv_v2_64, handle_cublasDsymv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDsyr2_v2_64, handle_cublasDsyr2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDsyr2k_v2_64, handle_cublasDsyr2k_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDsyr_v2_64, handle_cublasDsyr_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDsyrk_v2_64, handle_cublasDsyrk_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDsyrkx_64, handle_cublasDsyrkx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDtbmv_v2_64, handle_cublasDtbmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDtbsv_v2_64, handle_cublasDtbsv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDtpmv_v2_64, handle_cublasDtpmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDtpsv_v2_64, handle_cublasDtpsv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDtrmm_v2_64, handle_cublasDtrmm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDtrmv_v2_64, handle_cublasDtrmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDtrsmBatched_64, handle_cublasDtrsmBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDtrsm_v2_64, handle_cublasDtrsm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDtrsv_v2_64, handle_cublasDtrsv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDzasum_v2_64, handle_cublasDzasum_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasDznrm2_v2_64, handle_cublasDznrm2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasGemmBatchedEx_64,
+                       handle_cublasGemmBatchedEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasGemmEx_64, handle_cublasGemmEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120500
+LUPINE_DECLARE_HANDLER(RPC_cublasGemmGroupedBatchedEx,
+                       handle_cublasGemmGroupedBatchedEx, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120500
+LUPINE_DECLARE_HANDLER(RPC_cublasGemmGroupedBatchedEx_64,
+                       handle_cublasGemmGroupedBatchedEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasGemmStridedBatchedEx_64,
+                       handle_cublasGemmStridedBatchedEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(RPC_cublasGetEmulationSpecialValuesSupport,
+                       handle_cublasGetEmulationSpecialValuesSupport,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120900
+LUPINE_DECLARE_HANDLER(RPC_cublasGetEmulationStrategy,
+                       handle_cublasGetEmulationStrategy, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(
+    RPC_cublasGetFixedPointEmulationMantissaBitCountPointer,
+    handle_cublasGetFixedPointEmulationMantissaBitCountPointer,
+    rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(RPC_cublasGetFixedPointEmulationMantissaBitOffset,
+                       handle_cublasGetFixedPointEmulationMantissaBitOffset,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(RPC_cublasGetFixedPointEmulationMantissaControl,
+                       handle_cublasGetFixedPointEmulationMantissaControl,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(RPC_cublasGetFixedPointEmulationMaxMantissaBitCount,
+                       handle_cublasGetFixedPointEmulationMaxMantissaBitCount,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasHSHgemvBatched_64,
+                       handle_cublasHSHgemvBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasHSHgemvStridedBatched_64,
+                       handle_cublasHSHgemvStridedBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasHSSgemvBatched_64,
+                       handle_cublasHSSgemvBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasHSSgemvStridedBatched_64,
+                       handle_cublasHSSgemvStridedBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasHgemmBatched_64, handle_cublasHgemmBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasHgemmStridedBatched_64,
+                       handle_cublasHgemmStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasHgemm_64, handle_cublasHgemm_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasIamaxEx_64, handle_cublasIamaxEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasIaminEx_64, handle_cublasIaminEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasIcamax_v2_64, handle_cublasIcamax_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasIcamin_v2_64, handle_cublasIcamin_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasIdamax_v2_64, handle_cublasIdamax_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasIdamin_v2_64, handle_cublasIdamin_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasIsamax_v2_64, handle_cublasIsamax_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasIsamin_v2_64, handle_cublasIsamin_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasIzamax_v2_64, handle_cublasIzamax_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasIzamin_v2_64, handle_cublasIzamin_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasNrm2Ex_64, handle_cublasNrm2Ex_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasRotEx_64, handle_cublasRotEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasRotmEx_64, handle_cublasRotmEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSasum_v2_64, handle_cublasSasum_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSaxpy_v2_64, handle_cublasSaxpy_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasScalEx_64, handle_cublasScalEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasScasum_v2_64, handle_cublasScasum_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasScnrm2_v2_64, handle_cublasScnrm2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasScopy_v2_64, handle_cublasScopy_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSdgmm_64, handle_cublasSdgmm_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSdot_v2_64, handle_cublasSdot_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(RPC_cublasSetEmulationSpecialValuesSupport,
+                       handle_cublasSetEmulationSpecialValuesSupport,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120900
+LUPINE_DECLARE_HANDLER(RPC_cublasSetEmulationStrategy,
+                       handle_cublasSetEmulationStrategy, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120900
+LUPINE_DECLARE_HANDLER(RPC_cublasSetEnvironmentMode,
+                       handle_cublasSetEnvironmentMode, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(
+    RPC_cublasSetFixedPointEmulationMantissaBitCountPointer,
+    handle_cublasSetFixedPointEmulationMantissaBitCountPointer,
+    rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(RPC_cublasSetFixedPointEmulationMantissaBitOffset,
+                       handle_cublasSetFixedPointEmulationMantissaBitOffset,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(RPC_cublasSetFixedPointEmulationMantissaControl,
+                       handle_cublasSetFixedPointEmulationMantissaControl,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(RPC_cublasSetFixedPointEmulationMaxMantissaBitCount,
+                       handle_cublasSetFixedPointEmulationMaxMantissaBitCount,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSgbmv_v2_64, handle_cublasSgbmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSgeam_64, handle_cublasSgeam_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSgemmBatched_64, handle_cublasSgemmBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSgemmEx_64, handle_cublasSgemmEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120500
+LUPINE_DECLARE_HANDLER(RPC_cublasSgemmGroupedBatched,
+                       handle_cublasSgemmGroupedBatched, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120500
+LUPINE_DECLARE_HANDLER(RPC_cublasSgemmGroupedBatched_64,
+                       handle_cublasSgemmGroupedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSgemmStridedBatched_64,
+                       handle_cublasSgemmStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSgemm_v2_64, handle_cublasSgemm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSgemvBatched_64, handle_cublasSgemvBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSgemvStridedBatched_64,
+                       handle_cublasSgemvStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSgemv_v2_64, handle_cublasSgemv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSger_v2_64, handle_cublasSger_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSnrm2_v2_64, handle_cublasSnrm2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSrot_v2_64, handle_cublasSrot_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSrotm_v2_64, handle_cublasSrotm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSsbmv_v2_64, handle_cublasSsbmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSscal_v2_64, handle_cublasSscal_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSspmv_v2_64, handle_cublasSspmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSspr2_v2_64, handle_cublasSspr2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSspr_v2_64, handle_cublasSspr_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSswap_v2_64, handle_cublasSswap_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSsymm_v2_64, handle_cublasSsymm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSsymv_v2_64, handle_cublasSsymv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSsyr2_v2_64, handle_cublasSsyr2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSsyr2k_v2_64, handle_cublasSsyr2k_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSsyr_v2_64, handle_cublasSsyr_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSsyrk_v2_64, handle_cublasSsyrk_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSsyrkx_64, handle_cublasSsyrkx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasStbmv_v2_64, handle_cublasStbmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasStbsv_v2_64, handle_cublasStbsv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasStpmv_v2_64, handle_cublasStpmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasStpsv_v2_64, handle_cublasStpsv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasStrmm_v2_64, handle_cublasStrmm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasStrmv_v2_64, handle_cublasStrmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasStrsmBatched_64, handle_cublasStrsmBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasStrsm_v2_64, handle_cublasStrsm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasStrsv_v2_64, handle_cublasStrsv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasSwapEx_64, handle_cublasSwapEx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasTSSgemvBatched_64,
+                       handle_cublasTSSgemvBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasTSSgemvStridedBatched_64,
+                       handle_cublasTSSgemvStridedBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasTSTgemvBatched_64,
+                       handle_cublasTSTgemvBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasTSTgemvStridedBatched_64,
+                       handle_cublasTSTgemvStridedBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZaxpy_v2_64, handle_cublasZaxpy_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZcopy_v2_64, handle_cublasZcopy_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZdgmm_64, handle_cublasZdgmm_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZdotc_v2_64, handle_cublasZdotc_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZdotu_v2_64, handle_cublasZdotu_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZdrot_v2_64, handle_cublasZdrot_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZdscal_v2_64, handle_cublasZdscal_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZgbmv_v2_64, handle_cublasZgbmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZgeam_64, handle_cublasZgeam_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZgemm3m_64, handle_cublasZgemm3m_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZgemmBatched_64, handle_cublasZgemmBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZgemmStridedBatched_64,
+                       handle_cublasZgemmStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZgemm_v2_64, handle_cublasZgemm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZgemvBatched_64, handle_cublasZgemvBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZgemvStridedBatched_64,
+                       handle_cublasZgemvStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZgemv_v2_64, handle_cublasZgemv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZgerc_v2_64, handle_cublasZgerc_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZgeru_v2_64, handle_cublasZgeru_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZhbmv_v2_64, handle_cublasZhbmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZhemm_v2_64, handle_cublasZhemm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZhemv_v2_64, handle_cublasZhemv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZher2_v2_64, handle_cublasZher2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZher2k_v2_64, handle_cublasZher2k_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZher_v2_64, handle_cublasZher_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZherk_v2_64, handle_cublasZherk_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZherkx_64, handle_cublasZherkx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZhpmv_v2_64, handle_cublasZhpmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZhpr2_v2_64, handle_cublasZhpr2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZhpr_v2_64, handle_cublasZhpr_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZrot_v2_64, handle_cublasZrot_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZscal_v2_64, handle_cublasZscal_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZswap_v2_64, handle_cublasZswap_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZsymm_v2_64, handle_cublasZsymm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZsymv_v2_64, handle_cublasZsymv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZsyr2_v2_64, handle_cublasZsyr2_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZsyr2k_v2_64, handle_cublasZsyr2k_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZsyr_v2_64, handle_cublasZsyr_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZsyrk_v2_64, handle_cublasZsyrk_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZsyrkx_64, handle_cublasZsyrkx_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZtbmv_v2_64, handle_cublasZtbmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZtbsv_v2_64, handle_cublasZtbsv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZtpmv_v2_64, handle_cublasZtpmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZtpsv_v2_64, handle_cublasZtpsv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZtrmm_v2_64, handle_cublasZtrmm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZtrmv_v2_64, handle_cublasZtrmv_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZtrsmBatched_64, handle_cublasZtrsmBatched_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZtrsm_v2_64, handle_cublasZtrsm_v2_64,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+LUPINE_DECLARE_HANDLER(RPC_cublasZtrsv_v2_64, handle_cublasZtrsv_v2_64,
+                       rpc_backend::cublas)
+#endif
+LUPINE_CUBLASLT_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(RPC_lupineCublasLtEmulationDescCopy,
+                       handle_lupineCublasLtEmulationDescCopy,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120900
+LUPINE_DECLARE_HANDLER(RPC_cublasLtDisableCpuInstructionsSetMask,
+                       handle_cublasLtDisableCpuInstructionsSetMask,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(RPC_cublasLtEmulationDescGetAttribute,
+                       handle_cublasLtEmulationDescGetAttribute,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(RPC_cublasLtEmulationDescInit_internal,
+                       handle_cublasLtEmulationDescInit_internal,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+LUPINE_DECLARE_HANDLER(RPC_cublasLtEmulationDescSetAttribute,
+                       handle_cublasLtEmulationDescSetAttribute,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130300
+LUPINE_DECLARE_HANDLER(RPC_cublasLtMatmulAlgoCheckForStream,
+                       handle_cublasLtMatmulAlgoCheckForStream,
+                       rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130300
+LUPINE_DECLARE_HANDLER(RPC_cublasLtMatmulAlgoGetHeuristicForStream,
+                       handle_cublasLtMatmulAlgoGetHeuristicForStream,
+                       rpc_backend::cublas)
+#endif
+#endif
+#ifdef LUPINE_BUILD_CUFFT_BACKEND
+LUPINE_CUFFT_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if CUFFT_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cufftXtSetJITCallback, handle_cufftXtSetJITCallback,
+                       rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11300 && CUFFT_VERSION < 12000
+LUPINE_DECLARE_HANDLER(RPC___cufftXtSetJITCallback_12_7,
+                       handle___cufftXtSetJITCallback_12_7, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11200
+LUPINE_DECLARE_HANDLER(RPC_cufftGetPlanPropertyInt64,
+                       handle_cufftGetPlanPropertyInt64, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11200
+LUPINE_DECLARE_HANDLER(RPC_cufftResetPlanProperty,
+                       handle_cufftResetPlanProperty, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11200
+LUPINE_DECLARE_HANDLER(RPC_cufftSetPlanPropertyInt64,
+                       handle_cufftSetPlanPropertyInt64, rpc_backend::cufft)
+#endif
+#endif
+#ifdef LUPINE_BUILD_CUDNN_BACKEND
+LUPINE_CUDNN_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if CUDNN_VERSION >= 92300
+LUPINE_DECLARE_HANDLER(RPC_cudnnGetExecutionPlanWorkspaceSize,
+                       handle_cudnnGetExecutionPlanWorkspaceSize,
+                       rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 90500
+LUPINE_DECLARE_HANDLER(RPC_cudnnBackendPopulateCudaGraph,
+                       handle_cudnnBackendPopulateCudaGraph, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 90500
+LUPINE_DECLARE_HANDLER(RPC_cudnnBackendUpdateCudaGraph,
+                       handle_cudnnBackendUpdateCudaGraph, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92200
+LUPINE_DECLARE_HANDLER(RPC_cudnnSubquadraticOpsVersionCheck,
+                       handle_cudnnSubquadraticOpsVersionCheck,
+                       rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92200
+LUPINE_DECLARE_HANDLER(RPC_cudnnCausalConv1dForward,
+                       handle_cudnnCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92200
+LUPINE_DECLARE_HANDLER(RPC_cudnnCausalConv1dBackward,
+                       handle_cudnnCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+LUPINE_DECLARE_HANDLER(RPC_cudnnCausalConv1dNwhForward,
+                       handle_cudnnCausalConv1dNwhForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+LUPINE_DECLARE_HANDLER(RPC_cudnnCausalConv1dNwhBackward,
+                       handle_cudnnCausalConv1dNwhBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+LUPINE_DECLARE_HANDLER(RPC_cudnnB2BCausalConv1dForward,
+                       handle_cudnnB2BCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+LUPINE_DECLARE_HANDLER(RPC_cudnnB2BCausalConv1dBackward,
+                       handle_cudnnB2BCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnFFTCausalConv1dForward,
+                       handle_cudnnFFTCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnFFTCausalConv1dBackward,
+                       handle_cudnnFFTCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnLongFFTCausalConv1dGetBufferSizes,
+                       handle_cudnnLongFFTCausalConv1dGetBufferSizes,
+                       rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnLongFFTCausalConv1dForward,
+                       handle_cudnnLongFFTCausalConv1dForward,
+                       rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnLongFFTCausalConv1dBackward,
+                       handle_cudnnLongFFTCausalConv1dBackward,
+                       rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnGnnAggSimpleForward,
+                       handle_cudnnGnnAggSimpleForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+LUPINE_DECLARE_HANDLER(RPC_cudnnGnnAggSimpleBackward,
+                       handle_cudnnGnnAggSimpleBackward, rpc_backend::cudnn)
+#endif
+#endif
+#ifdef LUPINE_BUILD_CURAND_BACKEND
+LUPINE_CURAND_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+
+#endif
+#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
+LUPINE_CUSPARSE_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstSpVec,
+                       handle_cusparseCreateConstSpVec, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstSpVecGet, handle_cusparseConstSpVecGet,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstSpVecGetValues,
+                       handle_cusparseConstSpVecGetValues,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstDnVec,
+                       handle_cusparseCreateConstDnVec, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstDnVecGet, handle_cusparseConstDnVecGet,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstDnVecGetValues,
+                       handle_cusparseConstDnVecGetValues,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstSpMatGetValues,
+                       handle_cusparseConstSpMatGetValues,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusparseBsrSetStridedBatch,
+                       handle_cusparseBsrSetStridedBatch, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstCsr,
+                       handle_cusparseCreateConstCsr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstCsc,
+                       handle_cusparseCreateConstCsc, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstCsrGet, handle_cusparseConstCsrGet,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstCscGet, handle_cusparseConstCscGet,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateBsr, handle_cusparseCreateBsr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstBsr,
+                       handle_cusparseCreateConstBsr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstCoo,
+                       handle_cusparseCreateConstCoo, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstCooGet, handle_cusparseConstCooGet,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstBlockedEll,
+                       handle_cusparseCreateConstBlockedEll,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstBlockedEllGet,
+                       handle_cusparseConstBlockedEllGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateSlicedEll,
+                       handle_cusparseCreateSlicedEll, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12102
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstSlicedEll,
+                       handle_cusparseCreateConstSlicedEll,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseCreateConstDnMat,
+                       handle_cusparseCreateConstDnMat, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstDnMatGet, handle_cusparseConstDnMatGet,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseConstDnMatGetValues,
+                       handle_cusparseConstDnMatGetValues,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12300
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMV_preprocess,
+                       handle_cusparseSpMV_preprocess, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp_bufferSize,
+                       handle_cusparseSpMVOp_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp_createDescr,
+                       handle_cusparseSpMVOp_createDescr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp_destroyDescr,
+                       handle_cusparseSpMVOp_destroyDescr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp_createPlan,
+                       handle_cusparseSpMVOp_createPlan, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp_destroyPlan,
+                       handle_cusparseSpMVOp_destroyPlan, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp_setGlobalUserData,
+                       handle_cusparseSpMVOp_setGlobalUserData,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpMVOp, handle_cusparseSpMVOp,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpSV_updateMatrix,
+                       handle_cusparseSpSV_updateMatrix, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12300
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpSM_updateMatrix,
+                       handle_cusparseSpSM_updateMatrix, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEMM_getNumProducts,
+                       handle_cusparseSpGEMM_getNumProducts,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEMM_estimateMemory,
+                       handle_cusparseSpGEMM_estimateMemory,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEAM_createDescr,
+                       handle_cusparseSpGEAM_createDescr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEAM_destroyDescr,
+                       handle_cusparseSpGEAM_destroyDescr,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEAM_bufferSize,
+                       handle_cusparseSpGEAM_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEAM_nnz, handle_cusparseSpGEAM_nnz,
+                       rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+LUPINE_DECLARE_HANDLER(RPC_cusparseSpGEAM, handle_cusparseSpGEAM,
+                       rpc_backend::cusparse)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
@@ -1852,6 +4261,974 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_REGISTER_HANDLER(RPC___cudaGetKernel, handle___cudaGetKernel, rpc_backend::cudart)
 #endif
 #endif
+#ifdef LUPINE_BUILD_CUBLAS_BACKEND
+      LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetMatrixAsync_64, handle_cublasGetMatrixAsync_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetMatrix_64, handle_cublasGetMatrix_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetVectorAsync_64, handle_cublasGetVectorAsync_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetVector_64, handle_cublasGetVector_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetMatrixAsync_64, handle_cublasSetMatrixAsync_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetMatrix_64, handle_cublasSetMatrix_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetVectorAsync_64, handle_cublasSetVectorAsync_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetVector_64, handle_cublasSetVector_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasAsumEx_64, handle_cublasAsumEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasAxpyEx_64, handle_cublasAxpyEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCaxpy_v2_64, handle_cublasCaxpy_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCcopy_v2_64, handle_cublasCcopy_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCdgmm_64, handle_cublasCdgmm_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCdotc_v2_64, handle_cublasCdotc_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCdotu_v2_64, handle_cublasCdotu_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgbmv_v2_64, handle_cublasCgbmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgeam_64, handle_cublasCgeam_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgemm3mBatched_64, handle_cublasCgemm3mBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgemm3mEx_64, handle_cublasCgemm3mEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgemm3mStridedBatched_64, handle_cublasCgemm3mStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgemm3m_64, handle_cublasCgemm3m_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgemmBatched_64, handle_cublasCgemmBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgemmEx_64, handle_cublasCgemmEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgemmStridedBatched_64, handle_cublasCgemmStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgemm_v2_64, handle_cublasCgemm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgemvBatched_64, handle_cublasCgemvBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgemvStridedBatched_64, handle_cublasCgemvStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgemv_v2_64, handle_cublasCgemv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgerc_v2_64, handle_cublasCgerc_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCgeru_v2_64, handle_cublasCgeru_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasChbmv_v2_64, handle_cublasChbmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasChemm_v2_64, handle_cublasChemm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasChemv_v2_64, handle_cublasChemv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCher2_v2_64, handle_cublasCher2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCher2k_v2_64, handle_cublasCher2k_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCher_v2_64, handle_cublasCher_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCherk3mEx_64, handle_cublasCherk3mEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCherkEx_64, handle_cublasCherkEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCherk_v2_64, handle_cublasCherk_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCherkx_64, handle_cublasCherkx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasChpmv_v2_64, handle_cublasChpmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasChpr2_v2_64, handle_cublasChpr2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasChpr_v2_64, handle_cublasChpr_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCopyEx_64, handle_cublasCopyEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCrot_v2_64, handle_cublasCrot_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCscal_v2_64, handle_cublasCscal_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCsrot_v2_64, handle_cublasCsrot_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCsscal_v2_64, handle_cublasCsscal_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCswap_v2_64, handle_cublasCswap_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCsymm_v2_64, handle_cublasCsymm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCsymv_v2_64, handle_cublasCsymv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCsyr2_v2_64, handle_cublasCsyr2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCsyr2k_v2_64, handle_cublasCsyr2k_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCsyr_v2_64, handle_cublasCsyr_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCsyrk3mEx_64, handle_cublasCsyrk3mEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCsyrkEx_64, handle_cublasCsyrkEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCsyrk_v2_64, handle_cublasCsyrk_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCsyrkx_64, handle_cublasCsyrkx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCtbmv_v2_64, handle_cublasCtbmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCtbsv_v2_64, handle_cublasCtbsv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCtpmv_v2_64, handle_cublasCtpmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCtpsv_v2_64, handle_cublasCtpsv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCtrmm_v2_64, handle_cublasCtrmm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCtrmv_v2_64, handle_cublasCtrmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCtrsmBatched_64, handle_cublasCtrsmBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCtrsm_v2_64, handle_cublasCtrsm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasCtrsv_v2_64, handle_cublasCtrsv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDasum_v2_64, handle_cublasDasum_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDaxpy_v2_64, handle_cublasDaxpy_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDcopy_v2_64, handle_cublasDcopy_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDdgmm_64, handle_cublasDdgmm_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDdot_v2_64, handle_cublasDdot_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDgbmv_v2_64, handle_cublasDgbmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDgeam_64, handle_cublasDgeam_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDgemmBatched_64, handle_cublasDgemmBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120500
+      LUPINE_REGISTER_HANDLER(RPC_cublasDgemmGroupedBatched, handle_cublasDgemmGroupedBatched, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120500
+      LUPINE_REGISTER_HANDLER(RPC_cublasDgemmGroupedBatched_64, handle_cublasDgemmGroupedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDgemmStridedBatched_64, handle_cublasDgemmStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDgemm_v2_64, handle_cublasDgemm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDgemvBatched_64, handle_cublasDgemvBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDgemvStridedBatched_64, handle_cublasDgemvStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDgemv_v2_64, handle_cublasDgemv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDger_v2_64, handle_cublasDger_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDnrm2_v2_64, handle_cublasDnrm2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDotEx_64, handle_cublasDotEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDotcEx_64, handle_cublasDotcEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDrot_v2_64, handle_cublasDrot_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDrotm_v2_64, handle_cublasDrotm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDsbmv_v2_64, handle_cublasDsbmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDscal_v2_64, handle_cublasDscal_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDspmv_v2_64, handle_cublasDspmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDspr2_v2_64, handle_cublasDspr2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDspr_v2_64, handle_cublasDspr_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDswap_v2_64, handle_cublasDswap_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDsymm_v2_64, handle_cublasDsymm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDsymv_v2_64, handle_cublasDsymv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDsyr2_v2_64, handle_cublasDsyr2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDsyr2k_v2_64, handle_cublasDsyr2k_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDsyr_v2_64, handle_cublasDsyr_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDsyrk_v2_64, handle_cublasDsyrk_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDsyrkx_64, handle_cublasDsyrkx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDtbmv_v2_64, handle_cublasDtbmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDtbsv_v2_64, handle_cublasDtbsv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDtpmv_v2_64, handle_cublasDtpmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDtpsv_v2_64, handle_cublasDtpsv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDtrmm_v2_64, handle_cublasDtrmm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDtrmv_v2_64, handle_cublasDtrmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDtrsmBatched_64, handle_cublasDtrsmBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDtrsm_v2_64, handle_cublasDtrsm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDtrsv_v2_64, handle_cublasDtrsv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDzasum_v2_64, handle_cublasDzasum_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasDznrm2_v2_64, handle_cublasDznrm2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasGemmBatchedEx_64, handle_cublasGemmBatchedEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasGemmEx_64, handle_cublasGemmEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120500
+      LUPINE_REGISTER_HANDLER(RPC_cublasGemmGroupedBatchedEx, handle_cublasGemmGroupedBatchedEx, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120500
+      LUPINE_REGISTER_HANDLER(RPC_cublasGemmGroupedBatchedEx_64, handle_cublasGemmGroupedBatchedEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasGemmStridedBatchedEx_64, handle_cublasGemmStridedBatchedEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetEmulationSpecialValuesSupport, handle_cublasGetEmulationSpecialValuesSupport, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120900
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetEmulationStrategy, handle_cublasGetEmulationStrategy, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetFixedPointEmulationMantissaBitCountPointer, handle_cublasGetFixedPointEmulationMantissaBitCountPointer, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetFixedPointEmulationMantissaBitOffset, handle_cublasGetFixedPointEmulationMantissaBitOffset, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetFixedPointEmulationMantissaControl, handle_cublasGetFixedPointEmulationMantissaControl, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_cublasGetFixedPointEmulationMaxMantissaBitCount, handle_cublasGetFixedPointEmulationMaxMantissaBitCount, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasHSHgemvBatched_64, handle_cublasHSHgemvBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasHSHgemvStridedBatched_64, handle_cublasHSHgemvStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasHSSgemvBatched_64, handle_cublasHSSgemvBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasHSSgemvStridedBatched_64, handle_cublasHSSgemvStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasHgemmBatched_64, handle_cublasHgemmBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasHgemmStridedBatched_64, handle_cublasHgemmStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasHgemm_64, handle_cublasHgemm_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasIamaxEx_64, handle_cublasIamaxEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasIaminEx_64, handle_cublasIaminEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasIcamax_v2_64, handle_cublasIcamax_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasIcamin_v2_64, handle_cublasIcamin_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasIdamax_v2_64, handle_cublasIdamax_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasIdamin_v2_64, handle_cublasIdamin_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasIsamax_v2_64, handle_cublasIsamax_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasIsamin_v2_64, handle_cublasIsamin_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasIzamax_v2_64, handle_cublasIzamax_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasIzamin_v2_64, handle_cublasIzamin_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasNrm2Ex_64, handle_cublasNrm2Ex_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasRotEx_64, handle_cublasRotEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasRotmEx_64, handle_cublasRotmEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSasum_v2_64, handle_cublasSasum_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSaxpy_v2_64, handle_cublasSaxpy_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasScalEx_64, handle_cublasScalEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasScasum_v2_64, handle_cublasScasum_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasScnrm2_v2_64, handle_cublasScnrm2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasScopy_v2_64, handle_cublasScopy_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSdgmm_64, handle_cublasSdgmm_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSdot_v2_64, handle_cublasSdot_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetEmulationSpecialValuesSupport, handle_cublasSetEmulationSpecialValuesSupport, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120900
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetEmulationStrategy, handle_cublasSetEmulationStrategy, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120900
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetEnvironmentMode, handle_cublasSetEnvironmentMode, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetFixedPointEmulationMantissaBitCountPointer, handle_cublasSetFixedPointEmulationMantissaBitCountPointer, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetFixedPointEmulationMantissaBitOffset, handle_cublasSetFixedPointEmulationMantissaBitOffset, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetFixedPointEmulationMantissaControl, handle_cublasSetFixedPointEmulationMantissaControl, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_cublasSetFixedPointEmulationMaxMantissaBitCount, handle_cublasSetFixedPointEmulationMaxMantissaBitCount, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSgbmv_v2_64, handle_cublasSgbmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSgeam_64, handle_cublasSgeam_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSgemmBatched_64, handle_cublasSgemmBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSgemmEx_64, handle_cublasSgemmEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120500
+      LUPINE_REGISTER_HANDLER(RPC_cublasSgemmGroupedBatched, handle_cublasSgemmGroupedBatched, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120500
+      LUPINE_REGISTER_HANDLER(RPC_cublasSgemmGroupedBatched_64, handle_cublasSgemmGroupedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSgemmStridedBatched_64, handle_cublasSgemmStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSgemm_v2_64, handle_cublasSgemm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSgemvBatched_64, handle_cublasSgemvBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSgemvStridedBatched_64, handle_cublasSgemvStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSgemv_v2_64, handle_cublasSgemv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSger_v2_64, handle_cublasSger_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSnrm2_v2_64, handle_cublasSnrm2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSrot_v2_64, handle_cublasSrot_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSrotm_v2_64, handle_cublasSrotm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSsbmv_v2_64, handle_cublasSsbmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSscal_v2_64, handle_cublasSscal_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSspmv_v2_64, handle_cublasSspmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSspr2_v2_64, handle_cublasSspr2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSspr_v2_64, handle_cublasSspr_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSswap_v2_64, handle_cublasSswap_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSsymm_v2_64, handle_cublasSsymm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSsymv_v2_64, handle_cublasSsymv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSsyr2_v2_64, handle_cublasSsyr2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSsyr2k_v2_64, handle_cublasSsyr2k_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSsyr_v2_64, handle_cublasSsyr_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSsyrk_v2_64, handle_cublasSsyrk_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSsyrkx_64, handle_cublasSsyrkx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasStbmv_v2_64, handle_cublasStbmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasStbsv_v2_64, handle_cublasStbsv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasStpmv_v2_64, handle_cublasStpmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasStpsv_v2_64, handle_cublasStpsv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasStrmm_v2_64, handle_cublasStrmm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasStrmv_v2_64, handle_cublasStrmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasStrsmBatched_64, handle_cublasStrsmBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasStrsm_v2_64, handle_cublasStrsm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasStrsv_v2_64, handle_cublasStrsv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasSwapEx_64, handle_cublasSwapEx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasTSSgemvBatched_64, handle_cublasTSSgemvBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasTSSgemvStridedBatched_64, handle_cublasTSSgemvStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasTSTgemvBatched_64, handle_cublasTSTgemvBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasTSTgemvStridedBatched_64, handle_cublasTSTgemvStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZaxpy_v2_64, handle_cublasZaxpy_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZcopy_v2_64, handle_cublasZcopy_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZdgmm_64, handle_cublasZdgmm_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZdotc_v2_64, handle_cublasZdotc_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZdotu_v2_64, handle_cublasZdotu_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZdrot_v2_64, handle_cublasZdrot_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZdscal_v2_64, handle_cublasZdscal_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZgbmv_v2_64, handle_cublasZgbmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZgeam_64, handle_cublasZgeam_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZgemm3m_64, handle_cublasZgemm3m_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZgemmBatched_64, handle_cublasZgemmBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZgemmStridedBatched_64, handle_cublasZgemmStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZgemm_v2_64, handle_cublasZgemm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZgemvBatched_64, handle_cublasZgemvBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZgemvStridedBatched_64, handle_cublasZgemvStridedBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZgemv_v2_64, handle_cublasZgemv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZgerc_v2_64, handle_cublasZgerc_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZgeru_v2_64, handle_cublasZgeru_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZhbmv_v2_64, handle_cublasZhbmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZhemm_v2_64, handle_cublasZhemm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZhemv_v2_64, handle_cublasZhemv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZher2_v2_64, handle_cublasZher2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZher2k_v2_64, handle_cublasZher2k_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZher_v2_64, handle_cublasZher_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZherk_v2_64, handle_cublasZherk_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZherkx_64, handle_cublasZherkx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZhpmv_v2_64, handle_cublasZhpmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZhpr2_v2_64, handle_cublasZhpr2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZhpr_v2_64, handle_cublasZhpr_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZrot_v2_64, handle_cublasZrot_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZscal_v2_64, handle_cublasZscal_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZswap_v2_64, handle_cublasZswap_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZsymm_v2_64, handle_cublasZsymm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZsymv_v2_64, handle_cublasZsymv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZsyr2_v2_64, handle_cublasZsyr2_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZsyr2k_v2_64, handle_cublasZsyr2k_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZsyr_v2_64, handle_cublasZsyr_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZsyrk_v2_64, handle_cublasZsyrk_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZsyrkx_64, handle_cublasZsyrkx_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZtbmv_v2_64, handle_cublasZtbmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZtbsv_v2_64, handle_cublasZtbsv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZtpmv_v2_64, handle_cublasZtpmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZtpsv_v2_64, handle_cublasZtpsv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZtrmm_v2_64, handle_cublasZtrmm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZtrmv_v2_64, handle_cublasZtrmv_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZtrsmBatched_64, handle_cublasZtrsmBatched_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZtrsm_v2_64, handle_cublasZtrsm_v2_64, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120000
+      LUPINE_REGISTER_HANDLER(RPC_cublasZtrsv_v2_64, handle_cublasZtrsv_v2_64, rpc_backend::cublas)
+#endif
+      LUPINE_CUBLASLT_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_lupineCublasLtEmulationDescCopy, handle_lupineCublasLtEmulationDescCopy, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 120900
+      LUPINE_REGISTER_HANDLER(RPC_cublasLtDisableCpuInstructionsSetMask, handle_cublasLtDisableCpuInstructionsSetMask, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_cublasLtEmulationDescGetAttribute, handle_cublasLtEmulationDescGetAttribute, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_cublasLtEmulationDescInit_internal, handle_cublasLtEmulationDescInit_internal, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130100
+      LUPINE_REGISTER_HANDLER(RPC_cublasLtEmulationDescSetAttribute, handle_cublasLtEmulationDescSetAttribute, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130300
+      LUPINE_REGISTER_HANDLER(RPC_cublasLtMatmulAlgoCheckForStream, handle_cublasLtMatmulAlgoCheckForStream, rpc_backend::cublas)
+#endif
+#if CUBLAS_VERSION >= 130300
+      LUPINE_REGISTER_HANDLER(RPC_cublasLtMatmulAlgoGetHeuristicForStream, handle_cublasLtMatmulAlgoGetHeuristicForStream, rpc_backend::cublas)
+#endif
+#endif
+#ifdef LUPINE_BUILD_CUFFT_BACKEND
+      LUPINE_CUFFT_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if CUFFT_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cufftXtSetJITCallback, handle_cufftXtSetJITCallback, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11300 && CUFFT_VERSION < 12000
+      LUPINE_REGISTER_HANDLER(RPC___cufftXtSetJITCallback_12_7, handle___cufftXtSetJITCallback_12_7, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11200
+      LUPINE_REGISTER_HANDLER(RPC_cufftGetPlanPropertyInt64, handle_cufftGetPlanPropertyInt64, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11200
+      LUPINE_REGISTER_HANDLER(RPC_cufftResetPlanProperty, handle_cufftResetPlanProperty, rpc_backend::cufft)
+#endif
+#if CUFFT_VERSION >= 11200
+      LUPINE_REGISTER_HANDLER(RPC_cufftSetPlanPropertyInt64, handle_cufftSetPlanPropertyInt64, rpc_backend::cufft)
+#endif
+#endif
+#ifdef LUPINE_BUILD_CUDNN_BACKEND
+      LUPINE_CUDNN_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if CUDNN_VERSION >= 92300
+      LUPINE_REGISTER_HANDLER(RPC_cudnnGetExecutionPlanWorkspaceSize, handle_cudnnGetExecutionPlanWorkspaceSize, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 90500
+      LUPINE_REGISTER_HANDLER(RPC_cudnnBackendPopulateCudaGraph, handle_cudnnBackendPopulateCudaGraph, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 90500
+      LUPINE_REGISTER_HANDLER(RPC_cudnnBackendUpdateCudaGraph, handle_cudnnBackendUpdateCudaGraph, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92200
+      LUPINE_REGISTER_HANDLER(RPC_cudnnSubquadraticOpsVersionCheck, handle_cudnnSubquadraticOpsVersionCheck, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92200
+      LUPINE_REGISTER_HANDLER(RPC_cudnnCausalConv1dForward, handle_cudnnCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92200
+      LUPINE_REGISTER_HANDLER(RPC_cudnnCausalConv1dBackward, handle_cudnnCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+      LUPINE_REGISTER_HANDLER(RPC_cudnnCausalConv1dNwhForward, handle_cudnnCausalConv1dNwhForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+      LUPINE_REGISTER_HANDLER(RPC_cudnnCausalConv1dNwhBackward, handle_cudnnCausalConv1dNwhBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+      LUPINE_REGISTER_HANDLER(RPC_cudnnB2BCausalConv1dForward, handle_cudnnB2BCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92400
+      LUPINE_REGISTER_HANDLER(RPC_cudnnB2BCausalConv1dBackward, handle_cudnnB2BCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnFFTCausalConv1dForward, handle_cudnnFFTCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnFFTCausalConv1dBackward, handle_cudnnFFTCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnLongFFTCausalConv1dGetBufferSizes, handle_cudnnLongFFTCausalConv1dGetBufferSizes, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnLongFFTCausalConv1dForward, handle_cudnnLongFFTCausalConv1dForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnLongFFTCausalConv1dBackward, handle_cudnnLongFFTCausalConv1dBackward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnGnnAggSimpleForward, handle_cudnnGnnAggSimpleForward, rpc_backend::cudnn)
+#endif
+#if CUDNN_VERSION >= 92600
+      LUPINE_REGISTER_HANDLER(RPC_cudnnGnnAggSimpleBackward, handle_cudnnGnnAggSimpleBackward, rpc_backend::cudnn)
+#endif
+#endif
+#ifdef LUPINE_BUILD_CURAND_BACKEND
+      LUPINE_CURAND_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+
+#endif
+#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
+      LUPINE_CUSPARSE_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstSpVec, handle_cusparseCreateConstSpVec, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstSpVecGet, handle_cusparseConstSpVecGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstSpVecGetValues, handle_cusparseConstSpVecGetValues, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstDnVec, handle_cusparseCreateConstDnVec, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstDnVecGet, handle_cusparseConstDnVecGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstDnVecGetValues, handle_cusparseConstDnVecGetValues, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstSpMatGetValues, handle_cusparseConstSpMatGetValues, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusparseBsrSetStridedBatch, handle_cusparseBsrSetStridedBatch, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstCsr, handle_cusparseCreateConstCsr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstCsc, handle_cusparseCreateConstCsc, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstCsrGet, handle_cusparseConstCsrGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstCscGet, handle_cusparseConstCscGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateBsr, handle_cusparseCreateBsr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstBsr, handle_cusparseCreateConstBsr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstCoo, handle_cusparseCreateConstCoo, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstCooGet, handle_cusparseConstCooGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstBlockedEll, handle_cusparseCreateConstBlockedEll, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstBlockedEllGet, handle_cusparseConstBlockedEllGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateSlicedEll, handle_cusparseCreateSlicedEll, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12102
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstSlicedEll, handle_cusparseCreateConstSlicedEll, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseCreateConstDnMat, handle_cusparseCreateConstDnMat, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstDnMatGet, handle_cusparseConstDnMatGet, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseConstDnMatGetValues, handle_cusparseConstDnMatGetValues, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12300
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMV_preprocess, handle_cusparseSpMV_preprocess, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp_bufferSize, handle_cusparseSpMVOp_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp_createDescr, handle_cusparseSpMVOp_createDescr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp_destroyDescr, handle_cusparseSpMVOp_destroyDescr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp_createPlan, handle_cusparseSpMVOp_createPlan, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp_destroyPlan, handle_cusparseSpMVOp_destroyPlan, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp_setGlobalUserData, handle_cusparseSpMVOp_setGlobalUserData, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12702
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpMVOp, handle_cusparseSpMVOp, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12100
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpSV_updateMatrix, handle_cusparseSpSV_updateMatrix, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12300
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpSM_updateMatrix, handle_cusparseSpSM_updateMatrix, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEMM_getNumProducts, handle_cusparseSpGEMM_getNumProducts, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEMM_estimateMemory, handle_cusparseSpGEMM_estimateMemory, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEAM_createDescr, handle_cusparseSpGEAM_createDescr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEAM_destroyDescr, handle_cusparseSpGEAM_destroyDescr, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEAM_bufferSize, handle_cusparseSpGEAM_bufferSize, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEAM_nnz, handle_cusparseSpGEAM_nnz, rpc_backend::cusparse)
+#endif
+#if CUSPARSE_VERSION >= 12801
+      LUPINE_REGISTER_HANDLER(RPC_cusparseSpGEAM, handle_cusparseSpGEAM, rpc_backend::cusparse)
+#endif
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
@@ -1868,5 +5245,11 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 
 #undef LUPINE_CUDA_RPC_HANDLERS
 #undef LUPINE_CUDART_RPC_HANDLERS
+#undef LUPINE_CUBLAS_RPC_HANDLERS
+#undef LUPINE_CUBLASLT_RPC_HANDLERS
+#undef LUPINE_CUFFT_RPC_HANDLERS
+#undef LUPINE_CUDNN_RPC_HANDLERS
+#undef LUPINE_CURAND_RPC_HANDLERS
+#undef LUPINE_CUSPARSE_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS

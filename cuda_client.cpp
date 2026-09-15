@@ -1,4 +1,5 @@
 #include "lupine_platform.h"
+#include "cublas_log_callbacks.h"
 
 #include <algorithm>
 #include <atomic>
@@ -51,6 +52,7 @@
 #include "codegen/gen_cuda_client.h"
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_client_memcpy.h"
+#include "cuda_client_rpc.h"
 #include "cuda_profiler_compat.h"
 #include "events.h"
 #include "ipc.h"
@@ -7144,6 +7146,20 @@ extern "C" CUresult cuStreamAddCallback(CUstream hStream,
   return return_value;
 }
 
+static pending_log_callbacks &lupine_pending_logs() {
+  static auto *callbacks = new pending_log_callbacks;
+  return *callbacks;
+}
+
+static void lupine_complete_pending_log_callbacks(conn_t *conn,
+                                                  int32_t stream) {
+  lupine_pending_logs().complete(conn, stream);
+}
+
+static void lupine_discard_pending_log_callbacks(conn_t *conn) {
+  lupine_pending_logs().discard(conn);
+}
+
 #if CUDA_VERSION >= 12090
 static std::mutex &lupine_logs_callback_mutex() {
   static auto *mutex = new std::mutex();
@@ -7155,75 +7171,11 @@ struct lupine_logs_callback_route {
   CUlogsCallbackHandle server_callback = nullptr;
 };
 
-struct lupine_pending_log_callback {
-  int32_t stream_id = -1;
-  CUlogLevel level = CU_LOG_LEVEL_ERROR;
-  CUlogsCallback callback = nullptr;
-  void *user_data = nullptr;
-  size_t length = 0;
-  std::vector<char> message;
-};
-
 static std::unordered_map<CUlogsCallbackHandle, lupine_logs_callback_route> &
 lupine_logs_callback_routes() {
   static auto *routes = new std::unordered_map<CUlogsCallbackHandle,
                                                lupine_logs_callback_route>();
   return *routes;
-}
-
-static std::unordered_map<
-    conn_t *,
-    std::unordered_map<int32_t, std::vector<lupine_pending_log_callback>>> &
-lupine_pending_log_callbacks() {
-  static auto *callbacks = new std::unordered_map<
-      conn_t *,
-      std::unordered_map<int32_t, std::vector<lupine_pending_log_callback>>>();
-  return *callbacks;
-}
-
-static bool lupine_queue_log_callback(conn_t *conn,
-                                      lupine_pending_log_callback &&callback) {
-  try {
-    std::lock_guard<std::mutex> lock(lupine_logs_callback_mutex());
-    int32_t stream_id = callback.stream_id;
-    lupine_pending_log_callbacks()[conn][stream_id].push_back(
-        std::move(callback));
-    return true;
-  } catch (...) {
-    return false;
-  }
-}
-
-static void lupine_complete_pending_log_callbacks(conn_t *conn,
-                                                  int32_t stream_id) {
-  std::vector<lupine_pending_log_callback> ready;
-  {
-    std::lock_guard<std::mutex> lock(lupine_logs_callback_mutex());
-    auto conn_it = lupine_pending_log_callbacks().find(conn);
-    if (conn_it == lupine_pending_log_callbacks().end()) {
-      return;
-    }
-    auto stream_it = conn_it->second.find(stream_id);
-    if (stream_it == conn_it->second.end()) {
-      return;
-    }
-    ready = std::move(stream_it->second);
-    conn_it->second.erase(stream_it);
-    if (conn_it->second.empty()) {
-      lupine_pending_log_callbacks().erase(conn_it);
-    }
-  }
-  for (auto &callback : ready) {
-    if (callback.callback != nullptr) {
-      callback.callback(callback.user_data, callback.level,
-                        callback.message.data(), callback.length);
-    }
-  }
-}
-
-static void lupine_discard_pending_log_callbacks(conn_t *conn) {
-  std::lock_guard<std::mutex> lock(lupine_logs_callback_mutex());
-  lupine_pending_log_callbacks().erase(conn);
 }
 
 extern "C" CUresult cuLogsRegisterCallback(CUlogsCallback callbackFunc,
@@ -7312,10 +7264,6 @@ extern "C" CUresult cuLogsUnregisterCallback(CUlogsCallbackHandle callback) {
   }
   return return_value;
 }
-#else
-static void lupine_complete_pending_log_callbacks(conn_t *, int32_t) {}
-
-static void lupine_discard_pending_log_callbacks(conn_t *) {}
 #endif
 
 // Include admitted capture starts, not just completed BeginCapture calls: a
@@ -8879,9 +8827,12 @@ void *rpc_client_dispatch_thread(void *arg) {
           callback != nullptr) {
         callback(user_data, level, message.data(), length);
       } else if (callback != nullptr &&
-                 !lupine_queue_log_callback(conn, {origin_stream_id, level,
-                                                   callback, user_data, length,
-                                                   std::move(message)})) {
+                 !lupine_pending_logs().enqueue(
+                     conn, origin_stream_id,
+                     [callback, user_data, level, length,
+                      message = std::move(message)]() mutable {
+                       callback(user_data, level, message.data(), length);
+                     })) {
         LUPINE_LOG_ERROR("Failed to queue log callback.");
         break;
       }
@@ -8896,6 +8847,57 @@ void *rpc_client_dispatch_thread(void *arg) {
       LUPINE_LOG_ERROR("Received unsupported log callback request.");
       break;
 #endif
+    } else if (op == LUPINE_SIDE_EFFECT_LIBRARY_LOG) {
+      library_log_target target;
+      int level = 0;
+      int32_t origin_stream = -1;
+      uint8_t before_callbacks = 0;
+      uint32_t function_length = 0, length = 0;
+      if (rpc_read(conn, &target.callback, sizeof(target.callback)) < 0 ||
+          rpc_read(conn, &target.user_data, sizeof(target.user_data)) < 0 ||
+          rpc_read(conn, &origin_stream, sizeof(origin_stream)) < 0 ||
+          rpc_read(conn, &before_callbacks, sizeof(before_callbacks)) < 0 ||
+          rpc_read(conn, &level, sizeof(level)) < 0 ||
+          rpc_read(conn, &function_length, sizeof(function_length)) < 0 ||
+          rpc_read(conn, &length, sizeof(length)) < 0 ||
+          function_length > LUPINE_MAX_LIBRARY_LOG_BYTES ||
+          length > LUPINE_MAX_LIBRARY_LOG_BYTES) {
+        break;
+      }
+      std::string function, message;
+      try {
+        function.resize(function_length);
+        message.resize(length);
+      } catch (...) {
+        break;
+      }
+      if (rpc_read(conn, function.data(), function_length) < 0 ||
+          rpc_read(conn, message.data(), length) < 0) {
+        break;
+      }
+      int32_t callback_stream = rpc_current_http2_stream(conn);
+      int request_id = rpc_read_end(conn);
+      if (request_id < 0 || target.callback == nullptr) {
+        break;
+      }
+      auto invoke = [target, level, function = std::move(function),
+                     message = std::move(message)] {
+        target.callback(target.user_data, level, function.c_str(),
+                        message.c_str(), message.size());
+      };
+      if (origin_stream < 0 || origin_stream == callback_stream) {
+        invoke();
+      } else if (!lupine_pending_logs().enqueue(conn, origin_stream,
+                                                std::move(invoke),
+                                                before_callbacks != 0)) {
+        break;
+      }
+      void *response = nullptr;
+      if (rpc_write_start_response(conn, request_id) < 0 ||
+          rpc_write(conn, &response, sizeof(response)) < 0 ||
+          rpc_write_end(conn) < 0) {
+        break;
+      }
     } else if (op == LUPINE_SIDE_EFFECT_READ_HOST_MEMORY) {
       struct host_read {
         const unsigned char *source = nullptr;

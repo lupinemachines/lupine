@@ -225,7 +225,7 @@ jobs:
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl docker.io libnghttp2-14
+          apt-get install -y --no-install-recommends ca-certificates curl docker.io iproute2 libnghttp2-14
           SCRIPT
 
           if [[ -n "$CUDA_COMPAT_DEB_URL" ]]; then
@@ -308,6 +308,7 @@ jobs:
 
           ARG INTEGRATION_BINARY_CACHE_HIT=false
           ARG CUDA_SAMPLES_ARCH
+          ARG PYTORCH_INDEX_URL
           ENV DEBIAN_FRONTEND=noninteractive \
               CUDA_HOME=/usr/local/cuda \
               CUDA_LIB_DIR=/usr/local/cuda/lib64 \
@@ -385,6 +386,16 @@ jobs:
                 LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples LIBRARY_SAMPLES_ARCH="$CUDA_SAMPLES_ARCH" \
                   BUILD_ONLY=1 bash /opt/lupine/run_cuda_library_samples.sh; \
               fi
+
+          # Python setup is part of the dependency image, before the source copy.
+          COPY test/run_cuda_python_tests.sh /opt/lupine/run_cuda_python_tests.sh
+          RUN python3 -m venv /opt/venv-pytorch && \
+              /opt/venv-pytorch/bin/pip install --upgrade pip && \
+              /opt/venv-pytorch/bin/pip install numpy && \
+              /opt/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch
+          ENV PYTHON_BIN=/opt/venv-pytorch/bin/python \
+              CUDA_PYTHON_DIR=/opt/cuda-python
+          RUN CUDA_PYTHON_SETUP_ONLY=1 bash /opt/lupine/run_cuda_python_tests.sh
 
           WORKDIR /src
           COPY . /src
@@ -546,6 +557,7 @@ jobs:
             --file "${RUNNER_TEMP}/gpu-integration.Dockerfile" \
             --tag "$CLIENT_IMAGE" \
             --build-arg "BASE_IMAGE=${{ matrix.client_image }}" \
+            --build-arg "PYTORCH_INDEX_URL=${{ matrix.pytorch_index_url }}" \
             --build-arg "CUDA_SAMPLES_ARCH=$CUDA_SAMPLES_ARCH" \
             --build-arg "INTEGRATION_BINARY_CACHE_HIT=$INTEGRATION_BINARY_CACHE_HIT" \
             .
@@ -654,19 +666,19 @@ jobs:
               export LUPINE_LIB="$LUPINE_BUILD_DIR/libcuda.so.1"
               export SERVER_LOCAL_BIN="$LUPINE_BUILD_DIR/lupine_driver_server"
               export SERVER_REMOTE_BIN="/tmp/lupine-driver-server-${MATRIX_LABEL}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-              export SSH_OPTS="-i /tmp/lupine-ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
+              export SSH_OPTS="-o ControlMaster=auto -o ControlPersist=60 -o ControlPath=/tmp/lupine-ssh/control-%C -i /tmp/lupine-ssh/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
               export SAMPLE_TIMEOUT="$CUDA_SAMPLE_TIMEOUT"
               export LONG_SAMPLE_TIMEOUT="$CUDA_LONG_SAMPLE_TIMEOUT"
               export CUDA_SAMPLES_DIR=/opt/cuda-samples-src
               export CUDA_SAMPLES_BUILD_DIR=/opt/cuda-samples-build
-              export CUDA_PYTHON_DIR=/tmp/cuda-python
+              export CUDA_PYTHON_DIR=/opt/cuda-python
               export LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples
 
-              python3 -m venv /tmp/venv-pytorch
-              /tmp/venv-pytorch/bin/pip install --upgrade pip >/dev/null
-              /tmp/venv-pytorch/bin/pip install numpy >/dev/null
-              /tmp/venv-pytorch/bin/pip install --index-url "$PYTORCH_INDEX_URL" torch >/dev/null
-              export PYTHON_BIN=/tmp/venv-pytorch/bin/python
+              export PYTHON_BIN=/opt/venv-pytorch/bin/python
+              export CUDA_PYTHON_INSTALL=0
+              # PyTorch brings a cuDNN wheel; the cuDNN custom test builds
+              # against it and runs it through the driver and runtime shims.
+              export CUDNN_HOME="$("$PYTHON_BIN" -c "import nvidia.cudnn; print(list(nvidia.cudnn.__path__)[0])")"
 
               cmake -S /src -B "$LUPINE_BUILD_DIR" \
                 -G Ninja \
@@ -704,6 +716,10 @@ jobs:
               # Registers driver-only and driver-runtime against one build;
               # one CTest invocation runs both even when either variant fails.
               cmake -S /src/test/integration -B /tmp/lupine-integration-ctest
+              # Configuration can outlive ControlPersist. Establish one master
+              # before the eight CTest workers open their first SSH sessions.
+              timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
+                ssh "${ssh_args[@]}" "$SERVER_SSH_TARGET" true
               timeout --kill-after=30s "$COMPLIANCE_TIMEOUT" \
                 ctest --test-dir /tmp/lupine-integration-ctest \
                   --parallel "$CUDA_SAMPLE_JOBS" \

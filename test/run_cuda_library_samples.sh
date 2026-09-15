@@ -276,10 +276,8 @@ if [[ -f "$LIBRARY_SAMPLES_KNOWN_FAILURES" ]]; then
   done < "$LIBRARY_SAMPLES_KNOWN_FAILURES"
 fi
 
-ssh_with_timeout() {
-  timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
-    ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "$@"
-}
+# shellcheck source=test/integration/remote_server.sh
+source "$repo_root/test/integration/remote_server.sh"
 
 if [[ "$SERVER_UPLOAD" == "1" ]]; then
   timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
@@ -292,26 +290,6 @@ cleanup_remote_bin() {
   fi
 }
 trap cleanup_remote_bin EXIT
-
-stop_remote_server() {
-  local pidfile="$1"
-  local server_log="$2"
-
-  ssh_with_timeout "
-    if [ -f '$pidfile' ]; then
-      pid=\$(cat '$pidfile' 2>/dev/null || true)
-      if [ -n \"\$pid\" ]; then
-        kill \"\$pid\" >/dev/null 2>&1 || true
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-          kill -0 \"\$pid\" >/dev/null 2>&1 || break
-          sleep 0.1
-        done
-        kill -9 \"\$pid\" >/dev/null 2>&1 || true
-      fi
-    fi
-    rm -f '$pidfile' '$server_log'
-  " >/dev/null 2>&1 || true
-}
 
 in_list() {
   local needle="$1"
@@ -344,11 +322,6 @@ for i in "${!UNITS[@]}"; do
   server_log="/tmp/lupine-libsamples-$port.log"
   pidfile="/tmp/lupine-libsamples-$port.pid"
   unit_start_seconds="$SECONDS"
-  server_environment="LUPINE_PORT=$port"
-  if [[ -n "$SERVER_LD_LIBRARY_PATH" ]]; then
-    printf -v server_environment 'LD_LIBRARY_PATH=%q %s' \
-      "$SERVER_LD_LIBRARY_PATH" "$server_environment"
-  fi
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] library sample $((i + 1))/${#UNITS[@]}: $unit" >&2
 
   if [[ "$unit" == */ ]]; then
@@ -375,9 +348,7 @@ for i in "${!UNITS[@]}"; do
   cwd="$(unit_cwd "$unit")"
   exe="$LIBRARY_SAMPLES_BUILD_DIR/$unit"
 
-  stop_remote_server "$pidfile" "$server_log"
-  ssh_with_timeout \
-    "rm -f '$server_log' '$pidfile'; $server_environment nohup '$SERVER_REMOTE_BIN' >'$server_log' 2>&1 < /dev/null & echo \$! >'$pidfile'; sleep 0.25"
+  start_remote_server "$pidfile" "$server_log" "$port"
 
   set +e
   (

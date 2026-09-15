@@ -2,8 +2,8 @@ Codegen works via a human-in-the-loop system. It's quite challenging to build a 
 infer what parameters should be sent and received so we instead have a two-step process.
 
 First, `annotationgen.py` reads an SDK header such as `cuda.h` or `nvml.h` and copies its function signatures
-into that target's annotation file (`annotations_cuda.h`, `annotations_cudart.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per
-shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
+into that target's annotation file (`annotations_cuda.h`, `annotations_cudart.h`, `annotations_cublas.h`,
+`annotations_cublaslt.h`, `annotations_cufft.h`, `annotations_cudnn.h`, `annotations_curand.h`, `annotations_cusparse.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
 have significant meanings.
 
 Specifically, the order of `@param` annotations indicates the order in which the parameters are sent or received.
@@ -11,14 +11,32 @@ Specifically, the order of `@param` annotations indicates the order in which the
 available are `NULL_TERMINATED` (to indicate that this is a null-terminated string), or `LENGTH:<param>` and
 `SIZE:<value>` to specify the size (aka width) of the parameter. If `LENGTH:<param>` is specified, `<param>` must
 be placed in front of the parameter referencing it, otherwise the generated code will not compile.
+`LENGTH:<expr>`, where `<expr>` names no single parameter, is an element count the client computes
+from the call's other parameters (a cuBLASXt host matrix's accessed region). It must not contain spaces.
+The count travels ahead of the array as a `uint64_t`, so the server never evaluates the expression.
 `NULLABLE` marks a pointer that may be null. It composes with `LENGTH` on a
-`RECV_ONLY` pointer to declare an optional out-array. A pointer count marked
+`RECV_ONLY` pointer to declare an optional out-array, and on a `SEND_ONLY`
+pointer to declare an optional in-array the caller may leave null
+(`cufftPlanMany`'s `inembed`), which leads with a presence byte on the wire. A pointer count marked
 `SEND_RECV` supports the `cuGraphGetNodes` query pattern; a by-value count is a
 fixed capacity. Each array leads with its own presence byte on the wire, and
 several arrays may share one count.
 `ON_ERROR` may be added to a `RECV_ONLY NULLABLE LENGTH` buffer when CUDA only
 writes the buffer on failure. The generated response preserves the caller's
 buffer on success.
+`SCALAR` marks a pointer that a library's pointer mode places on the host or on
+the device (a cuBLAS `alpha`, `beta`, or dot-product `result`). The mode belongs
+to the call's first parameter, or to the parameter named by `SCALAR:<param>`
+(a cuBLASLt descriptor). The generated client asks
+`scalar_on_host(<owner>, "<name>")`, the name being the scalar's own for modes
+that place alpha and beta differently, and sends the value in host mode or the
+address in device mode, with the width leading on the wire so the server can
+tell which. `SEND_RECV SCALAR` brings a host value back (`cublasSrotg`), and
+`RECV_ONLY SCALAR` only brings it back (a cuRAND host generator's output). A
+`void` scalar carries its width as `SIZE:<expr>`, a C++ expression the client
+evaluates over the call's arguments (`SIZE:data_type_width(resultType)`); a
+typed scalar wider than its pointee spells that out the same way
+(`SIZE:5*sizeof(float)`).
 
 Client routing can also be annotated for handles that belong to a specific LUPINE
 server connection. `@routingkey <kind> <param>` selects the connection for the
@@ -28,7 +46,10 @@ generated client wrapper before it writes the RPC. Supported kinds are
 `@routingkey CURRENT_CONTEXT` routes through the client's current CUDA context
 owner. `DEVICE` and `CONTEXT` routing is inferred from the first non-pointer
 `CUdevice` or `CUcontext` parameter, so those annotations are only needed when
-the routing key is not the first matching parameter.
+the routing key is not the first matching parameter. A by-value
+`cublasHandle_t`, `cublasLtHandle_t`, `cufftHandle`, `curandGenerator_t`, `curandDiscreteDistribution_t`, a cuSPARSE handle, descriptor, plan or info, or a cuDNN handle, descriptor, parameter pack or plan infers `HANDLE` routing to the
+connection the handle was created on, which the creating call's body records
+with `note_handle_owner`.
 
 Forwarding backends also accept `@routingkey EVENT <param>`. Their client must
 provide `connection_for_event(event)`, which selects the connection without
