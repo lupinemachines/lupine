@@ -255,6 +255,9 @@ REGISTRY_CPP_TEMPLATE = Template(
 #ifdef LUPINE_BUILD_CUDNN_BACKEND
 #include <cudnn.h>
 #endif
+#ifdef LUPINE_BUILD_CURAND_BACKEND
+#include <curand.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -270,6 +273,8 @@ $cublaslt_registry_entries
 $cufft_registry_entries
 #define LUPINE_CUDNN_RPC_HANDLERS(HANDLER) \
 $cudnn_registry_entries
+#define LUPINE_CURAND_RPC_HANDLERS(HANDLER) \
+$curand_registry_entries
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
 $nvml_registry_entries
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
@@ -299,6 +304,10 @@ $cufft_guarded_declarations
 #ifdef LUPINE_BUILD_CUDNN_BACKEND
 LUPINE_CUDNN_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $cudnn_guarded_declarations
+#endif
+#ifdef LUPINE_BUILD_CURAND_BACKEND
+LUPINE_CURAND_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$curand_guarded_declarations
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -339,6 +348,10 @@ $cufft_guarded_handlers
       LUPINE_CUDNN_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $cudnn_guarded_handlers
 #endif
+#ifdef LUPINE_BUILD_CURAND_BACKEND
+      LUPINE_CURAND_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$curand_guarded_handlers
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nvml_guarded_handlers
@@ -359,6 +372,7 @@ $hip_guarded_handlers
 #undef LUPINE_CUBLASLT_RPC_HANDLERS
 #undef LUPINE_CUFFT_RPC_HANDLERS
 #undef LUPINE_CUDNN_RPC_HANDLERS
+#undef LUPINE_CURAND_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
 '''
@@ -385,6 +399,7 @@ SERVER_BACKENDS = {
     "CUBLASLT": "rpc_backend::cublas",
     "CUFFT": "rpc_backend::cufft",
     "CUDNN": "rpc_backend::cudnn",
+    "CURAND": "rpc_backend::curand",
     "NVML": "rpc_backend::nvml",
     "HIP": "rpc_backend::hip",
 }
@@ -520,6 +535,19 @@ CUDNN = Backend(
     not_supported="CUDNN_STATUS_NOT_SUPPORTED",
 )
 
+# cuRAND has no invalid-value or not-supported status. A null output pointer
+# gets the NOT_INITIALIZED the library itself answers for a null generator,
+# and an entry point the shim cannot carry gets ARCH_MISMATCH, which the
+# library documents as a requested feature being unavailable.
+CURAND = Backend(
+    result="curandStatus_t",
+    invalid_argument="CURAND_STATUS_NOT_INITIALIZED",
+    device_routing_kind="DEVICE",
+    symbol_lookup="curand_symbol",
+    guard_null_conn=True,
+    not_supported="CURAND_STATUS_ARCH_MISMATCH",
+)
+
 ANNOTATION_FILES = {
     "cuda": "annotations_cuda.h",
     "cudart": "annotations_cudart.h",
@@ -527,6 +555,7 @@ ANNOTATION_FILES = {
     "cublaslt": "annotations_cublaslt.h",
     "cufft": "annotations_cufft.h",
     "cudnn": "annotations_cudnn.h",
+    "curand": "annotations_curand.h",
     "nvml": "annotations_nvml.h",
     "hip": "annotations_hip.h",
 }
@@ -587,6 +616,8 @@ def infer_routing_key(
             "cublasXtHandle_t",
             "cublasLtHandle_t",
             "cufftHandle",
+            "curandGenerator_t",
+            "curandDiscreteDistribution_t",
         ):
             return "HANDLE", param
         if type_name.startswith("cudnn") and type_name.endswith(
@@ -1767,6 +1798,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 cudnn_registry_entries=" \\\n".join(
                     registry_entries["CUDNN"]
                 ),
+                curand_registry_entries=" \\\n".join(
+                    registry_entries["CURAND"]
+                ),
                 nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
                 hip_registry_entries=" \\\n".join(registry_entries["HIP"]),
                 cuda_guarded_declarations="\n".join(
@@ -1787,6 +1821,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 cudnn_guarded_declarations="\n".join(
                     guarded_declarations["CUDNN"]
                 ),
+                curand_guarded_declarations="\n".join(
+                    guarded_declarations["CURAND"]
+                ),
                 nvml_guarded_declarations="\n".join(
                     guarded_declarations["NVML"]
                 ),
@@ -1801,6 +1838,7 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 ),
                 cufft_guarded_handlers="\n".join(guarded_handlers["CUFFT"]),
                 cudnn_guarded_handlers="\n".join(guarded_handlers["CUDNN"]),
+                curand_guarded_handlers="\n".join(guarded_handlers["CURAND"]),
                 nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
             )
@@ -2003,6 +2041,10 @@ def main():
         annotations_by_target["cudnn"],
         client_call_templates=client_call_templates_by_target["cudnn"],
     )
+    curand_functions_with_annotations = collect_backend_functions(
+        annotations_by_target["curand"],
+        client_call_templates=client_call_templates_by_target["curand"],
+    )
 
     annotated_names = sorted(
         {function.name.format() for function in cuda_annotations.namespace.functions}
@@ -2021,7 +2063,8 @@ def main():
         cublas_functions_with_annotations
         + cublaslt_functions_with_annotations
         + cufft_functions_with_annotations
-        + cudnn_functions_with_annotations,
+        + cudnn_functions_with_annotations
+        + curand_functions_with_annotations,
     )
 
     with open("gen_nvml_client.inc", "w") as f:
@@ -2127,6 +2170,7 @@ def main():
         (CUBLASLT, "cublaslt", cublaslt_functions_with_annotations),
         (CUFFT, "cufft", cufft_functions_with_annotations),
         (CUDNN, "cudnn", cudnn_functions_with_annotations),
+        (CURAND, "curand", curand_functions_with_annotations),
     ):
         with open(f"gen_{target}_client.inc", "w") as f:
             f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
@@ -2211,6 +2255,7 @@ def main():
         ("CUBLASLT", cublaslt_functions_with_annotations),
         ("CUFFT", cufft_functions_with_annotations),
         ("CUDNN", cudnn_functions_with_annotations),
+        ("CURAND", curand_functions_with_annotations),
     ):
         generated_bindings.extend(
             ServerBinding(
@@ -2295,6 +2340,9 @@ def main():
             "gen_cudnn_client.inc",
             "gen_cudnn_server.inc",
             "gen_cudnn_server.h",
+            "gen_curand_client.inc",
+            "gen_curand_server.inc",
+            "gen_curand_server.h",
         ],
         check=True,
     )
@@ -2338,6 +2386,11 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_cudnn_server.inc",
             "gen_cudnn_server.h",
         ],
+        "curand": [
+            "gen_curand_client.inc",
+            "gen_curand_server.inc",
+            "gen_curand_server.h",
+        ],
     }
     forbidden = {
         "cuda": ["nvml", "hip"],
@@ -2346,6 +2399,7 @@ def verify_backend_boundaries(backend: str) -> None:
         "cublaslt": ["nvml", "hip"],
         "cufft": ["nvml", "hip"],
         "cudnn": ["nvml", "hip"],
+        "curand": ["nvml", "hip"],
         "nvml": ["cuda_compat", "<cuda.h>", "handle_cu", "hip"],
         "hip": ["cuda", "nvml"],
     }
@@ -2366,7 +2420,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--verify-backend",
-        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "nvml", "hip"),
+        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "nvml", "hip"),
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()

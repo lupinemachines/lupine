@@ -23,4 +23,7 @@ codegen/gen_cufft_server.inc linguist-generated=true
 codegen/gen_cudnn_client.inc linguist-generated=true
 codegen/gen_cudnn_server.h linguist-generated=true
 codegen/gen_cudnn_server.inc linguist-generated=true
+codegen/gen_curand_client.inc linguist-generated=true
+codegen/gen_curand_server.h linguist-generated=true
+codegen/gen_curand_server.inc linguist-generated=true
 codegen/registry.cpp linguist-generated=true

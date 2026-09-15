@@ -3,7 +3,7 @@ infer what parameters should be sent and received so we instead have a two-step 
 
 First, `annotationgen.py` reads an SDK header such as `cuda.h` or `nvml.h` and copies its function signatures
 into that target's annotation file (`annotations_cuda.h`, `annotations_cudart.h`, `annotations_cublas.h`,
-`annotations_cublaslt.h`, `annotations_cufft.h`, `annotations_cudnn.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
+`annotations_cublaslt.h`, `annotations_cufft.h`, `annotations_cudnn.h`, `annotations_curand.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
 have significant meanings.
 
 Specifically, the order of `@param` annotations indicates the order in which the parameters are sent or received.
@@ -31,7 +31,8 @@ to the call's first parameter, or to the parameter named by `SCALAR:<param>`
 `scalar_on_host(<owner>, "<name>")`, the name being the scalar's own for modes
 that place alpha and beta differently, and sends the value in host mode or the
 address in device mode, with the width leading on the wire so the server can
-tell which. `SEND_RECV SCALAR` brings a host value back (`cublasSrotg`). A
+tell which. `SEND_RECV SCALAR` brings a host value back (`cublasSrotg`), and
+`RECV_ONLY SCALAR` only brings it back (a cuRAND host generator's output). A
 `void` scalar carries its width as `SIZE:<expr>`, a C++ expression the client
 evaluates over the call's arguments (`SIZE:data_type_width(resultType)`); a
 typed scalar wider than its pointee spells that out the same way
@@ -46,7 +47,7 @@ generated client wrapper before it writes the RPC. Supported kinds are
 owner. `DEVICE` and `CONTEXT` routing is inferred from the first non-pointer
 `CUdevice` or `CUcontext` parameter, so those annotations are only needed when
 the routing key is not the first matching parameter. A by-value
-`cublasHandle_t`, `cublasLtHandle_t`, `cufftHandle`, or a cuDNN handle, descriptor, parameter pack or plan infers `HANDLE` routing to the
+`cublasHandle_t`, `cublasLtHandle_t`, `cufftHandle`, `curandGenerator_t`, `curandDiscreteDistribution_t`, or a cuDNN handle, descriptor, parameter pack or plan infers `HANDLE` routing to the
 connection the handle was created on, which the creating call's body records
 with `note_handle_owner`.
 

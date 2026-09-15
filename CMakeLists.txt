@@ -634,6 +634,58 @@ if(LUPINE_BUILD_CUDNN)
     add_custom_target(lupine_cudnn DEPENDS lupine_cudnn_client)
 endif()
 
+if(LUPINE_BUILD_CUDA)
+    # The cuRAND shim needs the library's own header, which the runtime header
+    # wheels the native client builds use do not carry; without it it is left
+    # out of the build.
+    find_path(LUPINE_CURAND_INCLUDE_DIR curand.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
+    if(LUPINE_CURAND_INCLUDE_DIR)
+        file(STRINGS ${LUPINE_CURAND_INCLUDE_DIR}/curand.h
+             LUPINE_CURAND_MAJOR_LINE REGEX "^#define CURAND_VER_MAJOR ")
+        string(REGEX REPLACE "^#define CURAND_VER_MAJOR ([0-9]+).*" "\\1"
+               LUPINE_CURAND_SOVERSION "${LUPINE_CURAND_MAJOR_LINE}")
+        set(LUPINE_BUILD_CURAND ON)
+    endif()
+endif()
+
+if(LUPINE_BUILD_CURAND)
+    # Named like NVIDIA's (libcurand.so.10, curand64_10.dll) with the matching
+    # ELF version node; cuRAND's major is its own, not the toolkit's. It runs
+    # on the runtime shim's current device, so it links both sibling shims.
+    configure_file(curand.exports.in curand.exports @ONLY)
+    add_library(lupine_curand_client SHARED curand_client.cpp)
+    target_include_directories(lupine_curand_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
+    target_link_libraries(lupine_curand_client PRIVATE
+        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
+    set_target_properties(lupine_curand_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+    lupine_manylinux2014_client(lupine_curand_client)
+    if(WIN32)
+        target_compile_options(lupine_curand_client PRIVATE /wd4996)
+        set_target_properties(lupine_curand_client PROPERTIES
+            OUTPUT_NAME curand64_${LUPINE_CURAND_SOVERSION}
+            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        target_compile_options(lupine_curand_client PRIVATE
+            -Wno-deprecated-declarations)
+        set_target_properties(lupine_curand_client PROPERTIES OUTPUT_NAME curand)
+        if(APPLE)
+            set_target_properties(lupine_curand_client PROPERTIES
+                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+        else()
+            target_link_options(lupine_curand_client PRIVATE
+                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/curand.exports")
+            set_target_properties(lupine_curand_client PROPERTIES
+                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+                VERSION ${LUPINE_CURAND_SOVERSION}
+                SOVERSION ${LUPINE_CURAND_SOVERSION})
+        endif()
+    endif()
+    add_custom_target(lupine_curand DEPENDS lupine_curand_client)
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -753,6 +805,16 @@ if(LUPINE_BUILD_SERVER)
             target_link_libraries(lupine_cudnn_server PRIVATE
                 lupine_server_core ${CMAKE_DL_LIBS})
         endif()
+
+        if(LUPINE_BUILD_CURAND)
+            add_library(lupine_curand_server STATIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/curand_server.cpp)
+            lupine_internal_target(lupine_curand_server)
+            target_include_directories(lupine_curand_server PRIVATE
+                ${CUDAToolkit_INCLUDE_DIRS})
+            target_link_libraries(lupine_curand_server PRIVATE
+                lupine_server_core ${CMAKE_DL_LIBS})
+        endif()
     endif()
 
     if(LUPINE_BUILD_NVML)
@@ -870,6 +932,12 @@ if(LUPINE_BUILD_SERVER)
                 ${LUPINE_CUDNN_INCLUDE_DIR})
             target_link_libraries(lupine_driver_server PRIVATE
                 lupine_cudnn_server)
+        endif()
+        if(LUPINE_BUILD_CURAND)
+            target_compile_definitions(lupine_driver_server PRIVATE
+                LUPINE_BUILD_CURAND_BACKEND)
+            target_link_libraries(lupine_driver_server PRIVATE
+                lupine_curand_server)
         endif()
     endif()
     if(LUPINE_BUILD_NVML)
@@ -1050,6 +1118,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "nm -D \"$<TARGET_FILE:lupine_cudnn_client>\" | grep -q cudnnConvolutionForward && nm -D \"$<TARGET_FILE:lupine_cudnn_client>\" | grep -q cudnnBackendSetAttribute && nm -D \"$<TARGET_FILE:lupine_cudnn_client>\" | grep -q cudnnMultiHeadAttnForward")
     endif()
 
+    if(TARGET lupine_curand_client)
+        add_test(NAME curand_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_curand_client>\" | grep -q ' T curandCreateGeneratorHost@@libcurand.so.${LUPINE_CURAND_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_curand_client>\" | grep -q ' T curandGenerateNormal@@libcurand.so.${LUPINE_CURAND_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_curand_client>\" | grep -q ' T curandGetDirectionVectors64@@libcurand.so.${LUPINE_CURAND_SOVERSION}$'")
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -1076,6 +1150,10 @@ endif()
 if(TARGET lupine_cudnn_client)
     message(STATUS
         "Building cuDNN client: lupine_cudnn_client (libcudnn.so.${LUPINE_CUDNN_SOVERSION})")
+endif()
+if(TARGET lupine_curand_client)
+    message(STATUS
+        "Building cuRAND client: lupine_curand_client (libcurand.so.${LUPINE_CURAND_SOVERSION})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS

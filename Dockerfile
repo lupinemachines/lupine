@@ -85,7 +85,7 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
 FROM builder AS client-build
 
 RUN cmake --build /opt/lupine/build --parallel \
-      --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_cublaslt_client lupine_cufft_client lupine_cudnn_client lupine_nvml_client lupine_hip_client
+      --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_cublaslt_client lupine_cufft_client lupine_cudnn_client lupine_curand_client lupine_nvml_client lupine_hip_client
 
 FROM builder AS server-build
 
@@ -105,7 +105,7 @@ ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
 LABEL org.opencontainers.image.title="lupine-client"
-LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, NVML, and HIP shims"
+LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, NVML, and HIP shims"
 LABEL org.opencontainers.image.source="https://github.com/lupinemachines/lupine"
 LABEL org.opencontainers.image.version="${CUDA_VERSION}-rocm-${ROCM_VERSION}-ubuntu${UBUNTU_VERSION}"
 
@@ -153,6 +153,7 @@ COPY --from=client-build /opt/lupine/build/libcublas.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcublasLt.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcufft.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcudnn.so* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libcurand.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1
 COPY --from=client-build /opt/lupine/build/libamdhip64.so.1 /opt/lupine/lib/libamdhip64.so.1
 
@@ -207,7 +208,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
          -O /tmp/cuda-keyring.deb \
     && apt-get install -y --no-install-recommends /tmp/cuda-keyring.deb \
     && apt-get update \
-    && apt-get install -y --no-install-recommends "cuda-compat-${cuda_series}" "cuda-cudart-${cuda_series}" "libcublas-${cuda_series}" "libcufft-${cuda_series}" \
+    && apt-get install -y --no-install-recommends "cuda-compat-${cuda_series}" "cuda-cudart-${cuda_series}" "libcublas-${cuda_series}" "libcufft-${cuda_series}" "libcurand-${cuda_series}" \
          "libcudnn9-cuda-${CUDA_VERSION%%.*}" \
     && cuda_series_dot="$(printf '%s' "${CUDA_VERSION}" | awk -F. '{print $1 "." $2}')" \
     && ln -sfn "cuda-${cuda_series_dot}" /usr/local/cuda \

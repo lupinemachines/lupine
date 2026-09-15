@@ -16,6 +16,9 @@
 #ifdef LUPINE_BUILD_CUDNN_BACKEND
 #include <cudnn.h>
 #endif
+#ifdef LUPINE_BUILD_CURAND_BACKEND
+#include <curand.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -1283,6 +1286,34 @@
   HANDLER(RPC_cudnnDestroyCTCLossDescriptor, handle_cudnnDestroyCTCLossDescriptor, rpc_backend::cudnn) \
   HANDLER(RPC_cudnnCTCLoss_v8, handle_cudnnCTCLoss_v8, rpc_backend::cudnn) \
   HANDLER(RPC_cudnnGetCTCLossWorkspaceSize_v8, handle_cudnnGetCTCLossWorkspaceSize_v8, rpc_backend::cudnn)
+#define LUPINE_CURAND_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_curandGetDirectionVectors32, handle_curandGetDirectionVectors32, rpc_backend::curand) \
+  HANDLER(RPC_curandGetScrambleConstants32, handle_curandGetScrambleConstants32, rpc_backend::curand) \
+  HANDLER(RPC_curandGetDirectionVectors64, handle_curandGetDirectionVectors64, rpc_backend::curand) \
+  HANDLER(RPC_curandGetScrambleConstants64, handle_curandGetScrambleConstants64, rpc_backend::curand) \
+  HANDLER(RPC_curandCreateGenerator, handle_curandCreateGenerator, rpc_backend::curand) \
+  HANDLER(RPC_curandCreateGeneratorHost, handle_curandCreateGeneratorHost, rpc_backend::curand) \
+  HANDLER(RPC_curandDestroyGenerator, handle_curandDestroyGenerator, rpc_backend::curand) \
+  HANDLER(RPC_curandGetVersion, handle_curandGetVersion, rpc_backend::curand) \
+  HANDLER(RPC_curandGetProperty, handle_curandGetProperty, rpc_backend::curand) \
+  HANDLER(RPC_curandSetStream, handle_curandSetStream, rpc_backend::curand) \
+  HANDLER(RPC_curandSetPseudoRandomGeneratorSeed, handle_curandSetPseudoRandomGeneratorSeed, rpc_backend::curand) \
+  HANDLER(RPC_curandSetGeneratorOffset, handle_curandSetGeneratorOffset, rpc_backend::curand) \
+  HANDLER(RPC_curandSetGeneratorOrdering, handle_curandSetGeneratorOrdering, rpc_backend::curand) \
+  HANDLER(RPC_curandSetQuasiRandomGeneratorDimensions, handle_curandSetQuasiRandomGeneratorDimensions, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerate, handle_curandGenerate, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateLongLong, handle_curandGenerateLongLong, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateUniform, handle_curandGenerateUniform, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateUniformDouble, handle_curandGenerateUniformDouble, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateNormal, handle_curandGenerateNormal, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateNormalDouble, handle_curandGenerateNormalDouble, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateLogNormal, handle_curandGenerateLogNormal, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateLogNormalDouble, handle_curandGenerateLogNormalDouble, rpc_backend::curand) \
+  HANDLER(RPC_curandCreatePoissonDistribution, handle_curandCreatePoissonDistribution, rpc_backend::curand) \
+  HANDLER(RPC_curandDestroyDistribution, handle_curandDestroyDistribution, rpc_backend::curand) \
+  HANDLER(RPC_curandGeneratePoisson, handle_curandGeneratePoisson, rpc_backend::curand) \
+  HANDLER(RPC_curandGeneratePoissonMethod, handle_curandGeneratePoissonMethod, rpc_backend::curand) \
+  HANDLER(RPC_curandGenerateSeeds, handle_curandGenerateSeeds, rpc_backend::curand)
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
@@ -3265,6 +3296,10 @@ LUPINE_DECLARE_HANDLER(RPC_cudnnGnnAggSimpleBackward,
                        handle_cudnnGnnAggSimpleBackward, rpc_backend::cudnn)
 #endif
 #endif
+#ifdef LUPINE_BUILD_CURAND_BACKEND
+LUPINE_CURAND_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 
@@ -4486,6 +4521,10 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_REGISTER_HANDLER(RPC_cudnnGnnAggSimpleBackward, handle_cudnnGnnAggSimpleBackward, rpc_backend::cudnn)
 #endif
 #endif
+#ifdef LUPINE_BUILD_CURAND_BACKEND
+      LUPINE_CURAND_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+
+#endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
@@ -4506,5 +4545,6 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #undef LUPINE_CUBLASLT_RPC_HANDLERS
 #undef LUPINE_CUFFT_RPC_HANDLERS
 #undef LUPINE_CUDNN_RPC_HANDLERS
+#undef LUPINE_CURAND_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
