@@ -1,0 +1,85 @@
+name: CodeQL
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * 1'
+permissions:
+  contents: read
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, c-cpp, python]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
+          upload: never
+          output: sarif-results
+      - id: upload
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sarif-results
+          category: /language:${{ matrix.language }}
+      - if: steps.upload.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: codeql-sarif-${{ matrix.language }}
+          path: sarif-results
+          retention-days: 1
+
+  # The upload action allows one upload per category per job, so a failed
+  # upload is retried from its own job with the analysis's SARIF.
+  retry-upload:
+    name: Retry upload (${{ matrix.language }})
+    needs: analyze
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [actions, c-cpp, python]
+    steps:
+      - id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: codeql-sarif-${{ matrix.language }}
+          path: sarif-results
+      - if: steps.download.outcome == 'success'
+        uses: actions/checkout@v6
+        with:
+          path: source
+      - if: steps.download.outcome == 'success'
+        run: sleep 60
+      - if: steps.download.outcome == 'success'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sarif-results
+          checkout_path: source
+          category: /language:${{ matrix.language }}
