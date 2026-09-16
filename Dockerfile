@@ -123,13 +123,12 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
 
 FROM builder AS client-build
 
-# nvJitLink exists only from CUDA 12.4, where its header gained
-# NVJITLINK_NO_INLINE, cuFile only where the toolkit carries cufile.h, and
-# CUPTI only where it carries cupti_result.h, and nvSHMEM only
-# where its package carries nvshmem_host.h.
-RUN header_gated_clients="$(ninja -C /opt/lupine/build -t targets all | grep -oE '^lupine_(nvjitlink|cufile|cupti|nvshmem)_client:' | tr -d :)" \
-    && cmake --build /opt/lupine/build --parallel \
-      --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_cublaslt_client lupine_cufft_client lupine_cudnn_client lupine_curand_client lupine_cusparse_client lupine_cusolver_client lupine_cusolvermg_client lupine_nvrtc_client lupine_nccl_client $header_gated_clients lupine_nvjpeg_client lupine_nppc_client lupine_nppial_client lupine_nppicc_client lupine_nppidei_client lupine_nppif_client lupine_nppig_client lupine_nppim_client lupine_nppist_client lupine_nppisu_client lupine_nppitc_client lupine_npps_client lupine_nvml_client lupine_hip_client
+# lupine_runtime_clients is every CUDA runtime and library shim this toolkit
+# could build, so the header-gated ones (nvJitLink from 12.4; cuFile, CUPTI and
+# nvSHMEM where their headers are present) join or drop out on their own.
+RUN cmake --build /opt/lupine/build --parallel \
+      --target lupine_cuda_client lupine_runtime_clients lupine_nvml_client \
+               lupine_hip_client
 
 FROM builder AS server-build
 

@@ -1324,10 +1324,15 @@ if(NOT WIN32 AND LUPINE_BUILD_HIP)
 endif()
 
 # Every CUDA runtime and library client shim, so a consumer can load them all
-# in place of NVIDIA's without naming each one.
+# in place of NVIDIA's without naming each one. A new shim joins by existing:
+# naming the ones that belong would put the list a thousand lines from where
+# shims are added, and one forgotten there is a shim the aggregate silently
+# omits. The three below are named because they are not library shims -- the
+# driver client, NVML, and HIP.
 get_property(lupine_runtime_client_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_(cu[a-z]+|nvrtc|nccl|nvjitlink|nvjpeg|npp[a-z]*|nvshmem)_client$")
-list(REMOVE_ITEM lupine_runtime_client_targets lupine_cuda_client)
+list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_[a-z0-9]+_client$")
+list(REMOVE_ITEM lupine_runtime_client_targets
+     lupine_cuda_client lupine_nvml_client lupine_hip_client)
 add_custom_target(lupine_runtime_clients)
 if(lupine_runtime_client_targets)
     add_dependencies(lupine_runtime_clients ${lupine_runtime_client_targets})
