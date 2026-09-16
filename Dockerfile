@@ -62,14 +62,17 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG CUDA_VERSION
 
 # nvSHMEM ships outside the toolkit too, in a package per CUDA major that puts
-# its headers under a directory of their own. The releases packaged for CUDA 11
-# predate nvshmem_host.h, so those leave the shim out of the build.
-RUN apt-get update \
-    && cuda_major="${CUDA_VERSION%%.*}" \
-    && apt-get install -y --no-install-recommends "libnvshmem3-dev-cuda-${cuda_major}" \
+# its headers under a directory of their own. The CUDA 11 releases predate
+# nvshmem_host.h and are packaged for x86_64 alone, so that series is skipped
+# and its empty directory leaves the shim out of the build.
+RUN cuda_major="${CUDA_VERSION%%.*}" \
     && mkdir -p /opt/nvshmem/include \
-    && cp -rL "/usr/include/nvshmem_${cuda_major}/." /opt/nvshmem/include/ \
-    && rm -rf /var/lib/apt/lists/*
+    && if [ "$cuda_major" -ge 12 ]; then \
+         apt-get update \
+         && apt-get install -y --no-install-recommends "libnvshmem3-dev-cuda-${cuda_major}" \
+         && cp -rL "/usr/include/nvshmem_${cuda_major}/." /opt/nvshmem/include/ \
+         && rm -rf /var/lib/apt/lists/*; \
+       fi
 
 FROM ubuntu:${UBUNTU_VERSION} AS builder
 

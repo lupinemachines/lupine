@@ -1231,7 +1231,9 @@ if(LUPINE_BUILD_CUPTI)
     find_path(LUPINE_NVSHMEM_INCLUDE_DIR nvshmem_host.h
         HINTS ${CUDAToolkit_INCLUDE_DIRS} ENV NVSHMEM_HOME
         PATH_SUFFIXES include)
-    if(LUPINE_NVSHMEM_INCLUDE_DIR)
+    # find_path leaves a cached value alone, so a directory named on the
+    # command line still has to carry the header.
+    if(EXISTS "${LUPINE_NVSHMEM_INCLUDE_DIR}/nvshmem_host.h")
         file(STRINGS ${LUPINE_NVSHMEM_INCLUDE_DIR}/non_abi/nvshmem_version.h
              LUPINE_NVSHMEM_MAJOR_LINE
              REGEX "^#define NVSHMEM_VENDOR_MAJOR_VERSION ")
