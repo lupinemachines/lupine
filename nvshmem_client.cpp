@@ -34,6 +34,7 @@
 
 #include <atomic>
 #include <cstdlib>
+#include <cstring>
 
 #include "lupine_log.h"
 
