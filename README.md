@@ -233,7 +233,7 @@ docker pull ghcr.io/lupinemachines/lupine-client:cuda-12.4.1-ubuntu22.04
 docker pull ghcr.io/lupinemachines/lupine-server:cuda-12.4.1-ubuntu22.04
 ```
 
-Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, CUPTI, NVML, and HIP shims, their runtime dependencies,
+Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, CUPTI, nvSHMEM, NVML, and HIP shims, their runtime dependencies,
 and `nvidia-smi`. They are based on Ubuntu and contain neither the CUDA nor ROCm
 SDK. The `-slim` tags remain available as compatibility aliases with the same
 SDK-free contents, for example
@@ -344,6 +344,10 @@ toolkit's or through `-DLUPINE_CUFILE_INCLUDE_DIR=<dir>`), the CUPTI shim at
 `build/libcupti.so.<major>` on Linux (`build/libcupti.so.11.8` on CUDA 11, whose
 CUPTI carries the minor in its SONAME; when `cupti_result.h` is found beside the
 toolkit's or through `-DLUPINE_CUPTI_INCLUDE_DIR=<dir>`), the NVML
+toolkit's or through `-DLUPINE_CUFILE_INCLUDE_DIR=<dir>`), the nvSHMEM shim at
+`build/libnvshmem_host.so.3` on Linux (when nvSHMEM 3 headers carrying
+`nvshmem_host.h` are found beside the toolkit's or through
+`-DLUPINE_NVSHMEM_INCLUDE_DIR=<dir>`), the NVML
 shim at `build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and
 the server at `build/lupine_driver_server`. The runtime and library shims cover
 their whole APIs: they forward `cuda*`, `cublas*`, `cublasLt*`, `cufft*`,
@@ -387,6 +391,20 @@ refusal prints one line to stderr. `torch.profiler` and Nsight Systems' CUPTI
 path report no GPU activity on a lupine client, rather than a fabricated
 timeline; the library loads, which is what PyTorch's `libtorch_cpu.so` needs
 from its `NEEDED` entry.
+nvSHMEM is the other exception, and a starker one: it forwards nothing at all.
+Its PEs hold a partitioned global address space over the GPUs of a job, reading
+and writing each other's symmetric heap from inside kernels, and a client is
+not one of them. The process that owns a GPU here is the server, which serves
+many clients at once, while nvSHMEM keeps its PE identity, its symmetric heap
+and its teams in process-global state with no handle to tell one job from
+another; its heap sits outside the identity VA arena a client reserves; and its
+device half never reaches a host shim. So the shim loads, answers the version
+and status queries truthfully, and refuses everything else -
+`nvshmemid_hostlib_init_attr` with `NVSHMEMX_ERROR_NOT_SUPPORTED`, the
+allocators and peer pointers with null, the collectives with an error - rather
+than return a value it cannot mean. That is enough for PyTorch, whose
+`libtorch_cuda.so` reaches `libnvshmem_host.so.3` through `libtorch_nvshmem.so`
+in its `NEEDED` and never calls it unless a program asks for symmetric memory.
 
 A communicator whose ranks sit behind different servers needs those servers to
 reach each other: NCCL's bootstrap and transport run between the server

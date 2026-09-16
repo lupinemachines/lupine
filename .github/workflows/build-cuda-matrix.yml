@@ -108,6 +108,7 @@ jobs:
               cupti_soversion="$(echo "${{ matrix.cuda }}" | cut -d. -f1)"
               case "${{ matrix.cuda }}" in 11.*) cupti_soversion=11.8 ;; esac
               test -e "/opt/lupine/lib/libcupti.so.$cupti_soversion"
+              case "${{ matrix.cuda }}" in 11.*) ;; *) test -e /opt/lupine/lib/libnvshmem_host.so.3 ;; esac
               test -e /opt/lupine/lib/libnvidia-ml.so.1
               test -e /opt/lupine/lib/libamdhip64.so.1
               test -x /usr/bin/nvidia-smi
@@ -193,6 +194,15 @@ jobs:
           # CUDA 12 (libcupti.so.11.8).
           cupti_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libcupti.so.[0-9]*')"
           docker cp "$container:$cupti_lib" "$out/$(basename "$cupti_lib")"
+          # nvSHMEM's package for CUDA 11 predates the host-only header the
+          # shim builds from, so the shim starts at CUDA 12.
+          nvshmem_libs=()
+          if [[ "$cuda_major" != 11 ]]; then
+            nvshmem_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libnvshmem_host.so.[0-9]*')"
+            docker cp "$container:$nvshmem_lib" "$out/$(basename "$nvshmem_lib")"
+            cp "$out/$(basename "$nvshmem_lib")" "$out/libnvshmem_host.so"
+            nvshmem_libs=(libnvshmem_host.so "$(basename "$nvshmem_lib")")
+          fi
           docker cp "$container:/opt/lupine/lib/libnvidia-ml.so.1" "$out/libnvidia-ml.so.1"
           docker cp "$container:/opt/lupine/lib/libamdhip64.so.1" "$out/libamdhip64.so.1"
           cp "$out/libcuda.so.1" "$out/libcuda.so"
@@ -212,6 +222,7 @@ jobs:
           cp "$out/libnvidia-ml.so.1" "$out/libnvidia-ml.so"
           cp "$out/libamdhip64.so.1" "$out/libamdhip64.so"
           (cd "$out" && sha256sum libcuda.so libcuda.so.1 libcudart.so "$runtime_soname" libcublas.so "libcublas.so.${cuda_major}" libcublasLt.so "libcublasLt.so.${cuda_major}" libcufft.so "$(basename "$cufft_lib")" libcudnn.so "$(basename "$cudnn_lib")" libcurand.so "$(basename "$curand_lib")" libcusparse.so "$(basename "$cusparse_lib")" libcusolver.so "$(basename "$cusolver_lib")" libcusolverMg.so "$(basename "$cusolvermg_lib")" libnvrtc.so "$(basename "$nvrtc_lib")" libnccl.so libnccl.so.2 "${nvjitlink_libs[@]}" libnvjpeg.so "$(basename "$nvjpeg_lib")" "${npp_files[@]}" libcufile.so libcufile.so.0 libcupti.so "$(basename "$cupti_lib")" libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
+          (cd "$out" && sha256sum libcuda.so libcuda.so.1 libcudart.so "$runtime_soname" libcublas.so "libcublas.so.${cuda_major}" libcublasLt.so "libcublasLt.so.${cuda_major}" libcufft.so "$(basename "$cufft_lib")" libcudnn.so "$(basename "$cudnn_lib")" libcurand.so "$(basename "$curand_lib")" libcusparse.so "$(basename "$cusparse_lib")" libcusolver.so "$(basename "$cusolver_lib")" libcusolverMg.so "$(basename "$cusolvermg_lib")" libnvrtc.so "$(basename "$nvrtc_lib")" libnccl.so libnccl.so.2 "${nvjitlink_libs[@]}" libnvjpeg.so "$(basename "$nvjpeg_lib")" "${npp_files[@]}" libcufile.so libcufile.so.0 "${nvshmem_libs[@]}" libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
           (cd "$out" && zip -r "../$(basename "$archive")" .)
 
       - name: Collect server artifacts

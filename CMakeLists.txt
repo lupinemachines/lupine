@@ -1222,6 +1222,47 @@ if(LUPINE_BUILD_CUPTI)
         SOVERSION ${LUPINE_CUPTI_SOVERSION})
     lupine_manylinux2014_client(lupine_cupti_client)
     add_custom_target(lupine_cupti DEPENDS lupine_cupti_client)
+    # nvSHMEM is Linux-only and ships outside the toolkit, in its own package
+    # or wheel, whose headers keep a directory of their own rather than sit
+    # beside the toolkit's. Point LUPINE_NVSHMEM_INCLUDE_DIR or NVSHMEM_HOME at
+    # them; without them the shim is left out. nvshmem_host.h arrives with the
+    # release that splits the host library out, the one carrying the NVSHMEM
+    # version node and the nvshmemid entry points the shim defines.
+    find_path(LUPINE_NVSHMEM_INCLUDE_DIR nvshmem_host.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} ENV NVSHMEM_HOME
+        PATH_SUFFIXES include)
+    if(LUPINE_NVSHMEM_INCLUDE_DIR)
+        file(STRINGS ${LUPINE_NVSHMEM_INCLUDE_DIR}/non_abi/nvshmem_version.h
+             LUPINE_NVSHMEM_MAJOR_LINE
+             REGEX "^#define NVSHMEM_VENDOR_MAJOR_VERSION ")
+        string(REGEX REPLACE "^#define NVSHMEM_VENDOR_MAJOR_VERSION ([0-9]+).*"
+               "\\1" LUPINE_NVSHMEM_SOVERSION
+               "${LUPINE_NVSHMEM_MAJOR_LINE}")
+        if(LUPINE_NVSHMEM_SOVERSION GREATER_EQUAL 3)
+            set(LUPINE_BUILD_NVSHMEM ON)
+        endif()
+    endif()
+endif()
+
+if(LUPINE_BUILD_NVSHMEM)
+    # Named like NVIDIA's (libnvshmem_host.so.3), with its symbols in the
+    # NVSHMEM version node the library's consumers ask for. Nothing is
+    # forwarded, so it links no sibling shim and the server needs no nvSHMEM.
+    configure_file(nvshmem.exports.in nvshmem.exports @ONLY)
+    add_library(lupine_nvshmem_client SHARED nvshmem_client.cpp)
+    target_include_directories(lupine_nvshmem_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${LUPINE_NVSHMEM_INCLUDE_DIR})
+    target_link_libraries(lupine_nvshmem_client PRIVATE lupine_cudart_headers)
+    target_link_options(lupine_nvshmem_client PRIVATE
+        "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/nvshmem.exports")
+    set_target_properties(lupine_nvshmem_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        OUTPUT_NAME nvshmem_host
+        BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+        VERSION ${LUPINE_NVSHMEM_SOVERSION}
+        SOVERSION ${LUPINE_NVSHMEM_SOVERSION})
+    lupine_manylinux2014_client(lupine_nvshmem_client)
+    add_custom_target(lupine_nvshmem DEPENDS lupine_nvshmem_client)
 endif()
 
 if(LUPINE_BUILD_NVML)
@@ -1283,7 +1324,7 @@ endif()
 # Every CUDA runtime and library client shim, so a consumer can load them all
 # in place of NVIDIA's without naming each one.
 get_property(lupine_runtime_client_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_(cu[a-z]+|nvrtc|nccl|nvjitlink|nvjpeg|npp[a-z]*)_client$")
+list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_(cu[a-z]+|nvrtc|nccl|nvjitlink|nvjpeg|npp[a-z]*|nvshmem)_client$")
 list(REMOVE_ITEM lupine_runtime_client_targets lupine_cuda_client)
 add_custom_target(lupine_runtime_clients)
 if(lupine_runtime_client_targets)
@@ -1885,6 +1926,14 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "for symbol in cuptiActivityDisable cuptiActivityEnable cuptiActivityEnableCudaEventDeviceTimestamps cuptiActivityEnableDriverApi cuptiActivityEnableRuntimeApi cuptiActivityFlushAll cuptiActivityGetNextRecord cuptiActivityGetNumDroppedRecords cuptiActivityPopExternalCorrelationId cuptiActivityPushExternalCorrelationId cuptiActivityRegisterCallbacks cuptiActivityRegisterTimestampCallback cuptiActivitySetAttribute cuptiEnableCallback cuptiEnableDomain cuptiFinalize cuptiGetCallbackName cuptiGetResultString cuptiGetVersion cuptiSubscribe cuptiUnsubscribe; do nm -D \"$<TARGET_FILE:lupine_cupti_client>\" | grep -q \" T \${symbol}@@libcupti.so.${LUPINE_CUPTI_SOVERSION}$\" || exit 1; done")
     endif()
 
+    if(TARGET lupine_nvshmem_client)
+        # The twenty entry points PyTorch's libtorch_nvshmem.so resolves at
+        # load time, each one in the NVSHMEM version node its reference names.
+        add_test(NAME nvshmem_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_nvshmem_client>\" | grep -cE ' T (nvshmem_free|nvshmem_info_get_version|nvshmem_init|nvshmem_malloc|nvshmem_ptr|nvshmem_team_n_pes|nvshmem_team_split_strided|nvshmemid_hostlib_finalize|nvshmemid_hostlib_init_attr|nvshmemid_init_status|nvshmemx_alltoallmem_on_stream|nvshmemx_broadcastmem_on_stream|nvshmemx_cumodule_init|nvshmemx_get_uniqueid|nvshmemx_getmem_on_stream|nvshmemx_mc_ptr|nvshmemx_putmem_on_stream|nvshmemx_putmem_signal_on_stream|nvshmemx_set_attr_uniqueid_args|nvshmemx_signal_wait_until_on_stream)@@NVSHMEM$' | grep -qx 20")
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -1951,6 +2000,10 @@ endif()
 if(TARGET lupine_cupti_client)
     message(STATUS
         "Building CUPTI client: lupine_cupti_client (libcupti.so.${LUPINE_CUPTI_SOVERSION})")
+endif()
+if(TARGET lupine_nvshmem_client)
+    message(STATUS
+        "Building nvSHMEM client: lupine_nvshmem_client (libnvshmem_host.so.${LUPINE_NVSHMEM_SOVERSION}, load-only)")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS

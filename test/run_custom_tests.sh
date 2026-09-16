@@ -33,6 +33,8 @@ CUDA_SAMPLES_ARCH="${CUDA_SAMPLES_ARCH:-}"
 CUDNN_HOME="${CUDNN_HOME:-}"
 # NCCL too, such as an nvidia-nccl wheel's nvidia/nccl.
 NCCL_HOME="${NCCL_HOME:-}"
+# nvSHMEM too, such as an nvidia-nvshmem wheel's nvidia/nvshmem.
+NVSHMEM_HOME="${NVSHMEM_HOME:-}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 BUILD_TESTS="${BUILD_TESTS:-1}"
 if [[ -n "${BUILD_DIR:-}" ]]; then
@@ -96,6 +98,13 @@ if grep -q '#include <nccl.h>' "$src"; then
   fi
   cudnn_args+=(-I"$NCCL_HOME/include" -L"$NCCL_HOME/lib" -l:libnccl.so.2)
 fi
+if grep -q '#include <nvshmem_host.h>' "$src"; then
+  if [[ -z "$NVSHMEM_HOME" || ! -e "$NVSHMEM_HOME/lib/libnvshmem_host.so.3" ]]; then
+    echo "SKIP: $name needs nvSHMEM; set NVSHMEM_HOME"
+    exit 0
+  fi
+  cudnn_args+=(-I"$NVSHMEM_HOME/include" -L"$NVSHMEM_HOME/lib" -l:libnvshmem_host.so.3)
+fi
 
 nvjitlink_args=()
 if grep -q '#include <nvJitLink.h>' "$src"; then
@@ -148,6 +157,12 @@ if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <cupti
   echo "SKIP: $name runs CUPTI on the client, which needs more than the driver shim"
   exit 0
 fi
+if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <nvshmem_host.h>' "$src"; then
+  # NVIDIA's libnvshmem_host bootstraps a PE on the client's own GPU, which a
+  # GPU-less client does not have; only the nvSHMEM shim runs.
+  echo "SKIP: $name runs nvSHMEM on the client, which needs more than the driver shim"
+  exit 0
+fi
 if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <nccl.h>' "$src"; then
   # NVIDIA's libnccl on a GPU-less client crashes over the driver shim alone,
   # zeroing the host memory ncclCommInitRank allocates; only the NCCL shim runs.
@@ -158,9 +173,9 @@ fi
 start_remote_server "$pidfile" "$server_log" "$port"
 if [[ -n "${RESULTS_DIR:-}" ]]; then
   mkdir -p "$RESULTS_DIR"
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${LD_LIBRARY_PATH:-}" \
+  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${LD_LIBRARY_PATH:-}" \
     LUPINE_SERVER="$SERVER_HOST:$port" "$exe" 2>&1 | tee "$RESULTS_DIR/client.log"
 else
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${LD_LIBRARY_PATH:-}" \
+  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${LD_LIBRARY_PATH:-}" \
     LUPINE_SERVER="$SERVER_HOST:$port" "$exe"
 fi

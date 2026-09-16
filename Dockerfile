@@ -56,6 +56,21 @@ RUN apt-get update \
     && cp -L /usr/include/nccl.h /opt/nccl/include/ \
     && rm -rf /var/lib/apt/lists/*
 
+FROM cuda-sdk AS nvshmem-headers
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG CUDA_VERSION
+
+# nvSHMEM ships outside the toolkit too, in a package per CUDA major that puts
+# its headers under a directory of their own. The releases packaged for CUDA 11
+# predate nvshmem_host.h, so those leave the shim out of the build.
+RUN apt-get update \
+    && cuda_major="${CUDA_VERSION%%.*}" \
+    && apt-get install -y --no-install-recommends "libnvshmem3-dev-cuda-${cuda_major}" \
+    && mkdir -p /opt/nvshmem/include \
+    && cp -rL "/usr/include/nvshmem_${cuda_major}/." /opt/nvshmem/include/ \
+    && rm -rf /var/lib/apt/lists/*
+
 FROM ubuntu:${UBUNTU_VERSION} AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -69,6 +84,9 @@ ARG CUDA_VERSION
 COPY --from=cuda-sdk /usr/local/cuda/include/ /usr/local/cuda/include/
 COPY --from=cudnn-headers /opt/cudnn/include/ /usr/local/cuda/include/
 COPY --from=nccl-headers /opt/nccl/include/ /usr/local/cuda/include/
+# nvSHMEM's headers keep directories of their own (device/, host/, non_abi/),
+# so they stay beside the toolkit's rather than inside them.
+COPY --from=nvshmem-headers /opt/nvshmem/include/ /opt/nvshmem/include/
 COPY --from=cuda-sdk /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so
 COPY --from=cuda-ops /opt/lupine-precompiled-ops/ /opt/lupine-precompiled-ops/
 COPY --from=rocm-sdk /opt/rocm/include/ /opt/rocm/include/
@@ -97,14 +115,16 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
       -DLUPINE_CUDA_DRIVER_LIBRARY="${CUDA_HOME}/lib64/stubs/libcuda.so" \
       -DLUPINE_CUDA_VERSION_OVERRIDE="${CUDA_VERSION}" \
       -DLUPINE_CLIENT_BUNDLE_INPUT="${LUPINE_CLIENT_BUNDLE_INPUT}" \
+      -DLUPINE_NVSHMEM_INCLUDE_DIR=/opt/nvshmem/include \
       -DLUPINE_PRECOMPILED_OPS=/opt/lupine-precompiled-ops
 
 FROM builder AS client-build
 
 # nvJitLink exists only from CUDA 12.4, where its header gained
 # NVJITLINK_NO_INLINE, cuFile only where the toolkit carries cufile.h, and
-# CUPTI only where it carries cupti_result.h.
-RUN header_gated_clients="$(ninja -C /opt/lupine/build -t targets all | grep -oE '^lupine_(nvjitlink|cufile|cupti)_client:' | tr -d :)" \
+# CUPTI only where it carries cupti_result.h, and nvSHMEM only
+# where its package carries nvshmem_host.h.
+RUN header_gated_clients="$(ninja -C /opt/lupine/build -t targets all | grep -oE '^lupine_(nvjitlink|cufile|cupti|nvshmem)_client:' | tr -d :)" \
     && cmake --build /opt/lupine/build --parallel \
       --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_cublaslt_client lupine_cufft_client lupine_cudnn_client lupine_curand_client lupine_cusparse_client lupine_cusolver_client lupine_cusolvermg_client lupine_nvrtc_client lupine_nccl_client $header_gated_clients lupine_nvjpeg_client lupine_nppc_client lupine_nppial_client lupine_nppicc_client lupine_nppidei_client lupine_nppif_client lupine_nppig_client lupine_nppim_client lupine_nppist_client lupine_nppisu_client lupine_nppitc_client lupine_npps_client lupine_nvml_client lupine_hip_client
 
@@ -126,7 +146,7 @@ ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
 LABEL org.opencontainers.image.title="lupine-client"
-LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, CUPTI, NVML, and HIP shims"
+LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, CUPTI, nvSHMEM, NVML, and HIP shims"
 LABEL org.opencontainers.image.source="https://github.com/lupinemachines/lupine"
 LABEL org.opencontainers.image.version="${CUDA_VERSION}-rocm-${ROCM_VERSION}-ubuntu${UBUNTU_VERSION}"
 
@@ -182,6 +202,8 @@ COPY --from=client-build /opt/lupine/build/libcusolverMg.so* /opt/lupine/lib/
 # CUPTI shim.
 COPY --from=client-build /opt/lupine/build/libnvrtc.so* /opt/lupine/build/libnvJitLin[k].so* /opt/lupine/build/libcufil[e].so* /opt/lupine/build/libcupt[i].so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnccl.so* /opt/lupine/lib/
+# The bracket keeps the COPY valid on toolkits without an nvSHMEM shim.
+COPY --from=client-build /opt/lupine/build/libnvshmem_hos[t].so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnvjpeg.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnpp*.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1

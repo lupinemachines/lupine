@@ -706,6 +706,9 @@ jobs:
               export CUDNN_HOME="$("$PYTHON_BIN" -c "import nvidia.cudnn; print(list(nvidia.cudnn.__path__)[0])")"
               # Its NCCL wheel serves the NCCL shim and its test the same way.
               export NCCL_HOME="$("$PYTHON_BIN" -c "import nvidia.nccl; print(list(nvidia.nccl.__path__)[0])")"
+              # Its nvSHMEM wheel, where that torch build carries one, does the
+              # same for the nvSHMEM shim and its test.
+              export NVSHMEM_HOME="$("$PYTHON_BIN" -c "import nvidia.nvshmem; print(list(nvidia.nvshmem.__path__)[0])" 2>/dev/null || true)"
 
               cmake -S /src -B "$LUPINE_BUILD_DIR" \
                 -G Ninja \
@@ -714,6 +717,7 @@ jobs:
                 -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs" \
                 -DLUPINE_CUDNN_INCLUDE_DIR="$CUDNN_HOME/include" \
                 -DLUPINE_NCCL_INCLUDE_DIR="$NCCL_HOME/include" \
+                ${NVSHMEM_HOME:+-DLUPINE_NVSHMEM_INCLUDE_DIR="$NVSHMEM_HOME/include"} \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
               cmake --build "$LUPINE_BUILD_DIR" --parallel \
