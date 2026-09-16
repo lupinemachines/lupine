@@ -3,7 +3,7 @@ infer what parameters should be sent and received so we instead have a two-step 
 
 First, `annotationgen.py` reads an SDK header such as `cuda.h` or `nvml.h` and copies its function signatures
 into that target's annotation file (`annotations_cuda.h`, `annotations_cudart.h`, `annotations_cublas.h`,
-`annotations_cublaslt.h`, `annotations_cufft.h`, `annotations_cudnn.h`, `annotations_curand.h`, `annotations_cusparse.h`, `annotations_cusolver.h`, `annotations_cusolvermg.h`, `annotations_nvrtc.h`, `annotations_nccl.h`, `annotations_nvjitlink.h`, `annotations_nvjpeg.h`, `annotations_npp<library>.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
+`annotations_cublaslt.h`, `annotations_cufft.h`, `annotations_cudnn.h`, `annotations_curand.h`, `annotations_cusparse.h`, `annotations_cusparselt.h`, `annotations_cusolver.h`, `annotations_cusolvermg.h`, `annotations_nvrtc.h`, `annotations_nccl.h`, `annotations_nvjitlink.h`, `annotations_nvjpeg.h`, `annotations_npp<library>.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
 have significant meanings.
 
 Specifically, the order of `@param` annotations indicates the order in which the parameters are sent or received.
@@ -24,6 +24,18 @@ several arrays may share one count.
 `ON_ERROR` may be added to a `RECV_ONLY NULLABLE LENGTH` buffer when CUDA only
 writes the buffer on failure. The generated response preserves the caller's
 buffer on success.
+`REMOTE` marks an opaque handle the caller keeps in storage of its own rather
+than in the parameter: cuSPARSELt hands the library 512 caller-owned bytes
+where cuBLAS hands back a pointer. The address on the wire is the same as for
+any other opaque handle, read from and written to that storage, so
+`SEND_ONLY REMOTE` sends it and the server passes it to the call, while
+`RECV_ONLY REMOTE` allocates the object on the server and sends its address
+back into the caller's storage. That allocation is lupine's rather than the
+library's, because the caller's storage stays on its own machine and the
+library links its objects to each other by address; the matching Destroy's
+handler frees it, and an object whose Destroy never arrives is freed with the
+rest of the session when the connection's child process exits. The client
+records the owning connection in the creating call's body.
 `SCALAR` marks a pointer that a library's pointer mode places on the host or on
 the device (a cuBLAS `alpha`, `beta`, or dot-product `result`). The mode belongs
 to the call's first parameter, or to the parameter named by `SCALAR:<param>`
@@ -69,7 +81,9 @@ owner. `DEVICE` and `CONTEXT` routing is inferred from the first non-pointer
 the routing key is not the first matching parameter. A by-value
 `cublasHandle_t`, `cublasLtHandle_t`, `cufftHandle`, `curandGenerator_t`, `curandDiscreteDistribution_t`, a cuSPARSE handle, descriptor, plan or info, an `nvrtcProgram`, an `ncclComm_t` or `ncclParamHandle_t`, an `nvJitLinkHandle`, an nvJPEG handle, state, parameter set, buffer, bitstream or decoder, a cuSOLVER or cuSOLVERMg handle, parameter set, info, IRS object, grid or matrix descriptor, or a cuDNN handle, descriptor, parameter pack or plan infers `HANDLE` routing to the
 connection the handle was created on, which the creating call's body records
-with `note_handle_owner`.
+with `note_handle_owner`. A `REMOTE` object is a pointer, so its call names it
+with `@routingkey HANDLE <param>` and the client's `connection_for_handle`
+reads the address out of the caller's storage.
 
 Forwarding backends also accept `@routingkey EVENT <param>`. Their client must
 provide `connection_for_event(event)`, which selects the connection without

@@ -21,6 +21,15 @@ RUN apt-get update \
     && cp -L /usr/include/nccl.h /opt/nccl/include/ \
     && rm -rf /var/lib/apt/lists/*
 
+# cuSPARSELt ships outside the toolkit as well. Its header package is pinned
+# for the same reason.
+FROM cuda-sdk AS cusparselt-sdk
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libcusparselt-dev=0.7.1.0-1 \
+    && mkdir -p /opt/cusparselt/include \
+    && cp -L /usr/include/cusparseLt.h /opt/cusparselt/include/ \
+    && rm -rf /var/lib/apt/lists/*
+
 FROM ghcr.io/astral-sh/uv:0.9.18-python3.12-bookworm-slim@sha256:0b074d1ae15f5c3f1861354917d356e5afbd5a4c53c1190e81ad2f2add46e45b
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -32,6 +41,7 @@ RUN apt-get update \
 COPY --from=cuda-sdk /usr/local/cuda/include/ /usr/local/cuda/include/
 COPY --from=cudnn-sdk /opt/cudnn/include/ /usr/local/cuda/include/
 COPY --from=nccl-sdk /opt/nccl/include/ /usr/local/cuda/include/
+COPY --from=cusparselt-sdk /opt/cusparselt/include/ /usr/local/cuda/include/
 COPY --from=rocm-sdk /opt/rocm/include/ /opt/rocm/include/
 
 ENV UV_CACHE_DIR=/tmp/uv-cache

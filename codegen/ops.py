@@ -887,6 +887,19 @@ class OpaqueTypeOperation:
     recv: bool
     parameter: Parameter
     type_: Union[Type, Pointer]
+    # The handle's value lives in caller-allocated storage instead of in the
+    # parameter: cuSPARSELt hands the library 512 caller-owned bytes where
+    # cuBLAS hands back a pointer. The same opaque address travels, read from
+    # and written to that storage, and the object a creating call names is
+    # lupine's to allocate on the server.
+    stored: bool = False
+
+    # An address is the whole wire form of a stored handle.
+    def wire_size(self) -> str:
+        return "sizeof(void *)" if self.stored else f"sizeof({self.type_.format()})"
+
+    def client_slot(self, name: str) -> str:
+        return name if self.stored else f"&{name}"
 
     def is_sent_cufunction(self) -> bool:
         type_name = self.type_.format().replace("const ", "").strip()
@@ -910,11 +923,21 @@ class OpaqueTypeOperation:
                 else self.parameter.name
             )
             f.write(
-                f"        rpc_write(conn, &{param_name}, sizeof({self.type_.format()})) < 0 ||\n"
+                f"        rpc_write(conn, {self.client_slot(param_name)}, {self.wire_size()}) < 0 ||\n"
             )
 
     @property
     def server_declaration(self) -> str:
+        # A stored handle the call creates is allocated here rather than by the
+        # library, because the caller's storage stays on its own machine. It
+        # outlives the handler: later calls name the object by this address,
+        # and the library links its objects to each other by address too. The
+        # connection's child process frees it by exiting, so an object whose
+        # Destroy never arrives is released on disconnect with the rest of the
+        # session's state.
+        if self.stored and self.recv:
+            object_type = self.type_.ptr_to.format()
+            return f"    {object_type} *{self.parameter.name} = new {object_type}();\n"
         if isinstance(self.type_, Pointer) and self.recv:
             return f"    {self.type_.ptr_to.format()} {self.parameter.name};\n"
         # ensure we don't have a const struct, otherwise we can't initialise it properly; ex: "const cudnnTensorDescriptor_t xDesc;" is invalid...
@@ -944,12 +967,13 @@ class OpaqueTypeOperation:
         if not self.send:
             return
         f.write(
-            f"        rpc_read(conn, &{self.parameter.name}, sizeof({self.type_.format()})) < 0 ||\n"
+            f"        rpc_read(conn, &{self.parameter.name}, {self.wire_size()}) < 0 ||\n"
         )
 
     @property
     def server_reference(self) -> str:
-        if self.recv:
+        # A stored handle is already the object's address.
+        if self.recv and not self.stored:
             return f"&{self.parameter.name}"
         return self.parameter.name
 
@@ -957,14 +981,14 @@ class OpaqueTypeOperation:
         if not self.recv:
             return
         f.write(
-            f"        rpc_write(conn, &{self.parameter.name}, sizeof({self.type_.format()})) < 0 ||\n"
+            f"        rpc_write(conn, &{self.parameter.name}, {self.wire_size()}) < 0 ||\n"
         )
 
     def client_rpc_read(self, f):
         if not self.recv:
             return
         f.write(
-            f"        rpc_read(conn, &{self.parameter.name}, sizeof({self.type_.format()})) < 0 ||\n"
+            f"        rpc_read(conn, {self.client_slot(self.parameter.name)}, {self.wire_size()}) < 0 ||\n"
         )
 
 

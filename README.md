@@ -233,7 +233,7 @@ docker pull ghcr.io/lupinemachines/lupine-client:cuda-12.4.1-ubuntu22.04
 docker pull ghcr.io/lupinemachines/lupine-server:cuda-12.4.1-ubuntu22.04
 ```
 
-Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, CUPTI, nvSHMEM, NVML, and HIP shims, their runtime dependencies,
+Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSPARSELt, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, CUPTI, nvSHMEM, NVML, and HIP shims, their runtime dependencies,
 and `nvidia-smi`. They are based on Ubuntu and contain neither the CUDA nor ROCm
 SDK. The `-slim` tags remain available as compatibility aliases with the same
 SDK-free contents, for example
@@ -348,15 +348,19 @@ toolkit's or through `-DLUPINE_CUFILE_INCLUDE_DIR=<dir>`), the nvSHMEM shim at
 `build/libnvshmem_host.so.3` on Linux (when nvSHMEM 3 headers carrying
 `nvshmem_host.h` are found beside the toolkit's or through
 `-DLUPINE_NVSHMEM_INCLUDE_DIR=<dir>`), the NVML
+toolkit's or through `-DLUPINE_CUFILE_INCLUDE_DIR=<dir>`), the cuSPARSELt shim
+at `build/libcusparseLt.so.0` (when cuSPARSELt 0.6 or newer headers are found
+beside the toolkit's, through `CUSPARSELT_HOME` or through
+`-DLUPINE_CUSPARSELT_INCLUDE_DIR=<dir>`), the NVML
 shim at `build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and
 the server at `build/lupine_driver_server`. The runtime and library shims cover
 their whole APIs: they forward `cuda*`, `cublas*`, `cublasLt*`, `cufft*`,
-`cudnn*`, `curand*`, `cusparse*`, `cusolver*`, `nvrtc*`, `nvJitLink*`, `nccl*`,
-`nvjpeg*` and `npp*` calls on the driver shim's connections, so all of them must come from
-the same build. NVRTC compiles and nvJitLink links on the server, so their
+`cudnn*`, `curand*`, `cusparse*`, `cusparseLt*`, `cusolver*`, `nvrtc*`,
+`nvJitLink*`, `nccl*`, `nvjpeg*` and `npp*` calls on the driver shim's
+connections, so all of them must come from the same build. NVRTC compiles and nvJitLink links on the server, so their
 output matches the server's toolkit and driver; the files a program includes or
 links from the client's disk are sent along with it. The server loads the
-machine's `libcudnn.so.9` and `libnccl.so.2` by name. nvJPEG decodes and encodes
+machine's `libcudnn.so.9`, `libnccl.so.2` and `libcusparseLt.so.0` by name. nvJPEG decodes and encodes
 on the server with the server library's default allocators, so a buffer it
 hands back through a retrieve call is a server address.
 
@@ -366,6 +370,14 @@ images, scratch buffers and results must be device memory on that server. The
 contour calls that fill host lists sized by an earlier call's outputs
 (`nppiCompressedMarkerLabelsUFInfo_32u_C1R_Ctx` and its geometry list and
 interpolation calls) return `NPP_NOT_IMPLEMENTED_ERROR`.
+
+A cuSPARSELt object (handle, matrix descriptor, matmul descriptor, algorithm
+selection, plan) is caller storage the library fills with state it links to its
+other objects by address, so it lives on the server and the caller's storage
+holds its address there. The initializing call allocates it and the matching
+Destroy releases it; storage that was never initialized through the shim names
+no object. Its matrices, compressed buffers, workspaces and pruning validity
+flags are device memory on the server that owns the handle.
 
 cuFile is the exception to that forwarding. GPUDirect Storage moves bytes
 between a storage device and GPU memory without the host, and no DMA spans a

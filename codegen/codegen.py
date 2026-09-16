@@ -272,6 +272,9 @@ REGISTRY_CPP_TEMPLATE = Template(
 #ifdef LUPINE_BUILD_CUSOLVER_BACKEND
 #include <cusolver_common.h>
 #endif
+#ifdef LUPINE_BUILD_CUSPARSELT_BACKEND
+#include <cusparseLt.h>
+#endif
 #ifdef LUPINE_BUILD_NVRTC_BACKEND
 #include <nvrtc.h>
 #endif
@@ -311,6 +314,8 @@ $cusparse_registry_entries
 $cusolver_registry_entries
 #define LUPINE_CUSOLVERMG_RPC_HANDLERS(HANDLER) \
 $cusolvermg_registry_entries
+#define LUPINE_CUSPARSELT_RPC_HANDLERS(HANDLER) \
+$cusparselt_registry_entries
 #define LUPINE_NVRTC_RPC_HANDLERS(HANDLER) \
 $nvrtc_registry_entries
 #define LUPINE_NCCL_RPC_HANDLERS(HANDLER) \
@@ -358,6 +363,10 @@ $curand_guarded_declarations
 #ifdef LUPINE_BUILD_CUSPARSE_BACKEND
 LUPINE_CUSPARSE_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $cusparse_guarded_declarations
+#endif
+#ifdef LUPINE_BUILD_CUSPARSELT_BACKEND
+LUPINE_CUSPARSELT_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+$cusparselt_guarded_declarations
 #endif
 #ifdef LUPINE_BUILD_CUSOLVER_BACKEND
 LUPINE_CUSOLVER_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -432,6 +441,10 @@ $curand_guarded_handlers
       LUPINE_CUSPARSE_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $cusparse_guarded_handlers
 #endif
+#ifdef LUPINE_BUILD_CUSPARSELT_BACKEND
+      LUPINE_CUSPARSELT_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+$cusparselt_guarded_handlers
+#endif
 #ifdef LUPINE_BUILD_CUSOLVER_BACKEND
       LUPINE_CUSOLVER_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $cusolver_guarded_handlers
@@ -480,6 +493,7 @@ $hip_guarded_handlers
 #undef LUPINE_CUDNN_RPC_HANDLERS
 #undef LUPINE_CURAND_RPC_HANDLERS
 #undef LUPINE_CUSPARSE_RPC_HANDLERS
+#undef LUPINE_CUSPARSELT_RPC_HANDLERS
 #undef LUPINE_CUSOLVER_RPC_HANDLERS
 #undef LUPINE_CUSOLVERMG_RPC_HANDLERS
 #undef LUPINE_NVRTC_RPC_HANDLERS
@@ -515,6 +529,7 @@ SERVER_BACKENDS = {
     "CUDNN": "rpc_backend::cudnn",
     "CURAND": "rpc_backend::curand",
     "CUSPARSE": "rpc_backend::cusparse",
+    "CUSPARSELT": "rpc_backend::cusparselt",
     "CUSOLVER": "rpc_backend::cusolver",
     # cuSOLVERMg ships with cuSOLVER and runs in the same server child.
     "CUSOLVERMG": "rpc_backend::cusolver",
@@ -681,6 +696,18 @@ CUSPARSE = Backend(
     not_supported="CUSPARSE_STATUS_NOT_SUPPORTED",
 )
 
+# cuSPARSELt ships outside the toolkit and shares cuSPARSE's status type. Its
+# objects are caller storage the library links by address, so they live on the
+# server and the caller's storage holds the address there.
+CUSPARSELT = Backend(
+    result="cusparseStatus_t",
+    invalid_argument="CUSPARSE_STATUS_INVALID_VALUE",
+    device_routing_kind="DEVICE",
+    symbol_lookup="cusparselt_symbol",
+    guard_null_conn=True,
+    not_supported="CUSPARSE_STATUS_NOT_SUPPORTED",
+)
+
 CUSOLVER = Backend(
     result="cusolverStatus_t",
     invalid_argument="CUSOLVER_STATUS_INVALID_VALUE",
@@ -781,6 +808,7 @@ ANNOTATION_FILES = {
     "cudnn": "annotations_cudnn.h",
     "curand": "annotations_curand.h",
     "cusparse": "annotations_cusparse.h",
+    "cusparselt": "annotations_cusparselt.h",
     "cusolver": "annotations_cusolver.h",
     "cusolvermg": "annotations_cusolvermg.h",
     "nvrtc": "annotations_nvrtc.h",
@@ -1115,6 +1143,22 @@ def parse_annotation(
                             strings=members("STRINGS:"),
                             cleared=members("CLEARED:"),
                             member_guards=member_guards,
+                        )
+                    )
+                    continue
+
+                if "REMOTE" in args:
+                    # REMOTE: an opaque handle the caller keeps in storage of
+                    # its own rather than in the parameter.
+                    if length_arg or null_terminated or nullable or deref:
+                        raise NotImplementedError("REMOTE takes no other modifiers")
+                    operations.append(
+                        OpaqueTypeOperation(
+                            send=send,
+                            recv=recv,
+                            parameter=param,
+                            type_=param.type,
+                            stored=True,
                         )
                     )
                     continue
@@ -2143,6 +2187,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 cusparse_registry_entries=" \\\n".join(
                     registry_entries["CUSPARSE"]
                 ),
+                cusparselt_registry_entries=" \\\n".join(
+                    registry_entries["CUSPARSELT"]
+                ),
                 cusolver_registry_entries=" \\\n".join(
                     registry_entries["CUSOLVER"]
                 ),
@@ -2188,6 +2235,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 cusparse_guarded_declarations="\n".join(
                     guarded_declarations["CUSPARSE"]
                 ),
+                cusparselt_guarded_declarations="\n".join(
+                    guarded_declarations["CUSPARSELT"]
+                ),
                 cusolver_guarded_declarations="\n".join(
                     guarded_declarations["CUSOLVER"]
                 ),
@@ -2224,6 +2274,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 curand_guarded_handlers="\n".join(guarded_handlers["CURAND"]),
                 cusparse_guarded_handlers="\n".join(
                     guarded_handlers["CUSPARSE"]
+                ),
+                cusparselt_guarded_handlers="\n".join(
+                    guarded_handlers["CUSPARSELT"]
                 ),
                 cusolver_guarded_handlers="\n".join(
                     guarded_handlers["CUSOLVER"]
@@ -2465,6 +2518,10 @@ def main():
         annotations_by_target["cusparse"],
         client_call_templates=client_call_templates_by_target["cusparse"],
     )
+    cusparselt_functions_with_annotations = collect_backend_functions(
+        annotations_by_target["cusparselt"],
+        client_call_templates=client_call_templates_by_target["cusparselt"],
+    )
     cusolver_functions_with_annotations = collect_backend_functions(
         annotations_by_target["cusolver"],
         client_call_templates=client_call_templates_by_target["cusolver"],
@@ -2517,6 +2574,7 @@ def main():
         + cudnn_functions_with_annotations
         + curand_functions_with_annotations
         + cusparse_functions_with_annotations
+        + cusparselt_functions_with_annotations
         + cusolver_functions_with_annotations
         + cusolvermg_functions_with_annotations
         + nvrtc_functions_with_annotations
@@ -2631,6 +2689,7 @@ def main():
         (CUDNN, "cudnn", cudnn_functions_with_annotations),
         (CURAND, "curand", curand_functions_with_annotations),
         (CUSPARSE, "cusparse", cusparse_functions_with_annotations),
+        (CUSPARSELT, "cusparselt", cusparselt_functions_with_annotations),
         (CUSOLVER, "cusolver", cusolver_functions_with_annotations),
         (CUSOLVERMG, "cusolvermg", cusolvermg_functions_with_annotations),
         (NVRTC, "nvrtc", nvrtc_functions_with_annotations),
@@ -2726,6 +2785,7 @@ def main():
         ("CUDNN", cudnn_functions_with_annotations),
         ("CURAND", curand_functions_with_annotations),
         ("CUSPARSE", cusparse_functions_with_annotations),
+        ("CUSPARSELT", cusparselt_functions_with_annotations),
         ("CUSOLVER", cusolver_functions_with_annotations),
         ("CUSOLVERMG", cusolvermg_functions_with_annotations),
         ("NVRTC", nvrtc_functions_with_annotations),
@@ -2823,6 +2883,9 @@ def main():
             "gen_cusparse_client.inc",
             "gen_cusparse_server.inc",
             "gen_cusparse_server.h",
+            "gen_cusparselt_client.inc",
+            "gen_cusparselt_server.inc",
+            "gen_cusparselt_server.h",
             "gen_cusolver_client.inc",
             "gen_cusolver_server.inc",
             "gen_cusolver_server.h",
@@ -2899,6 +2962,11 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_cusparse_server.inc",
             "gen_cusparse_server.h",
         ],
+        "cusparselt": [
+            "gen_cusparselt_client.inc",
+            "gen_cusparselt_server.inc",
+            "gen_cusparselt_server.h",
+        ],
         "cusolver": [
             "gen_cusolver_client.inc",
             "gen_cusolver_server.inc",
@@ -2947,6 +3015,7 @@ def verify_backend_boundaries(backend: str) -> None:
         "cudnn": ["nvml", "hip"],
         "curand": ["nvml", "hip"],
         "cusparse": ["nvml", "hip"],
+        "cusparselt": ["nvml", "hip"],
         "cusolver": ["nvml", "hip"],
         "cusolvermg": ["nvml", "hip"],
         "nvrtc": ["nvml", "hip"],
@@ -2974,7 +3043,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--verify-backend",
-        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "cusolver", "cusolvermg", "nvrtc", "nccl", "nvjitlink", "nvjpeg", *NPP_TARGETS, "nvml", "hip"),
+        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "cusparselt", "cusolver", "cusolvermg", "nvrtc", "nccl", "nvjitlink", "nvjpeg", *NPP_TARGETS, "nvml", "hip"),
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()

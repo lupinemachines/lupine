@@ -741,6 +741,66 @@ if(LUPINE_BUILD_CUSPARSE)
 endif()
 
 if(LUPINE_BUILD_CUDA)
+    # cuSPARSELt ships outside the toolkit, from its own package or wheel.
+    # Point LUPINE_CUSPARSELT_INCLUDE_DIR at an include directory holding
+    # cusparseLt.h when it is not beside the toolkit's headers; without one the
+    # shim is left out. 0.6.0 is the oldest release whose objects and matmul
+    # surface the shim covers; the error strings it gained in 0.7.0 and the
+    # algorithm-selection destroy it gained in 0.8.0 are guarded.
+    find_path(LUPINE_CUSPARSELT_INCLUDE_DIR cusparseLt.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS} ENV CUSPARSELT_HOME
+        PATH_SUFFIXES include)
+    if(LUPINE_CUSPARSELT_INCLUDE_DIR)
+        file(STRINGS ${LUPINE_CUSPARSELT_INCLUDE_DIR}/cusparseLt.h
+             LUPINE_CUSPARSELT_MINOR_LINE REGEX "^#define CUSPARSELT_VER_MINOR ")
+        string(REGEX REPLACE "^#define CUSPARSELT_VER_MINOR ([0-9]+).*" "\\1"
+               LUPINE_CUSPARSELT_MINOR "${LUPINE_CUSPARSELT_MINOR_LINE}")
+        if(LUPINE_CUSPARSELT_MINOR GREATER_EQUAL 6)
+            set(LUPINE_BUILD_CUSPARSELT ON)
+        endif()
+    endif()
+endif()
+
+if(LUPINE_BUILD_CUSPARSELT)
+    # Named like NVIDIA's (libcusparseLt.so.0, whose SONAME major is 0 for
+    # every cuSPARSELt release, and cusparseLt.dll), and its symbols carry no
+    # version node either. It runs on the runtime shim's current device, so it
+    # links both sibling shims.
+    add_library(lupine_cusparselt_client SHARED cusparselt_client.cpp)
+    target_include_directories(lupine_cusparselt_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen
+        ${LUPINE_CUSPARSELT_INCLUDE_DIR})
+    target_link_libraries(lupine_cusparselt_client PRIVATE
+        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
+    set_target_properties(lupine_cusparselt_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON)
+    lupine_manylinux2014_client(lupine_cusparselt_client)
+    if(WIN32)
+        target_compile_options(lupine_cusparselt_client PRIVATE /wd4996)
+        set_target_properties(lupine_cusparselt_client PROPERTIES
+            OUTPUT_NAME cusparseLt
+            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    else()
+        target_compile_options(lupine_cusparselt_client PRIVATE
+            -Wno-deprecated-declarations)
+        set_target_properties(lupine_cusparselt_client PROPERTIES
+            OUTPUT_NAME cusparseLt)
+        if(APPLE)
+            set_target_properties(lupine_cusparselt_client PROPERTIES
+                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
+        else()
+            target_link_options(lupine_cusparselt_client PRIVATE
+                "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cusparselt.exports")
+            set_target_properties(lupine_cusparselt_client PROPERTIES
+                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+                VERSION 0
+                SOVERSION 0)
+        endif()
+    endif()
+    add_custom_target(lupine_cusparselt DEPENDS lupine_cusparselt_client)
+endif()
+
+if(LUPINE_BUILD_CUDA)
     # The cuSOLVER shims need the library's own headers, which the runtime
     # header wheels the native client builds use do not carry; without them
     # the shims are left out of the build.
@@ -1425,6 +1485,16 @@ if(LUPINE_BUILD_SERVER)
                 lupine_server_core ${CMAKE_DL_LIBS})
         endif()
 
+        if(LUPINE_BUILD_CUSPARSELT)
+            add_library(lupine_cusparselt_server STATIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/cusparselt_server.cpp)
+            lupine_internal_target(lupine_cusparselt_server)
+            target_include_directories(lupine_cusparselt_server PRIVATE
+                ${CUDAToolkit_INCLUDE_DIRS} ${LUPINE_CUSPARSELT_INCLUDE_DIR})
+            target_link_libraries(lupine_cusparselt_server PRIVATE
+                lupine_server_core ${CMAKE_DL_LIBS})
+        endif()
+
         if(LUPINE_BUILD_CUSOLVER)
             add_library(lupine_cusolver_server STATIC
                 ${CMAKE_CURRENT_SOURCE_DIR}/cusolver_server.cpp
@@ -1635,6 +1705,14 @@ if(LUPINE_BUILD_SERVER)
                 LUPINE_BUILD_CUSPARSE_BACKEND)
             target_link_libraries(lupine_driver_server PRIVATE
                 lupine_cusparse_server)
+        endif()
+        if(LUPINE_BUILD_CUSPARSELT)
+            target_compile_definitions(lupine_driver_server PRIVATE
+                LUPINE_BUILD_CUSPARSELT_BACKEND)
+            target_include_directories(lupine_driver_server PRIVATE
+                ${LUPINE_CUSPARSELT_INCLUDE_DIR})
+            target_link_libraries(lupine_driver_server PRIVATE
+                lupine_cusparselt_server)
         endif()
         if(LUPINE_BUILD_CUSOLVER)
             target_compile_definitions(lupine_driver_server PRIVATE
@@ -1870,6 +1948,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "${lupine_cusparse_removed_check} && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseSpMV@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseCreateCsr@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseXcsrsort@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseGetErrorString@'")
     endif()
 
+    if(TARGET lupine_cusparselt_client)
+        add_test(NAME cusparselt_exports
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_cusparselt_client>\" | grep -q ' T cusparseLtInit$' && nm -D \"$<TARGET_FILE:lupine_cusparselt_client>\" | grep -q ' T cusparseLtStructuredDescriptorInit$' && nm -D \"$<TARGET_FILE:lupine_cusparselt_client>\" | grep -q ' T cusparseLtSpMMACompress2$' && nm -D \"$<TARGET_FILE:lupine_cusparselt_client>\" | grep -q ' T cusparseLtMatmulSearch$'")
+    endif()
+
     if(TARGET lupine_cusolver_client)
         add_test(NAME cusolver_exports
             COMMAND bash -c
@@ -1975,6 +2059,10 @@ endif()
 if(TARGET lupine_cusparse_client)
     message(STATUS
         "Building cuSPARSE client: lupine_cusparse_client (libcusparse.so.${LUPINE_CUSPARSE_SOVERSION})")
+endif()
+if(TARGET lupine_cusparselt_client)
+    message(STATUS
+        "Building cuSPARSELt client: lupine_cusparselt_client (libcusparseLt.so.0)")
 endif()
 if(TARGET lupine_cusolver_client)
     message(STATUS

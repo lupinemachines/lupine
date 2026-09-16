@@ -25,6 +25,9 @@
 #ifdef LUPINE_BUILD_CUSOLVER_BACKEND
 #include <cusolver_common.h>
 #endif
+#ifdef LUPINE_BUILD_CUSPARSELT_BACKEND
+#include <cusparseLt.h>
+#endif
 #ifdef LUPINE_BUILD_NVRTC_BACKEND
 #include <nvrtc.h>
 #endif
@@ -2314,6 +2317,35 @@
   HANDLER(RPC_cusolverMgPotrs, handle_cusolverMgPotrs, rpc_backend::cusolver) \
   HANDLER(RPC_cusolverMgPotri_bufferSize, handle_cusolverMgPotri_bufferSize, rpc_backend::cusolver) \
   HANDLER(RPC_cusolverMgPotri, handle_cusolverMgPotri, rpc_backend::cusolver)
+#define LUPINE_CUSPARSELT_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cusparseLtDestroy, handle_cusparseLtDestroy, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatDescriptorDestroy, handle_cusparseLtMatDescriptorDestroy, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatmulPlanDestroy, handle_cusparseLtMatmulPlanDestroy, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtInit, handle_cusparseLtInit, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtGetVersion, handle_cusparseLtGetVersion, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtGetProperty, handle_cusparseLtGetProperty, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtDenseDescriptorInit, handle_cusparseLtDenseDescriptorInit, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtStructuredDescriptorInit, handle_cusparseLtStructuredDescriptorInit, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatDescSetAttribute, handle_cusparseLtMatDescSetAttribute, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatDescGetAttribute, handle_cusparseLtMatDescGetAttribute, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatmulDescriptorInit, handle_cusparseLtMatmulDescriptorInit, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatmulDescSetAttribute, handle_cusparseLtMatmulDescSetAttribute, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatmulDescGetAttribute, handle_cusparseLtMatmulDescGetAttribute, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatmulAlgSelectionInit, handle_cusparseLtMatmulAlgSelectionInit, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatmulAlgSetAttribute, handle_cusparseLtMatmulAlgSetAttribute, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatmulAlgGetAttribute, handle_cusparseLtMatmulAlgGetAttribute, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatmulGetWorkspace, handle_cusparseLtMatmulGetWorkspace, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatmulPlanInit, handle_cusparseLtMatmulPlanInit, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatmul, handle_cusparseLtMatmul, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtMatmulSearch, handle_cusparseLtMatmulSearch, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtSpMMAPrune, handle_cusparseLtSpMMAPrune, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtSpMMAPruneCheck, handle_cusparseLtSpMMAPruneCheck, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtSpMMAPrune2, handle_cusparseLtSpMMAPrune2, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtSpMMAPruneCheck2, handle_cusparseLtSpMMAPruneCheck2, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtSpMMACompressedSize, handle_cusparseLtSpMMACompressedSize, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtSpMMACompress, handle_cusparseLtSpMMACompress, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtSpMMACompressedSize2, handle_cusparseLtSpMMACompressedSize2, rpc_backend::cusparselt) \
+  HANDLER(RPC_cusparseLtSpMMACompress2, handle_cusparseLtSpMMACompress2, rpc_backend::cusparselt)
 #define LUPINE_NVRTC_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvrtcGetErrorString, handle_nvrtcGetErrorString, rpc_backend::nvrtc) \
   HANDLER(RPC_nvrtcGetSupportedArchs, handle_nvrtcGetSupportedArchs, rpc_backend::nvrtc) \
@@ -11400,6 +11432,22 @@ LUPINE_DECLARE_HANDLER(RPC_cusparseZgthrz, handle_cusparseZgthrz,
 #if CUSPARSE_VERSION < 12000
 LUPINE_DECLARE_HANDLER(RPC_cusparseZsctr, handle_cusparseZsctr,
                        rpc_backend::cusparse)
+#endif
+#endif
+#ifdef LUPINE_BUILD_CUSPARSELT_BACKEND
+LUPINE_CUSPARSELT_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
+#if CUSPARSELT_VERSION >= 700
+LUPINE_DECLARE_HANDLER(RPC_cusparseLtGetErrorName,
+                       handle_cusparseLtGetErrorName, rpc_backend::cusparselt)
+#endif
+#if CUSPARSELT_VERSION >= 700
+LUPINE_DECLARE_HANDLER(RPC_cusparseLtGetErrorString,
+                       handle_cusparseLtGetErrorString, rpc_backend::cusparselt)
+#endif
+#if CUSPARSELT_VERSION >= 800
+LUPINE_DECLARE_HANDLER(RPC_cusparseLtMatmulAlgSelectionDestroy,
+                       handle_cusparseLtMatmulAlgSelectionDestroy,
+                       rpc_backend::cusparselt)
 #endif
 #endif
 #ifdef LUPINE_BUILD_CUSOLVER_BACKEND
@@ -39448,6 +39496,18 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_REGISTER_HANDLER(RPC_cusparseZsctr, handle_cusparseZsctr, rpc_backend::cusparse)
 #endif
 #endif
+#ifdef LUPINE_BUILD_CUSPARSELT_BACKEND
+      LUPINE_CUSPARSELT_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
+#if CUSPARSELT_VERSION >= 700
+      LUPINE_REGISTER_HANDLER(RPC_cusparseLtGetErrorName, handle_cusparseLtGetErrorName, rpc_backend::cusparselt)
+#endif
+#if CUSPARSELT_VERSION >= 700
+      LUPINE_REGISTER_HANDLER(RPC_cusparseLtGetErrorString, handle_cusparseLtGetErrorString, rpc_backend::cusparselt)
+#endif
+#if CUSPARSELT_VERSION >= 800
+      LUPINE_REGISTER_HANDLER(RPC_cusparseLtMatmulAlgSelectionDestroy, handle_cusparseLtMatmulAlgSelectionDestroy, rpc_backend::cusparselt)
+#endif
+#endif
 #ifdef LUPINE_BUILD_CUSOLVER_BACKEND
       LUPINE_CUSOLVER_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 #if CUSOLVER_VERSION >= 11500
@@ -58252,6 +58312,7 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #undef LUPINE_CUDNN_RPC_HANDLERS
 #undef LUPINE_CURAND_RPC_HANDLERS
 #undef LUPINE_CUSPARSE_RPC_HANDLERS
+#undef LUPINE_CUSPARSELT_RPC_HANDLERS
 #undef LUPINE_CUSOLVER_RPC_HANDLERS
 #undef LUPINE_CUSOLVERMG_RPC_HANDLERS
 #undef LUPINE_NVRTC_RPC_HANDLERS

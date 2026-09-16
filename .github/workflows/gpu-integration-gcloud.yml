@@ -662,6 +662,9 @@ jobs:
             -v /home/gha/lupine-results-"$MATRIX_LABEL":/results \
             "$CLIENT_IMAGE" \
             bash -lc '
+              # This script reaches the container inside a single-quoted
+              # command, so every quote below is a double quote: an apostrophe
+              # would end the command mid-script.
               set -euo pipefail
               if [[ -e /dev/nvidiactl || -e /dev/nvidia0 ]]; then
                 echo "NVIDIA device is visible inside the client container; client/server separation is invalid" >&2
@@ -709,6 +712,18 @@ jobs:
               # Its nvSHMEM wheel, where that torch build carries one, does the
               # same for the nvSHMEM shim and its test.
               export NVSHMEM_HOME="$("$PYTHON_BIN" -c "import nvidia.nvshmem; print(list(nvidia.nvshmem.__path__)[0])" 2>/dev/null || true)"
+              # Its cuSPARSELt wheel does too, from whichever directory the
+              # release installs into: nvidia/cu13 for the CUDA 13 wheels,
+              # nvidia/cusparselt from 0.7, and a top-level cusparselt before
+              # that. A wheel set without one leaves the shim out of the build.
+              export CUSPARSELT_HOME=""
+              nvidia_dir="$(dirname "$CUDNN_HOME")"
+              for header in "$nvidia_dir"/*/include/cusparseLt.h \
+                            "$(dirname "$nvidia_dir")"/*/include/cusparseLt.h; do
+                [[ -e "$header" ]] || continue
+                CUSPARSELT_HOME="$(dirname "$(dirname "$header")")"
+                break
+              done
 
               cmake -S /src -B "$LUPINE_BUILD_DIR" \
                 -G Ninja \
@@ -750,6 +765,9 @@ jobs:
                   # cuDNN comes from the PyTorch wheel, and libcudnn loads its
                   # operation sublibraries from its own directory.
                   vendor_libs+=("$CUDNN_HOME"/lib/libcudnn*.so.*)
+                elif [[ "$name" == libcusparseLt.so.* ]]; then
+                  # cuSPARSELt comes from the PyTorch wheel too.
+                  vendor_libs+=("$CUSPARSELT_HOME/lib/$name")
                 else
                   vendor_libs+=("$CUDA_LIB_DIR/$name")
                 fi

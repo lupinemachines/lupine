@@ -19,6 +19,7 @@ enum class rpc_backend {
   cudnn,
   curand,
   cusparse,
+  cusparselt,
   cusolver,
   nvrtc,
   nccl,

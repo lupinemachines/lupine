@@ -73,6 +73,17 @@ RUN cuda_major="${CUDA_VERSION%%.*}" \
          && cp -rL "/usr/include/nvshmem_${cuda_major}/." /opt/nvshmem/include/ \
          && rm -rf /var/lib/apt/lists/*; \
        fi
+FROM cuda-sdk AS cusparselt-headers
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# cuSPARSELt ships outside the toolkit too. Its header comes from the newest
+# release the CUDA repository carries, the one the server image installs.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libcusparselt-dev \
+    && mkdir -p /opt/cusparselt/include \
+    && cp -L /usr/include/cusparseLt.h /opt/cusparselt/include/ \
+    && rm -rf /var/lib/apt/lists/*
 
 FROM ubuntu:${UBUNTU_VERSION} AS builder
 
@@ -90,6 +101,7 @@ COPY --from=nccl-headers /opt/nccl/include/ /usr/local/cuda/include/
 # nvSHMEM's headers keep directories of their own (device/, host/, non_abi/),
 # so they stay beside the toolkit's rather than inside them.
 COPY --from=nvshmem-headers /opt/nvshmem/include/ /opt/nvshmem/include/
+COPY --from=cusparselt-headers /opt/cusparselt/include/ /usr/local/cuda/include/
 COPY --from=cuda-sdk /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so
 COPY --from=cuda-ops /opt/lupine-precompiled-ops/ /opt/lupine-precompiled-ops/
 COPY --from=rocm-sdk /opt/rocm/include/ /opt/rocm/include/
@@ -148,7 +160,7 @@ ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
 LABEL org.opencontainers.image.title="lupine-client"
-LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, CUPTI, nvSHMEM, NVML, and HIP shims"
+LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSPARSELt, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, CUPTI, nvSHMEM, NVML, and HIP shims"
 LABEL org.opencontainers.image.source="https://github.com/lupinemachines/lupine"
 LABEL org.opencontainers.image.version="${CUDA_VERSION}-rocm-${ROCM_VERSION}-ubuntu${UBUNTU_VERSION}"
 
@@ -198,6 +210,7 @@ COPY --from=client-build /opt/lupine/build/libcufft.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcudnn.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcurand.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcusparse.so* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libcusparseLt.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcusolver.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcusolverMg.so* /opt/lupine/lib/
 # The brackets keep the COPY valid on toolkits without an nvJitLink, cuFile or
@@ -264,7 +277,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update \
     && nccl_version="$(apt-cache madison libnccl2 | awk -v s="+cuda$(printf '%s' "${CUDA_VERSION}" | awk -F. '{print $1 "." $2}')" 'index($3, s) {print $3; exit}')" \
     && apt-get install -y --no-install-recommends "cuda-compat-${cuda_series}" "cuda-cudart-${cuda_series}" "libcublas-${cuda_series}" "libcufft-${cuda_series}" "libcurand-${cuda_series}" "libcusparse-${cuda_series}" "libcusolver-${cuda_series}" "cuda-nvrtc-${cuda_series}" "libnvjpeg-${cuda_series}" "libnpp-${cuda_series}" \
-         "libcudnn9-cuda-${CUDA_VERSION%%.*}" "libnccl2=${nccl_version}" $(test "${CUDA_VERSION%%.*}" -lt 12 || echo "libnvjitlink-${cuda_series}") \
+         "libcudnn9-cuda-${CUDA_VERSION%%.*}" "libnccl2=${nccl_version}" libcusparselt0 $(test "${CUDA_VERSION%%.*}" -lt 12 || echo "libnvjitlink-${cuda_series}") \
     && cuda_series_dot="$(printf '%s' "${CUDA_VERSION}" | awk -F. '{print $1 "." $2}')" \
     && ln -sfn "cuda-${cuda_series_dot}" /usr/local/cuda \
     && if [ "$arch" = amd64 ]; then \

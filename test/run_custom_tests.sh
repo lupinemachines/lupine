@@ -35,6 +35,8 @@ CUDNN_HOME="${CUDNN_HOME:-}"
 NCCL_HOME="${NCCL_HOME:-}"
 # nvSHMEM too, such as an nvidia-nvshmem wheel's nvidia/nvshmem.
 NVSHMEM_HOME="${NVSHMEM_HOME:-}"
+# cuSPARSELt too, such as an nvidia-cusparselt wheel's nvidia/cusparselt.
+CUSPARSELT_HOME="${CUSPARSELT_HOME:-}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 BUILD_TESTS="${BUILD_TESTS:-1}"
 if [[ -n "${BUILD_DIR:-}" ]]; then
@@ -115,6 +117,15 @@ if grep -q '#include <nvJitLink.h>' "$src"; then
   nvjitlink_args=(-lnvJitLink)
 fi
 
+cusparselt_args=()
+if grep -q '#include <cusparseLt.h>' "$src"; then
+  if [[ -z "$CUSPARSELT_HOME" || ! -e "$CUSPARSELT_HOME/lib/libcusparseLt.so.0" ]]; then
+    echo "SKIP: $name needs cuSPARSELt; set CUSPARSELT_HOME"
+    exit 0
+  fi
+  cusparselt_args=(-I"$CUSPARSELT_HOME/include" -L"$CUSPARSELT_HOME/lib" -l:libcusparseLt.so.0)
+fi
+
 cufile_args=()
 if grep -q '#include <cufile.h>' "$src"; then
   if [[ ! -e "$CUDA_HOME/lib64/libcufile.so" ]]; then
@@ -139,7 +150,7 @@ if [[ "$BUILD_TESTS" == "1" ]]; then
   [[ -n "$CUDA_SAMPLES_ARCH" ]] && arch_arg="-arch=sm_$CUDA_SAMPLES_ARCH"
   "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$arch_arg" \
     "$src" -o "$exe" -lcuda -lcublas -lcublasLt -lcufft -lcusolver -lcusolverMg -lcurand -lnvrtc -lnvjpeg -lcusparse -lnppc -lnppial -lnppicc -lnppidei -lnppif -lnppig -lnppim -lnppist -lnppisu -lnppitc -lnpps -ldl -L"$CUDA_HOME/lib64/stubs" \
-    "${cudnn_args[@]}" "${nvjitlink_args[@]}" "${cufile_args[@]}" "${cupti_args[@]}"
+    "${cudnn_args[@]}" "${nvjitlink_args[@]}" "${cusparselt_args[@]}" "${cufile_args[@]}" "${cupti_args[@]}"
 fi
 [[ -x "$exe" ]] || { echo "missing custom test executable: $exe" >&2; exit 1; }
 if [[ "$BUILD_ONLY" == "1" ]]; then
@@ -163,6 +174,18 @@ if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <nvshm
   echo "SKIP: $name runs nvSHMEM on the client, which needs more than the driver shim"
   exit 0
 fi
+if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <cusparseLt.h>' "$src"; then
+  # NVIDIA's cuSPARSELt before 0.7 answers cusparseLtMatmul with an internal
+  # error over the driver shim alone, though the same build runs on a local GPU
+  # and through the cuSPARSELt shim. Newer releases are fine, so only the old
+  # ones skip and every other release keeps its driver-only coverage.
+  cusparselt_minor="$(sed -n 's/^#define CUSPARSELT_VER_MINOR \([0-9][0-9]*\).*/\1/p' \
+    "$CUSPARSELT_HOME/include/cusparseLt.h")"
+  if [[ -n "$cusparselt_minor" && "$cusparselt_minor" -lt 7 ]]; then
+    echo "SKIP: $name runs cuSPARSELt 0.$cusparselt_minor on the client, which needs more than the driver shim"
+    exit 0
+  fi
+fi
 if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <nccl.h>' "$src"; then
   # NVIDIA's libnccl on a GPU-less client crashes over the driver shim alone,
   # zeroing the host memory ncclCommInitRank allocates; only the NCCL shim runs.
@@ -173,9 +196,9 @@ fi
 start_remote_server "$pidfile" "$server_log" "$port"
 if [[ -n "${RESULTS_DIR:-}" ]]; then
   mkdir -p "$RESULTS_DIR"
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${LD_LIBRARY_PATH:-}" \
+  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}${LD_LIBRARY_PATH:-}" \
     LUPINE_SERVER="$SERVER_HOST:$port" "$exe" 2>&1 | tee "$RESULTS_DIR/client.log"
 else
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${LD_LIBRARY_PATH:-}" \
+  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}${LD_LIBRARY_PATH:-}" \
     LUPINE_SERVER="$SERVER_HOST:$port" "$exe"
 fi

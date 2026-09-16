@@ -80,4 +80,7 @@ codegen/gen_nppitc_server.inc linguist-generated=true
 codegen/gen_npps_client.inc linguist-generated=true
 codegen/gen_npps_server.h linguist-generated=true
 codegen/gen_npps_server.inc linguist-generated=true
+codegen/gen_cusparselt_client.inc linguist-generated=true
+codegen/gen_cusparselt_server.h linguist-generated=true
+codegen/gen_cusparselt_server.inc linguist-generated=true
 codegen/registry.cpp linguist-generated=true
