@@ -1783,9 +1783,15 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
 
     if(TARGET lupine_nccl_client)
+        # The device API's host half is declared in nccl_device.h, so nothing
+        # else in the build would notice it going missing; torch links it.
+        set(LUPINE_NCCL_EXPORT_CHECKS "")
+        if(LUPINE_NCCL_VERSION_CODE GREATER_EQUAL 22800)
+            set(LUPINE_NCCL_EXPORT_CHECKS " && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclDevCommDestroy$'")
+        endif()
         add_test(NAME nccl_exports
             COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclAllReduce$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T pncclAllReduce$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclGroupEnd$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclCommInitRank$'")
+                "nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclAllReduce$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T pncclAllReduce$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclGroupEnd$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclCommInitRank$'${LUPINE_NCCL_EXPORT_CHECKS}")
     endif()
 
     if(TARGET lupine_nvjitlink_client)

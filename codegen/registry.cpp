@@ -11681,6 +11681,15 @@ LUPINE_DECLARE_HANDLER(RPC_ncclCommWindowDeregister,
 LUPINE_DECLARE_HANDLER(RPC_ncclWinGetUserPtr, handle_ncclWinGetUserPtr,
                        rpc_backend::nccl)
 #endif
+#if NCCL_VERSION_CODE >= 22900
+LUPINE_DECLARE_HANDLER(RPC_ncclGetLsaMultimemDevicePointer,
+                       handle_ncclGetLsaMultimemDevicePointer,
+                       rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22900
+LUPINE_DECLARE_HANDLER(RPC_ncclGetPeerDevicePointer,
+                       handle_ncclGetPeerDevicePointer, rpc_backend::nccl)
+#endif
 #if NCCL_VERSION_CODE >= 22803
 LUPINE_DECLARE_HANDLER(RPC_ncclAlltoAll, handle_ncclAlltoAll, rpc_backend::nccl)
 #endif
@@ -39637,6 +39646,12 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #if NCCL_VERSION_CODE >= 22902
       LUPINE_REGISTER_HANDLER(RPC_ncclWinGetUserPtr, handle_ncclWinGetUserPtr, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22900
+      LUPINE_REGISTER_HANDLER(RPC_ncclGetLsaMultimemDevicePointer, handle_ncclGetLsaMultimemDevicePointer, rpc_backend::nccl)
+#endif
+#if NCCL_VERSION_CODE >= 22900
+      LUPINE_REGISTER_HANDLER(RPC_ncclGetPeerDevicePointer, handle_ncclGetPeerDevicePointer, rpc_backend::nccl)
 #endif
 #if NCCL_VERSION_CODE >= 22803
       LUPINE_REGISTER_HANDLER(RPC_ncclAlltoAll, handle_ncclAlltoAll, rpc_backend::nccl)

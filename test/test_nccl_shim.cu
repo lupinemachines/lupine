@@ -1,11 +1,11 @@
 // Exercises the NCCL shim end to end against the remote devices: version and
 // error strings, unique ids, a one-rank communicator (collectives in and out
 // of groups, pre-multiplied sums with host and device scalars, send to self,
-// ncclMemAlloc buffers, a configured communicator, split, finalize and
-// abort) and, with two GPUs, a clique made by ncclCommInitAll and one made by
-// a group of ncclCommInitRank calls, driven from one thread with groups and
-// from a thread per rank without them. Results are checked against CPU
-// references.
+// ncclMemAlloc buffers, a window's peer and multimem addresses, a configured
+// communicator, split, finalize and abort) and, with two GPUs, a clique made
+// by ncclCommInitAll and one made by a group of ncclCommInitRank calls, driven
+// from one thread with groups and from a thread per rank without them. Results
+// are checked against CPU references.
 #include <cuda_runtime.h>
 #include <nccl.h>
 
@@ -13,6 +13,17 @@
 #include <cstring>
 #include <thread>
 #include <vector>
+
+#if NCCL_VERSION_CODE >= 22900
+// nccl_device.h declares the device API's host half; the window queries below
+// need nothing else from it.
+extern "C" ncclResult_t ncclGetLsaMultimemDevicePointer(ncclWindow_t window,
+                                                        size_t offset,
+                                                        void **outPtr);
+extern "C" ncclResult_t ncclGetPeerDevicePointer(ncclWindow_t window,
+                                                 size_t offset, int peer,
+                                                 void **outPtr);
+#endif
 
 #define CHECK_CUDA(call)                                                       \
   do {                                                                         \
@@ -197,6 +208,20 @@ static int test_single_rank() {
   if (download(recv, output) || compare(output, input, "ncclMemAlloc")) {
     return 1;
   }
+#if NCCL_VERSION_CODE >= 22900
+  // A window's peer and multimem addresses are the server's device addresses,
+  // as every device pointer the shim hands back is. One GPU has no multimem
+  // mapping, so that query answers with a null pointer rather than a failure.
+  ncclWindow_t window = nullptr;
+  CHECK_NCCL(ncclCommWindowRegister(comm, pool, kCount * sizeof(float),
+                                    &window, NCCL_WIN_COLL_SYMMETRIC));
+  void *peer = nullptr;
+  CHECK_NCCL(ncclGetPeerDevicePointer(window, 0, 0, &peer));
+  EXPECT(peer != nullptr);
+  void *multimem = nullptr;
+  CHECK_NCCL(ncclGetLsaMultimemDevicePointer(window, 0, &multimem));
+  CHECK_NCCL(ncclCommWindowDeregister(comm, window));
+#endif
   CHECK_NCCL(ncclMemFree(pool));
 #endif
 

@@ -23,6 +23,11 @@
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_client_rpc.h"
 
+// nccl_device.h declares the device API's host half; these opaque handles are
+// all of that header the shim needs.
+typedef struct ncclDevComm ncclDevComm_t;
+typedef struct ncclDevCommRequirements ncclDevCommRequirements_t;
+
 static ncclResult_t lupine_rpc_ncclGroupStart(conn_t *conn, bool submit_async);
 
 namespace {

@@ -63,6 +63,12 @@ int handle_ncclCommWindowDeregister(conn_t *conn);
 #if NCCL_VERSION_CODE >= 22902
 int handle_ncclWinGetUserPtr(conn_t *conn);
 #endif
+#if NCCL_VERSION_CODE >= 22900
+int handle_ncclGetLsaMultimemDevicePointer(conn_t *conn);
+#endif
+#if NCCL_VERSION_CODE >= 22900
+int handle_ncclGetPeerDevicePointer(conn_t *conn);
+#endif
 int handle_ncclRedOpCreatePreMulSum(conn_t *conn);
 int handle_ncclRedOpDestroy(conn_t *conn);
 int handle_ncclReduce(conn_t *conn);

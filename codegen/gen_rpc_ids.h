@@ -3196,6 +3196,8 @@
 #define RPC_ncclCommWindowRegister 1150252871
 #define RPC_ncclCommWindowDeregister 1048749828
 #define RPC_ncclWinGetUserPtr 1790926879
+#define RPC_ncclGetLsaMultimemDevicePointer 1288659017
+#define RPC_ncclGetPeerDevicePointer 484920634
 #define RPC_ncclRedOpCreatePreMulSum 352857648
 #define RPC_ncclRedOpDestroy 1759621512
 #define RPC_ncclReduce 1591367296

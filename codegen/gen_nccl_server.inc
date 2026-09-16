@@ -1164,6 +1164,76 @@ ERROR_0:
 
 #endif
 
+#if NCCL_VERSION_CODE >= 22900
+int handle_ncclGetLsaMultimemDevicePointer(conn_t *conn) {
+  ncclWindow_t window;
+  size_t offset;
+  void *outPtr{};
+  outPtr = {};
+  int request_id;
+  ncclResult_t return_value;
+  using fn_t = ncclResult_t (*)(ncclWindow_t, size_t, void **);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &window, sizeof(ncclWindow_t)) < 0 ||
+      rpc_read(conn, &offset, sizeof(size_t)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = nccl_symbol<fn_t>("ncclGetLsaMultimemDevicePointer");
+  return_value =
+      fn == nullptr ? function_not_found() : fn(window, offset, &outPtr);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &outPtr, sizeof(void *)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
+#if NCCL_VERSION_CODE >= 22900
+int handle_ncclGetPeerDevicePointer(conn_t *conn) {
+  ncclWindow_t window;
+  size_t offset;
+  int peer;
+  void *outPtr{};
+  outPtr = {};
+  int request_id;
+  ncclResult_t return_value;
+  using fn_t = ncclResult_t (*)(ncclWindow_t, size_t, int, void **);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &window, sizeof(ncclWindow_t)) < 0 ||
+      rpc_read(conn, &offset, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &peer, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = nccl_symbol<fn_t>("ncclGetPeerDevicePointer");
+  return_value =
+      fn == nullptr ? function_not_found() : fn(window, offset, peer, &outPtr);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &outPtr, sizeof(void *)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
 int handle_ncclRedOpCreatePreMulSum(conn_t *conn) {
   ncclRedOp_t op{};
   op = {};

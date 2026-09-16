@@ -908,6 +908,92 @@ extern "C" ncclResult_t ncclWinGetUserPtr(ncclComm_t comm, ncclWindow_t win,
 
 #endif
 
+#if NCCL_VERSION_CODE >= 22800
+extern "C" ncclResult_t ncclDevCommCreate(ncclComm_t comm,
+                                          const ncclDevCommRequirements_t *reqs,
+                                          ncclDevComm_t *outDevComm) {
+  (void)comm;
+  (void)reqs;
+  (void)outDevComm;
+  return ncclInvalidUsage;
+}
+
+#endif
+
+#if NCCL_VERSION_CODE >= 22800
+extern "C" ncclResult_t ncclDevCommDestroy(ncclComm_t comm,
+                                           const ncclDevComm_t *devComm) {
+  (void)comm;
+  (void)devComm;
+  return ncclInvalidUsage;
+}
+
+#endif
+
+#if NCCL_VERSION_CODE >= 22900
+static ncclResult_t
+lupine_rpc_ncclGetLsaMultimemDevicePointer(conn_t *conn, ncclWindow_t window,
+                                           size_t offset, void **outPtr) {
+  ncclResult_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_ncclGetLsaMultimemDevicePointer) < 0 ||
+      rpc_write(conn, &window, sizeof(ncclWindow_t)) < 0 ||
+      rpc_write(conn, &offset, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, outPtr, sizeof(void *)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" ncclResult_t ncclGetLsaMultimemDevicePointer(ncclWindow_t window,
+                                                        size_t offset,
+                                                        void **outPtr) {
+  if (outPtr == nullptr) {
+    return ncclInvalidArgument;
+  }
+  conn_t *conn = connection();
+  return lupine_rpc_ncclGetLsaMultimemDevicePointer(conn, window, offset,
+                                                    outPtr);
+}
+
+#endif
+
+#if NCCL_VERSION_CODE >= 22900
+static ncclResult_t lupine_rpc_ncclGetPeerDevicePointer(conn_t *conn,
+                                                        ncclWindow_t window,
+                                                        size_t offset, int peer,
+                                                        void **outPtr) {
+  ncclResult_t return_value = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_ncclGetPeerDevicePointer) < 0 ||
+      rpc_write(conn, &window, sizeof(ncclWindow_t)) < 0 ||
+      rpc_write(conn, &offset, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &peer, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, outPtr, sizeof(void *)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" ncclResult_t ncclGetPeerDevicePointer(ncclWindow_t window,
+                                                 size_t offset, int peer,
+                                                 void **outPtr) {
+  if (outPtr == nullptr) {
+    return ncclInvalidArgument;
+  }
+  conn_t *conn = connection();
+  return lupine_rpc_ncclGetPeerDevicePointer(conn, window, offset, peer,
+                                             outPtr);
+}
+
+#endif
+
 static ncclResult_t lupine_rpc_ncclRedOpCreatePreMulSum(
     conn_t *conn, ncclRedOp_t *op, void *scalar, ncclDataType_t datatype,
     ncclScalarResidence_t residence, ncclComm_t comm) {
@@ -2695,6 +2781,29 @@ extern "C" ncclResult_t pncclCommWindowDeregister(ncclComm_t comm,
 extern "C" ncclResult_t pncclWinGetUserPtr(ncclComm_t comm, ncclWindow_t win,
                                            void **outUserPtr)
     __attribute__((alias("ncclWinGetUserPtr")));
+#endif
+#if NCCL_VERSION_CODE >= 22800
+extern "C" ncclResult_t
+pncclDevCommCreate(ncclComm_t comm, const ncclDevCommRequirements_t *reqs,
+                   ncclDevComm_t *outDevComm)
+    __attribute__((alias("ncclDevCommCreate")));
+#endif
+#if NCCL_VERSION_CODE >= 22800
+extern "C" ncclResult_t pncclDevCommDestroy(ncclComm_t comm,
+                                            const ncclDevComm_t *devComm)
+    __attribute__((alias("ncclDevCommDestroy")));
+#endif
+#if NCCL_VERSION_CODE >= 22900
+extern "C" ncclResult_t pncclGetLsaMultimemDevicePointer(ncclWindow_t window,
+                                                         size_t offset,
+                                                         void **outPtr)
+    __attribute__((alias("ncclGetLsaMultimemDevicePointer")));
+#endif
+#if NCCL_VERSION_CODE >= 22900
+extern "C" ncclResult_t pncclGetPeerDevicePointer(ncclWindow_t window,
+                                                  size_t offset, int peer,
+                                                  void **outPtr)
+    __attribute__((alias("ncclGetPeerDevicePointer")));
 #endif
 extern "C" ncclResult_t
 pncclRedOpCreatePreMulSum(ncclRedOp_t *op, void *scalar,

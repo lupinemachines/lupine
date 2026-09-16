@@ -317,6 +317,49 @@ ncclResult_t ncclCommWindowDeregister(ncclComm_t comm, ncclWindow_t win);
 ncclResult_t ncclWinGetUserPtr(ncclComm_t comm, ncclWindow_t win,
                                void **outUserPtr);
 #endif
+
+// The device API's host half, which nccl_device.h declares rather than
+// nccl.h; its opaque handles are all of that header the shim needs. A device
+// communicator is a kernel's handle on NCCL's device-side resources: the
+// requirement list building one is a chain of nodes the library writes
+// handles back into, and the communicator it mints is laid out for device
+// code linked against that same NCCL release. Neither survives the wire, so
+// the calls that build one report the configuration unusable. The window
+// queries do cross: they answer with server device addresses, which is what
+// every pointer this shim hands back already is.
+typedef struct ncclDevComm ncclDevComm_t;
+typedef struct ncclDevCommRequirements ncclDevCommRequirements_t;
+#if NCCL_VERSION_CODE >= 22800
+/**
+ * @guard NCCL_VERSION_CODE >= 22800
+ */
+ncclResult_t ncclDevCommCreate(ncclComm_t comm,
+                               const ncclDevCommRequirements_t *reqs,
+                               ncclDevComm_t *outDevComm);
+/**
+ * @guard NCCL_VERSION_CODE >= 22800
+ */
+ncclResult_t ncclDevCommDestroy(ncclComm_t comm, const ncclDevComm_t *devComm);
+#endif
+#if NCCL_VERSION_CODE >= 22900
+/**
+ * @guard NCCL_VERSION_CODE >= 22900
+ * @param window SEND_ONLY
+ * @param offset SEND_ONLY
+ * @param outPtr RECV_ONLY
+ */
+ncclResult_t ncclGetLsaMultimemDevicePointer(ncclWindow_t window, size_t offset,
+                                             void **outPtr);
+/**
+ * @guard NCCL_VERSION_CODE >= 22900
+ * @param window SEND_ONLY
+ * @param offset SEND_ONLY
+ * @param peer SEND_ONLY
+ * @param outPtr RECV_ONLY
+ */
+ncclResult_t ncclGetPeerDevicePointer(ncclWindow_t window, size_t offset,
+                                      int peer, void **outPtr);
+#endif
 /**
  * @param op RECV_ONLY
  * @param scalar SEND_ONLY SCALAR:residence SIZE:nccl_type_width(datatype)
