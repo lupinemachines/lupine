@@ -102,8 +102,9 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
 FROM builder AS client-build
 
 # nvJitLink exists only from CUDA 12.4, where its header gained
-# NVJITLINK_NO_INLINE, and cuFile only where the toolkit carries cufile.h.
-RUN header_gated_clients="$(ninja -C /opt/lupine/build -t targets all | grep -oE '^lupine_(nvjitlink|cufile)_client:' | tr -d :)" \
+# NVJITLINK_NO_INLINE, cuFile only where the toolkit carries cufile.h, and
+# CUPTI only where it carries cupti_result.h.
+RUN header_gated_clients="$(ninja -C /opt/lupine/build -t targets all | grep -oE '^lupine_(nvjitlink|cufile|cupti)_client:' | tr -d :)" \
     && cmake --build /opt/lupine/build --parallel \
       --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_cublaslt_client lupine_cufft_client lupine_cudnn_client lupine_curand_client lupine_cusparse_client lupine_cusolver_client lupine_cusolvermg_client lupine_nvrtc_client lupine_nccl_client $header_gated_clients lupine_nvjpeg_client lupine_nppc_client lupine_nppial_client lupine_nppicc_client lupine_nppidei_client lupine_nppif_client lupine_nppig_client lupine_nppim_client lupine_nppist_client lupine_nppisu_client lupine_nppitc_client lupine_npps_client lupine_nvml_client lupine_hip_client
 
@@ -125,7 +126,7 @@ ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
 LABEL org.opencontainers.image.title="lupine-client"
-LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, NVML, and HIP shims"
+LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, CUPTI, NVML, and HIP shims"
 LABEL org.opencontainers.image.source="https://github.com/lupinemachines/lupine"
 LABEL org.opencontainers.image.version="${CUDA_VERSION}-rocm-${ROCM_VERSION}-ubuntu${UBUNTU_VERSION}"
 
@@ -177,9 +178,9 @@ COPY --from=client-build /opt/lupine/build/libcurand.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcusparse.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcusolver.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcusolverMg.so* /opt/lupine/lib/
-# The brackets keep the COPY valid on toolkits without an nvJitLink or cuFile
-# shim.
-COPY --from=client-build /opt/lupine/build/libnvrtc.so* /opt/lupine/build/libnvJitLin[k].so* /opt/lupine/build/libcufil[e].so* /opt/lupine/lib/
+# The brackets keep the COPY valid on toolkits without an nvJitLink, cuFile or
+# CUPTI shim.
+COPY --from=client-build /opt/lupine/build/libnvrtc.so* /opt/lupine/build/libnvJitLin[k].so* /opt/lupine/build/libcufil[e].so* /opt/lupine/build/libcupt[i].so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnccl.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnvjpeg.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnpp*.so* /opt/lupine/lib/

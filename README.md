@@ -233,7 +233,7 @@ docker pull ghcr.io/lupinemachines/lupine-client:cuda-12.4.1-ubuntu22.04
 docker pull ghcr.io/lupinemachines/lupine-server:cuda-12.4.1-ubuntu22.04
 ```
 
-Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, NVML, and HIP shims, their runtime dependencies,
+Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, CUPTI, NVML, and HIP shims, their runtime dependencies,
 and `nvidia-smi`. They are based on Ubuntu and contain neither the CUDA nor ROCm
 SDK. The `-slim` tags remain available as compatibility aliases with the same
 SDK-free contents, for example
@@ -340,7 +340,10 @@ the toolkit's or through `-DLUPINE_CUDNN_INCLUDE_DIR=<dir>`), the NCCL shim at
 `build/libnccl.so.2` on Linux (when NCCL 2.14.3 or newer headers are found
 beside the toolkit's or through `-DLUPINE_NCCL_INCLUDE_DIR=<dir>`), the cuFile
 shim at `build/libcufile.so.0` on Linux (when `cufile.h` is found beside the
-toolkit's or through `-DLUPINE_CUFILE_INCLUDE_DIR=<dir>`), the NVML
+toolkit's or through `-DLUPINE_CUFILE_INCLUDE_DIR=<dir>`), the CUPTI shim at
+`build/libcupti.so.<major>` on Linux (`build/libcupti.so.11.8` on CUDA 11, whose
+CUPTI carries the minor in its SONAME; when `cupti_result.h` is found beside the
+toolkit's or through `-DLUPINE_CUPTI_INCLUDE_DIR=<dir>`), the NVML
 shim at `build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and
 the server at `build/lupine_driver_server`. The runtime and library shims cover
 their whole APIs: they forward `cuda*`, `cublas*`, `cublasLt*`, `cufft*`,
@@ -370,6 +373,20 @@ direct, while `cuFileDriverGetProperties` reports no GPUDirect capability and
 the nvidia-fs tunables return `CU_FILE_PLATFORM_NOT_SUPPORTED`, so a program
 asking what the platform supports is told. Nothing reaches the server but the
 copies, and it needs no `libcufile` of its own.
+
+CUPTI is the other exception, and a starker one. It profiles the process it is
+loaded into by hooking the driver and runtime calls that process makes, and a
+client makes none: its CUDA calls are RPCs and the work runs on the server. A
+server-side CUPTI would report the server's threads, clock, correlation ids and
+- where a server holds more than one client's connections - the other clients'
+work, so a timeline built from it would be wrong in ways its reader could not
+see. The shim therefore profiles nothing and says so: `cuptiGetVersion`,
+`cuptiGetResultString`, `cuptiGetErrorMessage` and `cuptiGetLastError` answer,
+every other entry point returns `CUPTI_ERROR_NOT_SUPPORTED` and the first
+refusal prints one line to stderr. `torch.profiler` and Nsight Systems' CUPTI
+path report no GPU activity on a lupine client, rather than a fabricated
+timeline; the library loads, which is what PyTorch's `libtorch_cpu.so` needs
+from its `NEEDED` entry.
 
 A communicator whose ranks sit behind different servers needs those servers to
 reach each other: NCCL's bootstrap and transport run between the server

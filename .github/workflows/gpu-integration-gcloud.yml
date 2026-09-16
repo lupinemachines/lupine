@@ -739,6 +739,9 @@ jobs:
                 # The cuFile shim forwards nothing: it reads the file on the
                 # client and copies over the driver shim, so no libcufile goes.
                 [[ "$name" == libcufile.so.* ]] && continue
+                # The CUPTI shim forwards nothing either: it profiles nothing
+                # and answers on the client, so no libcupti goes.
+                [[ "$name" == libcupti.so.* ]] && continue
                 if [[ "$name" == libcudnn.so.* ]]; then
                   # cuDNN comes from the PyTorch wheel, and libcudnn loads its
                   # operation sublibraries from its own directory.

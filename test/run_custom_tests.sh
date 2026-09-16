@@ -115,13 +115,22 @@ if grep -q '#include <cufile.h>' "$src"; then
   cufile_args=(-lcufile)
 fi
 
+cupti_args=()
+if grep -q '#include <cupti.h>' "$src"; then
+  if [[ ! -e "$CUDA_HOME/lib64/libcupti.so" ]]; then
+    echo "SKIP: $name needs CUPTI, which this toolkit does not have"
+    exit 0
+  fi
+  cupti_args=(-lcupti)
+fi
+
 if [[ "$BUILD_TESTS" == "1" ]]; then
   mkdir -p "$BUILD_DIR"
   arch_arg="-arch=all"
   [[ -n "$CUDA_SAMPLES_ARCH" ]] && arch_arg="-arch=sm_$CUDA_SAMPLES_ARCH"
   "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$arch_arg" \
     "$src" -o "$exe" -lcuda -lcublas -lcublasLt -lcufft -lcusolver -lcusolverMg -lcurand -lnvrtc -lnvjpeg -lcusparse -lnppc -lnppial -lnppicc -lnppidei -lnppif -lnppig -lnppim -lnppist -lnppisu -lnppitc -lnpps -ldl -L"$CUDA_HOME/lib64/stubs" \
-    "${cudnn_args[@]}" "${nvjitlink_args[@]}" "${cufile_args[@]}"
+    "${cudnn_args[@]}" "${nvjitlink_args[@]}" "${cufile_args[@]}" "${cupti_args[@]}"
 fi
 [[ -x "$exe" ]] || { echo "missing custom test executable: $exe" >&2; exit 1; }
 if [[ "$BUILD_ONLY" == "1" ]]; then
@@ -131,6 +140,12 @@ if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <cufil
   # NVIDIA's libcufile drives the local GPU and its nvidia-fs driver from the
   # client, which a GPU-less client has neither of; only the cuFile shim runs.
   echo "SKIP: $name runs cuFile on the client, which needs more than the driver shim"
+  exit 0
+fi
+if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <cupti.h>' "$src"; then
+  # NVIDIA's libcupti attaches to the local driver to profile the local
+  # process, and a GPU-less client has neither; only the CUPTI shim runs.
+  echo "SKIP: $name runs CUPTI on the client, which needs more than the driver shim"
   exit 0
 fi
 if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <nccl.h>' "$src"; then

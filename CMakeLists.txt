@@ -1172,6 +1172,58 @@ if(LUPINE_BUILD_CUFILE)
     add_custom_target(lupine_cufile DEPENDS lupine_cufile_client)
 endif()
 
+if(LUPINE_BUILD_CUDA AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # CUPTI ships with the toolkit or in its own wheel. Point
+    # LUPINE_CUPTI_INCLUDE_DIR at an include directory holding cupti_result.h
+    # when it is not beside the toolkit's headers; without one the shim is left
+    # out. Some toolkits keep these headers under extras/CUPTI instead.
+    find_path(LUPINE_CUPTI_INCLUDE_DIR cupti_result.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS}
+              ${CUDAToolkit_LIBRARY_ROOT}/extras/CUPTI ENV CUPTI_HOME
+        PATH_SUFFIXES include)
+    if(LUPINE_CUPTI_INCLUDE_DIR)
+        # An SDK-free build has cuda.h's version and no CUDAToolkit components,
+        # the way the runtime shim's major is taken.
+        if(LUPINE_CUDA_HEADER_VERSION)
+            math(EXPR LUPINE_CUPTI_MAJOR "${LUPINE_CUDA_HEADER_VERSION} / 1000")
+            math(EXPR LUPINE_CUPTI_MINOR
+                 "(${LUPINE_CUDA_HEADER_VERSION} / 10) % 100")
+        else()
+            set(LUPINE_CUPTI_MAJOR ${CUDAToolkit_VERSION_MAJOR})
+            set(LUPINE_CUPTI_MINOR ${CUDAToolkit_VERSION_MINOR})
+        endif()
+        # NVIDIA's SONAME is libcupti.so.<major> from CUDA 12 on, and
+        # libcupti.so.<major>.<minor> before it (libcupti.so.11.8).
+        set(LUPINE_CUPTI_SOVERSION ${LUPINE_CUPTI_MAJOR})
+        if(LUPINE_CUPTI_MAJOR LESS 12)
+            set(LUPINE_CUPTI_SOVERSION
+                ${LUPINE_CUPTI_MAJOR}.${LUPINE_CUPTI_MINOR})
+        endif()
+        set(LUPINE_BUILD_CUPTI ON)
+    endif()
+endif()
+
+if(LUPINE_BUILD_CUPTI)
+    # The shim profiles nothing and forwards nothing, so it links no driver
+    # shim and no server library: what it needs from the toolkit is the result
+    # codes and the API version its headers carry.
+    configure_file(cupti.exports.in cupti.exports @ONLY)
+    add_library(lupine_cupti_client SHARED cupti_client.cpp)
+    target_include_directories(lupine_cupti_client PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CUDAToolkit_INCLUDE_DIRS}
+        ${LUPINE_CUPTI_INCLUDE_DIR})
+    target_link_options(lupine_cupti_client PRIVATE
+        "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/cupti.exports")
+    set_target_properties(lupine_cupti_client PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        OUTPUT_NAME cupti
+        BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
+        VERSION ${LUPINE_CUPTI_SOVERSION}
+        SOVERSION ${LUPINE_CUPTI_SOVERSION})
+    lupine_manylinux2014_client(lupine_cupti_client)
+    add_custom_target(lupine_cupti DEPENDS lupine_cupti_client)
+endif()
+
 if(LUPINE_BUILD_NVML)
     add_library(lupine_nvml_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/nvml_client.cpp)
@@ -1825,6 +1877,14 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 "nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileHandleRegister$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileRead$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileWrite$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileDriverClose$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileDriverClose_v2$'")
     endif()
 
+    if(TARGET lupine_cupti_client)
+        # The entry points PyTorch's libtorch_cpu.so resolves from libcupti,
+        # each under the SONAME's version node.
+        add_test(NAME cupti_exports
+            COMMAND bash -c
+                "for symbol in cuptiActivityDisable cuptiActivityEnable cuptiActivityEnableCudaEventDeviceTimestamps cuptiActivityEnableDriverApi cuptiActivityEnableRuntimeApi cuptiActivityFlushAll cuptiActivityGetNextRecord cuptiActivityGetNumDroppedRecords cuptiActivityPopExternalCorrelationId cuptiActivityPushExternalCorrelationId cuptiActivityRegisterCallbacks cuptiActivityRegisterTimestampCallback cuptiActivitySetAttribute cuptiEnableCallback cuptiEnableDomain cuptiFinalize cuptiGetCallbackName cuptiGetResultString cuptiGetVersion cuptiSubscribe cuptiUnsubscribe; do nm -D \"$<TARGET_FILE:lupine_cupti_client>\" | grep -q \" T \${symbol}@@libcupti.so.${LUPINE_CUPTI_SOVERSION}$\" || exit 1; done")
+    endif()
+
     if(TARGET lupine_nvml_client)
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
@@ -1887,6 +1947,10 @@ endif()
 if(TARGET lupine_cufile_client)
     message(STATUS
         "Building cuFile client: lupine_cufile_client (libcufile.so.0, reporting version ${LUPINE_CUFILE_VERSION})")
+endif()
+if(TARGET lupine_cupti_client)
+    message(STATUS
+        "Building CUPTI client: lupine_cupti_client (libcupti.so.${LUPINE_CUPTI_SOVERSION})")
 endif()
 if(TARGET lupine_nvml_client)
     message(STATUS
