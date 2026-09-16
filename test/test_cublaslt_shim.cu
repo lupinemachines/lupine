@@ -3,6 +3,7 @@
 // pointer modes with a bias epilogue, and a matrix transform, each checked
 // against a CPU reference.
 #include <cublasLt.h>
+#include <cublas_v2.h>
 #include <cuda_runtime.h>
 
 #include <cmath>
@@ -203,6 +204,40 @@ static int test_emulated_dgemm(cublasLtHandle_t handle) {
 }
 #endif
 
+// NVIDIA's libraries name one object with two types: a cublasHandle_t is
+// accepted wherever a cublasLtHandle_t is, which is how PyTorch reaches
+// cuBLASLt (getCurrentCUDABlasLtHandle casts the cuBLAS handle it already
+// holds). The two shims are separate objects, so this only holds while they
+// agree on the owner; nothing else in this file would notice them diverging.
+static int test_cublas_handle_reused_as_lt() {
+  cublasHandle_t blas = nullptr;
+  if (cublasCreate(&blas) != CUBLAS_STATUS_SUCCESS) {
+    fprintf(stderr, "cublasCreate failed\n");
+    return 1;
+  }
+  cublasLtMatmulDesc_t operation = nullptr;
+  cublasLtMatrixLayout_t layout = nullptr;
+  cublasLtMatmulPreference_t preference = nullptr;
+  cublasLtMatmulHeuristicResult_t result{};
+  int returned = 0;
+  CHECK_LT(cublasLtMatmulDescCreate(&operation, CUBLAS_COMPUTE_32F, CUDA_R_32F));
+  CHECK_LT(cublasLtMatrixLayoutCreate(&layout, CUDA_R_32F, 64, 64, 64));
+  CHECK_LT(cublasLtMatmulPreferenceCreate(&preference));
+  CHECK_LT(cublasLtMatmulAlgoGetHeuristic(
+      reinterpret_cast<cublasLtHandle_t>(blas), operation, layout, layout,
+      layout, layout, preference, 1, &result, &returned));
+  EXPECT(returned == 1);
+  CHECK_LT(cublasLtMatmulPreferenceDestroy(preference));
+  CHECK_LT(cublasLtMatrixLayoutDestroy(layout));
+  CHECK_LT(cublasLtMatmulDescDestroy(operation));
+  if (cublasDestroy(blas) != CUBLAS_STATUS_SUCCESS) {
+    fprintf(stderr, "cublasDestroy failed\n");
+    return 1;
+  }
+  printf("cublas handle reused as cublasLt: passed\n");
+  return 0;
+}
+
 int main() {
   cublasLtHandle_t handle = nullptr;
   CHECK_LT(cublasLtCreate(&handle));
@@ -212,6 +247,9 @@ int main() {
   printf("cuBLASLt %zu, runtime %zu\n", cublasLtGetVersion(),
          cublasLtGetCudartVersion());
   if (test_unwritten_buffers(handle) != 0) {
+    return 1;
+  }
+  if (test_cublas_handle_reused_as_lt() != 0) {
     return 1;
   }
 #if CUBLAS_VERSION >= 130100

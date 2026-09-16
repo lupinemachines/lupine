@@ -48,7 +48,6 @@ int rpc_read_end(conn_t *conn) { return lupine_rpc_read_end(conn); }
 // ---------------------------------------------------------------------------
 
 std::mutex handles_mutex;
-std::unordered_map<cublasLtHandle_t, conn_t *> handles;
 
 // A call without a handle goes to the runtime's current device, which the
 // runtime shim answers locally.
@@ -60,20 +59,18 @@ conn_t *connection() {
   return lupine_rpc_conn_for_device(&device);
 }
 
+// The owner is recorded in the driver client, so a handle from cublasCreate
+// routes here exactly as one from cublasLtCreate does.
 conn_t *connection_for_handle(cublasLtHandle_t handle) {
-  std::lock_guard<std::mutex> lock(handles_mutex);
-  auto it = handles.find(handle);
-  return it == handles.end() ? nullptr : it->second;
+  return lupine_rpc_conn_for_blas_handle(handle);
 }
 
 void note_handle_owner(conn_t *conn, cublasLtHandle_t handle) {
-  std::lock_guard<std::mutex> lock(handles_mutex);
-  handles[handle] = conn;
+  lupine_note_blas_handle_owner(handle, conn);
 }
 
 void forget_handle(cublasLtHandle_t handle) {
-  std::lock_guard<std::mutex> lock(handles_mutex);
-  handles.erase(handle);
+  lupine_forget_blas_handle_owner(handle);
 }
 
 // ---------------------------------------------------------------------------

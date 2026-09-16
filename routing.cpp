@@ -709,6 +709,21 @@ extern "C" lupine_route lupine_route_for_known_stream(CUstream stream) {
   return lupine_route_for_known_owner(stream);
 }
 
+extern "C" void lupine_note_blas_handle_owner(void *handle, conn_t *conn) {
+  lupine_note_owner(static_cast<lupine_blas_handle>(handle), conn);
+}
+
+extern "C" void lupine_forget_blas_handle_owner(void *handle) {
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  lupine_owners<lupine_blas_handle>().erase(
+      static_cast<lupine_blas_handle>(handle));
+}
+
+extern "C" conn_t *lupine_rpc_conn_for_blas_handle(void *handle) {
+  return lupine_route_remote_conn(
+      lupine_route_for_known_owner(static_cast<lupine_blas_handle>(handle)));
+}
+
 extern "C" lupine_route lupine_route_for_event(CUevent event) {
   return lupine_route_for_owner_or_default(event);
 }

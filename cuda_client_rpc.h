@@ -40,6 +40,13 @@ void lupine_note_stream_owner(struct CUstream_st *stream, conn_t *conn);
 void lupine_note_event_owner(struct CUevent_st *event, conn_t *conn);
 void lupine_forget_stream_owner(struct CUstream_st *stream);
 void lupine_forget_event_owner(struct CUevent_st *event);
+// cuBLAS and cuBLASLt name one object: NVIDIA's libraries take a
+// cublasHandle_t wherever a cublasLtHandle_t is expected. The two shims are
+// separate objects with separate state, so the owner they must agree on is
+// recorded here, in the one they both load.
+conn_t *lupine_rpc_conn_for_blas_handle(void *handle);
+void lupine_note_blas_handle_owner(void *handle, conn_t *conn);
+void lupine_forget_blas_handle_owner(void *handle);
 int lupine_local_device_for_remote(conn_t *conn, int remote_device);
 void lupine_note_deviceptr_allocation(unsigned long long ptr, size_t size,
                                       conn_t *conn);

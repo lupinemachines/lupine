@@ -50,11 +50,12 @@ int rpc_read_end(conn_t *conn) { return lupine_rpc_read_end(conn); }
 // ---------------------------------------------------------------------------
 
 // A handle is created on the runtime's current device and routes every later
-// call to that connection. Its pointer mode is kept here because the generated
+// call to that connection. The owner lives in the driver client because
+// cuBLASLt takes this same handle, and its shim cannot see this object's state.
+// The pointer mode stays here: cuBLASLt has no equivalent, and the generated
 // marshalling decides before each call whether a scalar's bytes or its address
 // travel.
 struct handle_state {
-  conn_t *conn;
   bool host_pointers;
 };
 
@@ -72,9 +73,7 @@ conn_t *connection() {
 }
 
 conn_t *connection_for_handle(cublasHandle_t handle) {
-  std::lock_guard<std::mutex> lock(handles_mutex);
-  auto it = handles.find(handle);
-  return it == handles.end() ? nullptr : it->second.conn;
+  return lupine_rpc_conn_for_blas_handle(handle);
 }
 
 conn_t *connection_for_stream(cudaStream_t stream) {
@@ -82,8 +81,9 @@ conn_t *connection_for_stream(cudaStream_t stream) {
 }
 
 void note_handle_owner(conn_t *conn, cublasHandle_t handle) {
+  lupine_note_blas_handle_owner(handle, conn);
   std::lock_guard<std::mutex> lock(handles_mutex);
-  handles[handle] = {conn, true};
+  handles[handle] = {true};
 }
 
 void note_pointer_mode(cublasHandle_t handle, cublasPointerMode_t mode) {
@@ -97,6 +97,7 @@ void note_pointer_mode(cublasHandle_t handle, cublasPointerMode_t mode) {
 // A destroyed handle's address may come back from a later cublasCreate,
 // which records it afresh.
 void forget_handle(cublasHandle_t handle) {
+  lupine_forget_blas_handle_owner(handle);
   std::lock_guard<std::mutex> lock(handles_mutex);
   handles.erase(handle);
 }
