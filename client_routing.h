@@ -71,6 +71,8 @@ extern "C" bool lupine_route_is_local(lupine_route route);
 extern "C" conn_t *lupine_route_remote_conn(lupine_route route);
 extern "C" bool lupine_routes_share_server(lupine_route first,
                                            lupine_route second);
+extern "C" bool
+lupine_connection_supports_concurrent_managed_access(conn_t *conn);
 extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first,
                                               CUdeviceptr second);
 extern "C" bool lupine_deviceptr_is_tracked(CUdeviceptr ptr);
