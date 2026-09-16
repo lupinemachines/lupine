@@ -168,9 +168,11 @@ void nvshmemx_vendor_get_version_info(int *major, int *minor, int *patch) {
 int nvshmem_my_pe() { return refuse_status("nvshmem_my_pe"); }
 int nvshmem_n_pes() { return refuse_status("nvshmem_n_pes"); }
 
-// NVIDIA's host library exports this as data, and the header declares it, so
-// the shim carries it too.
+// NVIDIA's host library exports this as data from nvSHMEM 3.5 on, where its
+// header starts declaring it, so the shim carries it over the same range.
+#if NVSHMEM_VENDOR_VERSION >= 30500
 long nvshmem_error = 0;
+#endif
 
 //////////////////// Heap management ////////////////////
 
@@ -235,9 +237,13 @@ int nvshmemx_culibrary_init(CUlibrary) {
 int nvshmemx_culibrary_finalize(CUlibrary) {
   return refuse_status("nvshmemx_culibrary_finalize");
 }
+// Queue pairs arrive with nvSHMEM 3.5; older headers declare no handle type for
+// this to hand back.
+#if NVSHMEM_VENDOR_VERSION >= 30500
 int nvshmemx_qp_create(int, nvshmemx_qp_handle_t **) {
   return refuse_status("nvshmemx_qp_create");
 }
+#endif
 
 //////////////////// Teams ////////////////////
 
