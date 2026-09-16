@@ -134,8 +134,9 @@ if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <cufil
   exit 0
 fi
 if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <nccl.h>' "$src"; then
-  # NVIDIA's libnccl on a GPU-less client crashes over the driver shim alone,
-  # zeroing the host memory ncclCommInitRank allocates; only the NCCL shim runs.
+  # A one-rank communicator works over the driver shim alone, but NCCL connects
+  # ranks on the same host with its SHM transport, whose kernels poll host
+  # memory that lives on the client; only the NCCL shim runs a clique.
   echo "SKIP: $name runs NCCL on the client, which needs more than the driver shim"
   exit 0
 fi

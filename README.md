@@ -377,6 +377,14 @@ processes, so settings such as `NCCL_SOCKET_IFNAME` belong in each server's
 environment. Drive such ranks from a thread each, as separate processes would;
 a group reaching two servers from one thread returns `ncclInvalidUsage`.
 
+NVIDIA's own NCCL runs on the client over the driver shim alone for a one-rank
+communicator: the NVML shim answers the P2P status and NVLink queries its
+initialization walks, several of which it calls through pointers it never
+null-checks, and it launches its kernels from a single packed parameter buffer,
+which the driver shim unpacks with the kernel's signature. More ranks than one
+need the NCCL shim, since NCCL connects ranks on a host with its shared-memory
+transport, whose kernels poll host memory that lives on the client.
+
 Redistributable server builds pass `LUPINE_CLIENT_BUNDLE_INPUT` with staged
 native client directories. CMake deterministically assembles all six platform
 routes and links them into `lupine_driver_server`. The Docker `server` target
