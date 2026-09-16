@@ -7,6 +7,8 @@
     lupine_prepare_rpc;
     lupine_invalidate_runtime_context;
     lupine_note_stream_owner;
+    lupine_note_blas_handle_owner;
+    lupine_forget_blas_handle_owner;
     lupine_note_event_owner;
     lupine_forget_stream_owner;
     lupine_forget_event_owner;

@@ -56,7 +56,7 @@ unsigned cublasLtDisableCpuInstructionsSetMask(unsigned mask);
  * @guard CUBLAS_VERSION >= 130100
  * @param emulationDesc SEND_ONLY NULLABLE
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
@@ -84,10 +84,18 @@ cublasLtEmulationDescInit_internal(cublasLtEmulationDescOpaque_t *emulationDesc,
  * @param buf SEND_ONLY LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  */
-cublasStatus_t
-cublasLtEmulationDescSetAttribute(cublasLtEmulationDescOpaque_t *emulationDesc,
-                                  cublasLtEmulationDescAttributes_t attr,
-                                  const void *buf, size_t sizeInBytes);
+// clang-format off
+cublasStatus_t cublasLtEmulationDescSetAttribute(
+    cublasLtEmulationDescOpaque_t *emulationDesc,
+    cublasLtEmulationDescAttributes_t attr, const void *buf,
+    size_t sizeInBytes) {
+  cublasStatus_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUBLAS_STATUS_SUCCESS) {
+    refresh_emulation_copy(emulationDesc);
+  }
+  return return_value;
+}
+// clang-format on
 #endif
 size_t cublasLtGetCudartVersion();
 /**
@@ -113,11 +121,14 @@ cublasStatus_t cublasLtHeuristicsCacheGetCapacity(size_t *capacity);
  */
 cublasStatus_t cublasLtHeuristicsCacheSetCapacity(size_t capacity);
 cublasStatus_t cublasLtLoggerForceDisable();
+// cublasLtLoggerOpenFile opens a client file and delegates to SetFile.
 /**
- * @param logFile SEND_ONLY NULL_TERMINATED
+ * @disabled
  */
-cublasStatus_t cublasLtLoggerOpenFile(const char *logFile);
 cublasStatus_t cublasLtLoggerSetCallback(cublasLtLoggerCallback_t callback);
+/**
+ * @disabled
+ */
 cublasStatus_t cublasLtLoggerSetFile(FILE *file);
 /**
  * @param level SEND_ONLY
@@ -155,7 +166,7 @@ cublasStatus_t cublasLtMatmul(
 /**
  * @param algo SEND_ONLY DEREF
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
@@ -200,7 +211,7 @@ cublasStatus_t cublasLtMatmulAlgoCheckForStream(
 /**
  * @param algo SEND_ONLY DEREF
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
@@ -226,7 +237,7 @@ cublasLtMatmulAlgoConfigSetAttribute(cublasLtMatmulAlgo_t *algo,
  * @param Ddesc SEND_ONLY NULLABLE
  * @param preference SEND_ONLY NULLABLE
  * @param requestedAlgoCount SEND_ONLY
- * @param heuristicResultsArray RECV_ONLY LENGTH:requestedAlgoCount
+ * @param heuristicResultsArray SEND_RECV LENGTH:requestedAlgoCount
  * @param returnAlgoCount RECV_ONLY
  */
 cublasStatus_t cublasLtMatmulAlgoGetHeuristic(
@@ -247,7 +258,7 @@ cublasStatus_t cublasLtMatmulAlgoGetHeuristic(
  * @param Ddesc SEND_ONLY NULLABLE
  * @param preference SEND_ONLY NULLABLE
  * @param requestedAlgoCount SEND_ONLY
- * @param heuristicResultsArray RECV_ONLY LENGTH:requestedAlgoCount
+ * @param heuristicResultsArray SEND_RECV LENGTH:requestedAlgoCount
  * @param returnAlgoCount RECV_ONLY
  * @param stream SEND_ONLY
  */
@@ -268,7 +279,7 @@ cublasStatus_t cublasLtMatmulAlgoGetHeuristicForStream(
  * @param Ctype SEND_ONLY
  * @param Dtype SEND_ONLY
  * @param requestedAlgoCount SEND_ONLY
- * @param algoIdsArray RECV_ONLY LENGTH:requestedAlgoCount
+ * @param algoIdsArray SEND_RECV LENGTH:requestedAlgoCount
  * @param returnAlgoCount RECV_ONLY
  */
 cublasStatus_t cublasLtMatmulAlgoGetIds(
@@ -295,14 +306,21 @@ cublasStatus_t cublasLtMatmulAlgoInit(
 /**
  * @param matmulDesc SEND_ONLY NULLABLE
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
-cublasStatus_t
-cublasLtMatmulDescGetAttribute(cublasLtMatmulDescOpaque_t *matmulDesc,
-                               cublasLtMatmulDescAttributes_t attr, void *buf,
-                               size_t sizeInBytes, size_t *sizeWritten);
+// clang-format off
+cublasStatus_t cublasLtMatmulDescGetAttribute(
+    cublasLtMatmulDescOpaque_t *matmulDesc, cublasLtMatmulDescAttributes_t attr,
+    void *buf, size_t sizeInBytes, size_t *sizeWritten) {
+  cublasStatus_t return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUBLAS_STATUS_SUCCESS) {
+    client_attribute(attr, buf, sizeInBytes);
+  }
+  return return_value;
+}
+// clang-format on
 /**
  * @param matmulDesc RECV_ONLY
  * @param size SEND_ONLY
@@ -330,6 +348,8 @@ cublasStatus_t cublasLtMatmulDescInit_internal(
 cublasStatus_t cublasLtMatmulDescSetAttribute(
     cublasLtMatmulDescOpaque_t *matmulDesc, cublasLtMatmulDescAttributes_t attr,
     const void *buf, size_t sizeInBytes) {
+  void *copy = nullptr;
+  buf = server_attribute(attr, buf, sizeInBytes, &copy);
   cublasStatus_t return_value = LUPINE_GENERATED_CALL();
   if (return_value == CUBLAS_STATUS_SUCCESS) {
     note_attribute(matmulDesc, attr, buf, sizeInBytes);
@@ -340,7 +360,7 @@ cublasStatus_t cublasLtMatmulDescSetAttribute(
 /**
  * @param pref SEND_ONLY NULLABLE
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
@@ -369,7 +389,7 @@ cublasLtMatmulPreferenceSetAttribute(cublasLtMatmulPreferenceOpaque_t *pref,
 /**
  * @param matLayout SEND_ONLY NULLABLE
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
@@ -422,7 +442,7 @@ cublasStatus_t cublasLtMatrixTransform(
 /**
  * @param transformDesc SEND_ONLY NULLABLE
  * @param attr SEND_ONLY
- * @param buf RECV_ONLY LENGTH:sizeInBytes
+ * @param buf SEND_RECV LENGTH:sizeInBytes
  * @param sizeInBytes SEND_ONLY
  * @param sizeWritten RECV_ONLY NULLABLE
  */
@@ -464,3 +484,12 @@ cublasStatus_t cublasLtMatrixTransformDescSetAttribute(
   return return_value;
 }
 // clang-format on
+#if CUBLAS_VERSION >= 130100
+// Sends an emulation descriptor's bytes and returns the address of the
+// server's copy, which a matmul descriptor then refers to.
+/**
+ * @guard CUBLAS_VERSION >= 130100
+ * @disabled
+ */
+void lupineCublasLtEmulationDescCopy();
+#endif

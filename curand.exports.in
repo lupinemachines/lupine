@@ -1,0 +1,8 @@
+/* The version node is literally NVIDIA's SONAME: consumers reference library
+   symbols as name@libcurand.so.<major>. */
+libcurand.so.@LUPINE_CURAND_SOVERSION@ {
+  global:
+    curand*;
+  local:
+    *;
+};

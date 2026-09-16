@@ -1,0 +1,8 @@
+/* The version node is literally NVIDIA's SONAME: consumers reference library
+   symbols as name@libcusparse.so.<major>. */
+libcusparse.so.@LUPINE_CUSPARSE_SOVERSION@ {
+  global:
+    cusparse*;
+  local:
+    *;
+};

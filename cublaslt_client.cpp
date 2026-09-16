@@ -14,6 +14,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -47,7 +48,6 @@ int rpc_read_end(conn_t *conn) { return lupine_rpc_read_end(conn); }
 // ---------------------------------------------------------------------------
 
 std::mutex handles_mutex;
-std::unordered_map<cublasLtHandle_t, conn_t *> handles;
 
 // A call without a handle goes to the runtime's current device, which the
 // runtime shim answers locally.
@@ -59,20 +59,18 @@ conn_t *connection() {
   return lupine_rpc_conn_for_device(&device);
 }
 
+// The owner is recorded in the driver client, so a handle from cublasCreate
+// routes here exactly as one from cublasLtCreate does.
 conn_t *connection_for_handle(cublasLtHandle_t handle) {
-  std::lock_guard<std::mutex> lock(handles_mutex);
-  auto it = handles.find(handle);
-  return it == handles.end() ? nullptr : it->second;
+  return lupine_rpc_conn_for_blas_handle(handle);
 }
 
 void note_handle_owner(conn_t *conn, cublasLtHandle_t handle) {
-  std::lock_guard<std::mutex> lock(handles_mutex);
-  handles[handle] = conn;
+  lupine_note_blas_handle_owner(handle, conn);
 }
 
 void forget_handle(cublasLtHandle_t handle) {
-  std::lock_guard<std::mutex> lock(handles_mutex);
-  handles.erase(handle);
+  lupine_forget_blas_handle_owner(handle);
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +143,92 @@ void note_attribute(cublasLtMatrixTransformDescOpaque_t *desc,
   note_attribute(desc, attr == CUBLASLT_MATRIX_TRANSFORM_DESC_SCALE_TYPE,
                  attr == CUBLASLT_MATRIX_TRANSFORM_DESC_POINTER_MODE, buf,
                  size);
+}
+
+#if CUBLAS_VERSION >= 130100
+// A matmul descriptor refers to its emulation descriptor by address, which
+// means nothing to the server. The server keeps a copy of each emulation
+// descriptor attached to a matmul descriptor, the matmul descriptor holds the
+// copy's address, and these maps translate between the two.
+std::mutex emulation_copies_mutex;
+std::unordered_map<cublasLtEmulationDesc_t, cublasLtEmulationDesc_t>
+    emulation_copies;
+std::unordered_map<cublasLtEmulationDesc_t, cublasLtEmulationDesc_t>
+    emulation_originals;
+
+cublasLtEmulationDesc_t
+copy_emulation_descriptor(cublasLtEmulationDesc_t desc) {
+  conn_t *conn = connection();
+  cublasLtEmulationDesc_t copy = nullptr;
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_lupineCublasLtEmulationDescCopy) < 0 ||
+      rpc_write(conn, &desc, sizeof(desc)) < 0 ||
+      rpc_write(conn, desc, sizeof(*desc)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &copy, sizeof(copy)) < 0 || rpc_read_end(conn) < 0) {
+    return nullptr;
+  }
+  std::lock_guard<std::mutex> lock(emulation_copies_mutex);
+  emulation_copies[desc] = copy;
+  emulation_originals[copy] = desc;
+  return copy;
+}
+
+// The attached copy follows later changes to the caller's descriptor, as the
+// library would see them through the address.
+void refresh_emulation_copy(cublasLtEmulationDesc_t desc) {
+  {
+    std::lock_guard<std::mutex> lock(emulation_copies_mutex);
+    if (emulation_copies.count(desc) == 0) {
+      return;
+    }
+  }
+  copy_emulation_descriptor(desc);
+}
+#endif
+
+// The value the server's library is given for a matmul descriptor attribute:
+// an emulation descriptor becomes the server's copy, held in `copy`.
+const void *server_attribute(cublasLtMatmulDescAttributes_t attr,
+                             const void *buf, size_t size, void **copy) {
+#if CUBLAS_VERSION >= 130100
+  cublasLtEmulationDesc_t desc = nullptr;
+  if (attr == CUBLASLT_MATMUL_DESC_EMULATION_DESCRIPTOR &&
+      size == sizeof(desc)) {
+    std::memcpy(&desc, buf, sizeof(desc));
+    if (desc != nullptr) {
+      *copy = copy_emulation_descriptor(desc);
+      return copy;
+    }
+  }
+#else
+  (void)attr;
+  (void)size;
+  (void)copy;
+#endif
+  return buf;
+}
+
+// The reverse for a get: the caller reads back its own emulation descriptor.
+void client_attribute(cublasLtMatmulDescAttributes_t attr, void *buf,
+                      size_t size) {
+#if CUBLAS_VERSION >= 130100
+  cublasLtEmulationDesc_t copy = nullptr;
+  if (attr != CUBLASLT_MATMUL_DESC_EMULATION_DESCRIPTOR ||
+      size < sizeof(copy)) {
+    return;
+  }
+  std::memcpy(&copy, buf, sizeof(copy));
+  std::lock_guard<std::mutex> lock(emulation_copies_mutex);
+  auto it = emulation_originals.find(copy);
+  if (it != emulation_originals.end()) {
+    std::memcpy(buf, &it->second, sizeof(copy));
+  }
+#else
+  (void)attr;
+  (void)buf;
+  (void)size;
+#endif
 }
 
 // The vector modes place alpha on the device and beta on the host or nowhere.
@@ -311,4 +395,87 @@ extern "C" const char *cublasLtGetStatusName(cublasStatus_t status) {
 
 extern "C" const char *cublasLtGetStatusString(cublasStatus_t status) {
   return status_text(RPC_cublasLtGetStatusString, status);
+}
+
+namespace {
+void log_callback(void *user_data, int level, const char *function,
+                  const char *message, size_t) {
+  reinterpret_cast<cublasLtLoggerCallback_t>(user_data)(level, function,
+                                                        message);
+}
+
+void log_file(void *user_data, int level, const char *function,
+              const char *message, size_t) {
+  auto *file = static_cast<FILE *>(user_data);
+  static const char *levels[] = {"Off",   "Error", "Trace",
+                                 "Hints", "Info",  "Api"};
+  const char *name = level >= 0 && level <= 5 ? levels[level] : "Unknown";
+  std::fprintf(file, "[cublasLt][%s][%s] %s\n", name, function, message);
+  std::fflush(file);
+}
+
+std::recursive_mutex log_files_mutex;
+std::unordered_map<conn_t *, std::shared_ptr<FILE>> owned_log_files;
+
+cublasStatus_t set_log_file(FILE *file, std::shared_ptr<FILE> owned) {
+  library_log_target target;
+  if (file != nullptr) {
+    target = {log_file, file};
+  }
+  conn_t *conn = connection();
+  cublasStatus_t status = rpc_error();
+  // A callback can replace the file from inside rpc_read_end. Publish the new
+  // ownership first and keep the previous file alive until all its logs drain.
+  std::lock_guard<std::recursive_mutex> lock(log_files_mutex);
+  auto previous = owned_log_files[conn];
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasLtLoggerSetFile) < 0 ||
+      rpc_write(conn, &target.callback, sizeof(target.callback)) < 0 ||
+      rpc_write(conn, &target.user_data, sizeof(target.user_data)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &status, sizeof(status)) < 0) {
+    return rpc_error();
+  }
+  if (status == CUBLAS_STATUS_SUCCESS) {
+    owned_log_files[conn] = std::move(owned);
+  }
+  if (rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return status;
+}
+} // namespace
+
+extern "C" cublasStatus_t
+cublasLtLoggerSetCallback(cublasLtLoggerCallback_t callback) {
+  library_log_target target;
+  if (callback != nullptr) {
+    target = {log_callback, reinterpret_cast<void *>(callback)};
+  }
+  conn_t *conn = connection();
+  cublasStatus_t status = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasLtLoggerSetCallback) < 0 ||
+      rpc_write(conn, &target.callback, sizeof(target.callback)) < 0 ||
+      rpc_write(conn, &target.user_data, sizeof(target.user_data)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &status, sizeof(status)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return status;
+}
+
+extern "C" cublasStatus_t cublasLtLoggerSetFile(FILE *file) {
+  return set_log_file(file, {});
+}
+
+extern "C" cublasStatus_t cublasLtLoggerOpenFile(const char *logFile) {
+  if (logFile == nullptr) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  FILE *file = std::fopen(logFile, "w");
+  if (file == nullptr) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  return set_log_file(file, std::shared_ptr<FILE>(file, std::fclose));
 }

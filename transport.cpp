@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <thread>
 #include <vector>
 
 #ifdef LUPINE_TLS_OPENSSL
@@ -23,6 +24,8 @@ struct client_transport_state {
   pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
   std::array<conn_t, kTransportCapacity> connections = {};
   std::array<lupine_client_endpoint, kTransportCapacity> endpoints;
+  std::array<lupine_bulk_lanes, kTransportCapacity> bulk = {};
+  std::array<bool, kTransportCapacity> bulk_dialed = {};
   unsigned int count = 0;
   bool shutting_down = false;
 };
@@ -267,7 +270,106 @@ int connect_endpoint(client_transport_state &state,
   return 0;
 }
 
+// One bulk connection: the preamble names the session, then an ordinary
+// HTTP/2 handshake without an arena. No dispatch thread or heartbeat: the
+// server never originates requests here and nothing waits for a response.
+bool dial_bulk_connection(const lupine_client_endpoint &endpoint,
+                          const std::string &preamble, unsigned int index,
+                          conn_t **out, int32_t *stream) {
+  lupine_socket_t connfd =
+      lupine_tcp_connect(endpoint.host.c_str(), endpoint.port.c_str(), 0);
+  if (connfd == LUPINE_INVALID_SOCKET) {
+    return false;
+  }
+  size_t sent = 0;
+  while (sent < preamble.size()) {
+    struct iovec buffer = {const_cast<char *>(preamble.data()) + sent,
+                           preamble.size() - sent};
+    ssize_t n = lupine_socket_sendv(connfd, &buffer, 1);
+    if (n < 0 && lupine_socket_error_is_intr()) {
+      continue;
+    }
+    if (n <= 0) {
+      lupine_socket_close(connfd);
+      return false;
+    }
+    sent += static_cast<size_t>(n);
+  }
+  auto *conn = new conn_t();
+  if (rpc_conn_init(conn, connfd, 0) < 0) {
+    delete conn;
+    return false;
+  }
+  conn->logical_index = static_cast<int>(index);
+  if (rpc_http2_client_init(conn) < 0 ||
+      rpc_http2_client_await_ready(conn) != 0 ||
+      (*stream = rpc_http2_lane_stream(conn, 0)) < 0) {
+    rpc_conn_destroy(conn);
+    delete conn;
+    return false;
+  }
+  *out = conn;
+  return true;
+}
+
+void dial_bulk_lanes(client_transport_state &state, conn_t *conn,
+                     unsigned int index) {
+  const char *token = rpc_http2_peer_bulk_token(conn);
+  const char *configured = getenv("LUPINE_BULK_CONNECTIONS");
+  unsigned int count =
+      configured == nullptr ? 4 : static_cast<unsigned int>(atoi(configured));
+  count = std::min(count, LUPINE_BULK_CONNECTIONS_MAX);
+  if (token == nullptr || state.endpoints[index].tls || count == 0) {
+    return;
+  }
+  std::string preamble(LUPINE_BULK_PREAMBLE_MAGIC,
+                       LUPINE_BULK_PREAMBLE_MAGIC_BYTES);
+  preamble += token;
+  lupine_bulk_lanes &lanes = state.bulk[index];
+  std::array<std::thread, LUPINE_BULK_CONNECTIONS_MAX> dialers;
+  std::array<bool, LUPINE_BULK_CONNECTIONS_MAX> dialed = {};
+  for (unsigned int i = 0; i < count; ++i) {
+    dialers[i] = std::thread([&, i]() {
+      dialed[i] = dial_bulk_connection(state.endpoints[index], preamble, index,
+                                       &lanes.conn[i], &lanes.stream[i]);
+    });
+  }
+  for (unsigned int i = 0; i < count; ++i) {
+    dialers[i].join();
+  }
+  // A partial pool still stripes; the lanes that failed are simply absent.
+  for (unsigned int i = 0; i < count; ++i) {
+    if (dialed[i]) {
+      lanes.conn[lanes.count] = lanes.conn[i];
+      lanes.stream[lanes.count] = lanes.stream[i];
+      ++lanes.count;
+    }
+  }
+  if (lanes.count == 0) {
+    LUPINE_LOG_DEBUG("No bulk connections to " << state.endpoints[index].label
+                                               << "; large copies stay on the "
+                                                  "session connection");
+  }
+}
+
 } // namespace
+
+lupine_bulk_lanes *lupine_client_transport_bulk_lanes(conn_t *conn) {
+  auto &state = transport();
+  if (conn == nullptr || conn->logical_index < 0 ||
+      static_cast<unsigned int>(conn->logical_index) >= state.count ||
+      pthread_mutex_lock(&state.mutex) != 0) {
+    return nullptr;
+  }
+  auto index = static_cast<unsigned int>(conn->logical_index);
+  if (!state.bulk_dialed[index] && !state.shutting_down) {
+    state.bulk_dialed[index] = true;
+    dial_bulk_lanes(state, conn, index);
+  }
+  lupine_bulk_lanes *lanes = &state.bulk[index];
+  pthread_mutex_unlock(&state.mutex);
+  return lanes->count != 0 && !lanes->failed ? lanes : nullptr;
+}
 
 int lupine_client_transport_open(const lupine_client_transport_config &config,
                                  const char *servers) {

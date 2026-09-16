@@ -7,9 +7,26 @@
 
 typedef int (*RequestHandler)(conn_t *conn);
 
-// cudart, cublas and cufft handlers run in the CUDA connection process: the
+// cudart and the library handlers run in the CUDA connection process: the
 // same child owns the driver state the runtime and library calls operate on.
-enum class rpc_backend { cuda, nvml, hip, cudart, cublas, cufft };
+enum class rpc_backend {
+  cuda,
+  nvml,
+  hip,
+  cudart,
+  cublas,
+  cufft,
+  cudnn,
+  curand,
+  cusparse,
+  cusparselt,
+  cusolver,
+  nvrtc,
+  nccl,
+  nvjitlink,
+  nvjpeg,
+  npp
+};
 
 struct rpc_handler {
   RequestHandler handler = nullptr;

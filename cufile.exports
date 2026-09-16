@@ -1,0 +1,8 @@
+/* NVIDIA's libcufile exports its symbols unversioned, the pre-rename
+   cuFileDriverClose included. */
+{
+  global:
+    cuFile*;
+  local:
+    *;
+};

@@ -1,0 +1,13 @@
+/* NVIDIA's libnvshmem_host places every symbol it defines in the NVSHMEM
+   version node, and PyTorch's libtorch_nvshmem.so asks for them that way, so
+   the node has to exist by that name or ld.so refuses the load. nvshmem_init
+   is the one reference that carries no version, the header making it a static
+   inline the library never defines; a default definition in this node answers
+   an unversioned reference, and an anonymous node cannot sit beside a named
+   one. */
+NVSHMEM {
+  global:
+    nvshmem*;
+  local:
+    *;
+};

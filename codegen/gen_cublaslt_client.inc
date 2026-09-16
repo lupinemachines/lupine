@@ -87,6 +87,7 @@ static cublasStatus_t lupine_rpc_cublasLtEmulationDescGetAttribute(
            0) ||
       rpc_write(conn, &attr, sizeof(cublasLtEmulationDescAttributes_t)) < 0 ||
       rpc_write(conn, &sizeInBytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, buf, sizeInBytes) < 0 ||
       rpc_write(conn, &sizeWritten, sizeof(size_t *)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       (sizeInBytes != 0 && rpc_read(conn, buf, sizeInBytes) < 0) ||
@@ -178,8 +179,12 @@ cublasLtEmulationDescSetAttribute(cublasLtEmulationDescOpaque_t *emulationDesc,
     return CUBLAS_STATUS_INVALID_VALUE;
   }
   conn_t *conn = connection();
-  return lupine_rpc_cublasLtEmulationDescSetAttribute(conn, emulationDesc, attr,
-                                                      buf, sizeInBytes);
+  cublasStatus_t return_value = lupine_rpc_cublasLtEmulationDescSetAttribute(
+      conn, emulationDesc, attr, buf, sizeInBytes);
+  if (return_value == CUBLAS_STATUS_SUCCESS) {
+    refresh_emulation_copy(emulationDesc);
+  }
+  return return_value;
 }
 
 #endif
@@ -303,41 +308,6 @@ extern "C" cublasStatus_t cublasLtLoggerForceDisable() {
   return lupine_rpc_cublasLtLoggerForceDisable(conn);
 }
 
-static cublasStatus_t lupine_rpc_cublasLtLoggerOpenFile(conn_t *conn,
-                                                        const char *logFile) {
-  cublasStatus_t return_value = rpc_error();
-  std::size_t logFile_len = static_cast<std::size_t>(std::strlen(logFile) + 1);
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cublasLtLoggerOpenFile) < 0 ||
-      rpc_write(conn, &logFile_len, sizeof(std::size_t)) < 0 ||
-      rpc_write(conn, logFile, logFile_len) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-extern "C" cublasStatus_t cublasLtLoggerOpenFile(const char *logFile) {
-  if (logFile == nullptr) {
-    return CUBLAS_STATUS_INVALID_VALUE;
-  }
-  conn_t *conn = connection();
-  return lupine_rpc_cublasLtLoggerOpenFile(conn, logFile);
-}
-
-extern "C" cublasStatus_t
-cublasLtLoggerSetCallback(cublasLtLoggerCallback_t callback) {
-  (void)callback;
-  return CUBLAS_STATUS_NOT_SUPPORTED;
-}
-
-extern "C" cublasStatus_t cublasLtLoggerSetFile(FILE *file) {
-  (void)file;
-  return CUBLAS_STATUS_NOT_SUPPORTED;
-}
-
 static cublasStatus_t lupine_rpc_cublasLtLoggerSetLevel(conn_t *conn,
                                                         int level) {
   cublasStatus_t return_value = rpc_error();
@@ -458,6 +428,7 @@ static cublasStatus_t lupine_rpc_cublasLtMatmulAlgoCapGetAttribute(
       rpc_write(conn, algo, sizeof(const cublasLtMatmulAlgo_t)) < 0 ||
       rpc_write(conn, &attr, sizeof(cublasLtMatmulAlgoCapAttributes_t)) < 0 ||
       rpc_write(conn, &sizeInBytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, buf, sizeInBytes) < 0 ||
       rpc_write(conn, &sizeWritten, sizeof(size_t *)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       (sizeInBytes != 0 && rpc_read(conn, buf, sizeInBytes) < 0) ||
@@ -603,6 +574,7 @@ static cublasStatus_t lupine_rpc_cublasLtMatmulAlgoConfigGetAttribute(
       rpc_write(conn, &attr, sizeof(cublasLtMatmulAlgoConfigAttributes_t)) <
           0 ||
       rpc_write(conn, &sizeInBytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, buf, sizeInBytes) < 0 ||
       rpc_write(conn, &sizeWritten, sizeof(size_t *)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       (sizeInBytes != 0 && rpc_read(conn, buf, sizeInBytes) < 0) ||
@@ -696,6 +668,9 @@ static cublasStatus_t lupine_rpc_cublasLtMatmulAlgoGetHeuristic(
        rpc_write(conn, preference, sizeof(cublasLtMatmulPreferenceOpaque_t)) <
            0) ||
       rpc_write(conn, &requestedAlgoCount, sizeof(int)) < 0 ||
+      rpc_write(conn, heuristicResultsArray,
+                requestedAlgoCount * sizeof(cublasLtMatmulHeuristicResult_t)) <
+          0 ||
       rpc_wait_for_response(conn) < 0 ||
       (requestedAlgoCount * sizeof(cublasLtMatmulHeuristicResult_t) != 0 &&
        rpc_read(conn, heuristicResultsArray,
@@ -765,6 +740,9 @@ static cublasStatus_t lupine_rpc_cublasLtMatmulAlgoGetHeuristicForStream(
        rpc_write(conn, preference, sizeof(cublasLtMatmulPreferenceOpaque_t)) <
            0) ||
       rpc_write(conn, &requestedAlgoCount, sizeof(int)) < 0 ||
+      rpc_write(conn, heuristicResultsArray,
+                requestedAlgoCount * sizeof(cublasLtMatmulHeuristicResult_t)) <
+          0 ||
       rpc_write(conn, &stream, sizeof(cudaStream_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       (requestedAlgoCount * sizeof(cublasLtMatmulHeuristicResult_t) != 0 &&
@@ -816,6 +794,7 @@ static cublasStatus_t lupine_rpc_cublasLtMatmulAlgoGetIds(
       rpc_write(conn, &Ctype, sizeof(cudaDataType_t)) < 0 ||
       rpc_write(conn, &Dtype, sizeof(cudaDataType_t)) < 0 ||
       rpc_write(conn, &requestedAlgoCount, sizeof(int)) < 0 ||
+      rpc_write(conn, algoIdsArray, requestedAlgoCount * sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       (requestedAlgoCount * sizeof(int) != 0 &&
        rpc_read(conn, algoIdsArray, requestedAlgoCount * sizeof(int)) < 0) ||
@@ -895,6 +874,7 @@ static cublasStatus_t lupine_rpc_cublasLtMatmulDescGetAttribute(
        rpc_write(conn, matmulDesc, sizeof(cublasLtMatmulDescOpaque_t)) < 0) ||
       rpc_write(conn, &attr, sizeof(cublasLtMatmulDescAttributes_t)) < 0 ||
       rpc_write(conn, &sizeInBytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, buf, sizeInBytes) < 0 ||
       rpc_write(conn, &sizeWritten, sizeof(size_t *)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       (sizeInBytes != 0 && rpc_read(conn, buf, sizeInBytes) < 0) ||
@@ -916,8 +896,12 @@ cublasLtMatmulDescGetAttribute(cublasLtMatmulDescOpaque_t *matmulDesc,
     return CUBLAS_STATUS_INVALID_VALUE;
   }
   conn_t *conn = connection();
-  return lupine_rpc_cublasLtMatmulDescGetAttribute(conn, matmulDesc, attr, buf,
-                                                   sizeInBytes, sizeWritten);
+  cublasStatus_t return_value = lupine_rpc_cublasLtMatmulDescGetAttribute(
+      conn, matmulDesc, attr, buf, sizeInBytes, sizeWritten);
+  if (return_value == CUBLAS_STATUS_SUCCESS) {
+    client_attribute(attr, buf, sizeInBytes);
+  }
+  return return_value;
 }
 
 static cublasStatus_t lupine_rpc_cublasLtMatmulDescInit_internal(
@@ -981,6 +965,8 @@ cublasLtMatmulDescSetAttribute(cublasLtMatmulDescOpaque_t *matmulDesc,
     return CUBLAS_STATUS_INVALID_VALUE;
   }
   conn_t *conn = connection();
+  void *copy = nullptr;
+  buf = server_attribute(attr, buf, sizeInBytes, &copy);
   cublasStatus_t return_value = lupine_rpc_cublasLtMatmulDescSetAttribute(
       conn, matmulDesc, attr, buf, sizeInBytes);
   if (return_value == CUBLAS_STATUS_SUCCESS) {
@@ -1004,6 +990,7 @@ static cublasStatus_t lupine_rpc_cublasLtMatmulPreferenceGetAttribute(
       rpc_write(conn, &attr, sizeof(cublasLtMatmulPreferenceAttributes_t)) <
           0 ||
       rpc_write(conn, &sizeInBytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, buf, sizeInBytes) < 0 ||
       rpc_write(conn, &sizeWritten, sizeof(size_t *)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       (sizeInBytes != 0 && rpc_read(conn, buf, sizeInBytes) < 0) ||
@@ -1103,6 +1090,7 @@ static cublasStatus_t lupine_rpc_cublasLtMatrixLayoutGetAttribute(
        rpc_write(conn, matLayout, sizeof(cublasLtMatrixLayoutOpaque_t)) < 0) ||
       rpc_write(conn, &attr, sizeof(cublasLtMatrixLayoutAttribute_t)) < 0 ||
       rpc_write(conn, &sizeInBytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, buf, sizeInBytes) < 0 ||
       rpc_write(conn, &sizeWritten, sizeof(size_t *)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       (sizeInBytes != 0 && rpc_read(conn, buf, sizeInBytes) < 0) ||
@@ -1271,6 +1259,7 @@ static cublasStatus_t lupine_rpc_cublasLtMatrixTransformDescGetAttribute(
       rpc_write(conn, &attr, sizeof(cublasLtMatrixTransformDescAttributes_t)) <
           0 ||
       rpc_write(conn, &sizeInBytes, sizeof(size_t)) < 0 ||
+      rpc_write(conn, buf, sizeInBytes) < 0 ||
       rpc_write(conn, &sizeWritten, sizeof(size_t *)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       (sizeInBytes != 0 && rpc_read(conn, buf, sizeInBytes) < 0) ||

@@ -82,6 +82,15 @@ int plan_gpu_count(cufftHandle plan) {
   return it == plans.end() ? 1 : it->second.gpus;
 }
 
+// A plan's work sizes hold one entry per GPU of the plan, which the library
+// writes whatever the caller's array holds; they travel as a host scalar of
+// that width.
+size_t work_size_bytes(cufftHandle plan) {
+  return plan_gpu_count(plan) * sizeof(size_t);
+}
+
+bool scalar_on_host(cufftHandle, const char *) { return true; }
+
 // ---------------------------------------------------------------------------
 // Multi-GPU descriptors
 // ---------------------------------------------------------------------------
@@ -126,14 +135,6 @@ size_t descriptor_bytes(const descriptor_mirror *mirror) {
 // ---------------------------------------------------------------------------
 // Plan state the client mirrors
 // ---------------------------------------------------------------------------
-
-extern "C" cufftResult cufftDestroy(cufftHandle plan) {
-  conn_t *conn = connection_for_handle(plan);
-  cufftResult status = lupine_rpc_cufftDestroy(conn, plan);
-  std::lock_guard<std::mutex> lock(plans_mutex);
-  plans.erase(plan);
-  return status;
-}
 
 // The caller names virtual device ordinals; the server's library wants its
 // own. A plan cannot span servers, so each is rewritten as if on the plan's.

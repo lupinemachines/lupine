@@ -27,6 +27,64 @@ RUN cmake \
       -DLUPINE_PRECOMPILED_OPS=/opt/lupine-precompiled-ops \
       -P /opt/lupine/ops/precompile.cmake
 
+FROM cuda-sdk AS cudnn-headers
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG CUDA_VERSION
+
+# cuDNN ships outside the toolkit. Its headers come from the release series the
+# server image installs for this CUDA major.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends "libcudnn9-headers-cuda-${CUDA_VERSION%%.*}" \
+    && mkdir -p /opt/cudnn/include \
+    && cp -L /usr/include/*-linux-gnu/cudnn*.h /opt/cudnn/include/ \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM cuda-sdk AS nccl-headers
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG CUDA_VERSION
+
+# NCCL ships outside the toolkit too. Its header comes from the newest release
+# built for this CUDA series, the one the server image installs.
+RUN apt-get update \
+    && cuda_series_dot="$(printf '%s' "${CUDA_VERSION}" | awk -F. '{print $1 "." $2}')" \
+    && nccl_version="$(apt-cache madison libnccl-dev | awk -v s="+cuda${cuda_series_dot}" 'index($3, s) {print $3; exit}')" \
+    && apt-get install -y --no-install-recommends --allow-downgrades --allow-change-held-packages \
+         "libnccl2=${nccl_version}" "libnccl-dev=${nccl_version}" \
+    && mkdir -p /opt/nccl/include \
+    && cp -L /usr/include/nccl.h /opt/nccl/include/ \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM cuda-sdk AS nvshmem-headers
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG CUDA_VERSION
+
+# nvSHMEM ships outside the toolkit too, in a package per CUDA major that puts
+# its headers under a directory of their own. The CUDA 11 releases predate
+# nvshmem_host.h and are packaged for x86_64 alone, so that series is skipped
+# and its empty directory leaves the shim out of the build.
+RUN cuda_major="${CUDA_VERSION%%.*}" \
+    && mkdir -p /opt/nvshmem/include \
+    && if [ "$cuda_major" -ge 12 ]; then \
+         apt-get update \
+         && apt-get install -y --no-install-recommends "libnvshmem3-dev-cuda-${cuda_major}" \
+         && cp -rL "/usr/include/nvshmem_${cuda_major}/." /opt/nvshmem/include/ \
+         && rm -rf /var/lib/apt/lists/*; \
+       fi
+FROM cuda-sdk AS cusparselt-headers
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# cuSPARSELt ships outside the toolkit too. Its header comes from the newest
+# release the CUDA repository carries, the one the server image installs.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libcusparselt-dev \
+    && mkdir -p /opt/cusparselt/include \
+    && cp -L /usr/include/cusparseLt.h /opt/cusparselt/include/ \
+    && rm -rf /var/lib/apt/lists/*
+
 FROM ubuntu:${UBUNTU_VERSION} AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -38,6 +96,12 @@ ARG CUDA_VERSION
 # needs only API headers, link-time stubs, and the combined operation directory,
 # so CUDA and ROCm compiler SDKs never have to coexist here.
 COPY --from=cuda-sdk /usr/local/cuda/include/ /usr/local/cuda/include/
+COPY --from=cudnn-headers /opt/cudnn/include/ /usr/local/cuda/include/
+COPY --from=nccl-headers /opt/nccl/include/ /usr/local/cuda/include/
+# nvSHMEM's headers keep directories of their own (device/, host/, non_abi/),
+# so they stay beside the toolkit's rather than inside them.
+COPY --from=nvshmem-headers /opt/nvshmem/include/ /opt/nvshmem/include/
+COPY --from=cusparselt-headers /opt/cusparselt/include/ /usr/local/cuda/include/
 COPY --from=cuda-sdk /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so
 COPY --from=cuda-ops /opt/lupine-precompiled-ops/ /opt/lupine-precompiled-ops/
 COPY --from=rocm-sdk /opt/rocm/include/ /opt/rocm/include/
@@ -66,12 +130,17 @@ RUN cmake -S /opt/lupine -B /opt/lupine/build \
       -DLUPINE_CUDA_DRIVER_LIBRARY="${CUDA_HOME}/lib64/stubs/libcuda.so" \
       -DLUPINE_CUDA_VERSION_OVERRIDE="${CUDA_VERSION}" \
       -DLUPINE_CLIENT_BUNDLE_INPUT="${LUPINE_CLIENT_BUNDLE_INPUT}" \
+      -DLUPINE_NVSHMEM_INCLUDE_DIR=/opt/nvshmem/include \
       -DLUPINE_PRECOMPILED_OPS=/opt/lupine-precompiled-ops
 
 FROM builder AS client-build
 
+# lupine_runtime_clients is every CUDA runtime and library shim this toolkit
+# could build, so the header-gated ones (nvJitLink from 12.4; cuFile, CUPTI and
+# nvSHMEM where their headers are present) join or drop out on their own.
 RUN cmake --build /opt/lupine/build --parallel \
-      --target lupine_cuda_client lupine_cudart_client lupine_cublas_client lupine_cublaslt_client lupine_cufft_client lupine_nvml_client lupine_hip_client
+      --target lupine_cuda_client lupine_runtime_clients lupine_nvml_client \
+               lupine_hip_client
 
 FROM builder AS server-build
 
@@ -91,7 +160,7 @@ ARG ROCM_VERSION
 ARG UBUNTU_VERSION
 
 LABEL org.opencontainers.image.title="lupine-client"
-LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, NVML, and HIP shims"
+LABEL org.opencontainers.image.description="LUPINE client runtime with CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSPARSELt, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, CUPTI, nvSHMEM, NVML, and HIP shims"
 LABEL org.opencontainers.image.source="https://github.com/lupinemachines/lupine"
 LABEL org.opencontainers.image.version="${CUDA_VERSION}-rocm-${ROCM_VERSION}-ubuntu${UBUNTU_VERSION}"
 
@@ -138,6 +207,20 @@ COPY --from=client-build /opt/lupine/build/libcudart.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcublas.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcublasLt.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libcufft.so* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libcudnn.so* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libcurand.so* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libcusparse.so* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libcusparseLt.so* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libcusolver.so* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libcusolverMg.so* /opt/lupine/lib/
+# The brackets keep the COPY valid on toolkits without an nvJitLink, cuFile or
+# CUPTI shim.
+COPY --from=client-build /opt/lupine/build/libnvrtc.so* /opt/lupine/build/libnvJitLin[k].so* /opt/lupine/build/libcufil[e].so* /opt/lupine/build/libcupt[i].so* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libnccl.so* /opt/lupine/lib/
+# The bracket keeps the COPY valid on toolkits without an nvSHMEM shim.
+COPY --from=client-build /opt/lupine/build/libnvshmem_hos[t].so* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libnvjpeg.so* /opt/lupine/lib/
+COPY --from=client-build /opt/lupine/build/libnpp*.so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1
 COPY --from=client-build /opt/lupine/build/libamdhip64.so.1 /opt/lupine/lib/libamdhip64.so.1
 
@@ -192,7 +275,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
          -O /tmp/cuda-keyring.deb \
     && apt-get install -y --no-install-recommends /tmp/cuda-keyring.deb \
     && apt-get update \
-    && apt-get install -y --no-install-recommends "cuda-compat-${cuda_series}" "cuda-cudart-${cuda_series}" "libcublas-${cuda_series}" "libcufft-${cuda_series}" \
+    && nccl_version="$(apt-cache madison libnccl2 | awk -v s="+cuda$(printf '%s' "${CUDA_VERSION}" | awk -F. '{print $1 "." $2}')" 'index($3, s) {print $3; exit}')" \
+    && apt-get install -y --no-install-recommends "cuda-compat-${cuda_series}" "cuda-cudart-${cuda_series}" "libcublas-${cuda_series}" "libcufft-${cuda_series}" "libcurand-${cuda_series}" "libcusparse-${cuda_series}" "libcusolver-${cuda_series}" "cuda-nvrtc-${cuda_series}" "libnvjpeg-${cuda_series}" "libnpp-${cuda_series}" \
+         "libcudnn9-cuda-${CUDA_VERSION%%.*}" "libnccl2=${nccl_version}" libcusparselt0 $(test "${CUDA_VERSION%%.*}" -lt 12 || echo "libnvjitlink-${cuda_series}") \
     && cuda_series_dot="$(printf '%s' "${CUDA_VERSION}" | awk -F. '{print $1 "." $2}')" \
     && ln -sfn "cuda-${cuda_series_dot}" /usr/local/cuda \
     && if [ "$arch" = amd64 ]; then \

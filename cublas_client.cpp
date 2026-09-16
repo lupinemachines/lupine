@@ -6,9 +6,9 @@
 // the three APIs ordered. Nearly all of the surface is generated. The calls
 // in this file carry something the generated marshalling cannot: a host
 // vector or matrix with a stride, a static string, or a result that is not a
-// status. A callback into the client is a generated stub that returns
-// CUBLAS_STATUS_NOT_SUPPORTED.
+// status. Logger callbacks return through the driver shim's side-effect lane.
 
+#include <cublasXt.h>
 #include <cublas_v2.h>
 #include <cuda_runtime_api.h>
 
@@ -18,6 +18,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "codegen/gen_rpc_ids.h"
@@ -49,11 +50,12 @@ int rpc_read_end(conn_t *conn) { return lupine_rpc_read_end(conn); }
 // ---------------------------------------------------------------------------
 
 // A handle is created on the runtime's current device and routes every later
-// call to that connection. Its pointer mode is kept here because the generated
+// call to that connection. The owner lives in the driver client because
+// cuBLASLt takes this same handle, and its shim cannot see this object's state.
+// The pointer mode stays here: cuBLASLt has no equivalent, and the generated
 // marshalling decides before each call whether a scalar's bytes or its address
 // travel.
 struct handle_state {
-  conn_t *conn;
   bool host_pointers;
 };
 
@@ -71,9 +73,7 @@ conn_t *connection() {
 }
 
 conn_t *connection_for_handle(cublasHandle_t handle) {
-  std::lock_guard<std::mutex> lock(handles_mutex);
-  auto it = handles.find(handle);
-  return it == handles.end() ? nullptr : it->second.conn;
+  return lupine_rpc_conn_for_blas_handle(handle);
 }
 
 conn_t *connection_for_stream(cudaStream_t stream) {
@@ -81,8 +81,9 @@ conn_t *connection_for_stream(cudaStream_t stream) {
 }
 
 void note_handle_owner(conn_t *conn, cublasHandle_t handle) {
+  lupine_note_blas_handle_owner(handle, conn);
   std::lock_guard<std::mutex> lock(handles_mutex);
-  handles[handle] = {conn, true};
+  handles[handle] = {true};
 }
 
 void note_pointer_mode(cublasHandle_t handle, cublasPointerMode_t mode) {
@@ -96,8 +97,27 @@ void note_pointer_mode(cublasHandle_t handle, cublasPointerMode_t mode) {
 // A destroyed handle's address may come back from a later cublasCreate,
 // which records it afresh.
 void forget_handle(cublasHandle_t handle) {
+  lupine_forget_blas_handle_owner(handle);
   std::lock_guard<std::mutex> lock(handles_mutex);
   handles.erase(handle);
+}
+
+std::unordered_map<cublasXtHandle_t, conn_t *> xt_handles;
+
+conn_t *connection_for_handle(cublasXtHandle_t handle) {
+  std::lock_guard<std::mutex> lock(handles_mutex);
+  auto it = xt_handles.find(handle);
+  return it == xt_handles.end() ? nullptr : it->second;
+}
+
+void note_handle_owner(conn_t *conn, cublasXtHandle_t handle) {
+  std::lock_guard<std::mutex> lock(handles_mutex);
+  xt_handles[handle] = conn;
+}
+
+void forget_handle(cublasXtHandle_t handle) {
+  std::lock_guard<std::mutex> lock(handles_mutex);
+  xt_handles.erase(handle);
 }
 
 // cuBLAS places alpha and beta together, so the scalar's name is unused.
@@ -128,9 +148,79 @@ size_t compute_scalar_width(cublasComputeType_t compute, cudaDataType c_type) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// cuBLASXt host matrices
+// ---------------------------------------------------------------------------
+
+// A matrix argument holds its whole array dimension, ld * columns elements.
+uint64_t xt_matrix(size_t rows, size_t columns, size_t ld) {
+  return rows == 0 || columns == 0 ? 0 : static_cast<uint64_t>(ld) * columns;
+}
+
+uint64_t xt_op_matrix(cublasOperation_t op, size_t m, size_t n, size_t ld) {
+  return op == CUBLAS_OP_N ? xt_matrix(m, n, ld) : xt_matrix(n, m, ld);
+}
+
+uint64_t xt_side_matrix(cublasSideMode_t side, size_t m, size_t n, size_t ld) {
+  const size_t order = side == CUBLAS_SIDE_LEFT ? m : n;
+  return xt_matrix(order, order, ld);
+}
+
+uint64_t xt_packed(cublasSideMode_t side, size_t m, size_t n) {
+  const uint64_t order = side == CUBLAS_SIDE_LEFT ? m : n;
+  return order * (order + 1) / 2;
+}
+
 } // namespace
 
 #include "codegen/gen_cublas_client.inc"
+
+// ---------------------------------------------------------------------------
+// cuBLASXt devices
+// ---------------------------------------------------------------------------
+
+// The caller names virtual device ordinals; the server's library wants its
+// own. A handle cannot span servers, so each is rewritten as if on the
+// handle's.
+extern "C" cublasStatus_t cublasXtDeviceSelect(cublasXtHandle_t handle,
+                                               int nbDevices, int *deviceId) {
+  std::vector<int> devices(deviceId, deviceId + nbDevices);
+  for (int &device : devices) {
+    lupine_rpc_conn_for_device(&device);
+  }
+  return lupine_rpc_cublasXtDeviceSelect(connection_for_handle(handle), handle,
+                                         nbDevices, devices.data());
+}
+
+// The library adds its board count to *nbBoards rather than overwriting it.
+// Boards behind different servers are different boards, so the running total
+// passes through each server that owns one of the devices.
+extern "C" cublasStatus_t cublasXtGetNumBoards(int nbDevices, int *deviceId,
+                                               int *nbBoards) {
+  std::vector<std::pair<conn_t *, std::vector<int>>> servers;
+  for (int i = 0; i < nbDevices; ++i) {
+    int device = deviceId[i];
+    conn_t *conn = lupine_rpc_conn_for_device(&device);
+    auto it = servers.begin();
+    while (it != servers.end() && it->first != conn) {
+      ++it;
+    }
+    if (it == servers.end()) {
+      servers.push_back({conn, {}});
+      it = servers.end() - 1;
+    }
+    it->second.push_back(device);
+  }
+  for (auto &server : servers) {
+    cublasStatus_t status = lupine_rpc_cublasXtGetNumBoards(
+        server.first, static_cast<int>(server.second.size()),
+        server.second.data(), nbBoards);
+    if (status != CUBLAS_STATUS_SUCCESS) {
+      return status;
+    }
+  }
+  return CUBLAS_STATUS_SUCCESS;
+}
 
 // ---------------------------------------------------------------------------
 // Static strings
@@ -198,6 +288,52 @@ extern "C" cublasStatus_t cublasLoggerConfigure(int logIsOn, int logToStdOut,
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &status, sizeof(status)) < 0 || rpc_read_end(conn) < 0) {
     return rpc_error();
+  }
+  return status;
+}
+
+namespace {
+void log_callback(void *user_data, int, const char *, const char *message,
+                  size_t) {
+  reinterpret_cast<cublasLogCallback>(user_data)(message);
+}
+} // namespace
+
+extern "C" cublasStatus_t cublasSetLoggerCallback(cublasLogCallback callback) {
+  library_log_target target;
+  if (callback != nullptr) {
+    target = {log_callback, reinterpret_cast<void *>(callback)};
+  }
+  conn_t *conn = connection();
+  cublasStatus_t status = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasSetLoggerCallback) < 0 ||
+      rpc_write(conn, &target.callback, sizeof(target.callback)) < 0 ||
+      rpc_write(conn, &target.user_data, sizeof(target.user_data)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &status, sizeof(status)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return status;
+}
+
+extern "C" cublasStatus_t
+cublasGetLoggerCallback(cublasLogCallback *userCallback) {
+  if (userCallback == nullptr) {
+    return CUBLAS_STATUS_INVALID_VALUE;
+  }
+  conn_t *conn = connection();
+  void *callback = nullptr;
+  cublasStatus_t status = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cublasGetLoggerCallback) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &callback, sizeof(callback)) < 0 ||
+      rpc_read(conn, &status, sizeof(status)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  if (status == CUBLAS_STATUS_SUCCESS) {
+    *userCallback = reinterpret_cast<cublasLogCallback>(callback);
   }
   return status;
 }

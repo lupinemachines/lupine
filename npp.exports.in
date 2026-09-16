@@ -1,0 +1,8 @@
+/* The version node is literally NVIDIA's SONAME: consumers reference library
+   symbols as name@libnppial.so.<major>. */
+lib@LUPINE_NPP_LIBRARY@.so.@LUPINE_NPP_SOVERSION@ {
+  global:
+    npp*;
+  local:
+    *;
+};

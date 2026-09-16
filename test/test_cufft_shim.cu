@@ -1,11 +1,14 @@
 // Exercises the cuFFT shim end to end against the remote device: plan
 // creation in every style, the optional layout arrays, work area management,
-// streams, the Xt entry points and, when two GPUs are present, a multi-GPU
-// descriptor, each transform checked against a CPU DFT.
+// streams, the Xt entry points and multi-GPU descriptors on one device named
+// twice and, when two GPUs are present, on both, each transform checked against
+// a CPU DFT.
 #include <cuda_runtime.h>
 #include <cufftXt.h>
+#include <nvrtc.h>
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -302,15 +305,20 @@ static int test_xt_plan_2d() {
   return 0;
 }
 
-// A multi-GPU descriptor: the client's copy reports the layout, and the host
-// copies round-trip the signal through the transform. Skipped when the server
-// has one device or the pair cannot share a plan.
-static int test_xt_multi_gpu() {
-  int device_count = 0;
-  CHECK_CUDA(cudaGetDeviceCount(&device_count));
-  if (device_count < 2) {
-    printf("multi-GPU descriptor: skipped, one device\n");
-    return 0;
+// A multi-GPU descriptor: the plan reports one work size per GPU, the client's
+// copy of the descriptor reports the layout, and the host copies round-trip the
+// signal through the transform. Two distinct devices are skipped when the
+// server has one or the pair cannot share a plan; a device named twice, as
+// single-GPU callers do, always runs.
+static int test_xt_multi_gpu(int first, int second) {
+  const bool distinct = first != second;
+  if (distinct) {
+    int device_count = 0;
+    CHECK_CUDA(cudaGetDeviceCount(&device_count));
+    if (device_count < 2) {
+      printf("multi-GPU descriptor: skipped, one device\n");
+      return 0;
+    }
   }
   const int n = 256;
   const std::vector<cufftComplex> signal = random_signal(n, 9);
@@ -318,20 +326,27 @@ static int test_xt_multi_gpu() {
 
   cufftHandle plan = 0;
   CHECK_CUFFT(cufftCreate(&plan));
-  int gpus[2] = {0, 1};
-  if (cufftXtSetGPUs(plan, 2, gpus) != CUFFT_SUCCESS) {
+  int gpus[2] = {first, second};
+  cufftResult set = cufftXtSetGPUs(plan, 2, gpus);
+  if (distinct && set != CUFFT_SUCCESS) {
     printf("multi-GPU descriptor: skipped, devices cannot share a plan\n");
     CHECK_CUFFT(cufftDestroy(plan));
     return 0;
   }
-  size_t work_sizes[2] = {0, 0};
+  CHECK_CUFFT(set);
+  size_t work_sizes[2] = {SIZE_MAX, SIZE_MAX};
   cufftResult made = cufftMakePlan1d(plan, n, CUFFT_C2C, 1, work_sizes);
-  if (made != CUFFT_SUCCESS) {
+  if (distinct && made != CUFFT_SUCCESS) {
     printf("multi-GPU descriptor: skipped, plan not supported (%d)\n",
            static_cast<int>(made));
     CHECK_CUFFT(cufftDestroy(plan));
     return 0;
   }
+  CHECK_CUFFT(made);
+  EXPECT(work_sizes[0] != SIZE_MAX && work_sizes[1] != SIZE_MAX);
+  size_t queried[2] = {SIZE_MAX, SIZE_MAX};
+  CHECK_CUFFT(cufftGetSize(plan, queried));
+  EXPECT(queried[0] == work_sizes[0] && queried[1] == work_sizes[1]);
 
   cudaLibXtDesc *descriptor = nullptr;
   CHECK_CUFFT(cufftXtMalloc(plan, &descriptor, CUFFT_XT_FORMAT_INPLACE));
@@ -352,9 +367,88 @@ static int test_xt_multi_gpu() {
   }
   CHECK_CUFFT(cufftXtFree(descriptor));
   CHECK_CUFFT(cufftDestroy(plan));
-  printf("multi-GPU descriptor: passed\n");
+  printf("multi-GPU descriptor on devices %d and %d: passed\n", first, second);
   return 0;
 }
+
+#if CUFFT_VERSION >= 11300
+// An LTO load callback compiled at run time. cuFFT reads the symbol name and
+// fatbin passed to cufftXtSetJITCallback when the plan is made, not when the
+// callback is set, so the plan below only works if both are still readable
+// then.
+static const char *const scale_callback_source = R"(
+struct scale_complex { float x; float y; };
+scale_complex scale_callback(void *input, unsigned long long idx, void *info,
+                             void *sharedmem) {
+  const float scale = *static_cast<const float *>(info);
+  const scale_complex *in = static_cast<const scale_complex *>(input);
+  return scale_complex{in[idx].x * scale, in[idx].y * scale};
+}
+)";
+
+static int test_jit_callback() {
+  nvrtcProgram program = nullptr;
+  EXPECT(nvrtcCreateProgram(&program, scale_callback_source, "scale.cu", 0,
+                            nullptr, nullptr) == NVRTC_SUCCESS);
+  const char *options[] = {"--std=c++11", "--relocatable-device-code=true",
+                           "-default-device", "-dlto", "-arch=compute_75"};
+  if (nvrtcCompileProgram(program, 5, options) != NVRTC_SUCCESS) {
+    size_t log_size = 0;
+    nvrtcGetProgramLogSize(program, &log_size);
+    std::vector<char> log(log_size + 1);
+    nvrtcGetProgramLog(program, log.data());
+    fprintf(stderr, "callback compilation failed: %s\n", log.data());
+    return 1;
+  }
+  size_t lto_size = 0;
+  EXPECT(nvrtcGetLTOIRSize(program, &lto_size) == NVRTC_SUCCESS);
+  std::vector<char> lto(lto_size);
+  EXPECT(nvrtcGetLTOIR(program, lto.data()) == NVRTC_SUCCESS);
+  nvrtcDestroyProgram(&program);
+
+  const int n = 128, batch = 3;
+  const float scale = 2.0f;
+  const std::vector<cufftComplex> signal = random_signal(n * batch, 7);
+  const std::vector<cufftComplex> spectrum = reference_dft(signal, n, batch);
+
+  float *device_scale = nullptr;
+  CHECK_CUDA(cudaMalloc(&device_scale, sizeof(scale)));
+  CHECK_CUDA(cudaMemcpy(device_scale, &scale, sizeof(scale),
+                        cudaMemcpyHostToDevice));
+  cufftHandle plan = 0;
+  CHECK_CUFFT(cufftCreate(&plan));
+  void *caller_info = device_scale;
+  CHECK_CUFFT(cufftXtSetJITCallback(plan, "scale_callback", lto.data(),
+                                    lto.size(), CUFFT_CB_LD_COMPLEX,
+                                    &caller_info));
+  size_t work_size = 0;
+  CHECK_CUFFT(cufftMakePlan1d(plan, n, CUFFT_C2C, batch, &work_size));
+
+  cufftComplex *device = nullptr;
+  CHECK_CUDA(cudaMalloc(&device, spectrum.size() * sizeof(cufftComplex)));
+  CHECK_CUDA(cudaMemcpy(device, spectrum.data(),
+                        spectrum.size() * sizeof(cufftComplex),
+                        cudaMemcpyHostToDevice));
+  CHECK_CUFFT(cufftExecC2C(plan, device, device, CUFFT_INVERSE));
+  std::vector<cufftComplex> result(signal.size());
+  CHECK_CUDA(cudaMemcpy(result.data(), device,
+                        result.size() * sizeof(cufftComplex),
+                        cudaMemcpyDeviceToHost));
+  // The callback scales the input the unnormalized inverse transform loads.
+  for (auto &value : result) {
+    value.x /= n * scale;
+    value.y /= n * scale;
+  }
+  if (compare(result.data(), signal, result.size(), "JIT callback inverse")) {
+    return 1;
+  }
+  CHECK_CUDA(cudaFree(device));
+  CHECK_CUDA(cudaFree(device_scale));
+  CHECK_CUFFT(cufftDestroy(plan));
+  printf("JIT callback: passed\n");
+  return 0;
+}
+#endif
 
 int main() {
   int version = 0;
@@ -382,9 +476,14 @@ int main() {
 
   if (test_plan1d_c2c() || test_plan_many_r2c_c2r() ||
       test_work_area_and_stream_z2z() || test_xt_plan_2d() ||
-      test_xt_multi_gpu()) {
+      test_xt_multi_gpu(0, 0) || test_xt_multi_gpu(0, 1)) {
     return 1;
   }
+#if CUFFT_VERSION >= 11300
+  if (test_jit_callback()) {
+    return 1;
+  }
+#endif
   printf("cufft shim: all checks passed (cuFFT %d)\n", version);
   return 0;
 }

@@ -37,10 +37,17 @@ cufftResult cufftCreate(cufftHandle *handle) {
 }
 // clang-format on
 /**
- * @disabled client
+ * @disabled server
  * @param plan SEND_ONLY
  */
-cufftResult cufftDestroy(cufftHandle plan);
+// clang-format off
+cufftResult cufftDestroy(cufftHandle plan) {
+  cufftResult return_value = LUPINE_GENERATED_CALL();
+  std::lock_guard<std::mutex> lock(plans_mutex);
+  plans.erase(plan);
+  return return_value;
+}
+// clang-format on
 /**
  * @param nx SEND_ONLY
  * @param type SEND_ONLY
@@ -142,7 +149,7 @@ cufftResult cufftGetPlanPropertyInt64(cufftHandle plan, cufftProperty property,
 cufftResult cufftGetProperty(libraryPropertyType type, int *value);
 /**
  * @param handle SEND_ONLY
- * @param workSize RECV_ONLY
+ * @param workSize RECV_ONLY SCALAR:handle SIZE:work_size_bytes(handle)
  */
 cufftResult cufftGetSize(cufftHandle handle, size_t *workSize);
 /**
@@ -150,7 +157,7 @@ cufftResult cufftGetSize(cufftHandle handle, size_t *workSize);
  * @param nx SEND_ONLY
  * @param type SEND_ONLY
  * @param batch SEND_ONLY
- * @param workSize RECV_ONLY
+ * @param workSize RECV_ONLY SCALAR:handle SIZE:work_size_bytes(handle)
  */
 cufftResult cufftGetSize1d(cufftHandle handle, int nx, cufftType type,
                            int batch, size_t *workSize);
@@ -159,7 +166,7 @@ cufftResult cufftGetSize1d(cufftHandle handle, int nx, cufftType type,
  * @param nx SEND_ONLY
  * @param ny SEND_ONLY
  * @param type SEND_ONLY
- * @param workSize RECV_ONLY
+ * @param workSize RECV_ONLY SCALAR:handle SIZE:work_size_bytes(handle)
  */
 cufftResult cufftGetSize2d(cufftHandle handle, int nx, int ny, cufftType type,
                            size_t *workSize);
@@ -169,7 +176,7 @@ cufftResult cufftGetSize2d(cufftHandle handle, int nx, int ny, cufftType type,
  * @param ny SEND_ONLY
  * @param nz SEND_ONLY
  * @param type SEND_ONLY
- * @param workSize RECV_ONLY
+ * @param workSize RECV_ONLY SCALAR:handle SIZE:work_size_bytes(handle)
  */
 cufftResult cufftGetSize3d(cufftHandle handle, int nx, int ny, int nz,
                            cufftType type, size_t *workSize);
@@ -185,7 +192,7 @@ cufftResult cufftGetSize3d(cufftHandle handle, int nx, int ny, int nz,
  * @param odist SEND_ONLY
  * @param type SEND_ONLY
  * @param batch SEND_ONLY
- * @param workArea RECV_ONLY
+ * @param workArea RECV_ONLY SCALAR:handle SIZE:work_size_bytes(handle)
  */
 cufftResult cufftGetSizeMany(cufftHandle handle, int rank, int *n, int *inembed,
                              int istride, int idist, int *onembed, int ostride,
@@ -203,7 +210,7 @@ cufftResult cufftGetSizeMany(cufftHandle handle, int rank, int *n, int *inembed,
  * @param odist SEND_ONLY
  * @param type SEND_ONLY
  * @param batch SEND_ONLY
- * @param workSize RECV_ONLY
+ * @param workSize RECV_ONLY SCALAR:plan SIZE:work_size_bytes(plan)
  */
 cufftResult cufftGetSizeMany64(cufftHandle plan, int rank, long long int *n,
                                long long int *inembed, long long int istride,
@@ -220,7 +227,7 @@ cufftResult cufftGetVersion(int *version);
  * @param nx SEND_ONLY
  * @param type SEND_ONLY
  * @param batch SEND_ONLY
- * @param workSize RECV_ONLY
+ * @param workSize RECV_ONLY SCALAR:plan SIZE:work_size_bytes(plan)
  */
 cufftResult cufftMakePlan1d(cufftHandle plan, int nx, cufftType type, int batch,
                             size_t *workSize);
@@ -229,7 +236,7 @@ cufftResult cufftMakePlan1d(cufftHandle plan, int nx, cufftType type, int batch,
  * @param nx SEND_ONLY
  * @param ny SEND_ONLY
  * @param type SEND_ONLY
- * @param workSize RECV_ONLY
+ * @param workSize RECV_ONLY SCALAR:plan SIZE:work_size_bytes(plan)
  */
 cufftResult cufftMakePlan2d(cufftHandle plan, int nx, int ny, cufftType type,
                             size_t *workSize);
@@ -239,7 +246,7 @@ cufftResult cufftMakePlan2d(cufftHandle plan, int nx, int ny, cufftType type,
  * @param ny SEND_ONLY
  * @param nz SEND_ONLY
  * @param type SEND_ONLY
- * @param workSize RECV_ONLY
+ * @param workSize RECV_ONLY SCALAR:plan SIZE:work_size_bytes(plan)
  */
 cufftResult cufftMakePlan3d(cufftHandle plan, int nx, int ny, int nz,
                             cufftType type, size_t *workSize);
@@ -255,7 +262,7 @@ cufftResult cufftMakePlan3d(cufftHandle plan, int nx, int ny, int nz,
  * @param odist SEND_ONLY
  * @param type SEND_ONLY
  * @param batch SEND_ONLY
- * @param workSize RECV_ONLY
+ * @param workSize RECV_ONLY SCALAR:plan SIZE:work_size_bytes(plan)
  */
 cufftResult cufftMakePlanMany(cufftHandle plan, int rank, int *n, int *inembed,
                               int istride, int idist, int *onembed, int ostride,
@@ -273,7 +280,7 @@ cufftResult cufftMakePlanMany(cufftHandle plan, int rank, int *n, int *inembed,
  * @param odist SEND_ONLY
  * @param type SEND_ONLY
  * @param batch SEND_ONLY
- * @param workSize RECV_ONLY
+ * @param workSize RECV_ONLY SCALAR:plan SIZE:work_size_bytes(plan)
  */
 cufftResult cufftMakePlanMany64(cufftHandle plan, int rank, long long int *n,
                                 long long int *inembed, long long int istride,
@@ -471,7 +478,7 @@ cufftResult cufftXtFree(cudaLibXtDesc *descriptor);
  * @param odist SEND_ONLY
  * @param outputtype SEND_ONLY
  * @param batch SEND_ONLY
- * @param workSize RECV_ONLY
+ * @param workSize RECV_ONLY SCALAR:plan SIZE:work_size_bytes(plan)
  * @param executiontype SEND_ONLY
  */
 cufftResult cufftXtGetSizeMany(cufftHandle plan, int rank, long long int *n,
@@ -494,7 +501,7 @@ cufftResult cufftXtGetSizeMany(cufftHandle plan, int rank, long long int *n,
  * @param odist SEND_ONLY
  * @param outputtype SEND_ONLY
  * @param batch SEND_ONLY
- * @param workSize RECV_ONLY
+ * @param workSize RECV_ONLY SCALAR:plan SIZE:work_size_bytes(plan)
  * @param executiontype SEND_ONLY
  */
 cufftResult cufftXtMakePlanMany(cufftHandle plan, int rank, long long int *n,

@@ -1,0 +1,9 @@
+/* The version node is literally NVIDIA's SONAME: consumers reference library
+   symbols as name@libnvJitLink.so.<major>. */
+libnvJitLink.so.@LUPINE_NVJITLINK_SOVERSION@ {
+  global:
+    nvJitLink*;
+    __nvJitLink*;
+  local:
+    *;
+};

@@ -3,7 +3,7 @@ infer what parameters should be sent and received so we instead have a two-step 
 
 First, `annotationgen.py` reads an SDK header such as `cuda.h` or `nvml.h` and copies its function signatures
 into that target's annotation file (`annotations_cuda.h`, `annotations_cudart.h`, `annotations_cublas.h`,
-`annotations_cublaslt.h`, `annotations_cufft.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
+`annotations_cublaslt.h`, `annotations_cufft.h`, `annotations_cudnn.h`, `annotations_curand.h`, `annotations_cusparse.h`, `annotations_cusparselt.h`, `annotations_cusolver.h`, `annotations_cusolvermg.h`, `annotations_nvrtc.h`, `annotations_nccl.h`, `annotations_nvjitlink.h`, `annotations_nvjpeg.h`, `annotations_npp<library>.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
 have significant meanings.
 
 Specifically, the order of `@param` annotations indicates the order in which the parameters are sent or received.
@@ -11,6 +11,9 @@ Specifically, the order of `@param` annotations indicates the order in which the
 available are `NULL_TERMINATED` (to indicate that this is a null-terminated string), or `LENGTH:<param>` and
 `SIZE:<value>` to specify the size (aka width) of the parameter. If `LENGTH:<param>` is specified, `<param>` must
 be placed in front of the parameter referencing it, otherwise the generated code will not compile.
+`LENGTH:<expr>`, where `<expr>` names no single parameter, is an element count the client computes
+from the call's other parameters (a cuBLASXt host matrix's accessed region). It must not contain spaces.
+The count travels ahead of the array as a `uint64_t`, so the server never evaluates the expression.
 `NULLABLE` marks a pointer that may be null. It composes with `LENGTH` on a
 `RECV_ONLY` pointer to declare an optional out-array, and on a `SEND_ONLY`
 pointer to declare an optional in-array the caller may leave null
@@ -21,6 +24,18 @@ several arrays may share one count.
 `ON_ERROR` may be added to a `RECV_ONLY NULLABLE LENGTH` buffer when CUDA only
 writes the buffer on failure. The generated response preserves the caller's
 buffer on success.
+`REMOTE` marks an opaque handle the caller keeps in storage of its own rather
+than in the parameter: cuSPARSELt hands the library 512 caller-owned bytes
+where cuBLAS hands back a pointer. The address on the wire is the same as for
+any other opaque handle, read from and written to that storage, so
+`SEND_ONLY REMOTE` sends it and the server passes it to the call, while
+`RECV_ONLY REMOTE` allocates the object on the server and sends its address
+back into the caller's storage. That allocation is lupine's rather than the
+library's, because the caller's storage stays on its own machine and the
+library links its objects to each other by address; the matching Destroy's
+handler frees it, and an object whose Destroy never arrives is freed with the
+rest of the session when the connection's child process exits. The client
+records the owning connection in the creating call's body.
 `SCALAR` marks a pointer that a library's pointer mode places on the host or on
 the device (a cuBLAS `alpha`, `beta`, or dot-product `result`). The mode belongs
 to the call's first parameter, or to the parameter named by `SCALAR:<param>`
@@ -28,11 +43,32 @@ to the call's first parameter, or to the parameter named by `SCALAR:<param>`
 `scalar_on_host(<owner>, "<name>")`, the name being the scalar's own for modes
 that place alpha and beta differently, and sends the value in host mode or the
 address in device mode, with the width leading on the wire so the server can
-tell which. `SEND_RECV SCALAR` brings a host value back (`cublasSrotg`). A
+tell which. `SEND_RECV SCALAR` brings a host value back (`cublasSrotg`), and
+`RECV_ONLY SCALAR` only brings it back (a cuRAND host generator's output). A
 `void` scalar carries its width as `SIZE:<expr>`, a C++ expression the client
 evaluates over the call's arguments (`SIZE:data_type_width(resultType)`); a
 typed scalar wider than its pointee spells that out the same way
 (`SIZE:5*sizeof(float)`).
+
+`VERSIONED` marks an optional pointer to a size-led, append-only configuration
+struct (NCCL's `ncclConfig_t`). The caller's `size` bytes travel, then each
+member named in `STRINGS:<member>,...` as its length and text; the server widens
+the struct to its own size and points those members at its copies, and nulls
+the client addresses named in `CLEARED:<member>,...`. A member some supported
+headers lack takes `MEMBERGUARD:<member>=<condition>`; its length still travels,
+so client and server built against different headers share one wire format.
+
+A parameter declared as a fixed-size C array (`const Npp32f aTwist[3][4]`)
+needs no size. Marked `DEREF`, its elements travel, both ways when it is
+`SEND_RECV` and not const; unmarked, it is device memory and only its address
+travels.
+
+`@async` on a forwarding backend that sets `async_success` makes the call's
+submission a choice: the generated wrapper asks `submit_async(conn)` and, when
+it says yes, sends the call fire-and-forget with an async ticket and returns
+that status; otherwise it sends an ordinary request that carries the all-ones
+ticket and waits for the library's result. NCCL uses this for calls inside a
+group, which the library only queues.
 
 Client routing can also be annotated for handles that belong to a specific LUPINE
 server connection. `@routingkey <kind> <param>` selects the connection for the
@@ -43,14 +79,17 @@ generated client wrapper before it writes the RPC. Supported kinds are
 owner. `DEVICE` and `CONTEXT` routing is inferred from the first non-pointer
 `CUdevice` or `CUcontext` parameter, so those annotations are only needed when
 the routing key is not the first matching parameter. A by-value
-`cublasHandle_t`, `cublasLtHandle_t` or `cufftHandle` infers `HANDLE` routing to the
+`cublasHandle_t`, `cublasLtHandle_t`, `cufftHandle`, `curandGenerator_t`, `curandDiscreteDistribution_t`, a cuSPARSE handle, descriptor, plan or info, an `nvrtcProgram`, an `ncclComm_t` or `ncclParamHandle_t`, an `nvJitLinkHandle`, an nvJPEG handle, state, parameter set, buffer, bitstream or decoder, a cuSOLVER or cuSOLVERMg handle, parameter set, info, IRS object, grid or matrix descriptor, or a cuDNN handle, descriptor, parameter pack or plan infers `HANDLE` routing to the
 connection the handle was created on, which the creating call's body records
-with `note_handle_owner`.
+with `note_handle_owner`. A `REMOTE` object is a pointer, so its call names it
+with `@routingkey HANDLE <param>` and the client's `connection_for_handle`
+reads the address out of the caller's storage.
 
 Forwarding backends also accept `@routingkey EVENT <param>`. Their client must
 provide `connection_for_event(event)`, which selects the connection without
 changing the event handle sent to the server.
-Likewise, `@routingkey STREAM <param>` uses `connection_for_stream(stream)`.
+Likewise, `@routingkey STREAM <param>` uses `connection_for_stream(stream)`,
+which a by-value `NppStreamContext` infers.
 The backend helper handles default streams; the stream argument is sent
 unchanged.
 
@@ -99,7 +138,8 @@ handler calls CUDA.
 
 Functions that need custom client-side code around the generated call may be
 written as definitions instead of declarations. The body must contain one
-explicitly typed generated-call placeholder and end by returning its result:
+explicitly typed generated-call placeholder and end by returning its result
+(a `void` call has a bare `LUPINE_GENERATED_CALL();` and no return):
 
 ```cpp
 CUresult cuExample(CUdeviceptr ptr) {

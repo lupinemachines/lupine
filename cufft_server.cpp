@@ -3,7 +3,9 @@
 
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
@@ -228,25 +230,35 @@ int handle_cufftXtSetCallback(conn_t *conn) {
 
 namespace {
 
+// cuFFT keeps the symbol name and fatbin a JIT callback is set with and reads
+// them when the plan is made, so they live until the plan is destroyed.
+struct jit_callback {
+  std::string name;
+  std::vector<unsigned char> fatbin;
+};
+std::mutex jit_callbacks_mutex;
+std::unordered_map<cufftHandle, jit_callback> jit_callbacks;
+
 int handle_set_jit_callback(conn_t *conn, const char *symbol) {
   cufftHandle plan;
   uint32_t name_length;
   uint64_t fatbin_size;
   cufftXtCallbackType type;
-  std::string name;
-  std::vector<unsigned char> fatbin;
+  jit_callback callback;
   std::vector<void *> caller_info;
   if (rpc_read(conn, &plan, sizeof(plan)) < 0 ||
       rpc_read(conn, &name_length, sizeof(name_length)) < 0) {
     return -1;
   }
-  name.resize(name_length);
-  if ((name_length != 0 && rpc_read(conn, &name[0], name_length) < 0) ||
+  callback.name.resize(name_length);
+  if ((name_length != 0 &&
+       rpc_read(conn, &callback.name[0], name_length) < 0) ||
       rpc_read(conn, &fatbin_size, sizeof(fatbin_size)) < 0) {
     return -1;
   }
-  fatbin.resize(fatbin_size);
-  if ((fatbin_size != 0 && rpc_read(conn, fatbin.data(), fatbin_size) < 0) ||
+  callback.fatbin.resize(fatbin_size);
+  if ((fatbin_size != 0 &&
+       rpc_read(conn, callback.fatbin.data(), fatbin_size) < 0) ||
       rpc_read(conn, &type, sizeof(type)) < 0 ||
       read_pointer_array(conn, caller_info) < 0) {
     return -1;
@@ -255,18 +267,43 @@ int handle_set_jit_callback(conn_t *conn, const char *symbol) {
   if (request_id < 0) {
     return -1;
   }
+  jit_callback *retained;
+  {
+    std::lock_guard<std::mutex> lock(jit_callbacks_mutex);
+    retained = &(jit_callbacks[plan] = std::move(callback));
+  }
   using fn_t = cufftResult (*)(cufftHandle, const char *, const void *, size_t,
                                cufftXtCallbackType, void **);
   fn_t fn = cufft_symbol<fn_t>(symbol);
-  return write_status(conn, request_id,
-                      fn == nullptr
-                          ? function_not_found()
-                          : fn(plan, name_length != 0 ? name.c_str() : nullptr,
-                               fatbin_size != 0 ? fatbin.data() : nullptr,
-                               fatbin_size, type, array_or_null(caller_info)));
+  return write_status(
+      conn, request_id,
+      fn == nullptr
+          ? function_not_found()
+          : fn(plan, name_length != 0 ? retained->name.c_str() : nullptr,
+               fatbin_size != 0 ? retained->fatbin.data() : nullptr,
+               fatbin_size, type, array_or_null(caller_info)));
 }
 
 } // namespace
+
+int handle_cufftDestroy(conn_t *conn) {
+  cufftHandle plan;
+  if (rpc_read(conn, &plan, sizeof(plan)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  using fn_t = cufftResult (*)(cufftHandle);
+  fn_t fn = cufft_symbol<fn_t>("cufftDestroy");
+  cufftResult status = fn == nullptr ? function_not_found() : fn(plan);
+  {
+    std::lock_guard<std::mutex> lock(jit_callbacks_mutex);
+    jit_callbacks.erase(plan);
+  }
+  return write_status(conn, request_id, status);
+}
 
 #if CUFFT_VERSION >= 12000
 int handle_cufftXtSetJITCallback(conn_t *conn) {

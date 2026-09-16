@@ -546,32 +546,32 @@ void test_client_retries_va_conflict_on_same_connection() {
 }
 #endif
 
-void test_client_await_ready_reports_capabilities(bool advertise) {
+void test_client_await_ready_reports_bulk_token(bool advertise) {
   h2_pair pair;
   init_pair_sockets(&pair);
 
-  bool supported = false;
-  int ready = -1;
+  std::string token;
   std::thread client([&] {
     require(rpc_http2_client_init(&pair.client) == 0, "client h2 init failed");
-    ready = rpc_http2_client_await_ready(&pair.client);
-    supported = rpc_http2_peer_supports(
-        &pair.client, LUPINE_SERVER_CAPABILITY_CLIENT_METADATA);
+    require(rpc_http2_client_await_ready(&pair.client) == 0,
+            "matching builds were not accepted");
+    const char *peer_token = rpc_http2_peer_bulk_token(&pair.client);
+    token = peer_token == nullptr ? "" : peer_token;
   });
   const rpc_http2_server_metadata metadata = {
       nullptr,
       nullptr,
-      advertise ? LUPINE_SERVER_CAPABILITY_CLIENT_METADATA : 0,
+      advertise ? "0123456789abcdef0123456789abcdef" : nullptr,
   };
   require(rpc_http2_server_init_with_metadata(&pair.server, &metadata) == 0,
           "server h2 init failed");
   client.join();
 
-  require(ready == 0, "matching builds were not accepted");
-  require(supported == advertise, "server capability was reported incorrectly");
+  require(token == (advertise ? "0123456789abcdef0123456789abcdef" : ""),
+          "bulk token was reported incorrectly");
 }
 
-void test_client_metadata_capability(bool advertise, int metadata_status) {
+void test_client_metadata_report(int metadata_status) {
   h2_pair pair;
   init_pair_sockets(&pair);
 
@@ -597,49 +597,41 @@ void test_client_metadata_capability(bool advertise, int metadata_status) {
     require(rpc_read_end(&pair.client) > 0, "follow-up response end failed");
   });
 
-  const rpc_http2_server_metadata metadata = {
-      nullptr,
-      nullptr,
-      advertise ? LUPINE_SERVER_CAPABILITY_CLIENT_METADATA : 0,
-  };
-  require(rpc_http2_server_init_with_metadata(&pair.server, &metadata) == 0,
-          "server h2 init failed");
+  require(rpc_http2_server_init(&pair.server) == 0, "server h2 init failed");
   int32_t stream_id = rpc_http2_accept_stream(&pair.server);
   require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
           "metadata stream bind failed");
 
   int op = rpc_dispatch(&pair.server, 0);
-  if (advertise) {
-    require(op == LUPINE_RPC_CLIENT_METADATA, "metadata RPC was not sent");
-    lupine_client_metadata_header header = {};
-    lupine_client_metadata received = {};
-    require(rpc_read(&pair.server, &header, sizeof(header)) == sizeof(header),
-            "metadata header read failed");
-    require(header.version == LUPINE_CLIENT_METADATA_VERSION &&
-                header.payload_size == sizeof(received),
-            "metadata header was invalid");
-    require(rpc_read(&pair.server, &received, sizeof(received)) ==
-                sizeof(received),
-            "metadata payload read failed");
-    require(received.client_pid != 0 &&
-                std::string(received.connection_kind) == "test",
-            "metadata payload was invalid");
-    int request_id = rpc_read_end(&pair.server);
-    require(request_id > 0, "metadata request end failed");
-    require(rpc_write_start_response(&pair.server, request_id) == 0 &&
-                rpc_write(&pair.server, &metadata_status,
-                          sizeof(metadata_status)) == 0 &&
-                rpc_write_end(&pair.server) == request_id,
-            "metadata response failed");
-    op = rpc_dispatch(&pair.server, 0);
-  }
+  require(op == LUPINE_RPC_CLIENT_METADATA, "metadata RPC was not sent");
+  lupine_client_metadata_header header = {};
+  lupine_client_metadata received = {};
+  require(rpc_read(&pair.server, &header, sizeof(header)) == sizeof(header),
+          "metadata header read failed");
+  require(header.version == LUPINE_CLIENT_METADATA_VERSION &&
+              header.payload_size == sizeof(received),
+          "metadata header was invalid");
+  require(rpc_read(&pair.server, &received, sizeof(received)) ==
+              sizeof(received),
+          "metadata payload read failed");
+  require(received.client_pid != 0 &&
+              std::string(received.connection_kind) == "test",
+          "metadata payload was invalid");
+  int request_id = rpc_read_end(&pair.server);
+  require(request_id > 0, "metadata request end failed");
+  require(rpc_write_start_response(&pair.server, request_id) == 0 &&
+              rpc_write(&pair.server, &metadata_status,
+                        sizeof(metadata_status)) == 0 &&
+              rpc_write_end(&pair.server) == request_id,
+          "metadata response failed");
+  op = rpc_dispatch(&pair.server, 0);
 
-  require(op == kFollowupOp, "optional metadata blocked the next RPC");
+  require(op == kFollowupOp, "metadata blocked the next RPC");
   int followup_value = 0;
   require(rpc_read(&pair.server, &followup_value, sizeof(followup_value)) ==
               sizeof(followup_value),
           "follow-up request read failed");
-  int request_id = rpc_read_end(&pair.server);
+  request_id = rpc_read_end(&pair.server);
   require(request_id > 0 && followup_value == kFollowupValue,
           "follow-up request was invalid");
   int response = followup_value + 1;
@@ -650,7 +642,7 @@ void test_client_metadata_capability(bool advertise, int metadata_status) {
   rpc_unbind_http2_stream(&pair.server);
   client.join();
 
-  require(report_result == 0, "optional metadata report failed");
+  require(report_result == 0, "metadata report failed");
   require(followup_result == kFollowupValue + 1,
           "connection did not continue after metadata");
 }
@@ -1978,11 +1970,10 @@ int main() {
 #if !defined(_WIN32) && !defined(__APPLE__)
   RUN_CASE(test_client_retries_va_conflict_on_same_connection());
 #endif
-  RUN_CASE(test_client_await_ready_reports_capabilities(true));
-  RUN_CASE(test_client_await_ready_reports_capabilities(false));
-  RUN_CASE(test_client_metadata_capability(true, 0));
-  RUN_CASE(test_client_metadata_capability(true, 3));
-  RUN_CASE(test_client_metadata_capability(false, 0));
+  RUN_CASE(test_client_await_ready_reports_bulk_token(true));
+  RUN_CASE(test_client_await_ready_reports_bulk_token(false));
+  RUN_CASE(test_client_metadata_report(0));
+  RUN_CASE(test_client_metadata_report(3));
   RUN_CASE(test_client_await_ready_reports_va_window());
   RUN_CASE(test_va_window_and_aliases_are_disjoint());
   RUN_CASE(test_va_claim_bumps_within_arena());

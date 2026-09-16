@@ -3,6 +3,7 @@
 // pointer modes with a bias epilogue, and a matrix transform, each checked
 // against a CPU reference.
 #include <cublasLt.h>
+#include <cublas_v2.h>
 #include <cuda_runtime.h>
 
 #include <cmath>
@@ -52,6 +53,191 @@ static int compare(const std::vector<float> &got, const std::vector<float> &want
   return 0;
 }
 
+// The library writes only what it reports, so bytes of the caller's buffer
+// past that keep their contents: the entries past the returned algorithm
+// count, the tile list of an algorithm without tiles, and a rejected get.
+static int test_unwritten_buffers(cublasLtHandle_t handle) {
+  constexpr int kIds = 64;
+  constexpr int kUnwritten = -7;
+  int ids[kIds];
+  for (int &id : ids) {
+    id = kUnwritten;
+  }
+  int count = 0;
+  CHECK_LT(cublasLtMatmulAlgoGetIds(handle, CUBLAS_COMPUTE_32F, CUDA_R_32F,
+                                    CUDA_R_32F, CUDA_R_32F, CUDA_R_32F,
+                                    CUDA_R_32F, kIds, ids, &count));
+  EXPECT(count > 0 && count < kIds && ids[count] == kUnwritten);
+
+  int tileless = 0;
+  for (int i = 0; i < count; ++i) {
+    cublasLtMatmulAlgo_t algo;
+    if (cublasLtMatmulAlgoInit(handle, CUBLAS_COMPUTE_32F, CUDA_R_32F,
+                               CUDA_R_32F, CUDA_R_32F, CUDA_R_32F, CUDA_R_32F,
+                               ids[i], &algo) != CUBLAS_STATUS_SUCCESS) {
+      continue;
+    }
+    size_t written = 0;
+    CHECK_LT(cublasLtMatmulAlgoCapGetAttribute(
+        &algo, CUBLASLT_ALGO_CAP_TILE_IDS, nullptr, 0, &written));
+    if (written != 0) {
+      continue;
+    }
+    int tile = kUnwritten;
+    CHECK_LT(cublasLtMatmulAlgoCapGetAttribute(
+        &algo, CUBLASLT_ALGO_CAP_TILE_IDS, &tile, sizeof(tile), &written));
+    EXPECT(written == 0 && tile == kUnwritten);
+    ++tileless;
+  }
+
+  cublasLtMatmulDescOpaque_t desc;
+  CHECK_LT(cublasLtMatmulDescInit(&desc, CUBLAS_COMPUTE_32F, CUDA_R_32F));
+  const uint64_t filled = 0x7f7f7f7f7f7f7f7fULL;
+  uint64_t wide = filled;
+  if (cublasLtMatmulDescGetAttribute(&desc, CUBLASLT_MATMUL_DESC_TRANSA, &wide,
+                                     sizeof(wide), nullptr) !=
+      CUBLAS_STATUS_SUCCESS) {
+    EXPECT(wide == filled);
+  }
+  printf("unwritten buffers: passed (%d algorithms without tiles)\n",
+         tileless);
+  return 0;
+}
+
+#if CUBLAS_VERSION >= 130100
+// A matmul descriptor names its emulation descriptor by address: the emulated
+// DGEMM must see the caller's settings, a get must return the caller's
+// address, and a later change to the emulation descriptor must still apply.
+static int test_emulated_dgemm(cublasLtHandle_t handle) {
+  constexpr int m = 16;
+  constexpr int k = 24;
+  constexpr int n = 12;
+  std::vector<double> a(static_cast<size_t>(m) * k);
+  std::vector<double> b(static_cast<size_t>(k) * n);
+  for (size_t i = 0; i < a.size(); ++i) {
+    a[i] = static_cast<double>((i * 5) % 17) / 3.0 - 2.0;
+  }
+  for (size_t i = 0; i < b.size(); ++i) {
+    b[i] = static_cast<double>((i * 11) % 7) - 3.0;
+  }
+  const double alpha = 2.0;
+  const double beta = 0.0;
+  std::vector<double> reference(static_cast<size_t>(m) * n);
+  for (int j = 0; j < n; ++j) {
+    for (int i = 0; i < m; ++i) {
+      double sum = 0.0;
+      for (int p = 0; p < k; ++p) {
+        sum += a[static_cast<size_t>(p) * m + i] * b[static_cast<size_t>(j) * k + p];
+      }
+      reference[static_cast<size_t>(j) * m + i] = alpha * sum;
+    }
+  }
+
+  cublasLtEmulationDescOpaque_t emulation;
+  CHECK_LT(cublasLtEmulationDescInit(&emulation));
+  const cublasEmulationStrategy_t strategy = CUBLAS_EMULATION_STRATEGY_EAGER;
+  CHECK_LT(cublasLtEmulationDescSetAttribute(
+      &emulation, CUBLASLT_EMULATION_DESC_STRATEGY, &strategy,
+      sizeof(strategy)));
+  cublasLtMatmulDescOpaque_t operation;
+  CHECK_LT(cublasLtMatmulDescInit(
+      &operation, CUBLAS_COMPUTE_64F_EMULATED_FIXEDPOINT, CUDA_R_64F));
+  cublasLtEmulationDesc_t attached = &emulation;
+  CHECK_LT(cublasLtMatmulDescSetAttribute(
+      &operation, CUBLASLT_MATMUL_DESC_EMULATION_DESCRIPTOR, &attached,
+      sizeof(attached)));
+  cublasLtEmulationDesc_t readback = nullptr;
+  CHECK_LT(cublasLtMatmulDescGetAttribute(
+      &operation, CUBLASLT_MATMUL_DESC_EMULATION_DESCRIPTOR, &readback,
+      sizeof(readback), nullptr));
+  EXPECT(readback == &emulation);
+  const int mantissa_bits = 55;
+  CHECK_LT(cublasLtEmulationDescSetAttribute(
+      &emulation, CUBLASLT_EMULATION_DESC_FIXEDPOINT_MAX_MANTISSA_BIT_COUNT,
+      &mantissa_bits, sizeof(mantissa_bits)));
+
+  cublasLtMatrixLayoutOpaque_t layout_a, layout_b, layout_c;
+  CHECK_LT(cublasLtMatrixLayoutInit(&layout_a, CUDA_R_64F, m, k, m));
+  CHECK_LT(cublasLtMatrixLayoutInit(&layout_b, CUDA_R_64F, k, n, k));
+  CHECK_LT(cublasLtMatrixLayoutInit(&layout_c, CUDA_R_64F, m, n, m));
+  constexpr size_t kWorkspace = 256u << 20;
+  cublasLtMatmulPreferenceOpaque_t preference;
+  CHECK_LT(cublasLtMatmulPreferenceInit(&preference));
+  CHECK_LT(cublasLtMatmulPreferenceSetAttribute(
+      &preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &kWorkspace,
+      sizeof(kWorkspace)));
+  cublasLtMatmulHeuristicResult_t heuristic = {};
+  int found = 0;
+  CHECK_LT(cublasLtMatmulAlgoGetHeuristic(handle, &operation, &layout_a,
+                                          &layout_b, &layout_c, &layout_c,
+                                          &preference, 1, &heuristic, &found));
+  EXPECT(found == 1);
+
+  double *device_a = nullptr;
+  double *device_b = nullptr;
+  double *device_c = nullptr;
+  void *workspace = nullptr;
+  CHECK_CUDA(cudaMalloc(&device_a, a.size() * sizeof(double)));
+  CHECK_CUDA(cudaMalloc(&device_b, b.size() * sizeof(double)));
+  CHECK_CUDA(cudaMalloc(&device_c, reference.size() * sizeof(double)));
+  CHECK_CUDA(cudaMalloc(&workspace, kWorkspace));
+  CHECK_CUDA(cudaMemcpy(device_a, a.data(), a.size() * sizeof(double),
+                        cudaMemcpyHostToDevice));
+  CHECK_CUDA(cudaMemcpy(device_b, b.data(), b.size() * sizeof(double),
+                        cudaMemcpyHostToDevice));
+  CHECK_LT(cublasLtMatmul(handle, &operation, &alpha, device_a, &layout_a,
+                          device_b, &layout_b, &beta, device_c, &layout_c,
+                          device_c, &layout_c, &heuristic.algo, workspace,
+                          kWorkspace, nullptr));
+  std::vector<double> c(reference.size());
+  CHECK_CUDA(cudaMemcpy(c.data(), device_c, c.size() * sizeof(double),
+                        cudaMemcpyDeviceToHost));
+  for (size_t i = 0; i < c.size(); ++i) {
+    EXPECT(std::fabs(c[i] - reference[i]) <= 1e-9 * (1.0 + std::fabs(reference[i])));
+  }
+  CHECK_CUDA(cudaFree(device_a));
+  CHECK_CUDA(cudaFree(device_b));
+  CHECK_CUDA(cudaFree(device_c));
+  CHECK_CUDA(cudaFree(workspace));
+  printf("emulated dgemm: passed\n");
+  return 0;
+}
+#endif
+
+// NVIDIA's libraries name one object with two types: a cublasHandle_t is
+// accepted wherever a cublasLtHandle_t is, which is how PyTorch reaches
+// cuBLASLt (getCurrentCUDABlasLtHandle casts the cuBLAS handle it already
+// holds). The two shims are separate objects, so this only holds while they
+// agree on the owner; nothing else in this file would notice them diverging.
+static int test_cublas_handle_reused_as_lt() {
+  cublasHandle_t blas = nullptr;
+  if (cublasCreate(&blas) != CUBLAS_STATUS_SUCCESS) {
+    fprintf(stderr, "cublasCreate failed\n");
+    return 1;
+  }
+  cublasLtMatmulDesc_t operation = nullptr;
+  cublasLtMatrixLayout_t layout = nullptr;
+  cublasLtMatmulPreference_t preference = nullptr;
+  cublasLtMatmulHeuristicResult_t result{};
+  int returned = 0;
+  CHECK_LT(cublasLtMatmulDescCreate(&operation, CUBLAS_COMPUTE_32F, CUDA_R_32F));
+  CHECK_LT(cublasLtMatrixLayoutCreate(&layout, CUDA_R_32F, 64, 64, 64));
+  CHECK_LT(cublasLtMatmulPreferenceCreate(&preference));
+  CHECK_LT(cublasLtMatmulAlgoGetHeuristic(
+      reinterpret_cast<cublasLtHandle_t>(blas), operation, layout, layout,
+      layout, layout, preference, 1, &result, &returned));
+  EXPECT(returned == 1);
+  CHECK_LT(cublasLtMatmulPreferenceDestroy(preference));
+  CHECK_LT(cublasLtMatrixLayoutDestroy(layout));
+  CHECK_LT(cublasLtMatmulDescDestroy(operation));
+  if (cublasDestroy(blas) != CUBLAS_STATUS_SUCCESS) {
+    fprintf(stderr, "cublasDestroy failed\n");
+    return 1;
+  }
+  printf("cublas handle reused as cublasLt: passed\n");
+  return 0;
+}
+
 int main() {
   cublasLtHandle_t handle = nullptr;
   CHECK_LT(cublasLtCreate(&handle));
@@ -60,6 +246,17 @@ int main() {
                 "CUBLAS_STATUS_SUCCESS") == 0);
   printf("cuBLASLt %zu, runtime %zu\n", cublasLtGetVersion(),
          cublasLtGetCudartVersion());
+  if (test_unwritten_buffers(handle) != 0) {
+    return 1;
+  }
+  if (test_cublas_handle_reused_as_lt() != 0) {
+    return 1;
+  }
+#if CUBLAS_VERSION >= 130100
+  if (test_emulated_dgemm(handle) != 0) {
+    return 1;
+  }
+#endif
 
   // Column-major D = alpha * A(m x k) * B(k x n) + beta * C + bias.
   constexpr int m = 64;

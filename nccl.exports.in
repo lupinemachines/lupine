@@ -1,0 +1,9 @@
+/* NVIDIA's libnccl exports its symbols unversioned, the profiling aliases
+   included. */
+{
+  global:
+    nccl*;
+    pnccl*;
+  local:
+    *;
+};

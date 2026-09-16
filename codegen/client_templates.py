@@ -25,6 +25,14 @@ def _definition_body(source: str, path: str, name: str, return_type: str) -> str
     return source[body_start:body_end]
 
 
+def _void_call_sections(body: str, name: str) -> tuple[str, str]:
+    marker = f"  {GENERATED_CALL_MARKER}();"
+    if body.count(marker) != 1:
+        raise RuntimeError(f"{name}: expected exactly one `{marker.strip()}`")
+    before_call, after_call = body.split(marker)
+    return before_call, after_call
+
+
 def collect_client_call_templates(
     path: str, definition_return_types: dict[str, str]
 ) -> dict[str, ClientCallTemplate]:
@@ -32,6 +40,14 @@ def collect_client_call_templates(
     templates = {}
     for name, return_type in definition_return_types.items():
         body = _definition_body(source, path, name, return_type)
+        if return_type == "void":
+            before_call, after_call = _void_call_sections(body, name)
+            templates[name] = ClientCallTemplate(
+                return_type=return_type,
+                before_call=_template_section(before_call),
+                after_call=_template_section(after_call),
+            )
+            continue
         marker = f"  {return_type} return_value = {GENERATED_CALL_MARKER}();"
         if body.count(marker) != 1:
             raise RuntimeError(

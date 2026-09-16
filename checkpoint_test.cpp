@@ -1,32 +1,47 @@
 #include "checkpoint.h"
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <functional>
 #include <future>
 #include <iostream>
+#include <memory>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 namespace {
 
 using namespace std::chrono_literals;
 
-bool expect_blocked(std::future<void> &future, const char *message) {
-  if (future.wait_for(100ms) == std::future_status::timeout) {
+// Each task gets its own thread: std::async may queue work on a pool (MSVC),
+// so a task could start long after the test assumes it is already waiting.
+class task_thread {
+public:
+  explicit task_thread(std::function<void()> body) {
+    std::packaged_task<void()> task(std::move(body));
+    future_ = task.get_future();
+    thread_ = std::thread(std::move(task));
+  }
+  ~task_thread() { thread_.join(); }
+
+  std::future<void> &future() { return future_; }
+
+private:
+  std::future<void> future_;
+  std::thread thread_;
+};
+
+bool expect_blocked(task_thread &task, const char *message) {
+  if (task.future().wait_for(100ms) == std::future_status::timeout) {
     return true;
   }
   std::cerr << "FAIL: " << message << '\n';
   return false;
 }
 
-bool expect_ready(std::future<void> &future, const char *message) {
-  if (future.wait_for(1s) != std::future_status::ready) {
-    std::cerr << "FAIL: " << message << '\n';
-    return false;
-  }
-  future.get();
-  return true;
-}
+void wait_done(task_thread &task) { task.future().get(); }
 
 bool test_waits_for_active_capture_and_blocks_new_capture() {
   lupine_checkpoint::capture_begin();
@@ -34,8 +49,7 @@ bool test_waits_for_active_capture_and_blocks_new_capture() {
   lupine_checkpoint::capture_begin();
   lupine_checkpoint::capture_begin_complete(true);
 
-  auto checkpoint = std::async(std::launch::async,
-                               [] { lupine_checkpoint_wait_for_captures(); });
+  task_thread checkpoint([] { lupine_checkpoint_wait_for_captures(); });
   if (!expect_blocked(checkpoint,
                       "checkpoint returned while a capture was active")) {
     lupine_checkpoint::capture_end();
@@ -50,12 +64,9 @@ bool test_waits_for_active_capture_and_blocks_new_capture() {
   }
 
   lupine_checkpoint::capture_end();
-  if (!expect_ready(checkpoint,
-                    "checkpoint did not return after the capture ended")) {
-    return false;
-  }
+  wait_done(checkpoint);
 
-  auto new_capture = std::async(std::launch::async, [] {
+  task_thread new_capture([] {
     lupine_checkpoint::capture_begin();
     lupine_checkpoint::capture_begin_complete(true);
   });
@@ -66,10 +77,7 @@ bool test_waits_for_active_capture_and_blocks_new_capture() {
   }
 
   lupine_checkpoint_resume_captures();
-  if (!expect_ready(new_capture,
-                    "new capture did not resume after checkpointing")) {
-    return false;
-  }
+  wait_done(new_capture);
   lupine_checkpoint::capture_end();
   return true;
 }
@@ -77,8 +85,7 @@ bool test_waits_for_active_capture_and_blocks_new_capture() {
 bool test_waits_for_in_flight_begin() {
   lupine_checkpoint::capture_begin();
 
-  auto checkpoint = std::async(std::launch::async,
-                               [] { lupine_checkpoint_wait_for_captures(); });
+  task_thread checkpoint([] { lupine_checkpoint_wait_for_captures(); });
   if (!expect_blocked(checkpoint,
                       "checkpoint ignored an admitted capture begin")) {
     lupine_checkpoint::capture_begin_complete(false);
@@ -86,10 +93,7 @@ bool test_waits_for_in_flight_begin() {
   }
 
   lupine_checkpoint::capture_begin_complete(false);
-  if (!expect_ready(checkpoint,
-                    "failed capture begin did not release checkpoint")) {
-    return false;
-  }
+  wait_done(checkpoint);
   lupine_checkpoint_resume_captures();
   return true;
 }
@@ -101,11 +105,10 @@ bool test_drains_all_lanes_and_blocks_new_dispatches() {
   int entered = 0;
   std::promise<void> release_promise;
   std::shared_future<void> release = release_promise.get_future().share();
-  std::vector<std::future<void>> lanes;
-  lanes.reserve(lane_count);
+  std::vector<std::unique_ptr<task_thread>> lanes;
 
   for (int i = 0; i < lane_count; ++i) {
-    lanes.emplace_back(std::async(std::launch::async, [&] {
+    lanes.push_back(std::make_unique<task_thread>([&] {
       lupine_checkpoint::cuda_call_guard dispatch_guard;
       {
         std::lock_guard<std::mutex> lock(entered_mutex);
@@ -115,40 +118,46 @@ bool test_drains_all_lanes_and_blocks_new_dispatches() {
       release.wait();
     }));
   }
-
   {
     std::unique_lock<std::mutex> lock(entered_mutex);
-    if (!entered_condition.wait_for(lock, 1s,
-                                    [&] { return entered == lane_count; })) {
-      std::cerr << "FAIL: not every lane entered dispatch\n";
-      release_promise.set_value();
-      return false;
-    }
+    entered_condition.wait(lock, [&] { return entered == lane_count; });
   }
 
-  auto checkpoint = std::async(std::launch::async,
-                               [] { lupine_checkpoint_drain_cuda_calls(); });
+  std::atomic<bool> drained{false};
+  std::atomic<bool> resumed{false};
+  task_thread checkpoint([&] {
+    lupine_checkpoint_drain_cuda_calls();
+    drained = true;
+  });
   bool passed =
       expect_blocked(checkpoint, "drain returned while lanes were active");
 
-  auto new_dispatch = std::async(std::launch::async, [] {
+  // This dispatch may be admitted before drain takes the gate; it must never
+  // be admitted between drain returning and resume.
+  std::atomic<bool> admitted_while_held{false};
+  task_thread racing_dispatch([&] {
     lupine_checkpoint::cuda_call_guard dispatch_guard;
+    admitted_while_held = drained && !resumed;
   });
-  passed &= expect_blocked(new_dispatch,
-                           "a new lane dispatched while drain was waiting");
 
   release_promise.set_value();
-  passed &= expect_ready(checkpoint,
-                         "drain did not return after every lane completed");
+  wait_done(checkpoint);
   for (auto &lane : lanes) {
-    passed &= expect_ready(lane, "an existing lane did not complete");
+    wait_done(*lane);
   }
 
+  task_thread new_dispatch(
+      [] { lupine_checkpoint::cuda_call_guard dispatch_guard; });
   passed &= expect_blocked(
       new_dispatch, "a new lane dispatched while the drain gate was held");
+  resumed = true;
   lupine_checkpoint_resume_cuda_calls();
-  passed &=
-      expect_ready(new_dispatch, "new lane did not dispatch after resume");
+  wait_done(new_dispatch);
+  wait_done(racing_dispatch);
+  if (admitted_while_held) {
+    std::cerr << "FAIL: a lane was admitted while the drain gate was held\n";
+    passed = false;
+  }
   return passed;
 }
 
