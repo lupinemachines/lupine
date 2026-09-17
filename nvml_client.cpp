@@ -396,6 +396,9 @@ nvmlReturn_t call_device_register_events(nvmlDevice_t device,
 #ifdef nvmlDeviceGetPciInfo
 #undef nvmlDeviceGetPciInfo
 #endif
+#ifdef nvmlDeviceGetNvLinkRemotePciInfo
+#undef nvmlDeviceGetNvLinkRemotePciInfo
+#endif
 #ifdef nvmlDeviceGetComputeRunningProcesses
 #undef nvmlDeviceGetComputeRunningProcesses
 #endif
@@ -699,6 +702,49 @@ extern "C" nvmlReturn_t nvmlDeviceGetPciInfo_v2(nvmlDevice_t device,
 extern "C" nvmlReturn_t nvmlDeviceGetPciInfo(nvmlDevice_t device,
                                              nvmlPciInfo_t *pci) {
   return nvmlDeviceGetPciInfo_v3(device, pci);
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetNvLinkRemotePciInfo(nvmlDevice_t device,
+                                                         unsigned int link,
+                                                         nvmlPciInfo_t *pci) {
+  return nvmlDeviceGetNvLinkRemotePciInfo_v2(device, link, pci);
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetP2PStatus(nvmlDevice_t device1,
+                                               nvmlDevice_t device2,
+                                               nvmlGpuP2PCapsIndex_t p2pIndex,
+                                               nvmlGpuP2PStatus_t *p2pStatus) {
+  if (p2pStatus == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  nvmlReturn_t result = ensure_devices();
+  if (result != NVML_SUCCESS) {
+    return result;
+  }
+  auto *first = mapped_device(device1);
+  auto *second = mapped_device(device2);
+  if (first == nullptr || second == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  if (first->conn_index != second->conn_index) {
+    // Two servers never peer with each other, and an error here would fail
+    // NCCL's whole NVML init rather than just this pair.
+    *p2pStatus = NVML_P2P_STATUS_NOT_SUPPORTED;
+    return NVML_SUCCESS;
+  }
+  conn_t *c = connection(first->conn_index);
+  result = rpc_error();
+  if (c == nullptr ||
+      rpc_write_start_request(c, RPC_nvmlDeviceGetP2PStatus) < 0 ||
+      rpc_write(c, &first->remote_device, sizeof(first->remote_device)) < 0 ||
+      rpc_write(c, &second->remote_device, sizeof(second->remote_device)) < 0 ||
+      rpc_write(c, &p2pIndex, sizeof(p2pIndex)) < 0 ||
+      rpc_wait_for_response(c) < 0 ||
+      rpc_read(c, p2pStatus, sizeof(*p2pStatus)) < 0 ||
+      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
+    return rpc_error();
+  }
+  return result;
 }
 
 extern "C" nvmlReturn_t nvmlDeviceGetComputeRunningProcesses(

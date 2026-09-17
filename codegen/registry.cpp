@@ -44,6 +44,9 @@
 #ifdef LUPINE_BUILD_NPP_BACKEND
 #include <npp.h>
 #endif
+#ifdef LUPINE_BUILD_NVML_BACKEND
+#include <nvml.h>
+#endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
@@ -259,6 +262,7 @@
   HANDLER(RPC_cuMemGetAccess, handle_cuMemGetAccess, rpc_backend::cuda) \
   HANDLER(RPC_cuMemGetAllocationGranularity, handle_cuMemGetAllocationGranularity, rpc_backend::cuda) \
   HANDLER(RPC_cuMemGetAllocationPropertiesFromHandle, handle_cuMemGetAllocationPropertiesFromHandle, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemRetainAllocationHandle, handle_cuMemRetainAllocationHandle, rpc_backend::cuda) \
   HANDLER(RPC_cuMemFreeAsync, handle_cuMemFreeAsync, rpc_backend::cuda) \
   HANDLER(RPC_cuMemAllocAsync, handle_cuMemAllocAsync, rpc_backend::cuda) \
   HANDLER(RPC_cuMemPoolTrimTo, handle_cuMemPoolTrimTo, rpc_backend::cuda) \
@@ -8977,7 +8981,12 @@
   HANDLER(RPC_nvmlDeviceIsMigDeviceHandle, handle_nvmlDeviceIsMigDeviceHandle, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetNvLinkRemoteDeviceType, handle_nvmlDeviceGetNvLinkRemoteDeviceType, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetNvLinkRemotePciInfo_v2, handle_nvmlDeviceGetNvLinkRemotePciInfo_v2, rpc_backend::nvml) \
-  HANDLER(RPC_nvmlDeviceGetCudaComputeCapability, handle_nvmlDeviceGetCudaComputeCapability, rpc_backend::nvml)
+  HANDLER(RPC_nvmlDeviceGetCudaComputeCapability, handle_nvmlDeviceGetCudaComputeCapability, rpc_backend::nvml) \
+  HANDLER(RPC_nvmlDeviceGetNvLinkState, handle_nvmlDeviceGetNvLinkState, rpc_backend::nvml) \
+  HANDLER(RPC_nvmlDeviceGetNvLinkCapability, handle_nvmlDeviceGetNvLinkCapability, rpc_backend::nvml) \
+  HANDLER(RPC_nvmlDeviceGetP2PStatus, handle_nvmlDeviceGetP2PStatus, rpc_backend::nvml) \
+  HANDLER(RPC_nvmlDeviceGetFieldValues, handle_nvmlDeviceGetFieldValues, rpc_backend::nvml) \
+  HANDLER(RPC_nvmlDeviceGetPcieLinkMaxSpeed, handle_nvmlDeviceGetPcieLinkMaxSpeed, rpc_backend::nvml)
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_hipInit, handle_hipInit, rpc_backend::hip) \
   HANDLER(RPC_hipGetDeviceCount, handle_hipGetDeviceCount, rpc_backend::hip) \
@@ -37889,7 +37898,27 @@ LUPINE_DECLARE_HANDLER(RPC_nppsAverageRelativeErrorGetBufferSize_64fc,
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-
+#if defined(nvmlPciInfoExt_v1)
+LUPINE_DECLARE_HANDLER(RPC_nvmlDeviceGetPciInfoExt,
+                       handle_nvmlDeviceGetPciInfoExt, rpc_backend::nvml)
+#endif
+#if defined(nvmlGpuFabricInfo_v2)
+LUPINE_DECLARE_HANDLER(RPC_nvmlDeviceGetGpuFabricInfoV,
+                       handle_nvmlDeviceGetGpuFabricInfoV, rpc_backend::nvml)
+#endif
+#if defined(nvmlPlatformInfo_v1)
+LUPINE_DECLARE_HANDLER(RPC_nvmlDeviceGetPlatformInfo,
+                       handle_nvmlDeviceGetPlatformInfo, rpc_backend::nvml)
+#endif
+#if CUDA_VERSION >= 12040
+LUPINE_DECLARE_HANDLER(RPC_nvmlSystemGetConfComputeState,
+                       handle_nvmlSystemGetConfComputeState, rpc_backend::nvml)
+#endif
+#if defined(nvmlSystemConfComputeSettings_v1)
+LUPINE_DECLARE_HANDLER(RPC_nvmlSystemGetConfComputeSettings,
+                       handle_nvmlSystemGetConfComputeSettings,
+                       rpc_backend::nvml)
+#endif
 #endif
 #ifdef LUPINE_BUILD_HIP_BACKEND
 LUPINE_HIP_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -58292,7 +58321,21 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-
+#if defined(nvmlPciInfoExt_v1)
+      LUPINE_REGISTER_HANDLER(RPC_nvmlDeviceGetPciInfoExt, handle_nvmlDeviceGetPciInfoExt, rpc_backend::nvml)
+#endif
+#if defined(nvmlGpuFabricInfo_v2)
+      LUPINE_REGISTER_HANDLER(RPC_nvmlDeviceGetGpuFabricInfoV, handle_nvmlDeviceGetGpuFabricInfoV, rpc_backend::nvml)
+#endif
+#if defined(nvmlPlatformInfo_v1)
+      LUPINE_REGISTER_HANDLER(RPC_nvmlDeviceGetPlatformInfo, handle_nvmlDeviceGetPlatformInfo, rpc_backend::nvml)
+#endif
+#if CUDA_VERSION >= 12040
+      LUPINE_REGISTER_HANDLER(RPC_nvmlSystemGetConfComputeState, handle_nvmlSystemGetConfComputeState, rpc_backend::nvml)
+#endif
+#if defined(nvmlSystemConfComputeSettings_v1)
+      LUPINE_REGISTER_HANDLER(RPC_nvmlSystemGetConfComputeSettings, handle_nvmlSystemGetConfComputeSettings, rpc_backend::nvml)
+#endif
 #endif
 #ifdef LUPINE_BUILD_HIP_BACKEND
       LUPINE_HIP_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)

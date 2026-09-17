@@ -1185,3 +1185,250 @@ extern "C" nvmlReturn_t nvmlDeviceGetCudaComputeCapability(nvmlDevice_t device,
   return lupine_rpc_nvmlDeviceGetCudaComputeCapability(conn, device, major,
                                                        minor);
 }
+
+static nvmlReturn_t
+lupine_rpc_nvmlDeviceGetNvLinkState(conn_t *conn, nvmlDevice_t device,
+                                    unsigned int link,
+                                    nvmlEnableState_t *isActive) {
+  nvmlReturn_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_nvmlDeviceGetNvLinkState) < 0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, &link, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, isActive, sizeof(nvmlEnableState_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetNvLinkState(nvmlDevice_t device,
+                                                 unsigned int link,
+                                                 nvmlEnableState_t *isActive) {
+  if (isActive == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetNvLinkState(conn, device, link, isActive);
+}
+
+static nvmlReturn_t lupine_rpc_nvmlDeviceGetNvLinkCapability(
+    conn_t *conn, nvmlDevice_t device, unsigned int link,
+    nvmlNvLinkCapability_t capability, unsigned int *capResult) {
+  nvmlReturn_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_nvmlDeviceGetNvLinkCapability) < 0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, &link, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &capability, sizeof(nvmlNvLinkCapability_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, capResult, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t
+nvmlDeviceGetNvLinkCapability(nvmlDevice_t device, unsigned int link,
+                              nvmlNvLinkCapability_t capability,
+                              unsigned int *capResult) {
+  if (capResult == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetNvLinkCapability(conn, device, link,
+                                                  capability, capResult);
+}
+
+static nvmlReturn_t
+lupine_rpc_nvmlDeviceGetFieldValues(conn_t *conn, nvmlDevice_t device,
+                                    int valuesCount, nvmlFieldValue_t *values) {
+  nvmlReturn_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_nvmlDeviceGetFieldValues) < 0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, &valuesCount, sizeof(int)) < 0 ||
+      rpc_write(conn, values, valuesCount * sizeof(nvmlFieldValue_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (valuesCount * sizeof(nvmlFieldValue_t) != 0 &&
+       rpc_read(conn, values, valuesCount * sizeof(nvmlFieldValue_t)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetFieldValues(nvmlDevice_t device,
+                                                 int valuesCount,
+                                                 nvmlFieldValue_t *values) {
+  if (valuesCount < 0 ||
+      (valuesCount * sizeof(nvmlFieldValue_t) != 0 && values == nullptr)) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetFieldValues(conn, device, valuesCount, values);
+}
+
+static nvmlReturn_t
+lupine_rpc_nvmlDeviceGetPcieLinkMaxSpeed(conn_t *conn, nvmlDevice_t device,
+                                         unsigned int *maxSpeed) {
+  nvmlReturn_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_nvmlDeviceGetPcieLinkMaxSpeed) < 0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, maxSpeed, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetPcieLinkMaxSpeed(nvmlDevice_t device,
+                                                      unsigned int *maxSpeed) {
+  if (maxSpeed == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetPcieLinkMaxSpeed(conn, device, maxSpeed);
+}
+
+#if defined(nvmlPciInfoExt_v1)
+static nvmlReturn_t lupine_rpc_nvmlDeviceGetPciInfoExt(conn_t *conn,
+                                                       nvmlDevice_t device,
+                                                       nvmlPciInfoExt_t *pci) {
+  nvmlReturn_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_nvmlDeviceGetPciInfoExt) < 0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, pci, sizeof(nvmlPciInfoExt_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, pci, sizeof(nvmlPciInfoExt_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetPciInfoExt(nvmlDevice_t device,
+                                                nvmlPciInfoExt_t *pci) {
+  if (pci == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetPciInfoExt(conn, device, pci);
+}
+
+#endif
+
+#if defined(nvmlGpuFabricInfo_v2)
+static nvmlReturn_t
+lupine_rpc_nvmlDeviceGetGpuFabricInfoV(conn_t *conn, nvmlDevice_t device,
+                                       nvmlGpuFabricInfoV_t *gpuFabricInfo) {
+  nvmlReturn_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_nvmlDeviceGetGpuFabricInfoV) < 0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, gpuFabricInfo, sizeof(nvmlGpuFabricInfoV_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, gpuFabricInfo, sizeof(nvmlGpuFabricInfoV_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t
+nvmlDeviceGetGpuFabricInfoV(nvmlDevice_t device,
+                            nvmlGpuFabricInfoV_t *gpuFabricInfo) {
+  if (gpuFabricInfo == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetGpuFabricInfoV(conn, device, gpuFabricInfo);
+}
+
+#endif
+
+#if defined(nvmlPlatformInfo_v1)
+static nvmlReturn_t
+lupine_rpc_nvmlDeviceGetPlatformInfo(conn_t *conn, nvmlDevice_t device,
+                                     nvmlPlatformInfo_t *platformInfo) {
+  nvmlReturn_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_nvmlDeviceGetPlatformInfo) < 0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, platformInfo, sizeof(nvmlPlatformInfo_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, platformInfo, sizeof(nvmlPlatformInfo_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t
+nvmlDeviceGetPlatformInfo(nvmlDevice_t device,
+                          nvmlPlatformInfo_t *platformInfo) {
+  if (platformInfo == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetPlatformInfo(conn, device, platformInfo);
+}
+
+#endif
+
+#if CUDA_VERSION >= 12040
+static nvmlReturn_t
+lupine_rpc_nvmlSystemGetConfComputeState(conn_t *conn,
+                                         nvmlConfComputeSystemState_t *state) {
+  nvmlReturn_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_nvmlSystemGetConfComputeState) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, state, sizeof(nvmlConfComputeSystemState_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t
+nvmlSystemGetConfComputeState(nvmlConfComputeSystemState_t *state) {
+  if (state == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection();
+  return lupine_rpc_nvmlSystemGetConfComputeState(conn, state);
+}
+
+#endif
+
+#if defined(nvmlSystemConfComputeSettings_v1)
+static nvmlReturn_t lupine_rpc_nvmlSystemGetConfComputeSettings(
+    conn_t *conn, nvmlSystemConfComputeSettings_t *settings) {
+  nvmlReturn_t return_value = rpc_error();
+  if (rpc_write_start_request(conn, RPC_nvmlSystemGetConfComputeSettings) < 0 ||
+      rpc_write(conn, settings, sizeof(nvmlSystemConfComputeSettings_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, settings, sizeof(nvmlSystemConfComputeSettings_t)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t
+nvmlSystemGetConfComputeSettings(nvmlSystemConfComputeSettings_t *settings) {
+  if (settings == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection();
+  return lupine_rpc_nvmlSystemGetConfComputeSettings(conn, settings);
+}
+
+#endif

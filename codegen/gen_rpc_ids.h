@@ -155,6 +155,7 @@
 #define RPC_cuMemImportFromShareableHandle 956879964
 #define RPC_cuMemGetAllocationGranularity 456804952
 #define RPC_cuMemGetAllocationPropertiesFromHandle 1832377395
+#define RPC_cuMemRetainAllocationHandle 1903553150
 #define RPC_cuMemFreeAsync 121394514
 #define RPC_cuMemAllocAsync 1816490266
 #define RPC_cuMemPoolTrimTo 1437163825
@@ -406,7 +407,6 @@
 #define RPC_cuMemPoolGetAttribute 830843819
 #define RPC_cuMemPoolSetAttribute 1050377512
 #define RPC_cuMemPrefetchAsync 596440383
-#define RPC_cuMemRetainAllocationHandle 1903553150
 #define RPC_cuMemcpyAtoHAsync_v2 1591028942
 #define RPC_cuParamSetv 1622049063
 #define RPC_cuPointerGetAttribute 599464150
@@ -478,6 +478,16 @@
 #define RPC_nvmlDeviceGetNvLinkRemoteDeviceType 65527014
 #define RPC_nvmlDeviceGetNvLinkRemotePciInfo_v2 1998574024
 #define RPC_nvmlDeviceGetCudaComputeCapability 1264755594
+#define RPC_nvmlDeviceGetNvLinkState 158654964
+#define RPC_nvmlDeviceGetNvLinkCapability 238727400
+#define RPC_nvmlDeviceGetP2PStatus 1103385609
+#define RPC_nvmlDeviceGetFieldValues 1834656270
+#define RPC_nvmlDeviceGetPcieLinkMaxSpeed 468881907
+#define RPC_nvmlDeviceGetPciInfoExt 270068115
+#define RPC_nvmlDeviceGetGpuFabricInfoV 1323581072
+#define RPC_nvmlDeviceGetPlatformInfo 574271545
+#define RPC_nvmlSystemGetConfComputeState 529302953
+#define RPC_nvmlSystemGetConfComputeSettings 1922014401
 #define RPC_hipInit 874444791
 #define RPC_hipGetDeviceCount 1401409107
 #define RPC_hipDeviceGet 1529875909

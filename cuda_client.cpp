@@ -155,10 +155,12 @@ struct lupine_module_function_record {
   std::unordered_map<int, CUfunction> functions_by_route;
 };
 
-static CUresult lupine_read_func_param_sizes(CUfunction function,
-                                             std::vector<size_t> *sizes);
-static CUresult lupine_read_kernel_param_sizes(CUkernel kernel,
-                                               std::vector<size_t> *sizes);
+static CUresult
+lupine_read_func_param_sizes(CUfunction function, std::vector<size_t> *sizes,
+                             std::vector<size_t> *offsets = nullptr);
+static CUresult
+lupine_read_kernel_param_sizes(CUkernel kernel, std::vector<size_t> *sizes,
+                               std::vector<size_t> *offsets = nullptr);
 static CUresult lupine_warm_func_param_info(CUfunction function);
 static CUresult lupine_warm_kernel_param_info(CUkernel kernel);
 
@@ -5605,8 +5607,12 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
 }
 
 static CUresult lupine_read_func_param_sizes(CUfunction function,
-                                             std::vector<size_t> *sizes) {
+                                             std::vector<size_t> *sizes,
+                                             std::vector<size_t> *offsets) {
   sizes->clear();
+  if (offsets != nullptr) {
+    offsets->clear();
+  }
   for (uint32_t i = 0;; ++i) {
     size_t offset;
     size_t size;
@@ -5621,12 +5627,19 @@ static CUresult lupine_read_func_param_sizes(CUfunction function,
       return result;
     }
     sizes->push_back(size);
+    if (offsets != nullptr) {
+      offsets->push_back(offset);
+    }
   }
 }
 
 static CUresult lupine_read_kernel_param_sizes(CUkernel kernel,
-                                               std::vector<size_t> *sizes) {
+                                               std::vector<size_t> *sizes,
+                                               std::vector<size_t> *offsets) {
   sizes->clear();
+  if (offsets != nullptr) {
+    offsets->clear();
+  }
   for (uint32_t i = 0;; ++i) {
     size_t offset;
     size_t size;
@@ -5641,7 +5654,49 @@ static CUresult lupine_read_kernel_param_sizes(CUkernel kernel,
       return result;
     }
     sizes->push_back(size);
+    if (offsets != nullptr) {
+      offsets->push_back(offset);
+    }
   }
+}
+
+// The parameter-buffer launch form hands the driver one packed blob, but the
+// wire carries each argument on its own, so split the blob at the offsets the
+// kernel's signature puts them at. The caller may pass fewer bytes than the
+// signature declares (NCCL does), and the driver leaves the rest untouched, so
+// stage the blob in storage the size of the whole parameter space. The
+// pointers refer to that storage, which the caller keeps until the launch has
+// been written.
+static CUresult lupine_params_from_param_buffer(
+    void **extra, const std::vector<size_t> &offsets,
+    const std::vector<size_t> &sizes, std::vector<char> *storage,
+    std::vector<void *> *kernel_params) {
+  const char *buffer = nullptr;
+  size_t buffer_size = 0;
+  for (size_t i = 0; extra[i] != CU_LAUNCH_PARAM_END; i += 2) {
+    if (extra[i] == CU_LAUNCH_PARAM_BUFFER_POINTER) {
+      buffer = static_cast<const char *>(extra[i + 1]);
+    } else if (extra[i] == CU_LAUNCH_PARAM_BUFFER_SIZE) {
+      buffer_size = *static_cast<const size_t *>(extra[i + 1]);
+    } else {
+      return CUDA_ERROR_INVALID_VALUE;
+    }
+  }
+  if (buffer == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  size_t declared = 0;
+  for (size_t i = 0; i < offsets.size(); ++i) {
+    declared = std::max(declared, offsets[i] + sizes[i]);
+  }
+  storage->assign(std::max(declared, buffer_size), 0);
+  memcpy(storage->data(), buffer, buffer_size);
+  kernel_params->clear();
+  kernel_params->reserve(offsets.size());
+  for (size_t offset : offsets) {
+    kernel_params->push_back(storage->data() + offset);
+  }
+  return CUDA_SUCCESS;
 }
 
 static std::vector<rpc_write_cursor>
@@ -5725,9 +5780,6 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
                unsigned int blockDimY, unsigned int blockDimZ,
                unsigned int sharedMemBytes, CUstream hStream,
                void **kernelParams, void **extra) {
-  if (extra != nullptr) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
   CUfunction requested_function = f;
   bool kernel_handle = lupine_is_library_kernel(requested_function);
   lupine_route launch_route = hStream != nullptr
@@ -5755,11 +5807,25 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   }
 
   std::vector<size_t> param_sizes;
-  status = kernel_handle ? lupine_read_kernel_param_sizes(
-                               reinterpret_cast<CUkernel>(f), &param_sizes)
-                         : lupine_read_func_param_sizes(f, &param_sizes);
+  std::vector<size_t> param_offsets;
+  std::vector<size_t> *offsets = extra != nullptr ? &param_offsets : nullptr;
+  status = kernel_handle
+               ? lupine_read_kernel_param_sizes(reinterpret_cast<CUkernel>(f),
+                                                &param_sizes, offsets)
+               : lupine_read_func_param_sizes(f, &param_sizes, offsets);
   if (status != CUDA_SUCCESS) {
     return status;
+  }
+
+  std::vector<char> param_storage;
+  std::vector<void *> buffer_params;
+  if (extra != nullptr) {
+    status = lupine_params_from_param_buffer(extra, param_offsets, param_sizes,
+                                             &param_storage, &buffer_params);
+    if (status != CUDA_SUCCESS) {
+      return status;
+    }
+    kernelParams = buffer_params.data();
   }
 
   for (size_t i = 0; i < param_sizes.size(); ++i) {
@@ -5818,9 +5884,6 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
 #if CUDA_VERSION < 11080
   return CUDA_ERROR_NOT_SUPPORTED;
 #else
-  if (extra != nullptr) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
   CUfunction requested_function = f;
   bool kernel_handle = lupine_is_library_kernel(requested_function);
   lupine_route launch_route = config->hStream != nullptr
@@ -5840,11 +5903,25 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   }
 
   std::vector<size_t> param_sizes;
-  status = kernel_handle ? lupine_read_kernel_param_sizes(
-                               reinterpret_cast<CUkernel>(f), &param_sizes)
-                         : lupine_read_func_param_sizes(f, &param_sizes);
+  std::vector<size_t> param_offsets;
+  std::vector<size_t> *offsets = extra != nullptr ? &param_offsets : nullptr;
+  status = kernel_handle
+               ? lupine_read_kernel_param_sizes(reinterpret_cast<CUkernel>(f),
+                                                &param_sizes, offsets)
+               : lupine_read_func_param_sizes(f, &param_sizes, offsets);
   if (status != CUDA_SUCCESS) {
     return status;
+  }
+
+  std::vector<char> param_storage;
+  std::vector<void *> buffer_params;
+  if (extra != nullptr) {
+    status = lupine_params_from_param_buffer(extra, param_offsets, param_sizes,
+                                             &param_storage, &buffer_params);
+    if (status != CUDA_SUCCESS) {
+      return status;
+    }
+    kernelParams = buffer_params.data();
   }
 
   for (size_t i = 0; i < param_sizes.size(); ++i) {

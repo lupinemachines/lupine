@@ -57,3 +57,23 @@ int handle_nvmlDeviceIsMigDeviceHandle(conn_t *conn);
 int handle_nvmlDeviceGetNvLinkRemoteDeviceType(conn_t *conn);
 int handle_nvmlDeviceGetNvLinkRemotePciInfo_v2(conn_t *conn);
 int handle_nvmlDeviceGetCudaComputeCapability(conn_t *conn);
+int handle_nvmlDeviceGetNvLinkState(conn_t *conn);
+int handle_nvmlDeviceGetNvLinkCapability(conn_t *conn);
+int handle_nvmlDeviceGetP2PStatus(conn_t *conn);
+int handle_nvmlDeviceGetFieldValues(conn_t *conn);
+int handle_nvmlDeviceGetPcieLinkMaxSpeed(conn_t *conn);
+#if defined(nvmlPciInfoExt_v1)
+int handle_nvmlDeviceGetPciInfoExt(conn_t *conn);
+#endif
+#if defined(nvmlGpuFabricInfo_v2)
+int handle_nvmlDeviceGetGpuFabricInfoV(conn_t *conn);
+#endif
+#if defined(nvmlPlatformInfo_v1)
+int handle_nvmlDeviceGetPlatformInfo(conn_t *conn);
+#endif
+#if CUDA_VERSION >= 12040
+int handle_nvmlSystemGetConfComputeState(conn_t *conn);
+#endif
+#if defined(nvmlSystemConfComputeSettings_v1)
+int handle_nvmlSystemGetConfComputeSettings(conn_t *conn);
+#endif

@@ -223,6 +223,7 @@ nvmlReturn_t nvmlSystemGetTopologyGpuSet(unsigned int cpuNumber,
                                          unsigned int *count,
                                          nvmlDevice_t *deviceArray);
 /**
+ * @disabled client - both handles need translating, not just the routing one
  * @param device1 SEND_ONLY
  * @param device2 SEND_ONLY
  * @param p2pIndex SEND_ONLY
@@ -308,6 +309,13 @@ nvmlReturn_t nvmlDeviceGetPersistenceMode(nvmlDevice_t device,
  * @param pci RECV_ONLY
  */
 nvmlReturn_t nvmlDeviceGetPciInfo_v3(nvmlDevice_t device, nvmlPciInfo_t *pci);
+/**
+ * @guard defined(nvmlPciInfoExt_v1)
+ * @param device SEND_ONLY
+ * @param pci SEND_RECV
+ */
+nvmlReturn_t nvmlDeviceGetPciInfoExt(nvmlDevice_t device,
+                                     nvmlPciInfoExt_t *pci);
 /**
  * @param device SEND_ONLY
  * @param maxLinkGen RECV_ONLY
@@ -1232,7 +1240,7 @@ nvmlReturn_t nvmlDeviceDiscoverGpus(nvmlPciInfo_t *pciInfo);
 /**
  * @param device SEND_ONLY
  * @param valuesCount SEND_ONLY
- * @param values RECV_ONLY LENGTH:valuesCount
+ * @param values SEND_RECV LENGTH:valuesCount
  */
 nvmlReturn_t nvmlDeviceGetFieldValues(nvmlDevice_t device, int valuesCount,
                                       nvmlFieldValue_t *values);
@@ -1968,6 +1976,32 @@ nvmlReturn_t nvmlGpmQueryDeviceSupport(nvmlDevice_t device,
 nvmlReturn_t
 nvmlDeviceSetNvLinkDeviceLowPowerThreshold(nvmlDevice_t device,
                                            nvmlNvLinkPowerThres_t *info);
+
+/**
+ * @guard defined(nvmlGpuFabricInfo_v2)
+ * @param device SEND_ONLY
+ * @param gpuFabricInfo SEND_RECV
+ */
+nvmlReturn_t nvmlDeviceGetGpuFabricInfoV(nvmlDevice_t device,
+                                         nvmlGpuFabricInfoV_t *gpuFabricInfo);
+/**
+ * @guard defined(nvmlPlatformInfo_v1)
+ * @param device SEND_ONLY
+ * @param platformInfo SEND_RECV
+ */
+nvmlReturn_t nvmlDeviceGetPlatformInfo(nvmlDevice_t device,
+                                       nvmlPlatformInfo_t *platformInfo);
+/**
+ * @guard CUDA_VERSION >= 12040
+ * @param state RECV_ONLY
+ */
+nvmlReturn_t nvmlSystemGetConfComputeState(nvmlConfComputeSystemState_t *state);
+/**
+ * @guard defined(nvmlSystemConfComputeSettings_v1)
+ * @param settings SEND_RECV
+ */
+nvmlReturn_t
+nvmlSystemGetConfComputeSettings(nvmlSystemConfComputeSettings_t *settings);
 
 // Registry-only operations without API declarations above. The code generator
 // reads these annotations directly; the C++ parser intentionally ignores them.
