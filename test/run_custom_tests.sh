@@ -174,18 +174,6 @@ if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <nvshm
   echo "SKIP: $name runs nvSHMEM on the client, which needs more than the driver shim"
   exit 0
 fi
-if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <cusparseLt.h>' "$src"; then
-  # NVIDIA's cuSPARSELt before 0.7 answers cusparseLtMatmul with an internal
-  # error over the driver shim alone, though the same build runs on a local GPU
-  # and through the cuSPARSELt shim. Newer releases are fine, so only the old
-  # ones skip and every other release keeps its driver-only coverage.
-  cusparselt_minor="$(sed -n 's/^#define CUSPARSELT_VER_MINOR \([0-9][0-9]*\).*/\1/p' \
-    "$CUSPARSELT_HOME/include/cusparseLt.h")"
-  if [[ -n "$cusparselt_minor" && "$cusparselt_minor" -lt 7 ]]; then
-    echo "SKIP: $name runs cuSPARSELt 0.$cusparselt_minor on the client, which needs more than the driver shim"
-    exit 0
-  fi
-fi
 if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <nccl.h>' "$src"; then
   # NVIDIA's libnccl on a GPU-less client crashes over the driver shim alone,
   # zeroing the host memory ncclCommInitRank allocates; only the NCCL shim runs.

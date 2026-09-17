@@ -5368,6 +5368,14 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
   return return_value;
 }
 
+// A fat binary container is one of the image shapes cuModuleLoadData already
+// packs, and the kind tag the request carries picks the driver entry point the
+// server loads it with.
+extern "C" CUresult cuModuleLoadFatBinary(CUmodule *module,
+                                          const void *fatCubin) {
+  return cuModuleLoadData(module, fatCubin);
+}
+
 extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
                                        unsigned int numOptions,
                                        CUjit_option *options,
@@ -8518,7 +8526,6 @@ static void *lupine_make_missing_stub(const char *symbol) {
 
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuModuleLoadData)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuModuleLoadFatBinary)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryLoadData)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryGetKernelCount)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryEnumerateKernels)
@@ -8624,7 +8631,6 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
   { #name, (void *)&lupine_unsupported_##name }
       LUPINE_STUB_ENTRY(cuCtxCreate),
       LUPINE_STUB_ENTRY(cuModuleLoadData),
-      LUPINE_STUB_ENTRY(cuModuleLoadFatBinary),
       LUPINE_STUB_ENTRY(cuLibraryLoadData),
       LUPINE_STUB_ENTRY(cuLibraryGetKernelCount),
       LUPINE_STUB_ENTRY(cuLibraryEnumerateKernels),
@@ -9498,6 +9504,7 @@ lupine_manual_function_map() {
       {"cuGetExportTable", (void *)cuGetExportTable},
       {"cuModuleLoad", (void *)cuModuleLoad},
       {"cuModuleLoadData", (void *)cuModuleLoadData},
+      {"cuModuleLoadFatBinary", (void *)cuModuleLoadFatBinary},
       {"cuModuleLoadDataEx", (void *)cuModuleLoadDataEx},
       {"cuLibraryLoadData", (void *)cuLibraryLoadData},
       {"cuLinkCreate", (void *)cuLinkCreate_v2},
