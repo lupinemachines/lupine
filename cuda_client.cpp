@@ -75,6 +75,8 @@
 
 void *rpc_client_dispatch_thread(void *arg);
 
+extern "C" void lupine_invalidate_function_caches();
+
 static void lupine_cuda_transport_connection_changed(conn_t *) {
   lupine_invalidate_current_context_cache();
 }
@@ -666,6 +668,37 @@ lupine_library_kernel_names() {
   static auto *cache =
       new libcuckoo::cuckoohash_map<lupine_library_kernel_name_key, CUkernel,
                                     lupine_library_kernel_name_key_hash>();
+  return *cache;
+}
+
+// Filled from module-load responses; serves cuModuleGetFunction without a
+// round trip. A loaded module's function set is fixed until it unloads, and
+// unloading a module or destroying the context that holds it drops the whole
+// cache through lupine_invalidate_function_caches; those are the only ways the
+// server frees a module handle, so a recycled one never resolves against the
+// functions of the module that held it before.
+struct lupine_module_function_name_key {
+  CUmodule module = nullptr;
+  std::string name;
+
+  bool operator==(const lupine_module_function_name_key &other) const {
+    return module == other.module && name == other.name;
+  }
+};
+
+struct lupine_module_function_name_key_hash {
+  size_t operator()(const lupine_module_function_name_key &key) const {
+    return reinterpret_cast<uintptr_t>(key.module) ^
+           std::hash<std::string>()(key.name);
+  }
+};
+
+static libcuckoo::cuckoohash_map<lupine_module_function_name_key, CUfunction,
+                                 lupine_module_function_name_key_hash> &
+lupine_module_function_names() {
+  static auto *cache =
+      new libcuckoo::cuckoohash_map<lupine_module_function_name_key, CUfunction,
+                                    lupine_module_function_name_key_hash>();
   return *cache;
 }
 
@@ -1285,6 +1318,55 @@ static void lupine_prefetch_function_param_layout(CUfunction function,
   }
 }
 
+// Reads the function snapshot a module-load response carries into the caches
+// cuModuleGetFunction, cuFuncGetParamInfo and cuFuncGetAttribute read, so none
+// of the three costs a round trip. A response that carries no functions (a
+// failed load, or a server whose driver cannot enumerate a module) leaves the
+// caches alone and every lookup falls back to its own request.
+static int lupine_read_module_functions(conn_t *conn, CUmodule module,
+                                        lupine_route route) {
+  uint32_t count = 0;
+  if (rpc_read(conn, &count, sizeof(count)) < 0 || count > 1024 * 1024) {
+    return -1;
+  }
+  for (uint32_t i = 0; i < count; ++i) {
+    uint32_t name_length = 0;
+    if (rpc_read(conn, &name_length, sizeof(name_length)) < 0 ||
+        name_length == 0 || name_length > 64 * 1024) {
+      return -1;
+    }
+    std::string name(name_length, '\0');
+    CUfunction function = nullptr;
+    uint32_t param_count = 0;
+    if (rpc_read(conn, name.data(), name_length) < 0 || name.back() != '\0' ||
+        rpc_read(conn, &function, sizeof(function)) < 0 ||
+        rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
+        param_count > 64 * 1024) {
+      return -1;
+    }
+    name.resize(name_length - 1);
+    uintptr_t handle = reinterpret_cast<uintptr_t>(function);
+    for (uint32_t index = 0; index < param_count; ++index) {
+      lupine_param_info_value param = {};
+      if (rpc_read(conn, &param.offset, sizeof(param.offset)) < 0 ||
+          rpc_read(conn, &param.size, sizeof(param.size)) < 0) {
+        return -1;
+      }
+      lupine_param_info_cache().insert_or_assign(
+          lupine_param_info_key{handle, index, false}, param);
+    }
+    if (lupine_read_function_attributes(conn, route, function) < 0) {
+      return -1;
+    }
+    lupine_param_layout_count_cache().insert_or_assign(
+        lupine_param_layout_key{handle, false}, param_count);
+    lupine_note_function_owner_route(function, route);
+    lupine_module_function_names().insert_or_assign(
+        lupine_module_function_name_key{module, std::move(name)}, function);
+  }
+  return 0;
+}
+
 static void lupine_prefill_function_attribute_snapshot(CUfunction function,
                                                        lupine_route route,
                                                        conn_t *conn) {
@@ -1318,6 +1400,18 @@ extern "C" CUresult cuModuleGetFunction(CUfunction *function, CUmodule module,
       lupine_prefetch_function_param_layout(*function, route);
     }
     return result;
+  }
+
+  // Param-layout and attribute warming already happened at snapshot time. A
+  // name the snapshot does not hold still asks the server rather than
+  // answering CUDA_ERROR_NOT_FOUND from an enumeration this side cannot prove
+  // complete.
+  CUfunction cached = nullptr;
+  if (lupine_module_function_names().find(
+          lupine_module_function_name_key{module, std::string(name)}, cached)) {
+    *function = cached;
+    (void)lupine_record_module_function(cached, module, name, route);
+    return CUDA_SUCCESS;
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
@@ -1422,7 +1516,9 @@ static CUresult lupine_load_recorded_module_on_route(CUmodule source_module,
         rpc_write(conn, record.image.data(), image_size) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &loaded, sizeof(loaded)) < 0 ||
-        rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+        rpc_read(conn, &result, sizeof(result)) < 0 ||
+        lupine_read_module_functions(conn, loaded, route) < 0 ||
+        rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
   }
@@ -1492,6 +1588,7 @@ extern "C" CUresult cuModuleLoad(CUmodule *module, const char *fname) {
                 rpc_wait_for_response(conn) < 0 ||
                 rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
                 rpc_read(conn, &result, sizeof(result)) < 0 ||
+                lupine_read_module_functions(conn, *module, route) < 0 ||
                 rpc_read_end(conn) < 0;
   munmap(mapping, mapped_size);
   if (failed) {
@@ -2426,6 +2523,9 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
     return CUDA_ERROR_INVALID_DEVICE;
   }
   lupine_invalidate_primary_ctx_state(dev);
+  // A reset unloads the primary context's modules; see
+  // lupine_forget_destroyed_context.
+  lupine_invalidate_function_caches();
   lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
@@ -3962,6 +4062,10 @@ extern "C" void lupine_forget_destroyed_context(CUcontext ctx) {
   if (ctx == nullptr) {
     return;
   }
+  // Destroying a context unloads the modules it holds, so every module and
+  // function handle cached against it is free for the server to hand out
+  // again. This is the other end of the module-unload invalidation.
+  lupine_invalidate_function_caches();
   lupine_forget_context_owner(ctx);
   lupine_stream_pool_discard(-1, -1, ctx);
   if (lupine_current_context == ctx) {
@@ -5438,6 +5542,7 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      lupine_read_module_functions(conn, *module, route) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -5500,6 +5605,7 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
       lupine_read_jit_outputs(conn, numOptions, options, optionValues) < 0 ||
       rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      lupine_read_module_functions(conn, *module, route) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -5773,6 +5879,7 @@ static CUresult lupine_warm_kernel_param_info(CUkernel kernel) {
 }
 
 extern "C" void lupine_invalidate_function_caches() {
+  lupine_module_function_names().clear();
   lupine_param_info_cache().clear();
   lupine_param_layout_count_cache().clear();
   lupine_kernel_function_cache().clear();

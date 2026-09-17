@@ -942,6 +942,114 @@ void lupine_cleanup_pending_dtoh_copies(
   pending->clear();
 }
 
+// Appends the loaded module's functions to a module-load response, each with
+// the parameter layout and attributes of the function, and submits the
+// response. Everything queued here is read directly out of storage the caller
+// owns for the whole call, because rpc_write only queues pointers and the
+// bytes leave at rpc_write_end: the function count and each parameter count
+// are still being counted up as the loop queues them.
+//
+// A module is immutable once loaded, so its function set, each function's
+// parameter layout, and its attributes cannot change before the module
+// unloads. Driver versions without the enumeration entry points write no
+// functions at all and the client falls back to asking per name.
+//
+// cuFuncLoad reproduces the side effect the client's cuModuleGetFunction would
+// have had: under the default lazy module loading a function's code is not
+// resident until it is looked up by name, and an unloaded function answers
+// CUDA_ERROR_FUNCTION_NOT_LOADED to every attribute query. A function that
+// will not load is left out of the snapshot entirely rather than reported with
+// answers that came from an unloaded function.
+static int lupine_write_module_functions(conn_t *conn, CUmodule module) {
+  uint32_t count = 0;
+#if CUDA_VERSION >= 12040
+  struct attribute_record {
+    CUresult result = CUDA_ERROR_UNKNOWN;
+    int attribute = 0;
+    int value = 0;
+  };
+  struct function_record {
+    uint32_t name_length = 0;
+    uint32_t param_count = 0;
+    uint32_t attribute_count = 0;
+    std::array<attribute_record, CU_FUNC_ATTRIBUTE_MAX> attributes;
+  };
+  struct param_record {
+    size_t offset = 0;
+    size_t size = 0;
+  };
+
+  unsigned int function_count = 0;
+  std::vector<CUfunction> functions;
+  if (module != nullptr &&
+      cuModuleGetFunctionCount(&function_count, module) == CUDA_SUCCESS &&
+      function_count != 0) {
+    functions.resize(function_count);
+    if (cuModuleEnumerateFunctions(functions.data(), function_count, module) !=
+        CUDA_SUCCESS) {
+      functions.clear();
+    }
+  }
+  std::vector<function_record> records(functions.size());
+  // Parameter counts are discovered during serialization. Deque growth keeps
+  // pointers already queued by rpc_write valid.
+  std::deque<param_record> params;
+#endif
+  if (rpc_write(conn, &count, sizeof(count)) < 0) {
+    return -1;
+  }
+#if CUDA_VERSION >= 12040
+  for (size_t i = 0; i < functions.size(); ++i) {
+    CUfunction &function = functions[i];
+    const char *name = nullptr;
+    if (function == nullptr || cuFuncGetName(&name, function) != CUDA_SUCCESS ||
+        name == nullptr || cuFuncLoad(function) != CUDA_SUCCESS) {
+      continue;
+    }
+    auto &record = records[i];
+    record.name_length = static_cast<uint32_t>(std::strlen(name) + 1);
+    if (rpc_write(conn, &record.name_length, sizeof(record.name_length)) < 0 ||
+        rpc_write(conn, name, record.name_length) < 0 ||
+        rpc_write(conn, &function, sizeof(function)) < 0 ||
+        rpc_write(conn, &record.param_count, sizeof(record.param_count)) < 0) {
+      return -1;
+    }
+    for (;;) {
+      params.emplace_back();
+      auto &param = params.back();
+      if (cuFuncGetParamInfo(function, record.param_count, &param.offset,
+                             &param.size) != CUDA_SUCCESS) {
+        break;
+      }
+      if (rpc_write(conn, &param.offset, sizeof(param.offset)) < 0 ||
+          rpc_write(conn, &param.size, sizeof(param.size)) < 0) {
+        return -1;
+      }
+      ++record.param_count;
+    }
+    record.attribute_count = CU_FUNC_ATTRIBUTE_MAX;
+    if (rpc_write(conn, &record.attribute_count,
+                  sizeof(record.attribute_count)) < 0) {
+      return -1;
+    }
+    for (uint32_t attribute = 0; attribute < record.attribute_count;
+         ++attribute) {
+      auto &entry = record.attributes[attribute];
+      entry.attribute = static_cast<int>(attribute);
+      entry.result = cuFuncGetAttribute(
+          &entry.value, static_cast<CUfunction_attribute>(attribute), function);
+      if (rpc_write(conn, &entry.result, sizeof(entry.result)) < 0 ||
+          rpc_write(conn, &entry.attribute, sizeof(entry.attribute)) < 0 ||
+          rpc_write(conn, &entry.value, sizeof(entry.value)) < 0) {
+        return -1;
+      }
+    }
+    ++count;
+  }
+#endif
+  return rpc_write_end(conn);
+}
+
 int handle_cuModuleLoad(conn_t *conn) {
   CUmodule module = nullptr;
   size_t image_size = 0;
@@ -969,10 +1077,11 @@ int handle_cuModuleLoad(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &module, sizeof(module)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+      rpc_write(conn, &result, sizeof(result)) < 0) {
     return -1;
   }
-  return 0;
+  return lupine_write_module_functions(conn, result == CUDA_SUCCESS ? module
+                                                                    : nullptr);
 }
 
 int handle_cuModuleLoadData(conn_t *conn) {
@@ -1011,10 +1120,11 @@ int handle_cuModuleLoadData(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &module, sizeof(module)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+      rpc_write(conn, &result, sizeof(result)) < 0) {
     return -1;
   }
-  return 0;
+  return lupine_write_module_functions(conn, result == CUDA_SUCCESS ? module
+                                                                    : nullptr);
 }
 
 int handle_cuModuleLoadDataEx(conn_t *conn) {
@@ -1053,7 +1163,9 @@ int handle_cuModuleLoadDataEx(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       lupine_write_jit_outputs(conn, &jit) < 0 ||
       rpc_write(conn, &module, sizeof(module)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      lupine_write_module_functions(
+          conn, result == CUDA_SUCCESS ? module : nullptr) < 0) {
     status = -1;
   }
   std::free(jit.options);
