@@ -5321,6 +5321,83 @@ static bool lupine_pack_module_image(const void *image, uint32_t *kind,
   return true;
 }
 
+// Whether any member entry of a packed fat binary could serve a device of this
+// compute capability, so a load that cannot be served never reaches the wire:
+// cuSPARSELt 0.6 offers 2494 fat binaries at init, of which 2220 and 149 MB
+// carry nothing an Ada part can run.
+//
+// The test is deliberately wider than the driver's own selection, because
+// skipping a load the driver would have taken is a correctness bug while
+// forwarding one it would have refused only costs a round trip:
+//   - a cubin is binary compatible forward within a major revision and only
+//     within it, so its arch must share the device's major and must not exceed
+//     the device's minor. The driver is stricter: it also refuses the
+//     Tegra-only capabilities (8.7, 8.8) on a desktop part, and honours the
+//     arch-conditional ('a') and family ('f') flags that pin an image to one
+//     capability or family.
+//   - PTX is JIT compiled for the device, which works for any target at or
+//     below the device's capability, across major revisions too.
+// Anything the walk cannot account for exactly — a container or entry version
+// this does not know, an entry kind that is neither cubin nor PTX, sizes that
+// do not add up to the packed image — forwards.
+static bool lupine_fatbin_may_serve_device(const unsigned char *image,
+                                           size_t size, unsigned device_cc) {
+  const auto *header = reinterpret_cast<const lupine_fatbin_header *>(image);
+  if (size < sizeof(lupine_fatbin_header) ||
+      header->magic != LUPINE_FATBIN_MAGIC ||
+      header->version != LUPINE_FATBIN_VERSION ||
+      header->header_size < sizeof(lupine_fatbin_header) ||
+      static_cast<uint64_t>(header->header_size) + header->files_size != size ||
+      header->files_size == 0) {
+    return true;
+  }
+  for (size_t offset = header->header_size; offset < size;) {
+    size_t left = size - offset;
+    if (left < sizeof(lupine_fatbin_entry)) {
+      return true;
+    }
+    const auto *entry =
+        reinterpret_cast<const lupine_fatbin_entry *>(image + offset);
+    if (entry->version != LUPINE_FATBIN_ENTRY_VERSION ||
+        entry->header_size < sizeof(lupine_fatbin_entry) ||
+        entry->header_size > left ||
+        entry->payload_size > left - entry->header_size || entry->arch == 0) {
+      return true;
+    }
+    if (entry->kind == LUPINE_FATBIN_ENTRY_CUBIN) {
+      if (entry->arch / 10 == device_cc / 10 && entry->arch <= device_cc) {
+        return true;
+      }
+    } else if (entry->kind == LUPINE_FATBIN_ENTRY_PTX) {
+      if (entry->arch <= device_cc) {
+        return true;
+      }
+    } else {
+      return true;
+    }
+    offset += entry->header_size + entry->payload_size;
+  }
+  return false;
+}
+
+// The bound device's compute capability, both lookups served from the caches
+// the device snapshot prefills, so the fat binary test above costs no round
+// trip of its own.
+static bool lupine_current_device_compute_capability(unsigned *cc) {
+  CUdevice device = 0;
+  int major = 0;
+  int minor = 0;
+  if (cuCtxGetDevice(&device) != CUDA_SUCCESS ||
+      cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
+                           device) != CUDA_SUCCESS ||
+      cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
+                           device) != CUDA_SUCCESS) {
+    return false;
+  }
+  *cc = static_cast<unsigned>(major) * 10 + static_cast<unsigned>(minor);
+  return true;
+}
+
 extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
   if (module == nullptr || image == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
@@ -5343,6 +5420,12 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
                                  image_bytes.size(), image);
     }
     return result;
+  }
+  unsigned device_cc = 0;
+  if (lupine_current_device_compute_capability(&device_cc) &&
+      !lupine_fatbin_may_serve_device(image_bytes.data(), image_bytes.size(),
+                                      device_cc)) {
+    return CUDA_ERROR_NO_BINARY_FOR_GPU;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
