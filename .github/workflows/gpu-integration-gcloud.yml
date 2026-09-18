@@ -433,7 +433,9 @@ jobs:
               sleep 15
             done
 
-            deadline=$((SECONDS + 300))
+            # Package downloads on a fresh VM can outlast five minutes even
+            # after the NVIDIA driver is ready.
+            deadline=$((SECONDS + 1200))
             until command -v docker >/dev/null 2>&1 &&
               sudo docker info >/dev/null 2>&1 &&
               test -f /var/lib/lupine-startup-complete; do
