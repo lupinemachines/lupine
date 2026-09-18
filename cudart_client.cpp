@@ -243,28 +243,43 @@ extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
 
 namespace {
 
-// A server reports the devices its own process was given, so a connection's
-// count -- and with it the ordinal offset every later connection sits at --
-// never moves once it has been answered.
-cudaError_t connection_device_count(conn_t *conn, int *count) {
+// Device ordinals run through the connections in index order, so one prefix
+// sum answers everything the runtime asks about them: entry i is the ordinal
+// connection i starts at, and the last entry is the total. A server reports
+// the devices its own process was given, so the sum holds for as long as the
+// connection table it was built from, which fills once when the transport
+// opens and empties only when it closes.
+cudaError_t device_ordinal_offsets(std::vector<int> *offsets) {
   static std::mutex mutex;
-  static auto *counts = new std::unordered_map<conn_t *, int>();
+  static auto *cached = new std::vector<int>();
+  const auto connections = all_connections();
+  if (connections.empty()) {
+    return rpc_error();
+  }
   {
     std::lock_guard<std::mutex> lock(mutex);
-    auto cached = counts->find(conn);
-    if (cached != counts->end()) {
-      *count = cached->second;
+    if (cached->size() == connections.size() + 1) {
+      *offsets = *cached;
       return cudaSuccess;
     }
   }
-  int remote_count = 0;
-  cudaError_t result = lupine_rpc_cudaGetDeviceCount(conn, &remote_count);
-  if (result != cudaSuccess) {
-    return result;
+  // Built off the lock: the counts belong to the servers, so two threads
+  // racing to fill the table build the same one.
+  std::vector<int> built(connections.size() + 1, 0);
+  for (size_t index = 0; index < connections.size(); ++index) {
+    int count = 0;
+    cudaError_t result =
+        lupine_rpc_cudaGetDeviceCount(connections[index], &count);
+    if (result != cudaSuccess) {
+      return result;
+    }
+    built[index + 1] = built[index] + count;
   }
-  std::lock_guard<std::mutex> lock(mutex);
-  (*counts)[conn] = remote_count;
-  *count = remote_count;
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    *cached = built;
+  }
+  *offsets = std::move(built);
   return cudaSuccess;
 }
 
@@ -295,24 +310,21 @@ bool lane_binding_describes(conn_t *conn) {
 }
 
 conn_t *connection_for_device(int *device, cudaError_t *result) {
-  int ordinal = *device;
-  cudaError_t status = cudaErrorInvalidDevice;
-  if (ordinal >= 0) {
-    for (conn_t *conn : all_connections()) {
-      int count = 0;
-      status = connection_device_count(conn, &count);
-      if (status != cudaSuccess) {
-        break;
+  std::vector<int> offsets;
+  cudaError_t status = device_ordinal_offsets(&offsets);
+  const int ordinal = *device;
+  if (status == cudaSuccess) {
+    status = cudaErrorInvalidDevice;
+    if (ordinal >= 0 && ordinal < offsets.back()) {
+      unsigned int index = 0;
+      while (offsets[index + 1] <= ordinal) {
+        ++index;
       }
-      if (ordinal < count) {
-        *device = ordinal;
-        if (result != nullptr) {
-          *result = cudaSuccess;
-        }
-        return conn;
+      *device = ordinal - offsets[index];
+      if (result != nullptr) {
+        *result = cudaSuccess;
       }
-      ordinal -= count;
-      status = cudaErrorInvalidDevice;
+      return lupine_rpc_client_get_connection(index);
     }
   }
   if (result != nullptr) {
@@ -431,20 +443,12 @@ extern "C" cudaError_t cudaGetDeviceCount(int *count) {
   if (count == nullptr) {
     return cudaErrorInvalidValue;
   }
-  const auto connections = all_connections();
-  if (connections.empty()) {
-    return rpc_error();
+  std::vector<int> offsets;
+  cudaError_t result = device_ordinal_offsets(&offsets);
+  if (result != cudaSuccess) {
+    return result;
   }
-  int total = 0;
-  for (conn_t *conn : connections) {
-    int remote_count = 0;
-    cudaError_t result = connection_device_count(conn, &remote_count);
-    if (result != cudaSuccess) {
-      return result;
-    }
-    total += remote_count;
-  }
-  *count = total;
+  *count = offsets.back();
   return cudaSuccess;
 }
 
@@ -467,15 +471,12 @@ extern "C" cudaError_t cudaGetDevice(int *device) {
   if (result != cudaSuccess) {
     return result;
   }
-  for (unsigned int index = 0; index < current_connection_index; ++index) {
-    int count = 0;
-    result = connection_device_count(lupine_rpc_client_get_connection(index),
-                                     &count);
-    if (result != cudaSuccess) {
-      return result;
-    }
-    remote_device += count;
+  std::vector<int> offsets;
+  result = device_ordinal_offsets(&offsets);
+  if (result != cudaSuccess) {
+    return result;
   }
+  remote_device += offsets[current_connection_index];
   *device = remote_device;
   lane_binding = {conn, epoch, context, remote_device, false};
   return cudaSuccess;
