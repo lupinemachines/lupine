@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build and run NVIDIA/CUDALibrarySamples (cuBLAS, cuBLASLt, cuFFT, cuRAND,
-# cuSOLVER, cuSPARSE, cuSPARSELt, nvJPEG, NPP, cuPQC, MathDx) through the
-# lupine client shim against a remote server. Every leaf directory with a
+# cuSOLVER, cuSOLVERSp2cuDSS, cuSPARSE, cuSPARSELt, nvJPEG, NPP, cuPQC, MathDx)
+# through the lupine client shim against a remote server. Every leaf directory with a
 # CMakeLists.txt is a standalone CMake project; every executable it produces is
 # a unit with its own server on SERVER_PORT_BASE + index.
 #
@@ -14,6 +14,13 @@
 # samples stay unbuilt. They call cusparseLtGetErrorString, which 0.6.x does
 # not declare and 0.7.x declares but does not export, so they need 0.8.0 or
 # newer.
+# cuSOLVERSp2cuDSS is the cuSOLVERSp/Rf-to-cuDSS transition example. It needs no
+# shim: the sample runs on the client against NVIDIA's own libcudss and only its
+# driver traffic crosses the wire, so this script unpacks cuDSS's redist archive
+# the way it does MathDx's. Its cuDSS is pinned to 0.7.1 and is deliberately not
+# the one the cuDSS samples ask for: these sources use cudssAlgType_t, CUDSS_ALG_1
+# and cudaDataType_t, all of which 0.8.0 removed or replaced, so they do not
+# compile against it, while every cuDSS/*/CMakeLists.txt requires 0.8.0 or newer.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,7 +29,7 @@ LIBRARY_SAMPLES_URL="${LIBRARY_SAMPLES_URL:-https://github.com/NVIDIA/CUDALibrar
 LIBRARY_SAMPLES_REF="${LIBRARY_SAMPLES_REF:-3437729}"
 LIBRARY_SAMPLES_DIR="${LIBRARY_SAMPLES_DIR:-$repo_root/test/cuda-library-samples/CUDALibrarySamples}"
 LIBRARY_SAMPLES_BUILD_DIR="${LIBRARY_SAMPLES_BUILD_DIR:-$LIBRARY_SAMPLES_DIR/build}"
-LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE cuSPARSELt nvJPEG NPP cuPQC MathDx}"
+LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSOLVERSp2cuDSS cuSPARSE cuSPARSELt nvJPEG NPP cuPQC MathDx}"
 LIBRARY_SAMPLES_ARCH="${LIBRARY_SAMPLES_ARCH:-${CUDA_SAMPLES_ARCH:-89}}"
 LIBRARY_SAMPLES_CMAKE_ARGS="${LIBRARY_SAMPLES_CMAKE_ARGS:-}"
 LIBRARY_SAMPLES_SKIP_LIST="${LIBRARY_SAMPLES_SKIP_LIST:-}"
@@ -36,6 +43,9 @@ MATHDX_URL="${MATHDX_URL:-https://developer.nvidia.com/downloads/compute/cublasd
 MATHDX_CUDA_MIN_MAJOR=13
 MATHDX_DIR="${MATHDX_DIR:-$(dirname "$LIBRARY_SAMPLES_DIR")/mathdx}"
 MATHDX_HOME="${MATHDX_HOME:-$MATHDX_DIR/nvidia/mathdx/26.06}"
+# 0.7.1 is the newest cuDSS these sources compile against; see the note above.
+CUDSS_TRANSITION_VERSION="${CUDSS_TRANSITION_VERSION:-0.7.1.4}"
+CUDSS_TRANSITION_HOME="${CUDSS_TRANSITION_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/cudss-transition}"
 BUILD_SAMPLES="${BUILD_SAMPLES:-auto}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 JOBS="${JOBS:-$(nproc)}"
@@ -83,6 +93,8 @@ Environment:
                              one the cuSPARSELt samples are not built.
   MATHDX_URL                 MathDx package to unpack. Default: $MATHDX_URL
   MATHDX_HOME                Unpacked MathDx package. Default: $MATHDX_HOME
+  CUDSS_TRANSITION_HOME      Unpacked cuDSS 0.7.x archive for cuSOLVERSp2cuDSS.
+                             Default: $CUDSS_TRANSITION_HOME
   BUILD_SAMPLES              auto, 1, or 0. Default: auto (build dirs without a build).
   BUILD_ONLY                 1 to clone/build and exit before running.
   JOBS                       Parallel sample builds. Default: $JOBS
@@ -220,6 +232,16 @@ CUPQC_CMAKE
     mkdir -p "$MATHDX_DIR"
     curl -fsSL "$MATHDX_URL" | tar -xz -C "$MATHDX_DIR" --strip-components=1 || true
   fi
+
+  # The cuDSS archive is CUDA-major-specific. Where it cannot be fetched -- no
+  # network, or a major NVIDIA does not build it for -- the cuSOLVERSp2cuDSS
+  # samples fail to configure and the run reports them SKIP:build-failed like
+  # any other.
+  if [[ " $LIBRARY_SAMPLES_LIBS " == *" cuSOLVERSp2cuDSS "* && ! -d "$CUDSS_TRANSITION_HOME" ]]; then
+    mkdir -p "$CUDSS_TRANSITION_HOME"
+    curl -fsSL "https://developer.download.nvidia.com/compute/cudss/redist/libcudss/linux-x86_64/libcudss-linux-x86_64-${CUDSS_TRANSITION_VERSION}_cuda$((${cuda_version:-0} / 1000))-archive.tar.xz" \
+      | tar -xJ -C "$CUDSS_TRANSITION_HOME" --strip-components=1 || true
+  fi
 fi
 
 # A sample is a directory with a CMakeLists.txt and no CMake project beneath
@@ -283,6 +305,8 @@ build_sample() {
     # kernels are the sample, so they have to be built for the server's GPU.
     configure_args=(-Dmathdx_ROOT="$MATHDX_HOME"
       -D"$(basename "$sample" | tr '[:lower:]' '[:upper:]')_CUDA_ARCHITECTURES=$LIBRARY_SAMPLES_ARCH-real")
+  elif [[ "$sample" == cuSOLVERSp2cuDSS ]]; then
+    configure_args=(-DCUDSS_ROOT="$CUDSS_TRANSITION_HOME")
   fi
   # Use the shared runtime by default. Explicit upstream cudart_static links
   # (the nvJPEG multi-instance examples) remain driver/static-runtime coverage.
@@ -309,7 +333,7 @@ build_sample() {
   fi
 }
 export -f build_sample
-export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME CUSPARSELT_HOME CUSPARSELT_STAGE MATHDX_HOME
+export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME CUSPARSELT_HOME CUSPARSELT_STAGE MATHDX_HOME CUDSS_TRANSITION_HOME
 
 if [[ "$BUILD_SAMPLES" != "0" ]]; then
   to_build=()
@@ -367,6 +391,7 @@ unit_argv() {
     MathDx/nvCOMPDx/02_lz4_gpu/*) printf '%s\0' -f "$nvcompdx_data/random_file_64KiB.bin" ;;
     MathDx/nvCOMPDx/03_lz4_gpu_and_cpu/*|MathDx/nvCOMPDx/05_lz4_cpu_and_nvrtc/*) printf '%s\0' -f "$nvcompdx_data/random_file_100MiB.bin" ;;
     MathDx/nvCOMPDx/04_ans_gpu/ans_gpu_compression_decompression) printf '%s\0' -t uint8 -f "$nvcompdx_data/random_file_100MiB.bin" ;;
+    cuSOLVERSp2cuDSS/*) printf '%s\0' --solver cudss ;;
   esac
 }
 # NPP samples open their inputs relative to the working directory: findContour
@@ -471,7 +496,7 @@ for i in "${!UNITS[@]}"; do
   (
     cd "$cwd"
     timeout --kill-after=5s "$SAMPLE_TIMEOUT" env \
-      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}${LD_LIBRARY_PATH:-}" \
+      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}$CUDSS_TRANSITION_HOME/lib:${LD_LIBRARY_PATH:-}" \
       LUPINE_SERVER="$SERVER_HOST:$port" \
       LD_PRELOAD="$LUPINE_LIB" \
       "$exe" "${argv[@]}"
