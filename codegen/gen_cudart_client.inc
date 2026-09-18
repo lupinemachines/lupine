@@ -1062,18 +1062,6 @@ cudaDeviceRegisterAsyncNotification(int device, cudaAsyncCallback callbackFunc,
 
 #endif
 
-static cudaError_t lupine_rpc_cudaDeviceReset(conn_t *conn) {
-  cudaError_t return_value = rpc_error();
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cudaDeviceReset) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
 static cudaError_t
 lupine_rpc_cudaDeviceSetCacheConfig(conn_t *conn,
                                     enum cudaFuncCache cacheConfig) {
