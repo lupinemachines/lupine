@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <new>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -323,10 +324,11 @@ bool host_pid_owned_by_other_slot(int32_t host_pid, int slot_index) {
 
 struct host_pid_probe {
   int slot_index = -1;
-  nvml_session session;
+  std::optional<nvml_session> session;
   nvmlDevice_t device = nullptr;
   std::set<unsigned int> before_pids;
   bool lock_held = false;
+  bool pid_can_appear = false;
 };
 
 thread_local std::unique_ptr<host_pid_probe> active_host_pid_probe;
@@ -338,13 +340,36 @@ void note_discovery_failure() {
   }
 }
 
+// NVML lists a process on a device for as long as it holds a context there, so
+// a retain or a create can only add our PID to that list while we hold none
+// yet. An active primary context means this process is already listed and no
+// new PID can appear, so end_context_probe skips its poll; the probe still runs
+// to the end, which counts the connection as a discovery failure.
+bool primary_context_active(int cuda_device) {
+  unsigned int flags = 0;
+  int active = 0;
+  return cuDevicePrimaryCtxGetState(cuda_device, &flags, &active) ==
+             CUDA_SUCCESS &&
+         active != 0;
+}
+
 void begin_context_probe(int cuda_device) {
   if (registry == nullptr || child_slot < 0 || slot_has_host_pid(child_slot) ||
       active_host_pid_probe != nullptr) {
     return;
   }
   std::unique_ptr<host_pid_probe> probe(new (std::nothrow) host_pid_probe());
-  if (probe == nullptr || !probe->session.active()) {
+  if (probe == nullptr) {
+    note_discovery_failure();
+    return;
+  }
+  if (primary_context_active(cuda_device)) {
+    probe->slot_index = child_slot;
+    active_host_pid_probe = std::move(probe);
+    return;
+  }
+  probe->session.emplace();
+  if (!probe->session->active()) {
     note_discovery_failure();
     return;
   }
@@ -379,6 +404,7 @@ void begin_context_probe(int cuda_device) {
     probe->before_pids.insert(process.pid);
   }
   probe->slot_index = child_slot;
+  probe->pid_can_appear = true;
   active_host_pid_probe = std::move(probe);
 }
 
@@ -389,7 +415,7 @@ void end_context_probe(bool context_created) {
   }
   bool resolved = false;
   bool ambiguous = false;
-  if (context_created) {
+  if (context_created && probe->pid_can_appear) {
     for (int attempt = 0; attempt < 50; ++attempt) {
       bool query_ok = false;
       std::vector<nvmlProcessInfo_t> after =
