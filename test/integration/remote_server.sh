@@ -27,7 +27,13 @@ stop_remote_server() {
             sleep 0.1
           done
         fi
-        kill -9 \"\$pid\" >/dev/null 2>&1 || true
+        # The listener waits for its connection children, so it is still alive
+        # here only when one of them is wedged in a CUDA call it will not
+        # return from. List the children before killing the listener: once it
+        # is gone they are reparented and unreachable, and a survivor holds a
+        # CUDA context, and whatever kernel wedged it, for the rest of the run.
+        children=\$(pgrep -P \"\$pid\" 2>/dev/null || true)
+        kill -9 \"\$pid\" \$children >/dev/null 2>&1 || true
       fi
     fi
     rm -f '$pidfile' '$server_log'
