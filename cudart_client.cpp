@@ -309,6 +309,31 @@ bool lane_binding_describes(conn_t *conn) {
          lane_binding.context == lupine_current_context_hint();
 }
 
+// What binds a lane that has never carried a CUDA call. One lane per client
+// thread, one server thread per lane, and the copies below reach the driver
+// shim, which resolves its route from the allocation rather than from the
+// calling thread's context and so puts no context on that lane: the server
+// thread runs the copy with none current and the driver answers
+// CUDA_ERROR_INVALID_CONTEXT. Binding it is the runtime's job and not the
+// driver's -- a runtime call on a thread with no current context takes the
+// current device's primary context, while a driver-API caller with none must
+// still fail -- and selecting the device the lane already reports is what
+// does it, since cudaSetDevice initializes that device's primary context
+// eagerly. A thread the driver shim already has on a context is left alone:
+// re-selecting its device would displace a non-primary context it put there.
+// A recorded selection is the only other proof the lane is bound; a device
+// query is answered from that same record, without the server making a call.
+void bind_calling_lane() {
+  if (lupine_current_context_hint() != nullptr ||
+      (lane_binding.selected && lane_binding_describes(connection()))) {
+    return;
+  }
+  int device = 0;
+  if (cudaGetDevice(&device) == cudaSuccess) {
+    (void)cudaSetDevice(device);
+  }
+}
+
 conn_t *connection_for_device(int *device, cudaError_t *result) {
   std::vector<int> offsets;
   cudaError_t status = device_ordinal_offsets(&offsets);
@@ -1060,6 +1085,7 @@ cudaError_t copy_2d(void *dst, size_t dpitch, const void *src, size_t spitch,
   if (dst == nullptr || src == nullptr) {
     return cudaErrorInvalidValue;
   }
+  bind_calling_lane();
   // A depth-one volume accepts arbitrary device pitches; cuMemcpy2D can
   // reject pitches that did not come from cuMemAllocPitch.
   CUDA_MEMCPY3D copy = {};
@@ -1108,6 +1134,7 @@ cudaError_t symbol_address(conn_t *conn, void **address, const void *symbol,
 
 cudaError_t copy_peer(void *dst, int dstDevice, const void *src, int srcDevice,
                       size_t count, const cudaStream_t *stream) {
+  bind_calling_lane();
   CUcontext dstContext = nullptr, srcContext = nullptr;
   CUresult result = cuDevicePrimaryCtxRetain(&dstContext, dstDevice);
   if (result != CUDA_SUCCESS) {
@@ -1142,6 +1169,7 @@ extern "C" cudaError_t cudaMemcpy(void *dst, const void *src, size_t count,
   if (dst == nullptr || src == nullptr) {
     return cudaErrorInvalidValue;
   }
+  bind_calling_lane();
   switch (kind) {
   case cudaMemcpyHostToHost:
     std::memmove(dst, src, count);
@@ -1175,6 +1203,7 @@ extern "C" cudaError_t cudaMemcpyAsync(void *dst, const void *src, size_t count,
   if (dst == nullptr || src == nullptr) {
     return cudaErrorInvalidValue;
   }
+  bind_calling_lane();
   switch (kind) {
   case cudaMemcpyHostToHost:
     std::memmove(dst, src, count);
@@ -1214,15 +1243,22 @@ extern "C" cudaError_t cudaMemcpy2DAsync(void *dst, size_t dpitch,
 extern "C" cudaError_t cudaMemcpy3D(const cudaMemcpy3DParms *params) {
   CUDA_MEMCPY3D copy{};
   cudaError_t result = copy_descriptor(params, &copy);
-  return result == cudaSuccess ? runtime_error(cuMemcpy3D(&copy)) : result;
+  if (result != cudaSuccess) {
+    return result;
+  }
+  bind_calling_lane();
+  return runtime_error(cuMemcpy3D(&copy));
 }
 
 extern "C" cudaError_t cudaMemcpy3DAsync(const cudaMemcpy3DParms *params,
                                          cudaStream_t stream) {
   CUDA_MEMCPY3D copy{};
   cudaError_t result = copy_descriptor(params, &copy);
-  return result == cudaSuccess ? runtime_error(cuMemcpy3DAsync(&copy, stream))
-                               : result;
+  if (result != cudaSuccess) {
+    return result;
+  }
+  bind_calling_lane();
+  return runtime_error(cuMemcpy3DAsync(&copy, stream));
 }
 
 extern "C" cudaError_t
@@ -1284,6 +1320,7 @@ cudaError_t copy_array_2d(CUDA_MEMCPY3D *copy, size_t width, size_t height,
   copy->Height = height;
   copy->Depth = 1;
   copy->srcHeight = copy->dstHeight = height;
+  bind_calling_lane();
   return runtime_error(stream == nullptr ? cuMemcpy3D(copy)
                                          : cuMemcpy3DAsync(copy, *stream));
 }
