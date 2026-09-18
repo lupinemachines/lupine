@@ -126,6 +126,12 @@ struct lupine_host_allocation {
   uintptr_t host_base = 0;
   CUdeviceptr device_alloc_base = 0;
   int route_id = -2;
+  struct route_mapping {
+    int route_id = -2;
+    CUdeviceptr server_host_ptr = 0;
+    CUdeviceptr device_ptr = 0;
+  };
+  std::vector<route_mapping> portable_mappings;
 };
 
 struct lupine_mapped_host_snapshot {
@@ -146,6 +152,11 @@ static std::mutex &lupine_host_allocation_mutex() {
   return mutex;
 }
 
+static std::mutex &lupine_portable_mapping_mutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
 // CUDA libraries can issue teardown requests after function-local statics have
 // started finalizing. Keep the registry alive for those late request flushes.
 static lupine_host_allocation_map &lupine_mutable_host_allocations_locked() {
@@ -156,6 +167,11 @@ static lupine_host_allocation_map &lupine_mutable_host_allocations_locked() {
 
 static lupine_host_allocation_map::iterator
 lupine_find_host_allocation_locked(void *p);
+static CUresult lupine_remote_cuMemHostAlloc(void **remote_host,
+                                             CUdeviceptr *device_ptr,
+                                             size_t bytesize,
+                                             unsigned int flags,
+                                             lupine_route route);
 
 static constexpr size_t LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES =
     sizeof(CUdeviceptr) + sizeof(size_t);
@@ -765,13 +781,49 @@ static std::vector<lupine_mapped_host_snapshot> lupine_mapped_host_snapshots() {
   return snapshots;
 }
 
+static bool lupine_mapping_for_route(
+    void *host, const lupine_host_allocation &allocation, int route_id,
+    lupine_host_allocation::route_mapping *mapping) {
+  if (allocation.route_id == route_id) {
+    *mapping = {route_id, allocation.server_host_ptr,
+                allocation.local_cuda
+                    ? reinterpret_cast<CUdeviceptr>(host)
+                    : allocation.device_ptr};
+    return true;
+  }
+  for (const auto &portable_mapping : allocation.portable_mappings) {
+    if (portable_mapping.route_id == route_id) {
+      *mapping = portable_mapping;
+      return true;
+    }
+  }
+  return false;
+}
+
+static lupine_host_allocation_map::iterator
+lupine_find_mapped_host_pointer_locked(CUdeviceptr pointer, size_t *offset) {
+  auto &allocations = lupine_mutable_host_allocations_locked();
+  for (auto it = allocations.begin(); it != allocations.end(); ++it) {
+    auto &allocation = it->second;
+    CUdeviceptr bases[] = {reinterpret_cast<CUdeviceptr>(it->first),
+                          allocation.device_ptr,
+                          allocation.server_host_ptr};
+    for (CUdeviceptr base : bases) {
+      if (base != 0 && pointer >= base && pointer < base + allocation.size) {
+        *offset = pointer - base;
+        return it;
+      }
+    }
+  }
+  return allocations.end();
+}
+
 extern "C" void
 lupine_mark_mapped_host_kernel_params(void *const *kernel_params,
                                       const size_t *sizes, uint32_t count) {
-  if (kernel_params == nullptr || sizes == nullptr || count == 0) {
+  if (kernel_params == nullptr || sizes == nullptr) {
     return;
   }
-
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   for (uint32_t i = 0; i < count; ++i) {
     if (sizes[i] != sizeof(CUdeviceptr) || kernel_params[i] == nullptr) {
@@ -779,32 +831,79 @@ lupine_mark_mapped_host_kernel_params(void *const *kernel_params,
     }
     CUdeviceptr argument = 0;
     memcpy(&argument, kernel_params[i], sizeof(argument));
-    if (argument == 0) {
-      continue;
-    }
-
-    for (auto &entry : lupine_mutable_host_allocations_locked()) {
-      auto &allocation = entry.second;
-      if (allocation.device_ptr == 0 || allocation.local_cuda ||
-          allocation.device_pointer_exposed) {
-        continue;
-      }
-      uintptr_t host = reinterpret_cast<uintptr_t>(entry.first);
-      bool matches_host = argument >= host && argument < host + allocation.size;
-      bool matches_device = argument >= allocation.device_ptr &&
-                            argument < allocation.device_ptr + allocation.size;
-      bool matches_server =
-          allocation.server_host_ptr != 0 &&
-          argument >= allocation.server_host_ptr &&
-          argument < allocation.server_host_ptr + allocation.size;
-      if (!matches_host && !matches_device && !matches_server) {
-        continue;
-      }
-      allocation.device_pointer_exposed = true;
+    size_t offset = 0;
+    auto it = lupine_find_mapped_host_pointer_locked(argument, &offset);
+    if (it != lupine_mutable_host_allocations_locked().end()) {
+      it->second.device_pointer_exposed = true;
       lupine_require_dirty_host_flush();
-      break;
     }
   }
+}
+
+CUresult lupine_translate_mapped_host_pointer(lupine_route route,
+                                              CUdeviceptr argument,
+                                              CUdeviceptr *translated) {
+  if (translated == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  *translated = argument;
+  std::lock_guard<std::mutex> mapping_lock(lupine_portable_mapping_mutex());
+  std::unique_lock<std::mutex> lock(lupine_host_allocation_mutex());
+  size_t offset = 0;
+  auto it = lupine_find_mapped_host_pointer_locked(argument, &offset);
+  if (it == lupine_mutable_host_allocations_locked().end()) {
+    return CUDA_SUCCESS;
+  }
+  auto &allocation = it->second;
+  allocation.device_pointer_exposed = true;
+  lupine_require_dirty_host_flush();
+  if (allocation.managed ||
+      (allocation.flags & CU_MEMHOSTALLOC_PORTABLE) == 0) {
+    return CUDA_SUCCESS;
+  }
+
+  int route_id = lupine_route_identity(route);
+  lupine_host_allocation::route_mapping mapping;
+  if (lupine_mapping_for_route(it->first, allocation, route_id, &mapping)) {
+    *translated = mapping.device_ptr + offset;
+    return CUDA_SUCCESS;
+  }
+
+  void *host = it->first;
+  size_t bytes = allocation.storage_size;
+  lock.unlock();
+  CUdeviceptr server_host = reinterpret_cast<CUdeviceptr>(host);
+  CUdeviceptr device_ptr = 0;
+  bool local = lupine_route_is_local(route);
+  CUresult result = CUDA_SUCCESS;
+  if (local) {
+    result = lupine_call_real_cuda_fn(
+        "cuMemHostRegister_v2", host, bytes,
+        CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP);
+    if (result == CUDA_SUCCESS) {
+      result = lupine_call_real_cuda_fn("cuMemHostGetDevicePointer_v2",
+                                        &device_ptr, host, 0);
+      if (result != CUDA_SUCCESS) {
+        (void)lupine_call_real_cuda_fn("cuMemHostUnregister", host);
+      }
+    }
+  } else {
+    void *remote_host = nullptr;
+    result = lupine_remote_cuMemHostAlloc(
+        &remote_host, &device_ptr, bytes,
+        CU_MEMHOSTALLOC_PORTABLE | CU_MEMHOSTALLOC_DEVICEMAP, route);
+    server_host = reinterpret_cast<CUdeviceptr>(remote_host);
+  }
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+
+  lock.lock();
+  allocation.portable_mappings.push_back(
+      {route_id, server_host, device_ptr});
+  lupine_require_dirty_host_flush();
+  *translated = device_ptr + offset;
+  return CUDA_SUCCESS;
 }
 
 // Writable aliases are private to the transport. Only the pinned DtoH RPC
@@ -994,21 +1093,35 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     }
   }
 
-  // Nothing observes writes to a registration, so the whole window goes over
-  // before device work can read it.
+  // Nothing observes writes to an untracked primary registration, so its
+  // whole window goes over before device work can read it. Dirty-page tracking
+  // is anchored at the primary mapping, so portable secondary mappings also
+  // receive the allocation's current contents before work is submitted there.
   {
     std::lock_guard<std::mutex> allocation_lock(lupine_host_allocation_mutex());
-    for (auto &entry : lupine_mutable_host_allocations_locked()) {
-      auto &allocation = entry.second;
-      if (allocation.tracking_enabled || !allocation.device_pointer_exposed ||
-          allocation.server_host_ptr == 0 || allocation.local_cuda ||
-          allocation.route_id != static_cast<int>(route_id) ||
+    auto &allocations = lupine_mutable_host_allocations_locked();
+    for (auto it = allocations.begin(); it != allocations.end(); ++it) {
+      auto &allocation = it->second;
+      if (!allocation.device_pointer_exposed ||
           __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0) {
         continue;
       }
-      __atomic_add_fetch(&allocation.pending_dirty_ranges, 1, __ATOMIC_ACQ_REL);
+      lupine_host_allocation::route_mapping mapping;
+      if (!lupine_mapping_for_route(it->first, allocation,
+                                    static_cast<int>(route_id), &mapping) ||
+          mapping.server_host_ptr == 0) {
+        continue;
+      }
+      bool primary = allocation.route_id == static_cast<int>(route_id);
+      if (primary && (allocation.tracking_enabled || allocation.local_cuda)) {
+        continue;
+      }
+      __atomic_add_fetch(&allocation.pending_dirty_ranges, 1,
+                         __ATOMIC_ACQ_REL);
       ranges.push_back({&allocation, allocation.host_base,
-                        allocation.host_base + allocation.size});
+                        allocation.host_base +
+                            (primary ? allocation.size
+                                     : allocation.storage_size)});
     }
   }
 
@@ -1104,7 +1217,14 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     }
     size_t offset = start - allocation.host_base;
     size_t bytes = end - start;
-    CUdeviceptr dst = allocation.server_host_ptr + offset;
+    lupine_host_allocation::route_mapping mapping;
+    if (!lupine_mapping_for_route(
+            reinterpret_cast<void *>(allocation.host_base), allocation,
+            static_cast<int>(route_id), &mapping)) {
+      release_ranges(true);
+      return CUDA_ERROR_INVALID_VALUE;
+    }
+    CUdeviceptr dst = mapping.server_host_ptr + offset;
     const void *source = reinterpret_cast<void *>(start);
     if (allocation.io_alias != nullptr) {
       source = static_cast<unsigned char *>(allocation.io_alias) + offset;
@@ -1971,6 +2091,24 @@ static CUresult lupine_remote_cuMemFreeHost(void *remote_host,
   return return_value;
 }
 
+static CUresult lupine_release_portable_mappings(
+    void *host,
+    const std::vector<lupine_host_allocation::route_mapping> &mappings) {
+  CUresult result = CUDA_SUCCESS;
+  for (const auto &mapping : mappings) {
+    lupine_route route = lupine_route_from_identity(mapping.route_id);
+    CUresult mapping_result =
+        lupine_route_is_local(route)
+            ? lupine_call_real_cuda_fn("cuMemHostUnregister", host)
+            : lupine_remote_cuMemFreeHost(
+                  reinterpret_cast<void *>(mapping.server_host_ptr), route);
+    if (result == CUDA_SUCCESS) {
+      result = mapping_result;
+    }
+  }
+  return result;
+}
+
 static CUresult lupine_remote_cuMemHostGetDevicePointer(CUdeviceptr *device_ptr,
                                                         void *remote_host,
                                                         unsigned int flags,
@@ -2139,6 +2277,7 @@ extern "C" CUresult cuMemHostAlloc(void **pp, size_t bytesize,
     allocation.owned = true;
     allocation.local_cuda = true;
     allocation.server_host_ptr = reinterpret_cast<CUdeviceptr>(*pp);
+    allocation.host_base = reinterpret_cast<uintptr_t>(*pp);
     allocation.route_id = lupine_route_identity(route);
     {
       std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
@@ -2194,6 +2333,7 @@ extern "C" CUresult lupine_free_host_allocation(void *p,
   if (flush_result != CUDA_SUCCESS) {
     return flush_result;
   }
+  std::unique_lock<std::mutex> mapping_lock(lupine_portable_mapping_mutex());
 
   bool owned = false;
   bool owned_mmap = false;
@@ -2202,6 +2342,7 @@ extern "C" CUresult lupine_free_host_allocation(void *p,
   size_t storage_size = 0;
   CUdeviceptr server_host_ptr = 0;
   CUdeviceptr device_ptr = 0;
+  std::vector<lupine_host_allocation::route_mapping> portable_mappings;
   lupine_host_allocation *retiring_allocation = nullptr;
   {
     std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
@@ -2217,6 +2358,7 @@ extern "C" CUresult lupine_free_host_allocation(void *p,
     storage_size = it->second.storage_size;
     server_host_ptr = it->second.server_host_ptr;
     device_ptr = it->second.device_ptr;
+    portable_mappings = it->second.portable_mappings;
     __atomic_store_n(&it->second.retiring, 1, __ATOMIC_RELEASE);
     lupine_pointer_attribute_cache_clear();
     lupine_disable_dirty_tracking(p, it->second);
@@ -2235,13 +2377,18 @@ extern "C" CUresult lupine_free_host_allocation(void *p,
     }
     allocations.erase(it);
   }
+  mapping_lock.unlock();
+  CUresult result = lupine_release_portable_mappings(p, portable_mappings);
   if (local_cuda) {
-    CUresult result = release(nullptr, p);
-    if (result == CUDA_SUCCESS) {
+    CUresult primary_result = release(nullptr, p);
+    if (primary_result == CUDA_SUCCESS) {
       lupine_forget_deviceptr_owner(reinterpret_cast<CUdeviceptr>(p));
       if (device_ptr != 0) {
         lupine_forget_deviceptr_owner(device_ptr);
       }
+    }
+    if (result == CUDA_SUCCESS) {
+      result = primary_result;
     }
     return result;
   }
@@ -2256,16 +2403,19 @@ extern "C" CUresult lupine_free_host_allocation(void *p,
       free(p);
     }
   }
-  CUresult result = CUDA_SUCCESS;
   if (server_host_ptr != 0) {
     lupine_route route = lupine_route_for_deviceptr(server_host_ptr);
-    result = release(lupine_route_remote_conn(route),
-                     reinterpret_cast<void *>(server_host_ptr));
-    if (result == CUDA_SUCCESS) {
+    CUresult primary_result =
+        release(lupine_route_remote_conn(route),
+                reinterpret_cast<void *>(server_host_ptr));
+    if (primary_result == CUDA_SUCCESS) {
       lupine_forget_deviceptr_owner(server_host_ptr);
       if (device_ptr != 0) {
         lupine_forget_deviceptr_owner(device_ptr);
       }
+    }
+    if (result == CUDA_SUCCESS) {
+      result = primary_result;
     }
   }
   return result;
@@ -2464,6 +2614,7 @@ static CUresult lupine_register_host_on_route(lupine_route route, void *p,
     allocation.local_cuda = true;
     allocation.client_to_server_only = client_to_server_only;
     allocation.server_host_ptr = reinterpret_cast<CUdeviceptr>(p);
+    allocation.host_base = reinterpret_cast<uintptr_t>(p);
     allocation.route_id = lupine_route_identity(route);
     std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
     if (!lupine_mutable_host_allocations_locked()
@@ -2590,9 +2741,11 @@ lupine_unregister_host_allocation(void *p, lupine_host_free_fn release) {
   if (flush_result != CUDA_SUCCESS) {
     return flush_result;
   }
+  std::unique_lock<std::mutex> mapping_lock(lupine_portable_mapping_mutex());
   bool local_cuda = false;
   CUdeviceptr server_host_ptr = 0;
   CUdeviceptr device_ptr = 0;
+  std::vector<lupine_host_allocation::route_mapping> portable_mappings;
   void *tracked = nullptr;
   lupine_host_allocation *retiring_allocation = nullptr;
   {
@@ -2610,6 +2763,7 @@ lupine_unregister_host_allocation(void *p, lupine_host_free_fn release) {
     local_cuda = it->second.local_cuda;
     server_host_ptr = it->second.server_host_ptr;
     device_ptr = it->second.device_ptr;
+    portable_mappings = it->second.portable_mappings;
     __atomic_store_n(&it->second.retiring, 1, __ATOMIC_RELEASE);
     lupine_pointer_attribute_cache_clear();
     lupine_disable_dirty_tracking(tracked, it->second);
@@ -2628,23 +2782,32 @@ lupine_unregister_host_allocation(void *p, lupine_host_free_fn release) {
     }
     allocations.erase(it);
   }
+  mapping_lock.unlock();
+  CUresult result =
+      lupine_release_portable_mappings(tracked, portable_mappings);
   if (local_cuda) {
-    CUresult result = release(nullptr, p);
-    if (result == CUDA_SUCCESS && device_ptr != 0) {
+    CUresult primary_result = release(nullptr, p);
+    if (primary_result == CUDA_SUCCESS && device_ptr != 0) {
       lupine_forget_deviceptr_owner(device_ptr);
+    }
+    if (result == CUDA_SUCCESS) {
+      result = primary_result;
     }
     return result;
   }
-  CUresult result = CUDA_SUCCESS;
   if (server_host_ptr != 0) {
     lupine_route route = lupine_route_for_deviceptr(server_host_ptr);
-    result = release(lupine_route_remote_conn(route),
-                     reinterpret_cast<void *>(server_host_ptr));
-    if (result == CUDA_SUCCESS) {
+    CUresult primary_result =
+        release(lupine_route_remote_conn(route),
+                reinterpret_cast<void *>(server_host_ptr));
+    if (primary_result == CUDA_SUCCESS) {
       lupine_forget_deviceptr_owner(server_host_ptr);
       if (device_ptr != 0) {
         lupine_forget_deviceptr_owner(device_ptr);
       }
+    }
+    if (result == CUDA_SUCCESS) {
+      result = primary_result;
     }
   }
   return result;
