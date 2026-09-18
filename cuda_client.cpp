@@ -1990,13 +1990,15 @@ lupine_translate_private_function_for_rpc(CUfunction function) {
 }
 
 extern "C" bool
-lupine_device_attribute_is_virtualized(CUdevice_attribute attrib) {
+lupine_device_attribute_is_virtualized(conn_t *conn,
+                                       CUdevice_attribute attrib) {
   switch (attrib) {
   case CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS:
   case CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES:
-  case CU_DEVICE_ATTRIBUTE_CONCURRENT_MANAGED_ACCESS:
   case CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST:
     return true;
+  case CU_DEVICE_ATTRIBUTE_CONCURRENT_MANAGED_ACCESS:
+    return !lupine_connection_supports_concurrent_managed_access(conn);
   default:
     return false;
   }
@@ -2051,7 +2053,7 @@ static void lupine_prefill_device_snapshot(conn_t *conn) {
       int attrib = static_cast<int>(pairs[pair * 2]);
       int value = static_cast<int>(pairs[pair * 2 + 1]);
       if (lupine_device_attribute_is_virtualized(
-              static_cast<CUdevice_attribute>(attrib))) {
+              conn, static_cast<CUdevice_attribute>(attrib))) {
         value = 0;
       }
       lupine_device_attribute_cache().insert_or_assign(
@@ -2102,7 +2104,7 @@ extern "C" CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
-    if (lupine_device_attribute_is_virtualized(attrib)) {
+    if (lupine_device_attribute_is_virtualized(conn, attrib)) {
       value = 0;
     }
     lupine_device_attribute_cache().insert_or_assign(key, value);

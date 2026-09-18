@@ -36,7 +36,7 @@ lupine_free_device_allocation(CUdeviceptr pointer,
 
 extern "C" bool lupine_copy_pointer_is_host(CUdeviceptr ptr);
 extern "C" bool
-lupine_device_attribute_is_virtualized(CUdevice_attribute attrib);
+lupine_device_attribute_is_virtualized(conn_t *conn, CUdevice_attribute attrib);
 extern "C" bool lupine_host_ptr_is_page_locked(const void *host);
 extern "C" bool lupine_is_managed_host_alias(CUdeviceptr ptr);
 extern "C" const void *lupine_mapped_host_read_source(const void *host,
