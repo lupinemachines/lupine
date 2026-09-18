@@ -1,0 +1,25 @@
+# Copy to run.tfvars and substitute your project, images, key and runner IP.
+project_id        = "your-gcp-project"
+run_id            = "lupine-topology-123-1"
+zone              = "us-central1-a"
+ssh_public_key    = "ssh-ed25519 REPLACE_WITH_RUNNER_PUBLIC_KEY"
+ssh_source_ranges = ["198.51.100.10/32"]
+
+# configure_fleet.py resolves these fields from the selected run automatically.
+host_platforms = {
+  client = {
+    os = "ubuntu", version = "24.04", arch = "x86_64", machine_type = "e2-standard-4"
+    image = "projects/your-image-project/global/images/lupine-cpu-IMAGE-VERSION"
+  }
+  a = {
+    os = "ubuntu", version = "24.04", arch = "x86_64", machine_type = "g2-standard-24"
+    image = "projects/your-image-project/global/images/lupine-gpu-IMAGE-VERSION"
+  }
+  b = {
+    os = "ubuntu", version = "24.04", arch = "x86_64", machine_type = "g2-standard-24"
+    image = "projects/your-image-project/global/images/lupine-gpu-IMAGE-VERSION"
+  }
+}
+
+# Reserve matching capacity separately, then require those reservations here.
+# reservations = { a = "lupine-gpu-a", b = "lupine-gpu-b" }
