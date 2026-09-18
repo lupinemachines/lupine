@@ -30,3 +30,4 @@ test/cuda-library-samples/cudss/
 test/cuda-library-samples/nvcomp/
 test/cuda-library-samples/nvtiff/
 test/cuda-library-samples/nppplus/
+test/cuda-library-samples/cudss-transition/
