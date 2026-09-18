@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Build and run NVIDIA/CUDALibrarySamples (cuBLAS, cuBLASLt, cuFFT, cuRAND,
-# cuSOLVER, cuSPARSE, nvJPEG, NPP, cuPQC) through the lupine client shim
-# against a remote server. Every leaf directory with a CMakeLists.txt is a
+# cuSOLVER, cuSPARSE, cuSPARSELt, nvJPEG, NPP, cuPQC) through the lupine client
+# shim against a remote server. Every leaf directory with a CMakeLists.txt is a
 # standalone CMake project; every executable it produces is a unit with its own
 # server on SERVER_PORT_BASE + index.
 #
-# Libraries that ship outside the toolkit (cuTENSOR, cuDSS, nvCOMP, cuSPARSELt,
-# MathDx, the *Mp multi-process variants) are not selected by default. cuPQC is
+# Libraries that ship outside the toolkit (cuTENSOR, cuDSS, nvCOMP, MathDx,
+# the *Mp multi-process variants) are not selected by default. cuPQC is
 # the exception: it is device-side only, so the toolkit shim covers it once
-# CUPQC_HOME points at an unpacked SDK.
+# CUPQC_HOME points at an unpacked SDK. cuSPARSELt ships outside the toolkit
+# too and needs CUSPARSELT_HOME; without one its samples stay unbuilt. They
+# call cusparseLtGetErrorString, which 0.6.x does not declare and 0.7.x
+# declares but does not export, so they need 0.8.0 or newer.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,7 +20,7 @@ LIBRARY_SAMPLES_URL="${LIBRARY_SAMPLES_URL:-https://github.com/NVIDIA/CUDALibrar
 LIBRARY_SAMPLES_REF="${LIBRARY_SAMPLES_REF:-3437729}"
 LIBRARY_SAMPLES_DIR="${LIBRARY_SAMPLES_DIR:-$repo_root/test/cuda-library-samples/CUDALibrarySamples}"
 LIBRARY_SAMPLES_BUILD_DIR="${LIBRARY_SAMPLES_BUILD_DIR:-$LIBRARY_SAMPLES_DIR/build}"
-LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE nvJPEG NPP cuPQC}"
+LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE cuSPARSELt nvJPEG NPP cuPQC}"
 LIBRARY_SAMPLES_ARCH="${LIBRARY_SAMPLES_ARCH:-${CUDA_SAMPLES_ARCH:-89}}"
 LIBRARY_SAMPLES_CMAKE_ARGS="${LIBRARY_SAMPLES_CMAKE_ARGS:-}"
 LIBRARY_SAMPLES_SKIP_LIST="${LIBRARY_SAMPLES_SKIP_LIST:-}"
@@ -43,6 +46,7 @@ LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 CUPQC_HOME="${CUPQC_HOME:-}"
+CUSPARSELT_HOME="${CUSPARSELT_HOME:-}"
 SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-180}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-library-samples/results/$(date +%Y%m%d-%H%M%S)}"
 nvjpeg_assets="${NVJPEG_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg-assets}"
@@ -64,6 +68,8 @@ Environment:
   LIBRARY_SAMPLES_SKIP_LIST  Comma or space separated units to mark SKIP:disabled.
   LIBRARY_SAMPLES_KNOWN_FAILURES
                              Units to mark SKIP:known. Default: $LIBRARY_SAMPLES_KNOWN_FAILURES
+  CUSPARSELT_HOME            cuSPARSELt root holding include/ and lib/. Without
+                             one the cuSPARSELt samples are not built.
   BUILD_SAMPLES              auto, 1, or 0. Default: auto (build dirs without a build).
   BUILD_ONLY                 1 to clone/build and exit before running.
   JOBS                       Parallel sample builds. Default: $JOBS
@@ -206,11 +212,36 @@ if [[ "${LIST_TESTS:-0}" == "1" ]]; then
   exit 0
 fi
 
+# The cuSPARSELt samples link $CUSPARSELT_PATH/lib64/libcusparseLt.so, a layout
+# no current release ships: the wheels carry lib/libcusparseLt.so.0 under
+# cusparselt/, nvidia/cusparselt/ or nvidia/cu13/. Stage the SONAME under the
+# name the samples ask for.
+CUSPARSELT_STAGE="$LIBRARY_SAMPLES_BUILD_DIR/cusparselt-root"
+if [[ -n "$CUSPARSELT_HOME" ]]; then
+  mkdir -p "$CUSPARSELT_STAGE/lib64"
+  ln -sfn "$CUSPARSELT_HOME/include" "$CUSPARSELT_STAGE/include"
+  ln -sfn "$CUSPARSELT_HOME/lib/libcusparseLt.so.0" \
+    "$CUSPARSELT_STAGE/lib64/libcusparseLt.so"
+fi
+
 build_sample() {
   local sample="$1"
   local build="$LIBRARY_SAMPLES_BUILD_DIR/$sample"
   local log="$build.build.log"
   mkdir -p "$(dirname "$build")"
+  local configure_args=()
+  local build_args=()
+  if [[ "$sample" == cuSPARSELt/* ]]; then
+    if [[ -z "$CUSPARSELT_HOME" ]]; then
+      echo "BUILD SKIPPED $sample: set CUSPARSELT_HOME"
+      return 1
+    fi
+    configure_args=(-DCUSPARSELT_PATH="$CUSPARSELT_STAGE")
+    # Each cuSPARSELt sample also builds the same source against
+    # libcusparseLt_static.a, which no cuSPARSELt wheel ships. Naming the
+    # shared executable keeps the missing archive out of the ninja graph.
+    build_args=(--target "$(basename "$sample")_example")
+  fi
   # Use the shared runtime by default. Explicit upstream cudart_static links
   # (the nvJPEG multi-instance examples) remain driver/static-runtime coverage.
   # The cuSPARSE lists link bare cudart/cusparse/cuda names and compile host
@@ -224,10 +255,11 @@ build_sample() {
         -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared \
         -DCMAKE_CUDA_ARCHITECTURES="$LIBRARY_SAMPLES_ARCH" \
         -DCUDAToolkit_ROOT="$CUDA_HOME" \
+        "${configure_args[@]}" \
         $LIBRARY_SAMPLES_CMAKE_ARGS >"$log" 2>&1 \
      && LIBRARY_PATH="$CUDA_LIB_DIR:$CUDA_LIB_DIR/stubs${LIBRARY_PATH:+:$LIBRARY_PATH}" \
      CPATH="$CUDA_HOME/include${CPATH:+:$CPATH}" \
-      cmake --build "$build" --parallel 2 >>"$log" 2>&1; then
+      cmake --build "$build" --parallel 2 "${build_args[@]}" >>"$log" 2>&1; then
     echo "built $sample"
   else
     echo "BUILD FAILED $sample: $(grep -m1 -iE 'error' "$log" | cut -c1-160)"
@@ -235,7 +267,7 @@ build_sample() {
   fi
 }
 export -f build_sample
-export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME
+export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME CUSPARSELT_HOME CUSPARSELT_STAGE
 
 if [[ "$BUILD_SAMPLES" != "0" ]]; then
   to_build=()
@@ -386,7 +418,7 @@ for i in "${!UNITS[@]}"; do
   (
     cd "$cwd"
     timeout --kill-after=5s "$SAMPLE_TIMEOUT" env \
-      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
+      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}${LD_LIBRARY_PATH:-}" \
       LUPINE_SERVER="$SERVER_HOST:$port" \
       LD_PRELOAD="$LUPINE_LIB" \
       "$exe" "${argv[@]}"

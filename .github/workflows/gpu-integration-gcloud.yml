@@ -388,12 +388,6 @@ jobs:
               curl -fsSL https://developer.nvidia.com/downloads/compute/cupqc/downloads/secure/cupqc-sdk-0.4.0-x86_64.tar.gz \
                 | tar xz -C "$CUPQC_HOME" --strip-components=1
 
-          # CUDALibrarySamples are built once here; samples the lane's toolkit
-          # cannot build are reported as SKIP:build-failed by the run step.
-          COPY test/run_cuda_library_samples.sh /opt/lupine/run_cuda_library_samples.sh
-          RUN LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples LIBRARY_SAMPLES_ARCH="$CUDA_SAMPLES_ARCH" \
-                BUILD_ONLY=1 bash /opt/lupine/run_cuda_library_samples.sh
-
           # Python setup is part of the dependency image, before the source copy.
           COPY test/run_cuda_python_tests.sh /opt/lupine/run_cuda_python_tests.sh
           RUN python3 -m venv /opt/venv-pytorch && \
@@ -403,6 +397,23 @@ jobs:
           ENV PYTHON_BIN=/opt/venv-pytorch/bin/python \
               CUDA_PYTHON_DIR=/opt/cuda-python
           RUN CUDA_PYTHON_SETUP_ONLY=1 bash /opt/lupine/run_cuda_python_tests.sh
+
+          # CUDALibrarySamples are built once here; samples the lane's toolkit
+          # cannot build are reported as SKIP:build-failed by the run step. The
+          # cuSPARSELt ones need the PyTorch wheel's cuSPARSELt, so they build
+          # after it, from whichever directory that release installs into.
+          COPY test/run_cuda_library_samples.sh /opt/lupine/run_cuda_library_samples.sh
+          RUN bash <<'SCRIPT'
+          set -euo pipefail
+          site="$("$PYTHON_BIN" -c 'import site; print(site.getsitepackages()[0])')"
+          for header in "$site"/*/include/cusparseLt.h "$site"/*/*/include/cusparseLt.h; do
+            [[ -e "$header" ]] || continue
+            export CUSPARSELT_HOME="$(dirname "$(dirname "$header")")"
+            break
+          done
+          LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples LIBRARY_SAMPLES_ARCH="$CUDA_SAMPLES_ARCH" \
+            BUILD_ONLY=1 bash /opt/lupine/run_cuda_library_samples.sh
+          SCRIPT
           EOF
           cat > "$RUNNER_TEMP/gpu-integration.Dockerfile" <<'EOF'
           ARG BASE_IMAGE
