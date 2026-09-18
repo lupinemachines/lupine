@@ -2,7 +2,8 @@
 // architectures, error strings, a templated kernel with an in-memory header and
 // name expressions compiled to PTX and to CUBIN, both loaded through the driver
 // API and launched, headers included from files beside the program and on an
-// include path, the log of a failing compile, LTO IR linked with nvJitLink
+// include path, a header whose name an unresolvable include sighted first, the
+// log of a failing compile, LTO IR linked with nvJitLink
 // when the client has it, the precompiled header and flow callback calls and,
 // when two GPUs are present, a program compiled and launched on the second.
 #include <cuda.h>
@@ -273,6 +274,61 @@ static int test_included_files(int device) {
   return launch(device, ptx, function.c_str(), "included files");
 }
 
+// Two headers include the same bare name: the first sighting is in a branch
+// the preprocessor never takes and resolves nowhere, the second sits beside a
+// file that does have it. The second one has to travel.
+static int test_include_name_retry(int device) {
+  char root[] = "/tmp/lupine-nvrtc-name-XXXXXX";
+  EXPECT(mkdtemp(root) != nullptr);
+  const std::string include_dir = std::string(root) + "/include";
+  const std::string nested_dir = include_dir + "/sub";
+  EXPECT(mkdir(include_dir.c_str(), 0700) == 0);
+  EXPECT(mkdir(nested_dir.c_str(), 0700) == 0);
+  std::ofstream(include_dir + "/first.h") << "#ifdef LUPINE_NEVER_DEFINED\n"
+      "#include \"shared.h\"\n"
+      "#endif\n";
+  std::ofstream(nested_dir + "/second.h") << "#include \"shared.h\"\n";
+  std::ofstream(nested_dir + "/shared.h") << "#define SCALE_FACTOR 3\n";
+  const std::string option = "--include-path=" + include_dir;
+  const char *options[] = {option.c_str()};
+
+  nvrtcProgram prog = nullptr;
+  CHECK_NVRTC(nvrtcCreateProgram(&prog,
+                                 "#include <first.h>\n"
+                                 "#include <sub/second.h>\n"
+                                 "template <typename T>\n"
+                                 "__global__ void scale(T *x, int n) {\n"
+                                 "  int i = blockIdx.x * blockDim.x + "
+                                 "threadIdx.x;\n"
+                                 "  if (i < n) {\n"
+                                 "    x[i] = x[i] * SCALE_FACTOR;\n"
+                                 "  }\n"
+                                 "}\n",
+                                 "scale.cu", 0, nullptr, nullptr));
+  CHECK_NVRTC(nvrtcAddNameExpression(prog, "scale<float>"));
+  const nvrtcResult status = nvrtcCompileProgram(prog, 1, options);
+  if (status != NVRTC_SUCCESS) {
+    fprintf(stderr, "include name retry compile failed: %s\n%s\n",
+            nvrtcGetErrorString(status), program_log(prog).c_str());
+    return 1;
+  }
+  const char *lowered = nullptr;
+  CHECK_NVRTC(nvrtcGetLoweredName(prog, "scale<float>", &lowered));
+  const std::string function = lowered;
+  size_t size = 0;
+  CHECK_NVRTC(nvrtcGetPTXSize(prog, &size));
+  std::vector<char> ptx(size);
+  CHECK_NVRTC(nvrtcGetPTX(prog, ptx.data()));
+  CHECK_NVRTC(nvrtcDestroyProgram(&prog));
+  unlink((include_dir + "/first.h").c_str());
+  unlink((nested_dir + "/second.h").c_str());
+  unlink((nested_dir + "/shared.h").c_str());
+  rmdir(nested_dir.c_str());
+  rmdir(include_dir.c_str());
+  rmdir(root);
+  return launch(device, ptx, function.c_str(), "include name retry");
+}
+
 static int test_compile_error() {
   nvrtcProgram prog = nullptr;
   CHECK_NVRTC(nvrtcCreateProgram(&prog, "__global__ void broken() { oops; }",
@@ -394,7 +450,8 @@ int main() {
   EXPECT(devices > 0);
   CHECK_DRV(cuInit(0));
   if (test_version_and_archs() || test_ptx_and_names(0) || test_cubin(0) ||
-      test_included_files(0) || test_compile_error()) {
+      test_included_files(0) || test_include_name_retry(0) ||
+      test_compile_error()) {
     return 1;
   }
 #if CUDA_VERSION >= 12000

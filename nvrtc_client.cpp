@@ -301,8 +301,12 @@ included_files(const program_state &state, int numOptions,
       include_paths.push_back(option.substr(15));
     }
   }
-  std::set<std::string> known(state.include_names.begin(),
-                              state.include_names.end());
+  // A name the server already has must not travel twice, but a name that
+  // resolved nowhere only failed for the directory it was sighted from: the
+  // same name from another directory is looked for again.
+  std::set<std::string> provided(state.include_names.begin(),
+                                 state.include_names.end());
+  std::set<std::string> tried;
   std::vector<std::pair<std::string, std::string>> files;
   std::deque<std::pair<std::string, std::string>> pending;
   pending.emplace_back(state.src, state.name ? directory_of(*state.name) : "");
@@ -311,7 +315,15 @@ included_files(const program_state &state, int numOptions,
         std::move(pending.front());
     pending.pop_front();
     for (const auto &directive : include_directives(source.first)) {
-      if (!known.insert(directive.first).second) {
+      if (provided.count(directive.first) != 0) {
+        continue;
+      }
+      // Only a quoted name's candidates depend on where it was sighted, so an
+      // angled name that failed once has failed for good.
+      const std::string attempt =
+          (directive.second ? source.second : std::string()) + '\0' +
+          directive.first;
+      if (!tried.insert(attempt).second) {
         continue;
       }
       std::vector<std::string> candidates;
@@ -324,6 +336,7 @@ included_files(const program_state &state, int numOptions,
       for (const std::string &candidate : candidates) {
         std::string contents;
         if (read_file(candidate, &contents)) {
+          provided.insert(directive.first);
           pending.emplace_back(contents, directory_of(candidate));
           files.emplace_back(directive.first, std::move(contents));
           break;
