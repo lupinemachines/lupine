@@ -38545,7 +38545,7 @@ int handle_cublasXtStrmm(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
       rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
     goto ERROR_0;
-  C = (float *)malloc(C_count * sizeof(float));
+  C = (float *)calloc(C_count * sizeof(float), 1);
   if ((C_count * sizeof(float) != 0 && C == nullptr) ||
       rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
@@ -38632,7 +38632,7 @@ int handle_cublasXtDtrmm(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
       rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
     goto ERROR_0;
-  C = (double *)malloc(C_count * sizeof(double));
+  C = (double *)calloc(C_count * sizeof(double), 1);
   if ((C_count * sizeof(double) != 0 && C == nullptr) ||
       rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
@@ -38719,7 +38719,7 @@ int handle_cublasXtCtrmm(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
       rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
     goto ERROR_0;
-  C = (cuComplex *)malloc(C_count * sizeof(cuComplex));
+  C = (cuComplex *)calloc(C_count * sizeof(cuComplex), 1);
   if ((C_count * sizeof(cuComplex) != 0 && C == nullptr) ||
       rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
@@ -38807,7 +38807,7 @@ int handle_cublasXtZtrmm(conn_t *conn) {
       rpc_read(conn, &ldb, sizeof(size_t)) < 0 ||
       rpc_read(conn, &C_count, sizeof(C_count)) < 0 || false)
     goto ERROR_0;
-  C = (cuDoubleComplex *)malloc(C_count * sizeof(cuDoubleComplex));
+  C = (cuDoubleComplex *)calloc(C_count * sizeof(cuDoubleComplex), 1);
   if ((C_count * sizeof(cuDoubleComplex) != 0 && C == nullptr) ||
       rpc_read(conn, &ldc, sizeof(size_t)) < 0 || false)
     goto ERROR_0;

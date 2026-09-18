@@ -145,7 +145,7 @@ int handle_cuDeviceGetName(conn_t *conn) {
   CUresult return_value;
   if (rpc_read(conn, &len, sizeof(int)) < 0 || len < 0 || false)
     goto ERROR_0;
-  name = (char *)malloc(len * sizeof(char));
+  name = (char *)calloc(len * sizeof(char), 1);
   if ((len * sizeof(char) != 0 && name == nullptr) ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
@@ -176,7 +176,7 @@ int handle_cuDeviceGetUuid_v2(conn_t *conn) {
   CUresult return_value;
   if (false)
     goto ERROR_0;
-  uuid = (CUuuid *)malloc(16 * sizeof(CUuuid));
+  uuid = (CUuuid *)calloc(16 * sizeof(CUuuid), 1);
   if ((16 * sizeof(CUuuid) != 0 && uuid == nullptr) ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
@@ -208,7 +208,7 @@ int handle_cuDeviceGetLuid(conn_t *conn) {
   CUresult return_value;
   if (false)
     goto ERROR_0;
-  luid = (char *)malloc(8 * sizeof(char));
+  luid = (char *)calloc(8 * sizeof(char), 1);
   if ((8 * sizeof(char) != 0 && luid == nullptr) ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
@@ -1829,7 +1829,7 @@ int handle_cuDeviceGetPCIBusId(conn_t *conn) {
   CUresult return_value;
   if (rpc_read(conn, &len, sizeof(int)) < 0 || len < 0 || false)
     goto ERROR_0;
-  pciBusId = (char *)malloc(len * sizeof(char));
+  pciBusId = (char *)calloc(len * sizeof(char), 1);
   if ((len * sizeof(char) != 0 && pciBusId == nullptr) ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
@@ -3564,7 +3564,7 @@ int handle_cuMemRangeGetAttribute(conn_t *conn) {
   CUresult return_value;
   if (rpc_read(conn, &dataSize, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  data = (void *)malloc(dataSize);
+  data = (void *)calloc(dataSize, 1);
   if ((dataSize != 0 && data == nullptr) ||
       rpc_read(conn, &attribute, sizeof(CUmem_range_attribute)) < 0 ||
       rpc_read(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
@@ -6099,8 +6099,8 @@ int handle_cuGraphGetNodes(conn_t *conn) {
       rpc_read(conn, &nodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!nodes_null) {
-    nodes = (CUgraphNode *)malloc(
-        (numNodes_requested != 0 ? numNodes_requested : 1) *
+    nodes = (CUgraphNode *)calloc(
+        (numNodes_requested != 0 ? numNodes_requested : 1),
         sizeof(CUgraphNode));
     if (nodes == nullptr)
       goto ERROR_0;
@@ -6145,8 +6145,8 @@ int handle_cuGraphGetRootNodes(conn_t *conn) {
       rpc_read(conn, &rootNodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!rootNodes_null) {
-    rootNodes = (CUgraphNode *)malloc(
-        (numRootNodes_requested != 0 ? numRootNodes_requested : 1) *
+    rootNodes = (CUgraphNode *)calloc(
+        (numRootNodes_requested != 0 ? numRootNodes_requested : 1),
         sizeof(CUgraphNode));
     if (rootNodes == nullptr)
       goto ERROR_0;
@@ -6195,8 +6195,8 @@ int handle_cuGraphGetEdges_v2(conn_t *conn) {
       rpc_read(conn, &from_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!from_null) {
-    from = (CUgraphNode *)malloc(
-        (numEdges_requested != 0 ? numEdges_requested : 1) *
+    from = (CUgraphNode *)calloc(
+        (numEdges_requested != 0 ? numEdges_requested : 1),
         sizeof(CUgraphNode));
     if (from == nullptr)
       goto ERROR_0;
@@ -6204,8 +6204,8 @@ int handle_cuGraphGetEdges_v2(conn_t *conn) {
   if (rpc_read(conn, &to_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!to_null) {
-    to = (CUgraphNode *)malloc(
-        (numEdges_requested != 0 ? numEdges_requested : 1) *
+    to = (CUgraphNode *)calloc(
+        (numEdges_requested != 0 ? numEdges_requested : 1),
         sizeof(CUgraphNode));
     if (to == nullptr)
       goto ERROR_0;
@@ -6213,8 +6213,8 @@ int handle_cuGraphGetEdges_v2(conn_t *conn) {
   if (rpc_read(conn, &edgeData_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!edgeData_null) {
-    edgeData = (CUgraphEdgeData *)malloc(
-        (numEdges_requested != 0 ? numEdges_requested : 1) *
+    edgeData = (CUgraphEdgeData *)calloc(
+        (numEdges_requested != 0 ? numEdges_requested : 1),
         sizeof(CUgraphEdgeData));
     if (edgeData == nullptr)
       goto ERROR_0;
@@ -6275,8 +6275,8 @@ int handle_cuGraphNodeGetDependencies_v2(conn_t *conn) {
       rpc_read(conn, &dependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!dependencies_null) {
-    dependencies = (CUgraphNode *)malloc(
-        (numDependencies_requested != 0 ? numDependencies_requested : 1) *
+    dependencies = (CUgraphNode *)calloc(
+        (numDependencies_requested != 0 ? numDependencies_requested : 1),
         sizeof(CUgraphNode));
     if (dependencies == nullptr)
       goto ERROR_0;
@@ -6284,8 +6284,8 @@ int handle_cuGraphNodeGetDependencies_v2(conn_t *conn) {
   if (rpc_read(conn, &edgeData_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!edgeData_null) {
-    edgeData = (CUgraphEdgeData *)malloc(
-        (numDependencies_requested != 0 ? numDependencies_requested : 1) *
+    edgeData = (CUgraphEdgeData *)calloc(
+        (numDependencies_requested != 0 ? numDependencies_requested : 1),
         sizeof(CUgraphEdgeData));
     if (edgeData == nullptr)
       goto ERROR_0;
@@ -6341,8 +6341,8 @@ int handle_cuGraphNodeGetDependentNodes_v2(conn_t *conn) {
       rpc_read(conn, &dependentNodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!dependentNodes_null) {
-    dependentNodes = (CUgraphNode *)malloc(
-        (numDependentNodes_requested != 0 ? numDependentNodes_requested : 1) *
+    dependentNodes = (CUgraphNode *)calloc(
+        (numDependentNodes_requested != 0 ? numDependentNodes_requested : 1),
         sizeof(CUgraphNode));
     if (dependentNodes == nullptr)
       goto ERROR_0;
@@ -6350,8 +6350,8 @@ int handle_cuGraphNodeGetDependentNodes_v2(conn_t *conn) {
   if (rpc_read(conn, &edgeData_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!edgeData_null) {
-    edgeData = (CUgraphEdgeData *)malloc(
-        (numDependentNodes_requested != 0 ? numDependentNodes_requested : 1) *
+    edgeData = (CUgraphEdgeData *)calloc(
+        (numDependentNodes_requested != 0 ? numDependentNodes_requested : 1),
         sizeof(CUgraphEdgeData));
     if (edgeData == nullptr)
       goto ERROR_0;
@@ -8481,7 +8481,7 @@ int handle_cuCoredumpGetAttributeGlobal(conn_t *conn) {
   if (rpc_read(conn, &attrib, sizeof(CUcoredumpSettings)) < 0 ||
       rpc_read(conn, &size, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  value = (void *)malloc(size);
+  value = (void *)calloc(size, 1);
   if ((size != 0 && value == nullptr) || false)
     goto ERROR_0;
 
@@ -8739,8 +8739,8 @@ int handle_cuDevSmResourceSplitByCount(conn_t *conn) {
       rpc_read(conn, &result_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!result_null) {
-    result = (CUdevResource *)malloc(
-        (nbGroups_requested != 0 ? nbGroups_requested : 1) *
+    result = (CUdevResource *)calloc(
+        (nbGroups_requested != 0 ? nbGroups_requested : 1),
         sizeof(CUdevResource));
     if (result == nullptr)
       goto ERROR_0;
@@ -8798,7 +8798,7 @@ int handle_cuDevSmResourceSplit(conn_t *conn) {
       rpc_read(conn, &result_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!result_null) {
-    result = (CUdevResource *)malloc((nbGroups != 0 ? nbGroups : 1) *
+    result = (CUdevResource *)calloc((nbGroups != 0 ? nbGroups : 1),
                                      sizeof(CUdevResource));
     if (result == nullptr)
       goto ERROR_0;
@@ -9155,7 +9155,7 @@ int handle_cuLogsDumpToMemory(conn_t *conn) {
       rpc_read(conn, &buffer_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!buffer_null) {
-    buffer = (char *)malloc((size_requested != 0 ? size_requested : 1) *
+    buffer = (char *)calloc((size_requested != 0 ? size_requested : 1),
                             sizeof(char));
     if (buffer == nullptr)
       goto ERROR_0;

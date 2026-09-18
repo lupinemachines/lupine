@@ -481,7 +481,7 @@ int handle_cudaDevSmResourceSplit(conn_t *conn) {
       rpc_read(conn, &result_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!result_null) {
-    result = (cudaDevResource *)malloc((nbGroups != 0 ? nbGroups : 1) *
+    result = (cudaDevResource *)calloc((nbGroups != 0 ? nbGroups : 1),
                                        sizeof(cudaDevResource));
     if (result == nullptr)
       goto ERROR_0;
@@ -556,8 +556,8 @@ int handle_cudaDevSmResourceSplitByCount(conn_t *conn) {
       rpc_read(conn, &result_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!result_null) {
-    result = (cudaDevResource *)malloc(
-        (nbGroups_requested != 0 ? nbGroups_requested : 1) *
+    result = (cudaDevResource *)calloc(
+        (nbGroups_requested != 0 ? nbGroups_requested : 1),
         sizeof(cudaDevResource));
     if (result == nullptr)
       goto ERROR_0;
@@ -954,7 +954,7 @@ int handle_cudaDeviceGetHostAtomicCapabilities(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &count, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  capabilities = (unsigned int *)malloc(count * sizeof(unsigned int));
+  capabilities = (unsigned int *)calloc(count * sizeof(unsigned int), 1);
   if ((count * sizeof(unsigned int) != 0 && capabilities == nullptr) || false)
     goto ERROR_0;
   operations_size = count * sizeof(const enum cudaAtomicOperation);
@@ -1067,7 +1067,7 @@ int handle_cudaDeviceGetP2PAtomicCapabilities(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &count, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  capabilities = (unsigned int *)malloc(count * sizeof(unsigned int));
+  capabilities = (unsigned int *)calloc(count * sizeof(unsigned int), 1);
   if ((count * sizeof(unsigned int) != 0 && capabilities == nullptr) || false)
     goto ERROR_0;
   operations_size = count * sizeof(const enum cudaAtomicOperation);
@@ -1153,7 +1153,7 @@ int handle_cudaDeviceGetPCIBusId(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &len, sizeof(int)) < 0 || len < 0 || false)
     goto ERROR_0;
-  pciBusId = (char *)malloc(len * sizeof(char));
+  pciBusId = (char *)calloc(len * sizeof(char), 1);
   if ((len * sizeof(char) != 0 && pciBusId == nullptr) ||
       rpc_read(conn, &device, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -3123,7 +3123,7 @@ int handle_cudaLibraryEnumerateKernels(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &numKernels, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  kernels = (cudaKernel_t *)malloc(numKernels * sizeof(cudaKernel_t));
+  kernels = (cudaKernel_t *)calloc(numKernels * sizeof(cudaKernel_t), 1);
   if ((numKernels * sizeof(cudaKernel_t) != 0 && kernels == nullptr) ||
       rpc_read(conn, &lib, sizeof(cudaLibrary_t)) < 0 || false)
     goto ERROR_0;
@@ -3677,7 +3677,7 @@ int handle_cudaLogsDumpToMemory(conn_t *conn) {
       rpc_read(conn, &buffer_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!buffer_null) {
-    buffer = (char *)malloc((size_requested != 0 ? size_requested : 1) *
+    buffer = (char *)calloc((size_requested != 0 ? size_requested : 1),
                             sizeof(char));
     if (buffer == nullptr)
       goto ERROR_0;
@@ -4837,7 +4837,7 @@ int handle_cudaMemRangeGetAttribute(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &dataSize, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  data = (void *)malloc(dataSize);
+  data = (void *)calloc(dataSize, 1);
   if ((dataSize != 0 && data == nullptr) ||
       rpc_read(conn, &attribute, sizeof(enum cudaMemRangeAttribute)) < 0 ||
       rpc_read(conn, &devPtr, sizeof(const void *)) < 0 ||
@@ -8312,8 +8312,8 @@ int handle_cudaGraphGetEdges(conn_t *conn) {
       rpc_read(conn, &from_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!from_null) {
-    from = (cudaGraphNode_t *)malloc(
-        (numEdges_requested != 0 ? numEdges_requested : 1) *
+    from = (cudaGraphNode_t *)calloc(
+        (numEdges_requested != 0 ? numEdges_requested : 1),
         sizeof(cudaGraphNode_t));
     if (from == nullptr)
       goto ERROR_0;
@@ -8321,8 +8321,8 @@ int handle_cudaGraphGetEdges(conn_t *conn) {
   if (rpc_read(conn, &to_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!to_null) {
-    to = (cudaGraphNode_t *)malloc(
-        (numEdges_requested != 0 ? numEdges_requested : 1) *
+    to = (cudaGraphNode_t *)calloc(
+        (numEdges_requested != 0 ? numEdges_requested : 1),
         sizeof(cudaGraphNode_t));
     if (to == nullptr)
       goto ERROR_0;
@@ -8330,8 +8330,8 @@ int handle_cudaGraphGetEdges(conn_t *conn) {
   if (rpc_read(conn, &edgeData_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!edgeData_null) {
-    edgeData = (cudaGraphEdgeData *)malloc(
-        (numEdges_requested != 0 ? numEdges_requested : 1) *
+    edgeData = (cudaGraphEdgeData *)calloc(
+        (numEdges_requested != 0 ? numEdges_requested : 1),
         sizeof(cudaGraphEdgeData));
     if (edgeData == nullptr)
       goto ERROR_0;
@@ -8426,8 +8426,8 @@ int handle_cudaGraphGetNodes(conn_t *conn) {
       rpc_read(conn, &nodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!nodes_null) {
-    nodes = (cudaGraphNode_t *)malloc(
-        (numNodes_requested != 0 ? numNodes_requested : 1) *
+    nodes = (cudaGraphNode_t *)calloc(
+        (numNodes_requested != 0 ? numNodes_requested : 1),
         sizeof(cudaGraphNode_t));
     if (nodes == nullptr)
       goto ERROR_0;
@@ -8475,8 +8475,8 @@ int handle_cudaGraphGetRootNodes(conn_t *conn) {
       rpc_read(conn, &pRootNodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pRootNodes_null) {
-    pRootNodes = (cudaGraphNode_t *)malloc(
-        (pNumRootNodes_requested != 0 ? pNumRootNodes_requested : 1) *
+    pRootNodes = (cudaGraphNode_t *)calloc(
+        (pNumRootNodes_requested != 0 ? pNumRootNodes_requested : 1),
         sizeof(cudaGraphNode_t));
     if (pRootNodes == nullptr)
       goto ERROR_0;
@@ -8729,7 +8729,7 @@ int handle_cudaGraphMemFreeNodeGetParams(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &node, sizeof(cudaGraphNode_t)) < 0 || false)
     goto ERROR_0;
-  dptr_out = (void *)malloc(8);
+  dptr_out = (void *)calloc(8, 1);
   if ((8 != 0 && dptr_out == nullptr) || false)
     goto ERROR_0;
 
@@ -8889,8 +8889,8 @@ int handle_cudaGraphNodeGetDependencies(conn_t *conn) {
       rpc_read(conn, &pDependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependencies_null) {
-    pDependencies = (cudaGraphNode_t *)malloc(
-        (pNumDependencies_requested != 0 ? pNumDependencies_requested : 1) *
+    pDependencies = (cudaGraphNode_t *)calloc(
+        (pNumDependencies_requested != 0 ? pNumDependencies_requested : 1),
         sizeof(cudaGraphNode_t));
     if (pDependencies == nullptr)
       goto ERROR_0;
@@ -8898,8 +8898,8 @@ int handle_cudaGraphNodeGetDependencies(conn_t *conn) {
   if (rpc_read(conn, &edgeData_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!edgeData_null) {
-    edgeData = (cudaGraphEdgeData *)malloc(
-        (pNumDependencies_requested != 0 ? pNumDependencies_requested : 1) *
+    edgeData = (cudaGraphEdgeData *)calloc(
+        (pNumDependencies_requested != 0 ? pNumDependencies_requested : 1),
         sizeof(cudaGraphEdgeData));
     if (edgeData == nullptr)
       goto ERROR_0;
@@ -8963,8 +8963,8 @@ int handle_cudaGraphNodeGetDependentNodes(conn_t *conn) {
       rpc_read(conn, &pDependentNodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependentNodes_null) {
-    pDependentNodes = (cudaGraphNode_t *)malloc(
-        (pNumDependentNodes_requested != 0 ? pNumDependentNodes_requested : 1) *
+    pDependentNodes = (cudaGraphNode_t *)calloc(
+        (pNumDependentNodes_requested != 0 ? pNumDependentNodes_requested : 1),
         sizeof(cudaGraphNode_t));
     if (pDependentNodes == nullptr)
       goto ERROR_0;
@@ -8972,8 +8972,8 @@ int handle_cudaGraphNodeGetDependentNodes(conn_t *conn) {
   if (rpc_read(conn, &edgeData_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!edgeData_null) {
-    edgeData = (cudaGraphEdgeData *)malloc(
-        (pNumDependentNodes_requested != 0 ? pNumDependentNodes_requested : 1) *
+    edgeData = (cudaGraphEdgeData *)calloc(
+        (pNumDependentNodes_requested != 0 ? pNumDependentNodes_requested : 1),
         sizeof(cudaGraphEdgeData));
     if (edgeData == nullptr)
       goto ERROR_0;
@@ -9889,7 +9889,7 @@ int handle___cudaPopCallConfiguration(conn_t *conn) {
       rpc_read(conn, &blockDim_null_check, sizeof(dim3 *)) < 0 ||
       rpc_read(conn, &sharedMem_null_check, sizeof(size_t *)) < 0 || false)
     goto ERROR_0;
-  stream = (void *)malloc(8);
+  stream = (void *)calloc(8, 1);
   if ((8 != 0 && stream == nullptr) || false)
     goto ERROR_0;
 
