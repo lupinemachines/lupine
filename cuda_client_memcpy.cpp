@@ -25,6 +25,7 @@
 
 #include <cuda.h>
 
+#include "cache.h"
 #include "client_routing.h"
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_client_memcpy.h"
@@ -113,6 +114,8 @@ struct lupine_host_allocation {
   volatile sig_atomic_t device_stale = 0;
   // Captured at invalidation; the handler must not take rpc_open()'s mutex.
   conn_t *stale_fetch_conn = nullptr;
+  // Captured with it; the fetch binds it on whichever lane ends up faulting.
+  CUcontext stale_fetch_context = nullptr;
   // Fetch owner; its own nested faults unprotect instead of self-waiting.
   volatile pid_t stale_fetch_tid = 0;
   // Per-chunk fetched flags; owner (state 2) sets, invalidator (3) clears.
@@ -1635,9 +1638,38 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
   if (allocation->host_base == 0 || allocation->device_ptr == 0) {
     return false;
   }
-  // Demand fetch can run from the fault handler and must not re-enter the
-  // normal CUDA request-start flush.
-  CUstream fetch_stream = CU_STREAM_LEGACY;
+  // Any thread can fault, so any lane can carry the fetch. A touch inside a
+  // host-func callback faults on the RPC dispatch thread, whose lane has never
+  // carried a CUDA call and so has no context current on the server to copy
+  // under. Demand fetch runs from the fault handler and must not re-enter the
+  // normal CUDA request-start flush, so the binding goes straight to the
+  // transport rather than through the routing helper, and consults the same
+  // per-lane cache so an already-bound lane still fetches in one round trip.
+  CUcontext context = allocation->stale_fetch_context;
+  if (context != nullptr &&
+      !lupine_lane_context_cache_matches(allocation->route_id, context)) {
+    uint64_t epoch = lupine_lane_context_cache_epoch();
+    CUresult bound = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    if (rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
+        rpc_write(conn, &context, sizeof(context)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &bound, sizeof(bound)) < 0 || rpc_read_end(conn) < 0) {
+      return false;
+    }
+    lupine_note_device_binding_changed();
+    lupine_lane_context_cache_update(allocation->route_id, context, epoch,
+                                     bound == CUDA_SUCCESS);
+    if (bound != CUDA_SUCCESS) {
+      return false;
+    }
+  }
+  // The stream running a host-func callback stays blocked until the client
+  // answers it, and the legacy stream orders behind every stream in the
+  // context, so a fetch queued there would wait on the callback that is
+  // waiting on it. The per-thread stream orders behind nothing, and the bytes
+  // are already final: an invalidation is published only after the client has
+  // observed the device work that produced them.
+  CUstream fetch_stream = CU_STREAM_PER_THREAD;
   if (rpc_write_start_request(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
       rpc_write(conn, &src, sizeof(src)) < 0 ||
       rpc_write(conn, &bytes, sizeof(bytes)) < 0 ||
@@ -1897,6 +1929,31 @@ extern "C" void lupine_materialize_host_allocations() {
   }
 }
 
+// The lane that services a demand fetch needs a context current on the server,
+// and the thread that faults may be one that never made a CUDA call of its own.
+// Resolve the allocation's context here, where the routing tables are
+// reachable, in the order lupine_route_for_default() resolves a route.
+static CUcontext lupine_demand_fetch_context(CUdeviceptr device_ptr) {
+  CUcontext context = lupine_context_for_deviceptr(device_ptr);
+  if (context == nullptr) {
+    context = lupine_current_context_hint();
+  }
+  if (context == nullptr) {
+    context = lupine_default_context_hint_value();
+  }
+  if (context == nullptr) {
+    context = lupine_global_default_context_hint_value();
+  }
+  if (context == nullptr) {
+    // A client that only calls the runtime API learns the server lane's
+    // context when a driver call asks for it, and until one does every hint
+    // above is empty. Asking costs a round trip once per client.
+    (void)lupine_refresh_runtime_context();
+    context = lupine_current_context_hint();
+  }
+  return context;
+}
+
 static CUresult lupine_sync_mapped_device_to_host(bool managed_only) {
   if (lupine_active_stream_captures.load(std::memory_order_relaxed) != 0) {
     return CUDA_SUCCESS;
@@ -1918,6 +1975,9 @@ static CUresult lupine_sync_mapped_device_to_host(bool managed_only) {
         (!mapping.managed && !mapping.device_pointer_exposed)) {
       continue;
     }
+    // Resolved outside lupine_host_allocation_mutex(): the fault handler that
+    // consumes it cannot reach the routing table.
+    CUcontext fetch_context = lupine_demand_fetch_context(mapping.device_ptr);
     bool invalidated = false;
     bool skip = false;
     lupine_host_allocation *fallback_allocation = nullptr;
@@ -1956,6 +2016,7 @@ static CUresult lupine_sync_mapped_device_to_host(bool managed_only) {
                                           3, false, __ATOMIC_ACQ_REL,
                                           __ATOMIC_ACQUIRE)) {
             allocation.stale_fetch_conn = conn;
+            allocation.stale_fetch_context = fetch_context;
             if (allocation.fresh_chunks != nullptr) {
               memset(allocation.fresh_chunks, 0, allocation.fresh_chunk_count);
             }
