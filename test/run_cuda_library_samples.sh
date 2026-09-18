@@ -9,7 +9,7 @@
 # the *Mp multi-process variants) are not selected by default. cuPQC and MathDx
 # are the exceptions: both are device-side, so they add no host library to
 # shim. cuPQC needs CUPQC_HOME pointed at an unpacked SDK; MathDx's package is
-# a tarball this script unpacks next to the checkout.
+# a tarball this script unpacks next to the checkout, and it needs CUDA 13.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,9 +23,13 @@ LIBRARY_SAMPLES_ARCH="${LIBRARY_SAMPLES_ARCH:-${CUDA_SAMPLES_ARCH:-89}}"
 LIBRARY_SAMPLES_CMAKE_ARGS="${LIBRARY_SAMPLES_CMAKE_ARGS:-}"
 LIBRARY_SAMPLES_SKIP_LIST="${LIBRARY_SAMPLES_SKIP_LIST:-}"
 LIBRARY_SAMPLES_KNOWN_FAILURES="${LIBRARY_SAMPLES_KNOWN_FAILURES:-$repo_root/test/cuda-library-samples/known_failures.txt}"
-# The MathDx package is built per CUDA major version; 26.06 is the release the
-# samples at this ref require (cuBLASDx 0.7.1, cuFFTDx 1.7.3).
+# 26.06 is the release the samples at this ref require (cuBLASDx 0.7.1,
+# cuFFTDx 1.7.3, cuSolverDx 0.5.0) and it is published for CUDA 13 only: the
+# newest package with a CUDA 12 build, 25.12.1, is a generation behind every
+# one of those minimums, and each example project fatal-errors on a package
+# below its own.
 MATHDX_URL="${MATHDX_URL:-https://developer.nvidia.com/downloads/compute/cublasdx/redist/cublasdx/cuda13/nvidia-mathdx-26.06.1-cuda13.tar.gz}"
+MATHDX_CUDA_MIN_MAJOR=13
 MATHDX_DIR="${MATHDX_DIR:-$(dirname "$LIBRARY_SAMPLES_DIR")/mathdx}"
 MATHDX_HOME="${MATHDX_HOME:-$MATHDX_DIR/nvidia/mathdx/26.06}"
 BUILD_SAMPLES="${BUILD_SAMPLES:-auto}"
@@ -85,6 +89,17 @@ EOF
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
   exit 0
+fi
+
+cuda_version="$(sed -nE 's/^#define CUDA_VERSION ([0-9]+).*/\1/p' "$CUDA_HOME/include/cuda.h" 2>/dev/null | head -n1 || true)"
+if [[ " $LIBRARY_SAMPLES_LIBS " == *" MathDx "* &&
+      -n "$cuda_version" && $((cuda_version / 1000)) -lt "$MATHDX_CUDA_MIN_MAJOR" ]]; then
+  libs=()
+  for lib in $LIBRARY_SAMPLES_LIBS; do
+    [[ "$lib" == "MathDx" ]] || libs+=("$lib")
+  done
+  LIBRARY_SAMPLES_LIBS="${libs[*]}"
+  echo "MathDx needs CUDA $MATHDX_CUDA_MIN_MAJOR or newer; its samples contribute no units on $((cuda_version / 1000)).$((cuda_version % 1000 / 10))" >&2
 fi
 
 if [[ "$BUILD_SAMPLES" != "0" ]]; then
@@ -191,10 +206,10 @@ CUPQC_CMAKE
   fi
 
   # MathDx is headers plus device-side fatbins and static archives, so the
-  # package only has to be unpacked. Where it cannot be (no network, or a
-  # toolkit MATHDX_URL has no build for), the MathDx samples fail to configure
-  # and the run reports them SKIP:build-failed like any other.
-  if [[ ! -d "$MATHDX_HOME" ]]; then
+  # package only has to be unpacked. Where it cannot be (no network), the
+  # MathDx samples fail to configure and the run reports them
+  # SKIP:build-failed like any other.
+  if [[ " $LIBRARY_SAMPLES_LIBS " == *" MathDx "* && ! -d "$MATHDX_HOME" ]]; then
     mkdir -p "$MATHDX_DIR"
     curl -fsSL "$MATHDX_URL" | tar -xz -C "$MATHDX_DIR" --strip-components=1 || true
   fi
