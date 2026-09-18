@@ -803,6 +803,9 @@ cudaError_t cudaGetFuncBySymbol(cudaFunction_t *functionPtr,
  */
 cudaError_t cudaGetKernel(cudaKernel_t *kernelPtr, const void *entryFuncAddr);
 #endif
+/**
+ * @disabled client - the client's own per-thread state answers it
+ */
 cudaError_t cudaGetLastError(void);
 /**
  * @param levelArray RECV_ONLY
@@ -1840,6 +1843,9 @@ cudaError_t cudaOccupancyMaxPotentialClusterSize(
   return return_value;
 }
 // clang-format on
+/**
+ * @disabled client - see cudaGetLastError
+ */
 cudaError_t cudaPeekAtLastError(void);
 /**
  * @param attributes RECV_ONLY

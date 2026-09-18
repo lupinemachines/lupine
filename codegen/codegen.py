@@ -630,6 +630,7 @@ CUDART = Backend(
     symbol_lookup="cudart_symbol",
     guard_null_conn=True,
     not_supported="cudaErrorNotSupported",
+    record_result="note_last_error",
 )
 
 # cuBLAS and cuBLASLt calls run on the driver shim's connections like the

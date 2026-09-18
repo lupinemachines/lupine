@@ -43,6 +43,10 @@ class Backend:
     # The library also exports every entry point under this prefix (NCCL's
     # profiling interface), as an alias of the same definition.
     alias_prefix: str = ""
+    # When set, every public entry point returning `result` hands its value to
+    # this function before returning it, so the client can answer the library's
+    # last-error query without asking the server.
+    record_result: str = ""
 
 
 def optional_async(backend: "Backend", metadata) -> bool:
@@ -58,12 +62,16 @@ def unsupported(function, metadata) -> bool:
 
 def write_stub(f, backend: Backend, function):
     name = function.name.format()
+    result = function.return_type.format()
     params = ", ".join(format_function_params(function))
-    f.write(f'extern "C" {function.return_type.format()} {name}({params}) {{\n')
+    f.write(f'extern "C" {result} {name}({params}) {{\n')
     for parameter in function.parameters:
         if parameter.name:
             f.write(f"  (void){parameter.name};\n")
-    f.write(f"  return {backend.not_supported};\n}}\n\n")
+    status = backend.not_supported
+    if backend.record_result and result == backend.result:
+        status = f"{backend.record_result}({status})"
+    f.write(f"  return {status};\n}}\n\n")
 
 
 def format_function_params(function: Function) -> list[str]:
@@ -232,7 +240,11 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
     name = function.name.format()
     result = function.return_type.format()
     params = ", ".join(format_function_params(function))
-    f.write(f'extern "C" {result} {name}({params}) {{\n')
+    record = bool(backend.record_result) and result == backend.result
+    if record:
+        f.write(f"static {result} lupine_call_{name}({params}) {{\n")
+    else:
+        f.write(f'extern "C" {result} {name}({params}) {{\n')
     write_client_validation(f, backend, function, operations)
 
     call_args = format_call_args(function)
@@ -308,6 +320,13 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
     else:
         f.write(f"  return {call};\n")
     f.write("}\n\n")
+    if record:
+        forwarded = ", ".join(format_call_args(function))
+        f.write(f'extern "C" {result} {name}({params}) {{\n')
+        f.write(
+            f"  return {backend.record_result}"
+            f"(lupine_call_{name}({forwarded}));\n}}\n\n"
+        )
 
 
 def write_server_buffer_cleanup(f, owned_buffers, indent):
