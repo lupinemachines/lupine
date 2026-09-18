@@ -411,10 +411,13 @@ namespace {
 using rpc_connection_closed_hook = void (*)(conn_t *);
 using rpc_thread_lane_destroyed_hook = void (*)(uint64_t);
 using rpc_response_completed_hook = void (*)(conn_t *, int32_t);
+using rpc_host_range_is_protected_hook = bool (*)(uintptr_t, size_t);
 
 std::atomic<rpc_connection_closed_hook> connection_closed_hook{nullptr};
 std::atomic<rpc_thread_lane_destroyed_hook> thread_lane_destroyed_hook{nullptr};
 std::atomic<rpc_response_completed_hook> response_completed_hook{nullptr};
+std::atomic<rpc_host_range_is_protected_hook> host_range_is_protected_hook{
+    nullptr};
 std::atomic_flag lifecycle_hooks_set = ATOMIC_FLAG_INIT;
 
 } // namespace
@@ -430,6 +433,8 @@ int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks) {
                                    std::memory_order_release);
   response_completed_hook.store(hooks->response_completed,
                                 std::memory_order_release);
+  host_range_is_protected_hook.store(hooks->host_range_is_protected,
+                                     std::memory_order_release);
   return 0;
 }
 
@@ -682,8 +687,14 @@ static int rpc_read_into_context(conn_t *conn, void *data, size_t size,
                               : static_cast<uintptr_t>(4096);
     uintptr_t page_start = start & ~(page_size - 1);
     uintptr_t page_end = (start + written + page_size - 1) & ~(page_size - 1);
+    auto protected_range =
+        host_range_is_protected_hook.load(std::memory_order_acquire);
+    int protection =
+        protected_range == nullptr || protected_range(start, written)
+            ? PROT_READ
+            : PROT_READ | PROT_WRITE;
     if (mprotect(reinterpret_cast<void *>(page_start), page_end - page_start,
-                 PROT_READ) < 0) {
+                 protection) < 0) {
       return -1;
     }
   }

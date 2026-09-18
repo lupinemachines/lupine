@@ -168,6 +168,9 @@ struct rpc_lifecycle_hooks {
   void (*thread_lane_destroyed)(uint64_t lane_id);
   // Runs on the RPC caller after a complete response has been consumed.
   void (*response_completed)(conn_t *conn, int32_t stream_id);
+  // Whether an alias-backed response destination needs write protection.
+  // Without a backend hook, preserve the protected read-view behavior.
+  bool (*host_range_is_protected)(uintptr_t start, size_t size) = nullptr;
 };
 extern int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks);
 

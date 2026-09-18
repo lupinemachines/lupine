@@ -110,9 +110,9 @@ static void lupine_rpc_connection_closed(conn_t *conn) {
 static pthread_once_t lupine_rpc_lifecycle_once = PTHREAD_ONCE_INIT;
 
 static void lupine_install_rpc_lifecycle_hooks() {
-  const rpc_lifecycle_hooks hooks = {lupine_rpc_connection_closed,
-                                     rpc_destroy_thread_lane,
-                                     lupine_complete_pending_log_callbacks};
+  const rpc_lifecycle_hooks hooks = {
+      lupine_rpc_connection_closed, rpc_destroy_thread_lane,
+      lupine_complete_pending_log_callbacks, lupine_host_range_is_protected};
   if (rpc_set_lifecycle_hooks(&hooks) < 0) {
     LUPINE_LOG_ERROR("Failed to install CUDA RPC lifecycle hooks");
   }
