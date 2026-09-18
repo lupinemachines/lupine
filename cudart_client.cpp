@@ -195,9 +195,42 @@ void **fatbin_handle(conn_t *conn, void **fatCubinHandle) {
   return nullptr;
 }
 
+// ---------------------------------------------------------------------------
+// Last error
+// ---------------------------------------------------------------------------
+
+// The runtime's per-thread last error is kept here rather than read back from
+// the server's runtime, so cudaGetLastError costs no round trip. Every entry
+// point below records the value it hands the caller; only a failure overwrites
+// the stored one, which cudaGetLastError then reads and clears. A launch is
+// fire-and-forget: a failure it raises on the device poisons the context, so
+// the first later call the server answers returns it and records it here,
+// which is where the driver-only loader's client-side runtime records it too.
+// A launch the driver rejects outright has nowhere left to report itself, and
+// is dropped as the driver-only loader already drops it.
+thread_local cudaError_t thread_last_error = cudaSuccess;
+
+// cudaErrorNotReady is a query's answer rather than a failure, and the native
+// runtime hands it back without recording it.
+cudaError_t note_last_error(cudaError_t result) {
+  if (result != cudaSuccess && result != cudaErrorNotReady) {
+    thread_last_error = result;
+  }
+  return result;
+}
+
 } // namespace
 
 #include "codegen/gen_cudart_client.inc"
+
+// Reading the state is not itself a call that records into it.
+extern "C" cudaError_t cudaGetLastError() {
+  const cudaError_t result = thread_last_error;
+  thread_last_error = cudaSuccess;
+  return result;
+}
+
+extern "C" cudaError_t cudaPeekAtLastError() { return thread_last_error; }
 
 namespace {
 
@@ -219,16 +252,17 @@ extern "C" unsigned __cudaPushCallConfiguration(dim3 gridDim, dim3 blockDim,
   return cudaSuccess;
 }
 
-extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
-                                                  size_t *sharedMem,
-                                                  void *stream) {
+static cudaError_t lupine_call___cudaPopCallConfiguration(dim3 *gridDim,
+                                                          dim3 *blockDim,
+                                                          size_t *sharedMem,
+                                                          void *stream) {
   if (gridDim == nullptr || blockDim == nullptr || sharedMem == nullptr ||
       stream == nullptr) {
     return cudaErrorInvalidValue;
   }
   if (launch_configurations.empty()) {
-    // The server stack is also empty. Preserve native error reporting and its
-    // last-error state without introducing client-side sticky-error tracking.
+    // The server stack is also empty; its runtime names the error the native
+    // one would.
     return lupine_rpc___cudaPopCallConfiguration(connection(), gridDim,
                                                  blockDim, sharedMem, stream);
   }
@@ -239,6 +273,13 @@ extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
   *sharedMem = config.shared_memory;
   *static_cast<void **>(stream) = config.stream;
   return cudaSuccess;
+}
+
+extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
+                                                  size_t *sharedMem,
+                                                  void *stream) {
+  return note_last_error(lupine_call___cudaPopCallConfiguration(
+      gridDim, blockDim, sharedMem, stream));
 }
 
 namespace {
@@ -353,8 +394,8 @@ cudaError_t adopt_runtime_host_allocation(conn_t *conn, void **host,
 
 } // namespace
 
-extern "C" cudaError_t cudaHostRegister(void *ptr, size_t bytes,
-                                        unsigned int flags) {
+static cudaError_t lupine_call_cudaHostRegister(void *ptr, size_t bytes,
+                                                unsigned int flags) {
   return runtime_error(lupine_register_host_allocation(
       connection(), ptr, bytes, flags,
       [](conn_t *conn, void *base, size_t size, unsigned int flags,
@@ -378,14 +419,18 @@ extern "C" cudaError_t cudaHostRegister(void *ptr, size_t bytes,
       }));
 }
 
+extern "C" cudaError_t cudaHostRegister(void *ptr, size_t bytes,
+                                        unsigned int flags) {
+  return note_last_error(lupine_call_cudaHostRegister(ptr, bytes, flags));
+}
+
 // ---------------------------------------------------------------------------
 // Device management
 // ---------------------------------------------------------------------------
 
-extern "C" cudaError_t
-cudaMemPoolExportToShareableHandle(void *handle_out, cudaMemPool_t pool,
-                                   cudaMemAllocationHandleType handle_type,
-                                   unsigned int flags) {
+static cudaError_t lupine_call_cudaMemPoolExportToShareableHandle(
+    void *handle_out, cudaMemPool_t pool,
+    cudaMemAllocationHandleType handle_type, unsigned int flags) {
   if (handle_out == nullptr) {
     return cudaErrorInvalidValue;
   }
@@ -411,9 +456,16 @@ cudaMemPoolExportToShareableHandle(void *handle_out, cudaMemPool_t pool,
 }
 
 extern "C" cudaError_t
-cudaMemPoolImportFromShareableHandle(cudaMemPool_t *pool, void *handle,
-                                     cudaMemAllocationHandleType handle_type,
-                                     unsigned int flags) {
+cudaMemPoolExportToShareableHandle(void *handle_out, cudaMemPool_t pool,
+                                   cudaMemAllocationHandleType handle_type,
+                                   unsigned int flags) {
+  return note_last_error(lupine_call_cudaMemPoolExportToShareableHandle(
+      handle_out, pool, handle_type, flags));
+}
+
+static cudaError_t lupine_call_cudaMemPoolImportFromShareableHandle(
+    cudaMemPool_t *pool, void *handle, cudaMemAllocationHandleType handle_type,
+    unsigned int flags) {
   if (pool == nullptr) {
     return cudaErrorInvalidValue;
   }
@@ -439,7 +491,15 @@ cudaMemPoolImportFromShareableHandle(cudaMemPool_t *pool, void *handle,
   return result;
 }
 
-extern "C" cudaError_t cudaGetDeviceCount(int *count) {
+extern "C" cudaError_t
+cudaMemPoolImportFromShareableHandle(cudaMemPool_t *pool, void *handle,
+                                     cudaMemAllocationHandleType handle_type,
+                                     unsigned int flags) {
+  return note_last_error(lupine_call_cudaMemPoolImportFromShareableHandle(
+      pool, handle, handle_type, flags));
+}
+
+static cudaError_t lupine_call_cudaGetDeviceCount(int *count) {
   if (count == nullptr) {
     return cudaErrorInvalidValue;
   }
@@ -452,7 +512,11 @@ extern "C" cudaError_t cudaGetDeviceCount(int *count) {
   return cudaSuccess;
 }
 
-extern "C" cudaError_t cudaGetDevice(int *device) {
+extern "C" cudaError_t cudaGetDeviceCount(int *count) {
+  return note_last_error(lupine_call_cudaGetDeviceCount(count));
+}
+
+static cudaError_t lupine_call_cudaGetDevice(int *device) {
   if (device == nullptr) {
     return cudaErrorInvalidValue;
   }
@@ -482,7 +546,11 @@ extern "C" cudaError_t cudaGetDevice(int *device) {
   return cudaSuccess;
 }
 
-extern "C" cudaError_t cudaSetDevice(int device) {
+extern "C" cudaError_t cudaGetDevice(int *device) {
+  return note_last_error(lupine_call_cudaGetDevice(device));
+}
+
+static cudaError_t lupine_call_cudaSetDevice(int device) {
   if (lane_binding.selected && lane_binding.device == device &&
       lane_binding_describes(connection())) {
     return cudaSuccess;
@@ -513,7 +581,11 @@ extern "C" cudaError_t cudaSetDevice(int device) {
   return cudaSuccess;
 }
 
-extern "C" cudaError_t cudaSetValidDevices(int *device_arr, int len) {
+extern "C" cudaError_t cudaSetDevice(int device) {
+  return note_last_error(lupine_call_cudaSetDevice(device));
+}
+
+static cudaError_t lupine_call_cudaSetValidDevices(int *device_arr, int len) {
   if (len < 0 || (len != 0 && device_arr == nullptr)) {
     return cudaErrorInvalidValue;
   }
@@ -540,7 +612,11 @@ extern "C" cudaError_t cudaSetValidDevices(int *device_arr, int len) {
   return lupine_rpc_cudaSetValidDevices(conn, remote_devices.data(), len);
 }
 
-extern "C" cudaError_t cudaDeviceReset() {
+extern "C" cudaError_t cudaSetValidDevices(int *device_arr, int len) {
+  return note_last_error(lupine_call_cudaSetValidDevices(device_arr, len));
+}
+
+static cudaError_t lupine_call_cudaDeviceReset() {
   conn_t *conn = connection();
   cudaError_t result = lupine_rpc_cudaDeviceReset(conn);
   if (result == cudaSuccess) {
@@ -549,6 +625,10 @@ extern "C" cudaError_t cudaDeviceReset() {
     lupine_invalidate_current_context_cache();
   }
   return result;
+}
+
+extern "C" cudaError_t cudaDeviceReset() {
+  return note_last_error(lupine_call_cudaDeviceReset());
 }
 
 namespace {
@@ -568,7 +648,7 @@ cudaError_t read_completion(conn_t *conn, bool with_stdout) {
 
 } // namespace
 
-extern "C" cudaError_t cudaDeviceSynchronize() {
+static cudaError_t lupine_call_cudaDeviceSynchronize() {
   conn_t *conn = connection();
   if (rpc_write_start_request(conn, RPC_cudaDeviceSynchronize) < 0) {
     return rpc_error();
@@ -576,7 +656,11 @@ extern "C" cudaError_t cudaDeviceSynchronize() {
   return read_completion(conn, true);
 }
 
-extern "C" cudaError_t cudaStreamSynchronize(cudaStream_t stream) {
+extern "C" cudaError_t cudaDeviceSynchronize() {
+  return note_last_error(lupine_call_cudaDeviceSynchronize());
+}
+
+static cudaError_t lupine_call_cudaStreamSynchronize(cudaStream_t stream) {
   conn_t *conn = connection_for_stream(stream);
   if (rpc_write_start_request(conn, RPC_cudaStreamSynchronize) < 0 ||
       rpc_write(conn, &stream, sizeof(stream)) < 0) {
@@ -585,7 +669,11 @@ extern "C" cudaError_t cudaStreamSynchronize(cudaStream_t stream) {
   return read_completion(conn, true);
 }
 
-extern "C" cudaError_t cudaStreamQuery(cudaStream_t stream) {
+extern "C" cudaError_t cudaStreamSynchronize(cudaStream_t stream) {
+  return note_last_error(lupine_call_cudaStreamSynchronize(stream));
+}
+
+static cudaError_t lupine_call_cudaStreamQuery(cudaStream_t stream) {
   conn_t *conn = connection_for_stream(stream);
   if (rpc_write_start_request(conn, RPC_cudaStreamQuery) < 0 ||
       rpc_write(conn, &stream, sizeof(stream)) < 0) {
@@ -594,7 +682,11 @@ extern "C" cudaError_t cudaStreamQuery(cudaStream_t stream) {
   return read_completion(conn, false);
 }
 
-extern "C" cudaError_t cudaEventSynchronize(cudaEvent_t event) {
+extern "C" cudaError_t cudaStreamQuery(cudaStream_t stream) {
+  return note_last_error(lupine_call_cudaStreamQuery(stream));
+}
+
+static cudaError_t lupine_call_cudaEventSynchronize(cudaEvent_t event) {
   conn_t *conn = connection_for_event(event);
   if (rpc_write_start_request(conn, RPC_cudaEventSynchronize) < 0 ||
       rpc_write(conn, &event, sizeof(event)) < 0) {
@@ -603,7 +695,11 @@ extern "C" cudaError_t cudaEventSynchronize(cudaEvent_t event) {
   return read_completion(conn, true);
 }
 
-extern "C" cudaError_t cudaEventQuery(cudaEvent_t event) {
+extern "C" cudaError_t cudaEventSynchronize(cudaEvent_t event) {
+  return note_last_error(lupine_call_cudaEventSynchronize(event));
+}
+
+static cudaError_t lupine_call_cudaEventQuery(cudaEvent_t event) {
   std::shared_lock<std::shared_mutex> lock(lupine_event_lifecycle_mutex());
   conn_t *conn = connection_for_event(event);
   if (rpc_write_start_request(conn, RPC_cudaEventQuery) < 0 ||
@@ -611,6 +707,10 @@ extern "C" cudaError_t cudaEventQuery(cudaEvent_t event) {
     return rpc_error();
   }
   return read_completion(conn, false);
+}
+
+extern "C" cudaError_t cudaEventQuery(cudaEvent_t event) {
+  return note_last_error(lupine_call_cudaEventQuery(event));
 }
 
 namespace {
@@ -652,9 +752,9 @@ extern "C" const char *cudaGetErrorString(cudaError_t error) {
 }
 
 #if CUDART_VERSION >= 12000
-extern "C" cudaError_t cudaGraphInstantiate(cudaGraphExec_t *exec,
-                                            cudaGraph_t graph,
-                                            unsigned long long flags) {
+static cudaError_t lupine_call_cudaGraphInstantiate(cudaGraphExec_t *exec,
+                                                    cudaGraph_t graph,
+                                                    unsigned long long flags) {
   if (exec == nullptr) {
     return cudaErrorInvalidValue;
   }
@@ -670,11 +770,18 @@ extern "C" cudaError_t cudaGraphInstantiate(cudaGraphExec_t *exec,
   }
   return result;
 }
-#else
+
 extern "C" cudaError_t cudaGraphInstantiate(cudaGraphExec_t *exec,
                                             cudaGraph_t graph,
-                                            cudaGraphNode_t *error_node,
-                                            char *log, size_t log_size) {
+                                            unsigned long long flags) {
+  return note_last_error(lupine_call_cudaGraphInstantiate(exec, graph, flags));
+}
+#else
+static cudaError_t lupine_call_cudaGraphInstantiate(cudaGraphExec_t *exec,
+                                                    cudaGraph_t graph,
+                                                    cudaGraphNode_t *error_node,
+                                                    char *log,
+                                                    size_t log_size) {
   conn_t *conn = connection();
   cudaError_t result = rpc_error();
   bool has_error_node = error_node != nullptr;
@@ -699,10 +806,18 @@ extern "C" cudaError_t cudaGraphInstantiate(cudaGraphExec_t *exec,
   return result;
 }
 
-extern "C" cudaError_t
-cudaGraphExecUpdate(cudaGraphExec_t exec, cudaGraph_t graph,
-                    cudaGraphNode_t *error_node,
-                    cudaGraphExecUpdateResult *update_result) {
+extern "C" cudaError_t cudaGraphInstantiate(cudaGraphExec_t *exec,
+                                            cudaGraph_t graph,
+                                            cudaGraphNode_t *error_node,
+                                            char *log, size_t log_size) {
+  return note_last_error(
+      lupine_call_cudaGraphInstantiate(exec, graph, error_node, log, log_size));
+}
+
+static cudaError_t
+lupine_call_cudaGraphExecUpdate(cudaGraphExec_t exec, cudaGraph_t graph,
+                                cudaGraphNode_t *error_node,
+                                cudaGraphExecUpdateResult *update_result) {
   conn_t *conn = connection();
   cudaError_t result = rpc_error();
   bool has_error_node = error_node != nullptr;
@@ -721,12 +836,20 @@ cudaGraphExecUpdate(cudaGraphExec_t exec, cudaGraph_t graph,
   }
   return result;
 }
+
+extern "C" cudaError_t
+cudaGraphExecUpdate(cudaGraphExec_t exec, cudaGraph_t graph,
+                    cudaGraphNode_t *error_node,
+                    cudaGraphExecUpdateResult *update_result) {
+  return note_last_error(
+      lupine_call_cudaGraphExecUpdate(exec, graph, error_node, update_result));
+}
 #endif
 
 #if CUDART_VERSION < 12000
-extern "C" cudaError_t cudaGetDriverEntryPoint(const char *symbol,
-                                               void **funcPtr,
-                                               unsigned long long flags) {
+static cudaError_t
+lupine_call_cudaGetDriverEntryPoint(const char *symbol, void **funcPtr,
+                                    unsigned long long flags) {
   if (symbol == nullptr || funcPtr == nullptr) {
     return cudaErrorInvalidValue;
   }
@@ -747,13 +870,19 @@ extern "C" cudaError_t cudaGetDriverEntryPoint(const char *symbol,
   }
   return result;
 }
+
+extern "C" cudaError_t cudaGetDriverEntryPoint(const char *symbol,
+                                               void **funcPtr,
+                                               unsigned long long flags) {
+  return note_last_error(
+      lupine_call_cudaGetDriverEntryPoint(symbol, funcPtr, flags));
+}
 #endif
 
 #if CUDART_VERSION < 13000
-extern "C" cudaError_t
-cudaStreamUpdateCaptureDependencies(cudaStream_t stream,
-                                    cudaGraphNode_t *dependencies, size_t count,
-                                    unsigned int flags) {
+static cudaError_t lupine_call_cudaStreamUpdateCaptureDependencies(
+    cudaStream_t stream, cudaGraphNode_t *dependencies, size_t count,
+    unsigned int flags) {
   if (count != 0 && dependencies == nullptr) {
     return cudaErrorInvalidValue;
   }
@@ -772,8 +901,17 @@ cudaStreamUpdateCaptureDependencies(cudaStream_t stream,
   return result;
 }
 
-extern "C" cudaError_t cudaMemAdvise(const void *devPtr, size_t count,
-                                     cudaMemoryAdvise advice, int device) {
+extern "C" cudaError_t
+cudaStreamUpdateCaptureDependencies(cudaStream_t stream,
+                                    cudaGraphNode_t *dependencies, size_t count,
+                                    unsigned int flags) {
+  return note_last_error(lupine_call_cudaStreamUpdateCaptureDependencies(
+      stream, dependencies, count, flags));
+}
+
+static cudaError_t lupine_call_cudaMemAdvise(const void *devPtr, size_t count,
+                                             cudaMemoryAdvise advice,
+                                             int device) {
   conn_t *conn = connection();
   cudaError_t result = rpc_error();
   if (rpc_write_start_request(conn, RPC_cudaMemAdvise) < 0 ||
@@ -788,9 +926,15 @@ extern "C" cudaError_t cudaMemAdvise(const void *devPtr, size_t count,
   return result;
 }
 
-extern "C" cudaError_t cudaMemPrefetchAsync(const void *devPtr, size_t count,
-                                            int dstDevice,
-                                            cudaStream_t stream) {
+extern "C" cudaError_t cudaMemAdvise(const void *devPtr, size_t count,
+                                     cudaMemoryAdvise advice, int device) {
+  return note_last_error(
+      lupine_call_cudaMemAdvise(devPtr, count, advice, device));
+}
+
+static cudaError_t lupine_call_cudaMemPrefetchAsync(const void *devPtr,
+                                                    size_t count, int dstDevice,
+                                                    cudaStream_t stream) {
   conn_t *conn = connection_for_stream(stream);
   cudaError_t result = rpc_error();
   if (rpc_write_start_request(conn, RPC_cudaMemPrefetchAsync) < 0 ||
@@ -804,10 +948,17 @@ extern "C" cudaError_t cudaMemPrefetchAsync(const void *devPtr, size_t count,
   }
   return result;
 }
+
+extern "C" cudaError_t cudaMemPrefetchAsync(const void *devPtr, size_t count,
+                                            int dstDevice,
+                                            cudaStream_t stream) {
+  return note_last_error(
+      lupine_call_cudaMemPrefetchAsync(devPtr, count, dstDevice, stream));
+}
 #endif
 
 #if CUDART_VERSION >= 12000
-extern "C" cudaError_t cudaStreamBeginCaptureToGraph(
+static cudaError_t lupine_call_cudaStreamBeginCaptureToGraph(
     cudaStream_t stream, cudaGraph_t graph, const cudaGraphNode_t *dependencies,
     const cudaGraphEdgeData *edges, size_t count, cudaStreamCaptureMode mode) {
   if (count != 0 && dependencies == nullptr) {
@@ -824,8 +975,15 @@ extern "C" cudaError_t cudaStreamBeginCaptureToGraph(
   return result;
 }
 
+extern "C" cudaError_t cudaStreamBeginCaptureToGraph(
+    cudaStream_t stream, cudaGraph_t graph, const cudaGraphNode_t *dependencies,
+    const cudaGraphEdgeData *edges, size_t count, cudaStreamCaptureMode mode) {
+  return note_last_error(lupine_call_cudaStreamBeginCaptureToGraph(
+      stream, graph, dependencies, edges, count, mode));
+}
+
 #if CUDART_VERSION >= 13000
-extern "C" cudaError_t cudaStreamUpdateCaptureDependencies(
+static cudaError_t lupine_call_cudaStreamUpdateCaptureDependencies(
     cudaStream_t stream, cudaGraphNode_t *dependencies,
     const cudaGraphEdgeData *edges, size_t count, unsigned int flags) {
   if (count != 0 && dependencies == nullptr) {
@@ -836,8 +994,15 @@ extern "C" cudaError_t cudaStreamUpdateCaptureDependencies(
       connection_for_stream(stream), stream, dependencies,
       edges == nullptr ? defaults.data() : edges, count, flags);
 }
+
+extern "C" cudaError_t cudaStreamUpdateCaptureDependencies(
+    cudaStream_t stream, cudaGraphNode_t *dependencies,
+    const cudaGraphEdgeData *edges, size_t count, unsigned int flags) {
+  return note_last_error(lupine_call_cudaStreamUpdateCaptureDependencies(
+      stream, dependencies, edges, count, flags));
+}
 #else
-extern "C" cudaError_t cudaStreamUpdateCaptureDependencies_v2(
+static cudaError_t lupine_call_cudaStreamUpdateCaptureDependencies_v2(
     cudaStream_t stream, cudaGraphNode_t *dependencies,
     const cudaGraphEdgeData *edges, size_t count, unsigned int flags) {
   if (count != 0 && dependencies == nullptr) {
@@ -847,6 +1012,13 @@ extern "C" cudaError_t cudaStreamUpdateCaptureDependencies_v2(
   return lupine_rpc_cudaStreamUpdateCaptureDependencies_v2(
       connection_for_stream(stream), stream, dependencies,
       edges == nullptr ? defaults.data() : edges, count, flags);
+}
+
+extern "C" cudaError_t cudaStreamUpdateCaptureDependencies_v2(
+    cudaStream_t stream, cudaGraphNode_t *dependencies,
+    const cudaGraphEdgeData *edges, size_t count, unsigned int flags) {
+  return note_last_error(lupine_call_cudaStreamUpdateCaptureDependencies_v2(
+      stream, dependencies, edges, count, flags));
 }
 #endif
 #endif
@@ -914,18 +1086,26 @@ cudaError_t capture_info(int op, cudaStream_t stream,
 } // namespace
 
 #if CUDART_VERSION < 13000
-extern "C" cudaError_t cudaStreamGetCaptureInfo(cudaStream_t stream,
-                                                cudaStreamCaptureStatus *status,
-                                                unsigned long long *id) {
+static cudaError_t
+lupine_call_cudaStreamGetCaptureInfo(cudaStream_t stream,
+                                     cudaStreamCaptureStatus *status,
+                                     unsigned long long *id) {
   return capture_info(RPC_cudaStreamGetCaptureInfo, stream, status, id, nullptr,
                       nullptr, nullptr, nullptr);
 }
+
+extern "C" cudaError_t cudaStreamGetCaptureInfo(cudaStream_t stream,
+                                                cudaStreamCaptureStatus *status,
+                                                unsigned long long *id) {
+  return note_last_error(
+      lupine_call_cudaStreamGetCaptureInfo(stream, status, id));
+}
 #else
-extern "C" cudaError_t
-cudaStreamGetCaptureInfo(cudaStream_t stream, cudaStreamCaptureStatus *status,
-                         unsigned long long *id, cudaGraph_t *graph,
-                         const cudaGraphNode_t **dependencies,
-                         const cudaGraphEdgeData **edges, size_t *count) {
+static cudaError_t lupine_call_cudaStreamGetCaptureInfo(
+    cudaStream_t stream, cudaStreamCaptureStatus *status,
+    unsigned long long *id, cudaGraph_t *graph,
+    const cudaGraphNode_t **dependencies, const cudaGraphEdgeData **edges,
+    size_t *count) {
   const CUgraphEdgeData *edge_data = nullptr;
   cudaError_t result =
       capture_info(RPC_cudaStreamGetCaptureInfo, stream, status, id, graph,
@@ -935,23 +1115,39 @@ cudaStreamGetCaptureInfo(cudaStream_t stream, cudaStreamCaptureStatus *status,
   }
   return result;
 }
+
+extern "C" cudaError_t
+cudaStreamGetCaptureInfo(cudaStream_t stream, cudaStreamCaptureStatus *status,
+                         unsigned long long *id, cudaGraph_t *graph,
+                         const cudaGraphNode_t **dependencies,
+                         const cudaGraphEdgeData **edges, size_t *count) {
+  return note_last_error(lupine_call_cudaStreamGetCaptureInfo(
+      stream, status, id, graph, dependencies, edges, count));
+}
 #endif
 
 #if CUDART_VERSION < 13000
-extern "C" cudaError_t cudaStreamGetCaptureInfo_v2(
+static cudaError_t lupine_call_cudaStreamGetCaptureInfo_v2(
     cudaStream_t stream, cudaStreamCaptureStatus *status,
     unsigned long long *id, cudaGraph_t *graph,
     const cudaGraphNode_t **dependencies, size_t *count) {
   return capture_info(RPC_cudaStreamGetCaptureInfo_v2, stream, status, id,
                       graph, dependencies, nullptr, count);
 }
+
+extern "C" cudaError_t cudaStreamGetCaptureInfo_v2(
+    cudaStream_t stream, cudaStreamCaptureStatus *status,
+    unsigned long long *id, cudaGraph_t *graph,
+    const cudaGraphNode_t **dependencies, size_t *count) {
+  return note_last_error(lupine_call_cudaStreamGetCaptureInfo_v2(
+      stream, status, id, graph, dependencies, count));
+}
 #if CUDART_VERSION >= 12000
-extern "C" cudaError_t
-cudaStreamGetCaptureInfo_v3(cudaStream_t stream,
-                            cudaStreamCaptureStatus *status,
-                            unsigned long long *id, cudaGraph_t *graph,
-                            const cudaGraphNode_t **dependencies,
-                            const cudaGraphEdgeData **edges, size_t *count) {
+static cudaError_t lupine_call_cudaStreamGetCaptureInfo_v3(
+    cudaStream_t stream, cudaStreamCaptureStatus *status,
+    unsigned long long *id, cudaGraph_t *graph,
+    const cudaGraphNode_t **dependencies, const cudaGraphEdgeData **edges,
+    size_t *count) {
   const CUgraphEdgeData *edge_data = nullptr;
   cudaError_t result =
       capture_info(RPC_cudaStreamGetCaptureInfo_v3, stream, status, id, graph,
@@ -960,6 +1156,16 @@ cudaStreamGetCaptureInfo_v3(cudaStream_t stream,
     *edges = reinterpret_cast<const cudaGraphEdgeData *>(edge_data);
   }
   return result;
+}
+
+extern "C" cudaError_t
+cudaStreamGetCaptureInfo_v3(cudaStream_t stream,
+                            cudaStreamCaptureStatus *status,
+                            unsigned long long *id, cudaGraph_t *graph,
+                            const cudaGraphNode_t **dependencies,
+                            const cudaGraphEdgeData **edges, size_t *count) {
+  return note_last_error(lupine_call_cudaStreamGetCaptureInfo_v3(
+      stream, status, id, graph, dependencies, edges, count));
 }
 #endif
 #endif
@@ -1131,8 +1337,8 @@ cudaError_t copy_peer(void *dst, int dstDevice, const void *src, int srcDevice,
 
 } // namespace
 
-extern "C" cudaError_t cudaMemcpy(void *dst, const void *src, size_t count,
-                                  cudaMemcpyKind kind) {
+static cudaError_t lupine_call_cudaMemcpy(void *dst, const void *src,
+                                          size_t count, cudaMemcpyKind kind) {
   if (kind < cudaMemcpyHostToHost || kind > cudaMemcpyDefault) {
     return cudaErrorInvalidMemcpyDirection;
   }
@@ -1163,9 +1369,15 @@ extern "C" cudaError_t cudaMemcpy(void *dst, const void *src, size_t count,
   return cudaErrorInvalidMemcpyDirection;
 }
 
-extern "C" cudaError_t cudaMemcpyAsync(void *dst, const void *src, size_t count,
-                                       cudaMemcpyKind kind,
-                                       cudaStream_t stream) {
+extern "C" cudaError_t cudaMemcpy(void *dst, const void *src, size_t count,
+                                  cudaMemcpyKind kind) {
+  return note_last_error(lupine_call_cudaMemcpy(dst, src, count, kind));
+}
+
+static cudaError_t lupine_call_cudaMemcpyAsync(void *dst, const void *src,
+                                               size_t count,
+                                               cudaMemcpyKind kind,
+                                               cudaStream_t stream) {
   if (kind < cudaMemcpyHostToHost || kind > cudaMemcpyDefault) {
     return cudaErrorInvalidMemcpyDirection;
   }
@@ -1197,10 +1409,33 @@ extern "C" cudaError_t cudaMemcpyAsync(void *dst, const void *src, size_t count,
   return cudaErrorInvalidMemcpyDirection;
 }
 
+extern "C" cudaError_t cudaMemcpyAsync(void *dst, const void *src, size_t count,
+                                       cudaMemcpyKind kind,
+                                       cudaStream_t stream) {
+  return note_last_error(
+      lupine_call_cudaMemcpyAsync(dst, src, count, kind, stream));
+}
+
+static cudaError_t lupine_call_cudaMemcpy2D(void *dst, size_t dpitch,
+                                            const void *src, size_t spitch,
+                                            size_t width, size_t height,
+                                            cudaMemcpyKind kind) {
+  return copy_2d(dst, dpitch, src, spitch, width, height, kind, nullptr);
+}
+
 extern "C" cudaError_t cudaMemcpy2D(void *dst, size_t dpitch, const void *src,
                                     size_t spitch, size_t width, size_t height,
                                     cudaMemcpyKind kind) {
-  return copy_2d(dst, dpitch, src, spitch, width, height, kind, nullptr);
+  return note_last_error(
+      lupine_call_cudaMemcpy2D(dst, dpitch, src, spitch, width, height, kind));
+}
+
+static cudaError_t lupine_call_cudaMemcpy2DAsync(void *dst, size_t dpitch,
+                                                 const void *src, size_t spitch,
+                                                 size_t width, size_t height,
+                                                 cudaMemcpyKind kind,
+                                                 cudaStream_t stream) {
+  return copy_2d(dst, dpitch, src, spitch, width, height, kind, &stream);
 }
 
 extern "C" cudaError_t cudaMemcpy2DAsync(void *dst, size_t dpitch,
@@ -1208,28 +1443,39 @@ extern "C" cudaError_t cudaMemcpy2DAsync(void *dst, size_t dpitch,
                                          size_t width, size_t height,
                                          cudaMemcpyKind kind,
                                          cudaStream_t stream) {
-  return copy_2d(dst, dpitch, src, spitch, width, height, kind, &stream);
+  return note_last_error(lupine_call_cudaMemcpy2DAsync(
+      dst, dpitch, src, spitch, width, height, kind, stream));
 }
 
-extern "C" cudaError_t cudaMemcpy3D(const cudaMemcpy3DParms *params) {
+static cudaError_t lupine_call_cudaMemcpy3D(const cudaMemcpy3DParms *params) {
   CUDA_MEMCPY3D copy{};
   cudaError_t result = copy_descriptor(params, &copy);
   return result == cudaSuccess ? runtime_error(cuMemcpy3D(&copy)) : result;
 }
 
-extern "C" cudaError_t cudaMemcpy3DAsync(const cudaMemcpy3DParms *params,
-                                         cudaStream_t stream) {
+extern "C" cudaError_t cudaMemcpy3D(const cudaMemcpy3DParms *params) {
+  return note_last_error(lupine_call_cudaMemcpy3D(params));
+}
+
+static cudaError_t
+lupine_call_cudaMemcpy3DAsync(const cudaMemcpy3DParms *params,
+                              cudaStream_t stream) {
   CUDA_MEMCPY3D copy{};
   cudaError_t result = copy_descriptor(params, &copy);
   return result == cudaSuccess ? runtime_error(cuMemcpy3DAsync(&copy, stream))
                                : result;
 }
 
-extern "C" cudaError_t
-cudaGraphAddMemcpyNode(cudaGraphNode_t *node, cudaGraph_t graph,
-                       const cudaGraphNode_t *dependencies,
-                       size_t dependency_count,
-                       const cudaMemcpy3DParms *params) {
+extern "C" cudaError_t cudaMemcpy3DAsync(const cudaMemcpy3DParms *params,
+                                         cudaStream_t stream) {
+  return note_last_error(lupine_call_cudaMemcpy3DAsync(params, stream));
+}
+
+static cudaError_t
+lupine_call_cudaGraphAddMemcpyNode(cudaGraphNode_t *node, cudaGraph_t graph,
+                                   const cudaGraphNode_t *dependencies,
+                                   size_t dependency_count,
+                                   const cudaMemcpy3DParms *params) {
   CUDA_MEMCPY3D copy{};
   cudaError_t result = copy_descriptor(params, &copy);
   if (result != cudaSuccess) {
@@ -1252,10 +1498,18 @@ cudaGraphAddMemcpyNode(cudaGraphNode_t *node, cudaGraph_t graph,
 }
 
 extern "C" cudaError_t
-cudaGraphAddMemcpyNode1D(cudaGraphNode_t *node, cudaGraph_t graph,
-                         const cudaGraphNode_t *dependencies,
-                         size_t dependency_count, void *dst, const void *src,
-                         size_t count, cudaMemcpyKind kind) {
+cudaGraphAddMemcpyNode(cudaGraphNode_t *node, cudaGraph_t graph,
+                       const cudaGraphNode_t *dependencies,
+                       size_t dependency_count,
+                       const cudaMemcpy3DParms *params) {
+  return note_last_error(lupine_call_cudaGraphAddMemcpyNode(
+      node, graph, dependencies, dependency_count, params));
+}
+
+static cudaError_t lupine_call_cudaGraphAddMemcpyNode1D(
+    cudaGraphNode_t *node, cudaGraph_t graph,
+    const cudaGraphNode_t *dependencies, size_t dependency_count, void *dst,
+    const void *src, size_t count, cudaMemcpyKind kind) {
   cudaMemcpy3DParms params{};
   params.srcPtr = {const_cast<void *>(src), count, count, 1};
   params.dstPtr = {dst, count, count, 1};
@@ -1263,6 +1517,15 @@ cudaGraphAddMemcpyNode1D(cudaGraphNode_t *node, cudaGraph_t graph,
   params.kind = kind;
   return cudaGraphAddMemcpyNode(node, graph, dependencies, dependency_count,
                                 &params);
+}
+
+extern "C" cudaError_t
+cudaGraphAddMemcpyNode1D(cudaGraphNode_t *node, cudaGraph_t graph,
+                         const cudaGraphNode_t *dependencies,
+                         size_t dependency_count, void *dst, const void *src,
+                         size_t count, cudaMemcpyKind kind) {
+  return note_last_error(lupine_call_cudaGraphAddMemcpyNode1D(
+      node, graph, dependencies, dependency_count, dst, src, count, kind));
 }
 
 namespace {
@@ -1331,10 +1594,10 @@ cudaError_t copy_array_linear(CUDA_MEMCPY3D copy, size_t bytes,
 
 } // namespace
 
-extern "C" cudaError_t cudaMemcpy2DToArray(cudaArray_t dst, size_t wOffset,
-                                           size_t hOffset, const void *src,
-                                           size_t spitch, size_t width,
-                                           size_t height, cudaMemcpyKind kind) {
+static cudaError_t
+lupine_call_cudaMemcpy2DToArray(cudaArray_t dst, size_t wOffset, size_t hOffset,
+                                const void *src, size_t spitch, size_t width,
+                                size_t height, cudaMemcpyKind kind) {
   CUDA_MEMCPY3D copy{};
   copy.dstArray = reinterpret_cast<CUarray>(dst);
   copy.dstXInBytes = wOffset;
@@ -1343,6 +1606,29 @@ extern "C" cudaError_t cudaMemcpy2DToArray(cudaArray_t dst, size_t wOffset,
   copy.srcDevice = reinterpret_cast<CUdeviceptr>(src);
   copy.srcPitch = spitch;
   return copy_array_2d(&copy, width, height, kind, nullptr);
+}
+
+extern "C" cudaError_t cudaMemcpy2DToArray(cudaArray_t dst, size_t wOffset,
+                                           size_t hOffset, const void *src,
+                                           size_t spitch, size_t width,
+                                           size_t height, cudaMemcpyKind kind) {
+  return note_last_error(lupine_call_cudaMemcpy2DToArray(
+      dst, wOffset, hOffset, src, spitch, width, height, kind));
+}
+
+static cudaError_t
+lupine_call_cudaMemcpy2DToArrayAsync(cudaArray_t dst, size_t wOffset,
+                                     size_t hOffset, const void *src,
+                                     size_t spitch, size_t width, size_t height,
+                                     cudaMemcpyKind kind, cudaStream_t stream) {
+  CUDA_MEMCPY3D copy{};
+  copy.dstArray = reinterpret_cast<CUarray>(dst);
+  copy.dstXInBytes = wOffset;
+  copy.dstY = hOffset;
+  copy.srcHost = src;
+  copy.srcDevice = reinterpret_cast<CUdeviceptr>(src);
+  copy.srcPitch = spitch;
+  return copy_array_2d(&copy, width, height, kind, &stream);
 }
 
 extern "C" cudaError_t cudaMemcpy2DToArrayAsync(cudaArray_t dst, size_t wOffset,
@@ -1351,21 +1637,13 @@ extern "C" cudaError_t cudaMemcpy2DToArrayAsync(cudaArray_t dst, size_t wOffset,
                                                 size_t height,
                                                 cudaMemcpyKind kind,
                                                 cudaStream_t stream) {
-  CUDA_MEMCPY3D copy{};
-  copy.dstArray = reinterpret_cast<CUarray>(dst);
-  copy.dstXInBytes = wOffset;
-  copy.dstY = hOffset;
-  copy.srcHost = src;
-  copy.srcDevice = reinterpret_cast<CUdeviceptr>(src);
-  copy.srcPitch = spitch;
-  return copy_array_2d(&copy, width, height, kind, &stream);
+  return note_last_error(lupine_call_cudaMemcpy2DToArrayAsync(
+      dst, wOffset, hOffset, src, spitch, width, height, kind, stream));
 }
 
-extern "C" cudaError_t cudaMemcpy2DFromArray(void *dst, size_t dpitch,
-                                             cudaArray_const_t src,
-                                             size_t wOffset, size_t hOffset,
-                                             size_t width, size_t height,
-                                             cudaMemcpyKind kind) {
+static cudaError_t lupine_call_cudaMemcpy2DFromArray(
+    void *dst, size_t dpitch, cudaArray_const_t src, size_t wOffset,
+    size_t hOffset, size_t width, size_t height, cudaMemcpyKind kind) {
   CUDA_MEMCPY3D copy{};
   copy.srcArray = reinterpret_cast<CUarray>(const_cast<cudaArray_t>(src));
   copy.srcXInBytes = wOffset;
@@ -1376,11 +1654,19 @@ extern "C" cudaError_t cudaMemcpy2DFromArray(void *dst, size_t dpitch,
   return copy_array_2d(&copy, width, height, kind, nullptr);
 }
 
-extern "C" cudaError_t
-cudaMemcpy2DFromArrayAsync(void *dst, size_t dpitch, cudaArray_const_t src,
-                           size_t wOffset, size_t hOffset, size_t width,
-                           size_t height, cudaMemcpyKind kind,
-                           cudaStream_t stream) {
+extern "C" cudaError_t cudaMemcpy2DFromArray(void *dst, size_t dpitch,
+                                             cudaArray_const_t src,
+                                             size_t wOffset, size_t hOffset,
+                                             size_t width, size_t height,
+                                             cudaMemcpyKind kind) {
+  return note_last_error(lupine_call_cudaMemcpy2DFromArray(
+      dst, dpitch, src, wOffset, hOffset, width, height, kind));
+}
+
+static cudaError_t lupine_call_cudaMemcpy2DFromArrayAsync(
+    void *dst, size_t dpitch, cudaArray_const_t src, size_t wOffset,
+    size_t hOffset, size_t width, size_t height, cudaMemcpyKind kind,
+    cudaStream_t stream) {
   CUDA_MEMCPY3D copy{};
   copy.srcArray = reinterpret_cast<CUarray>(const_cast<cudaArray_t>(src));
   copy.srcXInBytes = wOffset;
@@ -1391,9 +1677,19 @@ cudaMemcpy2DFromArrayAsync(void *dst, size_t dpitch, cudaArray_const_t src,
   return copy_array_2d(&copy, width, height, kind, &stream);
 }
 
-extern "C" cudaError_t cudaMemcpyToArray(cudaArray_t dst, size_t wOffset,
-                                         size_t hOffset, const void *src,
-                                         size_t count, cudaMemcpyKind kind) {
+extern "C" cudaError_t
+cudaMemcpy2DFromArrayAsync(void *dst, size_t dpitch, cudaArray_const_t src,
+                           size_t wOffset, size_t hOffset, size_t width,
+                           size_t height, cudaMemcpyKind kind,
+                           cudaStream_t stream) {
+  return note_last_error(lupine_call_cudaMemcpy2DFromArrayAsync(
+      dst, dpitch, src, wOffset, hOffset, width, height, kind, stream));
+}
+
+static cudaError_t lupine_call_cudaMemcpyToArray(cudaArray_t dst,
+                                                 size_t wOffset, size_t hOffset,
+                                                 const void *src, size_t count,
+                                                 cudaMemcpyKind kind) {
   CUDA_MEMCPY3D copy{};
   copy.dstArray = reinterpret_cast<CUarray>(dst);
   copy.dstXInBytes = wOffset;
@@ -1403,9 +1699,18 @@ extern "C" cudaError_t cudaMemcpyToArray(cudaArray_t dst, size_t wOffset,
   return copy_array_linear(copy, count, kind, nullptr);
 }
 
-extern "C" cudaError_t cudaMemcpyFromArray(void *dst, cudaArray_const_t src,
-                                           size_t wOffset, size_t hOffset,
-                                           size_t count, cudaMemcpyKind kind) {
+extern "C" cudaError_t cudaMemcpyToArray(cudaArray_t dst, size_t wOffset,
+                                         size_t hOffset, const void *src,
+                                         size_t count, cudaMemcpyKind kind) {
+  return note_last_error(
+      lupine_call_cudaMemcpyToArray(dst, wOffset, hOffset, src, count, kind));
+}
+
+static cudaError_t lupine_call_cudaMemcpyFromArray(void *dst,
+                                                   cudaArray_const_t src,
+                                                   size_t wOffset,
+                                                   size_t hOffset, size_t count,
+                                                   cudaMemcpyKind kind) {
   CUDA_MEMCPY3D copy{};
   copy.srcArray = reinterpret_cast<CUarray>(const_cast<cudaArray_t>(src));
   copy.srcXInBytes = wOffset;
@@ -1415,16 +1720,42 @@ extern "C" cudaError_t cudaMemcpyFromArray(void *dst, cudaArray_const_t src,
   return copy_array_linear(copy, count, kind, nullptr);
 }
 
-extern "C" cudaError_t cudaMemcpyToArrayAsync(cudaArray_t dst, size_t wOffset,
-                                              size_t hOffset, const void *src,
-                                              size_t count, cudaMemcpyKind kind,
-                                              cudaStream_t stream) {
+extern "C" cudaError_t cudaMemcpyFromArray(void *dst, cudaArray_const_t src,
+                                           size_t wOffset, size_t hOffset,
+                                           size_t count, cudaMemcpyKind kind) {
+  return note_last_error(
+      lupine_call_cudaMemcpyFromArray(dst, src, wOffset, hOffset, count, kind));
+}
+
+static cudaError_t lupine_call_cudaMemcpyToArrayAsync(
+    cudaArray_t dst, size_t wOffset, size_t hOffset, const void *src,
+    size_t count, cudaMemcpyKind kind, cudaStream_t stream) {
   CUDA_MEMCPY3D copy{};
   copy.dstArray = reinterpret_cast<CUarray>(dst);
   copy.dstXInBytes = wOffset;
   copy.dstY = hOffset;
   copy.srcHost = src;
   copy.srcDevice = reinterpret_cast<CUdeviceptr>(src);
+  return copy_array_linear(copy, count, kind, &stream);
+}
+
+extern "C" cudaError_t cudaMemcpyToArrayAsync(cudaArray_t dst, size_t wOffset,
+                                              size_t hOffset, const void *src,
+                                              size_t count, cudaMemcpyKind kind,
+                                              cudaStream_t stream) {
+  return note_last_error(lupine_call_cudaMemcpyToArrayAsync(
+      dst, wOffset, hOffset, src, count, kind, stream));
+}
+
+static cudaError_t lupine_call_cudaMemcpyFromArrayAsync(
+    void *dst, cudaArray_const_t src, size_t wOffset, size_t hOffset,
+    size_t count, cudaMemcpyKind kind, cudaStream_t stream) {
+  CUDA_MEMCPY3D copy{};
+  copy.srcArray = reinterpret_cast<CUarray>(const_cast<cudaArray_t>(src));
+  copy.srcXInBytes = wOffset;
+  copy.srcY = hOffset;
+  copy.dstHost = dst;
+  copy.dstDevice = reinterpret_cast<CUdeviceptr>(dst);
   return copy_array_linear(copy, count, kind, &stream);
 }
 
@@ -1432,23 +1763,24 @@ extern "C" cudaError_t
 cudaMemcpyFromArrayAsync(void *dst, cudaArray_const_t src, size_t wOffset,
                          size_t hOffset, size_t count, cudaMemcpyKind kind,
                          cudaStream_t stream) {
-  CUDA_MEMCPY3D copy{};
-  copy.srcArray = reinterpret_cast<CUarray>(const_cast<cudaArray_t>(src));
-  copy.srcXInBytes = wOffset;
-  copy.srcY = hOffset;
-  copy.dstHost = dst;
-  copy.dstDevice = reinterpret_cast<CUdeviceptr>(dst);
-  return copy_array_linear(copy, count, kind, &stream);
+  return note_last_error(lupine_call_cudaMemcpyFromArrayAsync(
+      dst, src, wOffset, hOffset, count, kind, stream));
 }
 
-extern "C" cudaError_t cudaGetSymbolAddress(void **devPtr, const void *symbol) {
+static cudaError_t lupine_call_cudaGetSymbolAddress(void **devPtr,
+                                                    const void *symbol) {
   conn_t *conn = connection();
   return symbol_address(conn, devPtr, symbol, 0, 0);
 }
 
-extern "C" cudaError_t cudaMemcpyToSymbol(const void *symbol, const void *src,
-                                          size_t count, size_t offset,
-                                          cudaMemcpyKind kind) {
+extern "C" cudaError_t cudaGetSymbolAddress(void **devPtr, const void *symbol) {
+  return note_last_error(lupine_call_cudaGetSymbolAddress(devPtr, symbol));
+}
+
+static cudaError_t lupine_call_cudaMemcpyToSymbol(const void *symbol,
+                                                  const void *src, size_t count,
+                                                  size_t offset,
+                                                  cudaMemcpyKind kind) {
   if (kind != cudaMemcpyHostToDevice && kind != cudaMemcpyDeviceToDevice &&
       kind != cudaMemcpyDefault) {
     return cudaErrorInvalidMemcpyDirection;
@@ -1462,9 +1794,17 @@ extern "C" cudaError_t cudaMemcpyToSymbol(const void *symbol, const void *src,
   return cudaMemcpy(address, src, count, kind);
 }
 
-extern "C" cudaError_t cudaMemcpyFromSymbol(void *dst, const void *symbol,
-                                            size_t count, size_t offset,
-                                            cudaMemcpyKind kind) {
+extern "C" cudaError_t cudaMemcpyToSymbol(const void *symbol, const void *src,
+                                          size_t count, size_t offset,
+                                          cudaMemcpyKind kind) {
+  return note_last_error(
+      lupine_call_cudaMemcpyToSymbol(symbol, src, count, offset, kind));
+}
+
+static cudaError_t lupine_call_cudaMemcpyFromSymbol(void *dst,
+                                                    const void *symbol,
+                                                    size_t count, size_t offset,
+                                                    cudaMemcpyKind kind) {
   if (kind != cudaMemcpyDeviceToHost && kind != cudaMemcpyDeviceToDevice &&
       kind != cudaMemcpyDefault) {
     return cudaErrorInvalidMemcpyDirection;
@@ -1478,11 +1818,17 @@ extern "C" cudaError_t cudaMemcpyFromSymbol(void *dst, const void *symbol,
   return cudaMemcpy(dst, address, count, kind);
 }
 
-extern "C" cudaError_t cudaMemcpyToSymbolAsync(const void *symbol,
-                                               const void *src, size_t count,
-                                               size_t offset,
-                                               cudaMemcpyKind kind,
-                                               cudaStream_t stream) {
+extern "C" cudaError_t cudaMemcpyFromSymbol(void *dst, const void *symbol,
+                                            size_t count, size_t offset,
+                                            cudaMemcpyKind kind) {
+  return note_last_error(
+      lupine_call_cudaMemcpyFromSymbol(dst, symbol, count, offset, kind));
+}
+
+static cudaError_t
+lupine_call_cudaMemcpyToSymbolAsync(const void *symbol, const void *src,
+                                    size_t count, size_t offset,
+                                    cudaMemcpyKind kind, cudaStream_t stream) {
   if (kind != cudaMemcpyHostToDevice && kind != cudaMemcpyDeviceToDevice &&
       kind != cudaMemcpyDefault) {
     return cudaErrorInvalidMemcpyDirection;
@@ -1496,10 +1842,18 @@ extern "C" cudaError_t cudaMemcpyToSymbolAsync(const void *symbol,
   return cudaMemcpyAsync(address, src, count, kind, stream);
 }
 
-extern "C" cudaError_t cudaMemcpyFromSymbolAsync(void *dst, const void *symbol,
-                                                 size_t count, size_t offset,
-                                                 cudaMemcpyKind kind,
-                                                 cudaStream_t stream) {
+extern "C" cudaError_t cudaMemcpyToSymbolAsync(const void *symbol,
+                                               const void *src, size_t count,
+                                               size_t offset,
+                                               cudaMemcpyKind kind,
+                                               cudaStream_t stream) {
+  return note_last_error(lupine_call_cudaMemcpyToSymbolAsync(
+      symbol, src, count, offset, kind, stream));
+}
+
+static cudaError_t lupine_call_cudaMemcpyFromSymbolAsync(
+    void *dst, const void *symbol, size_t count, size_t offset,
+    cudaMemcpyKind kind, cudaStream_t stream) {
   if (kind != cudaMemcpyDeviceToHost && kind != cudaMemcpyDeviceToDevice &&
       kind != cudaMemcpyDefault) {
     return cudaErrorInvalidMemcpyDirection;
@@ -1513,15 +1867,38 @@ extern "C" cudaError_t cudaMemcpyFromSymbolAsync(void *dst, const void *symbol,
   return cudaMemcpyAsync(dst, address, count, kind, stream);
 }
 
+extern "C" cudaError_t cudaMemcpyFromSymbolAsync(void *dst, const void *symbol,
+                                                 size_t count, size_t offset,
+                                                 cudaMemcpyKind kind,
+                                                 cudaStream_t stream) {
+  return note_last_error(lupine_call_cudaMemcpyFromSymbolAsync(
+      dst, symbol, count, offset, kind, stream));
+}
+
+static cudaError_t lupine_call_cudaMemcpyPeer(void *dst, int dstDevice,
+                                              const void *src, int srcDevice,
+                                              size_t count) {
+  return copy_peer(dst, dstDevice, src, srcDevice, count, nullptr);
+}
+
 extern "C" cudaError_t cudaMemcpyPeer(void *dst, int dstDevice, const void *src,
                                       int srcDevice, size_t count) {
-  return copy_peer(dst, dstDevice, src, srcDevice, count, nullptr);
+  return note_last_error(
+      lupine_call_cudaMemcpyPeer(dst, dstDevice, src, srcDevice, count));
+}
+
+static cudaError_t lupine_call_cudaMemcpyPeerAsync(void *dst, int dstDevice,
+                                                   const void *src,
+                                                   int srcDevice, size_t count,
+                                                   cudaStream_t stream) {
+  return copy_peer(dst, dstDevice, src, srcDevice, count, &stream);
 }
 
 extern "C" cudaError_t cudaMemcpyPeerAsync(void *dst, int dstDevice,
                                            const void *src, int srcDevice,
                                            size_t count, cudaStream_t stream) {
-  return copy_peer(dst, dstDevice, src, srcDevice, count, &stream);
+  return note_last_error(lupine_call_cudaMemcpyPeerAsync(
+      dst, dstDevice, src, srcDevice, count, stream));
 }
 
 // ---------------------------------------------------------------------------
@@ -1830,11 +2207,11 @@ cudaError_t launch(conn_t *conn, int op, const void *func, dim3 gridDim,
 
 } // namespace
 
-extern "C" cudaError_t
-cudaGraphAddKernelNode(cudaGraphNode_t *node, cudaGraph_t graph,
-                       const cudaGraphNode_t *dependencies,
-                       size_t dependency_count,
-                       const cudaKernelNodeParams *params) {
+static cudaError_t
+lupine_call_cudaGraphAddKernelNode(cudaGraphNode_t *node, cudaGraph_t graph,
+                                   const cudaGraphNode_t *dependencies,
+                                   size_t dependency_count,
+                                   const cudaKernelNodeParams *params) {
   if (node == nullptr || params == nullptr ||
       (dependency_count != 0 && dependencies == nullptr)) {
     return cudaErrorInvalidValue;
@@ -1862,8 +2239,17 @@ cudaGraphAddKernelNode(cudaGraphNode_t *node, cudaGraph_t graph,
 }
 
 extern "C" cudaError_t
-cudaGraphKernelNodeSetParams(cudaGraphNode_t node,
-                             const cudaKernelNodeParams *params) {
+cudaGraphAddKernelNode(cudaGraphNode_t *node, cudaGraph_t graph,
+                       const cudaGraphNode_t *dependencies,
+                       size_t dependency_count,
+                       const cudaKernelNodeParams *params) {
+  return note_last_error(lupine_call_cudaGraphAddKernelNode(
+      node, graph, dependencies, dependency_count, params));
+}
+
+static cudaError_t
+lupine_call_cudaGraphKernelNodeSetParams(cudaGraphNode_t node,
+                                         const cudaKernelNodeParams *params) {
   conn_t *conn = connection();
   std::vector<size_t> sizes;
   cudaError_t result = graph_kernel_param_sizes(conn, params, &sizes);
@@ -1883,8 +2269,15 @@ cudaGraphKernelNodeSetParams(cudaGraphNode_t node,
 }
 
 extern "C" cudaError_t
-cudaGraphExecKernelNodeSetParams(cudaGraphExec_t exec, cudaGraphNode_t node,
-                                 const cudaKernelNodeParams *params) {
+cudaGraphKernelNodeSetParams(cudaGraphNode_t node,
+                             const cudaKernelNodeParams *params) {
+  return note_last_error(
+      lupine_call_cudaGraphKernelNodeSetParams(node, params));
+}
+
+static cudaError_t lupine_call_cudaGraphExecKernelNodeSetParams(
+    cudaGraphExec_t exec, cudaGraphNode_t node,
+    const cudaKernelNodeParams *params) {
   conn_t *conn = connection();
   std::vector<size_t> sizes;
   cudaError_t result = graph_kernel_param_sizes(conn, params, &sizes);
@@ -1902,6 +2295,13 @@ cudaGraphExecKernelNodeSetParams(cudaGraphExec_t exec, cudaGraphNode_t node,
     return rpc_error();
   }
   return result;
+}
+
+extern "C" cudaError_t
+cudaGraphExecKernelNodeSetParams(cudaGraphExec_t exec, cudaGraphNode_t node,
+                                 const cudaKernelNodeParams *params) {
+  return note_last_error(
+      lupine_call_cudaGraphExecKernelNodeSetParams(exec, node, params));
 }
 
 #if CUDART_VERSION >= 12000
@@ -1977,23 +2377,48 @@ cudaError_t graph_add_node(int op, cudaGraphNode_t *node, cudaGraph_t graph,
 } // namespace
 
 #if CUDART_VERSION >= 13000
+static cudaError_t lupine_call_cudaGraphAddNode(
+    cudaGraphNode_t *node, cudaGraph_t graph,
+    const cudaGraphNode_t *dependencies, const cudaGraphEdgeData *edges,
+    size_t dependency_count, cudaGraphNodeParams *params) {
+  return graph_add_node(RPC_cudaGraphAddNode, node, graph, dependencies, edges,
+                        dependency_count, params);
+}
+
 extern "C" cudaError_t cudaGraphAddNode(cudaGraphNode_t *node,
                                         cudaGraph_t graph,
                                         const cudaGraphNode_t *dependencies,
                                         const cudaGraphEdgeData *edges,
                                         size_t dependency_count,
                                         cudaGraphNodeParams *params) {
-  return graph_add_node(RPC_cudaGraphAddNode, node, graph, dependencies, edges,
-                        dependency_count, params);
+  return note_last_error(lupine_call_cudaGraphAddNode(
+      node, graph, dependencies, edges, dependency_count, params));
 }
 #else
+static cudaError_t
+lupine_call_cudaGraphAddNode(cudaGraphNode_t *node, cudaGraph_t graph,
+                             const cudaGraphNode_t *dependencies,
+                             size_t dependency_count,
+                             cudaGraphNodeParams *params) {
+  return graph_add_node(RPC_cudaGraphAddNode, node, graph, dependencies,
+                        nullptr, dependency_count, params);
+}
+
 extern "C" cudaError_t cudaGraphAddNode(cudaGraphNode_t *node,
                                         cudaGraph_t graph,
                                         const cudaGraphNode_t *dependencies,
                                         size_t dependency_count,
                                         cudaGraphNodeParams *params) {
-  return graph_add_node(RPC_cudaGraphAddNode, node, graph, dependencies,
-                        nullptr, dependency_count, params);
+  return note_last_error(lupine_call_cudaGraphAddNode(
+      node, graph, dependencies, dependency_count, params));
+}
+
+static cudaError_t lupine_call_cudaGraphAddNode_v2(
+    cudaGraphNode_t *node, cudaGraph_t graph,
+    const cudaGraphNode_t *dependencies, const cudaGraphEdgeData *edges,
+    size_t dependency_count, cudaGraphNodeParams *params) {
+  return graph_add_node(RPC_cudaGraphAddNode_v2, node, graph, dependencies,
+                        edges, dependency_count, params);
 }
 
 extern "C" cudaError_t cudaGraphAddNode_v2(cudaGraphNode_t *node,
@@ -2002,18 +2427,35 @@ extern "C" cudaError_t cudaGraphAddNode_v2(cudaGraphNode_t *node,
                                            const cudaGraphEdgeData *edges,
                                            size_t dependency_count,
                                            cudaGraphNodeParams *params) {
-  return graph_add_node(RPC_cudaGraphAddNode_v2, node, graph, dependencies,
-                        edges, dependency_count, params);
+  return note_last_error(lupine_call_cudaGraphAddNode_v2(
+      node, graph, dependencies, edges, dependency_count, params));
 }
 #endif
 #endif
 
-extern "C" cudaError_t cudaLaunchKernel(const void *func, dim3 gridDim,
-                                        dim3 blockDim, void **args,
-                                        size_t sharedMem, cudaStream_t stream) {
+static cudaError_t lupine_call_cudaLaunchKernel(const void *func, dim3 gridDim,
+                                                dim3 blockDim, void **args,
+                                                size_t sharedMem,
+                                                cudaStream_t stream) {
   conn_t *conn = connection_for_stream(stream);
   return launch(conn, RPC_cudaLaunchKernel, func, gridDim, blockDim, args,
                 sharedMem, stream);
+}
+
+extern "C" cudaError_t cudaLaunchKernel(const void *func, dim3 gridDim,
+                                        dim3 blockDim, void **args,
+                                        size_t sharedMem, cudaStream_t stream) {
+  return note_last_error(lupine_call_cudaLaunchKernel(func, gridDim, blockDim,
+                                                      args, sharedMem, stream));
+}
+
+static cudaError_t
+lupine_call_cudaLaunchCooperativeKernel(const void *func, dim3 gridDim,
+                                        dim3 blockDim, void **args,
+                                        size_t sharedMem, cudaStream_t stream) {
+  conn_t *conn = connection_for_stream(stream);
+  return launch(conn, RPC_cudaLaunchCooperativeKernel, func, gridDim, blockDim,
+                args, sharedMem, stream);
 }
 
 extern "C" cudaError_t cudaLaunchCooperativeKernel(const void *func,
@@ -2021,13 +2463,13 @@ extern "C" cudaError_t cudaLaunchCooperativeKernel(const void *func,
                                                    void **args,
                                                    size_t sharedMem,
                                                    cudaStream_t stream) {
-  conn_t *conn = connection_for_stream(stream);
-  return launch(conn, RPC_cudaLaunchCooperativeKernel, func, gridDim, blockDim,
-                args, sharedMem, stream);
+  return note_last_error(lupine_call_cudaLaunchCooperativeKernel(
+      func, gridDim, blockDim, args, sharedMem, stream));
 }
 
-extern "C" cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
-                                           const void *func, void **args) {
+static cudaError_t
+lupine_call_cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
+                                const void *func, void **args) {
   if (config == nullptr ||
       (config->numAttrs != 0 && config->attrs == nullptr)) {
     return cudaErrorInvalidValue;
@@ -2071,28 +2513,50 @@ extern "C" cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
   return runtime_error(lupine_invalidate_managed_allocations());
 }
 
+extern "C" cudaError_t cudaLaunchKernelExC(const cudaLaunchConfig_t *config,
+                                           const void *func, void **args) {
+  return note_last_error(lupine_call_cudaLaunchKernelExC(config, func, args));
+}
+
 #if CUDART_VERSION >= 13000
+static cudaError_t lupine_call___cudaLaunchKernel(cudaKernel_t kernel,
+                                                  dim3 gridDim, dim3 blockDim,
+                                                  void **args, size_t sharedMem,
+                                                  cudaStream_t stream) {
+  conn_t *conn = connection_for_stream(stream);
+  return launch(conn, RPC___cudaLaunchKernel, kernel, gridDim, blockDim, args,
+                sharedMem, stream);
+}
+
 extern "C" cudaError_t __cudaLaunchKernel(cudaKernel_t kernel, dim3 gridDim,
                                           dim3 blockDim, void **args,
                                           size_t sharedMem,
                                           cudaStream_t stream) {
-  conn_t *conn = connection_for_stream(stream);
-  return launch(conn, RPC___cudaLaunchKernel, kernel, gridDim, blockDim, args,
-                sharedMem, stream);
+  return note_last_error(lupine_call___cudaLaunchKernel(
+      kernel, gridDim, blockDim, args, sharedMem, stream));
+}
+
+static cudaError_t
+lupine_call___cudaLaunchKernel_ptsz(cudaKernel_t kernel, dim3 gridDim,
+                                    dim3 blockDim, void **args,
+                                    size_t sharedMem, cudaStream_t stream) {
+  return __cudaLaunchKernel(kernel, gridDim, blockDim, args, sharedMem, stream);
 }
 
 extern "C" cudaError_t __cudaLaunchKernel_ptsz(cudaKernel_t kernel,
                                                dim3 gridDim, dim3 blockDim,
                                                void **args, size_t sharedMem,
                                                cudaStream_t stream) {
-  return __cudaLaunchKernel(kernel, gridDim, blockDim, args, sharedMem, stream);
+  return note_last_error(lupine_call___cudaLaunchKernel_ptsz(
+      kernel, gridDim, blockDim, args, sharedMem, stream));
 }
 #endif
 
 #if CUDART_VERSION >= 12000
 // The runtime owns the name string; a copy is held for the life of the
 // process, so the pointer handed back stays valid as the API promises.
-extern "C" cudaError_t cudaFuncGetName(const char **name, const void *func) {
+static cudaError_t lupine_call_cudaFuncGetName(const char **name,
+                                               const void *func) {
   if (name == nullptr) {
     return cudaErrorInvalidValue;
   }
@@ -2129,5 +2593,9 @@ extern "C" cudaError_t cudaFuncGetName(const char **name, const void *func) {
   std::lock_guard<std::mutex> lock(*names_mutex);
   *name = names->emplace(func, std::move(text)).first->second.c_str();
   return cudaSuccess;
+}
+
+extern "C" cudaError_t cudaFuncGetName(const char **name, const void *func) {
+  return note_last_error(lupine_call_cudaFuncGetName(name, func));
 }
 #endif
