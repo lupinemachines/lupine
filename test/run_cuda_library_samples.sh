@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build and run NVIDIA/CUDALibrarySamples (cuBLAS, cuBLASLt, cuFFT, cuRAND,
-# cuSOLVER, cuSPARSE, cuSPARSELt, nvJPEG, NPP, cuPQC, MathDx) through the
+# cuSOLVER, cuSPARSE, cuSPARSELt, cuEST, nvJPEG, NPP, cuPQC, MathDx) through the
 # lupine client shim against a remote server. Every leaf directory with a
 # CMakeLists.txt is a standalone CMake project; every executable it produces is
 # a unit with its own server on SERVER_PORT_BASE + index.
@@ -14,6 +14,10 @@
 # samples stay unbuilt. They call cusparseLtGetErrorString, which 0.6.x does
 # not declare and 0.7.x declares but does not export, so they need 0.8.0 or
 # newer.
+# cuEST ships outside the toolkit as well and needs no shim either: its samples
+# run on the client against NVIDIA's own libcuest and only their driver traffic
+# crosses the wire, so this script unpacks its redist archive the way it does
+# MathDx's. Its wheel carries Python bindings only.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -22,7 +26,7 @@ LIBRARY_SAMPLES_URL="${LIBRARY_SAMPLES_URL:-https://github.com/NVIDIA/CUDALibrar
 LIBRARY_SAMPLES_REF="${LIBRARY_SAMPLES_REF:-3437729}"
 LIBRARY_SAMPLES_DIR="${LIBRARY_SAMPLES_DIR:-$repo_root/test/cuda-library-samples/CUDALibrarySamples}"
 LIBRARY_SAMPLES_BUILD_DIR="${LIBRARY_SAMPLES_BUILD_DIR:-$LIBRARY_SAMPLES_DIR/build}"
-LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE cuSPARSELt nvJPEG NPP cuPQC MathDx}"
+LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE cuSPARSELt cuEST nvJPEG NPP cuPQC MathDx}"
 LIBRARY_SAMPLES_ARCH="${LIBRARY_SAMPLES_ARCH:-${CUDA_SAMPLES_ARCH:-89}}"
 LIBRARY_SAMPLES_CMAKE_ARGS="${LIBRARY_SAMPLES_CMAKE_ARGS:-}"
 LIBRARY_SAMPLES_SKIP_LIST="${LIBRARY_SAMPLES_SKIP_LIST:-}"
@@ -36,6 +40,8 @@ MATHDX_URL="${MATHDX_URL:-https://developer.nvidia.com/downloads/compute/cublasd
 MATHDX_CUDA_MIN_MAJOR=13
 MATHDX_DIR="${MATHDX_DIR:-$(dirname "$LIBRARY_SAMPLES_DIR")/mathdx}"
 MATHDX_HOME="${MATHDX_HOME:-$MATHDX_DIR/nvidia/mathdx/26.06}"
+CUEST_VERSION="${CUEST_VERSION:-0.2.2.2}"
+CUEST_HOME="${CUEST_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/cuest}"
 BUILD_SAMPLES="${BUILD_SAMPLES:-auto}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 JOBS="${JOBS:-$(nproc)}"
@@ -83,6 +89,7 @@ Environment:
                              one the cuSPARSELt samples are not built.
   MATHDX_URL                 MathDx package to unpack. Default: $MATHDX_URL
   MATHDX_HOME                Unpacked MathDx package. Default: $MATHDX_HOME
+  CUEST_HOME                 Unpacked cuEST archive. Default: $CUEST_HOME
   BUILD_SAMPLES              auto, 1, or 0. Default: auto (build dirs without a build).
   BUILD_ONLY                 1 to clone/build and exit before running.
   JOBS                       Parallel sample builds. Default: $JOBS
@@ -220,6 +227,15 @@ CUPQC_CMAKE
     mkdir -p "$MATHDX_DIR"
     curl -fsSL "$MATHDX_URL" | tar -xz -C "$MATHDX_DIR" --strip-components=1 || true
   fi
+
+  # cuEST's archive is CUDA-major-specific. Where it cannot be fetched -- no
+  # network, or a major NVIDIA does not build it for -- the cuEST samples fail
+  # to configure and the run reports them SKIP:build-failed like any other.
+  if [[ " $LIBRARY_SAMPLES_LIBS " == *" cuEST "* && ! -d "$CUEST_HOME" ]]; then
+    mkdir -p "$CUEST_HOME"
+    curl -fsSL "https://developer.download.nvidia.com/compute/cuest/redist/libcuest/linux-x86_64/libcuest-linux-x86_64-${CUEST_VERSION}_cuda$((${cuda_version:-0} / 1000))-archive.tar.xz" \
+      | tar -xJ -C "$CUEST_HOME" --strip-components=1 || true
+  fi
 fi
 
 # A sample is a directory with a CMakeLists.txt and no CMake project beneath
@@ -238,7 +254,8 @@ else
     # CUFFTDX_EXAMPLES_LTO option adds, off by default.
     # shellcheck disable=SC2086
     find $LIBRARY_SAMPLES_LIBS -name CMakeLists.txt -printf '%h\n' \
-      | grep -vE '(^|/)(cmake|utils)(/|$)' | grep -vE '^MathDx/[^/]+/' | sort \
+      | grep -vE '(^|/)(cmake|utils)(/|$)' | grep -vE '^MathDx/[^/]+/' \
+      | grep -vE '^cuEST/(c_examples/|python_examples)' | sort \
       | awk '{ if (prev != "" && index($0, prev "/") == 1) { skip[prev] = 1 } ; prev = $0; lines[n++] = $0 }
              END { for (i = 0; i < n; i++) if (!(lines[i] in skip)) print lines[i] }'
   )
@@ -283,6 +300,9 @@ build_sample() {
     # kernels are the sample, so they have to be built for the server's GPU.
     configure_args=(-Dmathdx_ROOT="$MATHDX_HOME"
       -D"$(basename "$sample" | tr '[:lower:]' '[:upper:]')_CUDA_ARCHITECTURES=$LIBRARY_SAMPLES_ARCH-real")
+  elif [[ "$sample" == cuEST/* ]]; then
+    configure_args=(-DCUEST_INCLUDE_DIR="$CUEST_HOME/include"
+      -DCUEST_LIB_DIR="$CUEST_HOME/lib")
   fi
   # Use the shared runtime by default. Explicit upstream cudart_static links
   # (the nvJPEG multi-instance examples) remain driver/static-runtime coverage.
@@ -309,7 +329,7 @@ build_sample() {
   fi
 }
 export -f build_sample
-export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME CUSPARSELT_HOME CUSPARSELT_STAGE MATHDX_HOME
+export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME CUSPARSELT_HOME CUSPARSELT_STAGE MATHDX_HOME CUEST_HOME
 
 if [[ "$BUILD_SAMPLES" != "0" ]]; then
   to_build=()
@@ -355,6 +375,14 @@ unit_argv() {
   # The nvCOMPDx samples compress a file the caller names; their build writes
   # the two its own CTest arguments use, and these mirror them.
   local nvcompdx_data="$LIBRARY_SAMPLES_BUILD_DIR/MathDx/nvCOMPDx"
+  # The cuEST examples take a geometry and one or more basis sets on the
+  # command line; these are the files and pairings its run_all.sh uses.
+  local cuest_data="$LIBRARY_SAMPLES_DIR/cuEST/data"
+  local xyz="$cuest_data/geometry/h2o.xyz"
+  local xyz_ecp="$cuest_data/geometry/ch2i2.xyz"
+  local gbs="$cuest_data/basis_set/def2-svp.gbs"
+  local aux_gbs="$cuest_data/basis_set/def2-universal-jkfit.gbs"
+  local ecp_gbs="$cuest_data/basis_set/def2-svp-ecp.gbs"
   case "$1" in
     nvJPEG/nvJPEG-Decoder/*) printf '%s\0' -i "$images" -b 2 -o "$nvjpeg_assets/nvjpeg-decoded" ;;
     nvJPEG/nvJPEG-Decoder-Backend-ROI/*) printf '%s\0' -i "$images" -b 2 ;;
@@ -367,6 +395,13 @@ unit_argv() {
     MathDx/nvCOMPDx/02_lz4_gpu/*) printf '%s\0' -f "$nvcompdx_data/random_file_64KiB.bin" ;;
     MathDx/nvCOMPDx/03_lz4_gpu_and_cpu/*|MathDx/nvCOMPDx/05_lz4_cpu_and_nvrtc/*) printf '%s\0' -f "$nvcompdx_data/random_file_100MiB.bin" ;;
     MathDx/nvCOMPDx/04_ans_gpu/ans_gpu_compression_decompression) printf '%s\0' -t uint8 -f "$nvcompdx_data/random_file_100MiB.bin" ;;
+    cuEST/*/xc_grid_general) printf '%s\0' "$xyz" ;;
+    cuEST/*/ao_basis_general) printf '%s\0' "$xyz" "$gbs" ;;
+    cuEST/*/ecp_atom) printf '%s\0' "$xyz_ecp" "$ecp_gbs" ;;
+    cuEST/*/3_density_fitting/*) printf '%s\0' "$xyz" "$gbs" "$aux_gbs" ;;
+    cuEST/*/5_effective_core_potentials/*) printf '%s\0' "$xyz_ecp" "$gbs" "$ecp_gbs" ;;
+    cuEST/*/2_one_electron_integrals/*|cuEST/*/4_exchange_correlation/*|cuEST/*/6_pcm/*)
+      printf '%s\0' "$xyz" "$gbs" ;;
   esac
 }
 # NPP samples open their inputs relative to the working directory: findContour
@@ -471,7 +506,7 @@ for i in "${!UNITS[@]}"; do
   (
     cd "$cwd"
     timeout --kill-after=5s "$SAMPLE_TIMEOUT" env \
-      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}${LD_LIBRARY_PATH:-}" \
+      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}$CUEST_HOME/lib:${LD_LIBRARY_PATH:-}" \
       LUPINE_SERVER="$SERVER_HOST:$port" \
       LD_PRELOAD="$LUPINE_LIB" \
       "$exe" "${argv[@]}"
