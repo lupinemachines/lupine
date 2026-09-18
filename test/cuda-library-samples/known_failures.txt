@@ -1,9 +1,6 @@
 # Units (<sample dir>/<executable>) that run_cuda_library_samples.sh marks
 # SKIP:known. One tracking issue per root cause; drop the lines when it closes.
 
-# #598 nvJPEG multiple decoder instances
-nvJPEG/nvJPEG-Decoder-MultipleInstances/nvJPEGDecMultipleInstances
-
 # Fail natively as well (not lupine): block-scaled FP8 / MXFP8 / NVFP4 and the
 # grouped FP8 GEMMs need Hopper/Blackwell; the rest error out on the RTX 4090 +
 # RTX 2070 SUPER test host. MgPotrf passes there but not on the single-GPU L4.
@@ -20,6 +17,14 @@ cuBLASLt/LtHSHgemmGroupedSimple/sample_cublasLt_LtHSHgemmGroupedSimple
 cuSOLVER/gesv/cusolver_irs_expert
 cuSOLVER/gesv/cusolver_irs_lapack
 cuFFT/3d_mgpu_r2c_c2r/bin/3d_mgpu_r2c_c2r_example
+
+# #836 Run close enough to SAMPLE_TIMEOUT that which one tips over is luck.
+# bicgstab times out on CUDA 11.8 only (121s against a 120s cap) and is under a
+# minute on 12.4 and 13.3; MgSyevd is the slowest unit on every lane at 63-100s.
+cuSPARSE/bicgstab/bicgstab_example
+cuSOLVER/MgSyevd/cusolver_MgSyevd_example1
+cuSOLVER/MgSyevd/cusolver_MgSyevd_example2
+cuSOLVER/MgSyevd/cusolver_MgSyevd_example3
 
 # #832 cuFFTDx fills >=1GiB with one synchronous cudaMemcpy per CUDA block:
 # 2.75M blocking HtoD round trips before the first kernel. Passes natively.

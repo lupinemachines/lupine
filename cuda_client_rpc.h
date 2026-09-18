@@ -53,6 +53,15 @@ void lupine_note_deviceptr_allocation(unsigned long long ptr, size_t size,
 void lupine_forget_deviceptr_owner(unsigned long long ptr);
 void lupine_deep_cache_reset(const void *key);
 void *lupine_deep_cache_add(const void *key, size_t bytes);
+// The device a server answers a query with belongs to the lane bound to the
+// calling thread. This token moves whenever anything can have rebound that
+// lane, so a device answer cached against it is good until it does.
+uint64_t lupine_device_binding_epoch(void);
+void lupine_note_device_binding_changed(void);
+void lupine_invalidate_current_context_cache(void);
+// What the driver shim believes is current on this thread's lane, without the
+// round trip it would spend confirming that belief.
+struct CUctx_st *lupine_current_context_hint(void);
 
 #ifdef __cplusplus
 }

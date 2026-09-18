@@ -101,14 +101,9 @@ size_t mem_pool_attribute_width(enum cudaMemPoolAttr attr) {
   }
 }
 
-// Invalidate device-query results before attempting a synchronous runtime call,
-// including requests that fail. Driver context changes are checked separately.
-thread_local uint64_t runtime_request_epoch = 1;
-
 // The generated code speaks the RPC core's vocabulary; the driver shim exports
 // it under its own prefix so both can be declared in one translation unit.
 int rpc_write_start_request(conn_t *conn, int op) {
-  ++runtime_request_epoch;
   if (lupine_prepare_rpc(conn) < 0) {
     return -1;
   }
@@ -248,25 +243,88 @@ extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
 
 namespace {
 
+// Device ordinals run through the connections in index order, so one prefix
+// sum answers everything the runtime asks about them: entry i is the ordinal
+// connection i starts at, and the last entry is the total. A server reports
+// the devices its own process was given, so the sum holds for as long as the
+// connection table it was built from, which fills once when the transport
+// opens and empties only when it closes.
+cudaError_t device_ordinal_offsets(std::vector<int> *offsets) {
+  static std::mutex mutex;
+  static auto *cached = new std::vector<int>();
+  const auto connections = all_connections();
+  if (connections.empty()) {
+    return rpc_error();
+  }
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (cached->size() == connections.size() + 1) {
+      *offsets = *cached;
+      return cudaSuccess;
+    }
+  }
+  // Built off the lock: the counts belong to the servers, so two threads
+  // racing to fill the table build the same one.
+  std::vector<int> built(connections.size() + 1, 0);
+  for (size_t index = 0; index < connections.size(); ++index) {
+    int count = 0;
+    cudaError_t result =
+        lupine_rpc_cudaGetDeviceCount(connections[index], &count);
+    if (result != cudaSuccess) {
+      return result;
+    }
+    built[index + 1] = built[index] + count;
+  }
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    *cached = built;
+  }
+  *offsets = std::move(built);
+  return cudaSuccess;
+}
+
+// Which device the server's runtime answers with is a property of the lane
+// bound to the calling thread, and only rebinding that lane can change it:
+// cudaSetDevice here, a driver context set on the lane, a context handle the
+// server may hand out again, or a connection coming or going. Every one of
+// those moves the driver shim's binding epoch, and a context the shim comes to
+// believe is current moves the hint, so the two together say whether a
+// recorded answer still describes the lane. Nothing else does: an RPC of any
+// other kind leaves the binding exactly where it was.
+struct lane_device_binding {
+  conn_t *connection = nullptr;
+  uint64_t epoch = 0;
+  CUcontext context = nullptr;
+  int device = 0;
+  // Recorded by cudaSetDevice: while the epoch holds, the lane is bound just
+  // as that call left it, so selecting the same device again changes nothing.
+  bool selected = false;
+};
+
+thread_local lane_device_binding lane_binding;
+
+bool lane_binding_describes(conn_t *conn) {
+  return conn != nullptr && lane_binding.connection == conn &&
+         lane_binding.epoch == lupine_device_binding_epoch() &&
+         lane_binding.context == lupine_current_context_hint();
+}
+
 conn_t *connection_for_device(int *device, cudaError_t *result) {
-  int ordinal = *device;
-  cudaError_t status = cudaErrorInvalidDevice;
-  if (ordinal >= 0) {
-    for (conn_t *conn : all_connections()) {
-      int count = 0;
-      status = lupine_rpc_cudaGetDeviceCount(conn, &count);
-      if (status != cudaSuccess) {
-        break;
+  std::vector<int> offsets;
+  cudaError_t status = device_ordinal_offsets(&offsets);
+  const int ordinal = *device;
+  if (status == cudaSuccess) {
+    status = cudaErrorInvalidDevice;
+    if (ordinal >= 0 && ordinal < offsets.back()) {
+      unsigned int index = 0;
+      while (offsets[index + 1] <= ordinal) {
+        ++index;
       }
-      if (ordinal < count) {
-        *device = ordinal;
-        if (result != nullptr) {
-          *result = cudaSuccess;
-        }
-        return conn;
+      *device = ordinal - offsets[index];
+      if (result != nullptr) {
+        *result = cudaSuccess;
       }
-      ordinal -= count;
-      status = cudaErrorInvalidDevice;
+      return lupine_rpc_client_get_connection(index);
     }
   }
   if (result != nullptr) {
@@ -385,20 +443,12 @@ extern "C" cudaError_t cudaGetDeviceCount(int *count) {
   if (count == nullptr) {
     return cudaErrorInvalidValue;
   }
-  const auto connections = all_connections();
-  if (connections.empty()) {
-    return rpc_error();
+  std::vector<int> offsets;
+  cudaError_t result = device_ordinal_offsets(&offsets);
+  if (result != cudaSuccess) {
+    return result;
   }
-  int total = 0;
-  for (conn_t *conn : connections) {
-    int remote_count = 0;
-    cudaError_t result = lupine_rpc_cudaGetDeviceCount(conn, &remote_count);
-    if (result != cudaSuccess) {
-      return result;
-    }
-    total += remote_count;
-  }
-  *count = total;
+  *count = offsets.back();
   return cudaSuccess;
 }
 
@@ -407,53 +457,36 @@ extern "C" cudaError_t cudaGetDevice(int *device) {
     return cudaErrorInvalidValue;
   }
   conn_t *conn = connection();
-  // Repeated runtime queries are local until a synchronous runtime request or a
-  // driver context change. cuCtxGetCurrent uses the driver's existing context
-  // tracking, including mixed driver/runtime calls. Check its cached device too
-  // because a destroyed context handle may be reused for another device.
-  struct device_query_cache {
-    conn_t *connection = nullptr;
-    uint64_t epoch = 0;
-    CUcontext context = nullptr;
-    CUdevice context_device = 0;
-    int device = 0;
-  };
-  static thread_local device_query_cache cached;
-  CUcontext context = nullptr;
-  CUdevice context_device = 0;
-  if (conn != nullptr && cached.connection == conn &&
-      cached.epoch == runtime_request_epoch &&
-      cuCtxGetCurrent(&context) == CUDA_SUCCESS && context == cached.context &&
-      (context == nullptr || (cuCtxGetDevice(&context_device) == CUDA_SUCCESS &&
-                              context_device == cached.context_device))) {
-    *device = cached.device;
+  if (lane_binding_describes(conn)) {
+    *device = lane_binding.device;
     return cudaSuccess;
   }
-  cached.epoch = 0;
+  // Read what the answer will be recorded against before asking for it: a
+  // rebinding that races the request then leaves a token the next query
+  // rejects rather than one it trusts.
+  const uint64_t epoch = lupine_device_binding_epoch();
+  CUcontext context = lupine_current_context_hint();
   int remote_device = 0;
   cudaError_t result = lupine_rpc_cudaGetDevice(conn, &remote_device);
   if (result != cudaSuccess) {
     return result;
   }
-  for (unsigned int index = 0; index < current_connection_index; ++index) {
-    int count = 0;
-    result = lupine_rpc_cudaGetDeviceCount(
-        lupine_rpc_client_get_connection(index), &count);
-    if (result != cudaSuccess) {
-      return result;
-    }
-    remote_device += count;
+  std::vector<int> offsets;
+  result = device_ordinal_offsets(&offsets);
+  if (result != cudaSuccess) {
+    return result;
   }
+  remote_device += offsets[current_connection_index];
   *device = remote_device;
-  if (cuCtxGetCurrent(&context) == CUDA_SUCCESS &&
-      (context == nullptr || cuCtxGetDevice(&context_device) == CUDA_SUCCESS)) {
-    cached = {conn, runtime_request_epoch, context, context_device,
-              remote_device};
-  }
+  lane_binding = {conn, epoch, context, remote_device, false};
   return cudaSuccess;
 }
 
 extern "C" cudaError_t cudaSetDevice(int device) {
+  if (lane_binding.selected && lane_binding.device == device &&
+      lane_binding_describes(connection())) {
+    return cudaSuccess;
+  }
   int remote_device = device;
   cudaError_t result = cudaSuccess;
   conn_t *conn = connection_for_device(&remote_device, &result);
@@ -472,6 +505,11 @@ extern "C" cudaError_t cudaSetDevice(int device) {
       break;
     }
   }
+  // The lane now holds this device, and the primary context that comes with
+  // it, until something else rebinds it.
+  lupine_note_device_binding_changed();
+  lane_binding = {conn, lupine_device_binding_epoch(),
+                  lupine_current_context_hint(), device, true};
   return cudaSuccess;
 }
 
@@ -497,12 +535,20 @@ extern "C" cudaError_t cudaSetValidDevices(int *device_arr, int len) {
   if (conn == nullptr) {
     conn = connection();
   }
+  // The list decides which device the runtime settles on next.
+  lupine_note_device_binding_changed();
   return lupine_rpc_cudaSetValidDevices(conn, remote_devices.data(), len);
 }
 
 extern "C" cudaError_t cudaDeviceReset() {
   conn_t *conn = connection();
-  return lupine_rpc_cudaDeviceReset(conn);
+  cudaError_t result = lupine_rpc_cudaDeviceReset(conn);
+  if (result == cudaSuccess) {
+    // The device's primary context is gone server-wide, so every lane's belief
+    // about that handle goes with it, not just this one's.
+    lupine_invalidate_current_context_cache();
+  }
+  return result;
 }
 
 namespace {

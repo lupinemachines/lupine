@@ -110,9 +110,9 @@ static void lupine_rpc_connection_closed(conn_t *conn) {
 static pthread_once_t lupine_rpc_lifecycle_once = PTHREAD_ONCE_INIT;
 
 static void lupine_install_rpc_lifecycle_hooks() {
-  const rpc_lifecycle_hooks hooks = {lupine_rpc_connection_closed,
-                                     rpc_destroy_thread_lane,
-                                     lupine_complete_pending_log_callbacks};
+  const rpc_lifecycle_hooks hooks = {
+      lupine_rpc_connection_closed, rpc_destroy_thread_lane,
+      lupine_complete_pending_log_callbacks, lupine_host_range_is_protected};
   if (rpc_set_lifecycle_hooks(&hooks) < 0) {
     LUPINE_LOG_ERROR("Failed to install CUDA RPC lifecycle hooks");
   }
@@ -4048,7 +4048,9 @@ CUresult lupine_refresh_runtime_context() {
   return result;
 }
 
-CUcontext lupine_current_context_hint() { return lupine_current_context; }
+extern "C" CUcontext lupine_current_context_hint() {
+  return lupine_current_context;
+}
 
 CUcontext lupine_default_context_hint_value() {
   return lupine_default_context_hint;
@@ -4064,8 +4066,11 @@ extern "C" void lupine_forget_destroyed_context(CUcontext ctx) {
   }
   // Destroying a context unloads the modules it holds, so every module and
   // function handle cached against it is free for the server to hand out
-  // again. This is the other end of the module-unload invalidation.
+  // again. This is the other end of the module-unload invalidation. The
+  // context handle itself can come back on any lane, so the device answers
+  // cached against it go too.
   lupine_invalidate_function_caches();
+  lupine_invalidate_current_context_cache();
   lupine_forget_context_owner(ctx);
   lupine_stream_pool_discard(-1, -1, ctx);
   if (lupine_current_context == ctx) {
@@ -4242,6 +4247,7 @@ static CUresult lupine_set_remote_current_context(CUcontext ctx) {
 }
 
 extern "C" void lupine_note_ctx_create(CUcontext ctx, conn_t *conn) {
+  lupine_note_device_binding_changed();
   lupine_note_context_owner(ctx, conn);
   lupine_lane_context_cache_store(
       lupine_route_identity(lupine_remote_route_for_conn(conn)), ctx);
@@ -4255,6 +4261,7 @@ extern "C" void lupine_note_ctx_create(CUcontext ctx, conn_t *conn) {
 
 extern "C" void lupine_note_ctx_create_route(CUcontext ctx,
                                              lupine_route route) {
+  lupine_note_device_binding_changed();
   lupine_note_context_owner_route(ctx, route);
   lupine_lane_context_cache_store(lupine_route_identity(route), ctx);
   lupine_context_stack->push_back(lupine_current_context);

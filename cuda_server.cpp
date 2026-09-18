@@ -1228,10 +1228,7 @@ int handle_lupineFunctionAttributeSnapshot(conn_t *conn) {
   return rpc_write_end(conn);
 }
 
-// Queues fields directly from stable typed storage and submits the response
-// before that storage leaves scope. Names remain owned by the loaded library;
-// no packed snapshot buffer or second RPC copy allocation is needed.
-static int lupine_write_library(conn_t *conn, CUlibrary library) {
+struct lupine_library_snapshot {
   CUresult result = CUDA_ERROR_NOT_SUPPORTED;
   CUdevice device = -1;
   uint32_t count = 0;
@@ -1241,55 +1238,116 @@ static int lupine_write_library(conn_t *conn, CUlibrary library) {
     int attribute = 0;
     int value = 0;
   };
-  struct kernel_record {
-    uint32_t name_length = 0;
-    CUfunction function = nullptr;
-    uint32_t param_count = 0;
-    uint32_t function_attribute_count = 0;
-    uint32_t kernel_attribute_count = 0;
-    std::array<attribute_record, CU_FUNC_ATTRIBUTE_MAX> function_attributes;
-    std::array<attribute_record, CU_FUNC_ATTRIBUTE_MAX> kernel_attributes;
-  };
   struct param_record {
     size_t offset = 0;
     size_t size = 0;
   };
+  struct kernel_record {
+    const char *name = nullptr;
+    uint32_t name_length = 0;
+    CUkernel kernel = nullptr;
+    CUfunction function = nullptr;
+    uint32_t param_count = 0;
+    uint32_t function_attribute_count = 0;
+    uint32_t kernel_attribute_count = 0;
+    std::vector<param_record> params;
+    std::array<attribute_record, CU_FUNC_ATTRIBUTE_MAX> function_attributes;
+    std::array<attribute_record, CU_FUNC_ATTRIBUTE_MAX> kernel_attributes;
+  };
+  std::vector<kernel_record> records;
+#endif
+};
 
+// Resolving a kernel to a function can synchronize CUDA work, including a
+// pinned HtoD callback that needs the RPC write lock to fetch client bytes.
+// Finish every CUDA query before starting the response and taking that lock.
+static lupine_library_snapshot lupine_collect_library(CUlibrary library) {
+  lupine_library_snapshot snapshot;
+#if CUDA_VERSION >= 12040
   CUdevice current_device = -1;
   if (cuCtxGetDevice(&current_device) == CUDA_SUCCESS) {
-    device = current_device;
+    snapshot.device = current_device;
   }
   unsigned int kernel_count = 0;
-  result = cuLibraryGetKernelCount(&kernel_count, library);
+  snapshot.result = cuLibraryGetKernelCount(&kernel_count, library);
   std::vector<CUkernel> kernels;
-  if (result == CUDA_SUCCESS && kernel_count != 0) {
+  if (snapshot.result == CUDA_SUCCESS && kernel_count != 0) {
     kernels.resize(kernel_count);
-    result = cuLibraryEnumerateKernels(kernels.data(), kernel_count, library);
+    snapshot.result =
+        cuLibraryEnumerateKernels(kernels.data(), kernel_count, library);
   }
-  std::vector<kernel_record> records(result == CUDA_SUCCESS ? kernel_count : 0);
-  // The parameter count is discovered during serialization. Deque growth keeps
-  // pointers already queued by rpc_write valid.
-  std::deque<param_record> params;
-#endif
-  if (rpc_write(conn, &result, sizeof(result)) < 0 ||
-      rpc_write(conn, &device, sizeof(device)) < 0 ||
-      rpc_write(conn, &count, sizeof(count)) < 0) {
-    return -1;
+  if (snapshot.result != CUDA_SUCCESS) {
+    return snapshot;
   }
-#if CUDA_VERSION >= 12040
-  if (result != CUDA_SUCCESS) {
-    return rpc_write_end(conn);
-  }
-  auto write_attributes = [&](auto &attributes, uint32_t &attribute_count,
-                              auto query) {
-    if (rpc_write(conn, &attribute_count, sizeof(attribute_count)) < 0) {
-      return -1;
-    }
+  snapshot.records.reserve(kernel_count);
+  auto collect_attributes = [](auto &attributes, uint32_t attribute_count,
+                               auto query) {
     for (uint32_t i = 0; i < attribute_count; ++i) {
       auto &attribute = attributes[i];
       attribute.attribute = static_cast<int>(i);
       attribute.result =
           query(&attribute.value, static_cast<CUfunction_attribute>(i));
+    }
+  };
+  for (CUkernel kernel : kernels) {
+    const char *name = nullptr;
+    if (kernel == nullptr || cuKernelGetName(&name, kernel) != CUDA_SUCCESS ||
+        name == nullptr) {
+      continue;
+    }
+    auto &record = snapshot.records.emplace_back();
+    record.name = name;
+    record.name_length = static_cast<uint32_t>(std::strlen(name) + 1);
+    record.kernel = kernel;
+    if (cuKernelGetFunction(&record.function, kernel) != CUDA_SUCCESS) {
+      record.function = nullptr;
+    }
+    for (;;) {
+      lupine_library_snapshot::param_record param;
+      if (cuKernelGetParamInfo(kernel, record.param_count, &param.offset,
+                               &param.size) != CUDA_SUCCESS) {
+        break;
+      }
+      record.params.push_back(param);
+      ++record.param_count;
+    }
+    record.function_attribute_count =
+        record.function != nullptr ? CU_FUNC_ATTRIBUTE_MAX : 0;
+    record.kernel_attribute_count =
+        snapshot.device >= 0 ? CU_FUNC_ATTRIBUTE_MAX : 0;
+    collect_attributes(
+        record.function_attributes, record.function_attribute_count,
+        [&](int *value, CUfunction_attribute attribute) {
+          return cuFuncGetAttribute(value, attribute, record.function);
+        });
+    collect_attributes(record.kernel_attributes, record.kernel_attribute_count,
+                       [&](int *value, CUfunction_attribute attribute) {
+                         return cuKernelGetAttribute(value, attribute, kernel,
+                                                     snapshot.device);
+                       });
+  }
+  snapshot.count = static_cast<uint32_t>(snapshot.records.size());
+#endif
+  return snapshot;
+}
+
+// Queue fields from stable typed storage. Names remain owned by the loaded
+// library, and the snapshot stays alive until the response is submitted.
+static int lupine_write_library(conn_t *conn,
+                                const lupine_library_snapshot &snapshot) {
+  if (rpc_write(conn, &snapshot.result, sizeof(snapshot.result)) < 0 ||
+      rpc_write(conn, &snapshot.device, sizeof(snapshot.device)) < 0 ||
+      rpc_write(conn, &snapshot.count, sizeof(snapshot.count)) < 0) {
+    return -1;
+  }
+#if CUDA_VERSION >= 12040
+  auto write_attributes = [&](const auto &attributes,
+                              const uint32_t &attribute_count) {
+    if (rpc_write(conn, &attribute_count, sizeof(attribute_count)) < 0) {
+      return -1;
+    }
+    for (uint32_t i = 0; i < attribute_count; ++i) {
+      const auto &attribute = attributes[i];
       if (rpc_write(conn, &attribute.result, sizeof(attribute.result)) < 0 ||
           rpc_write(conn, &attribute.attribute, sizeof(attribute.attribute)) <
               0 ||
@@ -1299,54 +1357,26 @@ static int lupine_write_library(conn_t *conn, CUlibrary library) {
     }
     return 0;
   };
-  for (size_t i = 0; i < kernels.size(); ++i) {
-    const char *name = nullptr;
-    CUkernel &kernel = kernels[i];
-    if (kernel == nullptr || cuKernelGetName(&name, kernel) != CUDA_SUCCESS ||
-        name == nullptr) {
-      continue;
-    }
-    auto &record = records[i];
-    record.name_length = static_cast<uint32_t>(std::strlen(name) + 1);
-    if (cuKernelGetFunction(&record.function, kernel) != CUDA_SUCCESS) {
-      record.function = nullptr;
-    }
+  for (const auto &record : snapshot.records) {
     if (rpc_write(conn, &record.name_length, sizeof(record.name_length)) < 0 ||
-        rpc_write(conn, name, record.name_length) < 0 ||
-        rpc_write(conn, &kernel, sizeof(kernel)) < 0 ||
+        rpc_write(conn, record.name, record.name_length) < 0 ||
+        rpc_write(conn, &record.kernel, sizeof(record.kernel)) < 0 ||
         rpc_write(conn, &record.function, sizeof(record.function)) < 0 ||
         rpc_write(conn, &record.param_count, sizeof(record.param_count)) < 0) {
       return -1;
     }
-    for (;;) {
-      params.emplace_back();
-      auto &param = params.back();
-      if (cuKernelGetParamInfo(kernel, record.param_count, &param.offset,
-                               &param.size) != CUDA_SUCCESS) {
-        break;
-      }
+    for (const auto &param : record.params) {
       if (rpc_write(conn, &param.offset, sizeof(param.offset)) < 0 ||
           rpc_write(conn, &param.size, sizeof(param.size)) < 0) {
         return -1;
       }
-      ++record.param_count;
     }
-    record.function_attribute_count =
-        record.function != nullptr ? CU_FUNC_ATTRIBUTE_MAX : 0;
-    record.kernel_attribute_count = device >= 0 ? CU_FUNC_ATTRIBUTE_MAX : 0;
-    if (write_attributes(
-            record.function_attributes, record.function_attribute_count,
-            [&](int *value, CUfunction_attribute attribute) {
-              return cuFuncGetAttribute(value, attribute, record.function);
-            }) < 0 ||
-        write_attributes(
-            record.kernel_attributes, record.kernel_attribute_count,
-            [&](int *value, CUfunction_attribute attribute) {
-              return cuKernelGetAttribute(value, attribute, kernel, device);
-            }) < 0) {
+    if (write_attributes(record.function_attributes,
+                         record.function_attribute_count) < 0 ||
+        write_attributes(record.kernel_attributes,
+                         record.kernel_attribute_count) < 0) {
       return -1;
     }
-    ++count;
   }
 #endif
   return rpc_write_end(conn);
@@ -1432,11 +1462,15 @@ int handle_cuLibraryLoadData(conn_t *conn) {
     lupine_note_device_stdout_image(image.data(), image.size());
   }
 
+  lupine_library_snapshot snapshot;
+  if (result == CUDA_SUCCESS) {
+    snapshot = lupine_collect_library(library);
+  }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &library, sizeof(library)) < 0 ||
       lupine_write_jit_outputs(conn, &jit_state) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 ||
-      (result == CUDA_SUCCESS ? lupine_write_library(conn, library)
+      (result == CUDA_SUCCESS ? lupine_write_library(conn, snapshot)
                               : rpc_write_end(conn)) < 0) {
     std::free(jit_state.options);
     std::free(jit_state.option_values);
