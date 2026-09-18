@@ -2325,6 +2325,7 @@ static void lupine_stream_pool_init(lupine_route route, CUdevice dev,
                                     CUcontext ctx);
 static void lupine_stream_pool_discard(int route_id, CUdevice dev,
                                        CUcontext ctx);
+static void lupine_forget_context_local_storage(CUcontext ctx);
 
 // One forwarded retain keeps a device's primary context alive for every
 // retain this client holds, so later retains are counted here and only the
@@ -2434,17 +2435,20 @@ extern "C" CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
   std::lock_guard<std::mutex> lock(lupine_primary_ctx_retain_mutex());
   auto &retains = lupine_primary_ctx_retains();
   auto retained = retains.find(static_cast<int>(dev));
+  CUcontext context = nullptr;
   if (retained != retains.end()) {
     if (--retained->second.count > 0) {
       return CUDA_SUCCESS;
     }
     bool forwarded = retained->second.forwarded;
+    context = retained->second.context;
     retains.erase(retained);
     if (!forwarded) {
       return CUDA_SUCCESS;
     }
   }
   lupine_invalidate_primary_ctx_state(dev);
+  lupine_forget_context_local_storage(context);
   lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
   return lupine_remote_primary_ctx_release(lupine_route_remote_conn(route),
                                            remote_dev);
@@ -2552,6 +2556,7 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
     auto retained = retains.find(static_cast<int>(dev));
     if (retained != retains.end() && retained->second.forwarded) {
       retained->second.forwarded = false;
+      lupine_forget_context_local_storage(retained->second.context);
       (void)lupine_remote_primary_ctx_release(conn, remote_dev);
     }
   }
@@ -4072,6 +4077,7 @@ extern "C" void lupine_forget_destroyed_context(CUcontext ctx) {
   lupine_invalidate_function_caches();
   lupine_invalidate_current_context_cache();
   lupine_forget_context_owner(ctx);
+  lupine_forget_context_local_storage(ctx);
   lupine_stream_pool_discard(-1, -1, ctx);
   if (lupine_current_context == ctx) {
     lupine_current_context = nullptr;
@@ -8125,6 +8131,22 @@ lupine_context_storage() {
                                     lupine_context_storage_value,
                                     lupine_context_storage_key_hash>();
   return *storage;
+}
+
+// A destroyed context takes its context-local storage with it, and the server
+// is free to hand the same handle back for the next context. NVIDIA's libcudart
+// keeps its per-device runtime state here and re-initializes the device when
+// the lookup misses, so an entry that outlives its context is the difference
+// between a reset device coming back and staying broken.
+static void lupine_forget_context_local_storage(CUcontext ctx) {
+  if (ctx == nullptr) {
+    return;
+  }
+  auto &storage = lupine_context_storage();
+  auto locked = storage.lock_table();
+  for (auto entry = locked.begin(); entry != locked.end();) {
+    entry = entry->first.first == ctx ? locked.erase(entry) : std::next(entry);
+  }
 }
 
 static CUresult lupine_normalize_context(CUcontext *ctx) {
