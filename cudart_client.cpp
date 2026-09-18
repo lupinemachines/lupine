@@ -125,6 +125,16 @@ int rpc_read_end(conn_t *conn) {
   }
   return result;
 }
+// Ends a request nothing reads back. The server still runs it against its
+// runtime, so the context cache is stale from here just as it is after a
+// response.
+int rpc_write_end(conn_t *conn) {
+  int result = lupine_rpc_write_end(conn);
+  if (result >= 0) {
+    lupine_invalidate_runtime_context(conn);
+  }
+  return result;
+}
 
 // ---------------------------------------------------------------------------
 // Device state
@@ -1576,6 +1586,14 @@ extern "C" void **__cudaRegisterFatBinary(void *fatCubin) {
       new fatbin_registration(std::move(registration)));
 }
 
+// The register entry points return void, so nothing is read back and the
+// request goes out without waiting. Ordering holds because a lane is one client
+// thread bound to one server worker that dispatches that lane's requests in
+// arrival order, so a launch cannot overtake a registration issued before it on
+// the same thread. __cudaRegisterFatBinaryEnd stays synchronous: nvcc emits it
+// as the last call of the fatbin constructor, so the registering thread does
+// not return until the server has applied every registration in that fatbin,
+// which is what a consumer on another lane orders against.
 extern "C" void __cudaRegisterFunction(void **fatCubinHandle,
                                        const char *hostFun, char *deviceFun,
                                        const char *deviceName, int thread_limit,
@@ -1602,7 +1620,7 @@ extern "C" void __cudaRegisterFunction(void **fatCubinHandle,
         (gDim != nullptr && rpc_write(conn, gDim, sizeof(*gDim)) < 0) ||
         rpc_write(conn, &wSize, sizeof(wSize)) < 0 ||
         (wSize != nullptr && rpc_write(conn, wSize, sizeof(*wSize)) < 0) ||
-        rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
+        rpc_write_end(conn) < 0) {
       return;
     }
   });
@@ -1626,7 +1644,7 @@ extern "C" void __cudaRegisterVar(void **fatCubinHandle, char *hostVar,
         rpc_write(conn, &size, sizeof(size)) < 0 ||
         rpc_write(conn, &constant, sizeof(constant)) < 0 ||
         rpc_write(conn, &global, sizeof(global)) < 0 ||
-        rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
+        rpc_write_end(conn) < 0) {
       return;
     }
   });
@@ -1695,7 +1713,7 @@ extern "C" void __cudaUnregisterFatBinary(void **fatCubinHandle) {
   broadcast_fatbin(fatCubinHandle, [&](conn_t *conn, void **handle) {
     if (rpc_write_start_request(conn, RPC___cudaUnregisterFatBinary) < 0 ||
         rpc_write(conn, &handle, sizeof(handle)) < 0 ||
-        rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
+        rpc_write_end(conn) < 0) {
       return;
     }
   });
