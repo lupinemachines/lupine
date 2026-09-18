@@ -141,6 +141,7 @@ struct h2_transport {
   bool write_failed = false;
   int response_waiters = 0;
   bool transport_failed = false;
+  bool read_stop = false;
   bool shutdown_acknowledged = false;
   std::string peer_cuda_version;
   std::string peer_bulk_token;
@@ -1044,6 +1045,10 @@ void *h2_read_main(void *arg) {
   for (;;) {
     ssize_t received = h2_read_socket(transport, buffer, sizeof(buffer));
     pthread_mutex_lock(&transport->session_mutex);
+    if (transport->read_stop) {
+      pthread_mutex_unlock(&transport->session_mutex);
+      return nullptr;
+    }
     size_t offset = 0;
     while (received > 0 && offset < static_cast<size_t>(received)) {
       ssize_t consumed =
@@ -1785,33 +1790,49 @@ int rpc_http2_server_graceful_shutdown(conn_t *conn) {
   return result == 0 ? 0 : -1;
 }
 
-void rpc_http2_destroy(conn_t *conn) {
+void rpc_http2_shutdown(conn_t *conn) {
   if (conn == nullptr || conn->http2 == nullptr) {
     return;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
-  conn->http2 = nullptr;
-#ifdef _WIN32
-  (void)shutdown(transport->netfd, SD_RECEIVE);
-#else
-  (void)shutdown(transport->netfd, SHUT_RD);
-#endif
   pthread_mutex_lock(&transport->session_mutex);
+  transport->read_stop = true;
   transport->response_waiters = -1;
   transport->transport_failed = true;
   pthread_cond_broadcast(&transport->heartbeat_progress);
   pthread_cond_broadcast(&transport->session_progress);
   pthread_mutex_unlock(&transport->session_mutex);
+#ifdef _WIN32
+  (void)shutdown(transport->netfd, SD_RECEIVE);
+#else
+  (void)shutdown(transport->netfd, SHUT_RD);
+#endif
+}
+
+void rpc_http2_destroy(conn_t *conn) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return;
+  }
+  rpc_http2_shutdown(conn);
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  conn->http2 = nullptr;
   if (transport->heartbeat_thread != 0) {
     pthread_join(transport->heartbeat_thread, nullptr);
     transport->heartbeat_thread = 0;
   }
+  if (transport->write_thread != 0) {
+    h2_stop_write_thread(transport);
+  }
+#ifdef _WIN32
+  // SD_RECEIVE rejects future receives but leaves an already pending recv
+  // blocked. Cancel it before joining the reader and before the socket can be
+  // closed or reused. Drain and stop the writer first because this
+  // cancellation also covers pending sends.
+  (void)CancelIoEx(reinterpret_cast<HANDLE>(transport->netfd), nullptr);
+#endif
   if (transport->read_thread != 0) {
     pthread_join(transport->read_thread, nullptr);
     transport->read_thread = 0;
-  }
-  if (transport->write_thread != 0) {
-    h2_stop_write_thread(transport);
   }
   if (transport->session != nullptr) {
     nghttp2_session_del(transport->session);

@@ -1795,12 +1795,7 @@ if(BUILD_TESTING)
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     lupine_scaled_timeout(ckpt_timeout 10)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
-endif()
 
-# Unix: h2_test needs no socketpair or mmap any more, but it hangs partway
-# through on Windows (issue #656, in test_rpc_write_queue_grows), so it stays
-# off that platform until the transport difference behind that is understood.
-if(BUILD_TESTING AND NOT WIN32)
     add_executable(h2_test
         ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/monitor_client.cpp)
@@ -1817,7 +1812,10 @@ if(BUILD_TESTING AND NOT WIN32)
     add_test(NAME h2_test COMMAND h2_test)
     lupine_scaled_timeout(h2_timeout 60)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
+endif()
 
+# Uses Unix socketpair().
+if(BUILD_TESTING AND NOT WIN32)
     add_executable(dispatch_test ${CMAKE_CURRENT_SOURCE_DIR}/dispatch_test.cpp)
     target_link_libraries(dispatch_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(dispatch_test)

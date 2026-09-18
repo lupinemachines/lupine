@@ -253,7 +253,9 @@ void rpc_shutdown_transport_socket(conn_t *conn) {
       __atomic_load_n(&conn->connfd, __ATOMIC_ACQUIRE);
 #endif
   rpc_wake_async_waiters(conn);
-  if (socket != LUPINE_INVALID_SOCKET) {
+  if (conn->http2 != nullptr) {
+    rpc_http2_shutdown(conn);
+  } else if (socket != LUPINE_INVALID_SOCKET) {
     rpc_shutdown_socket(socket);
   }
 }

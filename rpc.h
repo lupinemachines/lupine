@@ -277,6 +277,9 @@ extern int rpc_http2_client_retry_handshake(conn_t *conn);
 // LUPINE_RPC_HTTP2_CLIENT_MISMATCH.
 extern int rpc_http2_client_await_ready(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
+// Stop receiving and wake RPC waiters without closing the socket. Queued
+// output is drained when the transport is destroyed.
+extern void rpc_http2_shutdown(conn_t *conn);
 extern void rpc_http2_destroy(conn_t *conn);
 struct lupine_client_bundle_registry;
 struct rpc_http2_server_metadata {
