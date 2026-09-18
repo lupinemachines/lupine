@@ -4015,15 +4015,39 @@ extern "C" void lupine_invalidate_runtime_context(conn_t *conn) {
   lupine_pending_runtime_context = conn;
 }
 
-// Runtime calls may initialize or change the server lane's driver context.
-// Query it only when a subsequent driver call needs the client-side cache.
-// This observes CUDA state; it never calls cuInit or creates a context.
-CUresult lupine_refresh_runtime_context() {
-  conn_t *conn = lupine_pending_runtime_context;
-  if (conn == nullptr) {
+static void lupine_adopt_lane_context(conn_t *conn, int route_id,
+                                      CUcontext context) {
+  lupine_cuda_initialized.store(true, std::memory_order_release);
+  lupine_current_context = context;
+  if (context != nullptr) {
+    lupine_note_context_owner(context, conn);
+    lupine_default_context_hint = context;
+    lupine_global_default_context_hint.store(context,
+                                             std::memory_order_relaxed);
+  }
+  lupine_lane_context_cache_store(route_id, context);
+}
+
+// What the server lane bound to this thread has current. The handle belongs to
+// the server: a runtime call on a lane with no context creates and binds that
+// device's primary context, and nothing the client did predicts its address,
+// so the first read on a lane has to be asked for.
+//
+// Afterwards it need not be. Under a held binding epoch, only cudaSetDevice,
+// cudaSetValidDevices and cudaDeviceReset move a lane off a context it already
+// holds, and all three clear this cache first. A cached null is not an answer:
+// that is the state the next runtime call binds a context out of.
+extern "C" CUresult lupine_lane_current_context(conn_t *conn,
+                                                CUcontext *context_out) {
+  const int route_id =
+      lupine_route_identity(lupine_remote_route_for_conn(conn));
+  CUcontext cached = nullptr;
+  if (lupine_lane_context_cache_lookup(route_id, &cached) &&
+      cached != nullptr) {
+    lupine_adopt_lane_context(conn, route_id, cached);
+    *context_out = cached;
     return CUDA_SUCCESS;
   }
-  lupine_pending_runtime_context = nullptr;
   CUcontext context = nullptr;
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -4034,17 +4058,23 @@ CUresult lupine_refresh_runtime_context() {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (result == CUDA_SUCCESS) {
-    lupine_cuda_initialized.store(true, std::memory_order_release);
-    lupine_current_context = context;
-    if (context != nullptr) {
-      lupine_note_context_owner(context, conn);
-      lupine_default_context_hint = context;
-      lupine_global_default_context_hint.store(context,
-                                               std::memory_order_relaxed);
-    }
-    lupine_lane_context_cache_store(
-        lupine_route_identity(lupine_remote_route_for_conn(conn)), context);
+    lupine_adopt_lane_context(conn, route_id, context);
+    *context_out = context;
   }
+  return result;
+}
+
+// Runtime calls may initialize or change the server lane's driver context.
+// Read it only when a subsequent driver call needs the client-side cache.
+// This observes CUDA state; it never calls cuInit or creates a context.
+CUresult lupine_refresh_runtime_context() {
+  conn_t *conn = lupine_pending_runtime_context;
+  if (conn == nullptr) {
+    return CUDA_SUCCESS;
+  }
+  lupine_pending_runtime_context = nullptr;
+  CUcontext context = nullptr;
+  CUresult result = lupine_lane_current_context(conn, &context);
   // Registration alone need not initialize CUDA. There is no context to
   // cache yet, but pre-init calls such as cuDriverGetVersion must still route.
   if (result == CUDA_ERROR_NOT_INITIALIZED) {
