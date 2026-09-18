@@ -124,7 +124,7 @@ int main() {
   EXPECT(property == version / 1000);
   printf("cuSPARSELt %d\n", version);
 
-#if CUSPARSELT_VERSION >= 700
+#if CUSPARSELT_VERSION >= 800
   EXPECT(strcmp(cusparseLtGetErrorName(CUSPARSE_STATUS_SUCCESS),
                 "CUSPARSE_STATUS_SUCCESS") == 0);
   EXPECT(strlen(cusparseLtGetErrorString(CUSPARSE_STATUS_INVALID_VALUE)) != 0);

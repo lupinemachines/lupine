@@ -11436,11 +11436,11 @@ LUPINE_DECLARE_HANDLER(RPC_cusparseZsctr, handle_cusparseZsctr,
 #endif
 #ifdef LUPINE_BUILD_CUSPARSELT_BACKEND
 LUPINE_CUSPARSELT_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-#if CUSPARSELT_VERSION >= 700
+#if CUSPARSELT_VERSION >= 800
 LUPINE_DECLARE_HANDLER(RPC_cusparseLtGetErrorName,
                        handle_cusparseLtGetErrorName, rpc_backend::cusparselt)
 #endif
-#if CUSPARSELT_VERSION >= 700
+#if CUSPARSELT_VERSION >= 800
 LUPINE_DECLARE_HANDLER(RPC_cusparseLtGetErrorString,
                        handle_cusparseLtGetErrorString, rpc_backend::cusparselt)
 #endif
@@ -39498,10 +39498,10 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #ifdef LUPINE_BUILD_CUSPARSELT_BACKEND
       LUPINE_CUSPARSELT_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-#if CUSPARSELT_VERSION >= 700
+#if CUSPARSELT_VERSION >= 800
       LUPINE_REGISTER_HANDLER(RPC_cusparseLtGetErrorName, handle_cusparseLtGetErrorName, rpc_backend::cusparselt)
 #endif
-#if CUSPARSELT_VERSION >= 700
+#if CUSPARSELT_VERSION >= 800
       LUPINE_REGISTER_HANDLER(RPC_cusparseLtGetErrorString, handle_cusparseLtGetErrorString, rpc_backend::cusparselt)
 #endif
 #if CUSPARSELT_VERSION >= 800

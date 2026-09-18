@@ -149,7 +149,7 @@ bool scalar_on_host(const void *plan, const char *name) {
 // Static strings
 // ---------------------------------------------------------------------------
 
-#if CUSPARSELT_VERSION >= 700
+#if CUSPARSELT_VERSION >= 800
 namespace {
 
 // The server's library owns the status strings, so each is fetched once and

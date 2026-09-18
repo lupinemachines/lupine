@@ -66,12 +66,12 @@ cusparseStatus_t cusparseLtGetProperty(libraryPropertyType propertyType,
                                        int *value);
 /**
  * @disabled
- * @guard CUSPARSELT_VERSION >= 700
+ * @guard CUSPARSELT_VERSION >= 800
  */
 const char *cusparseLtGetErrorName(cusparseStatus_t status);
 /**
  * @disabled
- * @guard CUSPARSELT_VERSION >= 700
+ * @guard CUSPARSELT_VERSION >= 800
  */
 const char *cusparseLtGetErrorString(cusparseStatus_t status);
 /**

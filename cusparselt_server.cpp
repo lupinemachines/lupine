@@ -70,7 +70,7 @@ int handle_destroy(conn_t *conn, const char *symbol) {
   return 0;
 }
 
-#if CUSPARSELT_VERSION >= 700
+#if CUSPARSELT_VERSION >= 800
 // cusparseLtGetErrorName and cusparseLtGetErrorString return static strings,
 // so the response carries the bytes length-prefixed instead of a status.
 int handle_status_text(conn_t *conn, const char *symbol) {
@@ -118,7 +118,7 @@ int handle_cusparseLtMatmulPlanDestroy(conn_t *conn) {
                                                 "cusparseLtMatmulPlanDestroy");
 }
 
-#if CUSPARSELT_VERSION >= 700
+#if CUSPARSELT_VERSION >= 800
 int handle_cusparseLtGetErrorName(conn_t *conn) {
   return handle_status_text(conn, "cusparseLtGetErrorName");
 }

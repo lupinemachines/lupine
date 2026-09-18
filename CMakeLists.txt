@@ -745,8 +745,7 @@ if(LUPINE_BUILD_CUDA)
     # Point LUPINE_CUSPARSELT_INCLUDE_DIR at an include directory holding
     # cusparseLt.h when it is not beside the toolkit's headers; without one the
     # shim is left out. 0.6.0 is the oldest release whose objects and matmul
-    # surface the shim covers; the error strings it gained in 0.7.0 and the
-    # algorithm-selection destroy it gained in 0.8.0 are guarded.
+    # surface the shim covers.
     find_path(LUPINE_CUSPARSELT_INCLUDE_DIR cusparseLt.h
         HINTS ${CUDAToolkit_INCLUDE_DIRS} ENV CUSPARSELT_HOME
         PATH_SUFFIXES include)
