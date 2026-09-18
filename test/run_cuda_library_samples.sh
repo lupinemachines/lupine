@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Build and run NVIDIA/CUDALibrarySamples (cuBLAS, cuBLASLt, cuFFT, cuRAND,
-# cuSOLVER, cuSPARSE, nvJPEG, NPP, cuPQC) through the lupine client shim
+# cuSOLVER, cuSPARSE, nvJPEG, NPP, cuPQC, MathDx) through the lupine client shim
 # against a remote server. Every leaf directory with a CMakeLists.txt is a
-# standalone CMake project; every executable it produces is a unit with its own
-# server on SERVER_PORT_BASE + index.
+# standalone CMake project; every executable it produces is a unit that runs
+# against its own server.
 #
 # Libraries that ship outside the toolkit (cuTENSOR, cuDSS, nvCOMP, cuSPARSELt,
-# MathDx, the *Mp multi-process variants) are not selected by default. cuPQC is
-# the exception: it is device-side only, so the toolkit shim covers it once
-# CUPQC_HOME points at an unpacked SDK.
+# the *Mp multi-process variants) are not selected by default. cuPQC and MathDx
+# are the exceptions: both are device-side, so they add no host library to
+# shim. cuPQC needs CUPQC_HOME pointed at an unpacked SDK; MathDx's package is
+# a tarball this script unpacks next to the checkout.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,11 +18,16 @@ LIBRARY_SAMPLES_URL="${LIBRARY_SAMPLES_URL:-https://github.com/NVIDIA/CUDALibrar
 LIBRARY_SAMPLES_REF="${LIBRARY_SAMPLES_REF:-3437729}"
 LIBRARY_SAMPLES_DIR="${LIBRARY_SAMPLES_DIR:-$repo_root/test/cuda-library-samples/CUDALibrarySamples}"
 LIBRARY_SAMPLES_BUILD_DIR="${LIBRARY_SAMPLES_BUILD_DIR:-$LIBRARY_SAMPLES_DIR/build}"
-LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE nvJPEG NPP cuPQC}"
+LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE nvJPEG NPP cuPQC MathDx}"
 LIBRARY_SAMPLES_ARCH="${LIBRARY_SAMPLES_ARCH:-${CUDA_SAMPLES_ARCH:-89}}"
 LIBRARY_SAMPLES_CMAKE_ARGS="${LIBRARY_SAMPLES_CMAKE_ARGS:-}"
 LIBRARY_SAMPLES_SKIP_LIST="${LIBRARY_SAMPLES_SKIP_LIST:-}"
 LIBRARY_SAMPLES_KNOWN_FAILURES="${LIBRARY_SAMPLES_KNOWN_FAILURES:-$repo_root/test/cuda-library-samples/known_failures.txt}"
+# The MathDx package is built per CUDA major version; 26.06 is the release the
+# samples at this ref require (cuBLASDx 0.7.1, cuFFTDx 1.7.3).
+MATHDX_URL="${MATHDX_URL:-https://developer.nvidia.com/downloads/compute/cublasdx/redist/cublasdx/cuda13/nvidia-mathdx-26.06.1-cuda13.tar.gz}"
+MATHDX_DIR="${MATHDX_DIR:-$(dirname "$LIBRARY_SAMPLES_DIR")/mathdx}"
+MATHDX_HOME="${MATHDX_HOME:-$MATHDX_DIR/nvidia/mathdx/26.06}"
 BUILD_SAMPLES="${BUILD_SAMPLES:-auto}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 JOBS="${JOBS:-$(nproc)}"
@@ -64,6 +70,8 @@ Environment:
   LIBRARY_SAMPLES_SKIP_LIST  Comma or space separated units to mark SKIP:disabled.
   LIBRARY_SAMPLES_KNOWN_FAILURES
                              Units to mark SKIP:known. Default: $LIBRARY_SAMPLES_KNOWN_FAILURES
+  MATHDX_URL                 MathDx package to unpack. Default: $MATHDX_URL
+  MATHDX_HOME                Unpacked MathDx package. Default: $MATHDX_HOME
   BUILD_SAMPLES              auto, 1, or 0. Default: auto (build dirs without a build).
   BUILD_ONLY                 1 to clone/build and exit before running.
   JOBS                       Parallel sample builds. Default: $JOBS
@@ -181,6 +189,15 @@ CUPQC_CMAKE
   elif [[ " $LIBRARY_SAMPLES_LIBS " == *" cuPQC "* ]]; then
     echo "cuPQC selected but CUPQC_HOME is unset; its samples contribute no units" >&2
   fi
+
+  # MathDx is headers plus device-side fatbins and static archives, so the
+  # package only has to be unpacked. Where it cannot be (no network, or a
+  # toolkit MATHDX_URL has no build for), the MathDx samples fail to configure
+  # and the run reports them SKIP:build-failed like any other.
+  if [[ ! -d "$MATHDX_HOME" ]]; then
+    mkdir -p "$MATHDX_DIR"
+    curl -fsSL "$MATHDX_URL" | tar -xz -C "$MATHDX_DIR" --strip-components=1 || true
+  fi
 fi
 
 # A sample is a directory with a CMakeLists.txt and no CMake project beneath
@@ -194,9 +211,12 @@ else
     SAMPLES+=("$d")
   done < <(
     cd "$LIBRARY_SAMPLES_DIR"
+    # MathDx inverts the leaf rule: one project per library builds every
+    # example, and the nested projects under it are the LTO-only ones its
+    # CUFFTDX_EXAMPLES_LTO option adds, off by default.
     # shellcheck disable=SC2086
     find $LIBRARY_SAMPLES_LIBS -name CMakeLists.txt -printf '%h\n' \
-      | grep -vE '(^|/)(cmake|utils)(/|$)' | sort \
+      | grep -vE '(^|/)(cmake|utils)(/|$)' | grep -vE '^MathDx/[^/]+/' | sort \
       | awk '{ if (prev != "" && index($0, prev "/") == 1) { skip[prev] = 1 } ; prev = $0; lines[n++] = $0 }
              END { for (i = 0; i < n; i++) if (!(lines[i] in skip)) print lines[i] }'
   )
@@ -216,6 +236,16 @@ build_sample() {
   # The cuSPARSE lists link bare cudart/cusparse/cuda names and compile host
   # .cpp files that include cuda_fp16.h; LIBRARY_PATH and CPATH are how the
   # toolkit reaches those lines without patching the samples.
+  # Each MathDx library keeps its own architecture cache variable, defaulted to
+  # 80-real upstream, that CMAKE_CUDA_ARCHITECTURES does not reach; its kernels
+  # are the sample, so they have to be built for the server's GPU.
+  local args=()
+  case "$sample" in
+    MathDx/*)
+      args=(-Dmathdx_ROOT="$MATHDX_HOME"
+            -D"$(basename "$sample" | tr '[:lower:]' '[:upper:]')_CUDA_ARCHITECTURES=$LIBRARY_SAMPLES_ARCH-real")
+      ;;
+  esac
   # shellcheck disable=SC2086
   if LIBRARY_PATH="$CUDA_LIB_DIR:$CUDA_LIB_DIR/stubs${LIBRARY_PATH:+:$LIBRARY_PATH}" \
      CPATH="$CUDA_HOME/include${CPATH:+:$CPATH}" \
@@ -224,6 +254,7 @@ build_sample() {
         -DCMAKE_CUDA_RUNTIME_LIBRARY=Shared \
         -DCMAKE_CUDA_ARCHITECTURES="$LIBRARY_SAMPLES_ARCH" \
         -DCUDAToolkit_ROOT="$CUDA_HOME" \
+        "${args[@]}" \
         $LIBRARY_SAMPLES_CMAKE_ARGS >"$log" 2>&1 \
      && LIBRARY_PATH="$CUDA_LIB_DIR:$CUDA_LIB_DIR/stubs${LIBRARY_PATH:+:$LIBRARY_PATH}" \
      CPATH="$CUDA_HOME/include${CPATH:+:$CPATH}" \
@@ -235,7 +266,7 @@ build_sample() {
   fi
 }
 export -f build_sample
-export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME
+export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME MATHDX_HOME
 
 if [[ "$BUILD_SAMPLES" != "0" ]]; then
   to_build=()
@@ -278,6 +309,9 @@ done
 # BMPs that nvjpegDecoder writes with -o, so it runs after the decoder.
 unit_argv() {
   local images="$LIBRARY_SAMPLES_DIR/nvJPEG/nvJPEG-Decoder/input_images/"
+  # The nvCOMPDx samples compress a file the caller names; their build writes
+  # the two its own CTest arguments use, and these mirror them.
+  local nvcompdx_data="$LIBRARY_SAMPLES_BUILD_DIR/MathDx/nvCOMPDx"
   case "$1" in
     nvJPEG/nvJPEG-Decoder/*) printf '%s\0' -i "$images" -b 2 -o "$nvjpeg_assets/nvjpeg-decoded" ;;
     nvJPEG/nvJPEG-Decoder-Backend-ROI/*) printf '%s\0' -i "$images" -b 2 ;;
@@ -286,6 +320,10 @@ unit_argv() {
     nvJPEG/Image-Resize/*) printf '%s\0' -i "$images" -o "$nvjpeg_assets/nvjpeg-resized" ;;
     nvJPEG/Image-Resize-WaterMark/*) printf '%s\0' -i "$LIBRARY_SAMPLES_DIR/nvJPEG/Image-Resize-WaterMark/input_images/" -o "$nvjpeg_assets/nvjpeg-watermarked" ;;
     NPP/nppCanny/*) printf '%s\0' example_input.png ;;
+    MathDx/nvCOMPDx/01_introduction/*) printf '%s\0' -f "$nvcompdx_data/random_file_64KiB.bin" -o "$nvcompdx_data/random_file_64KiB.lz4" ;;
+    MathDx/nvCOMPDx/02_lz4_gpu/*) printf '%s\0' -f "$nvcompdx_data/random_file_64KiB.bin" ;;
+    MathDx/nvCOMPDx/03_lz4_gpu_and_cpu/*|MathDx/nvCOMPDx/05_lz4_cpu_and_nvrtc/*) printf '%s\0' -f "$nvcompdx_data/random_file_100MiB.bin" ;;
+    MathDx/nvCOMPDx/04_ans_gpu/ans_gpu_compression_decompression) printf '%s\0' -t uint8 -f "$nvcompdx_data/random_file_100MiB.bin" ;;
   esac
 }
 # NPP samples open their inputs relative to the working directory: findContour
@@ -349,7 +387,11 @@ echo "CUDALibrarySamples $LIBRARY_SAMPLES_REF, ${#SAMPLES[@]} samples, ${#UNITS[
 
 for i in "${!UNITS[@]}"; do
   unit="${UNITS[$i]}"
-  port=$((SERVER_PORT_BASE + i))
+  # Units run one server at a time, so ports only have to differ from their
+  # neighbours; rotating inside ten keeps a sample with many executables --
+  # every MathDx one -- within the window test/integration/CMakeLists.txt
+  # allocates it, instead of walking into the next entry's.
+  port=$((SERVER_PORT_BASE + i % 10))
   log="$RESULTS_DIR/${unit//\//_}.log"
   server_log="/tmp/lupine-libsamples-$port.log"
   pidfile="/tmp/lupine-libsamples-$port.pid"

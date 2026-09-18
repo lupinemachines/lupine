@@ -22,3 +22,4 @@ test/cuda-python/cuda-python/
 test/cuda-python/results/
 test/cuda-library-samples/CUDALibrarySamples/
 test/cuda-library-samples/results/
+test/cuda-library-samples/mathdx/

@@ -20,3 +20,7 @@ cuBLASLt/LtHSHgemmGroupedSimple/sample_cublasLt_LtHSHgemmGroupedSimple
 cuSOLVER/gesv/cusolver_irs_expert
 cuSOLVER/gesv/cusolver_irs_lapack
 cuFFT/3d_mgpu_r2c_c2r/bin/3d_mgpu_r2c_c2r_example
+
+# #832 cuFFTDx fills >=1GiB with one synchronous cudaMemcpy per CUDA block:
+# 2.75M blocking HtoD round trips before the first kernel. Passes natively.
+MathDx/cuFFTDx/08_mixed_precision/mixed_precision_fft_1d
