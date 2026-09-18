@@ -23,3 +23,4 @@ test/cuda-python/results/
 test/cuda-library-samples/CUDALibrarySamples/
 test/cuda-library-samples/results/
 test/cuda-library-samples/mathdx/
+test/cuda-library-samples/cutensor/
