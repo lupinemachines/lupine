@@ -2368,8 +2368,9 @@ extern "C" CUresult cuMemAllocHost(void **pp, size_t bytesize) {
 
 extern "C" CUresult lupine_free_host_allocation(void *p,
                                                 lupine_host_free_fn release) {
+  // cuMemFreeHost has free(NULL) semantics, which the headers do not document.
   if (p == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
+    return CUDA_SUCCESS;
   }
 
   CUresult flush_result = lupine_flush_dirty_host_pages_to_server();
