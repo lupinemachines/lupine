@@ -826,6 +826,10 @@ CUresult lupine_set_current_context_on_route(lupine_route route,
       result = CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
   }
+  // The lane just moved to another context, and with it to that context's
+  // device. Device answers cached against the old binding are stale even when
+  // the set failed and left the lane somewhere unknown.
+  lupine_note_device_binding_changed();
   lupine_lane_context_cache_update(lupine_route_identity(route), ctx, epoch,
                                    result == CUDA_SUCCESS);
   return result;

@@ -33,6 +33,10 @@
     lupine_host_pointer_for_rpc;
     lupine_free_device_allocation;
     lupine_mark_mapped_host_kernel_params;
+    lupine_current_context_hint;
+    lupine_device_binding_epoch;
+    lupine_note_device_binding_changed;
+    lupine_invalidate_current_context_cache;
     extern "C++" {
       "lupine_event_invalidate_completion(CUevent_st*)";
       "lupine_event_lifecycle_mutex()";
