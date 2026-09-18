@@ -36,3 +36,8 @@ MathDx/cuFFTDx/08_mixed_precision/mixed_precision_fft_1d
 # beside them passes in 24s on the same lane.
 MathDx/cuBLASDx/16_dgemm_emulation/dgemm_emulation
 MathDx/cuBLASDx/20_dgemm_emulation_pipeline/dgemm_emulation_pipeline
+
+# #851 cuDSS hybrid execute mode fails in cudssExecute phase 4 with
+# CUDSS_STATUS_EXECUTION_FAILED. Passes natively on the same GPU; no driver API
+# is missing and the server reports no error.
+cuDSS/simple_hybrid_execute_mode/simple_hybrid_execute_mode_example
