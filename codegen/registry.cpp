@@ -429,6 +429,7 @@
   HANDLER(RPC_cuMemAdvise, handle_cuMemAdvise, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphExecUpdate, handle_cuGraphExecUpdate, rpc_backend::cuda)
 #define LUPINE_CUDART_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cudaDeviceReset, handle_cudaDeviceReset, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceSynchronize, handle_cudaDeviceSynchronize, rpc_backend::cudart) \
   HANDLER(RPC_cudaEventDestroy, handle_cudaEventDestroy, rpc_backend::cudart) \
   HANDLER(RPC_cudaEventQuery, handle_cudaEventQuery, rpc_backend::cudart) \
@@ -506,7 +507,6 @@
   HANDLER(RPC_cudaDeviceGetStreamPriorityRange, handle_cudaDeviceGetStreamPriorityRange, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceGetTexture1DLinearMaxWidth, handle_cudaDeviceGetTexture1DLinearMaxWidth, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceGraphMemTrim, handle_cudaDeviceGraphMemTrim, rpc_backend::cudart) \
-  HANDLER(RPC_cudaDeviceReset, handle_cudaDeviceReset, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceSetCacheConfig, handle_cudaDeviceSetCacheConfig, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceSetGraphMemAttribute, handle_cudaDeviceSetGraphMemAttribute, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceSetLimit, handle_cudaDeviceSetLimit, rpc_backend::cudart) \

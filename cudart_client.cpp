@@ -542,7 +542,13 @@ extern "C" cudaError_t cudaSetValidDevices(int *device_arr, int len) {
 
 extern "C" cudaError_t cudaDeviceReset() {
   conn_t *conn = connection();
-  cudaError_t result = lupine_rpc_cudaDeviceReset(conn);
+  cudaError_t result = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaDeviceReset) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
   if (result == cudaSuccess) {
     // The device's primary context is gone server-wide, so every lane's belief
     // about that handle goes with it, not just this one's.

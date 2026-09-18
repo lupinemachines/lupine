@@ -335,7 +335,8 @@ cudaDeviceRegisterAsyncNotification(int device, cudaAsyncCallback callbackFunc,
                                     cudaAsyncCallbackHandle_t *callback);
 #endif
 /**
- * @disabled client - manual client drops its per-thread state first
+ * @disabled - manual client drops its per-thread state first; manual server
+ * discards the per-context staging state the reset destroys
  */
 cudaError_t cudaDeviceReset(void);
 /**
