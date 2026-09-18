@@ -130,11 +130,18 @@ int rpc_read_end(conn_t *conn) {
 // Device state
 // ---------------------------------------------------------------------------
 
-// The selected server's runtime owns device binding on the caller's lane.
-thread_local unsigned int current_connection_index = 0;
+// The server whose lane holds the caller's device binding owns it, and the
+// driver shim records which one that is: cudaSetDevice moves it, and so does a
+// driver context made current on another server's lane. Device queries and the
+// ordinal offset their answers are read through both come from this one index,
+// so they can never name different servers.
+unsigned int connection_index() {
+  const int index = lupine_device_binding_conn_index();
+  return index < 0 ? 0u : static_cast<unsigned int>(index);
+}
 
 conn_t *connection() {
-  return lupine_rpc_client_get_connection(current_connection_index);
+  return lupine_rpc_client_get_connection(connection_index());
 }
 
 conn_t *connection_for_device(int *device, cudaError_t *result = nullptr);
@@ -476,7 +483,7 @@ extern "C" cudaError_t cudaGetDevice(int *device) {
   if (result != cudaSuccess) {
     return result;
   }
-  remote_device += offsets[current_connection_index];
+  remote_device += offsets[connection_index()];
   *device = remote_device;
   lane_binding = {conn, epoch, context, remote_device, false};
   return cudaSuccess;
@@ -497,17 +504,9 @@ extern "C" cudaError_t cudaSetDevice(int device) {
   if (result != cudaSuccess) {
     return result;
   }
-  const int count = lupine_rpc_size();
-  for (int index = 0; index < count; ++index) {
-    if (lupine_rpc_client_get_connection(static_cast<unsigned int>(index)) ==
-        conn) {
-      current_connection_index = static_cast<unsigned int>(index);
-      break;
-    }
-  }
   // The lane now holds this device, and the primary context that comes with
   // it, until something else rebinds it.
-  lupine_note_device_binding_changed();
+  lupine_note_device_binding_moved(conn);
   lane_binding = {conn, lupine_device_binding_epoch(),
                   lupine_current_context_hint(), device, true};
   return cudaSuccess;
@@ -536,7 +535,7 @@ extern "C" cudaError_t cudaSetValidDevices(int *device_arr, int len) {
     conn = connection();
   }
   // The list decides which device the runtime settles on next.
-  lupine_note_device_binding_changed();
+  lupine_note_device_binding_moved(conn);
   return lupine_rpc_cudaSetValidDevices(conn, remote_devices.data(), len);
 }
 
