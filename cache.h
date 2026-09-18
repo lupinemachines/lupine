@@ -13,6 +13,7 @@ void lupine_current_context_device_cache_invalidate();
 
 uint64_t lupine_lane_context_cache_epoch();
 bool lupine_lane_context_cache_matches(int route_id, CUcontext context);
+bool lupine_lane_context_cache_lookup(int route_id, CUcontext *context);
 void lupine_lane_context_cache_update(int route_id, CUcontext context,
                                       uint64_t epoch, bool succeeded);
 void lupine_lane_context_cache_store(int route_id, CUcontext context);

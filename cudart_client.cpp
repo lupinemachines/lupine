@@ -1237,13 +1237,7 @@ cudaGraphAddMemcpyNode(cudaGraphNode_t *node, cudaGraph_t graph,
   }
   conn_t *conn = connection();
   CUcontext context = nullptr;
-  CUresult status = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (rpc_write_start_request(conn, RPC_cuCtxGetCurrent) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &context, sizeof(context)) < 0 ||
-      rpc_read(conn, &status, sizeof(status)) < 0 || rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
+  CUresult status = lupine_lane_current_context(conn, &context);
   if (status != CUDA_SUCCESS) {
     return runtime_error(status);
   }

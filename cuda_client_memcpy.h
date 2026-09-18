@@ -52,6 +52,11 @@ lupine_mark_mapped_host_kernel_params(void *const *kernel_params,
 CUresult lupine_translate_mapped_host_pointer(lupine_route route,
                                               CUdeviceptr pointer,
                                               CUdeviceptr *translated);
+// What the server lane bound to this thread has current on conn, answered
+// from the client's own record of that lane when it holds one.
+extern "C" CUresult lupine_lane_current_context(conn_t *conn,
+                                                CUcontext *context_out);
+
 extern "C" CUresult lupine_sync_mapped_device_to_host();
 extern "C" int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
                                               size_t bytes);
