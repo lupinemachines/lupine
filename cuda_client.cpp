@@ -4247,7 +4247,7 @@ static CUresult lupine_set_remote_current_context(CUcontext ctx) {
 }
 
 extern "C" void lupine_note_ctx_create(CUcontext ctx, conn_t *conn) {
-  lupine_note_device_binding_changed();
+  lupine_note_device_binding_moved(conn);
   lupine_note_context_owner(ctx, conn);
   lupine_lane_context_cache_store(
       lupine_route_identity(lupine_remote_route_for_conn(conn)), ctx);
@@ -4261,7 +4261,7 @@ extern "C" void lupine_note_ctx_create(CUcontext ctx, conn_t *conn) {
 
 extern "C" void lupine_note_ctx_create_route(CUcontext ctx,
                                              lupine_route route) {
-  lupine_note_device_binding_changed();
+  lupine_note_device_binding_moved(lupine_route_remote_conn(route));
   lupine_note_context_owner_route(ctx, route);
   lupine_lane_context_cache_store(lupine_route_identity(route), ctx);
   lupine_context_stack->push_back(lupine_current_context);
