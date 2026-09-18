@@ -9288,6 +9288,10 @@ LUPINE_DECLARE_HANDLER(RPC_cuMemPrefetchAsync_v2, handle_cuMemPrefetchAsync_v2,
 LUPINE_DECLARE_HANDLER(RPC_cuMemAdvise_v2, handle_cuMemAdvise_v2,
                        rpc_backend::cuda)
 #endif
+#if CUDA_VERSION >= 12080
+LUPINE_DECLARE_HANDLER(RPC_cuStreamGetDevice, handle_cuStreamGetDevice,
+                       rpc_backend::cuda)
+#endif
 #if CUDA_VERSION >= 12030
 LUPINE_DECLARE_HANDLER(RPC_cuFuncGetName, handle_cuFuncGetName,
                        rpc_backend::cuda)
@@ -37935,6 +37939,9 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #if CUDA_VERSION >= 12020
       LUPINE_REGISTER_HANDLER(RPC_cuMemAdvise_v2, handle_cuMemAdvise_v2, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12080
+      LUPINE_REGISTER_HANDLER(RPC_cuStreamGetDevice, handle_cuStreamGetDevice, rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12030
       LUPINE_REGISTER_HANDLER(RPC_cuFuncGetName, handle_cuFuncGetName, rpc_backend::cuda)

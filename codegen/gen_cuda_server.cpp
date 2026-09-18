@@ -3667,6 +3667,34 @@ ERROR_0:
   return -1;
 }
 
+#if CUDA_VERSION >= 12080
+int handle_cuStreamGetDevice(conn_t *conn) {
+  CUstream hStream;
+  CUdevice device{};
+  device = {};
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuStreamGetDevice(hStream, &device);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &device, sizeof(CUdevice)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
+
 int handle_cuStreamGetFlags(conn_t *conn) {
   CUstream hStream;
   unsigned int flags{};

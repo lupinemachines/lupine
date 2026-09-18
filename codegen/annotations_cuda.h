@@ -1523,6 +1523,14 @@ CUresult cuStreamGetId(CUstream hStream, unsigned long long *streamId);
  */
 CUresult cuStreamGetCtx(CUstream hStream, CUcontext *pctx);
 /**
+ * @guard CUDA_VERSION >= 12080
+ * @disabled client - manual client resolves the device of the stream's server
+ * @routingkey STREAM hStream
+ * @param hStream SEND_ONLY
+ * @param device RECV_ONLY
+ */
+CUresult cuStreamGetDevice(CUstream hStream, CUdevice *device);
+/**
  * @guard CUDA_VERSION >= 13010
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
