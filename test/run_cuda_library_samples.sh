@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Build and run NVIDIA/CUDALibrarySamples (cuBLAS, cuBLASLt, cuFFT, cuRAND,
-# cuSOLVER, cuSPARSE, cuSPARSELt, cuTENSOR, cuEST, nvJPEG, NPP, cuPQC, MathDx)
-# through the lupine client shim against a remote server. Every leaf directory
-# with a CMakeLists.txt is a standalone CMake project; every executable it
-# produces is a unit with its own server on SERVER_PORT_BASE + index.
+# cuSOLVER, cuSPARSE, cuSPARSELt, cuTENSOR, cuEST, nvJPEG, nvJPEG2000, NPP,
+# cuPQC, MathDx) through the lupine client shim against a remote server. Every
+# leaf directory with a CMakeLists.txt is a standalone CMake project; every
+# executable it produces is a unit with its own server on
+# SERVER_PORT_BASE + index.
 #
 # Libraries that ship outside the toolkit (cuDSS, nvCOMP, the *Mp
 # multi-process variants) are not selected by default. cuPQC and MathDx are
@@ -22,6 +23,10 @@
 # run on the client against NVIDIA's own libcuest and only their driver traffic
 # crosses the wire, so this script unpacks its redist archive the way it does
 # MathDx's. Its wheel carries Python bindings only.
+# nvJPEG2000 ships outside the toolkit as well and needs no shim either: its
+# samples run on the client against NVIDIA's own libnvjpeg2k and only their
+# driver traffic crosses the wire, so this script unpacks its redist archive
+# the way it does MathDx's.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,7 +35,7 @@ LIBRARY_SAMPLES_URL="${LIBRARY_SAMPLES_URL:-https://github.com/NVIDIA/CUDALibrar
 LIBRARY_SAMPLES_REF="${LIBRARY_SAMPLES_REF:-3437729}"
 LIBRARY_SAMPLES_DIR="${LIBRARY_SAMPLES_DIR:-$repo_root/test/cuda-library-samples/CUDALibrarySamples}"
 LIBRARY_SAMPLES_BUILD_DIR="${LIBRARY_SAMPLES_BUILD_DIR:-$LIBRARY_SAMPLES_DIR/build}"
-LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE cuSPARSELt cuTENSOR cuEST nvJPEG NPP cuPQC MathDx}"
+LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE cuSPARSELt cuTENSOR cuEST nvJPEG nvJPEG2000 NPP cuPQC MathDx}"
 LIBRARY_SAMPLES_ARCH="${LIBRARY_SAMPLES_ARCH:-${CUDA_SAMPLES_ARCH:-89}}"
 LIBRARY_SAMPLES_CMAKE_ARGS="${LIBRARY_SAMPLES_CMAKE_ARGS:-}"
 LIBRARY_SAMPLES_SKIP_LIST="${LIBRARY_SAMPLES_SKIP_LIST:-}"
@@ -50,6 +55,8 @@ CUTENSOR_VERSION="${CUTENSOR_VERSION:-2.8.0.6}"
 CUTENSOR_HOME="${CUTENSOR_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/cutensor}"
 CUEST_VERSION="${CUEST_VERSION:-0.2.2.2}"
 CUEST_HOME="${CUEST_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/cuest}"
+NVJPEG2K_VERSION="${NVJPEG2K_VERSION:-0.11.0.51}"
+NVJPEG2K_HOME="${NVJPEG2K_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/nvjpeg2k}"
 BUILD_SAMPLES="${BUILD_SAMPLES:-auto}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 JOBS="${JOBS:-$(nproc)}"
@@ -75,6 +82,7 @@ CUSPARSELT_HOME="${CUSPARSELT_HOME:-}"
 SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-180}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-library-samples/results/$(date +%Y%m%d-%H%M%S)}"
 nvjpeg_assets="${NVJPEG_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg-assets}"
+nvjpeg2k_assets="${NVJPEG2K_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg2000-assets}"
 
 usage() {
   cat <<EOF
@@ -99,6 +107,7 @@ Environment:
   MATHDX_HOME                Unpacked MathDx package. Default: $MATHDX_HOME
   CUTENSOR_HOME              Unpacked cuTENSOR archive. Default: $CUTENSOR_HOME
   CUEST_HOME                 Unpacked cuEST archive. Default: $CUEST_HOME
+  NVJPEG2K_HOME              Unpacked nvJPEG2000 archive. Default: $NVJPEG2K_HOME
   BUILD_SAMPLES              auto, 1, or 0. Default: auto (build dirs without a build).
   BUILD_ONLY                 1 to clone/build and exit before running.
   JOBS                       Parallel sample builds. Default: $JOBS
@@ -254,6 +263,16 @@ CUPQC_CMAKE
     curl -fsSL "https://developer.download.nvidia.com/compute/cuest/redist/libcuest/linux-x86_64/libcuest-linux-x86_64-${CUEST_VERSION}_cuda$((${cuda_version:-0} / 1000))-archive.tar.xz" \
       | tar -xJ -C "$CUEST_HOME" --strip-components=1 || true
   fi
+
+  # nvJPEG2000's archive is CUDA-major-specific. Where it cannot be fetched --
+  # no network, or a major NVIDIA does not build it for -- the nvJPEG2000
+  # samples fail to configure and the run reports them SKIP:build-failed like
+  # any other.
+  if [[ " $LIBRARY_SAMPLES_LIBS " == *" nvJPEG2000 "* && ! -d "$NVJPEG2K_HOME" ]]; then
+    mkdir -p "$NVJPEG2K_HOME"
+    curl -fsSL "https://developer.download.nvidia.com/compute/nvjpeg2000/redist/libnvjpeg_2k/linux-x86_64/libnvjpeg_2k-linux-x86_64-${NVJPEG2K_VERSION}_cuda$((${cuda_version:-0} / 1000))-archive.tar.xz" \
+      | tar -xJ -C "$NVJPEG2K_HOME" --strip-components=1 || true
+  fi
 fi
 
 # A sample is a directory with a CMakeLists.txt and no CMake project beneath
@@ -323,6 +342,8 @@ build_sample() {
   elif [[ "$sample" == cuEST/* ]]; then
     configure_args=(-DCUEST_INCLUDE_DIR="$CUEST_HOME/include"
       -DCUEST_LIB_DIR="$CUEST_HOME/lib")
+  elif [[ "$sample" == nvJPEG2000/* ]]; then
+    configure_args=(-DNVJPEG2K_PATH="$NVJPEG2K_HOME")
   fi
   # Use the shared runtime by default. Explicit upstream cudart_static links
   # (the nvJPEG multi-instance examples) remain driver/static-runtime coverage.
@@ -349,7 +370,7 @@ build_sample() {
   fi
 }
 export -f build_sample
-export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME CUSPARSELT_HOME CUSPARSELT_STAGE MATHDX_HOME CUTENSOR_HOME CUEST_HOME
+export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME CUSPARSELT_HOME CUSPARSELT_STAGE MATHDX_HOME CUTENSOR_HOME CUEST_HOME NVJPEG2K_HOME
 
 if [[ "$BUILD_SAMPLES" != "0" ]]; then
   to_build=()
@@ -403,6 +424,10 @@ unit_argv() {
   local gbs="$cuest_data/basis_set/def2-svp.gbs"
   local aux_gbs="$cuest_data/basis_set/def2-universal-jkfit.gbs"
   local ecp_gbs="$cuest_data/basis_set/def2-svp-ecp.gbs"
+  # The nvJPEG2000 decoders scan their input directory recursively, so one path
+  # covers all three .jp2 fixtures; the encoder takes BMPs, which the plain
+  # decoder writes with -o, so it runs after it in the sorted unit order.
+  local jp2_images="$LIBRARY_SAMPLES_DIR/nvJPEG2000/nvJPEG2000-Decoder/images/"
   case "$1" in
     nvJPEG/nvJPEG-Decoder/*) printf '%s\0' -i "$images" -b 2 -o "$nvjpeg_assets/nvjpeg-decoded" ;;
     nvJPEG/nvJPEG-Decoder-Backend-ROI/*) printf '%s\0' -i "$images" -b 2 ;;
@@ -422,6 +447,9 @@ unit_argv() {
     cuEST/*/5_effective_core_potentials/*) printf '%s\0' "$xyz_ecp" "$gbs" "$ecp_gbs" ;;
     cuEST/*/2_one_electron_integrals/*|cuEST/*/4_exchange_correlation/*|cuEST/*/6_pcm/*)
       printf '%s\0' "$xyz" "$gbs" ;;
+    nvJPEG2000/nvJPEG2000-Decoder/*) printf '%s\0' -i "$jp2_images" -b 2 -o "$nvjpeg2k_assets/decoded" ;;
+    nvJPEG2000/nvJPEG2000-Decoder-Pipelined/*|nvJPEG2000/nvJPEG2000-Decoder-Tile-Partial/*) printf '%s\0' -i "$jp2_images" -b 2 ;;
+    nvJPEG2000/nvJPEG2000-Encoder/*) printf '%s\0' -i "$nvjpeg2k_assets/decoded" -b 2 -o "$nvjpeg2k_assets/encoded" ;;
   esac
 }
 # NPP samples open their inputs relative to the working directory: findContour
@@ -472,7 +500,9 @@ in_list() {
 mkdir -p "$RESULTS_DIR" \
   "$nvjpeg_assets/nvjpeg-decoded" \
   "$nvjpeg_assets/nvjpeg-resized" \
-  "$nvjpeg_assets/nvjpeg-watermarked"
+  "$nvjpeg_assets/nvjpeg-watermarked" \
+  "$nvjpeg2k_assets/decoded" \
+  "$nvjpeg2k_assets/encoded"
 tsv="$RESULTS_DIR/results.tsv"
 : > "$tsv"
 pass=0
@@ -526,7 +556,7 @@ for i in "${!UNITS[@]}"; do
   (
     cd "$cwd"
     timeout --kill-after=5s "$SAMPLE_TIMEOUT" env \
-      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}$CUTENSOR_HOME/lib:$CUEST_HOME/lib:${LD_LIBRARY_PATH:-}" \
+      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}$CUTENSOR_HOME/lib:$CUEST_HOME/lib:$NVJPEG2K_HOME/lib:${LD_LIBRARY_PATH:-}" \
       LUPINE_SERVER="$SERVER_HOST:$port" \
       LD_PRELOAD="$LUPINE_LIB" \
       "$exe" "${argv[@]}"
