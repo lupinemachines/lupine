@@ -26,3 +26,4 @@ test/cuda-library-samples/mathdx/
 test/cuda-library-samples/cutensor/
 test/cuda-library-samples/cuest/
 test/cuda-library-samples/nvjpeg2k/
+test/cuda-library-samples/cudss/
