@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Build and run NVIDIA/CUDALibrarySamples (cuBLAS, cuBLASLt, cuFFT, cuRAND,
-# cuSOLVER, cuSPARSE, cuSPARSELt, cuTENSOR, cuEST, cuDSS, nvJPEG, nvJPEG2000,
-# NPP, cuPQC, MathDx) through the lupine client shim against a remote server.
-# Every leaf directory with a CMakeLists.txt is a standalone CMake project;
-# every executable it produces is a unit with its own server on
+# cuSOLVER, cuSPARSE, cuSPARSELt, cuTENSOR, cuEST, cuDSS, nvCOMP, nvJPEG,
+# nvJPEG2000, NPP, cuPQC, MathDx) through the lupine client shim against a
+# remote server. Every leaf directory with a CMakeLists.txt is a standalone
+# CMake project; every executable it produces is a unit with its own server on
 # SERVER_PORT_BASE + index.
 #
-# Libraries that ship outside the toolkit (nvCOMP, the *Mp multi-process
-# variants) are not selected by default. cuPQC and MathDx are exceptions: both
-# are device-side, so they add no host library to shim. cuPQC needs CUPQC_HOME
+# Libraries that ship outside the toolkit (the *Mp multi-process variants) are
+# not selected by default. cuPQC and MathDx are exceptions: both are
+# device-side, so they add no host library to shim. cuPQC needs CUPQC_HOME
 # pointed at an unpacked SDK; MathDx's package is a tarball this script
 # unpacks next to the checkout, and it needs CUDA 13. cuSPARSELt ships outside
 # the toolkit too and needs CUSPARSELT_HOME; without one its samples stay
@@ -31,6 +31,13 @@
 # crosses the wire, so this script unpacks its redist archive the way it does
 # MathDx's. Its MGMN examples additionally need OpenMPI and report
 # SKIP:build-failed without it.
+# nvCOMP ships outside the toolkit as well and needs no shim either: its samples
+# run on the client against NVIDIA's own libnvcomp and only their driver traffic
+# crosses the wire, so this script unpacks its redist archive the way it does
+# MathDx's. Its wheel carries Python bindings only. Its benchmarks/ project is
+# not selected: it fetches CPM, rapids-cmake and NVBench at configure time,
+# overrides CMAKE_CUDA_ARCHITECTURES with eight of its own, and reports
+# throughput rather than pass or fail.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,7 +46,7 @@ LIBRARY_SAMPLES_URL="${LIBRARY_SAMPLES_URL:-https://github.com/NVIDIA/CUDALibrar
 LIBRARY_SAMPLES_REF="${LIBRARY_SAMPLES_REF:-3437729}"
 LIBRARY_SAMPLES_DIR="${LIBRARY_SAMPLES_DIR:-$repo_root/test/cuda-library-samples/CUDALibrarySamples}"
 LIBRARY_SAMPLES_BUILD_DIR="${LIBRARY_SAMPLES_BUILD_DIR:-$LIBRARY_SAMPLES_DIR/build}"
-LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE cuSPARSELt cuTENSOR cuEST cuDSS nvJPEG nvJPEG2000 NPP cuPQC MathDx}"
+LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE cuSPARSELt cuTENSOR cuEST cuDSS nvCOMP nvJPEG nvJPEG2000 NPP cuPQC MathDx}"
 LIBRARY_SAMPLES_ARCH="${LIBRARY_SAMPLES_ARCH:-${CUDA_SAMPLES_ARCH:-89}}"
 LIBRARY_SAMPLES_CMAKE_ARGS="${LIBRARY_SAMPLES_CMAKE_ARGS:-}"
 LIBRARY_SAMPLES_SKIP_LIST="${LIBRARY_SAMPLES_SKIP_LIST:-}"
@@ -64,6 +71,8 @@ NVJPEG2K_HOME="${NVJPEG2K_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/nvjpeg2k}"
 # Every cuDSS/*/CMakeLists.txt asks find_package for 0.8.0 or newer.
 CUDSS_VERSION="${CUDSS_VERSION:-0.8.0.10}"
 CUDSS_HOME="${CUDSS_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/cudss}"
+NVCOMP_VERSION="${NVCOMP_VERSION:-5.3.0.16}"
+NVCOMP_HOME="${NVCOMP_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/nvcomp}"
 BUILD_SAMPLES="${BUILD_SAMPLES:-auto}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 JOBS="${JOBS:-$(nproc)}"
@@ -90,6 +99,7 @@ SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-180}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-library-samples/results/$(date +%Y%m%d-%H%M%S)}"
 nvjpeg_assets="${NVJPEG_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg-assets}"
 nvjpeg2k_assets="${NVJPEG2K_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg2000-assets}"
+nvcomp_assets="${NVCOMP_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvcomp-assets}"
 
 usage() {
   cat <<EOF
@@ -116,6 +126,7 @@ Environment:
   CUEST_HOME                 Unpacked cuEST archive. Default: $CUEST_HOME
   NVJPEG2K_HOME              Unpacked nvJPEG2000 archive. Default: $NVJPEG2K_HOME
   CUDSS_HOME                 Unpacked cuDSS archive. Default: $CUDSS_HOME
+  NVCOMP_HOME                Unpacked nvCOMP archive. Default: $NVCOMP_HOME
   BUILD_SAMPLES              auto, 1, or 0. Default: auto (build dirs without a build).
   BUILD_ONLY                 1 to clone/build and exit before running.
   JOBS                       Parallel sample builds. Default: $JOBS
@@ -290,6 +301,15 @@ CUPQC_CMAKE
     curl -fsSL "https://developer.download.nvidia.com/compute/cudss/redist/libcudss/linux-x86_64/libcudss-linux-x86_64-${CUDSS_VERSION}_cuda$((${cuda_version:-0} / 1000))-archive.tar.xz" \
       | tar -xJ -C "$CUDSS_HOME" --strip-components=1 || true
   fi
+
+  # nvCOMP's archive is CUDA-major-specific. Where it cannot be fetched -- no
+  # network, or a major NVIDIA does not build it for -- the nvCOMP samples fail
+  # to configure and the run reports them SKIP:build-failed like any other.
+  if [[ " $LIBRARY_SAMPLES_LIBS " == *" nvCOMP "* && ! -d "$NVCOMP_HOME" ]]; then
+    mkdir -p "$NVCOMP_HOME"
+    curl -fsSL "https://developer.download.nvidia.com/compute/nvcomp/redist/nvcomp/linux-x86_64/nvcomp-linux-x86_64-${NVCOMP_VERSION}_cuda$((${cuda_version:-0} / 1000))-archive.tar.xz" \
+      | tar -xJ -C "$NVCOMP_HOME" --strip-components=1 || true
+  fi
 fi
 
 # A sample is a directory with a CMakeLists.txt and no CMake project beneath
@@ -309,7 +329,8 @@ else
     # shellcheck disable=SC2086
     find $LIBRARY_SAMPLES_LIBS -name CMakeLists.txt -printf '%h\n' \
       | grep -vE '(^|/)(cmake|utils)(/|$)' | grep -vE '^MathDx/[^/]+/' \
-      | grep -vE '^cuEST/(c_examples/|python_examples)' | sort \
+      | grep -vE '^cuEST/(c_examples/|python_examples)' \
+      | grep -vE '^nvCOMP/benchmarks' | sort \
       | awk '{ if (prev != "" && index($0, prev "/") == 1) { skip[prev] = 1 } ; prev = $0; lines[n++] = $0 }
              END { for (i = 0; i < n; i++) if (!(lines[i] in skip)) print lines[i] }'
   )
@@ -363,6 +384,12 @@ build_sample() {
     configure_args=(-DNVJPEG2K_PATH="$NVJPEG2K_HOME")
   elif [[ "$sample" == cuDSS/* ]]; then
     configure_args=(-Dcudss_ROOT="$CUDSS_HOME")
+  elif [[ "$sample" == nvCOMP/* ]]; then
+    # Each nvCOMP example is built twice, against the shared library and against
+    # libnvcomp_static.a. Only the shared one is what an application links, and
+    # the static half doubles the unit count for no new coverage.
+    configure_args=(-Dnvcomp_ROOT="$NVCOMP_HOME"
+      -DSKIP_LINKING_WITH_STATIC_NVCOMP=ON)
   fi
   # Use the shared runtime by default. Explicit upstream cudart_static links
   # (the nvJPEG multi-instance examples) remain driver/static-runtime coverage.
@@ -389,7 +416,7 @@ build_sample() {
   fi
 }
 export -f build_sample
-export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME CUSPARSELT_HOME CUSPARSELT_STAGE MATHDX_HOME CUTENSOR_HOME CUEST_HOME NVJPEG2K_HOME CUDSS_HOME
+export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME CUSPARSELT_HOME CUSPARSELT_STAGE MATHDX_HOME CUTENSOR_HOME CUEST_HOME NVJPEG2K_HOME CUDSS_HOME NVCOMP_HOME
 
 if [[ "$BUILD_SAMPLES" != "0" ]]; then
   to_build=()
@@ -452,6 +479,9 @@ unit_argv() {
   # Matrix Market files on the command line.
   local cudss_mtlayer="$CUDSS_HOME/lib/libcudss_mtlayer_gomp.so"
   local cudss_mm="$LIBRARY_SAMPLES_DIR/cuDSS/simple_matrix_market"
+  # The nvCOMP examples compress a file the caller names and ship none; the
+  # fixture below is written once beside the results.
+  local nvcomp_input="$nvcomp_assets/input.bin"
   case "$1" in
     nvJPEG/nvJPEG-Decoder/*) printf '%s\0' -i "$images" -b 2 -o "$nvjpeg_assets/nvjpeg-decoded" ;;
     nvJPEG/nvJPEG-Decoder-Backend-ROI/*) printf '%s\0' -i "$images" -b 2 ;;
@@ -477,6 +507,9 @@ unit_argv() {
     cuDSS/simple_matrix_market/*) printf '%s\0' 0 spd upper "$cudss_mm/matrix.mtx" "$cudss_mm/rhs.mtx" ;;
     cuDSS/simple_multithreaded_mode/*) printf '%s\0' "$cudss_mtlayer" ;;
     cuDSS/test_threading_layer/*) printf '%s\0' openmp "$cudss_mtlayer" ;;
+    nvCOMP/examples/*/deflate_cpu_*) printf '%s\0' -a 0 -f "$nvcomp_input" ;;
+    nvCOMP/examples/*/high_level_quickstart_example|nvCOMP/examples/*/low_level_quickstart_example|nvCOMP/examples/*/bitcomp_native_lossy) ;;
+    nvCOMP/examples/*) printf '%s\0' -f "$nvcomp_input" ;;
   esac
 }
 # NPP samples open their inputs relative to the working directory: findContour
@@ -529,7 +562,16 @@ mkdir -p "$RESULTS_DIR" \
   "$nvjpeg_assets/nvjpeg-resized" \
   "$nvjpeg_assets/nvjpeg-watermarked" \
   "$nvjpeg2k_assets/decoded" \
-  "$nvjpeg2k_assets/encoded"
+  "$nvjpeg2k_assets/encoded" \
+  "$nvcomp_assets"
+# The nvCOMP examples take the file to compress on the command line and ship
+# none. Their own sources, repeated, are a deterministic and compressible one.
+if [[ ! -s "$nvcomp_assets/input.bin" ]]; then
+  for _ in 1 2 3 4 5 6 7 8; do
+    cat "$LIBRARY_SAMPLES_DIR"/nvCOMP/examples/*.cu \
+        "$LIBRARY_SAMPLES_DIR"/nvCOMP/examples/*.cpp 2>/dev/null || true
+  done > "$nvcomp_assets/input.bin"
+fi
 tsv="$RESULTS_DIR/results.tsv"
 : > "$tsv"
 pass=0
@@ -583,7 +625,7 @@ for i in "${!UNITS[@]}"; do
   (
     cd "$cwd"
     timeout --kill-after=5s "$SAMPLE_TIMEOUT" env \
-      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}$CUTENSOR_HOME/lib:$CUEST_HOME/lib:$NVJPEG2K_HOME/lib:$CUDSS_HOME/lib:${LD_LIBRARY_PATH:-}" \
+      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}$CUTENSOR_HOME/lib:$CUEST_HOME/lib:$NVJPEG2K_HOME/lib:$CUDSS_HOME/lib:$NVCOMP_HOME/lib:${LD_LIBRARY_PATH:-}" \
       LUPINE_SERVER="$SERVER_HOST:$port" \
       LD_PRELOAD="$LUPINE_LIB" \
       "$exe" "${argv[@]}"
