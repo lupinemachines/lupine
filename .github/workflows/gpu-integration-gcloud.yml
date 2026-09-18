@@ -380,6 +380,14 @@ jobs:
           fi
           SCRIPT
 
+          # cuPQC ships outside the toolkit; its device-side archives and
+          # headers are all the samples need, and 0.4.0 is the release the
+          # pinned CUDALibrarySamples ref builds against.
+          ENV CUPQC_HOME=/opt/cupqc-sdk
+          RUN mkdir -p "$CUPQC_HOME" && \
+              curl -fsSL https://developer.nvidia.com/downloads/compute/cupqc/downloads/secure/cupqc-sdk-0.4.0-x86_64.tar.gz \
+                | tar xz -C "$CUPQC_HOME" --strip-components=1
+
           # CUDALibrarySamples are built once here; samples the lane's toolkit
           # cannot build are reported as SKIP:build-failed by the run step.
           COPY test/run_cuda_library_samples.sh /opt/lupine/run_cuda_library_samples.sh

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Build and run NVIDIA/CUDALibrarySamples (cuBLAS, cuBLASLt, cuFFT, cuRAND,
-# cuSOLVER, cuSPARSE, nvJPEG, NPP) through the lupine client shim against a
-# remote server. Every leaf directory with a CMakeLists.txt is a standalone
-# CMake project; every executable it produces is a unit with its own server on
-# SERVER_PORT_BASE + index.
+# cuSOLVER, cuSPARSE, nvJPEG, NPP, cuPQC) through the lupine client shim
+# against a remote server. Every leaf directory with a CMakeLists.txt is a
+# standalone CMake project; every executable it produces is a unit with its own
+# server on SERVER_PORT_BASE + index.
 #
 # Libraries that ship outside the toolkit (cuTENSOR, cuDSS, nvCOMP, cuSPARSELt,
-# MathDx, the *Mp multi-process variants) are not selected by default.
+# MathDx, the *Mp multi-process variants) are not selected by default. cuPQC is
+# the exception: it is device-side only, so the toolkit shim covers it once
+# CUPQC_HOME points at an unpacked SDK.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,7 +17,7 @@ LIBRARY_SAMPLES_URL="${LIBRARY_SAMPLES_URL:-https://github.com/NVIDIA/CUDALibrar
 LIBRARY_SAMPLES_REF="${LIBRARY_SAMPLES_REF:-3437729}"
 LIBRARY_SAMPLES_DIR="${LIBRARY_SAMPLES_DIR:-$repo_root/test/cuda-library-samples/CUDALibrarySamples}"
 LIBRARY_SAMPLES_BUILD_DIR="${LIBRARY_SAMPLES_BUILD_DIR:-$LIBRARY_SAMPLES_DIR/build}"
-LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE nvJPEG NPP}"
+LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE nvJPEG NPP cuPQC}"
 LIBRARY_SAMPLES_ARCH="${LIBRARY_SAMPLES_ARCH:-${CUDA_SAMPLES_ARCH:-89}}"
 LIBRARY_SAMPLES_CMAKE_ARGS="${LIBRARY_SAMPLES_CMAKE_ARGS:-}"
 LIBRARY_SAMPLES_SKIP_LIST="${LIBRARY_SAMPLES_SKIP_LIST:-}"
@@ -40,6 +42,7 @@ SERVER_LD_LIBRARY_PATH="${SERVER_LD_LIBRARY_PATH:-}"
 LUPINE_LIB="${LUPINE_LIB:-$repo_root/build/libcuda.so.1}"
 CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
+CUPQC_HOME="${CUPQC_HOME:-}"
 SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-180}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-library-samples/results/$(date +%Y%m%d-%H%M%S)}"
 nvjpeg_assets="${NVJPEG_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg-assets}"
@@ -56,6 +59,8 @@ Environment:
   LIBRARY_SAMPLES_LIBS       Library roots to select. Default: $LIBRARY_SAMPLES_LIBS
   LIBRARY_SAMPLES_ARCH       CMAKE_CUDA_ARCHITECTURES. Default: $LIBRARY_SAMPLES_ARCH
   LIBRARY_SAMPLES_CMAKE_ARGS Extra CMake configure args.
+  CUPQC_HOME                 Unpacked cuPQC SDK root. Without it the cuPQC
+                             samples have no headers or archives and are dropped.
   LIBRARY_SAMPLES_SKIP_LIST  Comma or space separated units to mark SKIP:disabled.
   LIBRARY_SAMPLES_KNOWN_FAILURES
                              Units to mark SKIP:known. Default: $LIBRARY_SAMPLES_KNOWN_FAILURES
@@ -149,6 +154,33 @@ PATCH
     git -C "$LIBRARY_SAMPLES_DIR" apply "$patch_file"
   fi
   rm -f "$patch_file"
+
+  # cuPQC ships a flat Makefile, not a CMake project, so discovery would not
+  # see it. The archives hold LTO-IR only: the samples have to be compiled and
+  # linked with -dlto, which CMake emits for INTERPROCEDURAL_OPTIMIZATION.
+  if [[ -n "$CUPQC_HOME" ]]; then
+    cat >"$LIBRARY_SAMPLES_DIR/cuPQC/CMakeLists.txt" <<'CUPQC_CMAKE'
+cmake_minimum_required(VERSION 3.25)
+project(cupqc_examples LANGUAGES CXX CUDA)
+
+set(CUPQC_HOME "$ENV{CUPQC_HOME}" CACHE PATH "Unpacked cuPQC SDK root")
+
+file(GLOB cupqc_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cu")
+foreach(src IN LISTS cupqc_sources)
+  get_filename_component(name "${src}" NAME_WE)
+  add_executable(${name} "${src}")
+  set_target_properties(${name} PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    INTERPROCEDURAL_OPTIMIZATION ON)
+  target_compile_features(${name} PRIVATE cxx_std_17 cuda_std_17)
+  target_include_directories(${name} PRIVATE "${CUPQC_HOME}/include" "${CUPQC_HOME}/include/cupqc")
+  target_link_directories(${name} PRIVATE "${CUPQC_HOME}/lib")
+  target_link_libraries(${name} PRIVATE cupqc cuhash)
+endforeach()
+CUPQC_CMAKE
+  elif [[ " $LIBRARY_SAMPLES_LIBS " == *" cuPQC "* ]]; then
+    echo "cuPQC selected but CUPQC_HOME is unset; its samples contribute no units" >&2
+  fi
 fi
 
 # A sample is a directory with a CMakeLists.txt and no CMake project beneath
@@ -203,7 +235,7 @@ build_sample() {
   fi
 }
 export -f build_sample
-export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR
+export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME
 
 if [[ "$BUILD_SAMPLES" != "0" ]]; then
   to_build=()
