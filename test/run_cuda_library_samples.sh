@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Build and run NVIDIA/CUDALibrarySamples (cuBLAS, cuBLASLt, cuFFT, cuRAND,
 # cuSOLVER, cuSPARSE, cuSPARSELt, cuTENSOR, cuEST, cuDSS, nvCOMP, nvJPEG,
-# nvJPEG2000, NPP, cuPQC, MathDx) through the lupine client shim against a
-# remote server. Every leaf directory with a CMakeLists.txt is a standalone
-# CMake project; every executable it produces is a unit with its own server on
-# SERVER_PORT_BASE + index.
+# nvJPEG2000, nvTIFF, NPP, cuPQC, MathDx) through the lupine client shim
+# against a remote server. Every leaf directory with a CMakeLists.txt is a
+# standalone CMake project; every executable it produces is a unit with its
+# own server on SERVER_PORT_BASE + index.
 #
 # Libraries that ship outside the toolkit (the *Mp multi-process variants) are
 # not selected by default. cuPQC and MathDx are exceptions: both are
@@ -38,6 +38,10 @@
 # not selected: it fetches CPM, rapids-cmake and NVBench at configure time,
 # overrides CMAKE_CUDA_ARCHITECTURES with eight of its own, and reports
 # throughput rather than pass or fail.
+# nvTIFF ships outside the toolkit as well and needs no shim either: its
+# samples run on the client against NVIDIA's own libnvtiff and only their
+# driver traffic crosses the wire, so this script unpacks its redist archive
+# the way it does MathDx's.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -46,7 +50,7 @@ LIBRARY_SAMPLES_URL="${LIBRARY_SAMPLES_URL:-https://github.com/NVIDIA/CUDALibrar
 LIBRARY_SAMPLES_REF="${LIBRARY_SAMPLES_REF:-3437729}"
 LIBRARY_SAMPLES_DIR="${LIBRARY_SAMPLES_DIR:-$repo_root/test/cuda-library-samples/CUDALibrarySamples}"
 LIBRARY_SAMPLES_BUILD_DIR="${LIBRARY_SAMPLES_BUILD_DIR:-$LIBRARY_SAMPLES_DIR/build}"
-LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE cuSPARSELt cuTENSOR cuEST cuDSS nvCOMP nvJPEG nvJPEG2000 NPP cuPQC MathDx}"
+LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE cuSPARSELt cuTENSOR cuEST cuDSS nvCOMP nvJPEG nvJPEG2000 nvTIFF NPP cuPQC MathDx}"
 LIBRARY_SAMPLES_ARCH="${LIBRARY_SAMPLES_ARCH:-${CUDA_SAMPLES_ARCH:-89}}"
 LIBRARY_SAMPLES_CMAKE_ARGS="${LIBRARY_SAMPLES_CMAKE_ARGS:-}"
 LIBRARY_SAMPLES_SKIP_LIST="${LIBRARY_SAMPLES_SKIP_LIST:-}"
@@ -73,6 +77,9 @@ CUDSS_VERSION="${CUDSS_VERSION:-0.8.0.10}"
 CUDSS_HOME="${CUDSS_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/cudss}"
 NVCOMP_VERSION="${NVCOMP_VERSION:-5.3.0.16}"
 NVCOMP_HOME="${NVCOMP_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/nvcomp}"
+# The nvTIFF samples are written against the 0.8 API.
+NVTIFF_VERSION="${NVTIFF_VERSION:-0.8.0.82}"
+NVTIFF_HOME="${NVTIFF_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/nvtiff}"
 BUILD_SAMPLES="${BUILD_SAMPLES:-auto}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 JOBS="${JOBS:-$(nproc)}"
@@ -100,6 +107,7 @@ RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-library-samples/results/$(date 
 nvjpeg_assets="${NVJPEG_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg-assets}"
 nvjpeg2k_assets="${NVJPEG2K_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg2000-assets}"
 nvcomp_assets="${NVCOMP_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvcomp-assets}"
+nvtiff_assets="${NVTIFF_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvtiff-assets}"
 
 usage() {
   cat <<EOF
@@ -127,6 +135,7 @@ Environment:
   NVJPEG2K_HOME              Unpacked nvJPEG2000 archive. Default: $NVJPEG2K_HOME
   CUDSS_HOME                 Unpacked cuDSS archive. Default: $CUDSS_HOME
   NVCOMP_HOME                Unpacked nvCOMP archive. Default: $NVCOMP_HOME
+  NVTIFF_HOME                Unpacked nvTIFF archive. Default: $NVTIFF_HOME
   BUILD_SAMPLES              auto, 1, or 0. Default: auto (build dirs without a build).
   BUILD_ONLY                 1 to clone/build and exit before running.
   JOBS                       Parallel sample builds. Default: $JOBS
@@ -310,6 +319,15 @@ CUPQC_CMAKE
     curl -fsSL "https://developer.download.nvidia.com/compute/nvcomp/redist/nvcomp/linux-x86_64/nvcomp-linux-x86_64-${NVCOMP_VERSION}_cuda$((${cuda_version:-0} / 1000))-archive.tar.xz" \
       | tar -xJ -C "$NVCOMP_HOME" --strip-components=1 || true
   fi
+
+  # nvTIFF's archive is CUDA-major-specific. Where it cannot be fetched -- no
+  # network, or a major NVIDIA does not build it for -- the nvTIFF samples fail
+  # to configure and the run reports them SKIP:build-failed like any other.
+  if [[ " $LIBRARY_SAMPLES_LIBS " == *" nvTIFF "* && ! -d "$NVTIFF_HOME" ]]; then
+    mkdir -p "$NVTIFF_HOME"
+    curl -fsSL "https://developer.download.nvidia.com/compute/nvtiff/redist/libnvtiff/linux-x86_64/libnvtiff-linux-x86_64-${NVTIFF_VERSION}_cuda$((${cuda_version:-0} / 1000))-archive.tar.xz" \
+      | tar -xJ -C "$NVTIFF_HOME" --strip-components=1 || true
+  fi
 fi
 
 # A sample is a directory with a CMakeLists.txt and no CMake project beneath
@@ -390,6 +408,8 @@ build_sample() {
     # the static half doubles the unit count for no new coverage.
     configure_args=(-Dnvcomp_ROOT="$NVCOMP_HOME"
       -DSKIP_LINKING_WITH_STATIC_NVCOMP=ON)
+  elif [[ "$sample" == nvTIFF/* ]]; then
+    configure_args=(-DNVTIFF_PATH="$NVTIFF_HOME")
   fi
   # Use the shared runtime by default. Explicit upstream cudart_static links
   # (the nvJPEG multi-instance examples) remain driver/static-runtime coverage.
@@ -416,7 +436,7 @@ build_sample() {
   fi
 }
 export -f build_sample
-export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME CUSPARSELT_HOME CUSPARSELT_STAGE MATHDX_HOME CUTENSOR_HOME CUEST_HOME NVJPEG2K_HOME CUDSS_HOME NVCOMP_HOME
+export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME CUSPARSELT_HOME CUSPARSELT_STAGE MATHDX_HOME CUTENSOR_HOME CUEST_HOME NVJPEG2K_HOME CUDSS_HOME NVCOMP_HOME NVTIFF_HOME
 
 if [[ "$BUILD_SAMPLES" != "0" ]]; then
   to_build=()
@@ -482,6 +502,10 @@ unit_argv() {
   # The nvCOMP examples compress a file the caller names and ship none; the
   # fixture below is written once beside the results.
   local nvcomp_input="$nvcomp_assets/input.bin"
+  # nvTIFF ships one striped TIFF. The multi-image and GeoTIFF samples need a
+  # multi-page file and georeferencing tags, both of which nvTIFF-Encode-Options
+  # writes, and it runs before them in the sorted unit order.
+  local tif="$LIBRARY_SAMPLES_DIR/nvTIFF/images/bali_notiles.tif"
   case "$1" in
     nvJPEG/nvJPEG-Decoder/*) printf '%s\0' -i "$images" -b 2 -o "$nvjpeg_assets/nvjpeg-decoded" ;;
     nvJPEG/nvJPEG-Decoder-Backend-ROI/*) printf '%s\0' -i "$images" -b 2 ;;
@@ -510,6 +534,11 @@ unit_argv() {
     nvCOMP/examples/*/deflate_cpu_*) printf '%s\0' -a 0 -f "$nvcomp_input" ;;
     nvCOMP/examples/*/high_level_quickstart_example|nvCOMP/examples/*/low_level_quickstart_example|nvCOMP/examples/*/bitcomp_native_lossy) ;;
     nvCOMP/examples/*) printf '%s\0' -f "$nvcomp_input" ;;
+    nvTIFF/nvTIFF-Decode/*|nvTIFF/nvTIFF-Batched-Region-Decode/*) printf '%s\0' "$tif" ;;
+    nvTIFF/nvTIFF-Decode-Encode/*) printf '%s\0' "$tif" "$nvtiff_assets/reencoded.tif" ;;
+    nvTIFF/nvTIFF-Encode-Options/*) printf '%s\0' "$tif" "$nvtiff_assets" ;;
+    nvTIFF/nvTIFF-GeoTIFF-Decode-Encode/*) printf '%s\0' "$nvtiff_assets/custom_tags_from_buffer.tif" "$nvtiff_assets/geo_roundtrip.tif" ;;
+    nvTIFF/nvTIFF-Image-Info-Multi-Image/*) printf '%s\0' "$nvtiff_assets/striped_lzw_multipage.tif" ;;
   esac
 }
 # NPP samples open their inputs relative to the working directory: findContour
@@ -563,7 +592,8 @@ mkdir -p "$RESULTS_DIR" \
   "$nvjpeg_assets/nvjpeg-watermarked" \
   "$nvjpeg2k_assets/decoded" \
   "$nvjpeg2k_assets/encoded" \
-  "$nvcomp_assets"
+  "$nvcomp_assets" \
+  "$nvtiff_assets"
 # The nvCOMP examples take the file to compress on the command line and ship
 # none. Their own sources, repeated, are a deterministic and compressible one.
 if [[ ! -s "$nvcomp_assets/input.bin" ]]; then
@@ -625,7 +655,7 @@ for i in "${!UNITS[@]}"; do
   (
     cd "$cwd"
     timeout --kill-after=5s "$SAMPLE_TIMEOUT" env \
-      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}$CUTENSOR_HOME/lib:$CUEST_HOME/lib:$NVJPEG2K_HOME/lib:$CUDSS_HOME/lib:$NVCOMP_HOME/lib:${LD_LIBRARY_PATH:-}" \
+      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}$CUTENSOR_HOME/lib:$CUEST_HOME/lib:$NVJPEG2K_HOME/lib:$CUDSS_HOME/lib:$NVCOMP_HOME/lib:$NVTIFF_HOME/lib:${LD_LIBRARY_PATH:-}" \
       LUPINE_SERVER="$SERVER_HOST:$port" \
       LD_PRELOAD="$LUPINE_LIB" \
       "$exe" "${argv[@]}"
