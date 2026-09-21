@@ -4438,6 +4438,47 @@ extern "C" CUresult cuCtxGetDevice_v2(CUdevice *device, CUcontext ctx) {
 }
 #endif
 
+#if CUDA_VERSION >= 12080
+extern "C" CUresult cuStreamGetDevice(CUstream hStream, CUdevice *device) {
+  if (device == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  if (!lupine_cuda_is_initialized()) {
+    return CUDA_ERROR_NOT_INITIALIZED;
+  }
+  lupine_route route = lupine_route_for_stream(hStream);
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn("cuStreamGetDevice", hStream, device);
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUdevice remote_device = 0;
+  CUresult return_value;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuStreamGetDevice) < 0 ||
+      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &remote_device, sizeof(remote_device)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    // The ordinal the stream's own server answers with is that server's; the
+    // caller only ever sees the virtual ordinal it was handed.
+    *device = lupine_local_device_for_remote(conn, remote_device);
+  }
+  return return_value;
+}
+
+#ifdef cuStreamGetDevice_ptsz
+#undef cuStreamGetDevice_ptsz
+#endif
+extern "C" CUresult cuStreamGetDevice_ptsz(CUstream hStream, CUdevice *device) {
+  return cuStreamGetDevice(hStream, device);
+}
+#endif
+
 extern "C" CUresult cuMemPoolGetAttribute(CUmemoryPool pool,
                                           CUmemPool_attribute attr,
                                           void *value) {
@@ -9794,6 +9835,9 @@ lupine_manual_function_map() {
       {"cuCtxSynchronize", (void *)cuCtxSynchronize},
       {"cuStreamSynchronize", (void *)cuStreamSynchronize},
       {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize_ptsz},
+#if CUDA_VERSION >= 12080
+      {"cuStreamGetDevice_ptsz", (void *)cuStreamGetDevice_ptsz},
+#endif
       {"cuEventQuery", (void *)cuEventQuery},
       {"cuEventSynchronize", (void *)cuEventSynchronize},
       {"cuGetErrorName", (void *)cuGetErrorName},

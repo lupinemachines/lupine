@@ -1210,8 +1210,8 @@ int handle_nvjpegEncodeRetrieveBitstream(conn_t *conn) {
       rpc_read(conn, &data_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!data_null) {
-    data = (unsigned char *)malloc(
-        (length_requested != 0 ? length_requested : 1) * sizeof(unsigned char));
+    data = (unsigned char *)calloc(
+        (length_requested != 0 ? length_requested : 1), sizeof(unsigned char));
     if (data == nullptr)
       goto ERROR_0;
   }

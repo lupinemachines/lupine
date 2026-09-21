@@ -25,3 +25,14 @@ cuSPARSE/bicgstab/bicgstab_example
 cuSOLVER/MgSyevd/cusolver_MgSyevd_example1
 cuSOLVER/MgSyevd/cusolver_MgSyevd_example2
 cuSOLVER/MgSyevd/cusolver_MgSyevd_example3
+
+# #832 cuFFTDx fills >=1GiB with one synchronous cudaMemcpy per CUDA block:
+# 2.75M blocking HtoD round trips before the first kernel. Passes natively.
+MathDx/cuFFTDx/08_mixed_precision/mixed_precision_fft_1d
+
+# #836 Run against SAMPLE_TIMEOUT: each times an 8192^3 cuBLASLt DGEMM as its
+# reference, so both are FP64-rate bound. On an RTX 4090 they take 56s and 44s
+# natively, 160s and 91s through the shim at 0.30 ms RTT; the sgemm sibling
+# beside them passes in 24s on the same lane.
+MathDx/cuBLASDx/16_dgemm_emulation/dgemm_emulation
+MathDx/cuBLASDx/20_dgemm_emulation_pipeline/dgemm_emulation_pipeline

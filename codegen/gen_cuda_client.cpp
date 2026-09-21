@@ -7484,6 +7484,9 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamCreate", (void *)cuStreamCreate},
     {"cuStreamCreateWithPriority", (void *)cuStreamCreateWithPriority},
     {"cuStreamGetPriority", (void *)cuStreamGetPriority},
+#if CUDA_VERSION >= 12080
+    {"cuStreamGetDevice", (void *)cuStreamGetDevice},
+#endif
     {"cuStreamGetFlags", (void *)cuStreamGetFlags},
     {"cuStreamGetId", (void *)cuStreamGetId},
     {"cuStreamGetCtx", (void *)cuStreamGetCtx},
