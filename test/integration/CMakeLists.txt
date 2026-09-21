@@ -81,6 +81,8 @@ function(add_suite suite script)
                 "LUPINE_CUDART_LIB=${shim_dir}/libcudart.so"
                 "LD_LIBRARY_PATH=${lib_dir}" "LD_PRELOAD="
                 "NVJPEG_ASSETS_DIR=${results_dir}/assets/${variant}"
+                "NVJPEG2K_ASSETS_DIR=${results_dir}/assets/${variant}/nvjpeg2k"
+                "NVTIFF_ASSETS_DIR=${results_dir}/assets/${variant}/nvtiff"
                 ${ARGN})
             add_test(NAME "${test}" COMMAND "${script}" "${name}")
             set_tests_properties("${test}" PROPERTIES
@@ -106,8 +108,17 @@ add_suite(cuda-python "${TEST_DIR}/run_cuda_python_tests.sh" CUDA_PYTHON_INSTALL
 add_suite(cuda-library "${TEST_DIR}/run_cuda_library_samples.sh" BUILD_SAMPLES=0)
 add_suite(custom "${TEST_DIR}/run_custom_tests.sh")
 
+# These samples read files another sample writes into the variant's assets dir.
+function(add_sample_dependency variant consumer producer)
+    set(consumer "${variant}.cuda-library.${consumer}")
+    set(producer "${variant}.cuda-library.${producer}")
+    if(TEST "${consumer}" AND TEST "${producer}")
+        set_property(TEST "${consumer}" APPEND PROPERTY DEPENDS "${producer}")
+    endif()
+endfunction()
 foreach(variant IN LISTS variants)
-    set(decoder "${variant}.cuda-library.nvJPEG/nvJPEG-Decoder")
-    set(encoder "${variant}.cuda-library.nvJPEG/nvJPEG-Encoder-MultipleInstances")
-    set_property(TEST "${encoder}" PROPERTY DEPENDS "${decoder}")
+    add_sample_dependency(${variant} nvJPEG/nvJPEG-Encoder-MultipleInstances nvJPEG/nvJPEG-Decoder)
+    add_sample_dependency(${variant} nvJPEG2000/nvJPEG2000-Encoder nvJPEG2000/nvJPEG2000-Decoder)
+    add_sample_dependency(${variant} nvTIFF/nvTIFF-GeoTIFF-Decode-Encode nvTIFF/nvTIFF-Encode-Options)
+    add_sample_dependency(${variant} nvTIFF/nvTIFF-Image-Info-Multi-Image nvTIFF/nvTIFF-Encode-Options)
 endforeach()
