@@ -3572,8 +3572,9 @@ static CUresult lupine_bulk_pull(conn_t *conn, lupine_bulk_lanes *lanes,
     struct {
       int request_id;
       int op;
+      uint64_t async_watermark;
       uint64_t copy_id;
-    } request = {2, LUPINE_RPC_lupineBulkRead, copy_id};
+    } request = {2, LUPINE_RPC_lupineBulkRead, 0, copy_id};
     std::vector<rpc_write_cursor> cursors = {
         rpc_write_cursor(&request, sizeof(request))};
     if (rpc_http2_write_stream(bulk, stream_id, cursors) < 0) {
@@ -3734,6 +3735,9 @@ static uint64_t lupine_htod_pushed_bytes(bool is_server_authoritative,
 struct lupine_bulk_chunk_header {
   int request_id;
   int op;
+  // Bulk lanes stage bytes; native submissions are ordered on the caller's
+  // primary connection, so these lanes have no async tickets to wait for.
+  uint64_t async_watermark;
   uint64_t copy_id;
   uint64_t total;
   uint64_t offset;
@@ -3767,7 +3771,8 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
       size_t chunk_bytes = std::min(
           static_cast<size_t>(LUPINE_RPC_TRANSFER_CHUNK_BYTES), bytes - offset);
       lupine_bulk_chunk_header header = {
-          2, LUPINE_RPC_lupineBulkChunk, copy_id, bytes, offset, chunk_bytes};
+          2,          LUPINE_RPC_lupineBulkChunk, 0, copy_id, bytes, offset,
+          chunk_bytes};
       std::vector<rpc_write_cursor> cursors = {
           rpc_write_cursor(&header, sizeof(header)),
           rpc_write_cursor(data + offset, chunk_bytes)};
