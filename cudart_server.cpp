@@ -1209,6 +1209,10 @@ int handle_cudaDeviceSynchronize(conn_t *conn) {
   std::vector<lupine_pending_dtoh_item> pending;
   if (result == cudaSuccess) {
     pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
+    CUcontext context = nullptr;
+    if (cuCtxGetCurrent(&context) == CUDA_SUCCESS) {
+      lupine_collect_context_graph_dtoh_copies(context, &pending);
+    }
   }
   return write_completion(conn, request_id, result, &pending, {}, &capture);
 }

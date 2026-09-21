@@ -126,6 +126,10 @@ lupine_graph_dtoh_copy_snapshot(lupine_graph_resources *resources);
 // client, exactly once per launch.
 std::vector<lupine_graph_host_copy>
 lupine_take_stream_dtoh_copies(CUstream stream);
+// After a successful context wait, include every launched graph in that
+// context in the ordinary deferred-copy response, without freeing its buffers.
+void lupine_collect_context_graph_dtoh_copies(
+    CUcontext context, lupine_pending_dtoh_items *pending);
 struct lupine_htod_graph_binding {
   CUgraph original = nullptr;
   CUgraph prepared = nullptr;

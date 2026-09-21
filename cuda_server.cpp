@@ -4456,7 +4456,14 @@ int handle_cuCtxSynchronize(conn_t *conn) {
   lupine_start_stdout_capture(&capture);
   CUresult result = cuCtxSynchronize();
   lupine_finish_stdout_capture(&capture);
-  auto pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
+  lupine_pending_dtoh_items pending;
+  if (result == CUDA_SUCCESS) {
+    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
+    CUcontext context = nullptr;
+    if (cuCtxGetCurrent(&context) == CUDA_SUCCESS) {
+      lupine_collect_context_graph_dtoh_copies(context, &pending);
+    }
+  }
   bool failed = rpc_write_start_response(conn, request_id) < 0 ||
                 rpc_copy_alloc(conn, 2 * sizeof(uint64_t)) < 0 ||
                 lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
@@ -4481,7 +4488,11 @@ int handle_cuCtxSynchronize_v2(conn_t *conn) {
   lupine_start_stdout_capture(&capture);
   CUresult result = cuCtxSynchronize_v2(ctx);
   lupine_finish_stdout_capture(&capture);
-  auto pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
+  lupine_pending_dtoh_items pending;
+  if (result == CUDA_SUCCESS) {
+    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
+    lupine_collect_context_graph_dtoh_copies(ctx, &pending);
+  }
   bool failed = rpc_write_start_response(conn, request_id) < 0 ||
                 rpc_copy_alloc(conn, 2 * sizeof(uint64_t)) < 0 ||
                 lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
