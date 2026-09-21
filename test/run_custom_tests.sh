@@ -156,12 +156,6 @@ fi
 if [[ "$BUILD_ONLY" == "1" ]]; then
   exit 0
 fi
-if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" && "$name" == test_runtime_context_* ]]; then
-  # The context read these pin belongs to the runtime shim, which driver-only
-  # does not load: NVIDIA's own libcudart leaves nothing pending to read.
-  echo "SKIP: $name exercises the runtime shim's pending context read"
-  exit 0
-fi
 if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <cufile.h>' "$src"; then
   # NVIDIA's libcufile drives the local GPU and its nvidia-fs driver from the
   # client, which a GPU-less client has neither of; only the cuFile shim runs.
