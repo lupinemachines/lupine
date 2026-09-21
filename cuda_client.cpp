@@ -4468,7 +4468,6 @@ extern "C" CUresult cuCtxGetDevice_v2(CUdevice *device, CUcontext ctx) {
 }
 #endif
 
-#if CUDA_VERSION >= 12080
 extern "C" CUresult cuStreamGetDevice(CUstream hStream, CUdevice *device) {
   if (device == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
@@ -4507,7 +4506,6 @@ extern "C" CUresult cuStreamGetDevice(CUstream hStream, CUdevice *device) {
 extern "C" CUresult cuStreamGetDevice_ptsz(CUstream hStream, CUdevice *device) {
   return cuStreamGetDevice(hStream, device);
 }
-#endif
 
 extern "C" CUresult cuMemPoolGetAttribute(CUmemoryPool pool,
                                           CUmemPool_attribute attr,
@@ -9865,9 +9863,7 @@ lupine_manual_function_map() {
       {"cuCtxSynchronize", (void *)cuCtxSynchronize},
       {"cuStreamSynchronize", (void *)cuStreamSynchronize},
       {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize_ptsz},
-#if CUDA_VERSION >= 12080
       {"cuStreamGetDevice_ptsz", (void *)cuStreamGetDevice_ptsz},
-#endif
       {"cuEventQuery", (void *)cuEventQuery},
       {"cuEventSynchronize", (void *)cuEventSynchronize},
       {"cuGetErrorName", (void *)cuGetErrorName},

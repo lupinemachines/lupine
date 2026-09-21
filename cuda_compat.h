@@ -230,6 +230,57 @@ static inline CUresult cuKernelGetLibrary(CUlibrary *, CUkernel) {
 #endif
 #endif
 
+// Applications can bundle a runtime newer than the headers lupine was built
+// with, and that runtime stops launching kernels if these lookups fail. The
+// server's driver has them regardless, so an older build still forwards them.
+#if CUDA_VERSION < 12080
+#ifdef LUPINE_CUDA_COMPAT_TYPES_ONLY
+#ifdef __cplusplus
+extern "C" {
+#endif
+#if CUDA_VERSION < 12030
+CUresult cuKernelGetName(const char **, CUkernel);
+CUresult cuFuncGetName(const char **, CUfunction);
+#endif
+CUresult cuStreamGetDevice(CUstream, CUdevice *);
+#ifdef __cplusplus
+}
+#endif
+#else
+static inline void *lupine_driver_symbol(const char *name) {
+#ifdef _WIN32
+  static HMODULE lib = LoadLibraryA("nvcuda.dll");
+  return lib != nullptr ? reinterpret_cast<void *>(GetProcAddress(lib, name))
+                        : nullptr;
+#else
+  return dlsym(RTLD_DEFAULT, name);
+#endif
+}
+
+#if CUDA_VERSION < 12030
+static inline CUresult cuKernelGetName(const char **name, CUkernel hfunc) {
+  static auto fn =
+      reinterpret_cast<CUresult(CUDAAPI *)(const char **, CUkernel)>(
+          lupine_driver_symbol("cuKernelGetName"));
+  return fn != nullptr ? fn(name, hfunc) : CUDA_ERROR_NOT_SUPPORTED;
+}
+
+static inline CUresult cuFuncGetName(const char **name, CUfunction hfunc) {
+  static auto fn =
+      reinterpret_cast<CUresult(CUDAAPI *)(const char **, CUfunction)>(
+          lupine_driver_symbol("cuFuncGetName"));
+  return fn != nullptr ? fn(name, hfunc) : CUDA_ERROR_NOT_SUPPORTED;
+}
+#endif
+
+static inline CUresult cuStreamGetDevice(CUstream hStream, CUdevice *device) {
+  static auto fn = reinterpret_cast<CUresult(CUDAAPI *)(CUstream, CUdevice *)>(
+      lupine_driver_symbol("cuStreamGetDevice"));
+  return fn != nullptr ? fn(hStream, device) : CUDA_ERROR_NOT_SUPPORTED;
+}
+#endif
+#endif
+
 #if CUDA_VERSION < 11080
 typedef struct CUlaunchAttribute_st {
   int id;

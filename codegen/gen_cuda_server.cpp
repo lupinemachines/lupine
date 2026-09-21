@@ -1559,7 +1559,6 @@ ERROR_0:
   return -1;
 }
 
-#if CUDA_VERSION >= 12030
 int handle_cuKernelGetName(conn_t *conn) {
   const char *name = nullptr;
   std::size_t name_len = 0;
@@ -1588,8 +1587,6 @@ int handle_cuKernelGetName(conn_t *conn) {
 ERROR_0:
   return -1;
 }
-
-#endif
 
 int handle_cuKernelGetParamInfo(conn_t *conn) {
   CUkernel kernel;
@@ -3667,7 +3664,6 @@ ERROR_0:
   return -1;
 }
 
-#if CUDA_VERSION >= 12080
 int handle_cuStreamGetDevice(conn_t *conn) {
   CUstream hStream;
   CUdevice device{};
@@ -3692,8 +3688,6 @@ int handle_cuStreamGetDevice(conn_t *conn) {
 ERROR_0:
   return -1;
 }
-
-#endif
 
 int handle_cuStreamGetFlags(conn_t *conn) {
   CUstream hStream;
@@ -4530,7 +4524,6 @@ ERROR_0:
   return -1;
 }
 
-#if CUDA_VERSION >= 12030
 int handle_cuFuncGetName(conn_t *conn) {
   const char *name = nullptr;
   std::size_t name_len = 0;
@@ -4559,8 +4552,6 @@ int handle_cuFuncGetName(conn_t *conn) {
 ERROR_0:
   return -1;
 }
-
-#endif
 
 int handle_cuFuncGetParamInfo(conn_t *conn) {
   CUfunction func;

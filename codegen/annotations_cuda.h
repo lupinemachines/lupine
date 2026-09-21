@@ -627,7 +627,6 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
   return return_value;
 }
 /**
- * @guard CUDA_VERSION >= 12030
  * @routingkey FUNCTION hfunc
  * @retain name hfunc
  * @param name RECV_ONLY NULL_TERMINATED
@@ -1523,7 +1522,6 @@ CUresult cuStreamGetId(CUstream hStream, unsigned long long *streamId);
  */
 CUresult cuStreamGetCtx(CUstream hStream, CUcontext *pctx);
 /**
- * @guard CUDA_VERSION >= 12080
  * @disabled client - manual client resolves the device of the stream's server
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
@@ -1997,7 +1995,6 @@ CUresult cuFuncSetSharedMemConfig(CUfunction hfunc, CUsharedconfig config);
  */
 CUresult cuFuncGetModule(CUmodule *hmod, CUfunction hfunc);
 /**
- * @guard CUDA_VERSION >= 12030
  * @routingkey FUNCTION hfunc
  * @retain name hfunc
  * @param name RECV_ONLY NULL_TERMINATED

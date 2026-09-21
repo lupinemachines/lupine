@@ -1050,7 +1050,6 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
   return return_value;
 }
 
-#if CUDA_VERSION >= 12030
 CUresult cuKernelGetName(const char **name, CUkernel hfunc) {
   lupine_route route =
       lupine_route_for_function(reinterpret_cast<CUfunction>(hfunc));
@@ -1082,8 +1081,6 @@ CUresult cuKernelGetName(const char **name, CUkernel hfunc) {
   }
   return return_value;
 }
-
-#endif
 
 CUresult cuMemGetInfo_v2(size_t *free, size_t *total) {
   lupine_route route = lupine_route_for_current_context();
@@ -3288,7 +3285,6 @@ CUresult cuFuncGetModule(CUmodule *hmod, CUfunction hfunc) {
   return return_value;
 }
 
-#if CUDA_VERSION >= 12030
 CUresult cuFuncGetName(const char **name, CUfunction hfunc) {
   lupine_route route = lupine_route_for_function(hfunc);
   CUresult return_value;
@@ -3320,8 +3316,6 @@ CUresult cuFuncGetName(const char **name, CUfunction hfunc) {
   }
   return return_value;
 }
-
-#endif
 
 CUresult cuFuncSetBlockShape(CUfunction hfunc, int x, int y, int z) {
   lupine_route route = lupine_route_for_function(hfunc);
@@ -7374,9 +7368,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuKernelGetAttribute", (void *)cuKernelGetAttribute},
     {"cuKernelSetAttribute", (void *)cuKernelSetAttribute},
     {"cuKernelSetCacheConfig", (void *)cuKernelSetCacheConfig},
-#if CUDA_VERSION >= 12030
     {"cuKernelGetName", (void *)cuKernelGetName},
-#endif
     {"cuKernelGetParamInfo", (void *)cuKernelGetParamInfo},
     {"cuMemGetInfo_v2", (void *)cuMemGetInfo_v2},
     {"cuMemAlloc_v2", (void *)cuMemAlloc_v2},
@@ -7484,9 +7476,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamCreate", (void *)cuStreamCreate},
     {"cuStreamCreateWithPriority", (void *)cuStreamCreateWithPriority},
     {"cuStreamGetPriority", (void *)cuStreamGetPriority},
-#if CUDA_VERSION >= 12080
     {"cuStreamGetDevice", (void *)cuStreamGetDevice},
-#endif
     {"cuStreamGetFlags", (void *)cuStreamGetFlags},
     {"cuStreamGetId", (void *)cuStreamGetId},
     {"cuStreamGetCtx", (void *)cuStreamGetCtx},
@@ -7530,9 +7520,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuFuncSetAttribute", (void *)cuFuncSetAttribute},
     {"cuFuncSetCacheConfig", (void *)cuFuncSetCacheConfig},
     {"cuFuncGetModule", (void *)cuFuncGetModule},
-#if CUDA_VERSION >= 12030
     {"cuFuncGetName", (void *)cuFuncGetName},
-#endif
     {"cuFuncGetParamInfo", (void *)cuFuncGetParamInfo},
     {"cuLaunchKernel", (void *)cuLaunchKernel},
     {"cuLaunchKernelEx", (void *)cuLaunchKernelEx},
