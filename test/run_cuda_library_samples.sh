@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build and run NVIDIA/CUDALibrarySamples (cuBLAS, cuBLASLt, cuFFT, cuRAND,
 # cuSOLVER, cuSPARSE, cuSPARSELt, cuTENSOR, cuEST, cuDSS, nvCOMP, nvJPEG,
-# nvJPEG2000, nvTIFF, NPP, cuPQC, MathDx) through the lupine client shim
+# nvJPEG2000, nvTIFF, NPP, NPP+, cuPQC, MathDx) through the lupine client shim
 # against a remote server. Every leaf directory with a CMakeLists.txt is a
 # standalone CMake project; every executable it produces is a unit with its
 # own server on SERVER_PORT_BASE + index.
@@ -42,6 +42,12 @@
 # samples run on the client against NVIDIA's own libnvtiff and only their
 # driver traffic crosses the wire, so this script unpacks its redist archive
 # the way it does MathDx's.
+# NPP+ ships outside the toolkit as well and is not the NPP the lupine_npp*
+# shims cover: libnpp_plus_* link no toolkit NPP or shared cudart, carry a
+# static CUDA 12 runtime and dlopen libcuda.so.1, so the samples run on the
+# client and only their runtime and driver traffic crosses the wire. NVIDIA
+# builds it for CUDA 11 and 12 only; a CUDA 13 toolkit gets the CUDA 12
+# archive, which needs nothing from the toolkit at run time.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -50,7 +56,7 @@ LIBRARY_SAMPLES_URL="${LIBRARY_SAMPLES_URL:-https://github.com/NVIDIA/CUDALibrar
 LIBRARY_SAMPLES_REF="${LIBRARY_SAMPLES_REF:-3437729}"
 LIBRARY_SAMPLES_DIR="${LIBRARY_SAMPLES_DIR:-$repo_root/test/cuda-library-samples/CUDALibrarySamples}"
 LIBRARY_SAMPLES_BUILD_DIR="${LIBRARY_SAMPLES_BUILD_DIR:-$LIBRARY_SAMPLES_DIR/build}"
-LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE cuSPARSELt cuTENSOR cuEST cuDSS nvCOMP nvJPEG nvJPEG2000 nvTIFF NPP cuPQC MathDx}"
+LIBRARY_SAMPLES_LIBS="${LIBRARY_SAMPLES_LIBS:-cuBLAS cuBLASLt cuFFT cuRAND cuSOLVER cuSPARSE cuSPARSELt cuTENSOR cuEST cuDSS nvCOMP nvJPEG nvJPEG2000 nvTIFF NPP NPP+ cuPQC MathDx}"
 LIBRARY_SAMPLES_ARCH="${LIBRARY_SAMPLES_ARCH:-${CUDA_SAMPLES_ARCH:-89}}"
 LIBRARY_SAMPLES_CMAKE_ARGS="${LIBRARY_SAMPLES_CMAKE_ARGS:-}"
 LIBRARY_SAMPLES_SKIP_LIST="${LIBRARY_SAMPLES_SKIP_LIST:-}"
@@ -80,6 +86,8 @@ NVCOMP_HOME="${NVCOMP_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/nvcomp}"
 # The nvTIFF samples are written against the 0.8 API.
 NVTIFF_VERSION="${NVTIFF_VERSION:-0.8.0.82}"
 NVTIFF_HOME="${NVTIFF_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/nvtiff}"
+NPPPLUS_VERSION="${NPPPLUS_VERSION:-0.10.0.0}"
+NPPPLUS_HOME="${NPPPLUS_HOME:-$(dirname "$LIBRARY_SAMPLES_DIR")/nppplus}"
 BUILD_SAMPLES="${BUILD_SAMPLES:-auto}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 JOBS="${JOBS:-$(nproc)}"
@@ -108,6 +116,7 @@ nvjpeg_assets="${NVJPEG_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg-assets}"
 nvjpeg2k_assets="${NVJPEG2K_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg2000-assets}"
 nvcomp_assets="${NVCOMP_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvcomp-assets}"
 nvtiff_assets="${NVTIFF_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvtiff-assets}"
+nppplus_assets="${NPPPLUS_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nppplus-assets}"
 
 usage() {
   cat <<EOF
@@ -136,6 +145,7 @@ Environment:
   CUDSS_HOME                 Unpacked cuDSS archive. Default: $CUDSS_HOME
   NVCOMP_HOME                Unpacked nvCOMP archive. Default: $NVCOMP_HOME
   NVTIFF_HOME                Unpacked nvTIFF archive. Default: $NVTIFF_HOME
+  NPPPLUS_HOME               Unpacked NPP+ archive. Default: $NPPPLUS_HOME
   BUILD_SAMPLES              auto, 1, or 0. Default: auto (build dirs without a build).
   BUILD_ONLY                 1 to clone/build and exit before running.
   JOBS                       Parallel sample builds. Default: $JOBS
@@ -328,6 +338,17 @@ CUPQC_CMAKE
     curl -fsSL "https://developer.download.nvidia.com/compute/nvtiff/redist/libnvtiff/linux-x86_64/libnvtiff-linux-x86_64-${NVTIFF_VERSION}_cuda$((${cuda_version:-0} / 1000))-archive.tar.xz" \
       | tar -xJ -C "$NVTIFF_HOME" --strip-components=1 || true
   fi
+
+  # NPP+'s archive is CUDA-major-specific up to 12. Where it cannot be fetched
+  # the NPP+ samples fail to build and the run reports them SKIP:build-failed
+  # like any other.
+  if [[ " $LIBRARY_SAMPLES_LIBS " == *" NPP+ "* && ! -d "$NPPPLUS_HOME" ]]; then
+    nppplus_cuda=$((${cuda_version:-0} / 1000))
+    ((nppplus_cuda <= 12)) || nppplus_cuda=12
+    mkdir -p "$NPPPLUS_HOME"
+    curl -fsSL "https://developer.download.nvidia.com/compute/nppplus/redist/libnpp_plus/linux-x86_64/libnpp_plus-linux-x86_64-${NPPPLUS_VERSION}_cuda${nppplus_cuda}-archive.tar.xz" \
+      | tar -xJ -C "$NPPPLUS_HOME" --strip-components=1 || true
+  fi
 fi
 
 # A sample is a directory with a CMakeLists.txt and no CMake project beneath
@@ -410,6 +431,18 @@ build_sample() {
       -DSKIP_LINKING_WITH_STATIC_NVCOMP=ON)
   elif [[ "$sample" == nvTIFF/* ]]; then
     configure_args=(-DNVTIFF_PATH="$NVTIFF_HOME")
+  elif [[ "$sample" == NPP+/* ]]; then
+    # The NPP+ lists look for the libraries under $NPP_PLUS_PATH/12 and for
+    # npp.h under /usr/include/libnpp_plus/12, neither of which the archive
+    # has; npp.h must be NPP+'s, not the toolkit's. The sources call through
+    # nppPlusV::, which nppPlus.h declares only under NPP_PLUS_ENABLE, and the
+    # lists define NPP_PLUS_ON instead.
+    configure_args=(-DCMAKE_CUDA_FLAGS=-DNPP_PLUS_ENABLE
+      -DNPP_HEADER_PATH="$NPPPLUS_HOME/include"
+      -DNPP_PLUS_HEADER_PATH="$NPPPLUS_HOME/include/nppPlus"
+      -DNPP_PLUS_IF_LIBRARY="$NPPPLUS_HOME/lib/libnpp_plus_if.so"
+      -DNPP_PLUS_C_LIBRARY="$NPPPLUS_HOME/lib/libnpp_plus_c.so"
+      -DNPP_PLUS_ISU_LIBRARY="$NPPPLUS_HOME/lib/libnpp_plus_isu.so")
   fi
   # Use the shared runtime by default. Explicit upstream cudart_static links
   # (the nvJPEG multi-instance examples) remain driver/static-runtime coverage.
@@ -436,7 +469,7 @@ build_sample() {
   fi
 }
 export -f build_sample
-export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME CUSPARSELT_HOME CUSPARSELT_STAGE MATHDX_HOME CUTENSOR_HOME CUEST_HOME NVJPEG2K_HOME CUDSS_HOME NVCOMP_HOME NVTIFF_HOME
+export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRARY_SAMPLES_CMAKE_ARGS CUDA_HOME CUDA_LIB_DIR CUPQC_HOME CUSPARSELT_HOME CUSPARSELT_STAGE MATHDX_HOME CUTENSOR_HOME CUEST_HOME NVJPEG2K_HOME CUDSS_HOME NVCOMP_HOME NVTIFF_HOME NPPPLUS_HOME
 
 if [[ "$BUILD_SAMPLES" != "0" ]]; then
   to_build=()
@@ -543,11 +576,15 @@ unit_argv() {
 }
 # NPP samples open their inputs relative to the working directory: findContour
 # and nppCanny from the sample dir, the rest via ../images/; the watermark
-# sample reads NVLogo.jpg from the sample dir.
+# sample reads NVLogo.jpg from the sample dir. NPP+ follows the same layout,
+# except that distanceTransform joins "../images" to its file names without a
+# separator and ships none of the inputs it names, so it runs from a staging
+# directory whose parent holds them under the names it builds.
 unit_cwd() {
   case "$1" in
-    NPP/findContour/*|NPP/nppCanny/*|nvJPEG/Image-Resize-WaterMark/*) printf '%s\n' "$LIBRARY_SAMPLES_DIR/$(dirname "$1")" ;;
-    NPP/*) printf '%s\n' "$LIBRARY_SAMPLES_DIR/$(dirname "$1")/images" ;;
+    NPP/findContour/*|NPP/nppCanny/*|NPP+/findContour/*|nvJPEG/Image-Resize-WaterMark/*) printf '%s\n' "$LIBRARY_SAMPLES_DIR/$(dirname "$1")" ;;
+    NPP+/distanceTransform/*) printf '%s\n' "$nppplus_assets/distanceTransform/run" ;;
+    NPP/*|NPP+/*) printf '%s\n' "$LIBRARY_SAMPLES_DIR/$(dirname "$1")/images" ;;
     *) printf '%s\n' "$LIBRARY_SAMPLES_BUILD_DIR/$(dirname "$1")" ;;
   esac
 }
@@ -593,7 +630,8 @@ mkdir -p "$RESULTS_DIR" \
   "$nvjpeg2k_assets/decoded" \
   "$nvjpeg2k_assets/encoded" \
   "$nvcomp_assets" \
-  "$nvtiff_assets"
+  "$nvtiff_assets" \
+  "$nppplus_assets/distanceTransform/run"
 # The nvCOMP examples take the file to compress on the command line and ship
 # none. Their own sources, repeated, are a deterministic and compressible one.
 if [[ ! -s "$nvcomp_assets/input.bin" ]]; then
@@ -602,6 +640,11 @@ if [[ ! -s "$nvcomp_assets/input.bin" ]]; then
         "$LIBRARY_SAMPLES_DIR"/nvCOMP/examples/*.cpp 2>/dev/null || true
   done > "$nvcomp_assets/input.bin"
 fi
+for f in DistanceSampler_512x512_8u DistanceSampler_512x512_Inverted_8u \
+    SignedCircle_256x206_64f SignedCircle_256x206_Inverted_64f SignedLith_554x554_32f; do
+  ln -sfn "$LIBRARY_SAMPLES_DIR/NPP+/watershedSegmentation/images/$f.raw" \
+    "$nppplus_assets/distanceTransform/images$f.raw"
+done
 tsv="$RESULTS_DIR/results.tsv"
 : > "$tsv"
 pass=0
@@ -655,7 +698,7 @@ for i in "${!UNITS[@]}"; do
   (
     cd "$cwd"
     timeout --kill-after=5s "$SAMPLE_TIMEOUT" env \
-      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}$CUTENSOR_HOME/lib:$CUEST_HOME/lib:$NVJPEG2K_HOME/lib:$CUDSS_HOME/lib:$NVCOMP_HOME/lib:$NVTIFF_HOME/lib:${LD_LIBRARY_PATH:-}" \
+      LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}$CUTENSOR_HOME/lib:$CUEST_HOME/lib:$NVJPEG2K_HOME/lib:$CUDSS_HOME/lib:$NVCOMP_HOME/lib:$NVTIFF_HOME/lib:$NPPPLUS_HOME/lib:${LD_LIBRARY_PATH:-}" \
       LUPINE_SERVER="$SERVER_HOST:$port" \
       LD_PRELOAD="$LUPINE_LIB" \
       "$exe" "${argv[@]}"

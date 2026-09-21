@@ -47,3 +47,9 @@ cuDSS/simple_hybrid_execute_mode/simple_hybrid_execute_mode_example
 # LZ4Manager posts -- fetches on a lane with no server-side context, gets
 # CUDA_ERROR_INVALID_CONTEXT back, and turns a recoverable fault into SIGSEGV.
 nvCOMP/examples/dynamic_bin/high_level_quickstart_example
+
+# Fails natively as well (not lupine), on every run on the RTX 4090: NPP+
+# findContour walks each contour to nMaxContourPixelCount - 1 in unsigned
+# arithmetic, and a count it reads back as 0 turns that into ~4G iterations of
+# writes through garbage coordinates until it segfaults.
+NPP+/findContour/findContour

@@ -83,6 +83,7 @@ function(add_suite suite script)
                 "NVJPEG_ASSETS_DIR=${results_dir}/assets/${variant}"
                 "NVJPEG2K_ASSETS_DIR=${results_dir}/assets/${variant}/nvjpeg2k"
                 "NVTIFF_ASSETS_DIR=${results_dir}/assets/${variant}/nvtiff"
+                "NPPPLUS_ASSETS_DIR=${results_dir}/assets/${variant}/nppplus"
                 ${ARGN})
             add_test(NAME "${test}" COMMAND "${script}" "${name}")
             set_tests_properties("${test}" PROPERTIES
