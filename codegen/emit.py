@@ -60,6 +60,12 @@ def unsupported(function, metadata) -> bool:
     )
 
 
+def client_result(backend: Backend, result: str, value: str) -> str:
+    if backend.record_result and result == backend.result:
+        return f"{backend.record_result}({value})"
+    return value
+
+
 def write_stub(f, backend: Backend, function):
     name = function.name.format()
     result = function.return_type.format()
@@ -68,9 +74,7 @@ def write_stub(f, backend: Backend, function):
     for parameter in function.parameters:
         if parameter.name:
             f.write(f"  (void){parameter.name};\n")
-    status = backend.not_supported
-    if backend.record_result and result == backend.result:
-        status = f"{backend.record_result}({status})"
+    status = client_result(backend, result, backend.not_supported)
     f.write(f"  return {status};\n}}\n\n")
 
 
@@ -116,7 +120,7 @@ def signed_length_arrays(operations) -> list[ArrayOperation]:
     ]
 
 
-def write_client_validation(f, backend: Backend, function, operations):
+def write_client_validation(f, backend: Backend, function, operations, *, record=True):
     checks = [
         f"{operation.length.name} < 0"
         for operation in signed_length_arrays(operations)
@@ -137,7 +141,10 @@ def write_client_validation(f, backend: Backend, function, operations):
         f.write("  if (" + " ||\n      ".join(checks) + ") {\n")
         result = function.return_type.format()
         if result == backend.result:
-            f.write(f"    return {backend.invalid_argument};\n")
+            status = backend.invalid_argument
+            if record:
+                status = client_result(backend, result, status)
+            f.write(f"    return {status};\n")
         elif result == "void":
             f.write("    return;\n")
         else:
@@ -240,12 +247,19 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
     name = function.name.format()
     result = function.return_type.format()
     params = ", ".join(format_function_params(function))
-    record = bool(backend.record_result) and result == backend.result
-    if record:
+    template = metadata.client_call_template
+    # Templates can return early, including from nested lambdas. Keep their
+    # recorder outside the body; ordinary forwarders record directly.
+    wrap = (
+        bool(backend.record_result)
+        and result == backend.result
+        and template is not None
+    )
+    if wrap:
         f.write(f"static {result} lupine_call_{name}({params}) {{\n")
     else:
         f.write(f'extern "C" {result} {name}({params}) {{\n')
-    write_client_validation(f, backend, function, operations)
+    write_client_validation(f, backend, function, operations, record=not wrap)
 
     call_args = format_call_args(function)
     if optional_async(backend, metadata):
@@ -307,7 +321,6 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
         f.write("  conn_t *conn = connection();\n")
     else:
         raise RuntimeError(f"{name}: unsupported routing key {metadata.routing_kind}")
-    template = metadata.client_call_template
     if template is not None and result == "void":
         f.write(textwrap.indent(template.before_call, "  "))
         f.write(f"  {call};\n")
@@ -318,9 +331,9 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
         f.write(textwrap.indent(template.after_call, "  "))
         f.write("  return return_value;\n")
     else:
-        f.write(f"  return {call};\n")
+        f.write(f"  return {client_result(backend, result, call)};\n")
     f.write("}\n\n")
-    if record:
+    if wrap:
         forwarded = ", ".join(format_call_args(function))
         f.write(f'extern "C" {result} {name}({params}) {{\n')
         f.write(
