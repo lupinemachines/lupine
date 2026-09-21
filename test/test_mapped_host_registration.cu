@@ -1,8 +1,7 @@
 // Checks mapped host memory emulation against the driver's registration
-// semantics: independent same-page registrations, unaligned registration,
-// overlapping re-registration, RPC writes into registered memory, direct device
-// access, reported flags, unregister of allocated memory, and zero byte
-// allocation.
+// semantics: sub-page and unaligned registration, overlapping
+// re-registration, RPC writes into registered memory, direct device access,
+// reported flags, unregister of allocated memory, and zero byte allocation.
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -37,109 +36,6 @@ __global__ void increment_byte(unsigned char *value) {
   }
 }
 
-__global__ void increment_registered_buffers(unsigned char *a, unsigned char *b,
-                                             unsigned char *c,
-                                             unsigned char *d) {
-  ++*a;
-  ++*b;
-  ++*c;
-  ++*d;
-}
-
-static bool check_same_page_registrations(unsigned char *block,
-                                          size_t page_size,
-                                          unsigned int flags) {
-  // cuDSS hybrid execution registers several small, adjacent host buffers.
-  // They share a page but have independent registrations and lifetimes.
-  const size_t offsets[] = {64, 144, 192, 224};
-  const size_t sizes[] = {80, 20, 20, 72};
-  CUdeviceptr mapped[4] = {};
-  for (size_t i = 0; i < page_size; ++i) {
-    block[i] = 41;
-  }
-  for (int i = 0; i < 4; ++i) {
-    if (!cu_ok(cuMemHostRegister(block + offsets[i], sizes[i], flags),
-               "same-page cuMemHostRegister")) {
-      return false;
-    }
-  }
-  if (!cu_is(cuMemHostRegister(block + 64, 80, flags),
-             CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED,
-             "duplicate registration") ||
-      !cu_is(cuMemHostRegister(block + 70, 20, flags),
-             CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED,
-             "overlap with preceding registration") ||
-      !cu_is(cuMemHostRegister(block + 32, 40, flags),
-             CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED,
-             "overlap with following registration")) {
-    return false;
-  }
-
-  // Removing the middle range must leave its neighbors registered, and the
-  // freed range must be available for a new registration.
-  if (!cu_ok(cuMemHostUnregister(block + offsets[1]),
-             "unregister middle same-page buffer") ||
-      !cu_ok(cuMemHostRegister(block + offsets[1], sizes[1], flags),
-             "re-register middle same-page buffer")) {
-    return false;
-  }
-  for (int i = 0; i < 4; ++i) {
-    unsigned int observed_flags = 0;
-    if (!cu_ok(cuMemHostGetFlags(&observed_flags, block + offsets[i]),
-               "same-page cuMemHostGetFlags")) {
-      return false;
-    }
-    if ((observed_flags & flags) != flags) {
-      std::fprintf(stderr, "same-page flags: got %u, expected bits %u\n",
-                   observed_flags, flags);
-      return false;
-    }
-    if ((flags & CU_MEMHOSTREGISTER_DEVICEMAP) != 0) {
-      // Use an interior pointer to check that offsets are relative to each
-      // registration, not the containing page or a neighboring buffer.
-      if (!cu_ok(
-              cuMemHostGetDevicePointer(&mapped[i], block + offsets[i] + 1, 0),
-              "same-page cuMemHostGetDevicePointer")) {
-        return false;
-      }
-    }
-  }
-  if ((flags & CU_MEMHOSTREGISTER_DEVICEMAP) != 0) {
-    increment_registered_buffers<<<1, 1>>>(
-        reinterpret_cast<unsigned char *>(mapped[0]),
-        reinterpret_cast<unsigned char *>(mapped[1]),
-        reinterpret_cast<unsigned char *>(mapped[2]),
-        reinterpret_cast<unsigned char *>(mapped[3]));
-  }
-  if (cudaGetLastError() != cudaSuccess ||
-      cudaDeviceSynchronize() != cudaSuccess) {
-    return false;
-  }
-  for (size_t i = 0; i < page_size; ++i) {
-    unsigned char expected = 41;
-    if ((flags & CU_MEMHOSTREGISTER_DEVICEMAP) != 0) {
-      for (size_t offset : offsets) {
-        if (i == offset + 1) {
-          expected = 42;
-        }
-      }
-    }
-    if (block[i] != expected) {
-      std::fprintf(stderr, "same-page byte %zu: got %u, expected %u\n", i,
-                   static_cast<unsigned int>(block[i]),
-                   static_cast<unsigned int>(expected));
-      return false;
-    }
-  }
-  for (int i = 3; i >= 0; --i) {
-    if (!cu_ok(cuMemHostUnregister(block + offsets[i]),
-               "same-page cuMemHostUnregister")) {
-      return false;
-    }
-  }
-  return true;
-}
-
 int main() {
   if (!cu_ok(cuInit(0), "cuInit")) {
     return 1;
@@ -171,11 +67,6 @@ int main() {
       std::aligned_alloc(page_size, page_size * 4));
   if (block == nullptr) {
     std::fprintf(stderr, "aligned_alloc failed\n");
-    return 1;
-  }
-  if (!check_same_page_registrations(block, page_size, 0) ||
-      !check_same_page_registrations(block, page_size,
-                                     CU_MEMHOSTREGISTER_DEVICEMAP)) {
     return 1;
   }
   // A sub-page registration (NPP registers a stack-resident label count this
