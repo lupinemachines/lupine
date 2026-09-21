@@ -6068,7 +6068,7 @@ ERROR_0:
 
 #endif
 
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13030
 int handle_cudaStreamBeginRecaptureToGraph(conn_t *conn) {
   cudaStream_t stream;
   enum cudaStreamCaptureMode mode;

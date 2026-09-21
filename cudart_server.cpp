@@ -1456,7 +1456,7 @@ int handle_cudaLaunchHostFunc(conn_t *conn) {
   return 0;
 }
 
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13020
 int handle_cudaLaunchHostFunc_v2(conn_t *conn) {
   cudaStream_t stream = nullptr;
   cudaHostFn_t callback = nullptr;

@@ -2844,7 +2844,7 @@ extern "C" cudaError_t cudaLaunchHostFunc(cudaStream_t stream,
   return lupine_rpc_cudaLaunchHostFunc(conn, stream, callbackFunc, userData);
 }
 
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13020
 static cudaError_t lupine_rpc_cudaLaunchHostFunc_v2(conn_t *conn,
                                                     cudaStream_t stream,
                                                     cudaHostFn_t callbackFunc,
@@ -5205,7 +5205,7 @@ static cudaError_t lupine_rpc_cudaStreamBeginCaptureToGraph(
 
 #endif
 
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13030
 static cudaError_t lupine_rpc_cudaStreamBeginRecaptureToGraph(
     conn_t *conn, cudaStream_t stream, enum cudaStreamCaptureMode mode,
     cudaGraph_t graph, struct cudaGraphRecaptureCallbackData *callbackData) {

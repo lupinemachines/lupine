@@ -9410,7 +9410,7 @@ LUPINE_CUDART_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 LUPINE_DECLARE_HANDLER(RPC_cudaFuncGetName, handle_cudaFuncGetName,
                        rpc_backend::cudart)
 #endif
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13020
 LUPINE_DECLARE_HANDLER(RPC_cudaLaunchHostFunc_v2, handle_cudaLaunchHostFunc_v2,
                        rpc_backend::cudart)
 #endif
@@ -9656,7 +9656,7 @@ LUPINE_DECLARE_HANDLER(RPC_cudaStreamBeginCaptureToGraph,
                        handle_cudaStreamBeginCaptureToGraph,
                        rpc_backend::cudart)
 #endif
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13030
 LUPINE_DECLARE_HANDLER(RPC_cudaStreamBeginRecaptureToGraph,
                        handle_cudaStreamBeginRecaptureToGraph,
                        rpc_backend::cudart)
@@ -38033,7 +38033,7 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #if CUDART_VERSION >= 12000
       LUPINE_REGISTER_HANDLER(RPC_cudaFuncGetName, handle_cudaFuncGetName, rpc_backend::cudart)
 #endif
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13020
       LUPINE_REGISTER_HANDLER(RPC_cudaLaunchHostFunc_v2, handle_cudaLaunchHostFunc_v2, rpc_backend::cudart)
 #endif
 #if CUDART_VERSION < 13000
@@ -38207,7 +38207,7 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #if CUDART_VERSION >= 12000
       LUPINE_REGISTER_HANDLER(RPC_cudaStreamBeginCaptureToGraph, handle_cudaStreamBeginCaptureToGraph, rpc_backend::cudart)
 #endif
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13030
       LUPINE_REGISTER_HANDLER(RPC_cudaStreamBeginRecaptureToGraph, handle_cudaStreamBeginRecaptureToGraph, rpc_backend::cudart)
 #endif
 #if CUDART_VERSION >= 13000

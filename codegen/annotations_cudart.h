@@ -1028,10 +1028,10 @@ cudaError_t cudaLaunchCooperativeKernel(const void *func, dim3 gridDim,
  */
 cudaError_t cudaLaunchHostFunc(cudaStream_t stream, cudaHostFn_t callbackFunc,
                                void *userData);
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13020
 /**
  * @disabled server - delivers the callback through the shared side-effect lane
- * @guard CUDART_VERSION >= 13000
+ * @guard CUDART_VERSION >= 13020
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param callbackFunc SEND_ONLY
@@ -1954,9 +1954,9 @@ cudaError_t cudaStreamBeginCaptureToGraph(
     const cudaGraphEdgeData *dependencyData, size_t numDependencies,
     enum cudaStreamCaptureMode mode);
 #endif
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13030
 /**
- * @guard CUDART_VERSION >= 13000
+ * @guard CUDART_VERSION >= 13030
  * @routingkey STREAM stream
  * @param stream SEND_ONLY
  * @param mode SEND_ONLY
