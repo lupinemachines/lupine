@@ -90,8 +90,7 @@ static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
 struct lupine_host_allocation {
   size_t size = 0;
   size_t storage_size = 0;
-  // Exact caller range; the tracked range above is rounded out to whole pages,
-  // so Lupine only owns [data_offset, data_offset + user_size) of it.
+  // Exact caller range; owned allocations may have page-rounded storage.
   uintptr_t user_base = 0;
   size_t user_size = 0;
   size_t data_offset = 0;
@@ -1486,10 +1485,9 @@ static bool lupine_host_ptr_is_tracked(CUdeviceptr ptr) {
 
 // Whether the driver would treat this address as page-locked, which is true of
 // exactly the ranges the caller handed to cuMemHostAlloc, cuMemAllocHost,
-// cuMemHostRegister or cuMemAllocManaged. Tracked ranges are rounded out to
-// whole pages, so the exact caller range is what has to be tested: a plain
-// malloc that merely shares a page with a registered one is still pageable, and
-// treating it as page-locked would defer a copy the driver completes inline.
+// cuMemHostRegister or cuMemAllocManaged. A plain malloc that shares a page
+// with a registered buffer is still pageable: treating it as page-locked would
+// defer a copy the driver completes inline.
 extern "C" bool lupine_host_ptr_is_page_locked(const void *host) {
   if (host == nullptr) {
     return false;
@@ -2105,28 +2103,16 @@ lupine_find_host_allocation_locked(void *p) {
   return allocations.end();
 }
 
-static void lupine_covering_pages(void *p, size_t bytesize, uintptr_t *base,
-                                  size_t *size) {
-  size_t page_size = lupine_page_size();
-  uintptr_t start = reinterpret_cast<uintptr_t>(p);
-  uintptr_t page_base = start & ~(static_cast<uintptr_t>(page_size) - 1);
-  uintptr_t end = lupine_round_up(start + bytesize, page_size);
-  *base = page_base;
-  *size = end - page_base;
-}
-
-static bool lupine_host_pages_registered_locked(uintptr_t base, size_t size) {
+static bool lupine_host_range_registered_locked(uintptr_t base, size_t size) {
   auto &allocations = lupine_mutable_host_allocations_locked();
   uintptr_t end = base + size;
   auto upper = allocations.upper_bound(reinterpret_cast<void *>(base));
   if (upper != allocations.begin()) {
     auto prev = std::prev(upper);
-    uintptr_t prev_base = 0;
-    size_t prev_size = 0;
-    size_t prev_span = std::max(prev->second.size, prev->second.storage_size);
-    lupine_covering_pages(prev->first, prev_span == 0 ? 1 : prev_span,
-                          &prev_base, &prev_size);
-    if (prev_base + prev_size > base) {
+    uintptr_t prev_base = reinterpret_cast<uintptr_t>(prev->first);
+    // Owned allocations reserve their padded storage for page protection.
+    size_t prev_size = std::max(prev->second.size, prev->second.storage_size);
+    if (prev_base == base || prev_size > base - prev_base) {
       return true;
     }
   }
@@ -2577,8 +2563,12 @@ extern "C" CUresult cuMemHostGetDevicePointer_v2(CUdeviceptr *pdptr, void *p,
     CUresult result =
         lupine_register_host(reinterpret_cast<void *>(page), page_size,
                              CU_MEMHOSTREGISTER_DEVICEMAP, true);
-    if (result != CUDA_SUCCESS &&
-        result != CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED) {
+    if (result == CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED) {
+      // The query may be in an unregistered gap on a shared page. Retrying
+      // that query would never find an allocation containing it.
+      return CUDA_ERROR_INVALID_VALUE;
+    }
+    if (result != CUDA_SUCCESS) {
       return result;
     }
     return cuMemHostGetDevicePointer_v2(pdptr, p, Flags);
@@ -2687,13 +2677,16 @@ static CUresult lupine_register_host_on_route(lupine_route route, void *p,
     return CUDA_ERROR_INVALID_VALUE;
   }
 
-  uintptr_t covering_base = 0;
-  size_t covering_size = 0;
-  lupine_covering_pages(p, bytesize, &covering_base, &covering_size);
+  // CUDA permits disjoint registrations within the same page. Keep each
+  // caller's byte range independent, including its remote backing and lifetime.
+  uintptr_t base = reinterpret_cast<uintptr_t>(p);
+  if (bytesize > UINTPTR_MAX - base) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
 
   {
     std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-    if (lupine_host_pages_registered_locked(covering_base, covering_size)) {
+    if (lupine_host_range_registered_locked(base, bytesize)) {
       return CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED;
     }
   }
@@ -2730,13 +2723,12 @@ static CUresult lupine_register_host_on_route(lupine_route route, void *p,
   }
 
   size_t page_size = lupine_page_size();
-  void *tracked = reinterpret_cast<void *>(covering_base);
 
   void *server_host = nullptr;
   CUdeviceptr device_ptr = 0;
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult result =
-      allocate(conn, tracked, covering_size, Flags, &server_host, &device_ptr);
+      allocate(conn, p, bytesize, Flags, &server_host, &device_ptr);
   if (result != CUDA_SUCCESS) {
     if (server_host != nullptr) {
       release(conn, server_host);
@@ -2746,33 +2738,32 @@ static CUresult lupine_register_host_on_route(lupine_route route, void *p,
 
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   auto &allocations = lupine_mutable_host_allocations_locked();
-  if (lupine_host_pages_registered_locked(covering_base, covering_size)) {
+  if (lupine_host_range_registered_locked(base, bytesize)) {
     if (server_host != nullptr) {
       release(conn, server_host);
     }
     return CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED;
   }
   lupine_host_allocation allocation;
-  allocation.size = covering_size;
-  allocation.storage_size = covering_size;
-  allocation.user_base = reinterpret_cast<uintptr_t>(p);
+  allocation.size = bytesize;
+  allocation.storage_size = bytesize;
+  allocation.user_base = base;
   allocation.user_size = bytesize;
-  allocation.data_offset = reinterpret_cast<uintptr_t>(p) - covering_base;
   allocation.page_size = page_size;
-  allocation.page_count = covering_size / page_size;
+  allocation.page_count = lupine_round_up(bytesize, page_size) / page_size;
   allocation.flags = Flags;
   allocation.owned = false;
   allocation.owned_mmap = false;
   allocation.client_to_server_only = client_to_server_only;
   allocation.server_host_ptr = reinterpret_cast<CUdeviceptr>(server_host);
   allocation.device_ptr = device_ptr;
-  allocation.host_base = covering_base;
+  allocation.host_base = base;
   allocation.route_id = lupine_route_identity(route);
-  allocations.emplace(tracked, std::move(allocation));
+  allocations.emplace(p, std::move(allocation));
   if (server_host != nullptr) {
     lupine_note_deviceptr_allocation_route(
-        reinterpret_cast<CUdeviceptr>(server_host), covering_size, route);
-    lupine_note_deviceptr_allocation_route(device_ptr, covering_size, route);
+        reinterpret_cast<CUdeviceptr>(server_host), bytesize, route);
+    lupine_note_deviceptr_allocation_route(device_ptr, bytesize, route);
   }
   return CUDA_SUCCESS;
 }
