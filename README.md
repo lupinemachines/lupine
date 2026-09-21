@@ -174,6 +174,18 @@ synchronization captures server fd 1 and forwards the bounded CUDA `printf`
 buffer to the client's stdout. Capture remains process-global so output from
 concurrent synchronization lanes is not misattributed.
 
+## Library Load Profiles
+
+The client records which library images an application loads, keyed by the
+containing mapped object's GNU build-id and file offset, in a per-application
+profile (`$XDG_CACHE_HOME/lupine/profiles/<key>`, keyed by
+`LUPINE_LIBRARY_PROFILE` or the hash of the command line; an empty
+`LUPINE_LIBRARY_PROFILE` disables it). The next run of the same command line
+re-reads those images from its own mapped objects at its first remote load and
+requests them all in one round trip instead of one per library; an image that
+is no longer mapped at that offset simply loads as before. The server keeps
+nothing between connections and writes nothing to disk.
+
 ## Multi-GPU Across Multiple Servers
 
 The client accepts a comma-separated `LUPINE_SERVER` list. Devices are exposed as

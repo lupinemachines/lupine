@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <cuda.h>
 #include <cuda_occupancy.h>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -25,6 +28,9 @@
 #ifndef _WIN32
 #include <arpa/inet.h>
 #include <dlfcn.h>
+#if defined(__linux__)
+#include <link.h>
+#endif
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
@@ -62,6 +68,7 @@
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 #include "transport.h"
+#include "xxhash.h"
 
 #ifdef cuMemPrefetchAsync
 #undef cuMemPrefetchAsync
@@ -5683,6 +5690,12 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
         lupine_read_kernel_attributes(conn, route, kernel, device) < 0) {
       return -1;
     }
+    if (function != nullptr && device >= 0) {
+      lupine_function_attribute_cache().insert_or_assign(
+          lupine_function_attribute_key{lupine_route_identity(route), function,
+                                        LUPINE_FUNC_ATTRIBUTE_DEVICE},
+          device);
+    }
     lupine_param_layout_count_cache().insert_or_assign(
         lupine_param_layout_key{reinterpret_cast<uintptr_t>(kernel), true},
         param_count);
@@ -5706,6 +5719,386 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
     }
   }
   return 0;
+}
+
+// A profiled library image: the GNU build-id of the mapped object it is
+// embedded in, its file offset there, and the load parameters. `record` is the
+// profile form: kind, packed size, id length, id, offset, then the option tail
+// (JIT options, then library options with an absent value array encoded as
+// each option's complement), which is also the request tail on the wire.
+// Claims compare the whole record, so a pointer-valued option that differs
+// between runs misses. An image outside any mapped object has an empty id and
+// is never profiled.
+struct lupine_library_reference {
+  std::string id;
+  uint64_t offset = 0;
+  uint64_t size = 0;
+  uint32_t kind = 0;
+  std::string record;
+};
+
+static void lupine_library_reference_record(lupine_library_reference *ref,
+                                            CUjit_option *jitOptions,
+                                            void **jitOptionsValues,
+                                            unsigned int numJitOptions,
+                                            CUlibraryOption *libraryOptions,
+                                            void **libraryOptionValues,
+                                            unsigned int numLibraryOptions) {
+  std::string &out = ref->record;
+  auto append = [&](const void *data, size_t size) {
+    if (size != 0) {
+      out.append(static_cast<const char *>(data), size);
+    }
+  };
+  auto id_size = static_cast<uint8_t>(ref->id.size());
+  out.clear();
+  append(&ref->kind, sizeof(ref->kind));
+  append(&ref->size, sizeof(ref->size));
+  append(&id_size, sizeof(id_size));
+  append(ref->id.data(), id_size);
+  append(&ref->offset, sizeof(ref->offset));
+  append(&numJitOptions, sizeof(numJitOptions));
+  append(jitOptions, numJitOptions * sizeof(*jitOptions));
+  append(jitOptionsValues, numJitOptions * sizeof(*jitOptionsValues));
+  append(&numLibraryOptions, sizeof(numLibraryOptions));
+  append(libraryOptions, numLibraryOptions * sizeof(*libraryOptions));
+  for (unsigned int i = 0; i < numLibraryOptions; ++i) {
+    uintptr_t value = libraryOptionValues != nullptr
+                          ? reinterpret_cast<uintptr_t>(libraryOptionValues[i])
+                          : ~static_cast<uintptr_t>(libraryOptions[i]);
+    append(&value, sizeof(value));
+  }
+}
+
+// A profiled record goes on the wire only after its shape checks out: a
+// truncated option tail would desynchronize the lane.
+static bool lupine_library_reference_decode(const std::string &record,
+                                            lupine_library_reference *ref) {
+  if (record.size() < 21) {
+    return false;
+  }
+  auto id_size = static_cast<uint8_t>(record[12]);
+  std::memcpy(&ref->kind, record.data(), sizeof(ref->kind));
+  std::memcpy(&ref->size, record.data() + 4, sizeof(ref->size));
+  size_t at = 21u + id_size;
+  unsigned int counts[2] = {0, 0};
+  for (unsigned int &count : counts) {
+    if (record.size() < at + sizeof(count)) {
+      return false;
+    }
+    std::memcpy(&count, record.data() + at, sizeof(count));
+    at += sizeof(count) + static_cast<size_t>(count) * 12u;
+  }
+  if (id_size == 0 || ref->size < sizeof(lupine_fatbin_header) ||
+      at != record.size() || counts[0] != 0) {
+    return false;
+  }
+  ref->id.assign(record, 13, id_size);
+  std::memcpy(&ref->offset, record.data() + 13 + id_size, sizeof(ref->offset));
+  ref->record = record;
+  return true;
+}
+
+// Locating a fatbin among the objects mapped into this process, in either
+// direction: from its address to the containing object's build-id and file
+// offset, or from a profiled build-id and offset back to its bytes.
+#if defined(__linux__)
+struct lupine_fatbin_locator {
+  lupine_library_reference *ref;
+  const unsigned char *data;
+};
+
+// The NT_GNU_BUILD_ID note of the object's PT_NOTE segments; note headers are
+// padded to the segment's alignment, 4 or 8.
+static std::string lupine_object_build_id(const dl_phdr_info *info) {
+  for (int i = 0; i < info->dlpi_phnum; ++i) {
+    const ElfW(Phdr) &ph = info->dlpi_phdr[i];
+    const auto *notes =
+        reinterpret_cast<const unsigned char *>(info->dlpi_addr + ph.p_vaddr);
+    const size_t pad = ph.p_align == 8 ? 8 : 4;
+    for (size_t at = 0;
+         ph.p_type == PT_NOTE && at + sizeof(ElfW(Nhdr)) <= ph.p_filesz;) {
+      const auto *note = reinterpret_cast<const ElfW(Nhdr) *>(notes + at);
+      size_t name = at + sizeof(*note);
+      size_t desc = name + ((note->n_namesz + pad - 1) & ~(pad - 1));
+      if (desc + note->n_descsz > ph.p_filesz) {
+        break;
+      }
+      if (note->n_type == NT_GNU_BUILD_ID && note->n_namesz == 4 &&
+          std::memcmp(notes + name, "GNU", 4) == 0) {
+        return std::string(reinterpret_cast<const char *>(notes + desc),
+                           note->n_descsz);
+      }
+      at = desc + ((note->n_descsz + pad - 1) & ~(pad - 1));
+    }
+  }
+  return {};
+}
+
+static int lupine_locate_fatbin_in_object(dl_phdr_info *info, size_t,
+                                          void *arg) {
+  auto *locator = static_cast<lupine_fatbin_locator *>(arg);
+  lupine_library_reference &ref = *locator->ref;
+  for (int i = 0; i < info->dlpi_phnum; ++i) {
+    const ElfW(Phdr) &ph = info->dlpi_phdr[i];
+    uintptr_t start = info->dlpi_addr + ph.p_vaddr;
+    // Unsigned: an address or offset before the segment wraps past p_filesz.
+    uint64_t at = ref.id.empty()
+                      ? reinterpret_cast<uintptr_t>(locator->data) - start
+                      : ref.offset - ph.p_offset;
+    if (ph.p_type != PT_LOAD || at >= ph.p_filesz ||
+        ref.size > ph.p_filesz - at) {
+      continue;
+    }
+    if (ref.id.empty()) {
+      ref.id = lupine_object_build_id(info);
+      ref.offset = ph.p_offset + at;
+      return 1;
+    }
+    if (lupine_object_build_id(info) != ref.id) {
+      return 0;
+    }
+    locator->data = reinterpret_cast<const unsigned char *>(start + at);
+    return 1;
+  }
+  return 0;
+}
+
+static bool lupine_locate_fatbin(const void *data,
+                                 lupine_library_reference *ref) {
+  lupine_fatbin_locator locator{ref, static_cast<const unsigned char *>(data)};
+  ref->id.clear();
+  return dl_iterate_phdr(lupine_locate_fatbin_in_object, &locator) != 0 &&
+         !ref->id.empty();
+}
+
+static const unsigned char *
+lupine_mapped_fatbin(lupine_library_reference *ref) {
+  lupine_fatbin_locator locator{ref, nullptr};
+  if (dl_iterate_phdr(lupine_locate_fatbin_in_object, &locator) == 0) {
+    return nullptr;
+  }
+  const auto *header =
+      reinterpret_cast<const lupine_fatbin_header *>(locator.data);
+  return header->magic == LUPINE_FATBIN_MAGIC &&
+                 header->header_size + header->files_size == ref->size
+             ? locator.data
+             : nullptr;
+}
+#else
+static bool lupine_locate_fatbin(const void *, lupine_library_reference *) {
+  return false;
+}
+
+static const unsigned char *lupine_mapped_fatbin(lupine_library_reference *) {
+  return nullptr;
+}
+#endif
+
+// Writes one image as kind, size, bytes and the option tail, all from
+// caller-owned storage: rpc_write queues pointers until the response.
+static int lupine_write_library_image(conn_t *conn,
+                                      const lupine_library_reference &ref,
+                                      const unsigned char *image) {
+  size_t options = 21 + ref.id.size();
+  if (rpc_write(conn, ref.record.data(), 12) < 0 ||
+      rpc_write(conn, image, ref.size) < 0 ||
+      rpc_write(conn, ref.record.data() + options,
+                ref.record.size() - options) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+static int lupine_read_library_load_response(
+    conn_t *conn, unsigned int numJitOptions, const CUjit_option *jitOptions,
+    void **jitOptionsValues, CUlibrary *library, CUresult *result) {
+  if (rpc_read(conn, library, sizeof(*library)) < 0 ||
+      lupine_read_jit_outputs(conn, numJitOptions, jitOptions,
+                              jitOptionsValues) < 0 ||
+      rpc_read(conn, result, sizeof(*result)) < 0 ||
+      (*result == CUDA_SUCCESS && lupine_read_library(conn, *library) < 0)) {
+    return -1;
+  }
+  return 0;
+}
+
+// One batch per process, for the route of the first remote load: the images
+// the previous run of this command line loaded, re-read from this process's
+// own mapping of their objects and requested in one round trip. Entries are
+// handed out once, so every handle cudart receives is distinct and
+// cuLibraryUnload keeps its native meaning.
+struct lupine_library_batch_entry {
+  lupine_library_reference ref;
+  const unsigned char *image = nullptr;
+  CUlibrary library = nullptr;
+  CUresult result = CUDA_ERROR_UNKNOWN;
+};
+
+struct lupine_library_batch_state {
+  std::mutex mutex;
+  std::condition_variable finished_cv;
+  bool started = false;
+  bool finished = true;
+  int route_id = -2;
+  std::vector<lupine_library_batch_entry> entries;
+  std::filesystem::path profile;
+  std::string lines;
+};
+
+static lupine_library_batch_state &lupine_library_batch() {
+  static auto *state = new lupine_library_batch_state();
+  return *state;
+}
+
+// Profiles are keyed by LUPINE_LIBRARY_PROFILE or the full command line, so
+// `python train.py` and `python eval.py` keep separate load orders.
+static std::filesystem::path lupine_library_profile_path() {
+  const char *name = std::getenv("LUPINE_LIBRARY_PROFILE");
+  const char *xdg = std::getenv("XDG_CACHE_HOME");
+  const char *home = std::getenv("HOME");
+  std::string key = name != nullptr ? name : "";
+  if (name == nullptr) {
+    std::ifstream cmdline("/proc/self/cmdline", std::ios::binary);
+    std::string argv((std::istreambuf_iterator<char>(cmdline)),
+                     std::istreambuf_iterator<char>());
+    char hex[17];
+    std::snprintf(
+        hex, sizeof(hex), "%016llx",
+        static_cast<unsigned long long>(XXH64(argv.data(), argv.size(), 0)));
+    key = argv.empty() ? "" : hex;
+  }
+  std::filesystem::path dir = xdg != nullptr && *xdg != '\0'
+                                  ? std::filesystem::path(xdg)
+                              : home != nullptr && *home != '\0'
+                                  ? std::filesystem::path(home) / ".cache"
+                                  : std::filesystem::path();
+  return dir.empty() || key.empty() ? std::filesystem::path()
+                                    : dir / "lupine" / "profiles" / key;
+}
+
+// Through a temp file, so a concurrent reader never sees a partial profile.
+static void lupine_write_file_atomically(const std::filesystem::path &path,
+                                         const std::string &data) {
+  std::error_code ec;
+  std::filesystem::create_directories(path.parent_path(), ec);
+  std::filesystem::path temp = path;
+  temp += "." +
+          std::to_string(
+              std::chrono::steady_clock::now().time_since_epoch().count()) +
+          ".tmp";
+  std::ofstream out(temp, std::ios::binary);
+  out.write(data.data(), static_cast<std::streamsize>(data.size()));
+  out.close();
+  if (out) {
+    std::filesystem::rename(temp, path, ec);
+  }
+  std::filesystem::remove(temp, ec);
+}
+
+// Runs on its own lane with the app's context current: the server loads under
+// it, and lupine_read_library keys its caches by the reading thread's context.
+static void lupine_library_batch_main(conn_t *conn, CUcontext context) {
+  auto &state = lupine_library_batch();
+  lupine_current_context = context;
+  std::vector<lupine_library_batch_entry *> sent;
+  for (auto &entry : state.entries) {
+    if ((entry.image = lupine_mapped_fatbin(&entry.ref)) != nullptr) {
+      sent.push_back(&entry);
+    }
+  }
+  auto count = static_cast<uint32_t>(sent.size());
+  bool ok =
+      count != 0 && lupine_prepare_rpc(conn) >= 0 &&
+      rpc_write_start_request(conn, LUPINE_RPC_lupineLibraryLoadBatch) >= 0 &&
+      rpc_write(conn, &context, sizeof(context)) >= 0 &&
+      rpc_write(conn, &count, sizeof(count)) >= 0;
+  for (auto *entry : sent) {
+    ok = ok && lupine_write_library_image(conn, entry->ref, entry->image) >= 0;
+  }
+  ok = ok && rpc_wait_for_response(conn) >= 0;
+  uint32_t loaded = 0;
+  for (auto *entry : sent) {
+    if (!ok || lupine_read_library_load_response(conn, 0, nullptr, nullptr,
+                                                 &entry->library,
+                                                 &entry->result) < 0) {
+      ok = false;
+      entry->result = CUDA_ERROR_UNKNOWN;
+    }
+    loaded += entry->result == CUDA_SUCCESS;
+  }
+  ok = ok && rpc_read_end(conn) >= 0;
+  LUPINE_TRACE_LOG("LUPINE library batch: "
+                   << state.entries.size() << " profiled, " << count
+                   << " sent, " << loaded << " loaded, ok=" << ok);
+  std::lock_guard<std::mutex> lock(state.mutex);
+  state.finished = true;
+  state.finished_cv.notify_all();
+}
+
+static void lupine_library_batch_start(lupine_route route) {
+  auto &state = lupine_library_batch();
+  std::lock_guard<std::mutex> lock(state.mutex);
+  if (state.started) {
+    return;
+  }
+  state.started = true;
+  state.route_id = lupine_route_identity(route);
+  state.profile = lupine_library_profile_path();
+  std::ifstream in(state.profile, std::ios::binary);
+  std::string data((std::istreambuf_iterator<char>(in)),
+                   std::istreambuf_iterator<char>());
+  for (size_t at = 0; at + 4 <= data.size() && state.entries.size() < 4096;) {
+    uint32_t size = 0;
+    std::memcpy(&size, &data[at], sizeof(size));
+    at += sizeof(size);
+    lupine_library_batch_entry entry;
+    if (size > data.size() - at ||
+        !lupine_library_reference_decode(data.substr(at, size), &entry.ref)) {
+      break;
+    }
+    at += size;
+    state.entries.push_back(std::move(entry));
+  }
+  if (!state.entries.empty()) {
+    state.finished = false;
+    std::thread(lupine_library_batch_main, lupine_route_remote_conn(route),
+                lupine_current_context)
+        .detach();
+  }
+}
+
+static bool lupine_library_batch_claim(lupine_route route,
+                                       const lupine_library_reference &ref,
+                                       CUlibrary *library) {
+  auto &state = lupine_library_batch();
+  std::unique_lock<std::mutex> lock(state.mutex);
+  if (lupine_route_identity(route) != state.route_id) {
+    return false;
+  }
+  state.finished_cv.wait(lock, [&] { return state.finished; });
+  auto it = std::find_if(
+      state.entries.begin(), state.entries.end(),
+      [&](const auto &entry) { return entry.ref.record == ref.record; });
+  if (it == state.entries.end() || it->result != CUDA_SUCCESS) {
+    return false;
+  }
+  *library = it->library;
+  state.entries.erase(it);
+  return true;
+}
+
+static void lupine_library_profile_record(lupine_route route,
+                                          const lupine_library_reference &ref) {
+  auto &state = lupine_library_batch();
+  std::lock_guard<std::mutex> lock(state.mutex);
+  if (state.profile.empty() || lupine_route_identity(route) != state.route_id) {
+    return;
+  }
+  auto size = static_cast<uint32_t>(ref.record.size());
+  state.lines.append(reinterpret_cast<const char *>(&size), sizeof(size));
+  state.lines += ref.record;
+  lupine_write_file_atomically(state.profile, state.lines);
 }
 
 extern "C" CUresult
@@ -5745,50 +6138,35 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
     return result;
   }
 
+  // Loads carrying JIT options are never profiled: their log buffers and
+  // wall-time outputs belong to the call that passes them.
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  size_t image_size = image_bytes.size();
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
-      rpc_copy_alloc(conn, libraryOptionValues == nullptr
-                               ? numLibraryOptions * sizeof(uintptr_t)
-                               : 0) < 0 ||
-      rpc_write(conn, &kind, sizeof(kind)) < 0 ||
-      rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
-      rpc_write(conn, &numJitOptions, sizeof(numJitOptions)) < 0 ||
-      rpc_write(conn, jitOptions, numJitOptions * sizeof(*jitOptions)) < 0 ||
-      rpc_write(conn, jitOptionsValues,
-                numJitOptions * sizeof(*jitOptionsValues)) < 0 ||
-      rpc_write(conn, &numLibraryOptions, sizeof(numLibraryOptions)) < 0 ||
-      rpc_write(conn, libraryOptions,
-                numLibraryOptions * sizeof(*libraryOptions)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (libraryOptionValues != nullptr) {
-    if (rpc_write(conn, libraryOptionValues,
-                  numLibraryOptions * sizeof(*libraryOptionValues)) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  } else {
-    auto *wire_values = static_cast<uintptr_t *>(rpc_write_buffer(
-        conn, numLibraryOptions * sizeof(uintptr_t), alignof(uintptr_t)));
-    for (unsigned int i = 0; i < numLibraryOptions; ++i) {
-      wire_values[i] = ~static_cast<uintptr_t>(libraryOptions[i]);
-    }
-  }
-  if (rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, library, sizeof(CUlibrary)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (lupine_read_jit_outputs(conn, numJitOptions, jitOptions,
-                              jitOptionsValues) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      (return_value == CUDA_SUCCESS &&
-       lupine_read_library(conn, *library) < 0) ||
-      rpc_read_end(conn) < 0) {
+  lupine_library_reference ref;
+  ref.kind = kind;
+  ref.size = image_bytes.size();
+  const void *fatbin =
+      kind == LUPINE_MODULE_IMAGE_FATBIN_RAW
+          ? code
+          : reinterpret_cast<const lupine_fatbin_wrapper *>(code)->data;
+  bool profiled =
+      numJitOptions == 0 && ref.size >= sizeof(lupine_fatbin_header) &&
+      reinterpret_cast<const lupine_fatbin_header *>(fatbin)->magic ==
+          LUPINE_FATBIN_MAGIC &&
+      lupine_locate_fatbin(fatbin, &ref);
+  lupine_library_reference_record(&ref, jitOptions, jitOptionsValues,
+                                  numJitOptions, libraryOptions,
+                                  libraryOptionValues, numLibraryOptions);
+  lupine_library_batch_start(route);
+  CUresult return_value = CUDA_SUCCESS;
+  if (!(profiled && lupine_library_batch_claim(route, ref, library)) &&
+      (lupine_prepare_rpc(conn) < 0 ||
+       rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
+       lupine_write_library_image(conn, ref, image_bytes.data()) < 0 ||
+       rpc_wait_for_response(conn) < 0 ||
+       lupine_read_library_load_response(conn, numJitOptions, jitOptions,
+                                         jitOptionsValues, library,
+                                         &return_value) < 0 ||
+       rpc_read_end(conn) < 0)) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
@@ -5796,6 +6174,9 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
     lupine_record_library_image(*library, lupine_remote_route_for_conn(conn),
                                 kind, image_bytes.data(), image_bytes.size(),
                                 code);
+    if (profiled) {
+      lupine_library_profile_record(route, ref);
+    }
   }
   return return_value;
 }
