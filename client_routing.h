@@ -53,6 +53,12 @@ extern "C" lupine_route lupine_route_for_graph_exec(CUgraphExec exec);
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr);
 extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr);
 
+// The connection the caller's device binding sits on, or -1 before anything
+// has bound one. Every rebinding passes through
+// lupine_note_device_binding_moved.
+extern "C" void lupine_note_device_binding_moved(conn_t *conn);
+extern "C" int lupine_device_binding_conn_index();
+
 extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);
 extern "C" conn_t *lupine_rpc_conn_for_current_context();
 extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx);

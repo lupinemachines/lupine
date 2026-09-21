@@ -1062,18 +1062,6 @@ cudaDeviceRegisterAsyncNotification(int device, cudaAsyncCallback callbackFunc,
 
 #endif
 
-static cudaError_t lupine_rpc_cudaDeviceReset(conn_t *conn) {
-  cudaError_t return_value = rpc_error();
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_cudaDeviceReset) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
 static cudaError_t
 lupine_rpc_cudaDeviceSetCacheConfig(conn_t *conn,
                                     enum cudaFuncCache cacheConfig) {
@@ -2844,7 +2832,7 @@ extern "C" cudaError_t cudaLaunchHostFunc(cudaStream_t stream,
   return lupine_rpc_cudaLaunchHostFunc(conn, stream, callbackFunc, userData);
 }
 
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13020
 static cudaError_t lupine_rpc_cudaLaunchHostFunc_v2(conn_t *conn,
                                                     cudaStream_t stream,
                                                     cudaHostFn_t callbackFunc,
@@ -5205,7 +5193,7 @@ static cudaError_t lupine_rpc_cudaStreamBeginCaptureToGraph(
 
 #endif
 
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13030
 static cudaError_t lupine_rpc_cudaStreamBeginRecaptureToGraph(
     conn_t *conn, cudaStream_t stream, enum cudaStreamCaptureMode mode,
     cudaGraph_t graph, struct cudaGraphRecaptureCallbackData *callbackData) {

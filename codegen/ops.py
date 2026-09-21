@@ -329,12 +329,14 @@ class ArrayOperation:
                 f"sizeof({self.parameter.name}_count)) < 0 ||\n"
             )
         if not self.send:
-            # if this parameter is recv only and it's a type pointer, it needs to be malloc'd.
+            # The whole buffer goes back on the wire, but the library writes
+            # only as much of it as it has to, so the allocation has to supply
+            # the rest: uninitialized bytes here would be server heap.
             if isinstance(self.ptr, Pointer):
                 f.write("        false)\n")
                 f.write("        goto ERROR_0;\n")
                 f.write(
-                    f"    {self.parameter.name} = ({self.ptr.format()})malloc({self.server_transfer_size_expr()});\n"
+                    f"    {self.parameter.name} = ({self.ptr.format()})calloc({self.server_transfer_size_expr()}, 1);\n"
                 )
                 f.write(
                     f"    if (({self.server_transfer_size_expr()} != 0 && {self.parameter.name} == nullptr) ||\n"
@@ -542,14 +544,11 @@ class NullableArrayOperation:
         # null selects count-query semantics, which can report a count larger
         # than the zero-length storage the response would then be read from.
         f.write(f"    if (!{name}_null) {{\n")
-        if self.recv_on_error:
-            allocation = (
-                f"calloc(({requested} != 0 ? {requested} : 1), sizeof({elem}))"
-            )
-        else:
-            allocation = (
-                f"malloc(({requested} != 0 ? {requested} : 1) * sizeof({elem}))"
-            )
+        # The whole capacity goes back on the wire whether or not the library
+        # filled it, so the allocation supplies the untouched remainder.
+        allocation = (
+            f"calloc(({requested} != 0 ? {requested} : 1), sizeof({elem}))"
+        )
         f.write(
             f"        {name} = ({elem} *){allocation};\n"
         )

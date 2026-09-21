@@ -132,6 +132,36 @@ int handle_cudaGetErrorString(conn_t *conn) {
   return handle_error_text(conn, "cudaGetErrorString");
 }
 
+int handle_cudaDeviceReset(conn_t *conn) {
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  // The runtime's reset destroys the calling device's primary context, and
+  // with it every stream in that context, the staging ring's transfer stream
+  // among them. The ring is keyed by context and the driver hands the same
+  // handle back for the context that replaces it, so the bracket the
+  // driver-level resets use has to run here too: without it the next pushed
+  // host-to-device copy synchronizes a freed stream.
+  int device = 0;
+  (void)LUPINE_CUDART_CALL(cudaGetDevice, function_not_found(), &device);
+
+  lupine_server_begin_lifecycle_transaction(conn);
+  lupine_server_prepare_primary_context(conn, device);
+  cudaError_t result =
+      LUPINE_CUDART_CALL(cudaDeviceReset, function_not_found());
+  lupine_server_finish_primary_context(
+      conn, device, true,
+      result == cudaSuccess ? CUDA_SUCCESS : CUDA_ERROR_UNKNOWN);
+  lupine_server_end_lifecycle_transaction(conn);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 namespace {
 
 // Use the same reserved-address backing as the driver, but let the native
@@ -961,10 +991,6 @@ int handle___cudaRegisterFunction(conn_t *conn) {
        grid_dim_present != nullptr ? &grid_dim : nullptr,
        warp_size_present != nullptr ? &warp_size : nullptr);
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
   return 0;
 }
 
@@ -1016,10 +1042,6 @@ int handle___cudaRegisterVar(conn_t *conn) {
     fn(handle, hostVar, stored.first.data(), stored.second.c_str(), ext, size,
        constant, global);
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
   return 0;
 }
 
@@ -1045,10 +1067,6 @@ int handle___cudaUnregisterFatBinary(conn_t *conn) {
       delete entry->second;
       registrations().erase(entry);
     }
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write_end(conn) < 0) {
-    return -1;
   }
   return 0;
 }
@@ -1456,7 +1474,7 @@ int handle_cudaLaunchHostFunc(conn_t *conn) {
   return 0;
 }
 
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13020
 int handle_cudaLaunchHostFunc_v2(conn_t *conn) {
   cudaStream_t stream = nullptr;
   cudaHostFn_t callback = nullptr;

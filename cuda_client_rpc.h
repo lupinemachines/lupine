@@ -57,7 +57,12 @@ void *lupine_deep_cache_add(const void *key, size_t bytes);
 // calling thread. This token moves whenever anything can have rebound that
 // lane, so a device answer cached against it is good until it does.
 uint64_t lupine_device_binding_epoch(void);
-void lupine_note_device_binding_changed(void);
+// The connection that binding sits on, or -1 before anything has bound one.
+// cudaSetDevice moves it, and so does a driver context made current on another
+// server's lane: both decide which server answers this thread's device
+// queries, and which slice of the virtual device ordinals its answers fall in.
+void lupine_note_device_binding_moved(conn_t *conn);
+int lupine_device_binding_conn_index(void);
 void lupine_invalidate_current_context_cache(void);
 // What the driver shim believes is current on this thread's lane, without the
 // round trip it would spend confirming that belief.

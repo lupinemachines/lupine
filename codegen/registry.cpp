@@ -429,6 +429,7 @@
   HANDLER(RPC_cuMemAdvise, handle_cuMemAdvise, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphExecUpdate, handle_cuGraphExecUpdate, rpc_backend::cuda)
 #define LUPINE_CUDART_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_cudaDeviceReset, handle_cudaDeviceReset, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceSynchronize, handle_cudaDeviceSynchronize, rpc_backend::cudart) \
   HANDLER(RPC_cudaEventDestroy, handle_cudaEventDestroy, rpc_backend::cudart) \
   HANDLER(RPC_cudaEventQuery, handle_cudaEventQuery, rpc_backend::cudart) \
@@ -506,7 +507,6 @@
   HANDLER(RPC_cudaDeviceGetStreamPriorityRange, handle_cudaDeviceGetStreamPriorityRange, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceGetTexture1DLinearMaxWidth, handle_cudaDeviceGetTexture1DLinearMaxWidth, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceGraphMemTrim, handle_cudaDeviceGraphMemTrim, rpc_backend::cudart) \
-  HANDLER(RPC_cudaDeviceReset, handle_cudaDeviceReset, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceSetCacheConfig, handle_cudaDeviceSetCacheConfig, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceSetGraphMemAttribute, handle_cudaDeviceSetGraphMemAttribute, rpc_backend::cudart) \
   HANDLER(RPC_cudaDeviceSetLimit, handle_cudaDeviceSetLimit, rpc_backend::cudart) \
@@ -9288,6 +9288,10 @@ LUPINE_DECLARE_HANDLER(RPC_cuMemPrefetchAsync_v2, handle_cuMemPrefetchAsync_v2,
 LUPINE_DECLARE_HANDLER(RPC_cuMemAdvise_v2, handle_cuMemAdvise_v2,
                        rpc_backend::cuda)
 #endif
+#if CUDA_VERSION >= 12080
+LUPINE_DECLARE_HANDLER(RPC_cuStreamGetDevice, handle_cuStreamGetDevice,
+                       rpc_backend::cuda)
+#endif
 #if CUDA_VERSION >= 12030
 LUPINE_DECLARE_HANDLER(RPC_cuFuncGetName, handle_cuFuncGetName,
                        rpc_backend::cuda)
@@ -9406,7 +9410,7 @@ LUPINE_CUDART_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 LUPINE_DECLARE_HANDLER(RPC_cudaFuncGetName, handle_cudaFuncGetName,
                        rpc_backend::cudart)
 #endif
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13020
 LUPINE_DECLARE_HANDLER(RPC_cudaLaunchHostFunc_v2, handle_cudaLaunchHostFunc_v2,
                        rpc_backend::cudart)
 #endif
@@ -9652,7 +9656,7 @@ LUPINE_DECLARE_HANDLER(RPC_cudaStreamBeginCaptureToGraph,
                        handle_cudaStreamBeginCaptureToGraph,
                        rpc_backend::cudart)
 #endif
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13030
 LUPINE_DECLARE_HANDLER(RPC_cudaStreamBeginRecaptureToGraph,
                        handle_cudaStreamBeginRecaptureToGraph,
                        rpc_backend::cudart)
@@ -37936,6 +37940,9 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #if CUDA_VERSION >= 12020
       LUPINE_REGISTER_HANDLER(RPC_cuMemAdvise_v2, handle_cuMemAdvise_v2, rpc_backend::cuda)
 #endif
+#if CUDA_VERSION >= 12080
+      LUPINE_REGISTER_HANDLER(RPC_cuStreamGetDevice, handle_cuStreamGetDevice, rpc_backend::cuda)
+#endif
 #if CUDA_VERSION >= 12030
       LUPINE_REGISTER_HANDLER(RPC_cuFuncGetName, handle_cuFuncGetName, rpc_backend::cuda)
 #endif
@@ -38026,7 +38033,7 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #if CUDART_VERSION >= 12000
       LUPINE_REGISTER_HANDLER(RPC_cudaFuncGetName, handle_cudaFuncGetName, rpc_backend::cudart)
 #endif
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13020
       LUPINE_REGISTER_HANDLER(RPC_cudaLaunchHostFunc_v2, handle_cudaLaunchHostFunc_v2, rpc_backend::cudart)
 #endif
 #if CUDART_VERSION < 13000
@@ -38200,7 +38207,7 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #if CUDART_VERSION >= 12000
       LUPINE_REGISTER_HANDLER(RPC_cudaStreamBeginCaptureToGraph, handle_cudaStreamBeginCaptureToGraph, rpc_backend::cudart)
 #endif
-#if CUDART_VERSION >= 13000
+#if CUDART_VERSION >= 13030
       LUPINE_REGISTER_HANDLER(RPC_cudaStreamBeginRecaptureToGraph, handle_cudaStreamBeginRecaptureToGraph, rpc_backend::cudart)
 #endif
 #if CUDART_VERSION >= 13000
