@@ -2104,7 +2104,7 @@ int handle_cufftXtQueryPlan(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &plan, sizeof(cufftHandle)) < 0 || false)
     goto ERROR_0;
-  queryStruct = (void *)malloc(96);
+  queryStruct = (void *)calloc(96, 1);
   if ((96 != 0 && queryStruct == nullptr) ||
       rpc_read(conn, &queryType, sizeof(cufftXtQueryType)) < 0 || false)
     goto ERROR_0;

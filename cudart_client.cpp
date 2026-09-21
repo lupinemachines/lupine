@@ -125,16 +125,33 @@ int rpc_read_end(conn_t *conn) {
   }
   return result;
 }
+// Ends a request nothing reads back. The server still runs it against its
+// runtime, so the context cache is stale from here just as it is after a
+// response.
+int rpc_write_end(conn_t *conn) {
+  int result = lupine_rpc_write_end(conn);
+  if (result >= 0) {
+    lupine_invalidate_runtime_context(conn);
+  }
+  return result;
+}
 
 // ---------------------------------------------------------------------------
 // Device state
 // ---------------------------------------------------------------------------
 
-// The selected server's runtime owns device binding on the caller's lane.
-thread_local unsigned int current_connection_index = 0;
+// The server whose lane holds the caller's device binding owns it, and the
+// driver shim records which one that is: cudaSetDevice moves it, and so does a
+// driver context made current on another server's lane. Device queries and the
+// reverse mapping of their answers both use this connection, so they can
+// never name different servers.
+unsigned int connection_index() {
+  const int index = lupine_device_binding_conn_index();
+  return index < 0 ? 0u : static_cast<unsigned int>(index);
+}
 
 conn_t *connection() {
-  return lupine_rpc_client_get_connection(current_connection_index);
+  return lupine_rpc_client_get_connection(connection_index());
 }
 
 conn_t *connection_for_device(int *device, cudaError_t *result = nullptr);
@@ -284,46 +301,6 @@ extern "C" cudaError_t __cudaPopCallConfiguration(dim3 *gridDim, dim3 *blockDim,
 
 namespace {
 
-// Device ordinals run through the connections in index order, so one prefix
-// sum answers everything the runtime asks about them: entry i is the ordinal
-// connection i starts at, and the last entry is the total. A server reports
-// the devices its own process was given, so the sum holds for as long as the
-// connection table it was built from, which fills once when the transport
-// opens and empties only when it closes.
-cudaError_t device_ordinal_offsets(std::vector<int> *offsets) {
-  static std::mutex mutex;
-  static auto *cached = new std::vector<int>();
-  const auto connections = all_connections();
-  if (connections.empty()) {
-    return rpc_error();
-  }
-  {
-    std::lock_guard<std::mutex> lock(mutex);
-    if (cached->size() == connections.size() + 1) {
-      *offsets = *cached;
-      return cudaSuccess;
-    }
-  }
-  // Built off the lock: the counts belong to the servers, so two threads
-  // racing to fill the table build the same one.
-  std::vector<int> built(connections.size() + 1, 0);
-  for (size_t index = 0; index < connections.size(); ++index) {
-    int count = 0;
-    cudaError_t result =
-        lupine_rpc_cudaGetDeviceCount(connections[index], &count);
-    if (result != cudaSuccess) {
-      return result;
-    }
-    built[index + 1] = built[index] + count;
-  }
-  {
-    std::lock_guard<std::mutex> lock(mutex);
-    *cached = built;
-  }
-  *offsets = std::move(built);
-  return cudaSuccess;
-}
-
 // Which device the server's runtime answers with is a property of the lane
 // bound to the calling thread, and only rebinding that lane can change it:
 // cudaSetDevice here, a driver context set on the lane, a context handle the
@@ -351,27 +328,25 @@ bool lane_binding_describes(conn_t *conn) {
 }
 
 conn_t *connection_for_device(int *device, cudaError_t *result) {
-  std::vector<int> offsets;
-  cudaError_t status = device_ordinal_offsets(&offsets);
-  const int ordinal = *device;
+  // The driver table applies CUDA_VISIBLE_DEVICES and may reorder devices
+  // within a server or across servers. Server counts alone cannot map it.
+  int count = 0;
+  cudaError_t status = cudaGetDeviceCount(&count);
+  conn_t *conn = nullptr;
   if (status == cudaSuccess) {
-    status = cudaErrorInvalidDevice;
-    if (ordinal >= 0 && ordinal < offsets.back()) {
-      unsigned int index = 0;
-      while (offsets[index + 1] <= ordinal) {
-        ++index;
+    if (*device < 0 || *device >= count) {
+      status = cudaErrorInvalidDevice;
+    } else {
+      conn = lupine_rpc_conn_for_device(device);
+      if (conn == nullptr) {
+        status = rpc_error();
       }
-      *device = ordinal - offsets[index];
-      if (result != nullptr) {
-        *result = cudaSuccess;
-      }
-      return lupine_rpc_client_get_connection(index);
     }
   }
   if (result != nullptr) {
     *result = status;
   }
-  return nullptr;
+  return conn;
 }
 
 cudaError_t adopt_runtime_host_allocation(conn_t *conn, void **host,
@@ -503,13 +478,11 @@ static cudaError_t lupine_call_cudaGetDeviceCount(int *count) {
   if (count == nullptr) {
     return cudaErrorInvalidValue;
   }
-  std::vector<int> offsets;
-  cudaError_t result = device_ordinal_offsets(&offsets);
-  if (result != cudaSuccess) {
-    return result;
+  CUresult result = cuInit(0);
+  if (result != CUDA_SUCCESS) {
+    return runtime_error(result);
   }
-  *count = offsets.back();
-  return cudaSuccess;
+  return runtime_error(cuDeviceGetCount(count));
 }
 
 extern "C" cudaError_t cudaGetDeviceCount(int *count) {
@@ -519,6 +492,14 @@ extern "C" cudaError_t cudaGetDeviceCount(int *count) {
 static cudaError_t lupine_call_cudaGetDevice(int *device) {
   if (device == nullptr) {
     return cudaErrorInvalidValue;
+  }
+  // A fresh thread's default is the first visible device, which need not be
+  // device zero on connection zero. Bind it before querying the server lane.
+  if (lupine_device_binding_conn_index() < 0) {
+    cudaError_t result = cudaSetDevice(0);
+    if (result != cudaSuccess) {
+      return result;
+    }
   }
   conn_t *conn = connection();
   if (lane_binding_describes(conn)) {
@@ -535,14 +516,13 @@ static cudaError_t lupine_call_cudaGetDevice(int *device) {
   if (result != cudaSuccess) {
     return result;
   }
-  std::vector<int> offsets;
-  result = device_ordinal_offsets(&offsets);
-  if (result != cudaSuccess) {
-    return result;
+  const int visible_device =
+      lupine_local_device_for_remote(conn, remote_device);
+  if (visible_device < 0) {
+    return cudaErrorInvalidDevice;
   }
-  remote_device += offsets[current_connection_index];
-  *device = remote_device;
-  lane_binding = {conn, epoch, context, remote_device, false};
+  *device = visible_device;
+  lane_binding = {conn, epoch, context, visible_device, false};
   return cudaSuccess;
 }
 
@@ -565,17 +545,9 @@ static cudaError_t lupine_call_cudaSetDevice(int device) {
   if (result != cudaSuccess) {
     return result;
   }
-  const int count = lupine_rpc_size();
-  for (int index = 0; index < count; ++index) {
-    if (lupine_rpc_client_get_connection(static_cast<unsigned int>(index)) ==
-        conn) {
-      current_connection_index = static_cast<unsigned int>(index);
-      break;
-    }
-  }
   // The lane now holds this device, and the primary context that comes with
   // it, until something else rebinds it.
-  lupine_note_device_binding_changed();
+  lupine_note_device_binding_moved(conn);
   lane_binding = {conn, lupine_device_binding_epoch(),
                   lupine_current_context_hint(), device, true};
   return cudaSuccess;
@@ -608,7 +580,7 @@ static cudaError_t lupine_call_cudaSetValidDevices(int *device_arr, int len) {
     conn = connection();
   }
   // The list decides which device the runtime settles on next.
-  lupine_note_device_binding_changed();
+  lupine_note_device_binding_moved(conn);
   return lupine_rpc_cudaSetValidDevices(conn, remote_devices.data(), len);
 }
 
@@ -618,7 +590,13 @@ extern "C" cudaError_t cudaSetValidDevices(int *device_arr, int len) {
 
 static cudaError_t lupine_call_cudaDeviceReset() {
   conn_t *conn = connection();
-  cudaError_t result = lupine_rpc_cudaDeviceReset(conn);
+  cudaError_t result = rpc_error();
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_cudaDeviceReset) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
   if (result == cudaSuccess) {
     // The device's primary context is gone server-wide, so every lane's belief
     // about that handle goes with it, not just this one's.
@@ -1483,13 +1461,7 @@ lupine_call_cudaGraphAddMemcpyNode(cudaGraphNode_t *node, cudaGraph_t graph,
   }
   conn_t *conn = connection();
   CUcontext context = nullptr;
-  CUresult status = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (rpc_write_start_request(conn, RPC_cuCtxGetCurrent) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &context, sizeof(context)) < 0 ||
-      rpc_read(conn, &status, sizeof(status)) < 0 || rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
+  CUresult status = lupine_lane_current_context(conn, &context);
   if (status != CUDA_SUCCESS) {
     return runtime_error(status);
   }
@@ -1953,6 +1925,14 @@ extern "C" void **__cudaRegisterFatBinary(void *fatCubin) {
       new fatbin_registration(std::move(registration)));
 }
 
+// The register entry points return void, so nothing is read back and the
+// request goes out without waiting. Ordering holds because a lane is one client
+// thread bound to one server worker that dispatches that lane's requests in
+// arrival order, so a launch cannot overtake a registration issued before it on
+// the same thread. __cudaRegisterFatBinaryEnd stays synchronous: nvcc emits it
+// as the last call of the fatbin constructor, so the registering thread does
+// not return until the server has applied every registration in that fatbin,
+// which is what a consumer on another lane orders against.
 extern "C" void __cudaRegisterFunction(void **fatCubinHandle,
                                        const char *hostFun, char *deviceFun,
                                        const char *deviceName, int thread_limit,
@@ -1979,7 +1959,7 @@ extern "C" void __cudaRegisterFunction(void **fatCubinHandle,
         (gDim != nullptr && rpc_write(conn, gDim, sizeof(*gDim)) < 0) ||
         rpc_write(conn, &wSize, sizeof(wSize)) < 0 ||
         (wSize != nullptr && rpc_write(conn, wSize, sizeof(*wSize)) < 0) ||
-        rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
+        rpc_write_end(conn) < 0) {
       return;
     }
   });
@@ -2003,7 +1983,7 @@ extern "C" void __cudaRegisterVar(void **fatCubinHandle, char *hostVar,
         rpc_write(conn, &size, sizeof(size)) < 0 ||
         rpc_write(conn, &constant, sizeof(constant)) < 0 ||
         rpc_write(conn, &global, sizeof(global)) < 0 ||
-        rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
+        rpc_write_end(conn) < 0) {
       return;
     }
   });
@@ -2072,7 +2052,7 @@ extern "C" void __cudaUnregisterFatBinary(void **fatCubinHandle) {
   broadcast_fatbin(fatCubinHandle, [&](conn_t *conn, void **handle) {
     if (rpc_write_start_request(conn, RPC___cudaUnregisterFatBinary) < 0 ||
         rpc_write(conn, &handle, sizeof(handle)) < 0 ||
-        rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
+        rpc_write_end(conn) < 0) {
       return;
     }
   });

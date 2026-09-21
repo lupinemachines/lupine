@@ -101,6 +101,17 @@ bool lupine_lane_context_cache_matches(int route_id, CUcontext context) {
              lane_context_cache_epoch().load(std::memory_order_acquire);
 }
 
+bool lupine_lane_context_cache_lookup(int route_id, CUcontext *context) {
+  auto *entry = lane_context_cache_entry_for(route_id);
+  if (entry == nullptr || entry->route_id != route_id ||
+      entry->epoch !=
+          lane_context_cache_epoch().load(std::memory_order_acquire)) {
+    return false;
+  }
+  *context = entry->context;
+  return true;
+}
+
 void lupine_lane_context_cache_update(int route_id, CUcontext context,
                                       uint64_t epoch, bool succeeded) {
   auto *entry = lane_context_cache_entry_for(route_id);

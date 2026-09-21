@@ -245,7 +245,7 @@ int handle_cusparseLtMatDescGetAttribute(conn_t *conn) {
       rpc_read(conn, &matAttribute, sizeof(cusparseLtMatDescAttribute_t)) < 0 ||
       rpc_read(conn, &dataSize, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  data = (void *)malloc(dataSize);
+  data = (void *)calloc(dataSize, 1);
   if ((dataSize != 0 && data == nullptr) || false)
     goto ERROR_0;
 
@@ -383,7 +383,7 @@ int handle_cusparseLtMatmulDescGetAttribute(conn_t *conn) {
                sizeof(cusparseLtMatmulDescAttribute_t)) < 0 ||
       rpc_read(conn, &dataSize, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  data = (void *)malloc(dataSize);
+  data = (void *)calloc(dataSize, 1);
   if ((dataSize != 0 && data == nullptr) || false)
     goto ERROR_0;
 
@@ -505,7 +505,7 @@ int handle_cusparseLtMatmulAlgGetAttribute(conn_t *conn) {
       rpc_read(conn, &attribute, sizeof(cusparseLtMatmulAlgAttribute_t)) < 0 ||
       rpc_read(conn, &dataSize, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  data = (void *)malloc(dataSize);
+  data = (void *)calloc(dataSize, 1);
   if ((dataSize != 0 && data == nullptr) || false)
     goto ERROR_0;
 

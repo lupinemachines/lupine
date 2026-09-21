@@ -65,14 +65,29 @@ exe="$BUILD_DIR/$name"
 port="$SERVER_PORT_BASE"
 pidfile="/tmp/lupine-custom-$port.pid"
 server_log="/tmp/lupine-custom-$port.log"
+# A test whose virtual devices have to straddle two servers says so, and gets a
+# second one on the port above its own. Both are pinned to a single GPU, so
+# ordinal 1 is the second connection's first device however many the host has.
+second_port=""
+if grep -q 'LUPINE_TEST_CONNECTIONS 2' "$src"; then
+  second_port="$((port + 1))"
+  second_pidfile="/tmp/lupine-custom-$second_port.pid"
+  second_server_log="/tmp/lupine-custom-$second_port.log"
+fi
 
 cleanup() {
   if [[ "$BUILD_ONLY" != "1" ]]; then
     if [[ -n "${RESULTS_DIR:-}" ]]; then
       mkdir -p "$RESULTS_DIR"
       ssh_with_timeout "cat '$server_log'" >"$RESULTS_DIR/server.log" 2>&1 || true
+      if [[ -n "$second_port" ]]; then
+        ssh_with_timeout "cat '$second_server_log'" >"$RESULTS_DIR/server-2.log" 2>&1 || true
+      fi
     fi
     stop_remote_server "$pidfile" "$server_log"
+    if [[ -n "$second_port" ]]; then
+      stop_remote_server "$second_pidfile" "$second_server_log"
+    fi
     [[ "$SERVER_UPLOAD" == "1" ]] && ssh_with_timeout "rm -f '$SERVER_REMOTE_BIN'" >/dev/null 2>&1 || true
   fi
   if [[ "$owns_build_dir" == "1" ]]; then
@@ -181,12 +196,20 @@ if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <nccl.
   exit 0
 fi
 
-start_remote_server "$pidfile" "$server_log" "$port"
+servers="$SERVER_HOST:$port"
+if [[ -n "$second_port" ]]; then
+  start_remote_server "$pidfile" "$server_log" "$port" "CUDA_VISIBLE_DEVICES=0"
+  start_remote_server "$second_pidfile" "$second_server_log" "$second_port" \
+    "CUDA_VISIBLE_DEVICES=0"
+  servers="$servers,$SERVER_HOST:$second_port"
+else
+  start_remote_server "$pidfile" "$server_log" "$port"
+fi
 if [[ -n "${RESULTS_DIR:-}" ]]; then
   mkdir -p "$RESULTS_DIR"
   env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}${LD_LIBRARY_PATH:-}" \
-    LUPINE_SERVER="$SERVER_HOST:$port" "$exe" 2>&1 | tee "$RESULTS_DIR/client.log"
+    LUPINE_SERVER="$servers" "$exe" 2>&1 | tee "$RESULTS_DIR/client.log"
 else
   env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}${LD_LIBRARY_PATH:-}" \
-    LUPINE_SERVER="$SERVER_HOST:$port" "$exe"
+    LUPINE_SERVER="$servers" "$exe"
 fi

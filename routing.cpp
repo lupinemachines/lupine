@@ -75,6 +75,23 @@ static int lupine_conn_index(conn_t *conn) {
   return index >= 0 && index < rpc_size() ? index : -1;
 }
 
+// The connection whose lane this thread's device binding lives on. Only the
+// calls that rebind that lane move it, and every one of them knows the route
+// it bound to, so it is recorded where the epoch is bumped.
+static thread_local int lupine_device_binding_index = -1;
+
+extern "C" void lupine_note_device_binding_moved(conn_t *conn) {
+  const int index = lupine_conn_index(conn);
+  if (index >= 0) {
+    lupine_device_binding_index = index;
+  }
+  lupine_note_device_binding_changed();
+}
+
+extern "C" int lupine_device_binding_conn_index() {
+  return lupine_device_binding_index;
+}
+
 conn_t *lupine_thread_conn_by_index(unsigned int index) {
   // The Linux server forks one child process per accepted connection. CUDA
   // object handles, including primary-context handles used by libcudart, are
@@ -827,9 +844,10 @@ CUresult lupine_set_current_context_on_route(lupine_route route,
     }
   }
   // The lane just moved to another context, and with it to that context's
-  // device. Device answers cached against the old binding are stale even when
-  // the set failed and left the lane somewhere unknown.
-  lupine_note_device_binding_changed();
+  // device and to that context's server. Device answers cached against the old
+  // binding are stale even when the set failed and left the lane somewhere
+  // unknown.
+  lupine_note_device_binding_moved(lupine_route_remote_conn(route));
   lupine_lane_context_cache_update(lupine_route_identity(route), ctx, epoch,
                                    result == CUDA_SUCCESS);
   return result;

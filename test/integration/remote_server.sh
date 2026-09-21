@@ -44,8 +44,13 @@ start_remote_server() {
   local pidfile="$1"
   local server_log="$2"
   local port="$3"
+  local extra_environment="${4:-}"
   local attempt
   local server_environment="LUPINE_PORT=$port"
+
+  if [[ -n "$extra_environment" ]]; then
+    server_environment="$extra_environment $server_environment"
+  fi
 
   if [[ -n "$SERVER_LD_LIBRARY_PATH" ]]; then
     printf -v server_environment 'LD_LIBRARY_PATH=%q %s' \

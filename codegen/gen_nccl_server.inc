@@ -263,7 +263,7 @@ int handle_ncclCommInitAll(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &ndev, sizeof(int)) < 0 || ndev < 0 || false)
     goto ERROR_0;
-  comm = (ncclComm_t *)malloc(ndev * sizeof(ncclComm_t));
+  comm = (ncclComm_t *)calloc(ndev * sizeof(ncclComm_t), 1);
   if ((ndev * sizeof(ncclComm_t) != 0 && comm == nullptr) || ndev < 0 ||
       rpc_read(conn, &devlist_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;

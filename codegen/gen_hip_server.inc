@@ -245,7 +245,7 @@ int handle_hipDeviceGetName(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &len, sizeof(int)) < 0 || len < 0 || false)
     goto ERROR_0;
-  name = (char *)malloc(len * sizeof(char));
+  name = (char *)calloc(len * sizeof(char), 1);
   if ((len * sizeof(char) != 0 && name == nullptr) ||
       rpc_read(conn, &deviceId, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -486,7 +486,7 @@ int handle_hipDeviceGetPCIBusId(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &len, sizeof(int)) < 0 || len < 0 || false)
     goto ERROR_0;
-  pciBusId = (char *)malloc(len * sizeof(char));
+  pciBusId = (char *)calloc(len * sizeof(char), 1);
   if ((len * sizeof(char) != 0 && pciBusId == nullptr) ||
       rpc_read(conn, &device, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -1583,7 +1583,7 @@ int handle_hipExtStreamGetCUMask(conn_t *conn) {
   if (rpc_read(conn, &stream, sizeof(hipStream_t)) < 0 ||
       rpc_read(conn, &cuMaskSize, sizeof(uint32_t)) < 0 || false)
     goto ERROR_0;
-  cuMask = (uint32_t *)malloc(cuMaskSize * sizeof(uint32_t));
+  cuMask = (uint32_t *)calloc(cuMaskSize * sizeof(uint32_t), 1);
   if ((cuMaskSize * sizeof(uint32_t) != 0 && cuMask == nullptr) || false)
     goto ERROR_0;
 
@@ -2504,7 +2504,7 @@ int handle_hipMemRangeGetAttribute(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &data_size, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  data = (void *)malloc(data_size);
+  data = (void *)calloc(data_size, 1);
   if ((data_size != 0 && data == nullptr) ||
       rpc_read(conn, &attribute, sizeof(hipMemRangeAttribute)) < 0 ||
       rpc_read(conn, &dev_ptr, sizeof(const void *)) < 0 ||
@@ -3021,7 +3021,7 @@ int handle_hipMemcpyDtoH(conn_t *conn) {
   if (rpc_read(conn, &src, sizeof(hipDeviceptr_t)) < 0 ||
       rpc_read(conn, &sizeBytes, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  dst = (void *)malloc(sizeBytes);
+  dst = (void *)calloc(sizeBytes, 1);
   if ((sizeBytes != 0 && dst == nullptr) || false)
     goto ERROR_0;
 
@@ -3220,7 +3220,7 @@ int handle_hipMemcpyAtoH(conn_t *conn) {
       rpc_read(conn, &srcOffset, sizeof(size_t)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  dst = (void *)malloc(count);
+  dst = (void *)calloc(count, 1);
   if ((count != 0 && dst == nullptr) || false)
     goto ERROR_0;
 
@@ -5480,7 +5480,7 @@ int handle_hipLibraryEnumerateKernels(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &numKernels, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  kernels = (hipKernel_t *)malloc(numKernels * sizeof(hipKernel_t));
+  kernels = (hipKernel_t *)calloc(numKernels * sizeof(hipKernel_t), 1);
   if ((numKernels * sizeof(hipKernel_t) != 0 && kernels == nullptr) ||
       rpc_read(conn, &library, sizeof(hipLibrary_t)) < 0 || false)
     goto ERROR_0;
@@ -6562,8 +6562,8 @@ int handle_hipGraphGetEdges(conn_t *conn) {
       rpc_read(conn, &from_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!from_null) {
-    from = (hipGraphNode_t *)malloc(
-        (numEdges_requested != 0 ? numEdges_requested : 1) *
+    from = (hipGraphNode_t *)calloc(
+        (numEdges_requested != 0 ? numEdges_requested : 1),
         sizeof(hipGraphNode_t));
     if (from == nullptr)
       goto ERROR_0;
@@ -6571,8 +6571,8 @@ int handle_hipGraphGetEdges(conn_t *conn) {
   if (rpc_read(conn, &to_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!to_null) {
-    to = (hipGraphNode_t *)malloc(
-        (numEdges_requested != 0 ? numEdges_requested : 1) *
+    to = (hipGraphNode_t *)calloc(
+        (numEdges_requested != 0 ? numEdges_requested : 1),
         sizeof(hipGraphNode_t));
     if (to == nullptr)
       goto ERROR_0;
@@ -6628,8 +6628,8 @@ int handle_hipGraphGetNodes(conn_t *conn) {
       rpc_read(conn, &nodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!nodes_null) {
-    nodes = (hipGraphNode_t *)malloc(
-        (numNodes_requested != 0 ? numNodes_requested : 1) *
+    nodes = (hipGraphNode_t *)calloc(
+        (numNodes_requested != 0 ? numNodes_requested : 1),
         sizeof(hipGraphNode_t));
     if (nodes == nullptr)
       goto ERROR_0;
@@ -6678,8 +6678,8 @@ int handle_hipGraphGetRootNodes(conn_t *conn) {
       rpc_read(conn, &pRootNodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pRootNodes_null) {
-    pRootNodes = (hipGraphNode_t *)malloc(
-        (pNumRootNodes_requested != 0 ? pNumRootNodes_requested : 1) *
+    pRootNodes = (hipGraphNode_t *)calloc(
+        (pNumRootNodes_requested != 0 ? pNumRootNodes_requested : 1),
         sizeof(hipGraphNode_t));
     if (pRootNodes == nullptr)
       goto ERROR_0;
@@ -6728,8 +6728,8 @@ int handle_hipGraphNodeGetDependencies(conn_t *conn) {
       rpc_read(conn, &pDependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependencies_null) {
-    pDependencies = (hipGraphNode_t *)malloc(
-        (pNumDependencies_requested != 0 ? pNumDependencies_requested : 1) *
+    pDependencies = (hipGraphNode_t *)calloc(
+        (pNumDependencies_requested != 0 ? pNumDependencies_requested : 1),
         sizeof(hipGraphNode_t));
     if (pDependencies == nullptr)
       goto ERROR_0;
@@ -6779,8 +6779,8 @@ int handle_hipGraphNodeGetDependentNodes(conn_t *conn) {
       rpc_read(conn, &pDependentNodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependentNodes_null) {
-    pDependentNodes = (hipGraphNode_t *)malloc(
-        (pNumDependentNodes_requested != 0 ? pNumDependentNodes_requested : 1) *
+    pDependentNodes = (hipGraphNode_t *)calloc(
+        (pNumDependentNodes_requested != 0 ? pNumDependentNodes_requested : 1),
         sizeof(hipGraphNode_t));
     if (pDependentNodes == nullptr)
       goto ERROR_0;
@@ -6948,7 +6948,7 @@ int handle_hipGraphInstantiate(conn_t *conn) {
     goto ERROR_0;
   if (!pLogBuffer_null) {
     pLogBuffer =
-        (char *)malloc((bufferSize != 0 ? bufferSize : 1) * sizeof(char));
+        (char *)calloc((bufferSize != 0 ? bufferSize : 1), sizeof(char));
     if (pLogBuffer == nullptr)
       goto ERROR_0;
   }
@@ -7826,7 +7826,7 @@ int handle_hipGraphMemFreeNodeGetParams(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &node, sizeof(hipGraphNode_t)) < 0 || false)
     goto ERROR_0;
-  dev_ptr = (void *)malloc(8);
+  dev_ptr = (void *)calloc(8, 1);
   if ((8 != 0 && dev_ptr == nullptr) || false)
     goto ERROR_0;
 

@@ -18227,7 +18227,7 @@ int handle_cusparseSpMatGetAttribute(conn_t *conn) {
       rpc_read(conn, &attribute, sizeof(cusparseSpMatAttribute_t)) < 0 ||
       rpc_read(conn, &dataSize, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  data = (void *)malloc(dataSize);
+  data = (void *)calloc(dataSize, 1);
   if ((dataSize != 0 && data == nullptr) || false)
     goto ERROR_0;
 

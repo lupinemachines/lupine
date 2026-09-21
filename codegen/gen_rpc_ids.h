@@ -176,6 +176,7 @@
 #define RPC_cuStreamCreate 672328975
 #define RPC_cuStreamCreateWithPriority 475445991
 #define RPC_cuStreamGetPriority 1973857307
+#define RPC_cuStreamGetDevice 2047611888
 #define RPC_cuStreamGetFlags 1958132797
 #define RPC_cuStreamGetId 521704577
 #define RPC_cuStreamGetCtx 1361652262

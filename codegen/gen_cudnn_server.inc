@@ -98,7 +98,7 @@ int handle_cudnnGetLastErrorString(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &max_size, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  message = (char *)malloc(max_size * sizeof(char));
+  message = (char *)calloc(max_size * sizeof(char), 1);
   if ((max_size * sizeof(char) != 0 && message == nullptr) || false)
     goto ERROR_0;
 
@@ -855,11 +855,11 @@ int handle_cudnnGetTensorNdDescriptor(conn_t *conn) {
       rpc_read(conn, &nbDimsRequested, sizeof(int)) < 0 ||
       nbDimsRequested < 0 || false)
     goto ERROR_0;
-  dimA = (int *)malloc(nbDimsRequested * sizeof(int));
+  dimA = (int *)calloc(nbDimsRequested * sizeof(int), 1);
   if ((nbDimsRequested * sizeof(int) != 0 && dimA == nullptr) ||
       nbDimsRequested < 0 || false)
     goto ERROR_0;
-  strideA = (int *)malloc(nbDimsRequested * sizeof(int));
+  strideA = (int *)calloc(nbDimsRequested * sizeof(int), 1);
   if ((nbDimsRequested * sizeof(int) != 0 && strideA == nullptr) || false)
     goto ERROR_0;
 
@@ -1121,15 +1121,15 @@ int handle_cudnnGetTensorTransformDescriptor(conn_t *conn) {
       rpc_read(conn, &padBeforeA_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!padBeforeA_null) {
-    padBeforeA = (int32_t *)malloc(
-        (nbDimsRequested != 0 ? nbDimsRequested : 1) * sizeof(int32_t));
+    padBeforeA = (int32_t *)calloc((nbDimsRequested != 0 ? nbDimsRequested : 1),
+                                   sizeof(int32_t));
     if (padBeforeA == nullptr)
       goto ERROR_0;
   }
   if (rpc_read(conn, &padAfterA_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!padAfterA_null) {
-    padAfterA = (int32_t *)malloc((nbDimsRequested != 0 ? nbDimsRequested : 1) *
+    padAfterA = (int32_t *)calloc((nbDimsRequested != 0 ? nbDimsRequested : 1),
                                   sizeof(int32_t));
     if (padAfterA == nullptr)
       goto ERROR_0;
@@ -1137,7 +1137,7 @@ int handle_cudnnGetTensorTransformDescriptor(conn_t *conn) {
   if (rpc_read(conn, &foldA_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!foldA_null) {
-    foldA = (uint32_t *)malloc((nbDimsRequested != 0 ? nbDimsRequested : 1) *
+    foldA = (uint32_t *)calloc((nbDimsRequested != 0 ? nbDimsRequested : 1),
                                sizeof(uint32_t));
     if (foldA == nullptr)
       goto ERROR_0;
@@ -2244,7 +2244,7 @@ int handle_cudnnGetFilterNdDescriptor(conn_t *conn) {
       rpc_read(conn, &nbDimsRequested, sizeof(int)) < 0 ||
       nbDimsRequested < 0 || false)
     goto ERROR_0;
-  filterDimA = (int *)malloc(nbDimsRequested * sizeof(int));
+  filterDimA = (int *)calloc(nbDimsRequested * sizeof(int), 1);
   if ((nbDimsRequested * sizeof(int) != 0 && filterDimA == nullptr) || false)
     goto ERROR_0;
 
@@ -2706,15 +2706,15 @@ int handle_cudnnGetPoolingNdDescriptor(conn_t *conn) {
       rpc_read(conn, &nbDimsRequested, sizeof(int)) < 0 ||
       nbDimsRequested < 0 || false)
     goto ERROR_0;
-  windowDimA = (int *)malloc(nbDimsRequested * sizeof(int));
+  windowDimA = (int *)calloc(nbDimsRequested * sizeof(int), 1);
   if ((nbDimsRequested * sizeof(int) != 0 && windowDimA == nullptr) ||
       nbDimsRequested < 0 || false)
     goto ERROR_0;
-  paddingA = (int *)malloc(nbDimsRequested * sizeof(int));
+  paddingA = (int *)calloc(nbDimsRequested * sizeof(int), 1);
   if ((nbDimsRequested * sizeof(int) != 0 && paddingA == nullptr) ||
       nbDimsRequested < 0 || false)
     goto ERROR_0;
-  strideA = (int *)malloc(nbDimsRequested * sizeof(int));
+  strideA = (int *)calloc(nbDimsRequested * sizeof(int), 1);
   if ((nbDimsRequested * sizeof(int) != 0 && strideA == nullptr) || false)
     goto ERROR_0;
 
@@ -2768,7 +2768,7 @@ int handle_cudnnGetPoolingNdForwardOutputDim(conn_t *conn) {
           0 ||
       rpc_read(conn, &nbDims, sizeof(int)) < 0 || nbDims < 0 || false)
     goto ERROR_0;
-  outputTensorDimA = (int *)malloc(nbDims * sizeof(int));
+  outputTensorDimA = (int *)calloc(nbDims * sizeof(int), 1);
   if ((nbDims * sizeof(int) != 0 && outputTensorDimA == nullptr) || false)
     goto ERROR_0;
 
@@ -6456,15 +6456,15 @@ int handle_cudnnGetConvolutionNdDescriptor(conn_t *conn) {
       rpc_read(conn, &arrayLengthRequested, sizeof(int)) < 0 ||
       arrayLengthRequested < 0 || false)
     goto ERROR_0;
-  padA = (int *)malloc(arrayLengthRequested * sizeof(int));
+  padA = (int *)calloc(arrayLengthRequested * sizeof(int), 1);
   if ((arrayLengthRequested * sizeof(int) != 0 && padA == nullptr) ||
       arrayLengthRequested < 0 || false)
     goto ERROR_0;
-  strideA = (int *)malloc(arrayLengthRequested * sizeof(int));
+  strideA = (int *)calloc(arrayLengthRequested * sizeof(int), 1);
   if ((arrayLengthRequested * sizeof(int) != 0 && strideA == nullptr) ||
       arrayLengthRequested < 0 || false)
     goto ERROR_0;
-  dilationA = (int *)malloc(arrayLengthRequested * sizeof(int));
+  dilationA = (int *)calloc(arrayLengthRequested * sizeof(int), 1);
   if ((arrayLengthRequested * sizeof(int) != 0 && dilationA == nullptr) ||
       false)
     goto ERROR_0;
@@ -6571,7 +6571,7 @@ int handle_cudnnGetConvolutionNdForwardOutputDim(conn_t *conn) {
       rpc_read(conn, &filterDesc, sizeof(const cudnnFilterDescriptor_t)) < 0 ||
       rpc_read(conn, &nbDims, sizeof(int)) < 0 || nbDims < 0 || false)
     goto ERROR_0;
-  tensorOuputDimA = (int *)malloc(nbDims * sizeof(int));
+  tensorOuputDimA = (int *)calloc(nbDims * sizeof(int), 1);
   if ((nbDims * sizeof(int) != 0 && tensorOuputDimA == nullptr) || false)
     goto ERROR_0;
 
@@ -6652,8 +6652,8 @@ int handle_cudnnGetConvolutionForwardAlgorithm_v7(conn_t *conn) {
       rpc_read(conn, &destDesc, sizeof(const cudnnTensorDescriptor_t)) < 0 ||
       rpc_read(conn, &requestedAlgoCount, sizeof(const int)) < 0 || false)
     goto ERROR_0;
-  perfResults = (cudnnConvolutionFwdAlgoPerf_t *)malloc(
-      requestedAlgoCount * sizeof(cudnnConvolutionFwdAlgoPerf_t));
+  perfResults = (cudnnConvolutionFwdAlgoPerf_t *)calloc(
+      requestedAlgoCount * sizeof(cudnnConvolutionFwdAlgoPerf_t), 1);
   if ((requestedAlgoCount * sizeof(cudnnConvolutionFwdAlgoPerf_t) != 0 &&
        perfResults == nullptr) ||
       false)
@@ -6714,8 +6714,8 @@ int handle_cudnnFindConvolutionForwardAlgorithm(conn_t *conn) {
       rpc_read(conn, &yDesc, sizeof(const cudnnTensorDescriptor_t)) < 0 ||
       rpc_read(conn, &requestedAlgoCount, sizeof(const int)) < 0 || false)
     goto ERROR_0;
-  perfResults = (cudnnConvolutionFwdAlgoPerf_t *)malloc(
-      requestedAlgoCount * sizeof(cudnnConvolutionFwdAlgoPerf_t));
+  perfResults = (cudnnConvolutionFwdAlgoPerf_t *)calloc(
+      requestedAlgoCount * sizeof(cudnnConvolutionFwdAlgoPerf_t), 1);
   if ((requestedAlgoCount * sizeof(cudnnConvolutionFwdAlgoPerf_t) != 0 &&
        perfResults == nullptr) ||
       false)
@@ -6784,8 +6784,8 @@ int handle_cudnnFindConvolutionForwardAlgorithmEx(conn_t *conn) {
       rpc_read(conn, &y, sizeof(void *)) < 0 ||
       rpc_read(conn, &requestedAlgoCount, sizeof(const int)) < 0 || false)
     goto ERROR_0;
-  perfResults = (cudnnConvolutionFwdAlgoPerf_t *)malloc(
-      requestedAlgoCount * sizeof(cudnnConvolutionFwdAlgoPerf_t));
+  perfResults = (cudnnConvolutionFwdAlgoPerf_t *)calloc(
+      requestedAlgoCount * sizeof(cudnnConvolutionFwdAlgoPerf_t), 1);
   if ((requestedAlgoCount * sizeof(cudnnConvolutionFwdAlgoPerf_t) != 0 &&
        perfResults == nullptr) ||
       rpc_read(conn, &workSpace, sizeof(void *)) < 0 ||
@@ -7192,8 +7192,8 @@ int handle_cudnnFindConvolutionBackwardDataAlgorithm(conn_t *conn) {
       rpc_read(conn, &dxDesc, sizeof(const cudnnTensorDescriptor_t)) < 0 ||
       rpc_read(conn, &requestedAlgoCount, sizeof(const int)) < 0 || false)
     goto ERROR_0;
-  perfResults = (cudnnConvolutionBwdDataAlgoPerf_t *)malloc(
-      requestedAlgoCount * sizeof(cudnnConvolutionBwdDataAlgoPerf_t));
+  perfResults = (cudnnConvolutionBwdDataAlgoPerf_t *)calloc(
+      requestedAlgoCount * sizeof(cudnnConvolutionBwdDataAlgoPerf_t), 1);
   if ((requestedAlgoCount * sizeof(cudnnConvolutionBwdDataAlgoPerf_t) != 0 &&
        perfResults == nullptr) ||
       false)
@@ -7264,8 +7264,8 @@ int handle_cudnnFindConvolutionBackwardDataAlgorithmEx(conn_t *conn) {
       rpc_read(conn, &dx, sizeof(void *)) < 0 ||
       rpc_read(conn, &requestedAlgoCount, sizeof(const int)) < 0 || false)
     goto ERROR_0;
-  perfResults = (cudnnConvolutionBwdDataAlgoPerf_t *)malloc(
-      requestedAlgoCount * sizeof(cudnnConvolutionBwdDataAlgoPerf_t));
+  perfResults = (cudnnConvolutionBwdDataAlgoPerf_t *)calloc(
+      requestedAlgoCount * sizeof(cudnnConvolutionBwdDataAlgoPerf_t), 1);
   if ((requestedAlgoCount * sizeof(cudnnConvolutionBwdDataAlgoPerf_t) != 0 &&
        perfResults == nullptr) ||
       rpc_read(conn, &workSpace, sizeof(void *)) < 0 ||
@@ -7330,8 +7330,8 @@ int handle_cudnnGetConvolutionBackwardDataAlgorithm_v7(conn_t *conn) {
       rpc_read(conn, &gradDesc, sizeof(const cudnnTensorDescriptor_t)) < 0 ||
       rpc_read(conn, &requestedAlgoCount, sizeof(const int)) < 0 || false)
     goto ERROR_0;
-  perfResults = (cudnnConvolutionBwdDataAlgoPerf_t *)malloc(
-      requestedAlgoCount * sizeof(cudnnConvolutionBwdDataAlgoPerf_t));
+  perfResults = (cudnnConvolutionBwdDataAlgoPerf_t *)calloc(
+      requestedAlgoCount * sizeof(cudnnConvolutionBwdDataAlgoPerf_t), 1);
   if ((requestedAlgoCount * sizeof(cudnnConvolutionBwdDataAlgoPerf_t) != 0 &&
        perfResults == nullptr) ||
       false)
@@ -7648,8 +7648,8 @@ int handle_cudnnFindConvolutionBackwardFilterAlgorithm(conn_t *conn) {
       rpc_read(conn, &dwDesc, sizeof(const cudnnFilterDescriptor_t)) < 0 ||
       rpc_read(conn, &requestedAlgoCount, sizeof(const int)) < 0 || false)
     goto ERROR_0;
-  perfResults = (cudnnConvolutionBwdFilterAlgoPerf_t *)malloc(
-      requestedAlgoCount * sizeof(cudnnConvolutionBwdFilterAlgoPerf_t));
+  perfResults = (cudnnConvolutionBwdFilterAlgoPerf_t *)calloc(
+      requestedAlgoCount * sizeof(cudnnConvolutionBwdFilterAlgoPerf_t), 1);
   if ((requestedAlgoCount * sizeof(cudnnConvolutionBwdFilterAlgoPerf_t) != 0 &&
        perfResults == nullptr) ||
       false)
@@ -7720,8 +7720,8 @@ int handle_cudnnFindConvolutionBackwardFilterAlgorithmEx(conn_t *conn) {
       rpc_read(conn, &dw, sizeof(void *)) < 0 ||
       rpc_read(conn, &requestedAlgoCount, sizeof(const int)) < 0 || false)
     goto ERROR_0;
-  perfResults = (cudnnConvolutionBwdFilterAlgoPerf_t *)malloc(
-      requestedAlgoCount * sizeof(cudnnConvolutionBwdFilterAlgoPerf_t));
+  perfResults = (cudnnConvolutionBwdFilterAlgoPerf_t *)calloc(
+      requestedAlgoCount * sizeof(cudnnConvolutionBwdFilterAlgoPerf_t), 1);
   if ((requestedAlgoCount * sizeof(cudnnConvolutionBwdFilterAlgoPerf_t) != 0 &&
        perfResults == nullptr) ||
       rpc_read(conn, &workSpace, sizeof(void *)) < 0 ||
@@ -7786,8 +7786,8 @@ int handle_cudnnGetConvolutionBackwardFilterAlgorithm_v7(conn_t *conn) {
       rpc_read(conn, &gradDesc, sizeof(const cudnnFilterDescriptor_t)) < 0 ||
       rpc_read(conn, &requestedAlgoCount, sizeof(const int)) < 0 || false)
     goto ERROR_0;
-  perfResults = (cudnnConvolutionBwdFilterAlgoPerf_t *)malloc(
-      requestedAlgoCount * sizeof(cudnnConvolutionBwdFilterAlgoPerf_t));
+  perfResults = (cudnnConvolutionBwdFilterAlgoPerf_t *)calloc(
+      requestedAlgoCount * sizeof(cudnnConvolutionBwdFilterAlgoPerf_t), 1);
   if ((requestedAlgoCount * sizeof(cudnnConvolutionBwdFilterAlgoPerf_t) != 0 &&
        perfResults == nullptr) ||
       false)
@@ -8914,7 +8914,7 @@ int handle_cudnnGetRNNDataDescriptor(conn_t *conn) {
       rpc_read(conn, &arrayLengthRequested, sizeof(int)) < 0 ||
       arrayLengthRequested < 0 || false)
     goto ERROR_0;
-  seqLengthArray = (int *)malloc(arrayLengthRequested * sizeof(int));
+  seqLengthArray = (int *)calloc(arrayLengthRequested * sizeof(int), 1);
   if ((arrayLengthRequested * sizeof(int) != 0 && seqLengthArray == nullptr) ||
       rpc_read(conn, &paddingFill_width, sizeof(paddingFill_width)) < 0 ||
       (paddingFill_width == 0 &&
@@ -9210,16 +9210,16 @@ int handle_cudnnGetSeqDataDescriptor(conn_t *conn) {
       rpc_read(conn, &nbDimsRequested, sizeof(int)) < 0 ||
       nbDimsRequested < 0 || false)
     goto ERROR_0;
-  dimA = (int *)malloc(nbDimsRequested * sizeof(int));
+  dimA = (int *)calloc(nbDimsRequested * sizeof(int), 1);
   if ((nbDimsRequested * sizeof(int) != 0 && dimA == nullptr) ||
       nbDimsRequested < 0 || false)
     goto ERROR_0;
-  axes = (cudnnSeqDataAxis_t *)malloc(nbDimsRequested *
-                                      sizeof(cudnnSeqDataAxis_t));
+  axes = (cudnnSeqDataAxis_t *)calloc(
+      nbDimsRequested * sizeof(cudnnSeqDataAxis_t), 1);
   if ((nbDimsRequested * sizeof(cudnnSeqDataAxis_t) != 0 && axes == nullptr) ||
       rpc_read(conn, &seqLengthSizeRequested, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  seqLengthArray = (int *)malloc(seqLengthSizeRequested * sizeof(int));
+  seqLengthArray = (int *)calloc(seqLengthSizeRequested * sizeof(int), 1);
   if ((seqLengthSizeRequested * sizeof(int) != 0 &&
        seqLengthArray == nullptr) ||
       rpc_read(conn, &paddingFill_width, sizeof(paddingFill_width)) < 0 ||

@@ -4015,15 +4015,39 @@ extern "C" void lupine_invalidate_runtime_context(conn_t *conn) {
   lupine_pending_runtime_context = conn;
 }
 
-// Runtime calls may initialize or change the server lane's driver context.
-// Query it only when a subsequent driver call needs the client-side cache.
-// This observes CUDA state; it never calls cuInit or creates a context.
-CUresult lupine_refresh_runtime_context() {
-  conn_t *conn = lupine_pending_runtime_context;
-  if (conn == nullptr) {
+static void lupine_adopt_lane_context(conn_t *conn, int route_id,
+                                      CUcontext context) {
+  lupine_cuda_initialized.store(true, std::memory_order_release);
+  lupine_current_context = context;
+  if (context != nullptr) {
+    lupine_note_context_owner(context, conn);
+    lupine_default_context_hint = context;
+    lupine_global_default_context_hint.store(context,
+                                             std::memory_order_relaxed);
+  }
+  lupine_lane_context_cache_store(route_id, context);
+}
+
+// What the server lane bound to this thread has current. The handle belongs to
+// the server: a runtime call on a lane with no context creates and binds that
+// device's primary context, and nothing the client did predicts its address,
+// so the first read on a lane has to be asked for.
+//
+// Afterwards it need not be. Under a held binding epoch, only cudaSetDevice,
+// cudaSetValidDevices and cudaDeviceReset move a lane off a context it already
+// holds, and all three clear this cache first. A cached null is not an answer:
+// that is the state the next runtime call binds a context out of.
+extern "C" CUresult lupine_lane_current_context(conn_t *conn,
+                                                CUcontext *context_out) {
+  const int route_id =
+      lupine_route_identity(lupine_remote_route_for_conn(conn));
+  CUcontext cached = nullptr;
+  if (lupine_lane_context_cache_lookup(route_id, &cached) &&
+      cached != nullptr) {
+    lupine_adopt_lane_context(conn, route_id, cached);
+    *context_out = cached;
     return CUDA_SUCCESS;
   }
-  lupine_pending_runtime_context = nullptr;
   CUcontext context = nullptr;
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -4034,17 +4058,23 @@ CUresult lupine_refresh_runtime_context() {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (result == CUDA_SUCCESS) {
-    lupine_cuda_initialized.store(true, std::memory_order_release);
-    lupine_current_context = context;
-    if (context != nullptr) {
-      lupine_note_context_owner(context, conn);
-      lupine_default_context_hint = context;
-      lupine_global_default_context_hint.store(context,
-                                               std::memory_order_relaxed);
-    }
-    lupine_lane_context_cache_store(
-        lupine_route_identity(lupine_remote_route_for_conn(conn)), context);
+    lupine_adopt_lane_context(conn, route_id, context);
+    *context_out = context;
   }
+  return result;
+}
+
+// Runtime calls may initialize or change the server lane's driver context.
+// Read it only when a subsequent driver call needs the client-side cache.
+// This observes CUDA state; it never calls cuInit or creates a context.
+CUresult lupine_refresh_runtime_context() {
+  conn_t *conn = lupine_pending_runtime_context;
+  if (conn == nullptr) {
+    return CUDA_SUCCESS;
+  }
+  lupine_pending_runtime_context = nullptr;
+  CUcontext context = nullptr;
+  CUresult result = lupine_lane_current_context(conn, &context);
   // Registration alone need not initialize CUDA. There is no context to
   // cache yet, but pre-init calls such as cuDriverGetVersion must still route.
   if (result == CUDA_ERROR_NOT_INITIALIZED) {
@@ -4253,7 +4283,7 @@ static CUresult lupine_set_remote_current_context(CUcontext ctx) {
 }
 
 extern "C" void lupine_note_ctx_create(CUcontext ctx, conn_t *conn) {
-  lupine_note_device_binding_changed();
+  lupine_note_device_binding_moved(conn);
   lupine_note_context_owner(ctx, conn);
   lupine_lane_context_cache_store(
       lupine_route_identity(lupine_remote_route_for_conn(conn)), ctx);
@@ -4267,7 +4297,7 @@ extern "C" void lupine_note_ctx_create(CUcontext ctx, conn_t *conn) {
 
 extern "C" void lupine_note_ctx_create_route(CUcontext ctx,
                                              lupine_route route) {
-  lupine_note_device_binding_changed();
+  lupine_note_device_binding_moved(lupine_route_remote_conn(route));
   lupine_note_context_owner_route(ctx, route);
   lupine_lane_context_cache_store(lupine_route_identity(route), ctx);
   lupine_context_stack->push_back(lupine_current_context);
@@ -4435,6 +4465,47 @@ extern "C" CUresult cuCtxGetDevice_v2(CUdevice *device, CUcontext ctx) {
     lupine_current_context_device_cache_insert(ctx, *device);
   }
   return return_value;
+}
+#endif
+
+#if CUDA_VERSION >= 12080
+extern "C" CUresult cuStreamGetDevice(CUstream hStream, CUdevice *device) {
+  if (device == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  if (!lupine_cuda_is_initialized()) {
+    return CUDA_ERROR_NOT_INITIALIZED;
+  }
+  lupine_route route = lupine_route_for_stream(hStream);
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn("cuStreamGetDevice", hStream, device);
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUdevice remote_device = 0;
+  CUresult return_value;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuStreamGetDevice) < 0 ||
+      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &remote_device, sizeof(remote_device)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    // The ordinal the stream's own server answers with is that server's; the
+    // caller only ever sees the virtual ordinal it was handed.
+    *device = lupine_local_device_for_remote(conn, remote_device);
+  }
+  return return_value;
+}
+
+#ifdef cuStreamGetDevice_ptsz
+#undef cuStreamGetDevice_ptsz
+#endif
+extern "C" CUresult cuStreamGetDevice_ptsz(CUstream hStream, CUdevice *device) {
+  return cuStreamGetDevice(hStream, device);
 }
 #endif
 
@@ -9794,6 +9865,9 @@ lupine_manual_function_map() {
       {"cuCtxSynchronize", (void *)cuCtxSynchronize},
       {"cuStreamSynchronize", (void *)cuStreamSynchronize},
       {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize_ptsz},
+#if CUDA_VERSION >= 12080
+      {"cuStreamGetDevice_ptsz", (void *)cuStreamGetDevice_ptsz},
+#endif
       {"cuEventQuery", (void *)cuEventQuery},
       {"cuEventSynchronize", (void *)cuEventSynchronize},
       {"cuGetErrorName", (void *)cuGetErrorName},

@@ -37,7 +37,6 @@ int handle_cudaDeviceGetStreamPriorityRange(conn_t *conn);
 int handle_cudaDeviceGetTexture1DLinearMaxWidth(conn_t *conn);
 int handle_cudaDeviceGraphMemTrim(conn_t *conn);
 int handle_cudaDeviceRegisterAsyncNotification(conn_t *conn);
-int handle_cudaDeviceReset(conn_t *conn);
 int handle_cudaDeviceSetCacheConfig(conn_t *conn);
 int handle_cudaDeviceSetGraphMemAttribute(conn_t *conn);
 int handle_cudaDeviceSetLimit(conn_t *conn);
