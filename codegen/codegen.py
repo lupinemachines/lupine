@@ -242,6 +242,7 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineBulkRead",
     "lupineMemcpyDtoHBulk",
     "lupineStreamPoolInit",
+    "lupineLibraryLoadBatch",
 ]
 
 REGISTRY_CPP_TEMPLATE = Template(

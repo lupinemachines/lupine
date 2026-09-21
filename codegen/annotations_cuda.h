@@ -3341,6 +3341,8 @@ void lupineEventQueryBatch();
 /** @disabled */
 void lupineStreamPoolInit();
 /** @disabled */
+void lupineLibraryLoadBatch();
+/** @disabled */
 void cuStreamBeginCaptureToGraph();
 /** @disabled handle_cuStreamUpdateCaptureDependencies */
 void cuStreamUpdateCaptureDependencies_v2();

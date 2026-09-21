@@ -66,6 +66,7 @@ int handle_cuEventRecordWithFlags(conn_t *conn);
 int handle_cuEventQuery(conn_t *conn);
 int handle_lupineEventQueryBatch(conn_t *conn);
 int handle_lupineStreamPoolInit(conn_t *conn);
+int handle_lupineLibraryLoadBatch(conn_t *conn);
 int handle_cuStreamWaitEvent(conn_t *conn);
 int handle_cuStreamBeginCaptureToGraph(conn_t *conn);
 int handle_cuStreamUpdateCaptureDependencies(conn_t *conn);

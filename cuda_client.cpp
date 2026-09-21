@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <cuda.h>
@@ -56,12 +57,14 @@
 #include "cuda_profiler_compat.h"
 #include "events.h"
 #include "ipc.h"
+#include "library_cache.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 #include "transport.h"
+#include "xxhash.h"
 
 #ifdef cuMemPrefetchAsync
 #undef cuMemPrefetchAsync
@@ -5730,6 +5733,12 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
         lupine_read_kernel_attributes(conn, route, kernel, device) < 0) {
       return -1;
     }
+    if (function != nullptr && device >= 0) {
+      lupine_function_attribute_cache().insert_or_assign(
+          lupine_function_attribute_key{lupine_route_identity(route), function,
+                                        LUPINE_FUNC_ATTRIBUTE_DEVICE},
+          device);
+    }
     lupine_param_layout_count_cache().insert_or_assign(
         lupine_param_layout_key{reinterpret_cast<uintptr_t>(kernel), true},
         param_count);
@@ -5753,6 +5762,208 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
     }
   }
   return 0;
+}
+
+// The request tail after the image: JIT options, then library options with an
+// absent value array encoded as each option's complement. The same bytes key
+// the profile, so a pointer-valued option that differs between runs misses.
+static std::vector<unsigned char> lupine_pack_library_load_options(
+    CUjit_option *jitOptions, void **jitOptionsValues,
+    unsigned int numJitOptions, CUlibraryOption *libraryOptions,
+    void **libraryOptionValues, unsigned int numLibraryOptions) {
+  std::vector<unsigned char> bytes;
+  auto append = [&](const void *data, size_t size) {
+    const auto *begin = static_cast<const unsigned char *>(data);
+    bytes.insert(bytes.end(), begin, begin + size);
+  };
+  append(&numJitOptions, sizeof(numJitOptions));
+  append(jitOptions, numJitOptions * sizeof(*jitOptions));
+  append(jitOptionsValues, numJitOptions * sizeof(*jitOptionsValues));
+  append(&numLibraryOptions, sizeof(numLibraryOptions));
+  append(libraryOptions, numLibraryOptions * sizeof(*libraryOptions));
+  for (unsigned int i = 0; i < numLibraryOptions; ++i) {
+    uintptr_t value = libraryOptionValues != nullptr
+                          ? reinterpret_cast<uintptr_t>(libraryOptionValues[i])
+                          : ~static_cast<uintptr_t>(libraryOptions[i]);
+    append(&value, sizeof(value));
+  }
+  return bytes;
+}
+
+static int lupine_read_library_load_response(
+    conn_t *conn, unsigned int numJitOptions, const CUjit_option *jitOptions,
+    void **jitOptionsValues, CUlibrary *library, CUresult *result) {
+  if (rpc_read(conn, library, sizeof(*library)) < 0 ||
+      lupine_read_jit_outputs(conn, numJitOptions, jitOptions,
+                              jitOptionsValues) < 0 ||
+      rpc_read(conn, result, sizeof(*result)) < 0 ||
+      (*result == CUDA_SUCCESS && lupine_read_library(conn, *library) < 0)) {
+    return -1;
+  }
+  return 0;
+}
+
+// One batch per process, for the route of the first remote load: the images
+// the previous run of this command line loaded, requested from the server's
+// cache in one round trip. Entries are handed out once, so every handle cudart
+// receives is distinct and cuLibraryUnload keeps its native meaning.
+struct lupine_library_batch_entry {
+  uint64_t hash = 0;
+  uint32_t kind = 0;
+  std::vector<unsigned char> options;
+  CUlibrary library = nullptr;
+  CUresult result = CUDA_ERROR_UNKNOWN;
+};
+
+struct lupine_library_batch_state {
+  std::mutex mutex;
+  std::condition_variable finished_cv;
+  bool started = false;
+  bool finished = true;
+  int route_id = -2;
+  std::vector<lupine_library_batch_entry> entries;
+  std::filesystem::path profile;
+  std::string lines;
+};
+
+static lupine_library_batch_state &lupine_library_batch() {
+  static auto *state = new lupine_library_batch_state();
+  return *state;
+}
+
+// Profiles are keyed by the full command line, so `python train.py` and
+// `python eval.py` keep separate load orders.
+static std::filesystem::path lupine_library_profile_path() {
+  std::filesystem::path dir = lupine_library_cache_dir();
+  const char *name = std::getenv("LUPINE_LIBRARY_PROFILE");
+  std::string key = name != nullptr ? name : "";
+  if (key.empty()) {
+    std::ifstream cmdline("/proc/self/cmdline", std::ios::binary);
+    std::string argv((std::istreambuf_iterator<char>(cmdline)),
+                     std::istreambuf_iterator<char>());
+    if (!argv.empty()) {
+      key = lupine_library_hash_name(XXH64(argv.data(), argv.size(), 0));
+    }
+  }
+  return dir.empty() || key.empty() ? std::filesystem::path()
+                                    : dir / "profiles" / key;
+}
+
+// Runs on its own lane with the app's context current: the server loads under
+// it, and lupine_read_library keys its caches by the reading thread's context.
+static void lupine_library_batch_main(conn_t *conn, CUcontext context) {
+  auto &state = lupine_library_batch();
+  lupine_current_context = context;
+  auto count = static_cast<uint32_t>(state.entries.size());
+  bool ok =
+      lupine_prepare_rpc(conn) >= 0 &&
+      rpc_write_start_request(conn, LUPINE_RPC_lupineLibraryLoadBatch) >= 0 &&
+      rpc_write(conn, &context, sizeof(context)) >= 0 &&
+      rpc_write(conn, &count, sizeof(count)) >= 0;
+  for (const auto &entry : state.entries) {
+    ok = ok && rpc_write(conn, &entry.hash, sizeof(entry.hash)) >= 0 &&
+         rpc_write(conn, &entry.kind, sizeof(entry.kind)) >= 0 &&
+         rpc_write(conn, entry.options.data(), entry.options.size()) >= 0;
+  }
+  ok = ok && rpc_wait_for_response(conn) >= 0;
+  uint32_t cached = 0;
+  for (auto &entry : state.entries) {
+    if (!ok ||
+        lupine_read_library_load_response(conn, 0, nullptr, nullptr,
+                                          &entry.library, &entry.result) < 0) {
+      ok = false;
+      entry.result = CUDA_ERROR_UNKNOWN;
+    }
+    cached += entry.result == CUDA_SUCCESS;
+  }
+  ok = ok && rpc_read_end(conn) >= 0;
+  LUPINE_TRACE_LOG("LUPINE library batch: " << cached << "/" << count
+                                            << " cached, ok=" << ok);
+  std::lock_guard<std::mutex> lock(state.mutex);
+  state.finished = true;
+  state.finished_cv.notify_all();
+}
+
+static void lupine_library_batch_start(lupine_route route) {
+  auto &state = lupine_library_batch();
+  std::lock_guard<std::mutex> lock(state.mutex);
+  if (state.started) {
+    return;
+  }
+  state.started = true;
+  state.route_id = lupine_route_identity(route);
+  state.profile = lupine_library_profile_path();
+  std::ifstream in(state.profile, std::ios::binary);
+  std::string data((std::istreambuf_iterator<char>(in)),
+                   std::istreambuf_iterator<char>());
+  for (size_t at = 0; at + 16 <= data.size() && state.entries.size() < 4096;) {
+    lupine_library_batch_entry entry;
+    uint32_t size = 0;
+    std::memcpy(&entry.hash, &data[at], sizeof(entry.hash));
+    std::memcpy(&entry.kind, &data[at + 8], sizeof(entry.kind));
+    std::memcpy(&size, &data[at + 12], sizeof(size));
+    at += 16;
+    if (size < 8 || size > data.size() - at) {
+      break;
+    }
+    entry.options.assign(&data[at], &data[at] + size);
+    at += size;
+    state.entries.push_back(std::move(entry));
+  }
+  if (!state.entries.empty()) {
+    state.finished = false;
+    std::thread(lupine_library_batch_main, lupine_route_remote_conn(route),
+                lupine_current_context)
+        .detach();
+  }
+}
+
+static bool
+lupine_library_batch_claim(lupine_route route, uint64_t hash, uint32_t kind,
+                           const std::vector<unsigned char> &options,
+                           CUlibrary *library) {
+  auto &state = lupine_library_batch();
+  std::unique_lock<std::mutex> lock(state.mutex);
+  if (lupine_route_identity(route) != state.route_id) {
+    return false;
+  }
+  state.finished_cv.wait(lock, [&] { return state.finished; });
+  auto it = std::find_if(state.entries.begin(), state.entries.end(),
+                         [&](const auto &entry) {
+                           return entry.hash == hash && entry.kind == kind &&
+                                  entry.options == options;
+                         });
+  if (it == state.entries.end() || it->result != CUDA_SUCCESS) {
+    return false;
+  }
+  *library = it->library;
+  state.entries.erase(it);
+  return true;
+}
+
+// Loads carrying JIT options are not recorded: their log buffers and wall-time
+// outputs belong to the call that passes them.
+static void
+lupine_library_profile_record(lupine_route route, uint64_t hash, uint32_t kind,
+                              const std::vector<unsigned char> &options) {
+  auto &state = lupine_library_batch();
+  std::lock_guard<std::mutex> lock(state.mutex);
+  unsigned int jit_options = 0;
+  std::memcpy(&jit_options, options.data(), sizeof(jit_options));
+  if (state.profile.empty() || jit_options != 0 ||
+      lupine_route_identity(route) != state.route_id) {
+    return;
+  }
+  auto size = static_cast<uint32_t>(options.size());
+  auto append = [&](const void *data, size_t length) {
+    state.lines.append(static_cast<const char *>(data), length);
+  };
+  append(&hash, sizeof(hash));
+  append(&kind, sizeof(kind));
+  append(&size, sizeof(size));
+  append(options.data(), size);
+  lupine_write_file_atomically(state.profile, state.lines.data(),
+                               state.lines.size());
 }
 
 extern "C" CUresult
@@ -5793,49 +6004,25 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
+  std::vector<unsigned char> options = lupine_pack_library_load_options(
+      jitOptions, jitOptionsValues, numJitOptions, libraryOptions,
+      libraryOptionValues, numLibraryOptions);
+  uint64_t hash = XXH64(image_bytes.data(), image_bytes.size(), 0);
   size_t image_size = image_bytes.size();
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
-      rpc_copy_alloc(conn, libraryOptionValues == nullptr
-                               ? numLibraryOptions * sizeof(uintptr_t)
-                               : 0) < 0 ||
-      rpc_write(conn, &kind, sizeof(kind)) < 0 ||
-      rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
-      rpc_write(conn, &numJitOptions, sizeof(numJitOptions)) < 0 ||
-      rpc_write(conn, jitOptions, numJitOptions * sizeof(*jitOptions)) < 0 ||
-      rpc_write(conn, jitOptionsValues,
-                numJitOptions * sizeof(*jitOptionsValues)) < 0 ||
-      rpc_write(conn, &numLibraryOptions, sizeof(numLibraryOptions)) < 0 ||
-      rpc_write(conn, libraryOptions,
-                numLibraryOptions * sizeof(*libraryOptions)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (libraryOptionValues != nullptr) {
-    if (rpc_write(conn, libraryOptionValues,
-                  numLibraryOptions * sizeof(*libraryOptionValues)) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  } else {
-    auto *wire_values = static_cast<uintptr_t *>(rpc_write_buffer(
-        conn, numLibraryOptions * sizeof(uintptr_t), alignof(uintptr_t)));
-    for (unsigned int i = 0; i < numLibraryOptions; ++i) {
-      wire_values[i] = ~static_cast<uintptr_t>(libraryOptions[i]);
-    }
-  }
-  if (rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, library, sizeof(CUlibrary)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (lupine_read_jit_outputs(conn, numJitOptions, jitOptions,
-                              jitOptionsValues) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      (return_value == CUDA_SUCCESS &&
-       lupine_read_library(conn, *library) < 0) ||
-      rpc_read_end(conn) < 0) {
+  lupine_library_batch_start(route);
+  CUresult return_value = CUDA_SUCCESS;
+  if (!lupine_library_batch_claim(route, hash, kind, options, library) &&
+      (lupine_prepare_rpc(conn) < 0 ||
+       rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
+       rpc_write(conn, &kind, sizeof(kind)) < 0 ||
+       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
+       rpc_write(conn, image_bytes.data(), image_size) < 0 ||
+       rpc_write(conn, options.data(), options.size()) < 0 ||
+       rpc_wait_for_response(conn) < 0 ||
+       lupine_read_library_load_response(conn, numJitOptions, jitOptions,
+                                         jitOptionsValues, library,
+                                         &return_value) < 0 ||
+       rpc_read_end(conn) < 0)) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
@@ -5843,6 +6030,7 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
     lupine_record_library_image(*library, lupine_remote_route_for_conn(conn),
                                 kind, image_bytes.data(), image_bytes.size(),
                                 code);
+    lupine_library_profile_record(route, hash, kind, options);
   }
   return return_value;
 }

@@ -15973,3 +15973,4 @@
 #define LUPINE_RPC_lupineBulkRead 1532818193
 #define LUPINE_RPC_lupineMemcpyDtoHBulk 1646333528
 #define LUPINE_RPC_lupineStreamPoolInit 394532239
+#define LUPINE_RPC_lupineLibraryLoadBatch 1285236640

@@ -8,6 +8,7 @@
 #include <cuda.h>
 #include <deque>
 #include <errno.h>
+#include <fstream>
 #if defined(__linux__)
 #include <sys/mman.h> // memfd_create
 #include <sys/syscall.h>
@@ -43,6 +44,7 @@
 #include "cuda_server.h"
 #include "cuda_server_memcpy.h"
 #include "ipc.h"
+#include "library_cache.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
@@ -57,6 +59,7 @@
 #define lupine_ipc_close_fd close
 #endif
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
+#include "xxhash.h"
 
 #if CUDA_VERSION < 12020
 #ifdef CU_MEM_LOCATION_TYPE_HOST
@@ -1379,16 +1382,121 @@ static int lupine_write_library(conn_t *conn,
     }
   }
 #endif
-  return rpc_write_end(conn);
+  return 0;
+}
+
+// The request tail after the image: JIT options, then library options with an
+// absent value array encoded as each option's complement.
+struct lupine_library_load_options {
+  lupine_jit_state jit;
+  std::vector<CUlibraryOption> options;
+  std::vector<void *> values;
+  bool has_values = false;
+  ~lupine_library_load_options() {
+    std::free(jit.options);
+    std::free(jit.option_values);
+    std::free(jit.info_log);
+    std::free(jit.error_log);
+  }
+};
+
+static int lupine_read_library_load_options(conn_t *conn,
+                                            lupine_library_load_options *load) {
+  unsigned int count = 0;
+  if (lupine_read_jit_options(conn, &load->jit) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0) {
+    return -1;
+  }
+  load->options.resize(count);
+  load->values.resize(count);
+  if (rpc_read(conn, load->options.data(), count * sizeof(CUlibraryOption)) <
+          0 ||
+      rpc_read(conn, load->values.data(), count * sizeof(void *)) < 0) {
+    return -1;
+  }
+  for (unsigned int i = 0; i < count; ++i) {
+    load->has_values |= reinterpret_cast<uintptr_t>(load->values[i]) !=
+                        ~static_cast<uintptr_t>(load->options[i]);
+  }
+  for (unsigned int i = 0; i < count; ++i) {
+    // The client-side image is not the buffer passed to CUDA on this process.
+    // Clear the preservation hint so the driver retains its own copy rather
+    // than requiring a global library-to-image lifetime table.
+    if (load->has_values &&
+        load->options[i] == CU_LIBRARY_BINARY_IS_PRESERVED) {
+      load->values[i] = nullptr;
+    }
+  }
+  return 0;
+}
+
+static CUresult lupine_load_library(CUlibrary *library, uint32_t kind,
+                                    const std::vector<unsigned char> &image,
+                                    lupine_library_load_options *load) {
+  CUresult result = CUDA_ERROR_NOT_SUPPORTED;
+  lupine_fatbin_wrapper wrapper = {
+      LUPINE_FATBINC_MAGIC,
+      kind == LUPINE_MODULE_IMAGE_FATBINC_V2 ? 2U : 1U,
+      image.data(),
+      nullptr,
+  };
+  const void *code = kind == LUPINE_MODULE_IMAGE_FATBIN_RAW
+                         ? static_cast<const void *>(image.data())
+                         : &wrapper;
+  if (kind == LUPINE_MODULE_IMAGE_FATBINC_V1 ||
+      kind == LUPINE_MODULE_IMAGE_FATBINC_V2 ||
+      kind == LUPINE_MODULE_IMAGE_FATBIN_RAW) {
+    result = cuLibraryLoadData(library, code, load->jit.options,
+                               load->jit.option_values, load->jit.num_options,
+                               load->options.data(),
+                               load->has_values ? load->values.data() : nullptr,
+                               static_cast<unsigned int>(load->options.size()));
+  }
+  if (result == CUDA_SUCCESS) {
+    lupine_note_device_stdout_image(image.data(), image.size());
+  }
+  return result;
+}
+
+// Images are kept content-addressed by their XXH64 so a later run can load
+// them by hash alone.
+static std::filesystem::path lupine_library_cache_path(uint64_t hash) {
+  std::filesystem::path dir = lupine_library_cache_dir();
+  return dir.empty() ? dir : dir / lupine_library_hash_name(hash);
+}
+
+static void
+lupine_cache_library_image(const std::vector<unsigned char> &image) {
+  std::filesystem::path path =
+      lupine_library_cache_path(XXH64(image.data(), image.size(), 0));
+  std::error_code ec;
+  if (!path.empty() && !std::filesystem::exists(path, ec)) {
+    lupine_write_file_atomically(path, image.data(), image.size());
+  }
+}
+
+// Only a file that hashes to its own name is served; anything else is dropped
+// so the client's normal load rewrites it.
+static bool
+lupine_read_cached_library_image(uint64_t hash,
+                                 std::vector<unsigned char> *image) {
+  std::filesystem::path path = lupine_library_cache_path(hash);
+  std::ifstream in(path, std::ios::binary);
+  image->assign(std::istreambuf_iterator<char>(in),
+                std::istreambuf_iterator<char>());
+  if (!image->empty() && XXH64(image->data(), image->size(), 0) == hash) {
+    return true;
+  }
+  std::error_code ec;
+  std::filesystem::remove(path, ec);
+  return false;
 }
 
 int handle_cuLibraryLoadData(conn_t *conn) {
   uint32_t kind = 0;
   size_t image_size = 0;
-  int request_id;
   CUlibrary library = nullptr;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-  lupine_jit_state jit_state;
+  lupine_library_load_options load;
 
   if (rpc_read(conn, &kind, sizeof(kind)) < 0 ||
       rpc_read(conn, &image_size, sizeof(image_size)) < 0) {
@@ -1396,93 +1504,91 @@ int handle_cuLibraryLoadData(conn_t *conn) {
   }
 
   std::vector<unsigned char> image(image_size);
-  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0) {
+  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0 ||
+      lupine_read_library_load_options(conn, &load) < 0) {
     return -1;
-  }
-  if (lupine_read_jit_options(conn, &jit_state) < 0) {
-    return -1;
-  }
-  unsigned int num_library_options = 0;
-  if (rpc_read(conn, &num_library_options, sizeof(num_library_options)) < 0) {
-    return -1;
-  }
-  std::vector<CUlibraryOption> library_options(num_library_options);
-  std::vector<void *> library_option_values(num_library_options);
-  if (rpc_read(conn, library_options.data(),
-               library_options.size() * sizeof(*library_options.data())) < 0 ||
-      rpc_read(conn, library_option_values.data(),
-               library_option_values.size() *
-                   sizeof(*library_option_values.data())) < 0) {
-    return -1;
-  }
-  bool has_library_option_values = false;
-  for (unsigned int i = 0; i < num_library_options; ++i) {
-    has_library_option_values |=
-        reinterpret_cast<uintptr_t>(library_option_values[i]) !=
-        ~static_cast<uintptr_t>(library_options[i]);
-  }
-  for (unsigned int i = 0; i < num_library_options; ++i) {
-    // The client-side image is not the buffer passed to CUDA on this process.
-    // Clear the preservation hint so the driver retains its own copy rather
-    // than requiring a global library-to-image lifetime table.
-    if (has_library_option_values &&
-        library_options[i] == CU_LIBRARY_BINARY_IS_PRESERVED) {
-      library_option_values[i] = nullptr;
-    }
   }
 
-  request_id = rpc_read_end(conn);
+  int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
   }
 
-  if (kind == LUPINE_MODULE_IMAGE_FATBINC_V1 ||
-      kind == LUPINE_MODULE_IMAGE_FATBINC_V2) {
-    lupine_fatbin_wrapper wrapper = {
-        LUPINE_FATBINC_MAGIC,
-        kind == LUPINE_MODULE_IMAGE_FATBINC_V2 ? 2U : 1U,
-        image.data(),
-        nullptr,
-    };
-    result = cuLibraryLoadData(
-        &library, &wrapper, jit_state.options, jit_state.option_values,
-        jit_state.num_options, library_options.data(),
-        has_library_option_values ? library_option_values.data() : nullptr,
-        num_library_options);
-  } else if (kind == LUPINE_MODULE_IMAGE_FATBIN_RAW) {
-    result = cuLibraryLoadData(
-        &library, image.data(), jit_state.options, jit_state.option_values,
-        jit_state.num_options, library_options.data(),
-        has_library_option_values ? library_option_values.data() : nullptr,
-        num_library_options);
-  } else {
-    result = CUDA_ERROR_NOT_SUPPORTED;
-  }
-  if (result == CUDA_SUCCESS) {
-    lupine_note_device_stdout_image(image.data(), image.size());
-  }
-
+  CUresult result = lupine_load_library(&library, kind, image, &load);
   lupine_library_snapshot snapshot;
   if (result == CUDA_SUCCESS) {
+    lupine_cache_library_image(image);
     snapshot = lupine_collect_library(library);
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &library, sizeof(library)) < 0 ||
-      lupine_write_jit_outputs(conn, &jit_state) < 0 ||
+      lupine_write_jit_outputs(conn, &load.jit) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 ||
-      (result == CUDA_SUCCESS ? lupine_write_library(conn, snapshot)
-                              : rpc_write_end(conn)) < 0) {
-    std::free(jit_state.options);
-    std::free(jit_state.option_values);
-    std::free(jit_state.info_log);
-    std::free(jit_state.error_log);
+      (result == CUDA_SUCCESS && lupine_write_library(conn, snapshot) < 0) ||
+      rpc_write_end(conn) < 0) {
     return -1;
   }
-  std::free(jit_state.options);
-  std::free(jit_state.option_values);
-  std::free(jit_state.info_log);
-  std::free(jit_state.error_log);
   return 0;
+}
+
+// Loads profiled images from the cache under the client's context, on the
+// caller's own lane. Each entry answers like a cuLibraryLoadData response
+// without JIT outputs; an image missing from the cache answers
+// CUDA_ERROR_FILE_NOT_FOUND and no snapshot, and the client loads it normally.
+int handle_lupineLibraryLoadBatch(conn_t *conn) {
+  struct entry {
+    uint64_t hash = 0;
+    uint32_t kind = 0;
+    lupine_library_load_options load;
+    CUlibrary library = nullptr;
+    CUresult result = CUDA_ERROR_FILE_NOT_FOUND;
+    lupine_library_snapshot snapshot;
+  };
+  CUcontext context = nullptr;
+  uint32_t count = 0;
+  if (rpc_read(conn, &context, sizeof(context)) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0 || count > 4096) {
+    return -1;
+  }
+  std::deque<entry> entries;
+  for (uint32_t i = 0; i < count; ++i) {
+    entry &e = entries.emplace_back();
+    if (rpc_read(conn, &e.hash, sizeof(e.hash)) < 0 ||
+        rpc_read(conn, &e.kind, sizeof(e.kind)) < 0 ||
+        lupine_read_library_load_options(conn, &e.load) < 0) {
+      return -1;
+    }
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  if (cuCtxPushCurrent(context) == CUDA_SUCCESS) {
+    for (entry &e : entries) {
+      std::vector<unsigned char> image;
+      if (lupine_read_cached_library_image(e.hash, &image)) {
+        e.result = lupine_load_library(&e.library, e.kind, image, &e.load);
+      }
+      if (e.result == CUDA_SUCCESS) {
+        e.snapshot = lupine_collect_library(e.library);
+      }
+    }
+    CUcontext popped = nullptr;
+    cuCtxPopCurrent(&popped);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0) {
+    return -1;
+  }
+  for (entry &e : entries) {
+    if (rpc_write(conn, &e.library, sizeof(e.library)) < 0 ||
+        rpc_write(conn, &e.result, sizeof(e.result)) < 0 ||
+        (e.result == CUDA_SUCCESS &&
+         lupine_write_library(conn, e.snapshot) < 0)) {
+      return -1;
+    }
+  }
+  return rpc_write_end(conn);
 }
 
 int handle_cuMemPoolSetAttribute(conn_t *conn) {
