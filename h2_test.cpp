@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <future>
 #include <iostream>
 #include <nghttp2/nghttp2.h>
 #include <string>
@@ -1560,7 +1561,7 @@ void test_rpc_write_queue_grows() {
     require(rpc_write(&pair.client, &values[i], sizeof(values[i])) == 0,
             "large queue rpc_write failed");
   }
-  require(pair.client.write_queue.size() == kCount + 2,
+  require(pair.client.write_queue.size() == kCount + 3,
           "large queue count mismatch");
   require(rpc_write_end(&pair.client) > 0, "large queue write_end failed");
   reader.join();
@@ -1710,6 +1711,65 @@ void test_rpc_small_payload_round_trip() {
   require(received_prefix == prefix, "payload prefix mismatch");
   require(received == payload, "payload mismatch");
   require(received_suffix == suffix, "payload suffix mismatch");
+}
+
+void test_rpc_request_waits_for_prior_async_submission() {
+  h2_pair pair;
+  init_pair(&pair);
+  constexpr int kAsyncOp = 101;
+  constexpr int kRequestOp = 102;
+
+  uint64_t sequence = 0;
+  require(rpc_write_start_async_request(&pair.client, kAsyncOp, &sequence) ==
+                  0 &&
+              rpc_write(&pair.client, &sequence, sizeof(sequence)) == 0 &&
+              rpc_write_end(&pair.client) > 0,
+          "async request write failed");
+  int32_t stream_id = rpc_http2_accept_stream(&pair.server);
+  require(rpc_bind_http2_stream(&pair.server, stream_id) == 0 &&
+              rpc_dispatch(&pair.server, 0) == kAsyncOp &&
+              rpc_read(&pair.server, &sequence, sizeof(sequence)) ==
+                  sizeof(sequence) &&
+              rpc_read_end(&pair.server) > 0,
+          "async request read failed");
+  rpc_unbind_http2_stream(&pair.server);
+
+  // Receive the async request but delay its native submission. A request on
+  // another lane must wait even though its complete payload is available.
+  auto client = std::async(std::launch::async, [&] {
+    require(rpc_write_start_request(&pair.client, kRequestOp) == 0 &&
+                rpc_wait_for_response(&pair.client) == 0 &&
+                rpc_read_end(&pair.client) > 0,
+            "ordered request round trip failed");
+  });
+  std::promise<void> dispatching;
+  auto server = std::async(std::launch::async, [&] {
+    int32_t lane = rpc_http2_accept_stream(&pair.server);
+    require(rpc_bind_http2_stream(&pair.server, lane) == 0,
+            "ordered request stream bind failed");
+    require(rpc_dispatch(&pair.server, 0) == kRequestOp,
+            "ordered request dispatch failed");
+    dispatching.set_value();
+    int request_id = rpc_read_end(&pair.server);
+    require(request_id > 0 &&
+                rpc_write_start_response(&pair.server, request_id) == 0 &&
+                rpc_write_end(&pair.server) == request_id,
+            "ordered request response failed");
+    rpc_unbind_http2_stream(&pair.server);
+  });
+  require(dispatching.get_future().wait_for(std::chrono::seconds(5)) ==
+              std::future_status::ready,
+          "request could not receive its payload before async submission");
+  require(server.wait_for(std::chrono::milliseconds(100)) ==
+              std::future_status::timeout,
+          "request overtook an earlier async submission");
+  require(rpc_async_sequence_begin(&pair.server, sequence) == 0,
+          "async submission begin failed");
+  rpc_async_sequence_end(&pair.server);
+  require(server.wait_for(std::chrono::seconds(5)) == std::future_status::ready,
+          "request did not resume after async submission");
+  server.get();
+  client.get();
 }
 
 void test_rpc_repeated_responses_on_lane() {
@@ -2022,6 +2082,7 @@ int main() {
   RUN_CASE(test_rpc_write_buffer_uses_fixed_allocation());
   RUN_CASE(test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy());
   RUN_CASE(test_rpc_small_payload_round_trip());
+  RUN_CASE(test_rpc_request_waits_for_prior_async_submission());
   RUN_CASE(test_rpc_repeated_responses_on_lane());
   RUN_CASE(test_rpc_request_nested_in_response_builder());
   RUN_CASE(test_rpc_response_completed_hook());

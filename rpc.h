@@ -115,6 +115,7 @@ struct conn_t {
   int write_id;
   int write_op;
   int32_t write_stream_id;
+  uint64_t write_async_watermark;
 
   pthread_t read_thread;
   pthread_mutex_t write_mutex, call_mutex, async_mutex;

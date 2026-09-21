@@ -389,6 +389,24 @@ void rpc_async_sequence_end(conn_t *conn) {
   pthread_mutex_unlock(&conn->async_mutex);
 }
 
+// A request may arrive on another lane before an earlier fire-and-forget
+// payload. Wait for its native submission, without holding the sequence lock
+// while the request runs (it may itself be an async submission).
+static int rpc_wait_for_async_submissions(conn_t *conn, uint64_t watermark) {
+  if (pthread_mutex_lock(&conn->async_mutex) != 0) {
+    return -1;
+  }
+  while (!conn->closed && conn->serving_async_sequence < watermark) {
+    if (pthread_cond_wait(&conn->async_cond, &conn->async_mutex) != 0) {
+      pthread_mutex_unlock(&conn->async_mutex);
+      return -1;
+    }
+  }
+  const int result = conn->closed ? -1 : 0;
+  pthread_mutex_unlock(&conn->async_mutex);
+  return result;
+}
+
 void rpc_conn_destroy(conn_t *conn) {
   if (conn == nullptr) {
     return;
@@ -467,6 +485,7 @@ struct rpc_read_frame {
   int32_t stream_id = -1;
   int request_id = 0;
   int op = 0;
+  uint64_t async_watermark = 0;
 };
 
 struct rpc_response_route {
@@ -597,8 +616,15 @@ int rpc_dispatch(conn_t *conn, int parity) {
     }
     return -1;
   }
+  uint64_t async_watermark = 0;
+  if (rpc_http2_read_stream(conn, stream_id, &async_watermark,
+                            sizeof(async_watermark)) !=
+      sizeof(async_watermark)) {
+    rpc_mark_connection_closed(conn);
+    return -1;
+  }
   rpc_tls_io.read_conn = conn;
-  rpc_tls_io.read = {stream_id, request_id, op};
+  rpc_tls_io.read = {stream_id, request_id, op, async_watermark};
   return op;
 }
 
@@ -742,9 +768,16 @@ int rpc_read_end(conn_t *conn) {
     int read_id = rpc_tls_io.read.request_id;
     int32_t stream_id = rpc_tls_io.read.stream_id;
     bool completed_response = rpc_tls_io.read.op == -1;
+    uint64_t async_watermark = rpc_tls_io.read.async_watermark;
     rpc_tls_io.read_conn = nullptr;
     rpc_tls_io.read = {};
     rpc_release_held_call_lock(conn);
+    // Consume the payload before waiting so another lane's request cannot
+    // exhaust the receive window needed by an earlier async submission.
+    if (!completed_response &&
+        rpc_wait_for_async_submissions(conn, async_watermark) < 0) {
+      return -1;
+    }
     if (completed_response) {
       auto hook = response_completed_hook.load(std::memory_order_acquire);
       if (hook != nullptr) {
@@ -880,7 +913,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
     rpc_tls_io.write_conn = conn;
   }
 
-  if (rpc_write_queue_reset(conn, 2) < 0) {
+  if (rpc_write_queue_reset(conn, 3) < 0) {
     rpc_release_write_builder(conn, request_nested_in_response);
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
@@ -888,6 +921,9 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   conn->request_id = conn->request_id + 2; // leave the last bit the same
   conn->write_id = conn->request_id;
   conn->write_op = op;
+  // The call lock protects this snapshot. An async request takes its own
+  // ticket after this point, so its header waits only for earlier submissions.
+  conn->write_async_watermark = conn->issued_async_sequence;
   conn->write_stream_id = rpc_http2_lane_stream(conn, rpc_tls_lane.id);
   if (conn->write_stream_id < 0) {
     rpc_release_write_builder(conn, request_nested_in_response);
@@ -1054,6 +1090,10 @@ int rpc_write_end(conn_t *conn) {
         rpc_write_cursor(&conn->write_id, sizeof(conn->write_id));
     conn->write_queue[1] =
         rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
+    if (request) {
+      conn->write_queue[2] = rpc_write_cursor(
+          &conn->write_async_watermark, sizeof(conn->write_async_watermark));
+    }
     result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
   }
   rpc_release_write_builder(conn, request_nested_in_response);
