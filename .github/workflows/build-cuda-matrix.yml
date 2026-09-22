@@ -87,28 +87,7 @@ jobs:
             docker run --rm --entrypoint bash "$image" -lc '
               set -euo pipefail
               test -e /opt/lupine/lib/libcuda.so.1
-              test -e /opt/lupine/lib/libcudart.so
-              test -e /opt/lupine/lib/libcublas.so
-              test -e /opt/lupine/lib/libcublasLt.so
-              test -e /opt/lupine/lib/libcufft.so
-              test -e /opt/lupine/lib/libcudnn.so
-              test -e /opt/lupine/lib/libcurand.so
-              test -e /opt/lupine/lib/libcusparse.so
-              test -e /opt/lupine/lib/libcusparseLt.so.0
-              test -e /opt/lupine/lib/libcusolver.so
-              test -e /opt/lupine/lib/libcusolverMg.so
-              test -e /opt/lupine/lib/libnvrtc.so
               test -e /opt/lupine/lib/libnccl.so.2
-              case "${{ matrix.cuda }}" in 11.*) ;; *) test -e /opt/lupine/lib/libnvJitLink.so ;; esac
-              test -e /opt/lupine/lib/libnvjpeg.so
-              test -e /opt/lupine/lib/libnppc.so
-              test -e /opt/lupine/lib/libnppig.so
-              test -e /opt/lupine/lib/libcufile.so.0
-              # The CUPTI SONAME is the toolkit major, and carries the minor
-              # before CUDA 12.
-              cupti_soversion="$(echo "${{ matrix.cuda }}" | cut -d. -f1)"
-              case "${{ matrix.cuda }}" in 11.*) cupti_soversion=11.8 ;; esac
-              test -e "/opt/lupine/lib/libcupti.so.$cupti_soversion"
               case "${{ matrix.cuda }}" in 11.*) ;; *) test -e /opt/lupine/lib/libnvshmem_host.so.3 ;; esac
               test -e /opt/lupine/lib/libnvidia-ml.so.1
               test -e /opt/lupine/lib/libamdhip64.so.1
@@ -143,60 +122,7 @@ jobs:
           docker cp "$container:/opt/lupine/lib/libcuda.so.1" "$out/libcuda.so.1"
           cuda_major="${{ matrix.cuda }}"
           cuda_major="${cuda_major%%.*}"
-          runtime_soname="libcudart.so.${cuda_major}"
-          if [[ "$cuda_major" == 11 ]]; then
-            runtime_soname="libcudart.so.11.0"
-          fi
-          docker cp "$container:/opt/lupine/lib/$runtime_soname" "$out/$runtime_soname"
-          docker cp "$container:/opt/lupine/lib/libcublas.so.${cuda_major}" "$out/libcublas.so.${cuda_major}"
-          docker cp "$container:/opt/lupine/lib/libcublasLt.so.${cuda_major}" "$out/libcublasLt.so.${cuda_major}"
-          # cuFFT's major is its own, not the toolkit's.
-          cufft_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libcufft.so.[0-9]*')"
-          docker cp "$container:$cufft_lib" "$out/$(basename "$cufft_lib")"
-          # So is cuDNN's.
-          cudnn_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libcudnn.so.[0-9]*')"
-          docker cp "$container:$cudnn_lib" "$out/$(basename "$cudnn_lib")"
-          # So is cuRAND's.
-          curand_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libcurand.so.[0-9]*')"
-          docker cp "$container:$curand_lib" "$out/$(basename "$curand_lib")"
-          # So is cuSPARSE's.
-          cusparse_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libcusparse.so.[0-9]*')"
-          docker cp "$container:$cusparse_lib" "$out/$(basename "$cusparse_lib")"
-          # cuSPARSELt's SONAME major is 0 for every release of the library.
-          docker cp "$container:/opt/lupine/lib/libcusparseLt.so.0" "$out/libcusparseLt.so.0"
-          # So is cuSOLVER's, which cuSOLVERMg shares.
-          cusolver_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libcusolver.so.[0-9]*')"
-          docker cp "$container:$cusolver_lib" "$out/$(basename "$cusolver_lib")"
-          cusolvermg_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libcusolverMg.so.[0-9]*')"
-          docker cp "$container:$cusolvermg_lib" "$out/$(basename "$cusolvermg_lib")"
-          # NVRTC 11.x kept the 11.2 soname.
-          nvrtc_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libnvrtc.so.[0-9]*')"
-          docker cp "$container:$nvrtc_lib" "$out/$(basename "$nvrtc_lib")"
           docker cp "$container:/opt/lupine/lib/libnccl.so.2" "$out/libnccl.so.2"
-          # nvJitLink starts at CUDA 12 and shares the toolkit's major.
-          nvjitlink_libs=()
-          if [[ "$cuda_major" != 11 ]]; then
-            docker cp "$container:/opt/lupine/lib/libnvJitLink.so.${cuda_major}" "$out/libnvJitLink.so.${cuda_major}"
-            cp "$out/libnvJitLink.so.${cuda_major}" "$out/libnvJitLink.so"
-            nvjitlink_libs=(libnvJitLink.so "libnvJitLink.so.${cuda_major}")
-          fi
-          nvjpeg_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libnvjpeg.so.[0-9]*')"
-          docker cp "$container:$nvjpeg_lib" "$out/$(basename "$nvjpeg_lib")"
-          cp "$out/$(basename "$nvjpeg_lib")" "$out/libnvjpeg.so"
-          # NPP's major is its own too, and every NPP library shares it.
-          npp_files=()
-          for npp in nppc nppial nppicc nppidei nppif nppig nppim nppist nppisu nppitc npps; do
-            npp_lib="$(docker run --rm --entrypoint sh "$image" -c "ls /opt/lupine/lib/lib${npp}.so.[0-9]*")"
-            docker cp "$container:$npp_lib" "$out/$(basename "$npp_lib")"
-            cp "$out/$(basename "$npp_lib")" "$out/lib${npp}.so"
-            npp_files+=("lib${npp}.so" "$(basename "$npp_lib")")
-          done
-          # cuFile's SONAME major is 0 for every release of the library.
-          docker cp "$container:/opt/lupine/lib/libcufile.so.0" "$out/libcufile.so.0"
-          # CUPTI's SONAME is the toolkit's major, and carries the minor before
-          # CUDA 12 (libcupti.so.11.8).
-          cupti_lib="$(docker run --rm --entrypoint sh "$image" -c 'ls /opt/lupine/lib/libcupti.so.[0-9]*')"
-          docker cp "$container:$cupti_lib" "$out/$(basename "$cupti_lib")"
           # nvSHMEM's package for CUDA 11 predates the host-only header the
           # shim builds from, so the shim starts at CUDA 12.
           nvshmem_libs=()
@@ -209,23 +135,10 @@ jobs:
           docker cp "$container:/opt/lupine/lib/libnvidia-ml.so.1" "$out/libnvidia-ml.so.1"
           docker cp "$container:/opt/lupine/lib/libamdhip64.so.1" "$out/libamdhip64.so.1"
           cp "$out/libcuda.so.1" "$out/libcuda.so"
-          cp "$out/$runtime_soname" "$out/libcudart.so"
-          cp "$out/libcublas.so.${cuda_major}" "$out/libcublas.so"
-          cp "$out/libcublasLt.so.${cuda_major}" "$out/libcublasLt.so"
-          cp "$out/$(basename "$cufft_lib")" "$out/libcufft.so"
-          cp "$out/$(basename "$cudnn_lib")" "$out/libcudnn.so"
-          cp "$out/$(basename "$curand_lib")" "$out/libcurand.so"
-          cp "$out/$(basename "$cusparse_lib")" "$out/libcusparse.so"
-          cp "$out/libcusparseLt.so.0" "$out/libcusparseLt.so"
-          cp "$out/$(basename "$cusolver_lib")" "$out/libcusolver.so"
-          cp "$out/$(basename "$cusolvermg_lib")" "$out/libcusolverMg.so"
-          cp "$out/$(basename "$nvrtc_lib")" "$out/libnvrtc.so"
           cp "$out/libnccl.so.2" "$out/libnccl.so"
-          cp "$out/libcufile.so.0" "$out/libcufile.so"
-          cp "$out/$(basename "$cupti_lib")" "$out/libcupti.so"
           cp "$out/libnvidia-ml.so.1" "$out/libnvidia-ml.so"
           cp "$out/libamdhip64.so.1" "$out/libamdhip64.so"
-          (cd "$out" && sha256sum libcuda.so libcuda.so.1 libcudart.so "$runtime_soname" libcublas.so "libcublas.so.${cuda_major}" libcublasLt.so "libcublasLt.so.${cuda_major}" libcufft.so "$(basename "$cufft_lib")" libcudnn.so "$(basename "$cudnn_lib")" libcurand.so "$(basename "$curand_lib")" libcusparse.so "$(basename "$cusparse_lib")" libcusparseLt.so libcusparseLt.so.0 libcusolver.so "$(basename "$cusolver_lib")" libcusolverMg.so "$(basename "$cusolvermg_lib")" libnvrtc.so "$(basename "$nvrtc_lib")" libnccl.so libnccl.so.2 "${nvjitlink_libs[@]}" libnvjpeg.so "$(basename "$nvjpeg_lib")" "${npp_files[@]}" libcufile.so libcufile.so.0 libcupti.so "$(basename "$cupti_lib")" "${nvshmem_libs[@]}" libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
+          (cd "$out" && sha256sum libcuda.so libcuda.so.1 libnccl.so libnccl.so.2 "${nvshmem_libs[@]}" libnvidia-ml.so libnvidia-ml.so.1 libamdhip64.so libamdhip64.so.1 > SHA256SUMS)
           (cd "$out" && zip -r "../$(basename "$archive")" .)
 
       - name: Collect server artifacts

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Stage the CUDA headers the client shims build against.
 
-Each shim is header-gated, so every library it can forward needs that
-library's header present at configure time -- a missing one drops its shim from
-the build silently, so a new shim belongs in PACKAGES below. NVIDIA publishes no header-only
-package on PyPI, so the headers come out of the runtime wheels — which carry
-the libraries too, several hundred megabytes each. Take one wheel at a time
-and keep only its include tree, so a builder never holds more than one.
+The NCCL and nvSHMEM shims are header-gated, so a missing header drops the shim
+from the build silently; a new shim belongs in PACKAGES below. NVIDIA publishes
+no header-only package on PyPI, so the headers come out of the runtime wheels —
+which carry the libraries too, several hundred megabytes each. Take one wheel
+at a time and keep only its include tree, so a builder never holds more than
+one.
 
 The wheels are pulled for a fixed set of platform tags rather than the host's:
 headers are architecture-independent, and NVIDIA builds these against several
-glibc baselines (cuda-runtime 2.17, NCCL 2.18, CUPTI 2.25, cuBLAS and cuDNN 2.27).
-Explicit tags also let macOS, Windows, and aarch64 builders fetch the same headers.
+glibc baselines (cuda-runtime 2.17, NCCL 2.18). Explicit tags also let macOS,
+Windows, and aarch64 builders fetch the same headers.
 """
 
 import argparse
@@ -29,19 +29,6 @@ PACKAGES = (
     "nvidia-cuda-crt",
     "nvidia-cuda-cccl",
     "nvidia-nvml-dev",
-    "nvidia-cublas",
-    "nvidia-cufft",
-    "nvidia-curand",
-    "nvidia-cusparse",
-    "nvidia-cusolver",
-    "nvidia-cuda-nvrtc",
-    "nvidia-nvjitlink",
-    "nvidia-nvjpeg",
-    "nvidia-npp",
-    "nvidia-cufile",
-    "nvidia-cuda-cupti",
-    "nvidia-cusparselt-cu13",
-    "nvidia-cudnn-cu13",
     "nvidia-nccl-cu13",
     "nvidia-nvshmem-cu13",
 )

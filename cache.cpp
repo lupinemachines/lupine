@@ -42,11 +42,6 @@ lane_context_cache() {
   return cache;
 }
 
-uint64_t &lane_device_binding_epoch() {
-  static thread_local uint64_t epoch = 0;
-  return epoch;
-}
-
 lane_context_cache_entry *lane_context_cache_entry_for(int route_id) {
   if (route_id < -1) {
     return nullptr;
@@ -101,17 +96,6 @@ bool lupine_lane_context_cache_matches(int route_id, CUcontext context) {
              lane_context_cache_epoch().load(std::memory_order_acquire);
 }
 
-bool lupine_lane_context_cache_lookup(int route_id, CUcontext *context) {
-  auto *entry = lane_context_cache_entry_for(route_id);
-  if (entry == nullptr || entry->route_id != route_id ||
-      entry->epoch !=
-          lane_context_cache_epoch().load(std::memory_order_acquire)) {
-    return false;
-  }
-  *context = entry->context;
-  return true;
-}
-
 void lupine_lane_context_cache_update(int route_id, CUcontext context,
                                       uint64_t epoch, bool succeeded) {
   auto *entry = lane_context_cache_entry_for(route_id);
@@ -140,17 +124,7 @@ extern "C" void lupine_invalidate_current_context_cache() {
   lane_context_cache_epoch().fetch_add(1, std::memory_order_acq_rel);
 }
 
-extern "C" uint64_t lupine_device_binding_epoch() {
-  // Rebinding a lane touches only the thread that owns it, but a context
-  // handle the server frees can come back on any lane, so the global context
-  // epoch is folded in. Both counters only ever rise, so the sum moves
-  // whenever either does.
-  return lane_device_binding_epoch() +
-         current_context_device_cache_epoch().load(std::memory_order_acquire);
-}
-
 extern "C" void lupine_note_device_binding_changed() {
-  ++lane_device_binding_epoch();
   // The lane's driver context went with its device, so what this thread
   // believed was current there no longer holds.
   for (auto &entry : lane_context_cache()) {

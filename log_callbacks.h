@@ -1,5 +1,5 @@
-#ifndef LUPINE_CUBLAS_LOG_CALLBACKS_H
-#define LUPINE_CUBLAS_LOG_CALLBACKS_H
+#ifndef LUPINE_LOG_CALLBACKS_H
+#define LUPINE_LOG_CALLBACKS_H
 
 #include <cstdint>
 #include <functional>
@@ -14,12 +14,10 @@ struct conn_t;
 class pending_log_callbacks {
 public:
   template <typename Callback>
-  bool enqueue(conn_t *conn, int32_t stream, Callback callback,
-               bool before_callbacks = false) {
+  bool enqueue(conn_t *conn, int32_t stream, Callback callback) {
     try {
       std::lock_guard<std::mutex> lock(mutex_);
-      callbacks_[conn][stream].push_back(
-          {std::move(callback), before_callbacks});
+      callbacks_[conn][stream].push_back(std::move(callback));
       return true;
     } catch (...) {
       return false;
@@ -27,7 +25,7 @@ public:
   }
 
   void complete(conn_t *conn, int32_t stream) {
-    std::vector<pending_callback> ready;
+    std::vector<std::function<void()>> ready;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       auto connection = callbacks_.find(conn);
@@ -44,18 +42,8 @@ public:
         callbacks_.erase(connection);
       }
     }
-    // Flush file bytes on the caller thread before user callbacks can replace
-    // and close their FILE. Keeping stdio on this thread also permits callers
-    // to hold flockfile() across a library call, as with the native library.
     for (auto &callback : ready) {
-      if (callback.before_callbacks) {
-        callback.invoke();
-      }
-    }
-    for (auto &callback : ready) {
-      if (!callback.before_callbacks) {
-        callback.invoke();
-      }
+      callback();
     }
   }
 
@@ -65,13 +53,9 @@ public:
   }
 
 private:
-  struct pending_callback {
-    std::function<void()> invoke;
-    bool before_callbacks;
-  };
   std::mutex mutex_;
-  std::unordered_map<conn_t *,
-                     std::unordered_map<int32_t, std::vector<pending_callback>>>
+  std::unordered_map<
+      conn_t *, std::unordered_map<int32_t, std::vector<std::function<void()>>>>
       callbacks_;
 };
 

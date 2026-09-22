@@ -13,9 +13,7 @@ if(NOT EXISTS "${LUPINE_LIB}")
 endif()
 
 # Every suite loads the driver shim under NVIDIA's own runtime and libraries,
-# with the NVML, NCCL and nvSHMEM shims beside it. Never put the full build
-# directory on the search path: that would expose the runtime and library shims
-# too.
+# with the NVML, NCCL and nvSHMEM shims beside it.
 set(variant driver-only)
 set(lib_dir "${CMAKE_CURRENT_BINARY_DIR}/${variant}/lib")
 file(MAKE_DIRECTORY "${lib_dir}")

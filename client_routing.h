@@ -31,7 +31,6 @@ CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal);
 CUresult lupine_set_current_context_on_route(lupine_route route, CUcontext ctx);
 bool lupine_local_cuda_available();
 extern "C" CUcontext lupine_current_context_hint();
-CUresult lupine_refresh_runtime_context();
 CUcontext lupine_default_context_hint_value();
 CUcontext lupine_global_default_context_hint_value();
 void lupine_accept_current_context_hint(CUcontext ctx);
@@ -52,12 +51,6 @@ extern "C" lupine_route lupine_route_for_graph_node(CUgraphNode node);
 extern "C" lupine_route lupine_route_for_graph_exec(CUgraphExec exec);
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr);
 extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr);
-
-// The connection the caller's device binding sits on, or -1 before anything
-// has bound one. Every rebinding passes through
-// lupine_note_device_binding_moved.
-extern "C" void lupine_note_device_binding_moved(conn_t *conn);
-extern "C" int lupine_device_binding_conn_index();
 
 extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);
 extern "C" conn_t *lupine_rpc_conn_for_current_context();
@@ -103,11 +96,6 @@ static CUresult lupine_lookup_device_on_all_routes(CUdevice *device,
 }
 
 extern "C" void *lupine_real_cuda_symbol(const char *name);
-
-// A key of its own, so the shared cuBLAS/cuBLASLt handle does not land in a
-// map keyed by some other library's pointers.
-struct lupine_blas_handle_st;
-using lupine_blas_handle = lupine_blas_handle_st *;
 
 extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn);
 extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn);

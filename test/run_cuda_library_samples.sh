@@ -42,10 +42,9 @@
 # samples run on the client against NVIDIA's own libnvtiff and only their
 # driver traffic crosses the wire, so this script unpacks its redist archive
 # the way it does MathDx's.
-# NPP+ ships outside the toolkit as well and is not the NPP the lupine_npp*
-# shims cover: libnpp_plus_* link no toolkit NPP or shared cudart, carry a
-# static CUDA 12 runtime and dlopen libcuda.so.1, so the samples run on the
-# client and only their runtime and driver traffic crosses the wire. NVIDIA
+# NPP+ ships outside the toolkit as well: libnpp_plus_* link no toolkit NPP or
+# shared cudart, carry a static CUDA 12 runtime and dlopen libcuda.so.1, so the
+# samples run on the client and only their driver traffic crosses the wire. NVIDIA
 # builds it for CUDA 11 and 12 only; a CUDA 13 toolkit gets the CUDA 12
 # archive, which needs nothing from the toolkit at run time.
 # cuSOLVERSp2cuDSS is the cuSOLVERSp/Rf-to-cuDSS transition example. It needs

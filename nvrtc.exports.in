@@ -1,8 +1,0 @@
-/* The version node is literally NVIDIA's SONAME: consumers reference library
-   symbols as name@libnvrtc.so.<major>. */
-libnvrtc.so.@LUPINE_NVRTC_SOVERSION@ {
-  global:
-    nvrtc*;
-  local:
-    *;
-};

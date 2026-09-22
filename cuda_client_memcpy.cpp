@@ -862,27 +862,6 @@ lupine_find_mapped_host_pointer_locked(CUdeviceptr pointer, size_t *offset) {
   return allocations.end();
 }
 
-extern "C" void
-lupine_mark_mapped_host_kernel_params(void *const *kernel_params,
-                                      const size_t *sizes, uint32_t count) {
-  if (kernel_params == nullptr || sizes == nullptr) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-  for (uint32_t i = 0; i < count; ++i) {
-    if (sizes[i] != sizeof(CUdeviceptr) || kernel_params[i] == nullptr) {
-      continue;
-    }
-    CUdeviceptr argument = 0;
-    memcpy(&argument, kernel_params[i], sizeof(argument));
-    size_t offset = 0;
-    auto it = lupine_find_mapped_host_pointer_locked(argument, &offset);
-    if (it != lupine_mutable_host_allocations_locked().end()) {
-      lupine_expose_host_device_pointer(it->first, it->second);
-    }
-  }
-}
-
 CUresult lupine_translate_mapped_host_pointer(lupine_route route,
                                               CUdeviceptr argument,
                                               CUdeviceptr *translated) {
@@ -1942,26 +1921,14 @@ static CUcontext lupine_demand_fetch_context(CUdeviceptr device_ptr) {
   if (context == nullptr) {
     context = lupine_global_default_context_hint_value();
   }
-  if (context == nullptr) {
-    // A client that only calls the runtime API learns the server lane's
-    // context when a driver call asks for it, and until one does every hint
-    // above is empty. Asking costs a round trip once per client.
-    (void)lupine_refresh_runtime_context();
-    context = lupine_current_context_hint();
-  }
   return context;
 }
 
-static CUresult lupine_sync_mapped_device_to_host(bool managed_only) {
+extern "C" CUresult lupine_sync_mapped_device_to_host() {
   if (lupine_active_stream_captures.load(std::memory_order_relaxed) != 0) {
     return CUDA_SUCCESS;
   }
-  const bool pending =
-      managed_only
-          ? __atomic_load_n(&lupine_device_work_pending, __ATOMIC_ACQUIRE)
-          : __atomic_exchange_n(&lupine_device_work_pending, 0,
-                                __ATOMIC_ACQ_REL);
-  if (!pending) {
+  if (!__atomic_exchange_n(&lupine_device_work_pending, 0, __ATOMIC_ACQ_REL)) {
     return CUDA_SUCCESS;
   }
 
@@ -1969,7 +1936,7 @@ static CUresult lupine_sync_mapped_device_to_host(bool managed_only) {
     // Managed memory can be reached through nested pointers, so synchronize it
     // conservatively. Pinned host memory remains host-authoritative until its
     // device mapping is exposed through a launch or an explicit pointer query.
-    if (mapping.data_bytes == 0 || (managed_only && !mapping.managed) ||
+    if (mapping.data_bytes == 0 ||
         (!mapping.managed && !mapping.device_pointer_exposed)) {
       continue;
     }
@@ -2068,17 +2035,6 @@ static CUresult lupine_sync_mapped_device_to_host(bool managed_only) {
     }
   }
   return CUDA_SUCCESS;
-}
-
-extern "C" CUresult lupine_sync_mapped_device_to_host() {
-  return lupine_sync_mapped_device_to_host(false);
-}
-
-extern "C" CUresult lupine_invalidate_managed_allocations() {
-  // A mapped host allocation may contain a CPU-written latch that running GPU
-  // work is waiting for. Only managed pages migrate on launch; mapped host
-  // pages remain writable until the caller synchronizes.
-  return lupine_sync_mapped_device_to_host(true);
 }
 
 static lupine_host_allocation_map::iterator
@@ -2790,27 +2746,6 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
         return lupine_remote_cuMemFreeHost(server_host,
                                            lupine_remote_route_for_conn(conn));
       });
-}
-
-extern "C" CUresult lupine_register_host_allocation(
-    conn_t *conn, void *host, size_t bytes, unsigned int flags,
-    lupine_host_register_fn allocate, lupine_host_free_fn release) {
-  return lupine_register_host_on_route(lupine_remote_route_for_conn(conn), host,
-                                       bytes, flags, false, allocate, release);
-}
-
-extern "C" void *lupine_host_pointer_for_rpc(void *host, conn_t **owner) {
-  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-  auto it = lupine_find_host_allocation_locked(host);
-  if (it == lupine_mutable_host_allocations_locked().end() ||
-      it->second.server_host_ptr == 0 || it->second.local_cuda) {
-    return host;
-  }
-  *owner =
-      lupine_route_remote_conn(lupine_route_from_identity(it->second.route_id));
-  uintptr_t offset = reinterpret_cast<uintptr_t>(host) -
-                     reinterpret_cast<uintptr_t>(it->first);
-  return reinterpret_cast<void *>(it->second.server_host_ptr + offset);
 }
 
 extern "C" CUresult cuMemHostRegister_v2(void *p, size_t bytesize,

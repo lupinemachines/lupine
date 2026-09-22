@@ -115,10 +115,8 @@ class ArrayOperation:
     recv: bool
     parameter: Parameter
     ptr: Pointer
-    # if int, it's a constant length, if Parameter, it's a variable length,
-    # and if str, a count expression the client evaluates and sends ahead of
-    # the array as a uint64_t.
-    length: Union[int, Parameter, str]
+    # if int, it's a constant length, if Parameter, it's a variable length
+    length: Union[int, Parameter]
     # A SEND_ONLY NULLABLE LENGTH array the caller may leave null; a presence
     # byte leads it on the wire.
     nullable: bool = False
@@ -127,15 +125,9 @@ class ArrayOperation:
     def is_void_bytes(self) -> bool:
         return self.ptr.ptr_to.format() in ("void", "const void")
 
-    @property
-    def counted(self) -> bool:
-        return isinstance(self.length, str)
-
     def byte_count_expr(self) -> str:
         if isinstance(self.length, int):
             return str(self.length)
-        if self.counted:
-            return f"{self.parameter.name}_count"
         if isinstance(self.length.type, Pointer):
             return f"*{self.length.name}"
         return self.length.name
@@ -143,8 +135,6 @@ class ArrayOperation:
     def element_count_expr(self) -> str:
         if isinstance(self.length, int):
             return str(self.length)
-        if self.counted:
-            return f"{self.parameter.name}_count"
         if isinstance(self.length.type, Pointer):
             return f"*{self.length.name}"
         return self.length.name
@@ -157,8 +147,6 @@ class ArrayOperation:
     def server_element_count_expr(self) -> str:
         if isinstance(self.length, int):
             return str(self.length)
-        if self.counted:
-            return f"{self.parameter.name}_count"
         # Pointer length parameters are unmarshalled into scalar server locals.
         return self.length.name
 
@@ -196,17 +184,6 @@ class ArrayOperation:
                 f"        return {error_return};\n"
         )
     def client_rpc_write(self, f):
-        if self.counted:
-            name = self.parameter.name
-            f.write(
-                f"        rpc_write(conn, &{name}_count, sizeof({name}_count)) < 0 ||\n"
-            )
-            if self.send:
-                f.write(
-                    f"        ({self.transfer_size_expr()} != 0 && "
-                    f"rpc_write(conn, {name}, {self.transfer_size_expr()}) < 0) ||\n"
-                )
-            return
         if not self.send:
             return
         if self.nullable:
@@ -288,8 +265,6 @@ class ArrayOperation:
             s = f"    {self.ptr.format()} {self.parameter.name} = nullptr;\n"
             if self.send:
                 s += f"    size_t {self.parameter.name}_size;\n"
-            if self.counted:
-                s += f"    uint64_t {self.parameter.name}_count = 0;\n"
             if self.nullable:
                 s += f"    uint8_t {self.parameter.name}_null = 0;\n"
             self.ptr.ptr_to.const = c
@@ -297,8 +272,6 @@ class ArrayOperation:
 
     def client_declaration(self) -> str:
         name = self.parameter.name
-        if self.counted:
-            return f"    uint64_t {name}_count = static_cast<uint64_t>({self.length});\n"
         return f"    uint8_t {name}_null = {name} == nullptr ? 1 : 0;\n"
 
     def server_rpc_read(self, f) -> Optional[str]:
@@ -323,11 +296,6 @@ class ArrayOperation:
                 f"rpc_read(conn, {name}, {name}_size) < 0) ||\n"
             )
             return name
-        if self.counted:
-            f.write(
-                f"        rpc_read(conn, &{self.parameter.name}_count, "
-                f"sizeof({self.parameter.name}_count)) < 0 ||\n"
-            )
         if not self.send:
             # The whole buffer goes back on the wire, but the library writes
             # only as much of it as it has to, so the allocation has to supply
@@ -886,19 +854,12 @@ class OpaqueTypeOperation:
     recv: bool
     parameter: Parameter
     type_: Union[Type, Pointer]
-    # The handle's value lives in caller-allocated storage instead of in the
-    # parameter: cuSPARSELt hands the library 512 caller-owned bytes where
-    # cuBLAS hands back a pointer. The same opaque address travels, read from
-    # and written to that storage, and the object a creating call names is
-    # lupine's to allocate on the server.
-    stored: bool = False
 
-    # An address is the whole wire form of a stored handle.
     def wire_size(self) -> str:
-        return "sizeof(void *)" if self.stored else f"sizeof({self.type_.format()})"
+        return f"sizeof({self.type_.format()})"
 
     def client_slot(self, name: str) -> str:
-        return name if self.stored else f"&{name}"
+        return f"&{name}"
 
     def is_sent_cufunction(self) -> bool:
         type_name = self.type_.format().replace("const ", "").strip()
@@ -927,16 +888,6 @@ class OpaqueTypeOperation:
 
     @property
     def server_declaration(self) -> str:
-        # A stored handle the call creates is allocated here rather than by the
-        # library, because the caller's storage stays on its own machine. It
-        # outlives the handler: later calls name the object by this address,
-        # and the library links its objects to each other by address too. The
-        # connection's child process frees it by exiting, so an object whose
-        # Destroy never arrives is released on disconnect with the rest of the
-        # session's state.
-        if self.stored and self.recv:
-            object_type = self.type_.ptr_to.format()
-            return f"    {object_type} *{self.parameter.name} = new {object_type}();\n"
         if isinstance(self.type_, Pointer) and self.recv:
             return f"    {self.type_.ptr_to.format()} {self.parameter.name};\n"
         # ensure we don't have a const struct, otherwise we can't initialise it properly; ex: "const cudnnTensorDescriptor_t xDesc;" is invalid...
@@ -971,8 +922,7 @@ class OpaqueTypeOperation:
 
     @property
     def server_reference(self) -> str:
-        # A stored handle is already the object's address.
-        if self.recv and not self.stored:
+        if self.recv:
             return f"&{self.parameter.name}"
         return self.parameter.name
 
@@ -1288,86 +1238,9 @@ def format_array(array: Array, name: str = "") -> str:
     return f"{element.format()} {name}{dims}" if name else f"{element.format()}{dims}"
 
 
-@dataclass
-class FixedArrayOperation:
-    """
-    A parameter declared as a C array of fixed dimensions (`aTwist[3][4]`).
-    With `contents` (DEREF) its elements travel, however many dimensions it
-    has; without, it is an address in device memory and only that travels.
-    """
-
-    send: bool
-    recv: bool
-    parameter: Parameter
-    array: Array
-    contents: bool
-
-    def byte_size_expr(self) -> str:
-        dims = []
-        element = self.array
-        while isinstance(element, Array):
-            dims.append(element.size.format())
-            element = element.array_of
-        return " * ".join([f"sizeof({element.format()})", *dims])
-
-    def client_rpc_write(self, f):
-        name = self.parameter.name
-        if not self.send:
-            return
-        if self.contents:
-            f.write(
-                f"        rpc_write(conn, {name}, {self.byte_size_expr()}) < 0 ||\n"
-            )
-        else:
-            f.write(f"        rpc_write(conn, &{name}, sizeof(void *)) < 0 ||\n")
-
-    @property
-    def server_declaration(self) -> str:
-        name = self.parameter.name
-        if not self.contents:
-            return f"    {self.array.array_of.format()} *{name} = nullptr;\n"
-        # The server's copy is written into, so the elements lose their const.
-        element = self.array
-        while isinstance(element, Array):
-            element = element.array_of
-        const = element.const
-        element.const = False
-        declaration = format_array(self.array, name)
-        element.const = const
-        return f"    {declaration}{{}};\n"
-
-    def server_rpc_read(self, f):
-        name = self.parameter.name
-        if not self.send:
-            return
-        if self.contents:
-            f.write(
-                f"        rpc_read(conn, {name}, {self.byte_size_expr()}) < 0 ||\n"
-            )
-        else:
-            f.write(f"        rpc_read(conn, &{name}, sizeof(void *)) < 0 ||\n")
-
-    @property
-    def server_reference(self) -> str:
-        return self.parameter.name
-
-    def server_rpc_write(self, f):
-        if self.recv:
-            f.write(
-                f"        rpc_write(conn, {self.parameter.name}, {self.byte_size_expr()}) < 0 ||\n"
-            )
-
-    def client_rpc_read(self, f):
-        if self.recv:
-            f.write(
-                f"        rpc_read(conn, {self.parameter.name}, {self.byte_size_expr()}) < 0 ||\n"
-            )
-
-
 Operation = Union[
     NullableOperation,
     ArrayOperation,
-    FixedArrayOperation,
     NullTerminatedOperation,
     OpaqueTypeOperation,
     DereferenceOperation,

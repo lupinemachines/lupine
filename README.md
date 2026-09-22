@@ -238,9 +238,10 @@ docker pull ghcr.io/lupinemachines/lupine-client:cuda-12.4.1-ubuntu22.04
 docker pull ghcr.io/lupinemachines/lupine-server:cuda-12.4.1-ubuntu22.04
 ```
 
-Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSPARSELt, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, CUPTI, nvSHMEM, NVML, and HIP shims, their runtime dependencies,
-and `nvidia-smi`. They are based on Ubuntu and contain neither the CUDA nor ROCm
-SDK. The `-slim` tags remain available as compatibility aliases with the same
+Client images contain the CUDA driver, NCCL, nvSHMEM, NVML, and HIP shims,
+their runtime dependencies, and `nvidia-smi`. Programs bring their own CUDA
+runtime and libraries. They are based on Ubuntu and contain neither the CUDA
+nor ROCm SDK. The `-slim` tags remain available as compatibility aliases with the same
 SDK-free contents, for example
 `ghcr.io/lupinemachines/lupine-client:cuda-13.3.1-ubuntu24.04-slim`.
 
@@ -329,86 +330,20 @@ cmake -S . -B build
 cmake --build build
 ```
 
-CMake builds the CUDA driver shim at `build/libcuda.so.1`, the CUDA runtime shim
-at `build/libcudart.so.<major>`, the cuBLAS, cuBLASLt, cuFFT, cuRAND,
-cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, nvJitLink and nvJPEG shims at
-`build/libcublas.so.<major>`, `build/libcublasLt.so.<major>`,
-`build/libcufft.so.<major>`, `build/libcurand.so.<major>`,
-`build/libcusparse.so.<major>`, `build/libcusolver.so.<major>`,
-`build/libcusolverMg.so.<major>`, `build/libnvrtc.so.<major>`,
-`build/libnvJitLink.so.<major>`, `build/libnvjpeg.so.<major>`, the NPP shims at
-`build/libnppc.so.<major>` and its image and signal libraries
-(`build/libnppial.so.<major>` through `build/libnpps.so.<major>`) (when the
-toolkit's library headers are
-present; nvJitLink needs CUDA 12.4 or newer), the cuDNN shim at `build/libcudnn.so.9` (when cuDNN 9 headers are found beside
-the toolkit's or through `-DLUPINE_CUDNN_INCLUDE_DIR=<dir>`), the NCCL shim at
+CMake builds the CUDA driver shim at `build/libcuda.so.1`, the NCCL shim at
 `build/libnccl.so.2` on Linux (when NCCL 2.14.3 or newer headers are found
-beside the toolkit's or through `-DLUPINE_NCCL_INCLUDE_DIR=<dir>`), the cuFile
-shim at `build/libcufile.so.0` on Linux (when `cufile.h` is found beside the
-toolkit's or through `-DLUPINE_CUFILE_INCLUDE_DIR=<dir>`), the CUPTI shim at
-`build/libcupti.so.<major>` on Linux (`build/libcupti.so.11.8` on CUDA 11, whose
-CUPTI carries the minor in its SONAME; when `cupti_result.h` is found beside the
-toolkit's or through `-DLUPINE_CUPTI_INCLUDE_DIR=<dir>`), the NVML
-toolkit's or through `-DLUPINE_CUFILE_INCLUDE_DIR=<dir>`), the nvSHMEM shim at
-`build/libnvshmem_host.so.3` on Linux (when nvSHMEM 3 headers carrying
+beside the toolkit's or through `-DLUPINE_NCCL_INCLUDE_DIR=<dir>`), the nvSHMEM
+shim at `build/libnvshmem_host.so.3` on Linux (when nvSHMEM 3 headers carrying
 `nvshmem_host.h` are found beside the toolkit's or through
-`-DLUPINE_NVSHMEM_INCLUDE_DIR=<dir>`), the NVML
-toolkit's or through `-DLUPINE_CUFILE_INCLUDE_DIR=<dir>`), the cuSPARSELt shim
-at `build/libcusparseLt.so.0` (when cuSPARSELt 0.6 or newer headers are found
-beside the toolkit's, through `CUSPARSELT_HOME` or through
-`-DLUPINE_CUSPARSELT_INCLUDE_DIR=<dir>`), the NVML
-shim at `build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and
-the server at `build/lupine_driver_server`. The runtime and library shims cover
-their whole APIs: they forward `cuda*`, `cublas*`, `cublasLt*`, `cufft*`,
-`cudnn*`, `curand*`, `cusparse*`, `cusparseLt*`, `cusolver*`, `nvrtc*`,
-`nvJitLink*`, `nccl*`, `nvjpeg*` and `npp*` calls on the driver shim's
-connections, so all of them must come from the same build. NVRTC compiles and nvJitLink links on the server, so their
-output matches the server's toolkit and driver; the files a program includes or
-links from the client's disk are sent along with it. The server loads the
-machine's `libcudnn.so.9`, `libnccl.so.2` and `libcusparseLt.so.0` by name. nvJPEG decodes and encodes
-on the server with the server library's default allocators, so a buffer it
-hands back through a retrieve call is a server address.
+`-DLUPINE_NVSHMEM_INCLUDE_DIR=<dir>`), the NVML shim at
+`build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and the
+server at `build/lupine_driver_server`. A program runs against NVIDIA's own
+CUDA runtime and libraries on the client; the driver shim forwards the `cu*`
+calls they make, and the NCCL shim forwards `nccl*` calls on the driver shim's
+connections, so the two must come from the same build. The server loads the
+machine's `libnccl.so.2` by name.
 
-An NPP call with a stream context runs on the server that owns the context's
-stream, or on the current device's server for the default stream, and its
-images, scratch buffers and results must be device memory on that server. The
-contour calls that fill host lists sized by an earlier call's outputs
-(`nppiCompressedMarkerLabelsUFInfo_32u_C1R_Ctx` and its geometry list and
-interpolation calls) return `NPP_NOT_IMPLEMENTED_ERROR`.
-
-A cuSPARSELt object (handle, matrix descriptor, matmul descriptor, algorithm
-selection, plan) is caller storage the library fills with state it links to its
-other objects by address, so it lives on the server and the caller's storage
-holds its address there. The initializing call allocates it and the matching
-Destroy releases it; storage that was never initialized through the shim names
-no object. Its matrices, compressed buffers, workspaces and pruning validity
-flags are device memory on the server that owns the handle.
-
-cuFile is the exception to that forwarding. GPUDirect Storage moves bytes
-between a storage device and GPU memory without the host, and no DMA spans a
-client and a server, so the shim runs the compatibility path cuFile itself
-falls back to without nvidia-fs, with its halves on the two machines: the
-client reads the file and the driver shim moves the staging buffer. `cuFileRead`
-and `cuFileWrite` keep their contract, the transfer being staged rather than
-direct, while `cuFileDriverGetProperties` reports no GPUDirect capability and
-the nvidia-fs tunables return `CU_FILE_PLATFORM_NOT_SUPPORTED`, so a program
-asking what the platform supports is told. Nothing reaches the server but the
-copies, and it needs no `libcufile` of its own.
-
-CUPTI is the other exception, and a starker one. It profiles the process it is
-loaded into by hooking the driver and runtime calls that process makes, and a
-client makes none: its CUDA calls are RPCs and the work runs on the server. A
-server-side CUPTI would report the server's threads, clock, correlation ids and
-- where a server holds more than one client's connections - the other clients'
-work, so a timeline built from it would be wrong in ways its reader could not
-see. The shim therefore profiles nothing and says so: `cuptiGetVersion`,
-`cuptiGetResultString`, `cuptiGetErrorMessage` and `cuptiGetLastError` answer,
-every other entry point returns `CUPTI_ERROR_NOT_SUPPORTED` and the first
-refusal prints one line to stderr. `torch.profiler` and Nsight Systems' CUPTI
-path report no GPU activity on a lupine client, rather than a fabricated
-timeline; the library loads, which is what PyTorch's `libtorch_cpu.so` needs
-from its `NEEDED` entry.
-nvSHMEM is the other exception, and a starker one: it forwards nothing at all.
+nvSHMEM is the exception: it forwards nothing at all.
 Its PEs hold a partitioned global address space over the GPUs of a job, reading
 and writing each other's symmetric heap from inside kernels, and a client is
 not one of them. The process that owns a GPU here is the server, which serves

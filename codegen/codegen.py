@@ -36,7 +36,6 @@ from emit import (
 from ops import (
     NullableOperation,
     ArrayOperation,
-    FixedArrayOperation,
     InOutCountOperation,
     NullableArrayOperation,
     DeepStructOperation,
@@ -250,82 +249,16 @@ REGISTRY_CPP_TEMPLATE = Template(
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 #include <cuda.h>
 #endif
-#ifdef LUPINE_BUILD_CUDART_BACKEND
-#include <cuda_runtime_api.h>
-#endif
-#ifdef LUPINE_BUILD_CUBLAS_BACKEND
-#include <cublasLt.h>
-#include <cublas_v2.h>
-#endif
-#ifdef LUPINE_BUILD_CUFFT_BACKEND
-#include <cufftXt.h>
-#endif
-#ifdef LUPINE_BUILD_CUDNN_BACKEND
-#include <cudnn.h>
-#endif
-#ifdef LUPINE_BUILD_CURAND_BACKEND
-#include <curand.h>
-#endif
-#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
-#include <cusparse.h>
-#endif
-#ifdef LUPINE_BUILD_CUSOLVER_BACKEND
-#include <cusolver_common.h>
-#endif
-#ifdef LUPINE_BUILD_CUSPARSELT_BACKEND
-#include <cusparseLt.h>
-#endif
-#ifdef LUPINE_BUILD_NVRTC_BACKEND
-#include <nvrtc.h>
-#endif
 #ifdef LUPINE_BUILD_NCCL_BACKEND
 #include <nccl.h>
-#endif
-#ifdef LUPINE_BUILD_NVJITLINK_BACKEND
-#define NVJITLINK_NO_INLINE
-#include <nvJitLink.h>
-#endif
-#ifdef LUPINE_BUILD_NVJPEG_BACKEND
-#include <nvjpeg.h>
-#endif
-#ifdef LUPINE_BUILD_NPP_BACKEND
-#include <npp.h>
 #endif
 #include "gen_rpc_ids.h"
 
 // clang-format off
 #define LUPINE_CUDA_RPC_HANDLERS(HANDLER) \
 $cuda_registry_entries
-#define LUPINE_CUDART_RPC_HANDLERS(HANDLER) \
-$cudart_registry_entries
-#define LUPINE_CUBLAS_RPC_HANDLERS(HANDLER) \
-$cublas_registry_entries
-#define LUPINE_CUBLASLT_RPC_HANDLERS(HANDLER) \
-$cublaslt_registry_entries
-#define LUPINE_CUFFT_RPC_HANDLERS(HANDLER) \
-$cufft_registry_entries
-#define LUPINE_CUDNN_RPC_HANDLERS(HANDLER) \
-$cudnn_registry_entries
-#define LUPINE_CURAND_RPC_HANDLERS(HANDLER) \
-$curand_registry_entries
-#define LUPINE_CUSPARSE_RPC_HANDLERS(HANDLER) \
-$cusparse_registry_entries
-#define LUPINE_CUSOLVER_RPC_HANDLERS(HANDLER) \
-$cusolver_registry_entries
-#define LUPINE_CUSOLVERMG_RPC_HANDLERS(HANDLER) \
-$cusolvermg_registry_entries
-#define LUPINE_CUSPARSELT_RPC_HANDLERS(HANDLER) \
-$cusparselt_registry_entries
-#define LUPINE_NVRTC_RPC_HANDLERS(HANDLER) \
-$nvrtc_registry_entries
 #define LUPINE_NCCL_RPC_HANDLERS(HANDLER) \
 $nccl_registry_entries
-#define LUPINE_NVJITLINK_RPC_HANDLERS(HANDLER) \
-$nvjitlink_registry_entries
-#define LUPINE_NVJPEG_RPC_HANDLERS(HANDLER) \
-$nvjpeg_registry_entries
-#define LUPINE_NPP_RPC_HANDLERS(HANDLER) \
-$npp_registry_entries
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
 $nvml_registry_entries
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
@@ -338,61 +271,9 @@ $hip_registry_entries
 LUPINE_CUDA_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $cuda_guarded_declarations
 #endif
-#ifdef LUPINE_BUILD_CUDART_BACKEND
-LUPINE_CUDART_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$cudart_guarded_declarations
-#endif
-#ifdef LUPINE_BUILD_CUBLAS_BACKEND
-LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$cublas_guarded_declarations
-LUPINE_CUBLASLT_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$cublaslt_guarded_declarations
-#endif
-#ifdef LUPINE_BUILD_CUFFT_BACKEND
-LUPINE_CUFFT_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$cufft_guarded_declarations
-#endif
-#ifdef LUPINE_BUILD_CUDNN_BACKEND
-LUPINE_CUDNN_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$cudnn_guarded_declarations
-#endif
-#ifdef LUPINE_BUILD_CURAND_BACKEND
-LUPINE_CURAND_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$curand_guarded_declarations
-#endif
-#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
-LUPINE_CUSPARSE_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$cusparse_guarded_declarations
-#endif
-#ifdef LUPINE_BUILD_CUSPARSELT_BACKEND
-LUPINE_CUSPARSELT_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$cusparselt_guarded_declarations
-#endif
-#ifdef LUPINE_BUILD_CUSOLVER_BACKEND
-LUPINE_CUSOLVER_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$cusolver_guarded_declarations
-LUPINE_CUSOLVERMG_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$cusolvermg_guarded_declarations
-#endif
-#ifdef LUPINE_BUILD_NVRTC_BACKEND
-LUPINE_NVRTC_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$nvrtc_guarded_declarations
-#endif
 #ifdef LUPINE_BUILD_NCCL_BACKEND
 LUPINE_NCCL_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 $nccl_guarded_declarations
-#endif
-#ifdef LUPINE_BUILD_NVJITLINK_BACKEND
-LUPINE_NVJITLINK_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$nvjitlink_guarded_declarations
-#endif
-#ifdef LUPINE_BUILD_NVJPEG_BACKEND
-LUPINE_NVJPEG_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$nvjpeg_guarded_declarations
-#endif
-#ifdef LUPINE_BUILD_NPP_BACKEND
-LUPINE_NPP_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-$npp_guarded_declarations
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
 LUPINE_NVML_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
@@ -415,61 +296,9 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_CUDA_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $cuda_guarded_handlers
 #endif
-#ifdef LUPINE_BUILD_CUDART_BACKEND
-      LUPINE_CUDART_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$cudart_guarded_handlers
-#endif
-#ifdef LUPINE_BUILD_CUBLAS_BACKEND
-      LUPINE_CUBLAS_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$cublas_guarded_handlers
-      LUPINE_CUBLASLT_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$cublaslt_guarded_handlers
-#endif
-#ifdef LUPINE_BUILD_CUFFT_BACKEND
-      LUPINE_CUFFT_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$cufft_guarded_handlers
-#endif
-#ifdef LUPINE_BUILD_CUDNN_BACKEND
-      LUPINE_CUDNN_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$cudnn_guarded_handlers
-#endif
-#ifdef LUPINE_BUILD_CURAND_BACKEND
-      LUPINE_CURAND_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$curand_guarded_handlers
-#endif
-#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
-      LUPINE_CUSPARSE_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$cusparse_guarded_handlers
-#endif
-#ifdef LUPINE_BUILD_CUSPARSELT_BACKEND
-      LUPINE_CUSPARSELT_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$cusparselt_guarded_handlers
-#endif
-#ifdef LUPINE_BUILD_CUSOLVER_BACKEND
-      LUPINE_CUSOLVER_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$cusolver_guarded_handlers
-      LUPINE_CUSOLVERMG_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$cusolvermg_guarded_handlers
-#endif
-#ifdef LUPINE_BUILD_NVRTC_BACKEND
-      LUPINE_NVRTC_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$nvrtc_guarded_handlers
-#endif
 #ifdef LUPINE_BUILD_NCCL_BACKEND
       LUPINE_NCCL_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $nccl_guarded_handlers
-#endif
-#ifdef LUPINE_BUILD_NVJITLINK_BACKEND
-      LUPINE_NVJITLINK_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$nvjitlink_guarded_handlers
-#endif
-#ifdef LUPINE_BUILD_NVJPEG_BACKEND
-      LUPINE_NVJPEG_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$nvjpeg_guarded_handlers
-#endif
-#ifdef LUPINE_BUILD_NPP_BACKEND
-      LUPINE_NPP_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-$npp_guarded_handlers
 #endif
 #ifdef LUPINE_BUILD_NVML_BACKEND
       LUPINE_NVML_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
@@ -486,21 +315,7 @@ $hip_guarded_handlers
 }
 
 #undef LUPINE_CUDA_RPC_HANDLERS
-#undef LUPINE_CUDART_RPC_HANDLERS
-#undef LUPINE_CUBLAS_RPC_HANDLERS
-#undef LUPINE_CUBLASLT_RPC_HANDLERS
-#undef LUPINE_CUFFT_RPC_HANDLERS
-#undef LUPINE_CUDNN_RPC_HANDLERS
-#undef LUPINE_CURAND_RPC_HANDLERS
-#undef LUPINE_CUSPARSE_RPC_HANDLERS
-#undef LUPINE_CUSPARSELT_RPC_HANDLERS
-#undef LUPINE_CUSOLVER_RPC_HANDLERS
-#undef LUPINE_CUSOLVERMG_RPC_HANDLERS
-#undef LUPINE_NVRTC_RPC_HANDLERS
 #undef LUPINE_NCCL_RPC_HANDLERS
-#undef LUPINE_NVJITLINK_RPC_HANDLERS
-#undef LUPINE_NVJPEG_RPC_HANDLERS
-#undef LUPINE_NPP_RPC_HANDLERS
 #undef LUPINE_NVML_RPC_HANDLERS
 #undef LUPINE_HIP_RPC_HANDLERS
 '''
@@ -521,24 +336,7 @@ class ServerBinding:
 
 SERVER_BACKENDS = {
     "CUDA": "rpc_backend::cuda",
-    "CUDART": "rpc_backend::cudart",
-    "CUBLAS": "rpc_backend::cublas",
-    # cuBLASLt ships with cuBLAS and runs in the same server child.
-    "CUBLASLT": "rpc_backend::cublas",
-    "CUFFT": "rpc_backend::cufft",
-    "CUDNN": "rpc_backend::cudnn",
-    "CURAND": "rpc_backend::curand",
-    "CUSPARSE": "rpc_backend::cusparse",
-    "CUSPARSELT": "rpc_backend::cusparselt",
-    "CUSOLVER": "rpc_backend::cusolver",
-    # cuSOLVERMg ships with cuSOLVER and runs in the same server child.
-    "CUSOLVERMG": "rpc_backend::cusolver",
-    "NVRTC": "rpc_backend::nvrtc",
     "NCCL": "rpc_backend::nccl",
-    "NVJITLINK": "rpc_backend::nvjitlink",
-    "NVJPEG": "rpc_backend::nvjpeg",
-    # Every NPP library runs in one server child.
-    "NPP": "rpc_backend::npp",
     "NVML": "rpc_backend::nvml",
     "HIP": "rpc_backend::hip",
 }
@@ -623,120 +421,6 @@ HIP = Backend(
     not_supported="hipErrorNotSupported",
 )
 
-CUDART = Backend(
-    result="cudaError_t",
-    invalid_argument="cudaErrorInvalidValue",
-    device_routing_kind="DEVICE",
-    symbol_lookup="cudart_symbol",
-    guard_null_conn=True,
-    not_supported="cudaErrorNotSupported",
-)
-
-# cuBLAS and cuBLASLt calls run on the driver shim's connections like the
-# runtime's; a library handle routes to the server it was created on.
-CUBLAS = Backend(
-    result="cublasStatus_t",
-    invalid_argument="CUBLAS_STATUS_INVALID_VALUE",
-    device_routing_kind="DEVICE",
-    symbol_lookup="cublas_symbol",
-    guard_null_conn=True,
-    not_supported="CUBLAS_STATUS_NOT_SUPPORTED",
-)
-
-CUBLASLT = Backend(
-    result="cublasStatus_t",
-    invalid_argument="CUBLAS_STATUS_INVALID_VALUE",
-    device_routing_kind="DEVICE",
-    symbol_lookup="cublaslt_symbol",
-    guard_null_conn=True,
-    not_supported="CUBLAS_STATUS_NOT_SUPPORTED",
-)
-
-# cuFFT plans are integer handles the server's library hands out; the client
-# routes each one back to the connection that created it.
-CUFFT = Backend(
-    result="cufftResult",
-    invalid_argument="CUFFT_INVALID_VALUE",
-    device_routing_kind="DEVICE",
-    symbol_lookup="cufft_symbol",
-    guard_null_conn=True,
-    not_supported="CUFFT_NOT_SUPPORTED",
-)
-
-# cuDNN handles and descriptors are pointers the server's library hands out;
-# each routes back to the connection that created it.
-CUDNN = Backend(
-    result="cudnnStatus_t",
-    invalid_argument="CUDNN_STATUS_BAD_PARAM",
-    device_routing_kind="DEVICE",
-    symbol_lookup="cudnn_symbol",
-    guard_null_conn=True,
-    not_supported="CUDNN_STATUS_NOT_SUPPORTED",
-)
-
-# cuRAND has no invalid-value or not-supported status. A null output pointer
-# gets the NOT_INITIALIZED the library itself answers for a null generator,
-# and an entry point the shim cannot carry gets ARCH_MISMATCH, which the
-# library documents as a requested feature being unavailable.
-CURAND = Backend(
-    result="curandStatus_t",
-    invalid_argument="CURAND_STATUS_NOT_INITIALIZED",
-    device_routing_kind="DEVICE",
-    symbol_lookup="curand_symbol",
-    guard_null_conn=True,
-    not_supported="CURAND_STATUS_ARCH_MISMATCH",
-)
-
-CUSPARSE = Backend(
-    result="cusparseStatus_t",
-    invalid_argument="CUSPARSE_STATUS_INVALID_VALUE",
-    device_routing_kind="DEVICE",
-    symbol_lookup="cusparse_symbol",
-    guard_null_conn=True,
-    not_supported="CUSPARSE_STATUS_NOT_SUPPORTED",
-)
-
-# cuSPARSELt ships outside the toolkit and shares cuSPARSE's status type. Its
-# objects are caller storage the library links by address, so they live on the
-# server and the caller's storage holds the address there.
-CUSPARSELT = Backend(
-    result="cusparseStatus_t",
-    invalid_argument="CUSPARSE_STATUS_INVALID_VALUE",
-    device_routing_kind="DEVICE",
-    symbol_lookup="cusparselt_symbol",
-    guard_null_conn=True,
-    not_supported="CUSPARSE_STATUS_NOT_SUPPORTED",
-)
-
-CUSOLVER = Backend(
-    result="cusolverStatus_t",
-    invalid_argument="CUSOLVER_STATUS_INVALID_VALUE",
-    device_routing_kind="DEVICE",
-    symbol_lookup="cusolver_symbol",
-    guard_null_conn=True,
-    not_supported="CUSOLVER_STATUS_NOT_SUPPORTED",
-)
-
-CUSOLVERMG = Backend(
-    result="cusolverStatus_t",
-    invalid_argument="CUSOLVER_STATUS_INVALID_VALUE",
-    device_routing_kind="DEVICE",
-    symbol_lookup="cusolvermg_symbol",
-    guard_null_conn=True,
-    not_supported="CUSOLVER_STATUS_NOT_SUPPORTED",
-)
-
-# NVRTC has no not-supported status; its only stub is documented to return
-# NVRTC_ERROR_INVALID_INPUT.
-NVRTC = Backend(
-    result="nvrtcResult",
-    invalid_argument="NVRTC_ERROR_INVALID_INPUT",
-    device_routing_kind="DEVICE",
-    symbol_lookup="nvrtc_symbol",
-    guard_null_conn=True,
-    not_supported="NVRTC_ERROR_INVALID_INPUT",
-)
-
 # A communicator is a pointer the server's library hands out and routes to
 # the connection that created it. Collectives submitted inside a group are
 # fire-and-forget: NCCL only queues them until ncclGroupEnd.
@@ -751,71 +435,9 @@ NCCL = Backend(
     alias_prefix="p",
 )
 
-# nvJitLink has no status for an unreachable server or a missing library; both
-# report an internal error.
-NVJITLINK = Backend(
-    result="nvJitLinkResult",
-    invalid_argument="NVJITLINK_ERROR_NULL_INPUT",
-    device_routing_kind="DEVICE",
-    symbol_lookup="nvjitlink_symbol",
-    guard_null_conn=True,
-)
-
-# nvJPEG has no not-supported status; IMPLEMENTATION_NOT_SUPPORTED is the one it
-# documents for an unavailable feature.
-NVJPEG = Backend(
-    result="nvjpegStatus_t",
-    invalid_argument="NVJPEG_STATUS_INVALID_PARAMETER",
-    device_routing_kind="DEVICE",
-    symbol_lookup="nvjpeg_symbol",
-    guard_null_conn=True,
-    not_supported="NVJPEG_STATUS_IMPLEMENTATION_NOT_SUPPORTED",
-)
-
-# NVIDIA Performance Primitives: one target per NVIDIA library, so each client
-# library carries only its own calls and each server translation unit compiles
-# on its own. They share a backend, since every call is the same kind of
-# forward.
-NPP_TARGETS = (
-    "nppc",
-    "nppial",
-    "nppicc",
-    "nppidei",
-    "nppif",
-    "nppig",
-    "nppim",
-    "nppist",
-    "nppisu",
-    "nppitc",
-    "npps",
-)
-
-NPP = Backend(
-    result="NppStatus",
-    invalid_argument="NPP_NULL_POINTER_ERROR",
-    device_routing_kind="DEVICE",
-    symbol_lookup="npp_symbol",
-    guard_null_conn=True,
-    not_supported="NPP_NOT_IMPLEMENTED_ERROR",
-)
-
 ANNOTATION_FILES = {
     "cuda": "annotations_cuda.h",
-    "cudart": "annotations_cudart.h",
-    "cublas": "annotations_cublas.h",
-    "cublaslt": "annotations_cublaslt.h",
-    "cufft": "annotations_cufft.h",
-    "cudnn": "annotations_cudnn.h",
-    "curand": "annotations_curand.h",
-    "cusparse": "annotations_cusparse.h",
-    "cusparselt": "annotations_cusparselt.h",
-    "cusolver": "annotations_cusolver.h",
-    "cusolvermg": "annotations_cusolvermg.h",
-    "nvrtc": "annotations_nvrtc.h",
     "nccl": "annotations_nccl.h",
-    "nvjitlink": "annotations_nvjitlink.h",
-    "nvjpeg": "annotations_nvjpeg.h",
-    **{target: f"annotations_{target}.h" for target in NPP_TARGETS},
     "nvml": "annotations_nvml.h",
     "hip": "annotations_hip.h",
 }
@@ -836,74 +458,10 @@ def annotation_param(params: list[Parameter], name: str) -> Parameter:
         raise NotImplementedError(f"Parameter {name} not found")
 
 
-# Types whose value is an address or id in one server's library. cuSPARSE
-# descriptors, plans and infos route this way too, since many calls take one
-# without a handle beside it.
+# Types whose value is an address in one server's library.
 LIBRARY_HANDLES = {
-    "cublasHandle_t",
-    "cublasXtHandle_t",
-    "cublasLtHandle_t",
-    "cufftHandle",
-    "curandGenerator_t",
-    "curandDiscreteDistribution_t",
-    "cusparseHandle_t",
-    "cusparseMatDescr_t",
-    "csrsv2Info_t",
-    "csrsm2Info_t",
-    "csrgemm2Info_t",
-    "cusparseSpVecDescr_t",
-    "cusparseConstSpVecDescr_t",
-    "cusparseDnVecDescr_t",
-    "cusparseConstDnVecDescr_t",
-    "cusparseSpMatDescr_t",
-    "cusparseConstSpMatDescr_t",
-    "cusparseDnMatDescr_t",
-    "cusparseConstDnMatDescr_t",
-    "cusparseSpSVDescr_t",
-    "cusparseSpSMDescr_t",
-    "cusparseSpGEMMDescr_t",
-    "cusparseSpGEAMDescr_t",
-    "cusparseSpMMOpPlan_t",
-    "cusparseSpMVOpDescr_t",
-    "cusparseSpMVOpPlan_t",
-    "cusparseColorInfo_t",
-    "csric02Info_t",
-    "bsric02Info_t",
-    "csrilu02Info_t",
-    "bsrilu02Info_t",
-    "bsrsv2Info_t",
-    "bsrsm2Info_t",
-    "csru2csrInfo_t",
-    "pruneInfo_t",
-    "cusolverDnHandle_t",
-    "cusolverDnParams_t",
-    "syevjInfo_t",
-    "gesvdjInfo_t",
-    "cusolverDnIRSParams_t",
-    "cusolverDnIRSInfos_t",
-    "cusolverSpHandle_t",
-    "csrqrInfo_t",
-    "csrqrInfoHost_t",
-    "csrcholInfo_t",
-    "csrcholInfoHost_t",
-    "csrluInfoHost_t",
-    "cusolverRfHandle_t",
-    "cusolverMgHandle_t",
-    "cudaLibMgGrid_t",
-    "cudaLibMgMatrixDesc_t",
-    "nvrtcProgram",
     "ncclComm_t",
     "ncclParamHandle_t",
-    "nvJitLinkHandle",
-    "nvjpegHandle_t",
-    "nvjpegJpegState_t",
-    "nvjpegEncoderState_t",
-    "nvjpegEncoderParams_t",
-    "nvjpegBufferPinned_t",
-    "nvjpegBufferDevice_t",
-    "nvjpegJpegStream_t",
-    "nvjpegDecodeParams_t",
-    "nvjpegJpegDecoder_t",
 }
 
 
@@ -926,7 +484,7 @@ def infer_routing_key(
             return "LIBRARY", param
         if type_name == "CUfunction":
             return "FUNCTION", param
-        if type_name in ("CUstream", "NppStreamContext"):
+        if type_name == "CUstream":
             return "STREAM", param
         if type_name == "CUevent":
             return "EVENT", param
@@ -943,10 +501,6 @@ def infer_routing_key(
         # A library handle is created on one server and routes every later
         # call there.
         if type_name in LIBRARY_HANDLES:
-            return "HANDLE", param
-        if type_name.startswith("cudnn") and type_name.endswith(
-            ("Handle_t", "Descriptor_t", "ParamPack_t", "Plan_t")
-        ):
             return "HANDLE", param
     return None, None
 
@@ -1147,22 +701,6 @@ def parse_annotation(
                     )
                     continue
 
-                if "REMOTE" in args:
-                    # REMOTE: an opaque handle the caller keeps in storage of
-                    # its own rather than in the parameter.
-                    if length_arg or null_terminated or nullable or deref:
-                        raise NotImplementedError("REMOTE takes no other modifiers")
-                    operations.append(
-                        OpaqueTypeOperation(
-                            send=send,
-                            recv=recv,
-                            parameter=param,
-                            type_=param.type,
-                            stored=True,
-                        )
-                    )
-                    continue
-
                 if scalar_arg is not None:
                     # SCALAR[:<owner>]: a pointer-mode scalar, sized by
                     # SIZE:<expr> when the pointee is void. The owner is the
@@ -1228,25 +766,12 @@ def parse_annotation(
                         (p for p in params if p.name == length_name), None
                     )
                     if length_param is None:
-                        # LENGTH:<expr>: an element count the client computes
-                        # from other parameters (a BLAS matrix's accessed
-                        # region); it travels ahead of the array.
-                        if nullable:
-                            raise NotImplementedError(
-                                "NULLABLE LENGTH needs a count parameter"
-                            )
-                        operations.append(
-                            ArrayOperation(
-                                send=send,
-                                recv=recv,
-                                parameter=param,
-                                ptr=param.type,
-                                length=length_name,
-                            )
+                        raise NotImplementedError(
+                            f"LENGTH parameter {length_name} not found"
                         )
-                    elif nullable and send:
+                    if nullable and send:
                         # SEND_ONLY NULLABLE LENGTH: an optional in-array the
-                        # caller may leave null (cufftPlanMany's embeds).
+                        # caller may leave null (ncclCommInitAll's devlist).
                         if recv:
                             raise NotImplementedError(
                                 "NULLABLE LENGTH is SEND_ONLY or RECV_ONLY"
@@ -1362,19 +887,6 @@ def parse_annotation(
                         recv=recv,
                         parameter=param,
                         type_=param.type,
-                    )
-                )
-            elif isinstance(param.type, Array) and length_arg is None:
-                element = param.type
-                while isinstance(element, Array):
-                    element = element.array_of
-                operations.append(
-                    FixedArrayOperation(
-                        send=send,
-                        recv=recv and not element.const,
-                        parameter=param,
-                        array=param.type,
-                        contents="DEREF" in args,
                     )
                 )
             elif isinstance(param.type, Array):
@@ -1557,25 +1069,10 @@ RESULT_CODES = {
         "CUDA_ERROR_INVALID_DEVICE",
         "CUDA_ERROR_INVALID_VALUE",
     ),
-    "cudaError_t": ResultCodes(
-        "cudaErrorDevicesUnavailable",
-        "cudaErrorInvalidDevice",
-        "cudaErrorInvalidValue",
-    ),
     "hipError_t": ResultCodes(
         "hipErrorUnknown", "hipErrorInvalidDevice", "hipErrorInvalidValue"
     ),
     "nvmlReturn_t": ResultCodes("NVML_ERROR_GPU_IS_LOST", None, "NVML_ERROR_INVALID_ARGUMENT"),
-    "cublasStatus_t": ResultCodes(
-        "CUBLAS_STATUS_NOT_INITIALIZED",
-        None,
-        "CUBLAS_STATUS_INVALID_VALUE",
-    ),
-    "cudnnStatus_t": ResultCodes("CUDNN_STATUS_NOT_INITIALIZED", None, "CUDNN_STATUS_BAD_PARAM"),
-    "size_t": ResultCodes("size_t", None, None),
-    "const char*": ResultCodes("const char*", None, None),
-    "void": ResultCodes("void", None, None),
-    "struct cudaChannelFormatDesc": ResultCodes("struct cudaChannelFormatDesc", None, None),
 }
 
 
@@ -1689,8 +1186,7 @@ def write_rpc_ids(
     functions_with_annotations,
     annotated_names,
     hip_functions_with_annotations,
-    cudart_functions_with_annotations,
-    cublas_functions_with_annotations,
+    nccl_functions_with_annotations,
 ):
     with open("gen_rpc_ids.h", "w") as f:
         f.write("// Generated by codegen.py. Do not edit by hand.\n")
@@ -1730,8 +1226,7 @@ def write_rpc_ids(
             write_rpc_define(f"RPC_{name}", name)
         for functions in (
             hip_functions_with_annotations,
-            cudart_functions_with_annotations,
-            cublas_functions_with_annotations,
+            nccl_functions_with_annotations,
         ):
             for function, _, _, metadata in functions:
                 if unsupported(function, metadata):
@@ -2170,93 +1665,17 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
         f.write(
             REGISTRY_CPP_TEMPLATE.substitute(
                 cuda_registry_entries=" \\\n".join(registry_entries["CUDA"]),
-                cudart_registry_entries=" \\\n".join(registry_entries["CUDART"]),
-                cublas_registry_entries=" \\\n".join(registry_entries["CUBLAS"]),
-                cublaslt_registry_entries=" \\\n".join(
-                    registry_entries["CUBLASLT"]
-                ),
-                cufft_registry_entries=" \\\n".join(
-                    registry_entries["CUFFT"]
-                ),
-                cudnn_registry_entries=" \\\n".join(
-                    registry_entries["CUDNN"]
-                ),
-                curand_registry_entries=" \\\n".join(
-                    registry_entries["CURAND"]
-                ),
-                cusparse_registry_entries=" \\\n".join(
-                    registry_entries["CUSPARSE"]
-                ),
-                cusparselt_registry_entries=" \\\n".join(
-                    registry_entries["CUSPARSELT"]
-                ),
-                cusolver_registry_entries=" \\\n".join(
-                    registry_entries["CUSOLVER"]
-                ),
-                cusolvermg_registry_entries=" \\\n".join(
-                    registry_entries["CUSOLVERMG"]
-                ),
-                nvrtc_registry_entries=" \\\n".join(
-                    registry_entries["NVRTC"]
-                ),
                 nccl_registry_entries=" \\\n".join(
                     registry_entries["NCCL"]
                 ),
-                nvjitlink_registry_entries=" \\\n".join(
-                    registry_entries["NVJITLINK"]
-                ),
-                nvjpeg_registry_entries=" \\\n".join(
-                    registry_entries["NVJPEG"]
-                ),
-                npp_registry_entries=" \\\n".join(registry_entries["NPP"]),
                 nvml_registry_entries=" \\\n".join(registry_entries["NVML"]),
                 hip_registry_entries=" \\\n".join(registry_entries["HIP"]),
                 cuda_guarded_declarations="\n".join(
                     guarded_declarations["CUDA"]
                 ),
-                cudart_guarded_declarations="\n".join(
-                    guarded_declarations["CUDART"]
-                ),
-                cublas_guarded_declarations="\n".join(
-                    guarded_declarations["CUBLAS"]
-                ),
-                cublaslt_guarded_declarations="\n".join(
-                    guarded_declarations["CUBLASLT"]
-                ),
-                cufft_guarded_declarations="\n".join(
-                    guarded_declarations["CUFFT"]
-                ),
-                cudnn_guarded_declarations="\n".join(
-                    guarded_declarations["CUDNN"]
-                ),
-                curand_guarded_declarations="\n".join(
-                    guarded_declarations["CURAND"]
-                ),
-                cusparse_guarded_declarations="\n".join(
-                    guarded_declarations["CUSPARSE"]
-                ),
-                cusparselt_guarded_declarations="\n".join(
-                    guarded_declarations["CUSPARSELT"]
-                ),
-                cusolver_guarded_declarations="\n".join(
-                    guarded_declarations["CUSOLVER"]
-                ),
-                cusolvermg_guarded_declarations="\n".join(
-                    guarded_declarations["CUSOLVERMG"]
-                ),
-                nvrtc_guarded_declarations="\n".join(
-                    guarded_declarations["NVRTC"]
-                ),
                 nccl_guarded_declarations="\n".join(
                     guarded_declarations["NCCL"]
                 ),
-                nvjitlink_guarded_declarations="\n".join(
-                    guarded_declarations["NVJITLINK"]
-                ),
-                nvjpeg_guarded_declarations="\n".join(
-                    guarded_declarations["NVJPEG"]
-                ),
-                npp_guarded_declarations="\n".join(guarded_declarations["NPP"]),
                 nvml_guarded_declarations="\n".join(
                     guarded_declarations["NVML"]
                 ),
@@ -2264,39 +1683,9 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                     guarded_declarations["HIP"]
                 ),
                 cuda_guarded_handlers="\n".join(guarded_handlers["CUDA"]),
-                cudart_guarded_handlers="\n".join(guarded_handlers["CUDART"]),
-                cublas_guarded_handlers="\n".join(guarded_handlers["CUBLAS"]),
-                cublaslt_guarded_handlers="\n".join(
-                    guarded_handlers["CUBLASLT"]
-                ),
-                cufft_guarded_handlers="\n".join(guarded_handlers["CUFFT"]),
-                cudnn_guarded_handlers="\n".join(guarded_handlers["CUDNN"]),
-                curand_guarded_handlers="\n".join(guarded_handlers["CURAND"]),
-                cusparse_guarded_handlers="\n".join(
-                    guarded_handlers["CUSPARSE"]
-                ),
-                cusparselt_guarded_handlers="\n".join(
-                    guarded_handlers["CUSPARSELT"]
-                ),
-                cusolver_guarded_handlers="\n".join(
-                    guarded_handlers["CUSOLVER"]
-                ),
-                cusolvermg_guarded_handlers="\n".join(
-                    guarded_handlers["CUSOLVERMG"]
-                ),
-                nvrtc_guarded_handlers="\n".join(
-                    guarded_handlers["NVRTC"]
-                ),
                 nccl_guarded_handlers="\n".join(
                     guarded_handlers["NCCL"]
                 ),
-                nvjitlink_guarded_handlers="\n".join(
-                    guarded_handlers["NVJITLINK"]
-                ),
-                nvjpeg_guarded_handlers="\n".join(
-                    guarded_handlers["NVJPEG"]
-                ),
-                npp_guarded_handlers="\n".join(guarded_handlers["NPP"]),
                 nvml_guarded_handlers="\n".join(guarded_handlers["NVML"]),
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
             )
@@ -2311,19 +1700,10 @@ def main():
     hip_include_dir = os.path.dirname(os.path.dirname(hip_header))
     options = ParserOptions(
         preprocessor=make_gcc_preprocessor(
-            # cublas_api.h refuses direct inclusion until its umbrella
-            # header has defined this marker; cufft.h's is a visibility
-            # attribute the parser does not read.
             defines=[
                 "__HIP_PLATFORM_AMD__",
-                "CUBLASAPI=",
-                "CUFFTAPI=",
-                "DISABLE_CUSPARSE_DEPRECATED",
-                "DISABLE_CUSOLVER_DEPRECATED",
-                "DISABLE_CUSOLVERMG_DEPRECATED",
                 # nccl.h declares ncclResetDebugInit only for Linux builds.
                 "NCCL_OS_LINUX",
-                "NVJITLINK_NO_INLINE",
             ],
             include_paths=[cuda_include_dir, hip_include_dir],
         ),
@@ -2360,7 +1740,7 @@ def main():
     server_bindings = {}
     # A handler belongs to the backend whose annotation file declares it.
     for target, path in ANNOTATION_FILES.items():
-        backend = "NPP" if target in NPP_TARGETS else target.upper()
+        backend = target.upper()
         for name, binding in collect_server_bindings(path, backend).items():
             if name in server_bindings and server_bindings[name] != binding:
                 raise RuntimeError(f"Conflicting @disabled for {name}")
@@ -2490,70 +1870,10 @@ def main():
         annotations_by_target["hip"],
         client_call_templates=client_call_templates_by_target["hip"],
     )
-    cudart_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["cudart"],
-        client_call_templates=client_call_templates_by_target["cudart"],
-    )
-    cublas_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["cublas"],
-        client_call_templates=client_call_templates_by_target["cublas"],
-    )
-    cublaslt_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["cublaslt"],
-        client_call_templates=client_call_templates_by_target["cublaslt"],
-    )
-    cufft_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["cufft"],
-        client_call_templates=client_call_templates_by_target["cufft"],
-    )
-    cudnn_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["cudnn"],
-        client_call_templates=client_call_templates_by_target["cudnn"],
-    )
-    curand_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["curand"],
-        client_call_templates=client_call_templates_by_target["curand"],
-    )
-    cusparse_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["cusparse"],
-        client_call_templates=client_call_templates_by_target["cusparse"],
-    )
-    cusparselt_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["cusparselt"],
-        client_call_templates=client_call_templates_by_target["cusparselt"],
-    )
-    cusolver_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["cusolver"],
-        client_call_templates=client_call_templates_by_target["cusolver"],
-    )
-    cusolvermg_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["cusolvermg"],
-        client_call_templates=client_call_templates_by_target["cusolvermg"],
-    )
-    nvrtc_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["nvrtc"],
-        client_call_templates=client_call_templates_by_target["nvrtc"],
-    )
     nccl_functions_with_annotations = collect_backend_functions(
         annotations_by_target["nccl"],
         client_call_templates=client_call_templates_by_target["nccl"],
     )
-    nvjitlink_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["nvjitlink"],
-        client_call_templates=client_call_templates_by_target["nvjitlink"],
-    )
-    nvjpeg_functions_with_annotations = collect_backend_functions(
-        annotations_by_target["nvjpeg"],
-        client_call_templates=client_call_templates_by_target["nvjpeg"],
-    )
-    npp_functions_by_target = {
-        target: collect_backend_functions(
-            annotations_by_target[target],
-            client_call_templates=client_call_templates_by_target[target],
-        )
-        for target in NPP_TARGETS
-    }
-
     annotated_names = sorted(
         {function.name.format() for function in cuda_annotations.namespace.functions}
         | {
@@ -2567,21 +1887,7 @@ def main():
         functions_with_annotations,
         annotated_names,
         hip_functions_with_annotations,
-        cudart_functions_with_annotations,
-        cublas_functions_with_annotations
-        + cublaslt_functions_with_annotations
-        + cufft_functions_with_annotations
-        + cudnn_functions_with_annotations
-        + curand_functions_with_annotations
-        + cusparse_functions_with_annotations
-        + cusparselt_functions_with_annotations
-        + cusolver_functions_with_annotations
-        + cusolvermg_functions_with_annotations
-        + nvrtc_functions_with_annotations
-        + nccl_functions_with_annotations
-        + nvjitlink_functions_with_annotations
-        + nvjpeg_functions_with_annotations
-        + sum(npp_functions_by_target.values(), []),
+        nccl_functions_with_annotations,
     )
 
     with open("gen_nvml_client.inc", "w") as f:
@@ -2653,51 +1959,7 @@ def main():
                 continue
             f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
 
-    with open("gen_cudart_client.inc", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function, _, operations, metadata in cudart_functions_with_annotations:
-            if metadata.disabled_client and metadata.disabled_server:
-                continue
-            if metadata.guard is not None:
-                f.write(f"#if {metadata.guard}\n")
-            if unsupported(function, metadata):
-                write_stub(f, CUDART, function)
-            else:
-                write_client_rpc(f, CUDART, function, operations, metadata)
-                write_client_wrapper(f, CUDART, function, operations, metadata)
-            if metadata.guard is not None:
-                f.write("#endif\n\n")
-
-    with open("gen_cudart_server.inc", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function, _, operations, metadata in cudart_functions_with_annotations:
-            if metadata.disabled_server or unsupported(function, metadata):
-                continue
-            write_server_handler(f, CUDART, function, operations, metadata)
-
-    with open("gen_cudart_server.h", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function, _, _, metadata in cudart_functions_with_annotations:
-            if metadata.disabled_server or unsupported(function, metadata):
-                continue
-            f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
-
-    for backend, target, functions in (
-        (CUBLAS, "cublas", cublas_functions_with_annotations),
-        (CUBLASLT, "cublaslt", cublaslt_functions_with_annotations),
-        (CUFFT, "cufft", cufft_functions_with_annotations),
-        (CUDNN, "cudnn", cudnn_functions_with_annotations),
-        (CURAND, "curand", curand_functions_with_annotations),
-        (CUSPARSE, "cusparse", cusparse_functions_with_annotations),
-        (CUSPARSELT, "cusparselt", cusparselt_functions_with_annotations),
-        (CUSOLVER, "cusolver", cusolver_functions_with_annotations),
-        (CUSOLVERMG, "cusolvermg", cusolvermg_functions_with_annotations),
-        (NVRTC, "nvrtc", nvrtc_functions_with_annotations),
-        (NCCL, "nccl", nccl_functions_with_annotations),
-        (NVJITLINK, "nvjitlink", nvjitlink_functions_with_annotations),
-        (NVJPEG, "nvjpeg", nvjpeg_functions_with_annotations),
-        *((NPP, target, npp_functions_by_target[target]) for target in NPP_TARGETS),
-    ):
+    for backend, target, functions in ((NCCL, "nccl", nccl_functions_with_annotations),):
         with open(f"gen_{target}_client.inc", "w") as f:
             f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
             for function, _, operations, metadata in functions:
@@ -2769,43 +2031,15 @@ def main():
     generated_bindings.extend(
         ServerBinding(
             function.name.format(),
-            "CUDART",
+            "NCCL",
             f"handle_{function.name.format()}",
             metadata.guard,
         )
-        for function, _, _, metadata in cudart_functions_with_annotations
+        for function, _, _, metadata in nccl_functions_with_annotations
         if not metadata.disabled_server
         and not unsupported(function, metadata)
         and function.name.format() not in server_bindings
     )
-    for target, functions in (
-        ("CUBLAS", cublas_functions_with_annotations),
-        ("CUBLASLT", cublaslt_functions_with_annotations),
-        ("CUFFT", cufft_functions_with_annotations),
-        ("CUDNN", cudnn_functions_with_annotations),
-        ("CURAND", curand_functions_with_annotations),
-        ("CUSPARSE", cusparse_functions_with_annotations),
-        ("CUSPARSELT", cusparselt_functions_with_annotations),
-        ("CUSOLVER", cusolver_functions_with_annotations),
-        ("CUSOLVERMG", cusolvermg_functions_with_annotations),
-        ("NVRTC", nvrtc_functions_with_annotations),
-        ("NCCL", nccl_functions_with_annotations),
-        ("NVJITLINK", nvjitlink_functions_with_annotations),
-        ("NVJPEG", nvjpeg_functions_with_annotations),
-        *(("NPP", npp_functions_by_target[target]) for target in NPP_TARGETS),
-    ):
-        generated_bindings.extend(
-            ServerBinding(
-                function.name.format(),
-                target,
-                f"handle_{function.name.format()}",
-                metadata.guard,
-            )
-            for function, _, _, metadata in functions
-            if not metadata.disabled_server
-            and not unsupported(function, metadata)
-            and function.name.format() not in server_bindings
-        )
     bindings = list(server_bindings.values()) + generated_bindings
 
     operations_by_id = {}
@@ -2862,53 +2096,9 @@ def main():
             "gen_hip_client.inc",
             "gen_hip_server.inc",
             "gen_hip_server.h",
-            "gen_cudart_client.inc",
-            "gen_cudart_server.inc",
-            "gen_cudart_server.h",
-            "gen_cublas_client.inc",
-            "gen_cublas_server.inc",
-            "gen_cublas_server.h",
-            "gen_cublaslt_client.inc",
-            "gen_cublaslt_server.inc",
-            "gen_cublaslt_server.h",
-            "gen_cufft_client.inc",
-            "gen_cufft_server.inc",
-            "gen_cufft_server.h",
-            "gen_cudnn_client.inc",
-            "gen_cudnn_server.inc",
-            "gen_cudnn_server.h",
-            "gen_curand_client.inc",
-            "gen_curand_server.inc",
-            "gen_curand_server.h",
-            "gen_cusparse_client.inc",
-            "gen_cusparse_server.inc",
-            "gen_cusparse_server.h",
-            "gen_cusparselt_client.inc",
-            "gen_cusparselt_server.inc",
-            "gen_cusparselt_server.h",
-            "gen_cusolver_client.inc",
-            "gen_cusolver_server.inc",
-            "gen_cusolver_server.h",
-            "gen_cusolvermg_client.inc",
-            "gen_cusolvermg_server.inc",
-            "gen_cusolvermg_server.h",
-            "gen_nvrtc_client.inc",
-            "gen_nvrtc_server.inc",
-            "gen_nvrtc_server.h",
             "gen_nccl_client.inc",
             "gen_nccl_server.inc",
             "gen_nccl_server.h",
-            "gen_nvjitlink_client.inc",
-            "gen_nvjitlink_server.inc",
-            "gen_nvjitlink_server.h",
-            "gen_nvjpeg_client.inc",
-            "gen_nvjpeg_server.inc",
-            "gen_nvjpeg_server.h",
-            *(
-                f"gen_{target}_{suffix}"
-                for target in NPP_TARGETS
-                for suffix in ("client.inc", "server.inc", "server.h")
-            ),
         ],
         check=True,
     )
@@ -2917,11 +2107,6 @@ def main():
 def verify_backend_boundaries(backend: str) -> None:
     backend_files = {
         "cuda": ["gen_cuda_client.cpp", "gen_cuda_server.cpp"],
-        "cudart": [
-            "gen_cudart_client.inc",
-            "gen_cudart_server.inc",
-            "gen_cudart_server.h",
-        ],
         "nvml": [
             "gen_nvml_client.inc",
             "gen_nvml_server.inc",
@@ -2932,97 +2117,15 @@ def verify_backend_boundaries(backend: str) -> None:
             "gen_hip_server.inc",
             "gen_hip_server.h",
         ],
-        "cublas": [
-            "gen_cublas_client.inc",
-            "gen_cublas_server.inc",
-            "gen_cublas_server.h",
-        ],
-        "cublaslt": [
-            "gen_cublaslt_client.inc",
-            "gen_cublaslt_server.inc",
-            "gen_cublaslt_server.h",
-        ],
-        "cufft": [
-            "gen_cufft_client.inc",
-            "gen_cufft_server.inc",
-            "gen_cufft_server.h",
-        ],
-        "cudnn": [
-            "gen_cudnn_client.inc",
-            "gen_cudnn_server.inc",
-            "gen_cudnn_server.h",
-        ],
-        "curand": [
-            "gen_curand_client.inc",
-            "gen_curand_server.inc",
-            "gen_curand_server.h",
-        ],
-        "cusparse": [
-            "gen_cusparse_client.inc",
-            "gen_cusparse_server.inc",
-            "gen_cusparse_server.h",
-        ],
-        "cusparselt": [
-            "gen_cusparselt_client.inc",
-            "gen_cusparselt_server.inc",
-            "gen_cusparselt_server.h",
-        ],
-        "cusolver": [
-            "gen_cusolver_client.inc",
-            "gen_cusolver_server.inc",
-            "gen_cusolver_server.h",
-        ],
-        "cusolvermg": [
-            "gen_cusolvermg_client.inc",
-            "gen_cusolvermg_server.inc",
-            "gen_cusolvermg_server.h",
-        ],
-        "nvrtc": [
-            "gen_nvrtc_client.inc",
-            "gen_nvrtc_server.inc",
-            "gen_nvrtc_server.h",
-        ],
         "nccl": [
             "gen_nccl_client.inc",
             "gen_nccl_server.inc",
             "gen_nccl_server.h",
         ],
-        "nvjitlink": [
-            "gen_nvjitlink_client.inc",
-            "gen_nvjitlink_server.inc",
-            "gen_nvjitlink_server.h",
-        ],
-        "nvjpeg": [
-            "gen_nvjpeg_client.inc",
-            "gen_nvjpeg_server.inc",
-            "gen_nvjpeg_server.h",
-        ],
-        **{
-            target: [
-                f"gen_{target}_client.inc",
-                f"gen_{target}_server.inc",
-                f"gen_{target}_server.h",
-            ]
-            for target in NPP_TARGETS
-        },
     }
     forbidden = {
         "cuda": ["nvml", "hip"],
-        "cudart": ["nvml", "hip"],
-        "cublas": ["nvml", "hip"],
-        "cublaslt": ["nvml", "hip"],
-        "cufft": ["nvml", "hip"],
-        "cudnn": ["nvml", "hip"],
-        "curand": ["nvml", "hip"],
-        "cusparse": ["nvml", "hip"],
-        "cusparselt": ["nvml", "hip"],
-        "cusolver": ["nvml", "hip"],
-        "cusolvermg": ["nvml", "hip"],
-        "nvrtc": ["nvml", "hip"],
         "nccl": ["nvml", "hip"],
-        "nvjitlink": ["nvml", "hip"],
-        "nvjpeg": ["nvml", "hip"],
-        **{target: ["nvml", "hip"] for target in NPP_TARGETS},
         "nvml": ["cuda_compat", "<cuda.h>", "handle_cu", "hip"],
         "hip": ["cuda", "nvml"],
     }
@@ -3043,7 +2146,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--verify-backend",
-        choices=("all", "cuda", "cudart", "cublas", "cublaslt", "cufft", "cudnn", "curand", "cusparse", "cusparselt", "cusolver", "cusolvermg", "nvrtc", "nccl", "nvjitlink", "nvjpeg", *NPP_TARGETS, "nvml", "hip"),
+        choices=("all", "cuda", "nccl", "nvml", "hip"),
         help="verify existing generated files without loading backend SDK headers",
     )
     args = parser.parse_args()

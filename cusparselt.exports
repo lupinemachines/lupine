@@ -1,7 +1,0 @@
-/* NVIDIA's libcusparseLt exports its symbols unversioned. */
-{
-  global:
-    cusparseLt*;
-  local:
-    *;
-};

@@ -1,6 +1,3 @@
-#ifdef LUPINE_BUILD_CUBLAS_BACKEND
-void lupine_cublas_cleanup_logs(struct conn_t *conn);
-#endif
 #include <atomic>
 #include <cerrno>
 #include <cstdlib>
@@ -219,142 +216,10 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
 #else
     break;
 #endif
-  case rpc_backend::cudart:
-#ifdef LUPINE_BUILD_CUDART_BACKEND
-  {
-    backend_name = "CUDART";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::cublas:
-#ifdef LUPINE_BUILD_CUBLAS_BACKEND
-  {
-    backend_name = "cuBLAS";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::cufft:
-#ifdef LUPINE_BUILD_CUFFT_BACKEND
-  {
-    backend_name = "cuFFT";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::cudnn:
-#ifdef LUPINE_BUILD_CUDNN_BACKEND
-  {
-    backend_name = "cuDNN";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::curand:
-#ifdef LUPINE_BUILD_CURAND_BACKEND
-  {
-    backend_name = "cuRAND";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::cusparse:
-#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
-  {
-    backend_name = "cuSPARSE";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::cusparselt:
-#ifdef LUPINE_BUILD_CUSPARSELT_BACKEND
-  {
-    backend_name = "cuSPARSELt";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::cusolver:
-#ifdef LUPINE_BUILD_CUSOLVER_BACKEND
-  {
-    backend_name = "cuSOLVER";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::nvrtc:
-#ifdef LUPINE_BUILD_NVRTC_BACKEND
-  {
-    backend_name = "NVRTC";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
   case rpc_backend::nccl:
 #ifdef LUPINE_BUILD_NCCL_BACKEND
   {
     backend_name = "NCCL";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::nvjitlink:
-#ifdef LUPINE_BUILD_NVJITLINK_BACKEND
-  {
-    backend_name = "nvJitLink";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::nvjpeg:
-#ifdef LUPINE_BUILD_NVJPEG_BACKEND
-  {
-    backend_name = "nvJPEG";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::npp:
-#ifdef LUPINE_BUILD_NPP_BACKEND
-  {
-    backend_name = "NPP";
     lupine_checkpoint::cuda_call_guard guard;
     result = handler.handler(conn);
     break;
@@ -580,9 +445,6 @@ int client_handler(lupine_socket_t connfd) {
 #ifdef LUPINE_BUILD_CUDA_BACKEND
   // Finish checkpointing before releasing per-connection CUDA resources.
   checkpoint_result = lupine_server_checkpoint_child_finish();
-#ifdef LUPINE_BUILD_CUBLAS_BACKEND
-  lupine_cublas_cleanup_logs(&conn);
-#endif
   lupine_server_cleanup_connection(&conn);
   lupine_server_cleanup_identity_allocations(&conn);
 #endif

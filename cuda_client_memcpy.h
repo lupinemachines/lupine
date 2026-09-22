@@ -23,12 +23,8 @@ extern "C" CUresult lupine_free_host_allocation(void *host,
 using lupine_host_register_fn = CUresult (*)(conn_t *, void *, size_t,
                                              unsigned int, void **,
                                              CUdeviceptr *);
-extern "C" CUresult lupine_register_host_allocation(
-    conn_t *conn, void *host, size_t bytes, unsigned int flags,
-    lupine_host_register_fn allocate, lupine_host_free_fn release);
 extern "C" CUresult
 lupine_unregister_host_allocation(void *host, lupine_host_free_fn release);
-extern "C" void *lupine_host_pointer_for_rpc(void *host, conn_t **owner);
 using lupine_device_free_fn = CUresult (*)(conn_t *, CUdeviceptr);
 extern "C" CUresult
 lupine_free_device_allocation(CUdeviceptr pointer,
@@ -46,21 +42,12 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
                                                       int request_id,
                                                       CUdeviceptr source,
                                                       size_t bytes);
-extern "C" void
-lupine_mark_mapped_host_kernel_params(void *const *kernel_params,
-                                      const size_t *sizes, uint32_t count);
 CUresult lupine_translate_mapped_host_pointer(lupine_route route,
                                               CUdeviceptr pointer,
                                               CUdeviceptr *translated);
-// What the server lane bound to this thread has current on conn, answered
-// from the client's own record of that lane when it holds one.
-extern "C" CUresult lupine_lane_current_context(conn_t *conn,
-                                                CUcontext *context_out);
-
 extern "C" CUresult lupine_sync_mapped_device_to_host();
 extern "C" int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
                                               size_t bytes);
-extern "C" CUresult lupine_invalidate_managed_allocations();
 extern "C" void lupine_materialize_host_allocations();
 
 extern "C" void lupine_stream_capture_begin();

@@ -17,7 +17,6 @@ static constexpr int LUPINE_SIDE_EFFECT_HOST_FUNCTION = 1;
 static constexpr int LUPINE_SIDE_EFFECT_STREAM_CALLBACK = 2;
 static constexpr int LUPINE_SIDE_EFFECT_READ_HOST_MEMORY = 3;
 static constexpr int LUPINE_SIDE_EFFECT_LOG_CALLBACK = 4;
-static constexpr int LUPINE_SIDE_EFFECT_LIBRARY_LOG = 5;
 
 static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOH = 0;
 static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOD = 1;
