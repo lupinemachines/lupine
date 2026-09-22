@@ -1623,17 +1623,19 @@ if(LUPINE_BUILD_SERVER)
         set(LUPINE_CLIENT_BUNDLE_GENERATED_DIR
             ${CMAKE_CURRENT_BINARY_DIR}/client-bundles)
 
-        # The staging directory holds exactly the shims the client build
-        # produced, and each library shim keeps its real counterpart's soname,
-        # whose major moves independently of the toolkit's. Take the names from
-        # the directory rather than restating them here, and require only the
-        # three every client must have.
+        # A bundle carries the driver, NVML and, where the platform builds
+        # them, the NCCL and nvSHMEM shims, which cannot work through the
+        # driver by itself. The NCCL and nvSHMEM majors move independently of
+        # the toolkit's, so their names come from the directory; only the two
+        # every client must have are required.
         function(lupine_embed_client_bundle tag platforms)
             set(input_dir
                 ${LUPINE_CLIENT_BUNDLE_INPUT}/lupine-client-${tag})
             file(GLOB staged RELATIVE ${input_dir}
-                ${input_dir}/*.so ${input_dir}/*.so.*
-                ${input_dir}/*.dylib ${input_dir}/*.dll)
+                ${input_dir}/libcuda.so.* ${input_dir}/libnvidia-ml.so.*
+                ${input_dir}/libnccl.so.* ${input_dir}/libnvshmem_host.so.*
+                ${input_dir}/libcuda.dylib ${input_dir}/libnvidia-ml.dylib
+                ${input_dir}/nvcuda.dll ${input_dir}/nvml.dll)
             list(SORT staged)
             set(files ${staged})
             foreach(required IN LISTS ARGN)
@@ -1664,9 +1666,6 @@ if(LUPINE_BUILD_SERVER)
             target_sources(lupine_driver_server PRIVATE ${source})
         endfunction()
 
-        # Only the driver and NVML sonames are stable across toolkits; the
-        # runtime's tracks the CUDA major (11 ships libcudart.so.11.0), so it
-        # arrives through the glob like every library shim.
         lupine_embed_client_bundle(linux-x86_64 "linux/amd64"
             libcuda.so.1 libnvidia-ml.so.1)
         lupine_embed_client_bundle(linux-aarch64 "linux/arm64"

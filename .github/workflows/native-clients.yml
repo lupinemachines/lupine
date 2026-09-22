@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   client:
-    name: Complete client / ${{ matrix.tag }}
+    name: Client / ${{ matrix.tag }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -68,12 +68,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           python cmake/fetch_cuda_headers.py cuda-sdk
-          # The build reads the toolkit's headers from one flattened tree;
-          # cuDNN keeps its own, reached through CUDNN_PATH.
+          # The build reads the toolkit's headers from one flattened tree.
           New-Item -ItemType Directory -Force -Path cuda-sdk/include | Out-Null
           Copy-Item 'cuda-sdk/nvidia/cu13/include/*' cuda-sdk/include -Recurse -Force
 
-      - name: Build complete client (Linux)
+      - name: Build client (Linux)
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
@@ -89,7 +88,6 @@ jobs:
               cmake -E remove_directory build
               python3 cmake/fetch_cuda_headers.py cuda-sdk
 
-              CUDNN_PATH="$PWD/cuda-sdk/nvidia/cudnn" \
               NCCL_HOME="$PWD/cuda-sdk/nvidia/nccl" \
               NVSHMEM_HOME="$PWD/cuda-sdk/nvidia/nvshmem" \
               cmake -S . -B build \
@@ -98,31 +96,27 @@ jobs:
                 -DLUPINE_BUILD_HIP=OFF \
                 -DCMAKE_PREFIX_PATH="$PWD/cuda-sdk/nvidia/cu13"
               cmake --build build --parallel \
-                --target lupine_cuda_client lupine_runtime_clients lupine_nvml
+                --target lupine_cuda_client lupine_nvml lupine_nccl lupine_nvshmem
             '
 
-      - name: Build complete client (macOS)
+      - name: Build client (macOS)
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
-          CUDNN_PATH="$PWD/cuda-sdk/nvidia/cudnn" \
-          NVSHMEM_HOME="$PWD/cuda-sdk/nvidia/nvshmem" \
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DLUPINE_BUILD_SERVER=OFF \
             -DLUPINE_BUILD_HIP=OFF \
             -DCMAKE_PREFIX_PATH="$PWD/cuda-sdk/nvidia/cu13"
-          cmake --build build --parallel --target lupine_cuda_client lupine_runtime_clients lupine_nvml
+          cmake --build build --parallel --target lupine_cuda_client lupine_nvml
 
-      - name: Build complete client (Windows)
+      - name: Build client (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $arch = '${{ matrix.tag }}' -eq 'win-arm64' ? 'ARM64' : 'x64'
           $triplet = '${{ matrix.tag }}' -eq 'win-arm64' ? 'arm64-windows-static' : 'x64-windows-static'
-          $env:CUDNN_PATH = "$PWD\cuda-sdk\nvidia\cudnn"
-          $env:NVSHMEM_HOME = "$PWD\cuda-sdk\nvidia\nvshmem"
           cmake -S . -B build -G "Visual Studio 18 2026" -A $arch `
             -DLUPINE_BUILD_SERVER=OFF `
             -DLUPINE_BUILD_HIP=OFF `
@@ -131,42 +125,43 @@ jobs:
             "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=$triplet" `
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
-          cmake --build build --config Release --target lupine_cuda_client lupine_runtime_clients lupine_nvml
+          cmake --build build --config Release --target lupine_cuda_client lupine_nvml
 
-      - name: Collect complete client
+      - name: Collect client
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p complete-client
+          mkdir -p client
           case "${{ matrix.tag }}" in
             win-*)
-              cp build/Release/*.dll complete-client/
+              cp build/Release/nvcuda.dll build/Release/nvml.dll client/
               ;;
             macosx-*)
-              cp build/lib*.dylib complete-client/
+              cp build/libcuda.dylib build/libnvidia-ml.dylib client/
               ;;
             *)
-              # Each shim carries its real counterpart's SONAME, and those
-              # majors move independently of the toolkit's. Copy every shim
-              # under the name consumers dlopen rather than restating them.
-              for lib in build/lib*.so; do
+              # Each shim carries its real counterpart's SONAME, and the NCCL
+              # and nvSHMEM majors move independently of the toolkit's, so
+              # copy under that name.
+              for lib in build/libcuda.so build/libnvidia-ml.so \
+                         build/libnccl.so build/libnvshmem_host.so; do
                 soname="$(objdump -p "$lib" | awk '/SONAME/ {print $2}')"
                 test -n "$soname"
-                cp "$(readlink -f "$lib")" "complete-client/$soname"
+                cp "$(readlink -f "$lib")" "client/$soname"
               done
               ;;
           esac
-          ls -1 complete-client
+          ls -1 client
 
       - uses: actions/upload-artifact@v7
         with:
           name: lupine-client-${{ matrix.tag }}
-          path: complete-client
+          path: client
           if-no-files-found: error
           retention-days: 3
 
   macos-universal:
-    name: Complete client / macosx-universal2
+    name: Client / macosx-universal2
     needs: client
     runs-on: macos-26
     timeout-minutes: 10
@@ -180,19 +175,19 @@ jobs:
       - name: Assemble universal client
         run: |
           set -euo pipefail
-          mkdir -p complete-client
+          mkdir -p client
           # Both slices build the same shim set; fuse whatever they carry so a
           # newly added shim needs no change here.
           for path in thin/lupine-client-macosx-arm64/*.dylib; do
             lib="$(basename "$path")"
             lipo -create "$path" "thin/lupine-client-macosx-x86_64/$lib" \
-                    -output "complete-client/$lib"
+                    -output "client/$lib"
           done
-          ls -1 complete-client
+          ls -1 client
 
       - uses: actions/upload-artifact@v7
         with:
           name: lupine-client-macosx-universal2
-          path: complete-client
+          path: client
           if-no-files-found: error
           retention-days: 3

@@ -5,31 +5,30 @@ platform. The loader downloads the exact bundle selected by ``LUPINE_SERVER``
 before CUDA consumers are imported. The wheel itself is pure Python: every
 native object comes from a bound server or an explicit ``LUPINE_LIBDIR``.
 
-A bundle always carries the driver, runtime, and NVML shims, and carries a
-library shim for each of cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE,
-cuSOLVER, cuSOLVERMg, cuSPARSELt, NVRTC, nvJitLink, nvJPEG, NPP, cuFile,
-CUPTI, NCCL, and nvSHMEM that the server was built with:
+A bundle always carries the driver and NVML shims, and on Linux the NCCL
+and nvSHMEM shims, which cannot work through the driver by itself. The CUDA
+runtime and its libraries are the program's own:
 
-============= ================== ==================== ====================
-Platform      driver shim        runtime shim         NVML shim
-============= ================== ==================== ====================
-linux-x86_64  libcuda.so.1       libcudart.so.<major> libnvidia-ml.so.1
-linux-aarch64 libcuda.so.1       libcudart.so.<major> libnvidia-ml.so.1
-macosx-*      libcuda.dylib      libcudart.dylib      libnvidia-ml.dylib
-win-*         nvcuda.dll         cudart64_<major>.dll nvml.dll
-============= ================== ==================== ====================
+============= ================== ====================
+Platform      driver shim        NVML shim
+============= ================== ====================
+linux-x86_64  libcuda.so.1       libnvidia-ml.so.1
+linux-aarch64 libcuda.so.1       libnvidia-ml.so.1
+macosx-*      libcuda.dylib      libnvidia-ml.dylib
+win-*         nvcuda.dll         nvml.dll
+============= ================== ====================
 
-Each library shim keeps the soname its real counterpart uses, and those
-majors move independently of the toolkit's, so the manifest — not this
-module — is authoritative for the names in a bundle.
+The NCCL and nvSHMEM shims keep the soname their real counterparts use, and
+those majors move independently of the toolkit's, so the manifest — not
+this module — is authoritative for the names in a bundle.
 
 ``load()`` preloads them into the process with global visibility so that
 CUDA consumers resolve the LUPINE shims instead of (or, where a real NVIDIA
 stack exists, in front of) the real libraries:
 
-* PyTorch builds with CUDA link ``libcudart``, ``libcublas`` and friends and
-  load the driver lazily by soname, so preloading the LUPINE shims routes
-  every later call to the LUPINE server. No ``nvidia-*`` wheel is required.
+* PyTorch builds with CUDA bring ``libcudart``, ``libcublas`` and friends
+  and load the driver lazily by soname, so preloading the LUPINE shims
+  routes every driver call to the LUPINE server.
 * Natively compiled CUDA code (nvcc/clang) resolves the shims directly.
 * On platforms without any NVIDIA runtime (macOS, GPU-less Windows hosts),
   the server-selected shims are the only CUDA stack in the process.

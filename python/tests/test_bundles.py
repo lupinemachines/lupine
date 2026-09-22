@@ -12,15 +12,13 @@ import pytest
 from lupine import _bundles
 
 # Only the driver and NVML sonames are stable across toolkits, so those are
-# all a client demands; a bundle carries the runtime and library shims too.
+# all a client demands; a Linux bundle carries the NCCL and nvSHMEM shims too.
 REQUIRED = ("libcuda.so.1", "libnvidia-ml.so.1")
 NAMES = (
     "libcuda.so.1",
-    "libcudart.so.13",
-    "libcublas.so.13",
-    "libcublasLt.so.13",
-    "libcudnn.so.9",
+    "libnccl.so.2",
     "libnvidia-ml.so.1",
+    "libnvshmem_host.so.3",
 )
 
 

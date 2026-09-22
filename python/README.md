@@ -2,17 +2,15 @@
 
 CUDA on any host. The configured LUPINE server publishes its compatible native
 client for Linux (x86_64, aarch64), macOS (universal2), and Windows (amd64,
-arm64): the CUDA **driver API** (`libcuda` / `nvcuda.dll`), the CUDA
-**runtime API** (`libcudart`), **NVML**, and a shim for each companion
-library the server was built with — cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND,
-cuSPARSE, cuSPARSELt, cuSOLVER, cuSOLVERMg, NVRTC, nvJitLink, nvJPEG, NPP,
-cuFile, CUPTI, NCCL, and nvSHMEM. A CUDA-enabled PyTorch resolves every one
-of its CUDA libraries through them, with no `nvidia-*` wheel installed.
+arm64): the CUDA **driver API** (`libcuda` / `nvcuda.dll`), **NVML**, and on
+Linux the **NCCL** and **nvSHMEM** shims, which cannot work through the driver
+by itself. The CUDA runtime and its libraries run on the client: a CUDA-enabled
+PyTorch brings its own, and every driver call they make lands on the LUPINE
+shim.
 
 The wheel itself is pure Python: a small PyTorch adapter and the loader that
-resolves that client. No NVIDIA software, CUDA toolkit, `nvidia-*` wheel, or
-container runtime is needed on the client — a CUDA-enabled PyTorch resolves
-every one of its CUDA libraries through the LUPINE shims.
+resolves that client. No NVIDIA driver, CUDA toolkit, or container runtime is
+needed on the client.
 
 ```python
 import lupine
@@ -116,7 +114,7 @@ lupine/
   _native.py     shim discovery + preloading
 ```
 
-No native object ships in the wheel. Server workflows publish the complete
+No native object ships in the wheel. Server workflows publish the
 clients for CMake to embed, and the bundle manifest names the shims it
 carries — so a server built with more of them stays usable by an older
 client, which loads whatever arrives.

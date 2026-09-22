@@ -73,7 +73,11 @@ the server does no background NVML polling.
 
 Each production server executable embeds the matching Linux, macOS, and
 Windows client objects for amd64 and arm64; there is no client-bundle directory
-to deploy beside it. Python clients fetch the current object from
+to deploy beside it. A bundle carries `libcuda.so.1`
+/ `libcuda.dylib` / `nvcuda.dll`, NVML, and on Linux the NCCL and nvSHMEM
+shims, which cannot work through the driver by itself. Programs run their own
+CUDA runtime and libraries against it, so only driver calls cross the wire.
+Python clients fetch the current object from
 `/.well-known/lupine/client/v1/<os>/<arch>`, verify its strong ETag, content
 digest, manifest, and file hashes, and cache it locally. The selected ETag is
 also asserted when the RPC connection opens, closing the race between
@@ -425,10 +429,12 @@ environment. Drive such ranks from a thread each, as separate processes would;
 a group reaching two servers from one thread returns `ncclInvalidUsage`.
 
 Redistributable server builds pass `LUPINE_CLIENT_BUNDLE_INPUT` with staged
-native client directories. CMake deterministically assembles all six platform
-routes and links them into `lupine_driver_server`. The Docker `server` target
-requires that generated registry, so a server image cannot be produced without
-the clients.
+native client directories, one `lupine-client-<tag>` per platform holding the
+driver and NVML shims and, on Linux, the NCCL and nvSHMEM shims. CMake
+deterministically assembles all six platform routes from those files alone and
+links them into `lupine_driver_server`. The Docker `server` target requires
+that generated registry, so a server image cannot be produced without the
+clients.
 
 The Lupine server must be running before initiating client commands.
 
