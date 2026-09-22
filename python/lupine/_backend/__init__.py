@@ -3,10 +3,15 @@
 The user's ``torch`` gets a device whose operators execute in a same-version
 CUDA torch running in the worker (``lupine._worker``). Tensors are host-side
 metadata over a remote storage handle; one boxed fallback forwards every
-operator to the worker over the LUPINE RPC layer, fire-and-forget, with the
-result metadata decided here by the operator's meta kernel. Synchronous
-round trips happen only where torch itself waits: ``.item()``, copies to
-the CPU, ``synchronize()``.
+operator to the worker over the LUPINE RPC layer. The first call of an
+operator with a given argument metadata is a round trip: the worker runs it
+and reports what each result is (a new storage, an argument, a view of one),
+which becomes the operator's plan for that metadata; later calls build their
+results from the plan over host-assigned handles and go fire-and-forget.
+Synchronous round trips otherwise happen only where torch itself waits
+(``.item()``, copies to the CPU, ``synchronize()``) and for operators whose
+output shape depends on data (``nonzero``, ``masked_select``, ``unique``,
+boolean indexing).
 
 When the host torch has no CUDA build (every macOS torch, or a CPU wheel)
 the kernels are registered on the in-tree CUDA dispatch key, so

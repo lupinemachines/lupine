@@ -56,11 +56,16 @@ std::string take_error() {
   return error;
 }
 
+// A result the host keeps by handle may be a CPU tensor (a kernel's seed or
+// length output); the view takes the dispatch key of the storage it is over.
 at::Tensor make_tensor(c10::Storage storage, c10::ScalarType dtype,
                        c10::IntArrayRef sizes, c10::IntArrayRef strides,
                        int64_t offset) {
+  c10::DispatchKey key = storage.device_type() == c10::DeviceType::CPU
+                             ? c10::DispatchKey::CPU
+                             : c10::DispatchKey::CUDA;
   at::Tensor t = at::detail::make_tensor<c10::TensorImpl>(
-      std::move(storage), c10::DispatchKeySet(c10::DispatchKey::CUDA),
+      std::move(storage), c10::DispatchKeySet(key),
       caffe2::TypeMeta::fromScalarType(dtype));
   t.unsafeGetTensorImpl()->set_sizes_and_strides(sizes, strides, offset);
   return t;
@@ -91,11 +96,17 @@ at::Tensor materialize(const tensor_desc &d) {
                      d.sizes, d.strides, d.offset);
 }
 
-void bind(uint64_t handle, const at::Tensor &t) {
-  if (handle == 0 || !t.defined()) {
-    return;
-  }
+// A handle the host already holds (an argument the plan says the op returns
+// or views) must come back over the same storage; anything else is a plan
+// that does not describe this op.
+void bind(uint64_t handle, const at::Tensor &t, const std::string &name) {
   std::lock_guard<std::mutex> lock(g_table_mutex);
+  auto found = g_table.find(handle);
+  TORCH_CHECK(found == g_table.end() || found->second.unsafeGetStorageImpl() ==
+                                            t.storage().unsafeGetStorageImpl(),
+              name,
+              " returned a new storage where the host's plan has an "
+              "argument's; it must run synchronously");
   g_table[handle] = t.storage();
 }
 
@@ -124,15 +135,12 @@ tensor_desc describe(const at::Tensor &t) {
   return d;
 }
 
+// Every defined result stays here and travels as a handle, whichever device
+// the kernel put it on.
 const wire_context &wire() {
   static const wire_context ctx = {
-      describe, [](const at::Tensor &t) { return t.device().is_cuda(); },
+      describe, [](const at::Tensor &t) { return true; },
       [](const c10::Device &d) { return d.is_cuda(); }};
-  return ctx;
-}
-
-const read_context &reading() {
-  static const read_context ctx = {materialize, c10::DeviceType::CUDA};
   return ctx;
 }
 
@@ -292,44 +300,99 @@ std::string what(const std::exception &e) {
   return e.what();
 }
 
-// Binds each returned tensor to the handle the host chose for it. The host
-// wrote one handle per tensor and a count ahead of each tensor list.
-void bind_results(reader &r, const torch::jit::Stack &results) {
-  uint32_t count = r.get<uint32_t>();
-  std::vector<uint64_t> handles(count);
-  for (uint32_t i = 0; i < count; ++i) {
-    handles[i] = r.get<uint64_t>();
-  }
-  size_t next = 0;
+// Binds each result to the handle the host chose for it from its plan. A
+// shape the plan did not predict is an op whose output depends on data; the
+// error surfaces at the host's next synchronous message.
+void bind_results(reader &r, const std::string &name,
+                  const torch::jit::Stack &results) {
+  auto bind_one = [&](const at::Tensor &t) {
+    tensor_desc d = read_desc(r);
+    if (d.handle == 0) {
+      return;
+    }
+    TORCH_CHECK(t.defined() && t.sizes().equals(d.sizes), name,
+                " produced shape ", t.sizes(), " where the host's plan has ",
+                d.sizes,
+                ": its output shape depends on data, so it must "
+                "run synchronously");
+    bind(d.handle, t, name);
+  };
   for (const c10::IValue &v : results) {
     if (v.isTensor()) {
-      TORCH_CHECK(next < handles.size(), "lupine worker: result handle count");
-      bind(handles[next++], v.toTensor());
+      bind_one(v.toTensor());
     } else if (v.isTensorList()) {
-      TORCH_CHECK(next < handles.size(), "lupine worker: result handle count");
-      uint64_t expected = handles[next++];
       auto items = v.toTensorVector();
-      TORCH_CHECK(expected == items.size(),
-                  "lupine worker: result list length ", items.size(),
-                  " differs from the host's ", expected);
+      uint32_t expected = r.get<uint32_t>();
+      TORCH_CHECK(expected == items.size(), name, " returned ", items.size(),
+                  " tensors where the host's plan has ", expected);
       for (const at::Tensor &t : items) {
-        bind(handles[next++], t);
+        bind_one(t);
       }
     }
   }
 }
 
 // Decodes the call inside the sequence gate: descriptors resolve against the
-// table as it stands once every earlier op has bound its results.
-torch::jit::Stack decode_call(reader &r, std::string *name) {
+// table as it stands once every earlier op has bound its results. The
+// tensors read are numbered in `inputs` the way the host numbers them.
+torch::jit::Stack decode_call(reader &r, std::string *name,
+                              std::vector<at::Tensor> *inputs) {
+  read_context ctx;
+  ctx.materialize = [inputs](const tensor_desc &d) {
+    at::Tensor t = materialize(d);
+    inputs->push_back(t);
+    return t;
+  };
   *name = r.get_string();
   uint8_t nargs = r.get<uint8_t>();
   torch::jit::Stack stack;
   stack.reserve(nargs);
   for (uint8_t i = 0; i < nargs; ++i) {
-    stack.push_back(read_ivalue(r, reading()));
+    stack.push_back(read_ivalue(r, ctx));
   }
   return stack;
+}
+
+// Reports what each result tensor is relative to the arguments: an argument
+// itself (1), else a view over an argument's storage (2), else new (0). An
+// argument passed twice (self and out=) is two tensors here, so the
+// argument returned is found by identity before storage is considered.
+void write_aliases(writer &w, const std::vector<at::Tensor> &inputs,
+                   const torch::jit::Stack &results) {
+  std::vector<std::pair<uint8_t, int32_t>> aliases;
+  auto note = [&](const at::Tensor &t) {
+    if (!t.defined()) {
+      return;
+    }
+    std::pair<uint8_t, int32_t> alias(0, -1);
+    for (uint8_t kind = 1; kind <= 2 && alias.first == 0; ++kind) {
+      for (size_t i = 0; i < inputs.size(); ++i) {
+        bool same = kind == 1 ? inputs[i].unsafeGetTensorImpl() ==
+                                    t.unsafeGetTensorImpl()
+                              : inputs[i].storage().unsafeGetStorageImpl() ==
+                                    t.storage().unsafeGetStorageImpl();
+        if (same) {
+          alias = {kind, static_cast<int32_t>(i)};
+          break;
+        }
+      }
+    }
+    aliases.push_back(alias);
+  };
+  for (const c10::IValue &v : results) {
+    if (v.isTensor()) {
+      note(v.toTensor());
+    } else if (v.isTensorList()) {
+      for (const at::Tensor &t : v.toTensorVector()) {
+        note(t);
+      }
+    }
+  }
+  w.put<uint32_t>(static_cast<uint32_t>(aliases.size()));
+  for (const auto &alias : aliases) {
+    w.put<uint8_t>(alias.first);
+    w.put<int32_t>(alias.second);
+  }
 }
 
 int handle_op(conn_t *conn) {
@@ -346,10 +409,11 @@ int handle_op(conn_t *conn) {
     reader r = open_body(in);
     apply_frees(in);
     std::string name;
-    torch::jit::Stack stack = decode_call(r, &name);
+    std::vector<at::Tensor> inputs;
+    torch::jit::Stack stack = decode_call(r, &name, &inputs);
     uint64_t decoded = prof != nullptr ? profile::now() : 0;
     run(name, stack);
-    bind_results(r, stack);
+    bind_results(r, name, stack);
     if (prof != nullptr) {
       uint64_t finished = profile::now();
       prof->record(name, decoded - started, finished - decoded);
@@ -375,8 +439,10 @@ int handle_op_sync(conn_t *conn) {
     reader r = open_body(in);
     apply_frees(in);
     std::string name;
-    torch::jit::Stack stack = decode_call(r, &name);
+    std::vector<at::Tensor> inputs;
+    torch::jit::Stack stack = decode_call(r, &name, &inputs);
     run(name, stack);
+    write_aliases(w, inputs, stack);
     w.put<uint32_t>(static_cast<uint32_t>(stack.size()));
     for (const c10::IValue &v : stack) {
       write_ivalue(w, v, wire());

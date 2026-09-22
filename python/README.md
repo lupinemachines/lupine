@@ -87,11 +87,15 @@ host torch ──boxed aten ops, fire-and-forget──▶ lupine-torch-worker �
 
 - Tensors on the device are host-side metadata (sizes, strides, dtype,
   views, autograd) over a storage handle the worker owns. Every operator
-  reaches one boxed fallback that decides the result metadata with torch's
-  meta kernel (memoised per argument shapes) and forwards the call with
-  client-assigned result handles; the worker applies calls in issue order.
-  Only `.item()`, copies to the CPU and `torch.cuda.synchronize()` wait for
-  a reply. Storage release rides along with the next call.
+  reaches one boxed fallback. Its first call with a given argument metadata
+  is a round trip: the worker runs it and reports what each result is (a new
+  storage, an argument, a view of one), and that report is the operator's
+  plan for those shapes; later calls build their results from the plan over
+  host-assigned handles and are forwarded fire-and-forget, applied by the
+  worker in issue order. Only `.item()`, copies to the CPU,
+  `torch.cuda.synchronize()` and operators whose output shape depends on
+  data (`nonzero`, `masked_select`, `unique`, boolean indexing) wait for a
+  reply. Storage release rides along with the next call.
 - On a torch with no CUDA build the backend owns the in-tree `cuda` device:
   `torch.device("cuda")`, `.cuda()`, `torch.cuda.*`, `torch.autocast("cuda")`
   and CUDA graphs (`torch.cuda.graph`, captured and replayed by the worker)
