@@ -892,7 +892,8 @@ at::Tensor _copy_from_and_resize(const at::Tensor &self,
 }
 
 at::Scalar _local_scalar_dense(const at::Tensor &self) {
-  at::Tensor cpu = at::empty({}, self.options().device(c10::DeviceType::CPU));
+  at::Tensor cpu =
+      at::empty(self.sizes(), self.options().device(c10::DeviceType::CPU));
   copy_to_host(cpu, self);
   return at::native::_local_scalar_dense_cpu(cpu);
 }
