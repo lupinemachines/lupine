@@ -49,6 +49,8 @@ constexpr size_t kH2OutboundLimitBytes = 8 * 1024 * 1024;
 // How long the client write thread polls for more output before it parks.
 // Parked, every message costs its producer a futex wake and the two then
 // contend for session_mutex; polling covers the gap between back-to-back RPCs.
+// Stop polling while a caller waits for a response: it cannot produce its next
+// request yet, and busy-waiting competes with read threads.
 // The server hosts one write thread per connection and does not poll.
 constexpr auto kH2WriterPoll = std::chrono::microseconds(200);
 constexpr std::array<uint8_t, 8> kH2ShutdownPing = {'l', 'u', 'p', 'i',
@@ -129,6 +131,9 @@ struct h2_transport {
   // Bumped whenever outbound or flush_pending grows, so the write thread can
   // poll for work without touching session_mutex.
   std::atomic<uint64_t> output_generation{0};
+  // Updated under session_mutex, observed by the writer while polling outside
+  // the mutex. This is a scheduling hint, not part of the read/write protocol.
+  std::atomic<unsigned> response_readers{0};
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
   pthread_cond_t heartbeat_progress = PTHREAD_COND_INITIALIZER;
@@ -930,13 +935,15 @@ int h2_flush_pending_locked(h2_transport *transport) {
 }
 
 void h2_await_output_locked(h2_transport *transport) {
-  if (!transport->server) {
+  if (!transport->server &&
+      transport->response_readers.load(std::memory_order_relaxed) == 0) {
     uint64_t seen =
         transport->output_generation.load(std::memory_order_relaxed);
     pthread_mutex_unlock(&transport->session_mutex);
     auto deadline = std::chrono::steady_clock::now() + kH2WriterPoll;
     while (transport->output_generation.load(std::memory_order_acquire) ==
                seen &&
+           transport->response_readers.load(std::memory_order_relaxed) == 0 &&
            std::chrono::steady_clock::now() < deadline) {
     }
     pthread_mutex_lock(&transport->session_mutex);
@@ -1299,10 +1306,20 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
 
   stream.read_destination = out + copied;
   stream.read_remaining = size - copied;
+  // The dispatch stream listens for callbacks even when no caller is waiting.
+  // Only reads on the client's request lanes should suppress writer polling.
+  bool waiting_for_response =
+      !transport->server && stream_id != transport->dispatch_stream_id;
+  if (waiting_for_response) {
+    transport->response_readers.fetch_add(1, std::memory_order_relaxed);
+  }
   while (stream.read_remaining != 0 && !transport->transport_failed &&
          !stream.closed && !stream.remote_end &&
          (stream.response_status == 0 || stream.response_status == 200)) {
     pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
+  }
+  if (waiting_for_response) {
+    transport->response_readers.fetch_sub(1, std::memory_order_relaxed);
   }
   bool complete = stream.read_remaining == 0;
   stream.read_destination = nullptr;
