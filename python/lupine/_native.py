@@ -1,13 +1,11 @@
 """Native LUPINE client library loader.
 
-LUPINE servers publish the compatible client shims for every supported
-platform. The loader downloads the exact bundle selected by ``LUPINE_SERVER``
-before CUDA consumers are imported. The wheel itself is pure Python: every
-native object comes from a bound server or an explicit ``LUPINE_LIBDIR``.
+LUPINE servers publish the compatible client for every supported platform.
+The loader downloads the exact bundle selected by ``LUPINE_SERVER`` before
+CUDA consumers are imported. The wheel itself is pure Python: every native
+object comes from a bound server or an explicit ``LUPINE_LIBDIR``.
 
-A bundle always carries the driver and NVML shims, and on Linux the NCCL
-and nvSHMEM shims, which cannot work through the driver by itself. The CUDA
-runtime and its libraries are the program's own:
+``load()`` preloads the driver and NVML shims:
 
 ============= ================== ====================
 Platform      driver shim        NVML shim
@@ -18,20 +16,19 @@ macosx-*      libcuda.dylib      libnvidia-ml.dylib
 win-*         nvcuda.dll         nvml.dll
 ============= ================== ====================
 
-The NCCL and nvSHMEM shims keep the soname their real counterparts use, and
-those majors move independently of the toolkit's, so the manifest — not
-this module — is authoritative for the names in a bundle.
+NCCL and nvSHMEM cannot work through the driver alone, so their shims are
+loaded when the bundle names them and the platform has no native copy (an
+``nvidia-nccl-*`` wheel or a system library). A bundle names its shims in its
+manifest; a ``LUPINE_LIBDIR`` directory is filtered by the same names.
 
-``load()`` preloads them into the process with global visibility so that
-CUDA consumers resolve the LUPINE shims instead of (or, where a real NVIDIA
-stack exists, in front of) the real libraries:
+The shims are preloaded with global visibility so that CUDA consumers
+resolve them instead of (or, where a real NVIDIA stack exists, in front of)
+the real driver; the program's own CUDA runtime and libraries run against
+it:
 
-* PyTorch builds with CUDA bring ``libcudart``, ``libcublas`` and friends
-  and load the driver lazily by soname, so preloading the LUPINE shims
-  routes every driver call to the LUPINE server.
-* Natively compiled CUDA code (nvcc/clang) resolves the shims directly.
-* On platforms without any NVIDIA runtime (macOS, GPU-less Windows hosts),
-  the server-selected shims are the only CUDA stack in the process.
+* PyTorch's CUDA wheels load the driver lazily by soname, so preloading the
+  shim routes every driver call to the LUPINE server.
+* Natively compiled CUDA code (nvcc/clang) resolves the driver shim directly.
 
 The loader is dependency-free (stdlib only) and never imports torch.
 """
@@ -39,14 +36,16 @@ The loader is dependency-free (stdlib only) and never imports torch.
 from __future__ import annotations
 
 import ctypes
+import ctypes.util
+import importlib.util
 import os
 import sys
 from pathlib import Path
 
 from . import _bundles
 
-# Shims every bundle must carry, in load order: the driver first, because the
-# runtime and library shims link against it.
+# Shims every bundle must carry, in load order: the driver first, because
+# every other shim links against it.
 _REQUIRED = {
     "linux": ("libcuda.so.1", "libnvidia-ml.so.1"),
     "darwin": ("libcuda.dylib", "libnvidia-ml.dylib"),
@@ -54,6 +53,14 @@ _REQUIRED = {
 }
 
 _DRIVER = {"linux": "libcuda.so.1", "darwin": "libcuda.dylib", "win32": "nvcuda.dll"}
+
+# Shims loaded only when the bundle carries them and no native library
+# answers to the same soname: soname stem -> (``nvidia.*`` wheel package,
+# ``ctypes.util.find_library`` name).
+_CONDITIONAL = {
+    "libnccl": ("nvidia.nccl", "nccl"),
+    "libnvshmem_host": ("nvidia.nvshmem", "nvshmem_host"),
+}
 
 _loaded: dict[str, str] = {}
 _names: tuple[str, ...] = ()
@@ -91,14 +98,33 @@ def libdir() -> Path | None:
     return None
 
 
-def _shim_names(directory: Path) -> tuple[str, ...]:
-    """Every shim in the selected directory, driver first.
+def _soname_stem(name: str) -> str:
+    return name.split(".", 1)[0]
 
-    A resolved bundle names them in its manifest. ``LUPINE_LIBDIR`` points at
-    a plain directory instead, so fall back to its contents.
+
+def _native_available(package: str, library: str) -> bool:
+    """Whether the platform already supplies ``library`` outside LUPINE."""
+
+    try:
+        spec = importlib.util.find_spec(package)
+    except (ImportError, ValueError):
+        spec = None
+    if spec is not None and spec.submodule_search_locations:
+        for location in spec.submodule_search_locations:
+            if (Path(location) / "lib").is_dir():
+                return True
+    return ctypes.util.find_library(library) is not None
+
+
+def _shim_names(directory: Path) -> tuple[str, ...]:
+    """The shims to load from the selected directory, driver first.
+
+    A resolved bundle names its files in its manifest; ``LUPINE_LIBDIR``
+    points at a plain directory instead, so its contents stand in. Either
+    way only the driver, NVML, and a conditional shim with no native
+    counterpart are selected.
     """
 
-    driver = _DRIVER[sys.platform]
     if _names:
         names = _names
     else:
@@ -111,12 +137,16 @@ def _shim_names(directory: Path) -> tuple[str, ...]:
                 if entry.is_file() and suffix in entry.name
             )
         )
-    rest = [name for name in names if name != driver]
-    return (driver, *rest) if driver in names else tuple(rest)
+    selected = [name for name in _REQUIRED[sys.platform] if name in names]
+    for name in names:
+        native = _CONDITIONAL.get(_soname_stem(name))
+        if native is not None and not _native_available(*native):
+            selected.append(name)
+    return tuple(selected)
 
 
 def load(*, missing_ok: bool = True) -> dict[str, str]:
-    """Preload every LUPINE shim the selected client carries.
+    """Preload the LUPINE client.
 
     Returns a map of library name to loaded path. Idempotent: later calls
     only load libraries not already loaded into this process. Raises
@@ -164,8 +194,8 @@ def load(*, missing_ok: bool = True) -> dict[str, str]:
             if missing_ok:
                 continue
             raise LupineError(f"Selected LUPINE library missing: {path}")
-        # RTLD_GLOBAL so dlopen("libcuda.so.1") from other libraries
-        # (torch's libcudart, libcublas, ...) resolves to the shim.
+        # RTLD_GLOBAL so dlopen("libcuda.so.1") from the program's CUDA
+        # runtime resolves to the shim.
         ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
         _loaded[name] = str(path)
     return dict(_loaded)

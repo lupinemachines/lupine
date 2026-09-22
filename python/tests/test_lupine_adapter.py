@@ -164,50 +164,111 @@ def test_load_respects_existing_triton_libcuda_path(monkeypatch, tmp_path):
     assert os.environ["TRITON_LIBCUDA_PATH"] == "/caller/libcuda"
 
 
-def test_loads_every_library_shim_driver_first(monkeypatch, tmp_path):
-    libdir = tmp_path / "client"
-    extra = {
-        "linux": ("libcublas.so.13", "libcudart.so.13", "libcudnn.so.9"),
-        "darwin": ("libcublas.dylib", "libcudart.dylib", "libcudnn.dylib"),
-        "win32": ("cublas64_13.dll", "cudart64_13.dll", "cudnn64_9.dll"),
-    }[sys.platform]
-    names = _stage(libdir, extra)
+# A file no shim answers to, to show that only shim names are loaded.
+_PROBE = {
+    "linux": "liblupine_probe.so",
+    "darwin": "liblupine_probe.dylib",
+    "win32": "lupine_probe.dll",
+}[sys.platform]
 
+
+def _record_loads(monkeypatch):
     loaded = []
     monkeypatch.setattr(_native, "_loaded", {})
     monkeypatch.setattr(_native, "_names", ())
-    monkeypatch.setenv("LUPINE_LIBDIR", str(libdir))
     monkeypatch.setattr(
         _native.ctypes,
         "CDLL",
         lambda path, mode=None: loaded.append(Path(path).name),
     )
+    return loaded
+
+
+def test_load_takes_the_driver_and_nvml_from_the_bundle(monkeypatch, tmp_path):
+    libdir = tmp_path / "client"
+    names = _stage(libdir, (_PROBE,))
+    loaded = _record_loads(monkeypatch)
+    monkeypatch.setattr(_native, "_names", names)
+    monkeypatch.setenv("LUPINE_LIBDIR", str(libdir))
+
+    result = _native.load(missing_ok=False)
+
+    assert tuple(loaded) == _native._REQUIRED[sys.platform]
+    assert loaded[0] == _native._DRIVER[sys.platform]
+    assert set(result) == set(_native._REQUIRED[sys.platform])
+
+
+def test_libdir_directory_is_filtered_like_a_bundle(monkeypatch, tmp_path):
+    """LUPINE_LIBDIR has no manifest; its contents are filtered the same way."""
+
+    libdir = tmp_path / "build"
+    _stage(libdir, (_PROBE,))
+    (libdir / "notes.txt").write_bytes(b"")
+    loaded = _record_loads(monkeypatch)
+    monkeypatch.setenv("LUPINE_LIBDIR", str(libdir))
 
     _native.load(missing_ok=False)
 
-    driver = _native._DRIVER[sys.platform]
-    assert loaded[0] == driver, "the driver must load before the shims linking it"
-    assert set(loaded) == set(names)
+    assert tuple(loaded) == _native._REQUIRED[sys.platform]
 
 
-def test_load_uses_the_bundle_manifest_order(monkeypatch, tmp_path):
+@pytest.mark.skipif(sys.platform != "linux", reason="NCCL and nvSHMEM are Linux only")
+def test_nccl_shim_loads_only_when_named_and_absent_natively(monkeypatch, tmp_path):
+    libdir = tmp_path / "client"
+    names = _stage(libdir, ("libnccl.so.2", "libnvshmem_host.so.3"))
+    monkeypatch.setenv("LUPINE_LIBDIR", str(libdir))
+
+    # Nothing native: both conditional shims join the driver and NVML.
+    loaded = _record_loads(monkeypatch)
+    monkeypatch.setattr(_native, "_names", names)
+    monkeypatch.setattr(_native, "_native_available", lambda package, library: False)
+    _native.load(missing_ok=False)
+    assert tuple(loaded) == (
+        *_native._REQUIRED["linux"],
+        "libnccl.so.2",
+        "libnvshmem_host.so.3",
+    )
+
+    # A native NCCL (an nvidia-nccl wheel or a system library) wins.
+    loaded = _record_loads(monkeypatch)
+    monkeypatch.setattr(_native, "_names", names)
+    monkeypatch.setattr(
+        _native, "_native_available", lambda package, library: library == "nccl"
+    )
+    _native.load(missing_ok=False)
+    assert tuple(loaded) == (*_native._REQUIRED["linux"], "libnvshmem_host.so.3")
+
+    # A bundle that does not name NCCL never loads a stray copy of it.
+    loaded = _record_loads(monkeypatch)
+    monkeypatch.setattr(_native, "_names", tuple(n for n in names if "nccl" not in n))
+    monkeypatch.setattr(_native, "_native_available", lambda package, library: False)
+    _native.load(missing_ok=False)
+    assert "libnccl.so.2" not in loaded
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="NCCL is Linux only")
+def test_native_available_finds_the_nvidia_wheel(monkeypatch, tmp_path):
+    # A stand-in for nvidia.nccl: the test environment may hold the real one.
+    (tmp_path / "nvidia" / "lupine_test" / "lib").mkdir(parents=True)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(_native.ctypes.util, "find_library", lambda name: None)
+    assert _native._native_available("nvidia.lupine_test", "lupine_test")
+    assert not _native._native_available("nvidia.lupine_absent", "lupine_absent")
+    monkeypatch.setattr(_native.ctypes.util, "find_library", lambda name: "lib.so")
+    assert _native._native_available("nvidia.lupine_absent", "lupine_absent")
+
+
+def test_load_uses_the_bundle_manifest_names(monkeypatch, tmp_path):
     """A resolved bundle names its shims; a stray file must not be loaded."""
 
     libdir = tmp_path / "client"
-    names = _stage(libdir, ("libcublas.so.13",))
-    (libdir / "libstray.so.1").write_bytes(b"")
-
-    loaded = []
-    monkeypatch.setattr(_native, "_loaded", {})
+    names = _stage(libdir)
+    driver = _native._DRIVER[sys.platform]
+    (libdir / driver.replace("cuda", "stray")).write_bytes(b"")
+    loaded = _record_loads(monkeypatch)
     monkeypatch.setattr(_native, "_names", names)
     monkeypatch.setenv("LUPINE_LIBDIR", str(libdir))
-    monkeypatch.setattr(
-        _native.ctypes,
-        "CDLL",
-        lambda path, mode=None: loaded.append(Path(path).name),
-    )
 
     _native.load(missing_ok=False)
 
-    assert set(loaded) == set(names)
-    assert "libstray.so.1" not in loaded
+    assert tuple(loaded) == names

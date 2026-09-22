@@ -2,11 +2,12 @@
 
 CUDA on any host. The configured LUPINE server publishes its compatible native
 client for Linux (x86_64, aarch64), macOS (universal2), and Windows (amd64,
-arm64): the CUDA **driver API** (`libcuda` / `nvcuda.dll`), **NVML**, and on
-Linux the **NCCL** and **nvSHMEM** shims, which cannot work through the driver
-by itself. The CUDA runtime and its libraries run on the client: a CUDA-enabled
-PyTorch brings its own, and every driver call they make lands on the LUPINE
-shim.
+arm64): the CUDA **driver API** (`libcuda` / `nvcuda.dll`) and **NVML**. The
+program's own CUDA runtime and libraries run against it: on Linux and Windows
+x86_64 the CUDA `torch` wheels bundle them, and a natively compiled program
+brings its own. NCCL and nvSHMEM cannot work through the driver alone, so
+their shims are loaded when the bundle names them and no native copy (an
+`nvidia-nccl-*` wheel or a system library) is installed.
 
 The wheel itself is pure Python: a small PyTorch adapter and the loader that
 resolves that client. No NVIDIA driver, CUDA toolkit, or container runtime is
@@ -36,13 +37,15 @@ API, then uses the returned regional gateway for both bundle discovery and the
 native HTTP/2 connection, so:
 
 - **PyTorch builds with CUDA** keep their normal `torch.device("cuda:N")`
-  dispatch; every CUDA call lands on the LUPINE shims.
-- **Natively compiled CUDA code** (nvcc/clang binaries) resolves the
-  selected shims directly — including on platforms where no NVIDIA
-  runtime has ever shipped.
+  dispatch; every driver call their bundled CUDA libraries make lands on the
+  LUPINE driver shim.
+- **Natively compiled CUDA code** (nvcc/clang binaries) resolves the driver
+  shim directly.
 - **CPU-only PyTorch builds** cannot gain a CUDA backend by linking (the
-  backend is compiled out); use the shims directly via ctypes, or run such
-  workloads in a container against the same server.
+  backend is compiled out); use the driver shim directly via ctypes, or run
+  such workloads in a container against the same server.
+- **macOS and native arm64 Python on Windows** get the driver and NVML
+  (#888, #887).
 
 ## API
 
@@ -54,6 +57,8 @@ native HTTP/2 connection, so:
 - `lupine.load_native()` / `lupine.libdir()` — load/inspect the selected
   shims without torch.
 - `LUPINE_LIBDIR` — load shims from a custom directory (e.g. a newer build).
+  The directory is filtered by the same names as a bundle: the driver and
+  NVML load, and NCCL and nvSHMEM when present and not installed natively.
 - `TRITON_LIBCUDA_PATH` — defaults to the selected shim directory so
   `torch.compile` can link Triton's launcher; an explicit value is preserved.
 
@@ -114,7 +119,7 @@ lupine/
   _native.py     shim discovery + preloading
 ```
 
-No native object ships in the wheel. Server workflows publish the
-clients for CMake to embed, and the bundle manifest names the shims it
-carries — so a server built with more of them stays usable by an older
-client, which loads whatever arrives.
+No native object ships in the wheel. Server workflows publish the clients
+for CMake to embed, and the bundle manifest names the shims it carries; the
+loader loads the driver, NVML, and the conditional NCCL / nvSHMEM shims by
+those names.
