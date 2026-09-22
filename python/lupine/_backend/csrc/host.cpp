@@ -51,8 +51,8 @@ std::atomic<uint64_t> g_next_handle{1};
 std::mutex g_free_mutex;
 std::vector<uint64_t> g_pending_free;
 thread_local c10::DeviceIndex t_current_device = 0;
-// The device index new storages are placed on while an empty() call runs.
-thread_local c10::DeviceIndex t_alloc_device = 0;
+// The device new storages are placed on while an empty() call runs.
+thread_local c10::Device t_alloc_device(c10::DeviceType::PrivateUse1, 0);
 
 bool is_ours_type(c10::DeviceType type) {
   return type == c10::DeviceType::PrivateUse1 ||
@@ -218,7 +218,7 @@ struct lupine_allocator final : at::Allocator {
     uint64_t handle = g_next_handle.fetch_add(1);
     return {fake_pointer(handle),
             reinterpret_cast<void *>(static_cast<uintptr_t>(handle)),
-            &release_handle, c10::Device(g_device_type, t_alloc_device)};
+            &release_handle, t_alloc_device};
   }
   at::DeleterFnPtr raw_deleter() const override { return &release_handle; }
   void copy_data(void *, const void *, std::size_t) const override {
@@ -228,11 +228,18 @@ struct lupine_allocator final : at::Allocator {
 
 lupine_allocator g_allocator;
 
-c10::Storage new_storage(size_t nbytes, c10::DeviceIndex index) {
-  t_alloc_device = index;
+c10::Storage storage_for_handle(uint64_t handle, size_t nbytes,
+                                c10::Device device) {
   return c10::Storage(c10::make_intrusive<c10::StorageImpl>(
-      c10::StorageImpl::use_byte_size_t(), nbytes, g_allocator.allocate(nbytes),
+      c10::StorageImpl::use_byte_size_t(), nbytes,
+      at::DataPtr(fake_pointer(handle),
+                  reinterpret_cast<void *>(static_cast<uintptr_t>(handle)),
+                  &release_handle, device),
       &g_allocator, /*resizable=*/true));
+}
+
+c10::Storage new_storage(size_t nbytes, c10::Device device) {
+  return storage_for_handle(g_next_handle.fetch_add(1), nbytes, device);
 }
 
 at::Tensor make_tensor(c10::Storage storage, c10::ScalarType dtype,
@@ -259,7 +266,7 @@ tensor_desc describe(const at::Tensor &t) {
   return d;
 }
 
-// The memo key for _fused_sdp_choice: the CUDA choice depends on dtype,
+// The plan key for _fused_sdp_choice: the CUDA choice depends on dtype,
 // head count, head size and the last stride, not on batch or sequence
 // length, so those are dropped and one answer serves a whole generation.
 tensor_desc describe_shape_only(const at::Tensor &t) {
@@ -292,87 +299,28 @@ const wire_context &wire_shape_only() {
   return ctx;
 }
 
-tensor_desc describe_for_key(const at::Tensor &t) {
+// Storages are numbered by first appearance: which arguments share one is
+// part of the key, their identity is not.
+tensor_desc describe_for_key(const at::Tensor &t,
+                             std::unordered_map<uint64_t, uint64_t> &ids) {
   tensor_desc d = describe(t);
-  d.handle = 0;
+  d.handle = ids.emplace(d.handle, ids.size()).first->second;
   d.nbytes = 0;
   d.offset = 0;
   d.device = 0;
   return d;
 }
 
-const wire_context &wire_key() {
-  static const wire_context ctx = {
-      describe_for_key, is_ours,
-      [](const c10::Device &d) { return is_ours_type(d.type()); }};
-  return ctx;
-}
-
-size_t required_nbytes(const at::Tensor &t) {
-  return at::detail::computeStorageNbytes(t.sizes(), t.strides(),
-                                          t.element_size(), t.storage_offset());
-}
-
 // Storage growth is host-side bookkeeping: the worker grows its copy in place
 // when a descriptor arrives with more bytes than it holds.
 void ensure_storage(const at::Tensor &t) {
-  size_t needed = required_nbytes(t);
+  size_t needed = at::detail::computeStorageNbytes(
+      t.sizes(), t.strides(), t.element_size(), t.storage_offset());
   const c10::Storage &storage = t.storage();
   if (needed > storage.nbytes()) {
     storage.unsafeGetStorageImpl()->set_nbytes(needed);
   }
 }
-
-// Result tensors of a sync call: handles the worker already knows map to the
-// storage that carries them here, new ones get a host storage. A result over
-// a mutable argument's storage is that argument (an out= tensor the worker
-// may have resized), so its metadata is updated in place.
-class result_binder {
-public:
-  void note(const at::Tensor &t, bool mutable_argument) {
-    if (is_ours(t)) {
-      storages_[handle_of(t.storage())] = t.storage();
-      if (mutable_argument) {
-        mutated_.emplace_back(t);
-      }
-    }
-  }
-  at::Tensor materialize(const tensor_desc &d) {
-    auto found = storages_.find(d.handle);
-    c10::Storage storage;
-    if (found != storages_.end()) {
-      storage = found->second;
-      if (d.nbytes > storage.nbytes()) {
-        storage.unsafeGetStorageImpl()->set_nbytes(d.nbytes);
-      }
-      for (const at::Tensor &t : mutated_) {
-        if (t.storage().unsafeGetStorageImpl() ==
-                storage.unsafeGetStorageImpl() &&
-            t.scalar_type() == static_cast<c10::ScalarType>(d.dtype)) {
-          t.unsafeGetTensorImpl()->set_sizes_and_strides(d.sizes, d.strides,
-                                                         d.offset);
-          return t;
-        }
-      }
-    } else {
-      t_alloc_device = static_cast<c10::DeviceIndex>(d.device);
-      storage = c10::Storage(c10::make_intrusive<c10::StorageImpl>(
-          c10::StorageImpl::use_byte_size_t(), d.nbytes,
-          at::DataPtr(
-              fake_pointer(d.handle),
-              reinterpret_cast<void *>(static_cast<uintptr_t>(d.handle)),
-              &release_handle, c10::Device(g_device_type, d.device)),
-          &g_allocator, /*resizable=*/true));
-      storages_[d.handle] = storage;
-    }
-    return make_tensor(storage, static_cast<c10::ScalarType>(d.dtype), d.sizes,
-                       d.strides, d.offset);
-  }
-
-private:
-  std::unordered_map<uint64_t, c10::Storage> storages_;
-  std::vector<at::Tensor> mutated_;
-};
 
 // ---------------------------------------------------------------------------
 // Operator forwarding
@@ -383,19 +331,32 @@ bool trace_enabled() {
   return enabled;
 }
 
-// What an op does to its outputs for one set of argument shapes, learned
-// from the meta kernel once and replayed for every later call with the same
-// shapes: torch's meta kernels are pure in the argument metadata, and the
-// Python-implemented ones cost hundreds of microseconds a call.
+// What an op does to its outputs for one set of argument metadata, learned
+// from the worker's report on the first call and replayed for every later
+// call with the same key: the result metadata of an op is a function of its
+// argument metadata, except for the data-dependent ops that stay synchronous.
 struct plan_output {
-  enum kind : uint8_t { undefined, input, fresh, none, integer, real, boolean };
+  // input: the argument tensor returned as is (an in-place result, or an out=
+  // tensor the kernel resized); input_storage: a view over an argument's
+  // storage; fresh: a new storage, shared by every output in its group.
+  enum kind : uint8_t {
+    undefined,
+    input,
+    input_storage,
+    fresh,
+    none,
+    integer,
+    real,
+    boolean
+  };
   kind k = undefined;
-  // input: the flattened index of the argument tensor returned as is;
-  // fresh: the storage group the output lives in.
   int32_t index = 0;
+  bool same_metadata = false;
   int8_t dtype = 0;
   std::vector<int64_t> sizes;
   std::vector<int64_t> strides;
+  // fresh: the storage offset; input and input_storage: relative to the
+  // argument's offset, so the plan holds for arguments at any offset.
   int64_t offset = 0;
   int64_t ival = 0;
   double dval = 0;
@@ -409,19 +370,23 @@ struct plan_ret {
 struct plan {
   std::vector<plan_ret> rets;
   std::vector<size_t> group_nbytes;
+  // An op that neither writes an argument nor produces a storage is pure
+  // host metadata once learned.
+  bool needs_rpc = false;
 };
 
 struct op_state {
   std::string name;
   bool mutates = false;
+  // Output shapes that depend on data: every call is a round trip.
   bool sync = false;
+  bool bool_index = false;
   bool memo = false;
   // In-place ops (foo_, no out= argument) cannot change their arguments'
   // metadata through a Scalar or float value, so the plan key leaves those
   // out and an optimizer's per-step coefficients hit the same plan.
   bool inplace = false;
   std::mutex mutex;
-  std::unordered_map<std::string, std::vector<uint8_t>> memo_results;
   std::unordered_map<std::string, std::shared_ptr<const plan>> plans;
 };
 
@@ -430,6 +395,17 @@ op_state &state_for(const c10::OperatorHandle &op) {
   static std::unordered_map<std::string, std::unique_ptr<op_state>> states;
   static const std::unordered_set<std::string> memoized = {
       "aten::_fused_sdp_choice"};
+  static const std::unordered_set<std::string> data_dependent = {
+      "aten::nonzero",
+      "aten::masked_select",
+      "aten::_unique",
+      "aten::_unique2",
+      "aten::unique_dim",
+      "aten::unique_consecutive",
+      "aten::unique_dim_consecutive",
+      "aten::bincount",
+      "aten::repeat_interleave",
+      "aten::equal"};
   const c10::FunctionSchema &schema = op.schema();
   std::string name = schema.name();
   if (!schema.overload_name().empty()) {
@@ -443,6 +419,8 @@ op_state &state_for(const c10::OperatorHandle &op) {
   auto state = std::make_unique<op_state>();
   state->name = name;
   state->memo = memoized.count(schema.name()) != 0;
+  state->sync = data_dependent.count(schema.name()) != 0;
+  state->bool_index = schema.name() == "aten::index";
   bool has_out = false;
   for (const c10::Argument &argument : schema.arguments()) {
     if (argument.alias_info() != nullptr && argument.alias_info()->isWrite()) {
@@ -459,203 +437,10 @@ op_state &state_for(const c10::OperatorHandle &op) {
   return ref;
 }
 
-struct meta_mirror {
-  // Host tensors seen in the arguments and their meta counterparts.
-  std::vector<std::pair<at::Tensor, at::Tensor>> inputs;
-  std::vector<std::pair<c10::StorageImpl *, c10::Storage>> storages;
-  c10::DeviceIndex device = -1;
-  c10::DeviceType device_type = c10::DeviceType::PrivateUse1;
-
-  c10::Storage meta_storage_for(const c10::Storage &storage) {
-    for (auto &entry : storages) {
-      if (entry.first == storage.unsafeGetStorageImpl()) {
-        return entry.second;
-      }
-    }
-    c10::Storage meta(c10::make_intrusive<c10::StorageImpl>(
-        c10::StorageImpl::use_byte_size_t(), storage.nbytes(),
-        at::DataPtr(nullptr, c10::Device(c10::DeviceType::Meta)),
-        c10::GetAllocator(c10::DeviceType::Meta), /*resizable=*/true));
-    storages.emplace_back(storage.unsafeGetStorageImpl(), meta);
-    return meta;
-  }
-
-  at::Tensor to_meta(const at::Tensor &t) {
-    if (!is_ours(t)) {
-      return t;
-    }
-    if (device < 0) {
-      device = t.device().index();
-      device_type = t.device().type();
-    }
-    at::Tensor m = at::detail::make_tensor<c10::TensorImpl>(
-        meta_storage_for(t.storage()),
-        c10::DispatchKeySet(c10::DispatchKey::Meta), t.dtype());
-    m.unsafeGetTensorImpl()->set_sizes_and_strides(t.sizes(), t.strides(),
-                                                   t.storage_offset());
-    inputs.emplace_back(t, m);
-    return m;
-  }
-
-  c10::IValue convert(const c10::IValue &v) {
-    if (v.isTensor()) {
-      return to_meta(v.toTensor());
-    }
-    if (v.isTensorList()) {
-      c10::List<at::Tensor> list;
-      for (const at::Tensor &t : v.toTensorVector()) {
-        list.push_back(to_meta(t));
-      }
-      return list;
-    }
-    if (v.isList() && kind_of(v) == list_kind::optional_tensor) {
-      c10::List<std::optional<at::Tensor>> list;
-      for (const c10::IValue &item : v.toListRef()) {
-        if (item.isNone()) {
-          list.push_back(std::nullopt);
-        } else {
-          list.push_back(to_meta(item.toTensor()));
-        }
-      }
-      return list;
-    }
-    if (v.isDevice() && is_ours_type(v.toDevice().type())) {
-      if (device < 0) {
-        device =
-            v.toDevice().has_index() ? v.toDevice().index() : t_current_device;
-        device_type = v.toDevice().type();
-      }
-      return c10::Device(c10::DeviceType::Meta);
-    }
-    return v;
-  }
-};
-
-// An argument the meta kernel resized (an out= tensor sized by the call)
-// travels as an empty view: the worker's kernel sizes it the same way, and a
-// non-empty tensor of another shape would draw a deprecation warning there.
-void write_call(writer &w, const op_state &st, torch::jit::Stack *stack,
-                size_t args_begin, size_t nargs, const wire_context &base,
-                const std::vector<c10::TensorImpl *> &shrink = {}) {
-  wire_context ctx = base;
-  if (!shrink.empty()) {
-    ctx.describe = [&shrink, &base](const at::Tensor &t) {
-      tensor_desc d = base.describe(t);
-      if (std::find(shrink.begin(), shrink.end(), t.unsafeGetTensorImpl()) !=
-          shrink.end()) {
-        d.sizes.assign(1, 0);
-        d.strides.assign(1, 1);
-      }
-      return d;
-    };
-  }
-  w.put_string(st.name);
-  w.put<uint8_t>(static_cast<uint8_t>(nargs));
-  for (size_t i = 0; i < nargs; ++i) {
-    write_ivalue(w, (*stack)[args_begin + i], ctx);
-  }
-}
-
-c10::Storage fresh_storage(size_t nbytes, const meta_mirror &mirror) {
-  c10::DeviceIndex device =
-      mirror.device < 0 ? t_current_device : mirror.device;
-  c10::DeviceType saved = g_device_type;
-  g_device_type = mirror.device < 0 ? g_device_type : mirror.device_type;
-  c10::Storage storage = new_storage(nbytes, device);
-  g_device_type = saved;
-  return storage;
-}
-
-void note_shape(plan_output &out, const at::Tensor &m) {
-  out.dtype = static_cast<int8_t>(m.scalar_type());
-  out.sizes.assign(m.sizes().begin(), m.sizes().end());
-  out.strides.assign(m.strides().begin(), m.strides().end());
-  out.offset = m.storage_offset();
-}
-
-// Maps the meta result of an op onto host tensors, assigning the storage
-// handle the worker must bind each result to.
-struct output_mapper {
-  meta_mirror &mirror;
-  std::vector<uint64_t> handles;
-  std::vector<std::pair<c10::StorageImpl *, c10::Storage>> fresh;
-  bool needs_rpc = false;
-  plan learned;
-  bool cacheable = true;
-  std::vector<c10::TensorImpl *> resized;
-
-  at::Tensor map(const at::Tensor &m, plan_output &out) {
-    if (!m.defined()) {
-      handles.push_back(0);
-      out.k = plan_output::undefined;
-      return at::Tensor();
-    }
-    c10::StorageImpl *meta_storage = m.storage().unsafeGetStorageImpl();
-    for (size_t i = 0; i < mirror.inputs.size(); ++i) {
-      auto &input = mirror.inputs[i];
-      if (input.second.unsafeGetTensorImpl() == m.unsafeGetTensorImpl()) {
-        at::Tensor host = input.first;
-        c10::TensorImpl *impl = host.unsafeGetTensorImpl();
-        if (!m.sizes().equals(host.sizes()) ||
-            !m.strides().equals(host.strides()) ||
-            m.storage_offset() != host.storage_offset()) {
-          impl->set_sizes_and_strides(m.sizes(), m.strides(),
-                                      m.storage_offset());
-          ensure_storage(host);
-          cacheable = false;
-          resized.push_back(impl);
-        }
-        handles.push_back(handle_of(host.storage()));
-        out.k = plan_output::input;
-        out.index = static_cast<int32_t>(i);
-        return host;
-      }
-    }
-    for (auto &entry : mirror.storages) {
-      if (entry.second.unsafeGetStorageImpl() == meta_storage) {
-        for (auto &input : mirror.inputs) {
-          if (input.first.storage().unsafeGetStorageImpl() == entry.first) {
-            at::Tensor host =
-                make_tensor(input.first.storage(), m.scalar_type(), m.sizes(),
-                            m.strides(), m.storage_offset());
-            ensure_storage(host);
-            handles.push_back(handle_of(host.storage()));
-            cacheable = false;
-            return host;
-          }
-        }
-      }
-    }
-    for (size_t g = 0; g < fresh.size(); ++g) {
-      if (fresh[g].first == meta_storage) {
-        handles.push_back(handle_of(fresh[g].second));
-        out.k = plan_output::fresh;
-        out.index = static_cast<int32_t>(g);
-        note_shape(out, m);
-        return make_tensor(fresh[g].second, m.scalar_type(), m.sizes(),
-                           m.strides(), m.storage_offset());
-      }
-    }
-    needs_rpc = true;
-    size_t nbytes = at::detail::computeStorageNbytes(
-        m.sizes(), m.strides(), m.element_size(), m.storage_offset());
-    c10::Storage storage = fresh_storage(nbytes, mirror);
-    fresh.emplace_back(meta_storage, storage);
-    learned.group_nbytes.push_back(nbytes);
-    handles.push_back(handle_of(storage));
-    out.k = plan_output::fresh;
-    out.index = static_cast<int32_t>(fresh.size() - 1);
-    note_shape(out, m);
-    return make_tensor(storage, m.scalar_type(), m.sizes(), m.strides(),
-                       m.storage_offset());
-  }
-};
-
-// Replays a learned plan: the same allocations, handles and results the
-// meta kernel would have produced, without running it.
-bool apply_plan(const plan &p, op_state &st, torch::jit::Stack *stack,
-                size_t args_begin, size_t nargs) {
-  meta_mirror mirror;
+// The argument tensors on the device in argument order; the worker numbers
+// them the same way when it reports which one a result aliases.
+std::vector<at::Tensor> device_inputs(torch::jit::Stack *stack,
+                                      size_t args_begin, size_t nargs) {
   std::vector<at::Tensor> inputs;
   for (size_t i = 0; i < nargs; ++i) {
     const c10::IValue &v = (*stack)[args_begin + i];
@@ -675,44 +460,127 @@ bool apply_plan(const plan &p, op_state &st, torch::jit::Stack *stack,
           inputs.push_back(item.toTensor());
         }
       }
-    } else if (v.isDevice() && is_ours_type(v.toDevice().type()) &&
-               mirror.device < 0 && inputs.empty()) {
-      mirror.device =
-          v.toDevice().has_index() ? v.toDevice().index() : t_current_device;
-      mirror.device_type = v.toDevice().type();
     }
   }
+  return inputs;
+}
+
+// A boolean index selects a data-dependent number of rows.
+bool has_bool_index(const c10::IValue &indices) {
+  for (const c10::IValue &item : indices.toListRef()) {
+    if (!item.isNone() && (item.toTensor().scalar_type() == at::kBool ||
+                           item.toTensor().scalar_type() == at::kByte)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// New storages go where the arguments are, else on the device argument.
+c10::Device result_device(const std::vector<at::Tensor> &inputs,
+                          torch::jit::Stack *stack, size_t args_begin,
+                          size_t nargs) {
   if (!inputs.empty()) {
-    mirror.device = inputs[0].device().index();
-    mirror.device_type = inputs[0].device().type();
+    return inputs[0].device();
   }
-  std::vector<c10::Storage> groups(p.group_nbytes.size());
-  std::vector<uint64_t> handles;
-  std::vector<c10::IValue> results;
-  bool needs_rpc = st.mutates || !p.group_nbytes.empty();
-  auto build = [&](const plan_output &out) -> at::Tensor {
-    switch (out.k) {
-    case plan_output::undefined:
-      handles.push_back(0);
-      return at::Tensor();
-    case plan_output::input:
-      handles.push_back(handle_of(inputs[out.index].storage()));
-      return inputs[out.index];
-    default: {
-      c10::Storage &storage = groups[out.index];
-      if (!storage) {
-        storage = fresh_storage(p.group_nbytes[out.index], mirror);
+  for (size_t i = 0; i < nargs; ++i) {
+    const c10::IValue &v = (*stack)[args_begin + i];
+    if (v.isDevice() && is_ours_type(v.toDevice().type())) {
+      return c10::Device(v.toDevice().type(), v.toDevice().has_index()
+                                                  ? v.toDevice().index()
+                                                  : t_current_device);
+    }
+  }
+  return c10::Device(g_device_type, t_current_device);
+}
+
+at::Tensor build_output(const plan_output &out,
+                        const std::vector<at::Tensor> &inputs,
+                        const c10::Storage &storage) {
+  switch (out.k) {
+  case plan_output::undefined:
+    return at::Tensor();
+  case plan_output::input: {
+    const at::Tensor &t = inputs[out.index];
+    if (!out.same_metadata) {
+      t.unsafeGetTensorImpl()->set_sizes_and_strides(
+          out.sizes, out.strides, t.storage_offset() + out.offset);
+      ensure_storage(t);
+    }
+    return t;
+  }
+  case plan_output::input_storage: {
+    const at::Tensor &in = inputs[out.index];
+    at::Tensor t =
+        make_tensor(in.storage(), static_cast<c10::ScalarType>(out.dtype),
+                    out.sizes, out.strides, in.storage_offset() + out.offset);
+    ensure_storage(t);
+    return t;
+  }
+  default:
+    return make_tensor(storage, static_cast<c10::ScalarType>(out.dtype),
+                       out.sizes, out.strides, out.offset);
+  }
+}
+
+void write_call(writer &w, const op_state &st, torch::jit::Stack *stack,
+                size_t args_begin, size_t nargs) {
+  w.put_string(st.name);
+  w.put<uint8_t>(static_cast<uint8_t>(nargs));
+  for (size_t i = 0; i < nargs; ++i) {
+    write_ivalue(w, (*stack)[args_begin + i], wire());
+  }
+}
+
+// The result tensors of a replayed op, with the handles the worker binds
+// them to; the worker checks the shapes against its own results.
+void write_expected(writer &w, const std::vector<c10::IValue> &results) {
+  auto put = [&w](const at::Tensor &t) {
+    write_desc(w, is_ours(t) ? describe(t) : tensor_desc());
+  };
+  for (const c10::IValue &r : results) {
+    if (r.isTensor()) {
+      put(r.toTensor());
+    } else if (r.isTensorList()) {
+      auto items = r.toTensorVector();
+      w.put<uint32_t>(static_cast<uint32_t>(items.size()));
+      for (const at::Tensor &t : items) {
+        put(t);
       }
-      handles.push_back(handle_of(storage));
-      return make_tensor(storage, static_cast<c10::ScalarType>(out.dtype),
-                         out.sizes, out.strides, out.offset);
     }
+  }
+}
+
+void replace_results(torch::jit::Stack *stack, size_t args_begin,
+                     std::vector<c10::IValue> &results) {
+  stack->erase(stack->begin() + args_begin, stack->end());
+  for (c10::IValue &r : results) {
+    stack->push_back(std::move(r));
+  }
+}
+
+// Replays a learned plan: the same results the worker reported for these
+// argument shapes, over fresh handles, and the op fire-and-forget.
+void replay(const plan &p, const op_state &st, torch::jit::Stack *stack,
+            size_t args_begin, size_t nargs,
+            const std::vector<at::Tensor> &inputs) {
+  std::vector<c10::Storage> groups(p.group_nbytes.size());
+  std::vector<c10::IValue> results;
+  auto build = [&](const plan_output &out) -> at::Tensor {
+    c10::Storage storage;
+    if (out.k == plan_output::fresh) {
+      if (!groups[out.index]) {
+        groups[out.index] =
+            new_storage(p.group_nbytes[out.index],
+                        result_device(inputs, stack, args_begin, nargs));
+      }
+      storage = groups[out.index];
     }
+    return build_output(out, inputs, storage);
   };
   for (const plan_ret &ret : p.rets) {
     if (ret.is_list) {
       c10::List<at::Tensor> list;
-      handles.push_back(ret.items.size());
       for (const plan_output &out : ret.items) {
         list.push_back(build(out));
       }
@@ -737,21 +605,13 @@ bool apply_plan(const plan &p, op_state &st, torch::jit::Stack *stack,
       results.emplace_back(build(out));
     }
   }
-  if (needs_rpc) {
+  if (p.needs_rpc) {
     request req(LUPINE_RPC_lupineTorchOp);
-    writer &w = req.body();
-    write_call(w, st, stack, args_begin, nargs, wire());
-    w.put<uint32_t>(static_cast<uint32_t>(handles.size()));
-    for (uint64_t handle : handles) {
-      w.put<uint64_t>(handle);
-    }
+    write_call(req.body(), st, stack, args_begin, nargs);
+    write_expected(req.body(), results);
     req.send();
   }
-  stack->erase(stack->begin() + args_begin, stack->end());
-  for (c10::IValue &r : results) {
-    stack->push_back(std::move(r));
-  }
-  return true;
+  replace_results(stack, args_begin, results);
 }
 
 // A plan key is the op's argument metadata. CPU tensor arguments travel by
@@ -759,6 +619,13 @@ bool apply_plan(const plan &p, op_state &st, torch::jit::Stack *stack,
 bool plan_key(const op_state &st, torch::jit::Stack *stack, size_t args_begin,
               size_t nargs, std::string *key) {
   writer w;
+  std::unordered_map<uint64_t, uint64_t> ids;
+  wire_context ctx = st.memo ? wire_shape_only() : wire();
+  if (!st.memo) {
+    ctx.describe = [&ids](const at::Tensor &t) {
+      return describe_for_key(t, ids);
+    };
+  }
   for (size_t i = 0; i < nargs; ++i) {
     const c10::IValue &v = (*stack)[args_begin + i];
     if (v.isTensor() && v.toTensor().defined() && !is_ours(v.toTensor()) &&
@@ -772,19 +639,132 @@ bool plan_key(const op_state &st, torch::jit::Stack *stack, size_t args_begin,
       w.put_tag(tag::none);
       continue;
     }
-    write_ivalue(w, v, wire_key());
+    write_ivalue(w, v, ctx);
   }
   key->assign(reinterpret_cast<const char *>(w.buffer.data()), w.buffer.size());
   return true;
 }
 
-// Fire-and-forget path: the meta kernel decides the result metadata here, the
-// worker binds the results to the handles chosen here.
-bool try_async(const c10::OperatorHandle &op, op_state &st,
-               torch::jit::Stack *stack, size_t args_begin, size_t nargs) {
-  const c10::FunctionSchema &schema = op.schema();
+// Runs the op on the worker and builds its results from the report: each
+// tensor is an argument, a view over an argument's storage, or a storage the
+// worker created and handed a handle for. Returns the plan learned, or null
+// when a result has no plan form.
+std::shared_ptr<plan> run_sync(const op_state &st, torch::jit::Stack *stack,
+                               size_t args_begin, size_t nargs,
+                               const std::vector<at::Tensor> &inputs) {
+  request req(LUPINE_RPC_lupineTorchOpSync);
+  write_call(req.body(), st, stack, args_begin, nargs);
+  req.call();
+  read_status();
+  std::vector<uint8_t> blob = read_blob();
+  req.finish();
+
+  reader r(blob.data(), blob.size());
+  struct alias {
+    uint8_t kind;
+    int32_t index;
+  };
+  std::vector<alias> aliases(r.get<uint32_t>());
+  for (alias &a : aliases) {
+    a.kind = r.get<uint8_t>();
+    a.index = r.get<int32_t>();
+  }
+  auto learned = std::make_shared<plan>();
+  std::unordered_map<uint64_t, size_t> groups;
+  std::vector<c10::Storage> group_storage;
+  std::vector<plan_output> outputs;
+  size_t next = 0;
+  read_context ctx;
+  ctx.accelerator = g_device_type;
+  ctx.materialize = [&](const tensor_desc &d) {
+    plan_output out;
+    out.dtype = d.dtype;
+    out.sizes = d.sizes;
+    out.strides = d.strides;
+    out.offset = d.offset;
+    const alias &a = aliases.at(next++);
+    c10::Storage storage;
+    if (a.kind != 0) {
+      const at::Tensor &in = inputs.at(a.index);
+      out.k = a.kind == 1 ? plan_output::input : plan_output::input_storage;
+      out.index = a.index;
+      out.offset = d.offset - in.storage_offset();
+      out.same_metadata = a.kind == 1 && in.sizes().equals(d.sizes) &&
+                          in.strides().equals(d.strides) && out.offset == 0;
+    } else {
+      auto found = groups.find(d.handle);
+      if (found == groups.end()) {
+        found = groups.emplace(d.handle, group_storage.size()).first;
+        group_storage.push_back(storage_for_handle(
+            d.handle, d.nbytes,
+            result_device(inputs, stack, args_begin, nargs)));
+        learned->group_nbytes.push_back(d.nbytes);
+      }
+      out.k = plan_output::fresh;
+      out.index = static_cast<int32_t>(found->second);
+      storage = group_storage[found->second];
+    }
+    at::Tensor t = build_output(out, inputs, storage);
+    outputs.push_back(std::move(out));
+    return t;
+  };
+  uint32_t count = r.get<uint32_t>();
+  std::vector<c10::IValue> results;
+  for (uint32_t i = 0; i < count; ++i) {
+    results.push_back(read_ivalue(r, ctx));
+  }
+
+  size_t used = 0;
+  auto note = [&](const at::Tensor &t) {
+    return t.defined() ? std::move(outputs[used++]) : plan_output();
+  };
+  bool cacheable = true;
+  for (const c10::IValue &v : results) {
+    plan_ret ret;
+    if (v.isTensor()) {
+      ret.items.push_back(note(v.toTensor()));
+    } else if (v.isTensorList()) {
+      ret.is_list = true;
+      for (const at::Tensor &t : v.toTensorVector()) {
+        ret.items.push_back(note(t));
+      }
+    } else {
+      ret.items.emplace_back();
+      plan_output &out = ret.items.back();
+      if (v.isNone()) {
+        out.k = plan_output::none;
+      } else if (v.isBool()) {
+        out.k = plan_output::boolean;
+        out.ival = v.toBool() ? 1 : 0;
+      } else if (v.isDouble()) {
+        out.k = plan_output::real;
+        out.dval = v.toDouble();
+      } else if (v.isInt()) {
+        out.k = plan_output::integer;
+        out.ival = v.toInt();
+      } else {
+        cacheable = false;
+      }
+    }
+    learned->rets.push_back(std::move(ret));
+  }
+  learned->needs_rpc = st.mutates || !learned->group_nbytes.empty();
+  replace_results(stack, args_begin, results);
+  return cacheable ? learned : nullptr;
+}
+
+void fallback(const c10::OperatorHandle &op, torch::jit::Stack *stack) {
+  TORCH_CHECK(g_conn != nullptr, "lupine: the torch backend is not connected");
+  op_state &st = state_for(op);
+  size_t nargs = op.schema().arguments().size();
+  size_t args_begin = stack->size() - nargs;
+  profile *prof = profile::instance();
+  uint64_t started = prof != nullptr ? profile::now() : 0;
+  std::vector<at::Tensor> inputs = device_inputs(stack, args_begin, nargs);
   std::string key;
-  bool keyed = plan_key(st, stack, args_begin, nargs, &key);
+  bool keyed = !st.sync &&
+               !(st.bool_index && has_bool_index((*stack)[args_begin + 1])) &&
+               plan_key(st, stack, args_begin, nargs, &key);
   if (keyed) {
     std::shared_ptr<const plan> found;
     {
@@ -795,192 +775,25 @@ bool try_async(const c10::OperatorHandle &op, op_state &st,
       }
     }
     if (found) {
-      return apply_plan(*found, st, stack, args_begin, nargs);
-    }
-  }
-  meta_mirror mirror;
-  torch::jit::Stack meta_stack;
-  meta_stack.reserve(nargs);
-  for (size_t i = 0; i < nargs; ++i) {
-    meta_stack.push_back(mirror.convert((*stack)[args_begin + i]));
-  }
-  profile *prof = profile::instance();
-  uint64_t meta_started = prof != nullptr ? profile::now() : 0;
-  try {
-    op.redispatchBoxed(c10::DispatchKeySet(c10::DispatchKey::Meta),
-                       &meta_stack);
-  } catch (const c10::NotImplementedError &e) {
-    if (trace_enabled()) {
-      std::cerr << "lupine-torch no meta kernel for " << st.name << ": "
-                << e.what_without_backtrace() << std::endl;
-    }
-    st.sync = true;
-    return false;
-  } catch (const std::exception &e) {
-    if (trace_enabled()) {
-      std::cerr << "lupine-torch meta failed for " << st.name << ": "
-                << e.what() << std::endl;
-    }
-    return false;
-  }
-
-  if (prof != nullptr) {
-    prof->record("meta:" + st.name, profile::now() - meta_started, 0);
-  }
-  size_t nret = schema.returns().size();
-  TORCH_INTERNAL_ASSERT(meta_stack.size() == nret);
-  output_mapper mapper{mirror};
-  mapper.needs_rpc = st.mutates;
-  std::vector<c10::IValue> results;
-  results.reserve(nret);
-  for (const c10::IValue &r : meta_stack) {
-    plan_ret ret;
-    if (r.isTensor()) {
-      ret.items.emplace_back();
-      results.emplace_back(mapper.map(r.toTensor(), ret.items.back()));
-    } else if (r.isTensorList()) {
-      c10::List<at::Tensor> list;
-      auto items = r.toTensorVector();
-      mapper.handles.push_back(static_cast<uint64_t>(items.size()));
-      ret.is_list = true;
-      for (const at::Tensor &t : items) {
-        ret.items.emplace_back();
-        list.push_back(mapper.map(t, ret.items.back()));
+      replay(*found, st, stack, args_begin, nargs, inputs);
+      if (prof != nullptr) {
+        prof->record(st.name, profile::now() - started, 0);
       }
-      results.emplace_back(std::move(list));
-    } else if (r.isNone() || r.isInt() || r.isSymInt() || r.isDouble() ||
-               r.isBool()) {
-      // Shape-derived scalars (a sequence length, a count) come out of the
-      // meta kernel like the shapes do.
-      results.push_back(r);
-      ret.items.emplace_back();
-      plan_output &out = ret.items.back();
-      if (r.isNone()) {
-        out.k = plan_output::none;
-      } else if (r.isBool()) {
-        out.k = plan_output::boolean;
-        out.ival = r.toBool() ? 1 : 0;
-      } else if (r.isDouble()) {
-        out.k = plan_output::real;
-        out.dval = r.toDouble();
-      } else {
-        out.k = plan_output::integer;
-        out.ival = r.isSymInt() ? r.toSymInt().expect_int() : r.toInt();
-      }
-    } else {
-      return false;
-    }
-    mapper.learned.rets.push_back(std::move(ret));
-  }
-  if (keyed && mapper.cacheable) {
-    std::lock_guard<std::mutex> lock(st.mutex);
-    st.plans.emplace(std::move(key),
-                     std::make_shared<const plan>(std::move(mapper.learned)));
-  }
-
-  if (mapper.needs_rpc) {
-    request req(LUPINE_RPC_lupineTorchOp);
-    writer &w = req.body();
-    write_call(w, st, stack, args_begin, nargs, wire(), mapper.resized);
-    w.put<uint32_t>(static_cast<uint32_t>(mapper.handles.size()));
-    for (uint64_t handle : mapper.handles) {
-      w.put<uint64_t>(handle);
-    }
-    req.send();
-  }
-  stack->erase(stack->begin() + args_begin, stack->end());
-  for (c10::IValue &r : results) {
-    stack->push_back(std::move(r));
-  }
-  return true;
-}
-
-std::vector<c10::IValue> decode_results(const std::vector<uint8_t> &blob,
-                                        result_binder &binder) {
-  reader r(blob.data(), blob.size());
-  read_context ctx;
-  ctx.accelerator = g_device_type;
-  ctx.materialize = [&binder](const tensor_desc &d) {
-    return binder.materialize(d);
-  };
-  uint32_t count = r.get<uint32_t>();
-  std::vector<c10::IValue> results;
-  for (uint32_t i = 0; i < count; ++i) {
-    results.push_back(read_ivalue(r, ctx));
-  }
-  return results;
-}
-
-void run_sync(const c10::OperatorHandle &op, op_state &st,
-              torch::jit::Stack *stack, size_t args_begin, size_t nargs) {
-  result_binder binder;
-  const auto &arguments = op.schema().arguments();
-  for (size_t i = 0; i < nargs; ++i) {
-    const c10::IValue &v = (*stack)[args_begin + i];
-    const c10::AliasInfo *alias = arguments[i].alias_info();
-    bool mutable_argument = alias != nullptr && alias->isWrite();
-    if (v.isTensor()) {
-      binder.note(v.toTensor(), mutable_argument);
-    } else if (v.isTensorList()) {
-      for (const at::Tensor &t : v.toTensorVector()) {
-        binder.note(t, mutable_argument);
-      }
-    }
-  }
-  std::string memo_key;
-  if (st.memo) {
-    writer probe;
-    write_call(probe, st, stack, args_begin, nargs, wire_shape_only());
-    const std::vector<uint8_t> &b = probe.buffer;
-    memo_key.assign(reinterpret_cast<const char *>(b.data()), b.size());
-    std::lock_guard<std::mutex> lock(st.mutex);
-    auto found = st.memo_results.find(memo_key);
-    if (found != st.memo_results.end()) {
-      std::vector<c10::IValue> results = decode_results(found->second, binder);
-      stack->erase(stack->begin() + args_begin, stack->end());
-      for (c10::IValue &r : results) {
-        stack->push_back(std::move(r));
+      if (trace_enabled()) {
+        std::cerr << "lupine-torch replay " << st.name << std::endl;
       }
       return;
     }
   }
-  request req(LUPINE_RPC_lupineTorchOpSync);
-  write_call(req.body(), st, stack, args_begin, nargs, wire());
-  req.call();
-  read_status();
-  std::vector<uint8_t> blob = read_blob();
-  req.finish();
-  if (st.memo) {
-    std::lock_guard<std::mutex> lock(st.mutex);
-    st.memo_results[memo_key] = blob;
-  }
-  std::vector<c10::IValue> results = decode_results(blob, binder);
-  stack->erase(stack->begin() + args_begin, stack->end());
-  for (c10::IValue &r : results) {
-    stack->push_back(std::move(r));
-  }
-}
-
-void fallback(const c10::OperatorHandle &op, torch::jit::Stack *stack) {
-  TORCH_CHECK(g_conn != nullptr, "lupine: the torch backend is not connected");
-  op_state &st = state_for(op);
-  size_t nargs = op.schema().arguments().size();
-  size_t args_begin = stack->size() - nargs;
-  profile *prof = profile::instance();
-  uint64_t started = prof != nullptr ? profile::now() : 0;
-  if (!st.sync && !st.memo && try_async(op, st, stack, args_begin, nargs)) {
-    if (prof != nullptr) {
-      prof->record(st.name, profile::now() - started, 0);
-    }
-    if (trace_enabled()) {
-      std::cerr << "lupine-torch async " << st.name << std::endl;
-    }
-    return;
-  }
   if (trace_enabled()) {
     std::cerr << "lupine-torch sync " << st.name << std::endl;
   }
-  run_sync(op, st, stack, args_begin, nargs);
+  std::shared_ptr<plan> learned =
+      run_sync(st, stack, args_begin, nargs, inputs);
+  if (keyed && learned) {
+    std::lock_guard<std::mutex> lock(st.mutex);
+    st.plans.emplace(std::move(key), std::move(learned));
+  }
   if (prof != nullptr) {
     prof->record(st.name, 0, profile::now() - started);
   }
@@ -1108,14 +921,10 @@ at::Tensor empty_memory_format(c10::IntArrayRef size,
   TORCH_CHECK(!c10::pinned_memory_or_default(pin_memory),
               "lupine: pinned memory is a host allocation");
   c10::Device d = c10::device_or_default(device);
-  t_alloc_device = resolve_index(device);
-  c10::DeviceType saved = g_device_type;
-  g_device_type = d.type();
-  at::Tensor t = at::detail::empty_generic(
-      size, &g_allocator, c10::DispatchKeySet(key_for(d.type())),
-      c10::dtype_or_default(dtype), memory_format);
-  g_device_type = saved;
-  return t;
+  t_alloc_device = c10::Device(d.type(), resolve_index(device));
+  return at::detail::empty_generic(size, &g_allocator,
+                                   c10::DispatchKeySet(key_for(d.type())),
+                                   c10::dtype_or_default(dtype), memory_format);
 }
 
 at::Tensor empty_strided(c10::IntArrayRef size, c10::IntArrayRef stride,
@@ -1128,14 +937,10 @@ at::Tensor empty_strided(c10::IntArrayRef size, c10::IntArrayRef stride,
   TORCH_CHECK(!c10::pinned_memory_or_default(pin_memory),
               "lupine: pinned memory is a host allocation");
   c10::Device d = c10::device_or_default(device);
-  t_alloc_device = resolve_index(device);
-  c10::DeviceType saved = g_device_type;
-  g_device_type = d.type();
-  at::Tensor t = at::detail::empty_strided_generic(
+  t_alloc_device = c10::Device(d.type(), resolve_index(device));
+  return at::detail::empty_strided_generic(
       size, stride, &g_allocator, c10::DispatchKeySet(key_for(d.type())),
       c10::dtype_or_default(dtype));
-  g_device_type = saved;
-  return t;
 }
 
 at::Tensor as_strided(const at::Tensor &self, c10::SymIntArrayRef size,
@@ -1175,11 +980,12 @@ at::Tensor view_as_complex(const at::Tensor &self) {
 
 const at::Tensor &resize_(const at::Tensor &self, c10::SymIntArrayRef size,
                           std::optional<c10::MemoryFormat> memory_format) {
-  meta_mirror mirror;
-  at::Tensor m = mirror.to_meta(self);
-  m.resize_(C10_AS_INTARRAYREF_SLOW(size), memory_format);
-  self.unsafeGetTensorImpl()->set_sizes_and_strides(m.sizes(), m.strides(),
-                                                    m.storage_offset());
+  c10::TensorImpl *impl = self.unsafeGetTensorImpl();
+  impl->set_sizes_contiguous(C10_AS_INTARRAYREF_SLOW(size));
+  if (memory_format.has_value() &&
+      *memory_format != c10::MemoryFormat::Contiguous) {
+    impl->empty_tensor_restride(*memory_format);
+  }
   ensure_storage(self);
   return self;
 }
@@ -1213,7 +1019,7 @@ at::Tensor &set_source_Tensor(at::Tensor &self, const at::Tensor &source) {
 }
 
 at::Tensor &set_(at::Tensor &self) {
-  return set_storage(self, new_storage(0, self.device().index()), 0, {0}, {});
+  return set_storage(self, new_storage(0, self.device()), 0, {0}, {});
 }
 
 at::Tensor _pin_memory(const at::Tensor &self,
