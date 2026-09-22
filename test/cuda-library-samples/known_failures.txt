@@ -18,13 +18,10 @@ cuSOLVER/gesv/cusolver_irs_expert
 cuSOLVER/gesv/cusolver_irs_lapack
 cuFFT/3d_mgpu_r2c_c2r/bin/3d_mgpu_r2c_c2r_example
 
-# #836 Run close enough to SAMPLE_TIMEOUT that which one tips over is luck.
-# bicgstab times out on CUDA 11.8 only (121s against a 120s cap) and is under a
-# minute on 12.4 and 13.3; MgSyevd is the slowest unit on every lane at 63-100s.
+# #836 bicgstab intermittently hangs on CUDA 11.8: it alternates between ~2s
+# and the 120s timeout. This is not a near-budget workload; keep the skip until
+# the intermittent hang is understood. See performance.md for current timings.
 cuSPARSE/bicgstab/bicgstab_example
-cuSOLVER/MgSyevd/cusolver_MgSyevd_example1
-cuSOLVER/MgSyevd/cusolver_MgSyevd_example2
-cuSOLVER/MgSyevd/cusolver_MgSyevd_example3
 
 # #832 cuFFTDx fills >=1GiB with one synchronous cudaMemcpy per CUDA block:
 # 2.75M blocking HtoD round trips before the first kernel. Passes natively.
