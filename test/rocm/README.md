@@ -75,7 +75,7 @@ Each suite has its own prefix: `HIP_TESTS`, `ROCM_EXAMPLES`, or `ROCM_LIBRARIES`
 | `<PREFIX>_DIR`, `_BUILD_DIR` | `test/<suite>/<suite>` and `<checkout>/build`. |
 | `<PREFIX>_CMAKE_ARGS` | Extra configure arguments, parsed with shell quoting. |
 | `<PREFIX>_SKIP_LIST` | Comma/space separated exact unit names; records `SKIP:disabled`. |
-| `<PREFIX>_KNOWN_FAILURES` | `test/<suite>/known_failures.txt`; exact unit plus a tracking issue URL in a comment. No failures are skipped by default. |
+| `<PREFIX>_KNOWN_FAILURES` | Optional `test/<suite>/known_failures.txt`; add entries only for confirmed Lupine failures, with an exact unit and a tracking issue URL in a comment. A missing file means no known-failure skips. |
 | `ROCM_PATH` | `/opt/rocm`. |
 | `ROCM_ARCH` | Semicolon separated gfx architectures; detected from the local GPU if unset. Set this explicitly for a remote GPU or a machine without a GPU. |
 | `ROCM_EXAMPLES_ROOTS` | `HIP-Basic Libraries Applications`. |

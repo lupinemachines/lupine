@@ -1,4 +1,0 @@
-# One exact <library>/<executable> per line, with a tracking issue URL.
-# Compare RUN_NATIVE=1 on the same AMD host before adding a failure here.
-# Library support depends on HIP implementation tracked in
-# https://github.com/lupinemachines/lupine/issues/659.

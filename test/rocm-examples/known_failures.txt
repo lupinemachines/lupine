@@ -1,4 +1,0 @@
-# One exact <sample>/<executable> per line, with a tracking issue URL.
-# Compare RUN_NATIVE=1 on the same AMD host before adding a failure here.
-# HIP backend implementation is tracked in
-# https://github.com/lupinemachines/lupine/issues/659.

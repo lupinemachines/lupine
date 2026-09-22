@@ -1,4 +1,0 @@
-# One exact unit per line, followed by a tracking issue URL in a comment.
-# Compare RUN_NATIVE=1 on the same AMD host before adding a failure here.
-# No blanket skips: the incomplete HIP backend is tracked in
-# https://github.com/lupinemachines/lupine/issues/659.
