@@ -378,6 +378,10 @@ if(LUPINE_BUILD_CUDA)
     target_link_libraries(lupine_cuda_client PRIVATE
         lupine_client_transport lupine_cuda_checkpoint lupine_ipc
         ${CMAKE_DL_LIBS})
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # shm_open/shm_unlink live in librt before glibc 2.34.
+        target_link_libraries(lupine_cuda_client PRIVATE rt)
+    endif()
     set_target_properties(lupine_cuda_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
     lupine_manylinux_client(lupine_cuda_client)
