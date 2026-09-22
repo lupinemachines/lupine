@@ -20,39 +20,15 @@ READY_PREFIX = "LUPINE_WORKER_READY"
 # The namespace exec/eval messages from the host run in.
 _namespace: dict[str, Any] = {}
 _graphs: dict[int, tuple[Any, Any]] = {}
-_capture_stream: Any = None
 
 
 def info() -> dict[str, Any]:
     import torch
 
-    devices = []
-    for index in range(torch.cuda.device_count()):
-        props = torch.cuda.get_device_properties(index)
-        devices.append(
-            {
-                "name": props.name,
-                "major": props.major,
-                "minor": props.minor,
-                "multi_processor_count": props.multi_processor_count,
-                "total_memory": props.total_memory,
-                "uuid": str(getattr(props, "uuid", "")),
-                "L2_cache_size": getattr(props, "L2_cache_size", 0),
-                "max_threads_per_multi_processor": getattr(
-                    props, "max_threads_per_multi_processor", 0
-                ),
-                "warp_size": getattr(props, "warp_size", 32),
-                "is_integrated": getattr(props, "is_integrated", 0),
-                "is_multi_gpu_board": getattr(props, "is_multi_gpu_board", 0),
-                "regs_per_multiprocessor": getattr(props, "regs_per_multiprocessor", 0),
-                "gcnArchName": getattr(props, "gcnArchName", ""),
-            }
-        )
     return {
         "torch": torch.__version__,
         "cuda": torch.version.cuda,
-        "device_count": len(devices),
-        "devices": devices,
+        "device_count": torch.cuda.device_count(),
     }
 
 
@@ -71,15 +47,36 @@ def _eval(code: str) -> str:
     return json.dumps(eval(code, _namespace))
 
 
-def _capturing() -> bool:
-    return _capture_stream is not None
+# The host's torch.cuda module forwards its queries and setters here (see
+# _backend.device): pickled arguments, the host's current device selected,
+# a pickled result. Device properties are rebuilt as the host's own class.
+def _cuda(name: str, payload: str, device: int) -> str:
+    import base64
+    import pickle
+
+    import torch
+
+    args, kwargs = pickle.loads(base64.b64decode(payload))
+    with torch.cuda.device(device):
+        result = getattr(torch.cuda, name)(*args, **kwargs)
+    if isinstance(result, torch.cuda._CudaDeviceProperties):
+        from ._backend.device import _Properties
+
+        result = _Properties(
+            {
+                key: value if isinstance(value, (bool, int, float, str)) else str(value)
+                for key in dir(result)
+                if not key.startswith("_")
+                for value in [getattr(result, key)]
+            }
+        )
+    return base64.b64encode(pickle.dumps(result)).decode()
 
 
 # CUDA graph capture happens here, on the worker's torch: the ops the host
 # keeps issuing during capture run on the capture stream (see
 # _C.worker_set_stream) and land in the graph.
-def _capture_begin(graph_id: int, capture_error_mode: str) -> None:
-    global _capture_stream
+def _capture_begin(graph_id: int, capture_error_mode: str, pool: Any = None) -> None:
     import torch
 
     from ._backend import _C
@@ -88,14 +85,12 @@ def _capture_begin(graph_id: int, capture_error_mode: str) -> None:
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())
     with torch.cuda.stream(stream):
-        graph.capture_begin(capture_error_mode=capture_error_mode)
+        graph.capture_begin(pool=pool, capture_error_mode=capture_error_mode)
     _graphs[graph_id] = (graph, stream)
-    _capture_stream = stream
     _C.worker_set_stream(stream.stream_id, stream.device_index)
 
 
 def _capture_end(graph_id: int) -> None:
-    global _capture_stream
     import torch
 
     from ._backend import _C
@@ -105,7 +100,6 @@ def _capture_end(graph_id: int) -> None:
     with torch.cuda.stream(stream):
         graph.capture_end()
     torch.cuda.current_stream().wait_stream(stream)
-    _capture_stream = None
 
 
 def _replay(graph_id: int) -> None:
@@ -128,7 +122,7 @@ def _prepare_namespace() -> None:
             "_capture_end": _capture_end,
             "_replay": _replay,
             "_reset": _reset,
-            "_capturing": _capturing,
+            "_cuda": _cuda,
         }
     )
 
