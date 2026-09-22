@@ -1,59 +1,37 @@
-ARG DEBIAN_FRONTEND=noninteractive
-ARG UBUNTU_VERSION=24.04
-ARG CUDA_VERSION=13.3.1
-ARG TORCH_CUDA_INDEX=cu132
-
 # syntax=docker/dockerfile:1.7
+# The torch worker image: a CUDA PyTorch of one release plus the LUPINE torch
+# backend extension built against it. The client shims are not baked in; the
+# worker fetches the bundle its server publishes at start (linux/arm64 for
+# the Apple silicon guest, linux/amd64 elsewhere).
+ARG PYTHON_VERSION=3.12
+ARG TORCH_VERSION=2.12.1
+ARG TORCH_CUDA_INDEX=cu130
 
-FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS lupine-build
-
-ARG DEBIAN_FRONTEND
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential \
-        ca-certificates \
-        cmake \
-        g++ \
-        gcc \
-        libnghttp2-dev \
-        libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /opt/lupine-src
-COPY . /opt/lupine-src
-
-RUN cmake -S /opt/lupine-src -B /opt/lupine-src/build \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
-    && cmake --build /opt/lupine-src/build --parallel --target lupine_cuda_client lupine_nvml_client \
-    && mkdir -p /opt/lupine/lib \
-    && cp /opt/lupine-src/build/libcuda.so.1 /opt/lupine/lib/libcuda.so.1 \
-    && cp /opt/lupine-src/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1 \
-    && ln -sf libcuda.so.1 /opt/lupine/lib/libcuda.so \
-    && ln -sf libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so
-
-FROM ubuntu:${UBUNTU_VERSION}
-
-ARG DEBIAN_FRONTEND
+FROM python:${PYTHON_VERSION}-slim-trixie AS build
+ARG TORCH_VERSION
 ARG TORCH_CUDA_INDEX
-
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        libnghttp2-14 \
-        libssl3t64 \
-        python3 \
-        python3-pip \
+    && apt-get install -y --no-install-recommends g++ libnghttp2-dev \
     && rm -rf /var/lib/apt/lists/*
-
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip3 install --break-system-packages \
-    --index-url "https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" \
-    torch
+    pip install --index-url "https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" \
+        "torch==${TORCH_VERSION}" \
+    && pip install ninja setuptools numpy
+WORKDIR /src
+COPY . /src
+# Editable so the in-place extension build lands inside the package.
+RUN pip install --no-deps -e /src/python \
+    && cd /src/python/lupine/_backend \
+    && python setup.py build_ext --inplace \
+    && rm -rf build
 
-COPY --from=lupine-build /opt/lupine/lib /opt/lupine/lib
-
-ENV LUPINE_LIBCUDA=/opt/lupine/lib/libcuda.so.1
-ENV LUPINE_LIB=/opt/lupine/lib/libcuda.so.1
-ENV LD_LIBRARY_PATH=/opt/lupine/lib:${LD_LIBRARY_PATH}
+FROM python:${PYTHON_VERSION}-slim-trixie
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates libnghttp2-14 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=build /usr/local/bin/lupine-torch-worker /usr/local/bin/lupine-torch-worker
+COPY --from=build /src/python /src/python
+EXPOSE 14834
+ENTRYPOINT ["lupine-torch-worker"]
+CMD ["--listen", "0.0.0.0:14834"]
