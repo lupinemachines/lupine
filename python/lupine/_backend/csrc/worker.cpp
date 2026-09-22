@@ -15,7 +15,11 @@
 #include <pybind11/pybind11.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdlib>
+#include <deque>
+#include <functional>
+#include <future>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -33,7 +37,9 @@ constexpr size_t kMaxLanes = 64;
 
 std::mutex g_table_mutex;
 std::unordered_map<uint64_t, c10::Storage> g_table;
-std::atomic<uint64_t> g_next_handle{UINT64_C(1) << 62};
+// Above every handle the host will assign, and below the fake pointers'
+// shift (host.cpp) so they stay distinct from the host's.
+std::atomic<uint64_t> g_next_handle{UINT64_C(1) << 40};
 std::mutex g_error_mutex;
 std::string g_error;
 std::mutex g_ops_mutex;
@@ -183,6 +189,64 @@ bool trace_enabled() {
   static const bool enabled = getenv("LUPINE_TORCH_TRACE") != nullptr;
   return enabled;
 }
+
+// Every op runs on this one thread, in the order the lanes post them inside
+// the sequence gate. A lane thread is a client thread of the driver shim,
+// with its own lane to the GPU server, and the shim's lanes are not ordered
+// against each other (a sync request on one may overtake fire-and-forget
+// launches still buffered on another); one thread of CUDA calls is what the
+// driver path itself runs and is ordered on the wire.
+class executor {
+public:
+  void post(std::function<void()> job) {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      jobs_.push_back(std::move(job));
+    }
+    ready_.notify_one();
+  }
+
+  void run(const std::function<void()> &job) {
+    std::promise<void> done;
+    std::future<void> finished = done.get_future();
+    post([&] {
+      job();
+      done.set_value();
+    });
+    finished.wait();
+  }
+
+  void start() {
+    thread_ = std::thread([this] {
+      for (;;) {
+        std::function<void()> job;
+        {
+          std::unique_lock<std::mutex> lock(mutex_);
+          ready_.wait(lock, [this] { return !jobs_.empty(); });
+          job = std::move(jobs_.front());
+          jobs_.pop_front();
+        }
+        if (!job) {
+          return;
+        }
+        job();
+      }
+    });
+  }
+
+  void stop() {
+    post(nullptr);
+    thread_.join();
+  }
+
+private:
+  std::mutex mutex_;
+  std::condition_variable ready_;
+  std::deque<std::function<void()>> jobs_;
+  std::thread thread_;
+};
+
+executor g_executor;
 
 // Ops run on the device of their first tensor argument.
 void run(const std::string &name, torch::jit::Stack &stack) {
@@ -376,31 +440,33 @@ void write_aliases(writer &w, const std::vector<at::Tensor> &inputs,
 }
 
 int handle_op(conn_t *conn) {
-  incoming in;
-  if (read_incoming(conn, &in) < 0 ||
-      (in.request_id = rpc_read_end(conn)) < 0 ||
-      rpc_async_sequence_begin(conn, in.sequence) < 0) {
+  auto in = std::make_shared<incoming>();
+  if (read_incoming(conn, in.get()) < 0 ||
+      (in->request_id = rpc_read_end(conn)) < 0 ||
+      rpc_async_sequence_begin(conn, in->sequence) < 0) {
     return -1;
   }
-  profile *prof = profile::instance();
-  uint64_t started = prof != nullptr ? profile::now() : 0;
-  try {
-    stream_scope stream;
-    reader r = open_body(in);
-    apply_frees(in);
-    std::string name;
-    std::vector<at::Tensor> inputs;
-    torch::jit::Stack stack = decode_call(r, &name, &inputs);
-    uint64_t decoded = prof != nullptr ? profile::now() : 0;
-    run(name, stack);
-    bind_results(r, name, stack);
-    if (prof != nullptr) {
-      uint64_t finished = profile::now();
-      prof->record(name, decoded - started, finished - decoded);
+  g_executor.post([in] {
+    profile *prof = profile::instance();
+    uint64_t started = prof != nullptr ? profile::now() : 0;
+    try {
+      stream_scope stream;
+      reader r = open_body(*in);
+      apply_frees(*in);
+      std::string name;
+      std::vector<at::Tensor> inputs;
+      torch::jit::Stack stack = decode_call(r, &name, &inputs);
+      uint64_t decoded = prof != nullptr ? profile::now() : 0;
+      run(name, stack);
+      bind_results(r, name, stack);
+      if (prof != nullptr) {
+        uint64_t finished = profile::now();
+        prof->record(name, decoded - started, finished - decoded);
+      }
+    } catch (const std::exception &e) {
+      record_error(what(e));
     }
-  } catch (const std::exception &e) {
-    record_error(what(e));
-  }
+  });
   rpc_async_sequence_end(conn);
   return 0;
 }
@@ -414,22 +480,24 @@ int handle_op_sync(conn_t *conn) {
   }
   writer w;
   std::string error;
-  try {
-    stream_scope stream;
-    reader r = open_body(in);
-    apply_frees(in);
-    std::string name;
-    std::vector<at::Tensor> inputs;
-    torch::jit::Stack stack = decode_call(r, &name, &inputs);
-    run(name, stack);
-    std::vector<at::Tensor> table;
-    std::vector<char> bytes = pickle_stack(stack, &table);
-    write_aliases(w, inputs, table);
-    write_pickled(w, bytes, table, keep, describe);
-    error = take_error();
-  } catch (const std::exception &e) {
-    error = what(e);
-  }
+  g_executor.run([&] {
+    try {
+      stream_scope stream;
+      reader r = open_body(in);
+      apply_frees(in);
+      std::string name;
+      std::vector<at::Tensor> inputs;
+      torch::jit::Stack stack = decode_call(r, &name, &inputs);
+      run(name, stack);
+      std::vector<at::Tensor> table;
+      std::vector<char> bytes = pickle_stack(stack, &table);
+      write_aliases(w, inputs, table);
+      write_pickled(w, bytes, table, keep, describe);
+      error = take_error();
+    } catch (const std::exception &e) {
+      error = what(e);
+    }
+  });
   rpc_async_sequence_end(conn);
   if (!error.empty()) {
     return respond_error(conn, in.request_id, error);
@@ -446,21 +514,23 @@ int handle_copy_to_host(conn_t *conn) {
   }
   at::Tensor cpu;
   std::string error;
-  try {
-    stream_scope stream;
-    reader r = open_body(in);
-    apply_frees(in);
-    tensor_desc d = read_desc(r);
-    auto dtype = static_cast<c10::ScalarType>(r.get<int8_t>());
-    at::Tensor t = materialize(d);
-    if (t.scalar_type() != dtype) {
-      t = t.to(dtype);
+  g_executor.run([&] {
+    try {
+      stream_scope stream;
+      reader r = open_body(in);
+      apply_frees(in);
+      tensor_desc d = read_desc(r);
+      auto dtype = static_cast<c10::ScalarType>(r.get<int8_t>());
+      at::Tensor t = materialize(d);
+      if (t.scalar_type() != dtype) {
+        t = t.to(dtype);
+      }
+      cpu = t.contiguous().cpu();
+      error = take_error();
+    } catch (const std::exception &e) {
+      error = what(e);
     }
-    cpu = t.contiguous().cpu();
-    error = take_error();
-  } catch (const std::exception &e) {
-    error = what(e);
-  }
+  });
   rpc_async_sequence_end(conn);
   if (!error.empty()) {
     return respond_error(conn, in.request_id, error);
@@ -477,32 +547,34 @@ int handle_copy_to_host(conn_t *conn) {
 }
 
 int handle_copy_from_host(conn_t *conn) {
-  incoming in;
-  if (read_incoming(conn, &in) < 0) {
+  auto in = std::make_shared<incoming>();
+  if (read_incoming(conn, in.get()) < 0) {
     return -1;
   }
   // The payload follows the body; it is read before the request ends and
   // lands directly in a host tensor shaped like the destination.
-  reader r = open_body(in);
+  reader r = open_body(*in);
   tensor_desc d = read_desc(r);
   uint64_t nbytes = r.get<uint64_t>();
   at::Tensor source = at::empty(
       d.sizes,
       at::TensorOptions().dtype(static_cast<c10::ScalarType>(d.dtype)));
   if ((nbytes != 0 && rpc_read(conn, source.mutable_data_ptr(), nbytes) < 0) ||
-      (in.request_id = rpc_read_end(conn)) < 0 ||
-      rpc_async_sequence_begin(conn, in.sequence) < 0) {
+      (in->request_id = rpc_read_end(conn)) < 0 ||
+      rpc_async_sequence_begin(conn, in->sequence) < 0) {
     return -1;
   }
-  try {
-    stream_scope stream;
-    apply_frees(in);
-    at::Tensor target = materialize(d);
-    c10::DeviceGuard guard(target.device());
-    target.copy_(source);
-  } catch (const std::exception &e) {
-    record_error(what(e));
-  }
+  g_executor.post([in, d, source] {
+    try {
+      stream_scope stream;
+      apply_frees(*in);
+      at::Tensor target = materialize(d);
+      c10::DeviceGuard guard(target.device());
+      target.copy_(source);
+    } catch (const std::exception &e) {
+      record_error(what(e));
+    }
+  });
   rpc_async_sequence_end(conn);
   return 0;
 }
@@ -510,21 +582,23 @@ int handle_copy_from_host(conn_t *conn) {
 py::object worker_module() { return py::module_::import("lupine._worker"); }
 
 int handle_exec(conn_t *conn) {
-  incoming in;
-  if (read_incoming(conn, &in) < 0 ||
-      (in.request_id = rpc_read_end(conn)) < 0 ||
-      rpc_async_sequence_begin(conn, in.sequence) < 0) {
+  auto in = std::make_shared<incoming>();
+  if (read_incoming(conn, in.get()) < 0 ||
+      (in->request_id = rpc_read_end(conn)) < 0 ||
+      rpc_async_sequence_begin(conn, in->sequence) < 0) {
     return -1;
   }
-  try {
-    reader r = open_body(in);
-    apply_frees(in);
-    std::string code = r.get_string();
-    py::gil_scoped_acquire gil;
-    worker_module().attr("_exec")(code);
-  } catch (const std::exception &e) {
-    record_error(what(e));
-  }
+  g_executor.post([in] {
+    try {
+      reader r = open_body(*in);
+      apply_frees(*in);
+      std::string code = r.get_string();
+      py::gil_scoped_acquire gil;
+      worker_module().attr("_exec")(code);
+    } catch (const std::exception &e) {
+      record_error(what(e));
+    }
+  });
   rpc_async_sequence_end(conn);
   return 0;
 }
@@ -538,16 +612,18 @@ int handle_eval(conn_t *conn) {
   }
   std::string result;
   std::string error;
-  try {
-    reader r = open_body(in);
-    apply_frees(in);
-    std::string code = r.get_string();
-    py::gil_scoped_acquire gil;
-    result = worker_module().attr("_eval")(code).cast<std::string>();
-    error = take_error();
-  } catch (const std::exception &e) {
-    error = what(e);
-  }
+  g_executor.run([&] {
+    try {
+      reader r = open_body(in);
+      apply_frees(in);
+      std::string code = r.get_string();
+      py::gil_scoped_acquire gil;
+      result = worker_module().attr("_eval")(code).cast<std::string>();
+      error = take_error();
+    } catch (const std::exception &e) {
+      error = what(e);
+    }
+  });
   rpc_async_sequence_end(conn);
   if (!error.empty()) {
     return respond_error(conn, in.request_id, error);
@@ -563,14 +639,16 @@ int handle_sync(conn_t *conn) {
     return -1;
   }
   std::string error;
-  try {
-    (void)open_body(in);
-    apply_frees(in);
-    synchronize_all();
-    error = take_error();
-  } catch (const std::exception &e) {
-    error = what(e);
-  }
+  g_executor.run([&] {
+    try {
+      (void)open_body(in);
+      apply_frees(in);
+      synchronize_all();
+      error = take_error();
+    } catch (const std::exception &e) {
+      error = what(e);
+    }
+  });
   rpc_async_sequence_end(conn);
   if (!error.empty()) {
     return respond_error(conn, in.request_id, error);
@@ -674,7 +752,9 @@ void serve(int fd) {
     return;
   }
   if (rpc_http2_server_init_with_metadata(&conn, &metadata) == 0) {
+    g_executor.start();
     serve_lanes(conn);
+    g_executor.stop();
   }
   rpc_conn_destroy(&conn);
 }
