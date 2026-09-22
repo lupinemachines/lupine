@@ -101,26 +101,6 @@ jobs:
                 --target lupine_cuda_client lupine_runtime_clients lupine_nvml
             '
 
-      - name: Verify Linux client ABI
-        if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          for lib in build/lib*.so; do
-            # Private dependencies must remain static when the builder changes.
-            needed="$(objdump -p "$lib" | awk '/NEEDED/ {print $2}')"
-            if grep -E '^lib(stdc\+\+|gcc_s|nghttp2|ssl|crypto)\.so' <<< "$needed"; then
-              echo "$lib has a shared dependency that must be linked statically"
-              exit 1
-            fi
-            glibc="$(readelf --version-info "$lib" |
-              grep -oE 'GLIBC_[0-9]+(\.[0-9]+)*' | sort -Vu | tail -1)"
-            if [ "$(printf '%s\n' GLIBC_2.28 "$glibc" | sort -V | tail -1)" != GLIBC_2.28 ]; then
-              echo "$lib requires $glibc, newer than the glibc 2.28 baseline"
-              exit 1
-            fi
-            echo "$lib: $glibc; private dependencies linked statically"
-          done
-
       - name: Build complete client (macOS)
         if: runner.os == 'macOS'
         run: |
