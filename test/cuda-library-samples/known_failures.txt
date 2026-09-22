@@ -37,19 +37,12 @@ MathDx/cuFFTDx/08_mixed_precision/mixed_precision_fft_1d
 MathDx/cuBLASDx/16_dgemm_emulation/dgemm_emulation
 MathDx/cuBLASDx/20_dgemm_emulation_pipeline/dgemm_emulation_pipeline
 
-# #851 cuDSS hybrid execute mode fails in cudssExecute phase 4 with
-# CUDSS_STATUS_EXECUTION_FAILED. Passes natively on the same GPU; no driver API
-# is missing and the server reports no error.
-cuDSS/simple_hybrid_execute_mode/simple_hybrid_execute_mode_example
-
-# #852 A page fault on invalidated mapped-host memory that originates on the RPC
-# dispatch thread -- here inside the cuLaunchHostFunc callback nvCOMP's
-# LZ4Manager posts -- fetches on a lane with no server-side context, gets
-# CUDA_ERROR_INVALID_CONTEXT back, and turns a recoverable fault into SIGSEGV.
-nvCOMP/examples/dynamic_bin/high_level_quickstart_example
-
 # Fails natively as well (not lupine), on every run on the RTX 4090: NPP+
 # findContour walks each contour to nMaxContourPixelCount - 1 in unsigned
 # arithmetic, and a count it reads back as 0 turns that into ~4G iterations of
 # writes through garbage coordinates until it segfaults.
 NPP+/findContour/findContour
+
+# #900 nvCOMP's high-level quickstart intermittently hits an illegal address
+# (700) through the shim; the variant that fails differs from lane to lane.
+nvCOMP/examples/dynamic_bin/high_level_quickstart_example
