@@ -137,12 +137,7 @@ tensor_desc describe(const at::Tensor &t) {
 
 // Every defined result stays here and travels as a handle, whichever device
 // the kernel put it on.
-const wire_context &wire() {
-  static const wire_context ctx = {
-      describe, [](const at::Tensor &t) { return true; },
-      [](const c10::Device &d) { return d.is_cuda(); }};
-  return ctx;
-}
+bool keep(const at::Tensor &) { return true; }
 
 const c10::OperatorHandle &lookup(const std::string &name) {
   std::lock_guard<std::mutex> lock(g_ops_mutex);
@@ -337,32 +332,26 @@ void bind_results(reader &r, const std::string &name,
 // tensors read are numbered in `inputs` the way the host numbers them.
 torch::jit::Stack decode_call(reader &r, std::string *name,
                               std::vector<at::Tensor> *inputs) {
-  read_context ctx;
-  ctx.materialize = [inputs](const tensor_desc &d) {
+  torch::jit::Stack stack = read_stack(r, [inputs](const tensor_desc &d) {
     at::Tensor t = materialize(d);
     inputs->push_back(t);
     return t;
-  };
-  *name = r.get_string();
-  uint8_t nargs = r.get<uint8_t>();
-  torch::jit::Stack stack;
-  stack.reserve(nargs);
-  for (uint8_t i = 0; i < nargs; ++i) {
-    stack.push_back(read_ivalue(r, ctx));
-  }
+  });
+  *name = stack.front().toStringRef();
+  stack.erase(stack.begin());
   return stack;
 }
 
-// Reports what each result tensor is relative to the arguments: an argument
-// itself (1), else a view over an argument's storage (2), else new (0). An
-// argument passed twice (self and out=) is two tensors here, so the
-// argument returned is found by identity before storage is considered.
+// Reports what each defined result tensor is relative to the arguments: an
+// argument itself (1), else a view over an argument's storage (2), else new
+// (0). An argument passed twice (self and out=) may be two tensors here, so
+// the argument returned is found by identity before storage is considered.
 void write_aliases(writer &w, const std::vector<at::Tensor> &inputs,
-                   const torch::jit::Stack &results) {
+                   const std::vector<at::Tensor> &results) {
   std::vector<std::pair<uint8_t, int32_t>> aliases;
-  auto note = [&](const at::Tensor &t) {
+  for (const at::Tensor &t : results) {
     if (!t.defined()) {
-      return;
+      continue;
     }
     std::pair<uint8_t, int32_t> alias(0, -1);
     for (uint8_t kind = 1; kind <= 2 && alias.first == 0; ++kind) {
@@ -378,15 +367,6 @@ void write_aliases(writer &w, const std::vector<at::Tensor> &inputs,
       }
     }
     aliases.push_back(alias);
-  };
-  for (const c10::IValue &v : results) {
-    if (v.isTensor()) {
-      note(v.toTensor());
-    } else if (v.isTensorList()) {
-      for (const at::Tensor &t : v.toTensorVector()) {
-        note(t);
-      }
-    }
   }
   w.put<uint32_t>(static_cast<uint32_t>(aliases.size()));
   for (const auto &alias : aliases) {
@@ -442,11 +422,10 @@ int handle_op_sync(conn_t *conn) {
     std::vector<at::Tensor> inputs;
     torch::jit::Stack stack = decode_call(r, &name, &inputs);
     run(name, stack);
-    write_aliases(w, inputs, stack);
-    w.put<uint32_t>(static_cast<uint32_t>(stack.size()));
-    for (const c10::IValue &v : stack) {
-      write_ivalue(w, v, wire());
-    }
+    std::vector<at::Tensor> table;
+    std::vector<char> bytes = pickle_stack(stack, &table);
+    write_aliases(w, inputs, table);
+    write_pickled(w, bytes, table, keep, describe);
     error = take_error();
   } catch (const std::exception &e) {
     error = what(e);
