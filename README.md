@@ -343,8 +343,6 @@ calls they make, and the NCCL shim forwards `nccl*` calls on the driver shim's
 connections, so the two must come from the same build. The server loads the
 machine's `libnccl.so.2` by name.
 
-For HIP compiler-generated kernels, see [HIP hello-world and WSL setup](docs/hip.md).
-
 nvSHMEM is the exception: it forwards nothing at all.
 Its PEs hold a partitioned global address space over the GPUs of a job, reading
 and writing each other's symmetric heap from inside kernels, and a client is
