@@ -24,11 +24,9 @@ static void check(cudaError_t result, const char *expr, int line) {
 
 struct CallbackState {
   int *host = nullptr;
-  int *readback = nullptr;
   int value = 0;
   std::atomic<bool> ready{false};
   std::atomic<bool> done{false};
-  bool passed = false;
   bool timed_out = false;
 };
 
@@ -69,15 +67,8 @@ __global__ void copy_values(const int *src, int *dst) {
   }
 }
 
-static void CUDART_CB verify(void *opaque) {
+static void CUDART_CB complete(void *opaque) {
   auto *state = static_cast<CallbackState *>(opaque);
-  state->passed = !state->timed_out;
-  for (int i = 0; i < kCount; ++i) {
-    if (state->readback[i] != state->value) {
-      state->passed = false;
-      break;
-    }
-  }
   state->done.store(true, std::memory_order_release);
 }
 
@@ -87,9 +78,9 @@ int main() {
   int *device = nullptr;
   cudaStream_t stream = nullptr;
   constexpr size_t bytes = kCount * sizeof(int);
+  int readback[kCount];
   CHECK(cudaHostAlloc(&state.host, bytes, cudaHostAllocMapped));
   CHECK(cudaHostGetDevicePointer(&mapped, state.host, 0));
-  CHECK(cudaMallocHost(&state.readback, bytes));
   CHECK(cudaMalloc(&device, bytes));
   CHECK(cudaStreamCreate(&stream));
   for (int i = 0; i < kCount; ++i) {
@@ -107,7 +98,6 @@ int main() {
       ++state.value;
       state.ready.store(false, std::memory_order_relaxed);
       state.done.store(false, std::memory_order_relaxed);
-      state.passed = false;
       state.timed_out = false;
       cudaGraph_t graph = nullptr;
       cudaGraphExec_t exec = nullptr;
@@ -121,9 +111,7 @@ int main() {
       }
       copy_values<<<kCount / 256, 256, 0, stream>>>(mapped, device);
       CHECK(cudaGetLastError());
-      CHECK(cudaMemcpyAsync(state.readback, device, bytes,
-                            cudaMemcpyDeviceToHost, stream));
-      CHECK(cudaLaunchHostFunc(stream, verify, &state));
+      CHECK(cudaLaunchHostFunc(stream, complete, &state));
       if (mode == 2) {
         CHECK(cudaStreamEndCapture(stream, &graph));
         CHECK(cudaGraphInstantiate(&exec, graph, nullptr, nullptr, 0));
@@ -131,17 +119,29 @@ int main() {
       }
 
       // Every CUDA call above has returned before the callback writes. Do not
-      // synchronize until verify has observed the kernel's result.
+      // make another CUDA call until the trailing callback proves the kernel
+      // has finished: a later flush cannot change the values it already read.
       state.ready.store(true, std::memory_order_release);
       if (!wait_for(state.done)) {
         std::fprintf(stderr, "FAIL: %s timed out\n", names[mode]);
         std::exit(EXIT_FAILURE);
       }
       CHECK(cudaStreamSynchronize(stream));
-      if (!state.passed) {
-        std::fprintf(stderr, "FAIL: %s round %d read stale mapped writes\n",
+      // Read the completed output directly so this test does not also depend
+      // on deferred DtoH delivery across callbacks.
+      CHECK(cudaMemcpy(readback, device, bytes, cudaMemcpyDeviceToHost));
+      if (state.timed_out) {
+        std::fprintf(stderr, "FAIL: %s round %d writer gate timed out\n",
                      names[mode], round);
         ++failures;
+      }
+      for (int i = 0; i < kCount; ++i) {
+        if (readback[i] != state.value) {
+          std::fprintf(stderr, "FAIL: %s round %d read %d at %d, expected %d\n",
+                       names[mode], round, readback[i], i, state.value);
+          ++failures;
+          break;
+        }
       }
       if (exec != nullptr) {
         CHECK(cudaGraphExecDestroy(exec));
@@ -152,7 +152,6 @@ int main() {
 
   CHECK(cudaStreamDestroy(stream));
   CHECK(cudaFree(device));
-  CHECK(cudaFreeHost(state.readback));
   CHECK(cudaFreeHost(state.host));
   if (failures != 0) {
     return EXIT_FAILURE;
