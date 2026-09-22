@@ -937,8 +937,9 @@ endif()
 
 if(LUPINE_BUILD_NCCL)
     # Named like NVIDIA's (libnccl.so.2), whose symbols carry no version node.
-    # It runs on the runtime shim's current device, so it links both sibling
-    # shims. nccl.h declares ncclResetDebugInit only for Linux builds.
+    # It routes by the driver shim's current context, so that is the only
+    # sibling it links: a driver-only client ships it beside the program's own
+    # runtime. nccl.h declares ncclResetDebugInit only for Linux builds.
     configure_file(nccl.exports.in nccl.exports @ONLY)
     add_library(lupine_nccl_client SHARED nccl_client.cpp)
     target_include_directories(lupine_nccl_client PRIVATE
@@ -946,7 +947,7 @@ if(LUPINE_BUILD_NCCL)
         ${LUPINE_NCCL_INCLUDE_DIR})
     target_compile_definitions(lupine_nccl_client PRIVATE NCCL_OS_LINUX)
     target_link_libraries(lupine_nccl_client PRIVATE
-        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
+        lupine_cudart_headers lupine_cuda_client)
     target_compile_options(lupine_nccl_client PRIVATE
         -Wno-deprecated-declarations)
     target_link_options(lupine_nccl_client PRIVATE

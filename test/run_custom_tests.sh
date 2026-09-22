@@ -183,18 +183,6 @@ if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <cupti
   echo "SKIP: $name runs CUPTI on the client, which needs more than the driver shim"
   exit 0
 fi
-if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <nvshmem_host.h>' "$src"; then
-  # NVIDIA's libnvshmem_host bootstraps a PE on the client's own GPU, which a
-  # GPU-less client does not have; only the nvSHMEM shim runs.
-  echo "SKIP: $name runs nvSHMEM on the client, which needs more than the driver shim"
-  exit 0
-fi
-if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <nccl.h>' "$src"; then
-  # NVIDIA's libnccl on a GPU-less client crashes over the driver shim alone,
-  # zeroing the host memory ncclCommInitRank allocates; only the NCCL shim runs.
-  echo "SKIP: $name runs NCCL on the client, which needs more than the driver shim"
-  exit 0
-fi
 
 servers="$SERVER_HOST:$port"
 if [[ -n "$second_port" ]]; then

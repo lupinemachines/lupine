@@ -9,29 +9,31 @@ endif()
 get_filename_component(LUPINE_LIB "${LUPINE_LIB}" ABSOLUTE)
 get_filename_component(shim_dir "${LUPINE_LIB}" DIRECTORY)
 # The runtime and library shims (libcudart, libcublas, libcufft, ...) share
-# the libcu prefix with the driver shim; NVRTC, NCCL, nvJitLink, nvJPEG, NPP
-# and nvSHMEM are the ones without it.
+# the libcu prefix with the driver shim; NVRTC, nvJitLink, nvJPEG and NPP are
+# the ones without it.
 file(GLOB runtime_libs "${shim_dir}/libcu*.so*" "${shim_dir}/libnvrtc.so*"
-     "${shim_dir}/libnccl.so*" "${shim_dir}/libnvJitLink.so*"
-     "${shim_dir}/libnvjpeg.so*" "${shim_dir}/libnpp*.so*"
-     "${shim_dir}/libnvshmem_host.so*")
+     "${shim_dir}/libnvJitLink.so*" "${shim_dir}/libnvjpeg.so*"
+     "${shim_dir}/libnpp*.so*")
 list(FILTER runtime_libs EXCLUDE REGEX "/libcuda\\.so")
-file(GLOB nvml_libs "${shim_dir}/libnvidia-ml.so*")
+# NVML, NCCL and nvSHMEM need nothing but the driver shim, so both variants
+# load them.
+file(GLOB driver_libs "${shim_dir}/libnvidia-ml.so*" "${shim_dir}/libnccl.so*"
+     "${shim_dir}/libnvshmem_host.so*")
 if(NOT EXISTS "${LUPINE_LIB}" OR NOT EXISTS "${shim_dir}/libcudart.so")
     message(FATAL_ERROR "Build lupine_cuda_client and lupine_runtime_clients before configuring integration tests")
 endif()
 
-# Both variants use one build. driver-only loads the driver shim with NVIDIA's
-# runtime and libraries; driver-runtime also loads every runtime and library
-# shim. Never put the full build directory on the driver-only search path: that
-# would expose the other shims too.
+# Both variants use one build. driver-only loads the driver-level shims with
+# NVIDIA's runtime and libraries; driver-runtime also loads every runtime and
+# library shim. Never put the full build directory on the driver-only search
+# path: that would expose the other shims too.
 set(variants driver-only driver-runtime)
 foreach(variant IN LISTS variants)
     set(lib_dir "${CMAKE_CURRENT_BINARY_DIR}/${variant}/lib")
     file(MAKE_DIRECTORY "${lib_dir}")
     file(CREATE_LINK "${LUPINE_LIB}" "${lib_dir}/libcuda.so.1" SYMBOLIC)
     file(CREATE_LINK "${LUPINE_LIB}" "${lib_dir}/libcuda.so" SYMBOLIC)
-    foreach(lib IN LISTS nvml_libs)
+    foreach(lib IN LISTS driver_libs)
         get_filename_component(name "${lib}" NAME)
         file(CREATE_LINK "${lib}" "${lib_dir}/${name}" SYMBOLIC)
     endforeach()
