@@ -209,3 +209,45 @@ def test_resolve_rejects_a_file_the_manifest_does_not_declare(monkeypatch, tmp_p
         pytest.raises(ValueError, match="unexpected file set"),
     ):
         _bundles.resolve((server,), REQUIRED)
+
+
+def _windows(monkeypatch, *, build, machine, wow64=None):
+    monkeypatch.setattr(_bundles.sys, "platform", "win32")
+    monkeypatch.setattr(_bundles.sysconfig, "get_platform", lambda: build)
+    # platform.machine() reports the machine, not the process, under WOW64.
+    monkeypatch.setattr(_bundles.platform, "machine", lambda: machine)
+    if wow64 is None:
+        monkeypatch.delenv("PROCESSOR_ARCHITEW6432", raising=False)
+    else:
+        monkeypatch.setenv("PROCESSOR_ARCHITEW6432", wow64)
+
+
+def test_windows_arm64_selects_the_x64_client_for_an_x64_python(monkeypatch):
+    _windows(monkeypatch, build="win-amd64", machine="ARM64", wow64="ARM64")
+    assert _bundles.platform_name() == "windows/amd64"
+    assert _bundles.host_machine() == "arm64"
+    assert not _bundles.native_arm64_windows()
+
+
+def test_windows_arm64_native_python_selects_the_arm64_client(monkeypatch):
+    _windows(monkeypatch, build="win-arm64", machine="ARM64")
+    assert _bundles.platform_name() == "windows/arm64"
+    assert _bundles.native_arm64_windows()
+
+
+def test_windows_x64_host_is_unchanged(monkeypatch):
+    _windows(monkeypatch, build="win-amd64", machine="AMD64")
+    assert _bundles.platform_name() == "windows/amd64"
+    assert not _bundles.native_arm64_windows()
+    _windows(monkeypatch, build="win32", machine="AMD64", wow64="AMD64")
+    assert _bundles.platform_name() is None
+
+
+def test_unix_platform_keys_follow_the_machine(monkeypatch):
+    monkeypatch.setattr(_bundles.sys, "platform", "linux")
+    monkeypatch.setattr(_bundles.platform, "machine", lambda: "aarch64")
+    assert _bundles.platform_name() == "linux/arm64"
+    assert not _bundles.native_arm64_windows()
+    monkeypatch.setattr(_bundles.sys, "platform", "darwin")
+    monkeypatch.setattr(_bundles.platform, "machine", lambda: "x86_64")
+    assert _bundles.platform_name() == "macos/amd64"
