@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <string_view>
 
 // Clang's uncompressed offload bundle: magic, bundle count, then a table of
 // (offset, size, target-ID length, target-ID bytes). Copy the whole bundle so
@@ -14,15 +15,15 @@ constexpr size_t lupine_hip_max_image_size = 256 * 1024 * 1024;
 inline size_t
 lupine_hip_bundle_size(const void *image,
                        size_t available = std::numeric_limits<size_t>::max()) {
-  static constexpr char magic[] = "__CLANG_OFFLOAD_BUNDLE__";
-  constexpr size_t header_size = sizeof(magic) - 1 + sizeof(uint64_t);
+  static constexpr std::string_view magic = "__CLANG_OFFLOAD_BUNDLE__";
+  constexpr size_t header_size = magic.size() + sizeof(uint64_t);
   if (image == nullptr || available < header_size ||
-      memcmp(image, magic, sizeof(magic) - 1) != 0) {
+      memcmp(image, magic.data(), magic.size()) != 0) {
     return 0;
   }
   const auto *bytes = static_cast<const unsigned char *>(image);
   uint64_t count = 0;
-  memcpy(&count, bytes + sizeof(magic) - 1, sizeof(count));
+  memcpy(&count, bytes + magic.size(), sizeof(count));
   if (count == 0 || count > 64) {
     return 0;
   }
