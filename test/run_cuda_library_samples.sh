@@ -262,53 +262,6 @@ PATCH
   fi
   rm -f "$patch_file"
 
-  # #899: the batched Cholesky reference copies one triangle row at a time.
-  # Read each matrix once and select the triangle on the CPU, preserving the
-  # opposite triangle and padding that cuSolver uses as workspace. This takes
-  # blocked_potrf from 204,800 small readbacks to 400 without changing its work.
-  patch_file="$(mktemp)"
-  cat >"$patch_file" <<'PATCH'
-diff --git a/MathDx/cuSolverDx/common/cusolver_reference_cholesky.hpp b/MathDx/cuSolverDx/common/cusolver_reference_cholesky.hpp
-index eede9a1..68abb2b 100644
---- a/MathDx/cuSolverDx/common/cusolver_reference_cholesky.hpp
-+++ b/MathDx/cuSolverDx/common/cusolver_reference_cholesky.hpp
-@@ -125,22 +125,27 @@ namespace common {
-
-             CUDA_CHECK_AND_EXIT(cudaMemcpyAsync(Aarray.data(), d_Aarray, sizeof(T*) * Aarray.size(), cudaMemcpyDeviceToHost, stream));
-
--            // cuSolver's batched solver uses the off-diagonal part as workspace.  So, we only copy the desired triangle.
-+            // Read each matrix once, then retain only the desired triangle: cuSolver
-+            // uses the opposite triangle as workspace. Per-row device copies make
-+            // validation pay a driver call (and a remote round trip) for every row.
-+            std::vector<T> factor(a_size);
-             for (int k = 0; k < batches; k++) {
-+                CUDA_CHECK_AND_EXIT(cudaMemcpyAsync(factor.data(), Aarray[k], sizeof(T) * a_size, cudaMemcpyDeviceToHost, stream));
-+                CUDA_CHECK_AND_EXIT(cudaStreamSynchronize(stream));
-                 T* A_k = A.data() + k * a_size;
-                 if (is_lower_fill) {
-                     // Lower fill and column major, or upper fill and row major
-                     for (int j = 0; j < m; ++j) {
-                         int    offset = j + j * lda;
-                         size_t size   = sizeof(T) * (m - j);
--                        CUDA_CHECK_AND_EXIT(cudaMemcpyAsync(A_k + offset, Aarray[k] + offset, size, cudaMemcpyDeviceToHost, stream));
-+                        std::memcpy(A_k + offset, factor.data() + offset, size);
-                     }
-                 } else {
-                     // Upper fill and column major, or lower fill and row major
-                     for (int j = 0; j < m; ++j) {
-                         int    offset = j * lda;
-                         size_t size   = sizeof(T) * (j + 1);
--                        CUDA_CHECK_AND_EXIT(cudaMemcpyAsync(A_k + offset, Aarray[k] + offset, size, cudaMemcpyDeviceToHost, stream));
-+                        std::memcpy(A_k + offset, factor.data() + offset, size);
-                     }
-                 }
-             }
-PATCH
-  if ! git -C "$LIBRARY_SAMPLES_DIR" apply --reverse --check "$patch_file" 2>/dev/null; then
-    git -C "$LIBRARY_SAMPLES_DIR" apply "$patch_file"
-  fi
-  rm -f "$patch_file"
-
   # cuPQC ships a flat Makefile, not a CMake project, so discovery would not
   # see it. The archives hold LTO-IR only: the samples have to be compiled and
   # linked with -dlto, which CMake emits for INTERPROCEDURAL_OPTIMIZATION.
@@ -770,9 +723,9 @@ for i in "${!UNITS[@]}"; do
   [[ "$unit" == cuSOLVERSp2cuDSS/* ]] && cudss_lib="$CUDSS_TRANSITION_HOME/lib"
 
   timeout_seconds="$SAMPLE_TIMEOUT"
-  if [[ "$unit" == cuSOLVER/MgSyevd/* ]]; then
-    # #836: cuSolverMg performs thousands of blocking stream synchronizations.
-    # Keep these correctness checks enabled with room for a busy GPU lane.
+  if [[ "$unit" == MathDx/cuSolverDx/blocked_potrf || "$unit" == cuSOLVER/MgSyevd/* ]]; then
+    # #899/#836: these unmodified upstream samples issue thousands of blocking
+    # driver calls and need room for a busy GPU integration lane.
     timeout_seconds="$LONG_SAMPLE_TIMEOUT"
   fi
 
