@@ -285,20 +285,6 @@ tensor_desc describe_shape_only(const at::Tensor &t) {
   return d;
 }
 
-const wire_context &wire() {
-  static const wire_context ctx = {describe, is_ours, [](const c10::Device &d) {
-                                     return is_ours_type(d.type());
-                                   }};
-  return ctx;
-}
-
-const wire_context &wire_shape_only() {
-  static const wire_context ctx = {
-      describe_shape_only, is_ours,
-      [](const c10::Device &d) { return is_ours_type(d.type()); }};
-  return ctx;
-}
-
 // Storages are numbered by first appearance: which arguments share one is
 // part of the key, their identity is not.
 tensor_desc describe_for_key(const at::Tensor &t,
@@ -437,29 +423,61 @@ op_state &state_for(const c10::OperatorHandle &op) {
   return ref;
 }
 
-// The argument tensors on the device in argument order; the worker numbers
-// them the same way when it reports which one a result aliases.
-std::vector<at::Tensor> device_inputs(torch::jit::Stack *stack,
-                                      size_t args_begin, size_t nargs) {
-  std::vector<at::Tensor> inputs;
+// The call as it travels: the pickle of (name, arguments...) and the tensor
+// table it refers to. Symbolic ints and the device are made concrete for the
+// worker; an undefined generator is the default one.
+struct encoded {
+  std::vector<char> bytes;
+  std::vector<at::Tensor> table;
+};
+
+c10::IValue sanitize(const c10::IValue &v) {
+  if (v.isDevice() && is_ours_type(v.toDevice().type())) {
+    return v.toDevice().has_index()
+               ? c10::Device(c10::DeviceType::CUDA, v.toDevice().index())
+               : c10::Device(c10::DeviceType::CUDA);
+  }
+  if (v.isGenerator()) {
+    TORCH_CHECK(!v.toGenerator().defined(),
+                "lupine: explicit torch.Generator objects are not supported "
+                "on the lupine backend; use torch.manual_seed");
+    return c10::IValue();
+  }
+  if (v.isSymInt()) {
+    return v.toSymInt().expect_int();
+  }
+  if (v.isSymFloat()) {
+    return v.toSymFloat().expect_float();
+  }
+  if (v.isSymBool()) {
+    return v.toSymBool().expect_bool();
+  }
+  if (v.isSymIntList()) {
+    return c10::List<int64_t>(v.toIntVector());
+  }
+  return v;
+}
+
+encoded encode(const op_state &st, torch::jit::Stack *stack, size_t args_begin,
+               size_t nargs) {
+  std::vector<c10::IValue> values;
+  values.reserve(nargs + 1);
+  values.emplace_back(st.name);
   for (size_t i = 0; i < nargs; ++i) {
-    const c10::IValue &v = (*stack)[args_begin + i];
-    if (v.isTensor()) {
-      if (is_ours(v.toTensor())) {
-        inputs.push_back(v.toTensor());
-      }
-    } else if (v.isTensorList()) {
-      for (const at::Tensor &t : v.toTensorVector()) {
-        if (is_ours(t)) {
-          inputs.push_back(t);
-        }
-      }
-    } else if (v.isList() && kind_of(v) == list_kind::optional_tensor) {
-      for (const c10::IValue &item : v.toListRef()) {
-        if (!item.isNone() && is_ours(item.toTensor())) {
-          inputs.push_back(item.toTensor());
-        }
-      }
+    values.push_back(sanitize((*stack)[args_begin + i]));
+  }
+  encoded e;
+  e.bytes = pickle_stack(std::move(values), &e.table);
+  return e;
+}
+
+// The argument tensors on the device in table order; the worker numbers
+// them the same way when it reports which one a result aliases.
+std::vector<at::Tensor> device_inputs(const encoded &e) {
+  std::vector<at::Tensor> inputs;
+  for (const at::Tensor &t : e.table) {
+    if (is_ours(t)) {
+      inputs.push_back(t);
     }
   }
   return inputs;
@@ -523,13 +541,8 @@ at::Tensor build_output(const plan_output &out,
   }
 }
 
-void write_call(writer &w, const op_state &st, torch::jit::Stack *stack,
-                size_t args_begin, size_t nargs) {
-  w.put_string(st.name);
-  w.put<uint8_t>(static_cast<uint8_t>(nargs));
-  for (size_t i = 0; i < nargs; ++i) {
-    write_ivalue(w, (*stack)[args_begin + i], wire());
-  }
+void write_call(writer &w, const encoded &e) {
+  write_pickled(w, e.bytes, e.table, is_ours, describe);
 }
 
 // The result tensors of a replayed op, with the handles the worker binds
@@ -561,7 +574,7 @@ void replace_results(torch::jit::Stack *stack, size_t args_begin,
 
 // Replays a learned plan: the same results the worker reported for these
 // argument shapes, over fresh handles, and the op fire-and-forget.
-void replay(const plan &p, const op_state &st, torch::jit::Stack *stack,
+void replay(const plan &p, const encoded &e, torch::jit::Stack *stack,
             size_t args_begin, size_t nargs,
             const std::vector<at::Tensor> &inputs) {
   std::vector<c10::Storage> groups(p.group_nbytes.size());
@@ -607,40 +620,30 @@ void replay(const plan &p, const op_state &st, torch::jit::Stack *stack,
   }
   if (p.needs_rpc) {
     request req(LUPINE_RPC_lupineTorchOp);
-    write_call(req.body(), st, stack, args_begin, nargs);
+    write_call(req.body(), e);
     write_expected(req.body(), results);
     req.send();
   }
   replace_results(stack, args_begin, results);
 }
 
-// A plan key is the op's argument metadata. CPU tensor arguments travel by
-// value, so a large one makes the call uncacheable rather than the key huge.
-bool plan_key(const op_state &st, torch::jit::Stack *stack, size_t args_begin,
-              size_t nargs, std::string *key) {
-  writer w;
-  std::unordered_map<uint64_t, uint64_t> ids;
-  wire_context ctx = st.memo ? wire_shape_only() : wire();
-  if (!st.memo) {
-    ctx.describe = [&ids](const at::Tensor &t) {
-      return describe_for_key(t, ids);
-    };
-  }
-  for (size_t i = 0; i < nargs; ++i) {
-    const c10::IValue &v = (*stack)[args_begin + i];
-    if (v.isTensor() && v.toTensor().defined() && !is_ours(v.toTensor()) &&
-        v.toTensor().numel() > 64) {
+// A plan key is the pickled call with its tensors described by metadata
+// alone. CPU tensor arguments travel by value, so a large one makes the call
+// uncacheable rather than the key huge.
+bool plan_key(const op_state &st, const encoded &e, std::string *key) {
+  for (const at::Tensor &t : e.table) {
+    if (t.defined() && !is_ours(t) && t.numel() > 64) {
       return false;
     }
-    if (st.inplace &&
-        (v.isDouble() || v.isScalar() ||
-         (v.isList() && !v.isIntList() && !v.isBoolList() &&
-          (v.isDoubleList() || kind_of(v) == list_kind::scalar)))) {
-      w.put_tag(tag::none);
-      continue;
-    }
-    write_ivalue(w, v, ctx);
   }
+  writer w;
+  if (!st.inplace) {
+    w.put_bytes(e.bytes.data(), e.bytes.size());
+  }
+  std::unordered_map<uint64_t, uint64_t> ids;
+  write_tensors(w, e.table, is_ours, [&](const at::Tensor &t) {
+    return st.memo ? describe_shape_only(t) : describe_for_key(t, ids);
+  });
   key->assign(reinterpret_cast<const char *>(w.buffer.data()), w.buffer.size());
   return true;
 }
@@ -649,11 +652,12 @@ bool plan_key(const op_state &st, torch::jit::Stack *stack, size_t args_begin,
 // tensor is an argument, a view over an argument's storage, or a storage the
 // worker created and handed a handle for. Returns the plan learned, or null
 // when a result has no plan form.
-std::shared_ptr<plan> run_sync(const op_state &st, torch::jit::Stack *stack,
-                               size_t args_begin, size_t nargs,
+std::shared_ptr<plan> run_sync(const op_state &st, const encoded &e,
+                               torch::jit::Stack *stack, size_t args_begin,
+                               size_t nargs,
                                const std::vector<at::Tensor> &inputs) {
   request req(LUPINE_RPC_lupineTorchOpSync);
-  write_call(req.body(), st, stack, args_begin, nargs);
+  write_call(req.body(), e);
   req.call();
   read_status();
   std::vector<uint8_t> blob = read_blob();
@@ -672,11 +676,9 @@ std::shared_ptr<plan> run_sync(const op_state &st, torch::jit::Stack *stack,
   auto learned = std::make_shared<plan>();
   std::unordered_map<uint64_t, size_t> groups;
   std::vector<c10::Storage> group_storage;
-  std::vector<plan_output> outputs;
+  std::unordered_map<c10::TensorImpl *, plan_output> outputs;
   size_t next = 0;
-  read_context ctx;
-  ctx.accelerator = g_device_type;
-  ctx.materialize = [&](const tensor_desc &d) {
+  auto materialize = [&](const tensor_desc &d) {
     plan_output out;
     out.dtype = d.dtype;
     out.sizes = d.sizes;
@@ -705,18 +707,13 @@ std::shared_ptr<plan> run_sync(const op_state &st, torch::jit::Stack *stack,
       storage = group_storage[found->second];
     }
     at::Tensor t = build_output(out, inputs, storage);
-    outputs.push_back(std::move(out));
+    outputs.emplace(t.unsafeGetTensorImpl(), std::move(out));
     return t;
   };
-  uint32_t count = r.get<uint32_t>();
-  std::vector<c10::IValue> results;
-  for (uint32_t i = 0; i < count; ++i) {
-    results.push_back(read_ivalue(r, ctx));
-  }
+  std::vector<c10::IValue> results = read_stack(r, materialize);
 
-  size_t used = 0;
   auto note = [&](const at::Tensor &t) {
-    return t.defined() ? std::move(outputs[used++]) : plan_output();
+    return t.defined() ? outputs.at(t.unsafeGetTensorImpl()) : plan_output();
   };
   bool cacheable = true;
   for (const c10::IValue &v : results) {
@@ -760,11 +757,12 @@ void fallback(const c10::OperatorHandle &op, torch::jit::Stack *stack) {
   size_t args_begin = stack->size() - nargs;
   profile *prof = profile::instance();
   uint64_t started = prof != nullptr ? profile::now() : 0;
-  std::vector<at::Tensor> inputs = device_inputs(stack, args_begin, nargs);
+  encoded e = encode(st, stack, args_begin, nargs);
+  std::vector<at::Tensor> inputs = device_inputs(e);
   std::string key;
   bool keyed = !st.sync &&
                !(st.bool_index && has_bool_index((*stack)[args_begin + 1])) &&
-               plan_key(st, stack, args_begin, nargs, &key);
+               plan_key(st, e, &key);
   if (keyed) {
     std::shared_ptr<const plan> found;
     {
@@ -775,7 +773,7 @@ void fallback(const c10::OperatorHandle &op, torch::jit::Stack *stack) {
       }
     }
     if (found) {
-      replay(*found, st, stack, args_begin, nargs, inputs);
+      replay(*found, e, stack, args_begin, nargs, inputs);
       if (prof != nullptr) {
         prof->record(st.name, profile::now() - started, 0);
       }
@@ -789,7 +787,7 @@ void fallback(const c10::OperatorHandle &op, torch::jit::Stack *stack) {
     std::cerr << "lupine-torch sync " << st.name << std::endl;
   }
   std::shared_ptr<plan> learned =
-      run_sync(st, stack, args_begin, nargs, inputs);
+      run_sync(st, e, stack, args_begin, nargs, inputs);
   if (keyed && learned) {
     std::lock_guard<std::mutex> lock(st.mutex);
     st.plans.emplace(std::move(key), std::move(learned));
