@@ -29,6 +29,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import _bundles
+
 DEFAULT_PORT = 14833
 
 
@@ -160,7 +162,16 @@ class Session:
         torch = _torch()
         count = int(torch.cuda.device_count()) if self.servers else 0
         if index >= count or index < -count:
-            raise LupineError(f"device index {index} out of range ({count} devices)")
+            hint = ""
+            if count == 0 and _bundles.native_arm64_windows():
+                hint = (
+                    "; this is a native arm64 Python on Windows on ARM, which has "
+                    "no CUDA runtime: run an x64 Python (under the OS's x64 "
+                    "emulation) with the x64 CUDA torch wheel"
+                )
+            raise LupineError(
+                f"device index {index} out of range ({count} devices){hint}"
+            )
         return torch.device("cuda", range(count)[index])
 
 

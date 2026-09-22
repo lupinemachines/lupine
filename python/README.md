@@ -45,7 +45,30 @@ native HTTP/2 connection, so:
   backend is compiled out); use the driver shim directly via ctypes, or run
   such workloads in a container against the same server.
 - **macOS and native arm64 Python on Windows** get the driver and NVML
-  (#888, #887).
+  (#888); on Windows arm64 run an x64 Python for a CUDA PyTorch (see below).
+
+## Windows on ARM
+
+NVIDIA publishes no CUDA runtime for Windows arm64, so a CUDA PyTorch there
+is the x64 `torch` wheel with its bundled NVIDIA DLLs, running in an **x64
+Python** under the OS's built-in x64 emulation. The loader keys the bundle on
+the interpreter, not the machine: an x64 Python selects the `windows/amd64`
+client (`platform.machine()` reports the machine's `ARM64` for it, which
+would pick the wrong one), a native arm64 Python selects `windows/arm64`,
+which carries the driver and NVML. The shim is user mode and the GPU
+work is remote, so emulated CPU speed is acceptable.
+
+```powershell
+# Windows arm64: install an x64 Python (python.org "Windows installer (64-bit)"),
+# then the x64 CUDA torch wheel and lupine into it.
+py -3.12-64 -m venv .venv
+.venv\Scripts\pip install torch --index-url https://download.pytorch.org/whl/cu130
+.venv\Scripts\pip install lupine
+```
+
+A native arm64 Python can still use the driver shim directly (ctypes, or a
+program built against the driver API); `session.device()` on one explains
+that CUDA torch needs the x64 interpreter.
 
 ## API
 

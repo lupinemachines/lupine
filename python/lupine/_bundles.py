@@ -12,6 +12,7 @@ import re
 import shutil
 import stat
 import sys
+import sysconfig
 import tempfile
 import urllib.error
 import urllib.request
@@ -24,16 +25,53 @@ _MAX_BUNDLE_BYTES = 128 * 1024 * 1024
 _ETAG = re.compile(r'^"sha256:([0-9a-f]{64})"$')
 
 
+_ARCH = {"amd64": "amd64", "x86_64": "amd64", "arm64": "arm64", "aarch64": "arm64"}
+
+
+def interpreter_machine() -> str:
+    """The architecture of this interpreter, which the bundle has to match.
+
+    Windows on ARM runs x64 programs under the OS's x64 emulation, and
+    ``platform.machine()`` reports the machine's ARM64 for them. An x64
+    Python loads x64 DLLs, so on Windows the interpreter's build platform
+    (``win-amd64`` / ``win-arm64``) decides; elsewhere the two agree.
+    """
+
+    if sys.platform == "win32":
+        return sysconfig.get_platform().removeprefix("win-").lower()
+    return platform.machine().lower()
+
+
+def host_machine() -> str:
+    """The machine's own architecture: ``arm64`` for an emulated x64 Python."""
+
+    if sys.platform == "win32":
+        return (
+            os.environ.get("PROCESSOR_ARCHITEW6432") or platform.machine()
+        ).lower()
+    return platform.machine().lower()
+
+
+def native_arm64_windows() -> bool:
+    """A native arm64 Python on Windows on ARM.
+
+    NVIDIA publishes no CUDA runtime for Windows arm64, so such a process
+    gets the driver and NVML only; a CUDA PyTorch needs an x64 Python, which
+    the OS runs under emulation and which selects the ``windows/amd64``
+    client.
+    """
+
+    return (
+        sys.platform == "win32"
+        and _ARCH.get(interpreter_machine()) == "arm64"
+        and _ARCH.get(host_machine()) == "arm64"
+    )
+
+
 def platform_name() -> str | None:
     """Return the public OS/architecture key for this Python process."""
 
-    machine = platform.machine().lower()
-    arch = {
-        "amd64": "amd64",
-        "x86_64": "amd64",
-        "arm64": "arm64",
-        "aarch64": "arm64",
-    }.get(machine)
+    arch = _ARCH.get(interpreter_machine())
     if arch is None:
         return None
     os_name = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
