@@ -579,27 +579,19 @@ int rpc_dispatch(conn_t *conn, int parity) {
   if (stream_id < 0) {
     return -1;
   }
-  int request_id = 0;
-  int op = 0;
+  int header[2] = {};
   int read_result =
-      rpc_http2_read_stream(conn, stream_id, &request_id, sizeof(request_id));
-  if (read_result != sizeof(request_id) || request_id < 2 ||
-      request_id % 2 != parity) {
-    if (read_result != LUPINE_RPC_HTTP2_STREAM_END) {
-      rpc_mark_connection_closed(conn);
-    }
-    return -1;
-  }
-  read_result = rpc_http2_read_stream(conn, stream_id, &op, sizeof(op));
-  if (read_result != sizeof(op)) {
+      rpc_http2_read_stream(conn, stream_id, header, sizeof(header));
+  if (read_result != sizeof(header) || header[0] < 2 ||
+      header[0] % 2 != parity) {
     if (read_result != LUPINE_RPC_HTTP2_STREAM_END) {
       rpc_mark_connection_closed(conn);
     }
     return -1;
   }
   rpc_tls_io.read_conn = conn;
-  rpc_tls_io.read = {stream_id, request_id, op};
-  return op;
+  rpc_tls_io.read = {stream_id, header[0], header[1]};
+  return header[1];
 }
 
 // rpc_read_start waits for a response with a specific request id on the
@@ -615,19 +607,16 @@ int rpc_read_start(conn_t *conn, int write_id) {
     return -1;
   }
   int32_t stream_id = rpc_tls_io.response.stream_id;
-  int request_id = 0;
-  int op = 0;
-  if (rpc_http2_read_stream(conn, stream_id, &request_id, sizeof(request_id)) !=
-          sizeof(request_id) ||
-      request_id != write_id ||
-      rpc_http2_read_stream(conn, stream_id, &op, sizeof(op)) != sizeof(op) ||
-      op != -1) {
+  int header[2] = {};
+  if (rpc_http2_read_stream(conn, stream_id, header, sizeof(header)) !=
+          sizeof(header) ||
+      header[0] != write_id || header[1] != -1) {
     rpc_mark_connection_closed(conn);
     rpc_release_held_call_lock(conn);
     return -1;
   }
   rpc_tls_io.read_conn = conn;
-  rpc_tls_io.read = {stream_id, request_id, op};
+  rpc_tls_io.read = {stream_id, header[0], header[1]};
   return 0;
 }
 
@@ -821,9 +810,11 @@ int rpc_wait_for_response(conn_t *conn) {
   uint64_t start =
       lupine_rpc_stats_path() != nullptr ? lupine_rpc_stats_now_ns() : 0;
   int write_id = rpc_write_end(conn);
-  if (write_id < 0 || rpc_http2_flush(conn) < 0) {
+  if (write_id < 0) {
     return -1;
   }
+  // The writer sends queued requests independently. Waiting for this response
+  // must not also wait for unrelated output on other lanes to drain.
   rpc_http2_response_wait_begin(conn);
   int result = rpc_read_start(conn, write_id);
   rpc_http2_response_wait_end(conn);

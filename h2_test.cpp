@@ -893,6 +893,14 @@ void test_shutdown_wakes_idle_reader() {
   init_pair(&pair);
   exchange_settings(&pair);
 
+  int32_t lane = rpc_http2_lane_stream(&pair.client, 501);
+  require(lane > 0 && rpc_http2_accept_stream(&pair.server) == lane,
+          "idle reader lane setup failed");
+  int lane_result = 0;
+  std::thread lane_reader([&] {
+    char byte;
+    lane_result = rpc_http2_read_stream(&pair.client, lane, &byte, 1);
+  });
   int result = 0;
   std::thread reader([&] {
     char byte;
@@ -902,6 +910,8 @@ void test_shutdown_wakes_idle_reader() {
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   rpc_shutdown_transport_socket(&pair.client);
   reader.join();
+  lane_reader.join();
+  require(lane_result == -1, "shutdown did not wake the idle lane reader");
   require(result == -1, "shutdown did not wake the idle HTTP/2 reader");
   require(pair.client.connfd != LUPINE_INVALID_SOCKET,
           "shutdown closed the socket before transport teardown");
@@ -1157,6 +1167,13 @@ void test_large_payload() {
             {payload.substr(0, midpoint), payload.substr(midpoint)});
   reader.join();
   require(received == payload, "large payload mismatch");
+  require(rpc_http2_end_stream(&pair.client,
+                               rpc_http2_dispatch_stream(&pair.client)) == 0,
+          "large payload stream end failed");
+  char extra;
+  require(rpc_http2_read(&pair.server, &extra, 1) ==
+              LUPINE_RPC_HTTP2_STREAM_END,
+          "reader did not observe the end of the payload stream");
 }
 
 void test_payload_larger_than_flow_control_window() {
