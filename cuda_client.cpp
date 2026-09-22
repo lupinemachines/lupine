@@ -5722,13 +5722,12 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
 }
 
 // A profiled library image: the GNU build-id of the mapped object it is
-// embedded in, its file offset there, and the load parameters. `record` is the
-// profile form: kind, packed size, id length, id, offset, then the option tail
-// (JIT options, then library options with an absent value array encoded as
-// each option's complement), which is also the request tail on the wire.
-// Claims compare the whole record, so a pointer-valued option that differs
-// between runs misses. An image outside any mapped object has an empty id and
-// is never profiled.
+// embedded in, its file offset there, and the library options. `record` is the
+// profile form: kind, packed size, id length, id, offset, then the options with
+// an absent value array encoded as each option's complement, which is also how
+// they go on the wire. Claims compare the whole record, so a pointer-valued
+// option that differs between runs misses. An image outside any mapped object
+// has an empty id and is never profiled.
 struct lupine_library_reference {
   std::string id;
   uint64_t offset = 0;
@@ -5738,9 +5737,6 @@ struct lupine_library_reference {
 };
 
 static void lupine_library_reference_record(lupine_library_reference *ref,
-                                            CUjit_option *jitOptions,
-                                            void **jitOptionsValues,
-                                            unsigned int numJitOptions,
                                             CUlibraryOption *libraryOptions,
                                             void **libraryOptionValues,
                                             unsigned int numLibraryOptions) {
@@ -5757,9 +5753,6 @@ static void lupine_library_reference_record(lupine_library_reference *ref,
   append(&id_size, sizeof(id_size));
   append(ref->id.data(), id_size);
   append(&ref->offset, sizeof(ref->offset));
-  append(&numJitOptions, sizeof(numJitOptions));
-  append(jitOptions, numJitOptions * sizeof(*jitOptions));
-  append(jitOptionsValues, numJitOptions * sizeof(*jitOptionsValues));
   append(&numLibraryOptions, sizeof(numLibraryOptions));
   append(libraryOptions, numLibraryOptions * sizeof(*libraryOptions));
   for (unsigned int i = 0; i < numLibraryOptions; ++i) {
@@ -5781,16 +5774,14 @@ static bool lupine_library_reference_decode(const std::string &record,
   std::memcpy(&ref->kind, record.data(), sizeof(ref->kind));
   std::memcpy(&ref->size, record.data() + 4, sizeof(ref->size));
   size_t at = 21u + id_size;
-  unsigned int counts[2] = {0, 0};
-  for (unsigned int &count : counts) {
-    if (record.size() < at + sizeof(count)) {
-      return false;
-    }
-    std::memcpy(&count, record.data() + at, sizeof(count));
-    at += sizeof(count) + static_cast<size_t>(count) * 12u;
+  unsigned int count = 0;
+  if (record.size() < at + sizeof(count)) {
+    return false;
   }
+  std::memcpy(&count, record.data() + at, sizeof(count));
+  at += sizeof(count) + static_cast<size_t>(count) * 12u;
   if (id_size == 0 || ref->size < sizeof(lupine_fatbin_header) ||
-      at != record.size() || counts[0] != 0) {
+      at != record.size()) {
     return false;
   }
   ref->id.assign(record, 13, id_size);
@@ -5900,14 +5891,16 @@ static const unsigned char *lupine_mapped_fatbin(lupine_library_reference *) {
 static int lupine_write_library_image(conn_t *conn,
                                       const lupine_library_reference &ref,
                                       const unsigned char *image) {
-  size_t options = 21 + ref.id.size();
-  if (rpc_write(conn, ref.record.data(), 12) < 0 ||
-      rpc_write(conn, image, ref.size) < 0 ||
-      rpc_write(conn, ref.record.data() + options,
-                ref.record.size() - options) < 0) {
-    return -1;
-  }
-  return 0;
+  return rpc_write(conn, ref.record.data(), 12) < 0 ||
+                 rpc_write(conn, image, ref.size) < 0
+             ? -1
+             : 0;
+}
+
+static int lupine_write_library_options(conn_t *conn,
+                                        const lupine_library_reference &ref) {
+  size_t at = 21 + ref.id.size();
+  return rpc_write(conn, ref.record.data() + at, ref.record.size() - at);
 }
 
 static int lupine_read_library_load_response(
@@ -6014,7 +6007,9 @@ static void lupine_library_batch_main(conn_t *conn, CUcontext context) {
       rpc_write(conn, &context, sizeof(context)) >= 0 &&
       rpc_write(conn, &count, sizeof(count)) >= 0;
   for (auto *entry : sent) {
-    ok = ok && lupine_write_library_image(conn, entry->ref, entry->image) >= 0;
+    ok = ok &&
+         lupine_write_library_image(conn, entry->ref, entry->image) >= 0 &&
+         lupine_write_library_options(conn, entry->ref) >= 0;
   }
   ok = ok && rpc_wait_for_response(conn) >= 0;
   uint32_t loaded = 0;
@@ -6153,15 +6148,19 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
       reinterpret_cast<const lupine_fatbin_header *>(fatbin)->magic ==
           LUPINE_FATBIN_MAGIC &&
       lupine_locate_fatbin(fatbin, &ref);
-  lupine_library_reference_record(&ref, jitOptions, jitOptionsValues,
-                                  numJitOptions, libraryOptions,
-                                  libraryOptionValues, numLibraryOptions);
+  lupine_library_reference_record(&ref, libraryOptions, libraryOptionValues,
+                                  numLibraryOptions);
   lupine_library_batch_start(route);
   CUresult return_value = CUDA_SUCCESS;
   if (!(profiled && lupine_library_batch_claim(route, ref, library)) &&
       (lupine_prepare_rpc(conn) < 0 ||
        rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
        lupine_write_library_image(conn, ref, image_bytes.data()) < 0 ||
+       rpc_write(conn, &numJitOptions, sizeof(numJitOptions)) < 0 ||
+       rpc_write(conn, jitOptions, numJitOptions * sizeof(*jitOptions)) < 0 ||
+       rpc_write(conn, jitOptionsValues,
+                 numJitOptions * sizeof(*jitOptionsValues)) < 0 ||
+       lupine_write_library_options(conn, ref) < 0 ||
        rpc_wait_for_response(conn) < 0 ||
        lupine_read_library_load_response(conn, numJitOptions, jitOptions,
                                          jitOptionsValues, library,
