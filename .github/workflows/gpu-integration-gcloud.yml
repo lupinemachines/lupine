@@ -725,20 +725,18 @@ jobs:
 
               export PYTHON_BIN=/opt/venv-pytorch/bin/python
               export CUDA_PYTHON_INSTALL=0
-              # PyTorch brings a cuDNN wheel; the cuDNN custom test builds
-              # against it and runs it through the driver and runtime shims.
-              export CUDNN_HOME="$("$PYTHON_BIN" -c "import nvidia.cudnn; print(list(nvidia.cudnn.__path__)[0])")"
-              # Its NCCL wheel serves the NCCL shim and its test the same way.
+              # PyTorch brings an NCCL wheel; the NCCL shim builds against it
+              # and its test links it.
               export NCCL_HOME="$("$PYTHON_BIN" -c "import nvidia.nccl; print(list(nvidia.nccl.__path__)[0])")"
               # Its nvSHMEM wheel, where that torch build carries one, does the
               # same for the nvSHMEM shim and its test.
               export NVSHMEM_HOME="$("$PYTHON_BIN" -c "import nvidia.nvshmem; print(list(nvidia.nvshmem.__path__)[0])" 2>/dev/null || true)"
-              # Its cuSPARSELt wheel does too, from whichever directory the
-              # release installs into: nvidia/cu13 for the CUDA 13 wheels,
-              # nvidia/cusparselt from 0.7, and a top-level cusparselt before
-              # that. A wheel set without one leaves the shim out of the build.
+              # The cuSPARSELt library samples load its cuSPARSELt wheel at run
+              # time, from whichever directory the release installs into:
+              # nvidia/cu13 for the CUDA 13 wheels, nvidia/cusparselt from 0.7,
+              # and a top-level cusparselt before that.
               export CUSPARSELT_HOME=""
-              nvidia_dir="$(dirname "$CUDNN_HOME")"
+              nvidia_dir="$(dirname "$NCCL_HOME")"
               for header in "$nvidia_dir"/*/include/cusparseLt.h \
                             "$(dirname "$nvidia_dir")"/*/include/cusparseLt.h; do
                 [[ -e "$header" ]] || continue
@@ -751,13 +749,12 @@ jobs:
                 -DCMAKE_BUILD_TYPE=Release \
                 -DCUDAToolkit_ROOT="$CUDA_HOME" \
                 -DCMAKE_LIBRARY_PATH="$CUDA_HOME/lib64/stubs" \
-                -DLUPINE_CUDNN_INCLUDE_DIR="$CUDNN_HOME/include" \
                 -DLUPINE_NCCL_INCLUDE_DIR="$NCCL_HOME/include" \
                 ${NVSHMEM_HOME:+-DLUPINE_NVSHMEM_INCLUDE_DIR="$NVSHMEM_HOME/include"} \
                 -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
                 -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
               cmake --build "$LUPINE_BUILD_DIR" --parallel \
-                --target lupine_cuda_client lupine_runtime_clients lupine_nvml_client lupine_driver_server
+                --target lupine_cuda_client lupine_nccl_client ${NVSHMEM_HOME:+lupine_nvshmem_client} lupine_nvml_client lupine_driver_server
               ln -sf libcuda.so.1 "$LUPINE_BUILD_DIR/libcuda.so"
               ln -sf libnvidia-ml.so.1 "$LUPINE_BUILD_DIR/libnvidia-ml.so"
 
@@ -767,51 +764,14 @@ jobs:
                 scp -q "${ssh_args[@]}" "$SERVER_LOCAL_BIN" \
                   "$SERVER_SSH_TARGET:$SERVER_REMOTE_BIN"
 
-              # The server loads the NVIDIA library each runtime or library shim
-              # forwards to, by the same SONAME; send the copies from this lane.
-              # The client keeps its two shim search paths separate below.
+              # The server loads the NVIDIA libnccl by SONAME for the NCCL shim;
+              # send the copy from this lane. The client search path stays
+              # separate below.
               server_runtime_dir="${SERVER_REMOTE_BIN}-runtime"
-              vendor_libs=()
-              for shim in "$LUPINE_BUILD_DIR"/libcu*.so.* "$LUPINE_BUILD_DIR"/libnvjpeg.so.* "$LUPINE_BUILD_DIR"/libnpp*.so.*; do
-                [[ -e "$shim" ]] || continue
-                name="$(basename "$shim")"
-                [[ "$name" == libcuda.so.* ]] && continue
-                # The cuFile shim forwards nothing: it reads the file on the
-                # client and copies over the driver shim, so no libcufile goes.
-                [[ "$name" == libcufile.so.* ]] && continue
-                # The CUPTI shim forwards nothing either: it profiles nothing
-                # and answers on the client, so no libcupti goes.
-                [[ "$name" == libcupti.so.* ]] && continue
-                if [[ "$name" == libcudnn.so.* ]]; then
-                  # cuDNN comes from the PyTorch wheel, and libcudnn loads its
-                  # operation sublibraries from its own directory.
-                  vendor_libs+=("$CUDNN_HOME"/lib/libcudnn*.so.*)
-                elif [[ "$name" == libcusparseLt.so.* ]]; then
-                  # cuSPARSELt comes from the PyTorch wheel too.
-                  vendor_libs+=("$CUSPARSELT_HOME/lib/$name")
-                else
-                  vendor_libs+=("$CUDA_LIB_DIR/$name")
-                fi
-              done
-              for shim in "$LUPINE_BUILD_DIR"/libnccl.so.*; do
-                [[ -e "$shim" ]] && vendor_libs+=("$NCCL_HOME/lib/$(basename "$shim")")
-              done
-              # cuFFT and cuBLASLt load NVRTC and nvJitLink at run time for JIT
-              # kernels and LTO callbacks; send each once, by SONAME.
-              declare -A jit_sonames=()
-              for lib in "$CUDA_LIB_DIR"/libnvrtc.so.* "$CUDA_LIB_DIR"/libnvrtc-builtins.so.* "$CUDA_LIB_DIR"/libnvJitLink.so.*; do
-                [[ -e "$lib" ]] || continue
-                soname="$(readelf -d "$lib" | grep SONAME)" || continue
-                soname="${soname##*[}"
-                jit_sonames["${soname%]*}"]=1
-              done
-              for soname in "${!jit_sonames[@]}"; do
-                vendor_libs+=("$CUDA_LIB_DIR/$soname")
-              done
               timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
                 ssh "${ssh_args[@]}" "$SERVER_SSH_TARGET" "mkdir -p $server_runtime_dir"
               timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
-                scp -q "${ssh_args[@]}" "${vendor_libs[@]}" \
+                scp -q "${ssh_args[@]}" "$NCCL_HOME"/lib/libnccl.so.* \
                   "$SERVER_SSH_TARGET:$server_runtime_dir/"
               export SERVER_LD_LIBRARY_PATH="${SERVER_LD_LIBRARY_PATH:+$SERVER_LD_LIBRARY_PATH:}$server_runtime_dir"
 
@@ -820,8 +780,6 @@ jobs:
               export LIBRARY_SAMPLES_SKIP_LIST="cuFFT/3d_mgpu_c2c/bin/3d_mgpu_c2c_example"
               export INTEGRATION_RESULTS_DIR="/results/test/integration/results/$(date +%Y%m%d-%H%M%S)"
               mkdir -p "$INTEGRATION_RESULTS_DIR"
-              # Registers driver-only and driver-runtime against one build;
-              # one CTest invocation runs both even when either variant fails.
               cmake -S /src/test/integration -B /tmp/lupine-integration-ctest
               # Configuration can outlive ControlPersist. Establish one master
               # before the eight CTest workers open their first SSH sessions.

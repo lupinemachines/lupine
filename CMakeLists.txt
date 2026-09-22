@@ -1920,120 +1920,16 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         endif()
     endif()
 
-    if(TARGET lupine_cublas_client)
-        # cuSOLVER imports this undeclared export from cuBLAS 12.9 on.
-        set(lupine_cublas_undeclared_check "true")
-        if("${LUPINE_CUBLAS_SOVERSION}.${LUPINE_CUBLAS_MINOR}" VERSION_GREATER_EQUAL 12.9)
-            set(lupine_cublas_undeclared_check
-                "nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q ' T cublasSetEnvironmentMode@@libcublas.so.${LUPINE_CUBLAS_SOVERSION}$'")
-        endif()
-        add_test(NAME cublas_exports
-            COMMAND bash -c
-                "${lupine_cublas_undeclared_check} && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSgemm_v2 && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasGemmEx && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSetMatrix && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasXtSgemm && nm -D \"$<TARGET_FILE:lupine_cublaslt_client>\" | grep -q cublasLtMatmul && nm -D \"$<TARGET_FILE:lupine_cublaslt_client>\" | grep -q cublasLtMatmulDescCreate")
-    endif()
-
     if(TARGET lupine_hip_client)
         add_test(NAME hip_exports
             COMMAND bash -c
                 "nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipMalloc$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipMemcpyHtoD$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipStreamCreate$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipGraphLaunch$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipChooseDevice$'")
     endif()
 
-    if(TARGET lupine_cufft_client)
-        add_test(NAME cufft_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cufft_client>\" | grep -q cufftPlanMany && nm -D \"$<TARGET_FILE:lupine_cufft_client>\" | grep -q cufftExecC2C && nm -D \"$<TARGET_FILE:lupine_cufft_client>\" | grep -q cufftXtMemcpy")
-    endif()
-
-    if(TARGET lupine_cudnn_client)
-        add_test(NAME cudnn_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cudnn_client>\" | grep -q cudnnConvolutionForward && nm -D \"$<TARGET_FILE:lupine_cudnn_client>\" | grep -q cudnnBackendSetAttribute && nm -D \"$<TARGET_FILE:lupine_cudnn_client>\" | grep -q cudnnMultiHeadAttnForward")
-    endif()
-
-    if(TARGET lupine_curand_client)
-        add_test(NAME curand_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_curand_client>\" | grep -q ' T curandCreateGeneratorHost@@libcurand.so.${LUPINE_CURAND_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_curand_client>\" | grep -q ' T curandGenerateNormal@@libcurand.so.${LUPINE_CURAND_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_curand_client>\" | grep -q ' T curandGetDirectionVectors64@@libcurand.so.${LUPINE_CURAND_SOVERSION}$'")
-    endif()
-
-    if(TARGET lupine_cusparse_client)
-        set(lupine_cusparse_removed_check "true")
-        if(LUPINE_CUSPARSE_SOVERSION LESS 12)
-            set(lupine_cusparse_removed_check
-                "nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseScsrsv2_bufferSize@@libcusparse.so.${LUPINE_CUSPARSE_SOVERSION}$'")
-        endif()
-        add_test(NAME cusparse_exports
-            COMMAND bash -c
-                "${lupine_cusparse_removed_check} && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseSpMV@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseCreateCsr@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseXcsrsort@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseGetErrorString@'")
-    endif()
-
-    if(TARGET lupine_cusparselt_client)
-        add_test(NAME cusparselt_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cusparselt_client>\" | grep -q ' T cusparseLtInit$' && nm -D \"$<TARGET_FILE:lupine_cusparselt_client>\" | grep -q ' T cusparseLtStructuredDescriptorInit$' && nm -D \"$<TARGET_FILE:lupine_cusparselt_client>\" | grep -q ' T cusparseLtSpMMACompress2$' && nm -D \"$<TARGET_FILE:lupine_cusparselt_client>\" | grep -q ' T cusparseLtMatmulSearch$'")
-    endif()
-
-    if(TARGET lupine_cusolver_client)
-        add_test(NAME cusolver_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cusolver_client>\" | grep -q ' T cusolverDnXgetrf@@libcusolver.so.${LUPINE_CUSOLVER_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_cusolver_client>\" | grep -q ' T cusolverSpDcsrqrsvBatched@@libcusolver.so.${LUPINE_CUSOLVER_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_cusolver_client>\" | grep -q ' T cusolverRfRefactor@@libcusolver.so.${LUPINE_CUSOLVER_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_cusolvermg_client>\" | grep -q ' T cusolverMgSyevd@@libcusolverMg.so.${LUPINE_CUSOLVER_SOVERSION}$'")
-    endif()
-
-    if(TARGET lupine_nvrtc_client)
-        add_test(NAME nvrtc_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_nvrtc_client>\" | grep -q ' T nvrtcCompileProgram@@libnvrtc.so.${LUPINE_NVRTC_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvrtc_client>\" | grep -q ' T nvrtcGetLoweredName@@libnvrtc.so.${LUPINE_NVRTC_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvrtc_client>\" | grep -q ' T nvrtcGetPTX@@libnvrtc.so.${LUPINE_NVRTC_SOVERSION}$'")
-    endif()
-
     if(TARGET lupine_nccl_client)
         add_test(NAME nccl_exports
             COMMAND bash -c
                 "nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclAllReduce$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T pncclAllReduce$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclGroupEnd$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclCommInitRank$'")
-    endif()
-
-    if(TARGET lupine_nvjitlink_client)
-        add_test(NAME nvjitlink_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T nvJitLinkCreate@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T __nvJitLinkCreate_${LUPINE_NVJITLINK_MAJOR}_${LUPINE_NVJITLINK_MINOR}@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T __nvJitLinkGetLinkedPtx_${LUPINE_NVJITLINK_MAJOR}_0@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T nvJitLinkVersion@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$'")
-    endif()
-
-    if(TARGET lupine_nvjpeg_client)
-        add_test(NAME nvjpeg_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_nvjpeg_client>\" | grep -q ' T nvjpegDecode@@libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjpeg_client>\" | grep -q ' T nvjpegDecodeBatchedEx@@libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjpeg_client>\" | grep -q ' T nvjpegEncodeRetrieveBitstream@@libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION}$'")
-    endif()
-
-    if(TARGET lupine_nppc_client)
-        # One representative export per library, each on its library's node.
-        set(npp_export_checks
-            "nppc:nppGetStreamContext" "nppial:nppiAdd_8u_C1RSfs_Ctx"
-            "nppicc:nppiRGBToGray_8u_C3C1R_Ctx" "nppidei:nppiCopy_8u_C1R_Ctx"
-            "nppif:nppiFilterBoxBorder_8u_C1R_Ctx" "nppig:nppiResize_8u_C1R_Ctx"
-            "nppim:nppiDilate3x3_8u_C1R_Ctx" "nppist:nppiMean_StdDev_8u_C1R_Ctx"
-            "nppisu:nppiMalloc_8u_C1" "nppitc:nppiThreshold_8u_C1R_Ctx"
-            "npps:nppsSum_32f_Ctx")
-        foreach(check IN LISTS npp_export_checks)
-            string(REPLACE ":" ";" check "${check}")
-            list(GET check 0 library)
-            list(GET check 1 symbol)
-            add_test(NAME ${library}_exports
-                COMMAND bash -c
-                    "nm -D \"$<TARGET_FILE:lupine_${library}_client>\" | grep -q ' T ${symbol}@@lib${library}.so.${LUPINE_NPP_SOVERSION}$'")
-        endforeach()
-    endif()
-
-    if(TARGET lupine_cufile_client)
-        add_test(NAME cufile_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileHandleRegister$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileRead$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileWrite$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileDriverClose$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileDriverClose_v2$'")
-    endif()
-
-    if(TARGET lupine_cupti_client)
-        # The entry points PyTorch's libtorch_cpu.so resolves from libcupti,
-        # each under the SONAME's version node.
-        add_test(NAME cupti_exports
-            COMMAND bash -c
-                "for symbol in cuptiActivityDisable cuptiActivityEnable cuptiActivityEnableCudaEventDeviceTimestamps cuptiActivityEnableDriverApi cuptiActivityEnableRuntimeApi cuptiActivityFlushAll cuptiActivityGetNextRecord cuptiActivityGetNumDroppedRecords cuptiActivityPopExternalCorrelationId cuptiActivityPushExternalCorrelationId cuptiActivityRegisterCallbacks cuptiActivityRegisterTimestampCallback cuptiActivitySetAttribute cuptiEnableCallback cuptiEnableDomain cuptiFinalize cuptiGetCallbackName cuptiGetResultString cuptiGetVersion cuptiSubscribe cuptiUnsubscribe; do nm -D \"$<TARGET_FILE:lupine_cupti_client>\" | grep -q \" T \${symbol}@@libcupti.so.${LUPINE_CUPTI_SOVERSION}$\" || exit 1; done")
     endif()
 
     if(TARGET lupine_nvshmem_client)
