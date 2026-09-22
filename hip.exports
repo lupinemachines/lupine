@@ -1,6 +1,8 @@
 {
     global:
         hip*;
+        __hip*;
+        lupine_hip_client_marker;
     local:
         *;
 };

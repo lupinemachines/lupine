@@ -1,3 +1,4 @@
+#include "device_stdout.h"
 #include "lupine_platform.h"
 
 #include <algorithm>
@@ -5028,22 +5029,7 @@ extern "C" CUresult cuLinkAddFile(CUlinkState state, CUjitInputType type,
 }
 
 extern "C" int lupine_forward_remote_stdout(conn_t *conn) {
-  uint64_t output_size = 0;
-  if (rpc_read_buffer(conn, &output_size, sizeof(output_size)) < 0) {
-    return -1;
-  }
-  if (output_size == 0) {
-    return 0;
-  }
-  std::string output;
-  output.resize(static_cast<size_t>(output_size));
-  if (rpc_read(conn, output.data(), output.size()) < 0) {
-    return -1;
-  }
-  fflush(stdout);
-  std::cout.flush();
-  return fwrite(output.data(), 1, output.size(), stdout) == output.size() ? 0
-                                                                          : -1;
+  return lupine_read_captured_stdout(conn);
 }
 
 extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {

@@ -346,23 +346,6 @@ extern "C" hipError_t hipDeviceSynchronize() {
   return lupine_rpc_hipDeviceSynchronize(conn);
 }
 
-static hipError_t lupine_rpc_hipDeviceReset(conn_t *conn) {
-  hipError_t return_value = rpc_error();
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_hipDeviceReset) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  return return_value;
-}
-
-extern "C" hipError_t hipDeviceReset() {
-  conn_t *conn = connection();
-  return lupine_rpc_hipDeviceReset(conn);
-}
-
 static hipError_t lupine_rpc_hipDeviceGetDefaultMemPool(conn_t *conn,
                                                         hipMemPool_t *mem_pool,
                                                         int device) {
@@ -6635,46 +6618,6 @@ extern "C" hipError_t hipHostRegister(void *hostPtr, size_t sizeBytes,
   (void)hostPtr;
   (void)sizeBytes;
   (void)flags;
-  return hipErrorNotSupported;
-}
-
-extern "C" hipError_t hipModuleLoadData(hipModule_t *module,
-                                        const void *image) {
-  (void)module;
-  (void)image;
-  return hipErrorNotSupported;
-}
-
-extern "C" hipError_t
-hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
-                      unsigned int gridDimY, unsigned int gridDimZ,
-                      unsigned int blockDimX, unsigned int blockDimY,
-                      unsigned int blockDimZ, unsigned int sharedMemBytes,
-                      hipStream_t stream, void **kernelParams, void **extra) {
-  (void)f;
-  (void)gridDimX;
-  (void)gridDimY;
-  (void)gridDimZ;
-  (void)blockDimX;
-  (void)blockDimY;
-  (void)blockDimZ;
-  (void)sharedMemBytes;
-  (void)stream;
-  (void)kernelParams;
-  (void)extra;
-  return hipErrorNotSupported;
-}
-
-extern "C" hipError_t hipLaunchKernel(const void *function_address,
-                                      dim3 numBlocks, dim3 dimBlocks,
-                                      void **args, size_t sharedMemBytes,
-                                      hipStream_t stream) {
-  (void)function_address;
-  (void)numBlocks;
-  (void)dimBlocks;
-  (void)args;
-  (void)sharedMemBytes;
-  (void)stream;
   return hipErrorNotSupported;
 }
 

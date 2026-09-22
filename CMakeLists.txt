@@ -304,6 +304,7 @@ add_library(lupine_rpc_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dispatch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/device_stdout.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client_bundle.cpp
 )
 lupine_internal_target(lupine_rpc_core)
@@ -574,6 +575,16 @@ if(NOT WIN32 AND LUPINE_BUILD_HIP)
         OUTPUT_NAME amdhip64
         VERSION 1
         SOVERSION 1)
+    # Retain Lupine's .so.1 name while satisfying binaries linked against the
+    # installed ROCm SDK (for example, DT_NEEDED libamdhip64.so.7).
+    file(STRINGS "${LUPINE_HIP_INCLUDE_DIR}/hip/hip_version.h"
+         lupine_hip_version_line REGEX "^#define HIP_VERSION_MAJOR +[0-9]+")
+    string(REGEX REPLACE ".*HIP_VERSION_MAJOR +([0-9]+).*" "\\1"
+           lupine_hip_runtime_major "${lupine_hip_version_line}")
+    add_custom_command(TARGET lupine_hip_client POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+                "$<TARGET_FILE_NAME:lupine_hip_client>"
+                "$<TARGET_FILE_DIR:lupine_hip_client>/libamdhip64.so.${lupine_hip_runtime_major}")
     add_custom_target(lupine_hip DEPENDS lupine_hip_client)
 endif()
 
@@ -884,6 +895,13 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
 
     if(TARGET lupine_hip_client)
+        add_executable(hip_registration_test test/hip_registration_test.cpp)
+        target_include_directories(hip_registration_test PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR} ${LUPINE_HIP_INCLUDE_DIR})
+        target_compile_definitions(hip_registration_test PRIVATE __HIP_PLATFORM_AMD__)
+        target_link_libraries(hip_registration_test PRIVATE
+            lupine_hip_client Threads::Threads)
+        add_test(NAME hip_registration_test COMMAND hip_registration_test)
         add_test(NAME hip_exports
             COMMAND bash -c
                 "nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipMalloc$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipMemcpyHtoD$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipStreamCreate$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipGraphLaunch$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipChooseDevice$'")

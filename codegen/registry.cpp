@@ -485,6 +485,12 @@
   HANDLER(RPC_nvmlDeviceGetNvLinkRemotePciInfo_v2, handle_nvmlDeviceGetNvLinkRemotePciInfo_v2, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetCudaComputeCapability, handle_nvmlDeviceGetCudaComputeCapability, rpc_backend::nvml)
 #define LUPINE_HIP_RPC_HANDLERS(HANDLER) \
+  HANDLER(RPC_hipGetErrorString, handle_hipGetErrorString, rpc_backend::hip) \
+  HANDLER(RPC_hipGetErrorName, handle_hipGetErrorName, rpc_backend::hip) \
+  HANDLER(RPC_hipModuleUnload, handle_hipModuleUnload, rpc_backend::hip) \
+  HANDLER(RPC_hipModuleLoadData, handle_hipModuleLoadData, rpc_backend::hip) \
+  HANDLER(RPC_hipModuleLaunchKernel, handle_hipModuleLaunchKernel, rpc_backend::hip) \
+  HANDLER(RPC_hipLaunchKernel, handle_hipModuleLaunchKernel, rpc_backend::hip) \
   HANDLER(RPC_hipInit, handle_hipInit, rpc_backend::hip) \
   HANDLER(RPC_hipGetDeviceCount, handle_hipGetDeviceCount, rpc_backend::hip) \
   HANDLER(RPC_hipDeviceGet, handle_hipDeviceGet, rpc_backend::hip) \
@@ -658,7 +664,6 @@
   HANDLER(RPC_hipDevicePrimaryCtxRetain, handle_hipDevicePrimaryCtxRetain, rpc_backend::hip) \
   HANDLER(RPC_hipDevicePrimaryCtxReset, handle_hipDevicePrimaryCtxReset, rpc_backend::hip) \
   HANDLER(RPC_hipDevicePrimaryCtxSetFlags, handle_hipDevicePrimaryCtxSetFlags, rpc_backend::hip) \
-  HANDLER(RPC_hipModuleUnload, handle_hipModuleUnload, rpc_backend::hip) \
   HANDLER(RPC_hipModuleGetFunction, handle_hipModuleGetFunction, rpc_backend::hip) \
   HANDLER(RPC_hipModuleGetFunctionCount, handle_hipModuleGetFunctionCount, rpc_backend::hip) \
   HANDLER(RPC_hipLibraryUnload, handle_hipLibraryUnload, rpc_backend::hip) \

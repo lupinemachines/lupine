@@ -487,6 +487,8 @@
 #define RPC_hipGetLastError 1798010550
 #define RPC_hipExtGetLastError 696469396
 #define RPC_hipPeekAtLastError 1304510228
+#define RPC_hipGetErrorString 2139246685
+#define RPC_hipGetErrorName 2091111978
 #define RPC_hipGetDevicePropertiesR0600 768204638
 #define RPC_hipDeviceGetName 2031968752
 #define RPC_hipDeviceTotalMem 53957243
@@ -743,6 +745,9 @@
 #define RPC_hipMemRetainAllocationHandle 1862472557
 #define RPC_hipMemSetAccess 314125663
 #define RPC_hipMemUnmap 1146827046
+#define RPC_hipModuleLoadData 417453143
+#define RPC_hipModuleLaunchKernel 348401074
+#define RPC_hipLaunchKernel 1869134569
 #define RPC_ncclMemAlloc 1326162165
 #define RPC_ncclMemFree 1631597426
 #define RPC_ncclGetVersion 260300160
