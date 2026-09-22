@@ -31,3 +31,9 @@ test/cuda-library-samples/nvcomp/
 test/cuda-library-samples/nvtiff/
 test/cuda-library-samples/nppplus/
 test/cuda-library-samples/cudss-transition/
+test/hip-tests/hip-tests/
+test/hip-tests/results/
+test/rocm-examples/rocm-examples/
+test/rocm-examples/results/
+test/rocm-libraries/rocm-libraries/
+test/rocm-libraries/results/
