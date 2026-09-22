@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
-#include <pthread.h>
 #if defined(__linux__)
 #include <sys/mman.h>
 #include <unistd.h>
