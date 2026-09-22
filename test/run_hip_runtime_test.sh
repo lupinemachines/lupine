@@ -12,19 +12,10 @@ SERVER_PORT_BASE="${SERVER_PORT_BASE:-14990}"
 native=0
 [[ "${1:-}" == "--native" ]] && native=1
 
-source_file="${HIP_TEST_SOURCE:-$repo_root/test/test_hip_runtime.cpp}"
-exe="$BUILD_DIR/$(basename "${source_file%.*}")"
+exe="$BUILD_DIR/test_hip_runtime"
 lib_dir="$BUILD_DIR"
 [[ "$native" == "1" ]] && lib_dir="$ROCM_PATH/lib"
-compiler=(g++)
-if [[ "$source_file" == *.hip ]]; then
-  compiler=("$ROCM_PATH/bin/hipcc" "--offload-arch=${HIP_TEST_ARCH:-native}")
-  # WSL cannot service HIP printf hostcalls, which require PCIe atomics.
-  if [[ "$(uname -r)" == *[Mm]icrosoft* ]]; then
-    compiler+=(-mprintf-kind=buffered)
-  fi
-fi
-"${compiler[@]}" -std=c++17 -Wall -I"$ROCM_PATH/include" "$source_file" \
+g++ -std=c++17 -Wall -I"$ROCM_PATH/include" "$repo_root/test/test_hip_runtime.cpp" \
   -o "$exe" -L"$lib_dir" -lamdhip64
 
 if [[ "$native" == "1" ]]; then

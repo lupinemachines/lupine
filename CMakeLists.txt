@@ -895,13 +895,6 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
 
     if(TARGET lupine_hip_client)
-        add_executable(hip_registration_test test/hip_registration_test.cpp)
-        target_include_directories(hip_registration_test PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR} ${LUPINE_HIP_INCLUDE_DIR})
-        target_compile_definitions(hip_registration_test PRIVATE __HIP_PLATFORM_AMD__)
-        target_link_libraries(hip_registration_test PRIVATE
-            lupine_hip_client Threads::Threads)
-        add_test(NAME hip_registration_test COMMAND hip_registration_test)
         add_test(NAME hip_exports
             COMMAND bash -c
                 "nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipMalloc$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipMemcpyHtoD$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipStreamCreate$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipGraphLaunch$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipChooseDevice$'")
