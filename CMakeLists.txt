@@ -35,10 +35,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(CTest)
 find_package(Threads REQUIRED)
 
-set(LUPINE_MANYLINUX2014 OFF)
+set(LUPINE_MANYLINUX OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
-   "$ENV{AUDITWHEEL_POLICY}" STREQUAL "manylinux2014")
-    set(LUPINE_MANYLINUX2014 ON)
+   "$ENV{AUDITWHEEL_POLICY}" STREQUAL "manylinux_2_28")
+    set(LUPINE_MANYLINUX ON)
     include(ExternalProject)
     include(FetchContent)
     include(ProcessorCount)
@@ -54,7 +54,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
     endif()
 
     set(LUPINE_OPENSSL_PREFIX
-        "${CMAKE_BINARY_DIR}/manylinux2014/openssl")
+        "${CMAKE_BINARY_DIR}/manylinux/openssl")
     file(MAKE_DIRECTORY "${LUPINE_OPENSSL_PREFIX}/include")
 
     function(lupine_add_manylinux_nghttp2)
@@ -258,8 +258,8 @@ function(lupine_internal_target target)
     )
 endfunction()
 
-function(lupine_manylinux2014_client target)
-    if(LUPINE_MANYLINUX2014)
+function(lupine_manylinux_client target)
+    if(LUPINE_MANYLINUX)
         target_link_options(${target} PRIVATE
             -static-libgcc
             -static-libstdc++
@@ -312,7 +312,7 @@ target_include_directories(lupine_rpc_core
     PRIVATE ${NGHTTP2_INCLUDE_DIR})
 target_link_libraries(lupine_rpc_core PUBLIC
     Threads::Threads ${NGHTTP2_LIBRARY} lupine_lz4)
-if(LUPINE_MANYLINUX2014)
+if(LUPINE_MANYLINUX)
     add_dependencies(lupine_rpc_core lupine_manylinux_openssl_external)
 endif()
 if(OpenSSL_FOUND)
@@ -380,7 +380,7 @@ if(LUPINE_BUILD_CUDA)
         ${CMAKE_DL_LIBS})
     set_target_properties(lupine_cuda_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_cuda_client)
+    lupine_manylinux_client(lupine_cuda_client)
     if(WIN32)
         target_compile_definitions(lupine_cuda_client PRIVATE
             LUPINE_WINDOWS_POSIX_SHIMS
@@ -438,7 +438,7 @@ if(LUPINE_BUILD_CUDA)
         lupine_cudart_headers lupine_cuda_client lupine_ipc Threads::Threads)
     set_target_properties(lupine_cudart_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_cudart_client)
+    lupine_manylinux_client(lupine_cudart_client)
     if(WIN32)
         target_compile_options(lupine_cudart_client PRIVATE /wd4996)
         set_target_properties(lupine_cudart_client PROPERTIES
@@ -500,7 +500,7 @@ if(LUPINE_BUILD_CUBLAS)
         target_link_libraries(${target} PRIVATE
             lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
         set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        lupine_manylinux2014_client(${target})
+        lupine_manylinux_client(${target})
         if(WIN32)
             target_compile_options(${target} PRIVATE /wd4996)
             set_target_properties(${target} PROPERTIES
@@ -552,7 +552,7 @@ if(LUPINE_BUILD_CUFFT)
         lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
     set_target_properties(lupine_cufft_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_cufft_client)
+    lupine_manylinux_client(lupine_cufft_client)
     if(WIN32)
         target_compile_options(lupine_cufft_client PRIVATE /wd4996)
         set_target_properties(lupine_cufft_client PROPERTIES
@@ -609,7 +609,7 @@ if(LUPINE_BUILD_CUDNN)
         lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
     set_target_properties(lupine_cudnn_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_cudnn_client)
+    lupine_manylinux_client(lupine_cudnn_client)
     if(WIN32)
         target_compile_options(lupine_cudnn_client PRIVATE /wd4996)
         set_target_properties(lupine_cudnn_client PROPERTIES
@@ -661,7 +661,7 @@ if(LUPINE_BUILD_CURAND)
         lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
     set_target_properties(lupine_curand_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_curand_client)
+    lupine_manylinux_client(lupine_curand_client)
     if(WIN32)
         target_compile_options(lupine_curand_client PRIVATE /wd4996)
         set_target_properties(lupine_curand_client PROPERTIES
@@ -714,7 +714,7 @@ if(LUPINE_BUILD_CUSPARSE)
         lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
     set_target_properties(lupine_cusparse_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_cusparse_client)
+    lupine_manylinux_client(lupine_cusparse_client)
     if(WIN32)
         target_compile_options(lupine_cusparse_client PRIVATE /wd4996)
         set_target_properties(lupine_cusparse_client PROPERTIES
@@ -773,7 +773,7 @@ if(LUPINE_BUILD_CUSPARSELT)
         lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
     set_target_properties(lupine_cusparselt_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_cusparselt_client)
+    lupine_manylinux_client(lupine_cusparselt_client)
     if(WIN32)
         target_compile_options(lupine_cusparselt_client PRIVATE /wd4996)
         set_target_properties(lupine_cusparselt_client PROPERTIES
@@ -832,7 +832,7 @@ if(LUPINE_BUILD_CUSOLVER)
         target_link_libraries(${target} PRIVATE
             lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
         set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        lupine_manylinux2014_client(${target})
+        lupine_manylinux_client(${target})
         if(WIN32)
             target_compile_options(${target} PRIVATE /wd4996)
             set_target_properties(${target} PROPERTIES
@@ -887,7 +887,7 @@ if(LUPINE_BUILD_NVRTC)
         lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
     set_target_properties(lupine_nvrtc_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_nvrtc_client)
+    lupine_manylinux_client(lupine_nvrtc_client)
     if(WIN32)
         target_compile_options(lupine_nvrtc_client PRIVATE /wd4996)
         set_target_properties(lupine_nvrtc_client PROPERTIES
@@ -957,7 +957,7 @@ if(LUPINE_BUILD_NCCL)
         BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
         VERSION ${LUPINE_NCCL_SOVERSION}
         SOVERSION ${LUPINE_NCCL_SOVERSION})
-    lupine_manylinux2014_client(lupine_nccl_client)
+    lupine_manylinux_client(lupine_nccl_client)
     add_custom_target(lupine_nccl DEPENDS lupine_nccl_client)
 endif()
 
@@ -1009,7 +1009,7 @@ if(LUPINE_BUILD_NVJITLINK)
         lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
     set_target_properties(lupine_nvjitlink_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_nvjitlink_client)
+    lupine_manylinux_client(lupine_nvjitlink_client)
     if(WIN32)
         target_compile_options(lupine_nvjitlink_client PRIVATE /wd4996)
         set_target_properties(lupine_nvjitlink_client PROPERTIES
@@ -1062,7 +1062,7 @@ if(LUPINE_BUILD_NVJPEG)
         lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
     set_target_properties(lupine_nvjpeg_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_nvjpeg_client)
+    lupine_manylinux_client(lupine_nvjpeg_client)
     if(WIN32)
         target_compile_options(lupine_nvjpeg_client PRIVATE /wd4996)
         set_target_properties(lupine_nvjpeg_client PROPERTIES
@@ -1132,7 +1132,7 @@ if(LUPINE_BUILD_NPP)
         target_link_libraries(${target} PRIVATE
             lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
         set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        lupine_manylinux2014_client(${target})
+        lupine_manylinux_client(${target})
         if(WIN32)
             target_compile_options(${target} PRIVATE /wd4996)
             set_target_properties(${target} PROPERTIES
@@ -1227,7 +1227,7 @@ if(LUPINE_BUILD_CUFILE)
         BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
         VERSION 0
         SOVERSION 0)
-    lupine_manylinux2014_client(lupine_cufile_client)
+    lupine_manylinux_client(lupine_cufile_client)
     add_custom_target(lupine_cufile DEPENDS lupine_cufile_client)
 endif()
 
@@ -1279,7 +1279,7 @@ if(LUPINE_BUILD_CUPTI)
         BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
         VERSION ${LUPINE_CUPTI_SOVERSION}
         SOVERSION ${LUPINE_CUPTI_SOVERSION})
-    lupine_manylinux2014_client(lupine_cupti_client)
+    lupine_manylinux_client(lupine_cupti_client)
     add_custom_target(lupine_cupti DEPENDS lupine_cupti_client)
     # nvSHMEM is Linux-only and ships outside the toolkit, in its own package
     # or wheel, whose headers keep a directory of their own rather than sit
@@ -1322,7 +1322,7 @@ if(LUPINE_BUILD_NVSHMEM)
         BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
         VERSION ${LUPINE_NVSHMEM_SOVERSION}
         SOVERSION ${LUPINE_NVSHMEM_SOVERSION})
-    lupine_manylinux2014_client(lupine_nvshmem_client)
+    lupine_manylinux_client(lupine_nvshmem_client)
     add_custom_target(lupine_nvshmem DEPENDS lupine_nvshmem_client)
 endif()
 
@@ -1336,7 +1336,7 @@ if(LUPINE_BUILD_NVML)
     target_link_libraries(lupine_nvml_client PRIVATE lupine_client_transport)
     set_target_properties(lupine_nvml_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_nvml_client)
+    lupine_manylinux_client(lupine_nvml_client)
     if(WIN32)
         target_compile_definitions(lupine_nvml_client PRIVATE
             LUPINE_WINDOWS_POSIX_SHIMS

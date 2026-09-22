@@ -80,10 +80,11 @@ also asserted when the RPC connection opens, closing the race between
 discovery and a server upgrade. `LUPINE_LIBDIR` remains an explicit local
 override for development.
 
-Linux client objects target the manylinux2014 ABI (glibc 2.17) and statically
+Linux client objects target the manylinux_2_28 ABI (glibc 2.28) and statically
 include their private C++, HTTP/2, and TLS dependencies. They therefore work on
 newer glibc distributions, including Ubuntu 22.04, without requiring host copies
-of libstdc++, nghttp2, or OpenSSL.
+of libstdc++, nghttp2, or OpenSSL. Linux clients require glibc 2.28 or newer;
+CentOS/RHEL 7 and Ubuntu 18.04 are no longer supported.
 
 ## Graceful Server Checkpoints
 

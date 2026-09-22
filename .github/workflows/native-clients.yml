@@ -26,10 +26,10 @@ jobs:
         include:
           - runner: ubuntu-24.04
             tag: linux-x86_64
-            manylinux_image: quay.io/pypa/manylinux2014_x86_64@sha256:f6077fab327d7823d7cee287b93ef63efe3af0e234add7503121247c1475ebec
+            manylinux_image: quay.io/pypa/manylinux_2_28_x86_64@sha256:531d7aa844bbb0c131d4ab011d3db741c4abc8d498cd5ccc86121046f62303b4
           - runner: ubuntu-24.04-arm
             tag: linux-aarch64
-            manylinux_image: quay.io/pypa/manylinux2014_aarch64@sha256:a0e2c77d2f0c2c2245bcacaf4024b2e19fa39257c172d6d7e33393aa0c3285ec
+            manylinux_image: quay.io/pypa/manylinux_2_28_aarch64@sha256:bbb43f784ce78a454a9e3351b862a12e7ad5c30972e8aeba092da678918bbba9
           - runner: macos-26
             tag: macosx-arm64
           - runner: macos-26-intel
@@ -83,7 +83,7 @@ jobs:
             '${{ matrix.manylinux_image }}' \
             bash -lc '
               set -euo pipefail
-              yum -q install -y perl-core
+              dnf -q install -y perl-core
               export PATH="/opt/python/cp312-cp312/bin:$PATH"
 
               cmake -E remove_directory build
@@ -100,6 +100,26 @@ jobs:
               cmake --build build --parallel \
                 --target lupine_cuda_client lupine_runtime_clients lupine_nvml
             '
+
+      - name: Verify Linux client ABI
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          for lib in build/lib*.so; do
+            # Private dependencies must remain static when the builder changes.
+            needed="$(objdump -p "$lib" | awk '/NEEDED/ {print $2}')"
+            if grep -E '^lib(stdc\+\+|gcc_s|nghttp2|ssl|crypto)\.so' <<< "$needed"; then
+              echo "$lib has a shared dependency that must be linked statically"
+              exit 1
+            fi
+            glibc="$(readelf --version-info "$lib" |
+              grep -oE 'GLIBC_[0-9]+(\.[0-9]+)*' | sort -Vu | tail -1)"
+            if [ "$(printf '%s\n' GLIBC_2.28 "$glibc" | sort -V | tail -1)" != GLIBC_2.28 ]; then
+              echo "$lib requires $glibc, newer than the glibc 2.28 baseline"
+              exit 1
+            fi
+            echo "$lib: $glibc; private dependencies linked statically"
+          done
 
       - name: Build complete client (macOS)
         if: runner.os == 'macOS'

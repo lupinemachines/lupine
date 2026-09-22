@@ -10,8 +10,8 @@ and keep only its include tree, so a builder never holds more than one.
 
 The wheels are pulled for a fixed set of platform tags rather than the host's:
 headers are architecture-independent, and NVIDIA builds these against several
-glibc baselines (cuda-runtime 2.17, NCCL 2.18, CUPTI 2.25, cuBLAS and cuDNN 2.27), none of
-which a manylinux2014 builder could install.
+glibc baselines (cuda-runtime 2.17, NCCL 2.18, CUPTI 2.25, cuBLAS and cuDNN 2.27).
+Explicit tags also let macOS, Windows, and aarch64 builders fetch the same headers.
 """
 
 import argparse
