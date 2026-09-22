@@ -299,6 +299,30 @@ static CUresult lupine_ensure_device_table() {
   return CUDA_SUCCESS;
 }
 
+extern "C" bool
+lupine_connection_supports_concurrent_managed_access(conn_t *conn) {
+  // Identity mappings belong to one server connection. Managed pointers can
+  // be shared only when every visible device routes through their owner.
+  if (conn == nullptr || conn->va_size == 0 ||
+      lupine_ensure_device_table() != CUDA_SUCCESS) {
+    return false;
+  }
+
+  int index = lupine_conn_index(conn);
+  if (index < 0) {
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  const auto &devices = lupine_device_table();
+  return !devices.empty() &&
+         std::all_of(
+             devices.begin(), devices.end(), [index](const auto &device) {
+               return !device.local &&
+                      device.conn_index == static_cast<unsigned int>(index);
+             });
+}
+
 CUresult lupine_virtual_device_count(int *count) {
   if (count == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;

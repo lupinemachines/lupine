@@ -593,7 +593,7 @@ cudaDeviceGetAttribute(int *value, enum cudaDeviceAttr attr, int device) {
       lupine_rpc_cudaDeviceGetAttribute(conn, value, attr, device);
   if (return_value == cudaSuccess &&
       lupine_device_attribute_is_virtualized(
-          static_cast<CUdevice_attribute>(attr))) {
+          conn, static_cast<CUdevice_attribute>(attr))) {
     *value = 0;
   }
   return return_value;
@@ -2039,7 +2039,10 @@ extern "C" cudaError_t cudaGetDeviceProperties(struct cudaDeviceProp *prop,
     // Match the driver's remote-memory capabilities, not the server CPU's.
     prop->pageableMemoryAccess = 0;
     prop->pageableMemoryAccessUsesHostPageTables = 0;
-    prop->concurrentManagedAccess = 0;
+    if (lupine_device_attribute_is_virtualized(
+            conn, CU_DEVICE_ATTRIBUTE_CONCURRENT_MANAGED_ACCESS)) {
+      prop->concurrentManagedAccess = 0;
+    }
     prop->directManagedMemAccessFromHost = 0;
   }
   return return_value;
