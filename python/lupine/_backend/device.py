@@ -1,9 +1,17 @@
 """The ``torch.lupine`` device module, also installed as ``torch.cuda`` when
 the host torch has no CUDA build.
 
-Everything here is host-side state or a message to the worker: streams and
-events are stubs because the worker runs every op on one stream in issue
-order; CUDA graphs are captured and replayed by the worker's own torch.
+Only what must live on the host is defined here: the device the backend
+selects and counts (``is_available``, ``device_count``, ``current_device``,
+``set_device``, ``device``, ``_lazy_init``, ``_is_in_bad_fork``, ...),
+streams and events (stubs: the worker runs every op on one stream in issue
+order), CUDA graphs (captured and replayed by the worker's torch),
+``synchronize``, and the installation over ``torch.cuda``. Every other
+``torch.cuda`` function (device properties and capabilities, memory
+statistics, RNG seeds and states, ``current_blas_handle``, ``empty_cache``,
+``mem_get_info``, ...) is resolved by ``__getattr__`` on the worker's real
+``torch.cuda``: the call travels pickled, runs with the host's current device
+selected, and its picklable result comes back (RNG states as CPU tensors).
 """
 
 from __future__ import annotations
@@ -11,7 +19,9 @@ from __future__ import annotations
 import base64
 import functools
 import gc
+import inspect
 import json
+import pickle
 import warnings
 from typing import Any
 
@@ -50,6 +60,46 @@ def _eval(code: str) -> Any:
 
 def _exec(code: str) -> None:
     _C().exec(code)
+
+
+# --- forwarding to the worker's torch.cuda ----------------------------------
+
+
+class _Properties:
+    """``torch.cuda.get_device_properties`` as the worker reports it."""
+
+    def __init__(self, values: dict[str, Any]):
+        self.__dict__.update(values)
+
+    def __repr__(self) -> str:
+        return (
+            f"_CudaDeviceProperties(name='{self.name}', major={self.major}, "
+            f"minor={self.minor}, total_memory={self.total_memory >> 20}MB, "
+            f"multi_processor_count={self.multi_processor_count})"
+        )
+
+
+def _to_worker(value: Any) -> Any:
+    if isinstance(value, torch.device) and value.type in ("cuda", _DEVICE_NAME):
+        return torch.device("cuda") if value.index is None else torch.device("cuda", value.index)
+    return value
+
+
+def _forwarded(name: str) -> Any:
+    def call(*args: Any, **kwargs: Any) -> Any:
+        payload = ([_to_worker(a) for a in args], {k: _to_worker(v) for k, v in kwargs.items()})
+        encoded = base64.b64encode(pickle.dumps(payload)).decode()
+        result = _eval(f"_cuda({name!r}, {encoded!r}, {_C().current_device()})")
+        return pickle.loads(base64.b64decode(result))
+
+    call.__name__ = name
+    return call
+
+
+def __getattr__(name: str) -> Any:
+    if name.startswith("_") or not inspect.isfunction(getattr(torch.cuda, name, None)):
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return _forwarded(name)
 
 
 # --- devices ----------------------------------------------------------------
@@ -117,150 +167,14 @@ class device_of(device):
         super().__init__(obj.get_device() if obj.device.type != "cpu" else -1)
 
 
-class _Properties:
-    def __init__(self, values: dict[str, Any]):
-        self.__dict__.update(values)
-
-    def __repr__(self) -> str:
-        return (
-            f"_CudaDeviceProperties(name='{self.name}', major={self.major}, "
-            f"minor={self.minor}, total_memory={self.total_memory >> 20}MB, "
-            f"multi_processor_count={self.multi_processor_count})"
-        )
-
-
-@functools.lru_cache(maxsize=None)
-def get_device_properties(device: Any = None) -> _Properties:
-    from . import info
-
-    return _Properties(info()["devices"][_index(device)])
-
-
-def get_device_name(device: Any = None) -> str:
-    return get_device_properties(device).name
-
-
-def get_device_capability(device: Any = None) -> tuple[int, int]:
-    props = get_device_properties(device)
-    return props.major, props.minor
-
-
-def get_arch_list() -> list[str]:
-    return _eval("torch.cuda.get_arch_list()")
-
-
-def is_bf16_supported(including_emulation: bool = True) -> bool:
-    return bool(_eval(f"torch.cuda.is_bf16_supported({bool(including_emulation)})"))
-
-
-def can_device_access_peer(device: Any, peer_device: Any) -> bool:
-    return bool(
-        _eval(f"torch.cuda.can_device_access_peer({_index(device)}, {_index(peer_device)})")
-    )
-
-
+# Autocast asks the PrivateUse1 device module for this; torch.cuda has no
+# such function to forward to.
 def get_amp_supported_dtype() -> list[torch.dtype]:
     return [torch.float16, torch.bfloat16]
 
 
 def synchronize(device: Any = None) -> None:
     _C().synchronize()
-
-
-def ipc_collect() -> None:
-    pass
-
-
-# --- memory -----------------------------------------------------------------
-
-
-def empty_cache() -> None:
-    _exec("torch.cuda.empty_cache()")
-
-
-def _memory_query(name: str, device: Any) -> Any:
-    return _eval(f"torch.cuda.{name}({_index(device)})")
-
-
-def memory_allocated(device: Any = None) -> int:
-    return int(_memory_query("memory_allocated", device))
-
-
-def max_memory_allocated(device: Any = None) -> int:
-    return int(_memory_query("max_memory_allocated", device))
-
-
-def memory_reserved(device: Any = None) -> int:
-    return int(_memory_query("memory_reserved", device))
-
-
-def max_memory_reserved(device: Any = None) -> int:
-    return int(_memory_query("max_memory_reserved", device))
-
-
-def reset_peak_memory_stats(device: Any = None) -> None:
-    _exec(f"torch.cuda.reset_peak_memory_stats({_index(device)})")
-
-
-def reset_max_memory_allocated(device: Any = None) -> None:
-    reset_peak_memory_stats(device)
-
-
-def memory_stats(device: Any = None) -> dict[str, Any]:
-    return dict(_memory_query("memory_stats", device))
-
-
-def mem_get_info(device: Any = None) -> tuple[int, int]:
-    free, total = _memory_query("mem_get_info", device)
-    return int(free), int(total)
-
-
-# --- random -----------------------------------------------------------------
-
-
-def manual_seed(seed: int) -> None:
-    _exec(f"torch.cuda.manual_seed({int(seed)})")
-
-
-def manual_seed_all(seed: int) -> None:
-    _exec(f"torch.cuda.manual_seed_all({int(seed)})")
-
-
-def seed() -> None:
-    _exec("torch.cuda.seed()")
-
-
-def seed_all() -> None:
-    _exec("torch.cuda.seed_all()")
-
-
-def initial_seed() -> int:
-    return int(_eval("torch.cuda.initial_seed()"))
-
-
-def get_rng_state(device: Any = None) -> torch.Tensor:
-    encoded = _eval(
-        "__import__('base64').b64encode("
-        f"torch.cuda.get_rng_state({_index(device)}).numpy().tobytes()).decode()"
-    )
-    return torch.frombuffer(bytearray(base64.b64decode(encoded)), dtype=torch.uint8).clone()
-
-
-def set_rng_state(new_state: torch.Tensor, device: Any = None) -> None:
-    encoded = base64.b64encode(new_state.cpu().numpy().tobytes()).decode()
-    _exec(
-        "torch.cuda.set_rng_state(torch.frombuffer(bytearray(__import__('base64')"
-        f".b64decode({encoded!r})), dtype=torch.uint8).clone(), {_index(device)})"
-    )
-
-
-def get_rng_state_all() -> list[torch.Tensor]:
-    return [get_rng_state(i) for i in range(device_count())]
-
-
-def set_rng_state_all(new_states: list[torch.Tensor]) -> None:
-    for i, state in enumerate(new_states):
-        set_rng_state(state, i)
 
 
 # --- streams and events -----------------------------------------------------
@@ -358,10 +272,6 @@ def default_stream(device: Any = None) -> Stream:
     return Stream(device)
 
 
-def current_blas_handle() -> int:
-    return 0
-
-
 # --- CUDA graphs ------------------------------------------------------------
 
 
@@ -374,17 +284,18 @@ class CUDAGraph:
     """
 
     _next_id = 0
+    capturing = False
 
     def __init__(self, keep_graph: bool = False):
         self._id = CUDAGraph._next_id
         CUDAGraph._next_id += 1
 
     def capture_begin(self, pool: Any = None, capture_error_mode: str = "global") -> None:
-        if pool is not None:
-            raise RuntimeError("lupine: shared graph memory pools are not supported")
-        _exec(f"_capture_begin({self._id}, {capture_error_mode!r})")
+        _exec(f"_capture_begin({self._id}, {capture_error_mode!r}, {pool!r})")
+        CUDAGraph.capturing = True
 
     def capture_end(self) -> None:
+        CUDAGraph.capturing = False
         _exec(f"_capture_end({self._id})")
 
     def replay(self) -> None:
@@ -420,42 +331,28 @@ class graph:
     def __enter__(self) -> None:
         synchronize()
         gc.collect()
-        empty_cache()
+        _forwarded("empty_cache")()
         self.cuda_graph.capture_begin(self.pool, self.capture_error_mode)
 
     def __exit__(self, *args: object) -> None:
         self.cuda_graph.capture_end()
 
 
-def graph_pool_handle() -> None:
-    raise RuntimeError("lupine: shared graph memory pools are not supported")
-
-
 def is_current_stream_capturing() -> bool:
-    return bool(_eval("_capturing()"))
+    return CUDAGraph.capturing
 
 
 # --- installation -----------------------------------------------------------
 
-_CUDA_MODULE_NAMES = (
-    "is_available", "is_initialized", "init", "_lazy_init",
-    "_is_in_bad_fork", "device_count", "current_device", "set_device",
-    "_exchange_device", "_maybe_exchange_device", "device", "device_of",
-    "get_device_properties", "get_device_name", "get_device_capability",
-    "get_arch_list", "is_bf16_supported", "can_device_access_peer", "synchronize",
-    "ipc_collect", "empty_cache", "memory_allocated", "max_memory_allocated",
-    "memory_reserved", "max_memory_reserved", "reset_peak_memory_stats",
-    "reset_max_memory_allocated", "memory_stats", "mem_get_info", "manual_seed",
-    "manual_seed_all", "seed", "seed_all", "initial_seed", "get_rng_state",
-    "set_rng_state", "get_rng_state_all", "set_rng_state_all", "Stream",
+# What this module defines for torch.cuda; its other public functions are
+# forwarded to the worker.
+_HOST_NAMES = (
+    "is_available", "is_initialized", "init", "_lazy_init", "_is_in_bad_fork",
+    "device_count", "current_device", "set_device", "_exchange_device",
+    "_maybe_exchange_device", "device", "device_of", "synchronize", "Stream",
     "ExternalStream", "Event", "StreamContext", "stream", "set_stream",
-    "current_stream", "default_stream", "current_blas_handle", "CUDAGraph",
-    "graph", "graph_pool_handle", "is_current_stream_capturing",
-)
-
-_RANDOM_NAMES = (
-    "manual_seed", "manual_seed_all", "seed", "seed_all", "initial_seed",
-    "get_rng_state", "set_rng_state", "get_rng_state_all", "set_rng_state_all",
+    "current_stream", "default_stream", "CUDAGraph", "graph",
+    "is_current_stream_capturing",
 )
 
 
@@ -466,10 +363,12 @@ def install_as_cuda() -> None:
     import torch.cuda.random
 
     this = globals()
-    for name in _CUDA_MODULE_NAMES:
+    for name in _HOST_NAMES:
         setattr(torch.cuda, name, this[name])
-    for name in _RANDOM_NAMES:
-        setattr(torch.cuda.random, name, this[name])
+    for module in (torch.cuda, torch.cuda.random):
+        for name, value in list(vars(module).items()):
+            if name not in _HOST_NAMES and not name.startswith("_") and inspect.isfunction(value):
+                setattr(module, name, _forwarded(name))
     torch.cuda._initialized = True
     torch.cuda.graphs.CUDAGraph = CUDAGraph
     torch.cuda.graphs.graph = graph
