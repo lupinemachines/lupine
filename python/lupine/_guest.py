@@ -43,8 +43,8 @@ class Worker:
             from ._backend import _extension
 
             _extension().disconnect()
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"lupine: worker disconnect failed: {exc}", file=sys.stderr)
         try:
             process.wait(timeout=10)
             return

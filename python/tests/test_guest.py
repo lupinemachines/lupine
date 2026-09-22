@@ -4,7 +4,7 @@ import sys
 import pytest
 
 import lupine
-from lupine import LupineError, _guest
+import lupine._guest
 
 
 def test_torch_backend_selected_follows_env_then_platform(monkeypatch):
@@ -18,15 +18,15 @@ def test_torch_backend_selected_follows_env_then_platform(monkeypatch):
 
 def test_subprocess_worker_needs_an_interpreter(monkeypatch):
     monkeypatch.delenv("LUPINE_WORKER_PYTHON", raising=False)
-    with pytest.raises(LupineError):
-        _guest._subprocess_command(("h:1",))
+    with pytest.raises(lupine.LupineError):
+        lupine._guest._subprocess_command(("h:1",))
 
 
 def test_worker_environment_inherits_session_and_devices(monkeypatch):
     monkeypatch.setenv("LUPINE_SESSION", "lease")
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-abc")
     monkeypatch.setenv("LUPINE_WORKER_LIBDIR", "/tmp/libs")
-    env = _guest._worker_environment(("a:1", "b:2"))
+    env = lupine._guest._worker_environment(("a:1", "b:2"))
     assert env["LUPINE_SERVER"] == "a:1,b:2"
     assert env["LUPINE_SESSION"] == "lease"
     assert env["CUDA_VISIBLE_DEVICES"] == "GPU-abc"
@@ -37,5 +37,5 @@ def test_worker_environment_inherits_session_and_devices(monkeypatch):
 def test_macos_without_a_worker_to_attach_names_the_follow_up(monkeypatch):
     monkeypatch.delenv("LUPINE_WORKER", raising=False)
     monkeypatch.setattr(sys, "platform", "darwin")
-    with pytest.raises(LupineError, match="python/torch-worker-container"):
-        _guest.start(("h:1",))
+    with pytest.raises(lupine.LupineError, match="python/torch-worker-container"):
+        lupine._guest.start(("h:1",))

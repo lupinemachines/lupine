@@ -23,6 +23,7 @@ import inspect
 import json
 import pickle
 import warnings
+import weakref
 from typing import Any
 
 import torch
@@ -275,6 +276,11 @@ def default_stream(device: Any = None) -> Stream:
 # --- CUDA graphs ------------------------------------------------------------
 
 
+def _release_graph(graph_id: int) -> None:
+    if is_started():
+        _exec(f"_reset({graph_id})")
+
+
 class CUDAGraph:
     """A graph captured and replayed by the worker's torch.
 
@@ -289,6 +295,7 @@ class CUDAGraph:
     def __init__(self, keep_graph: bool = False):
         self._id = CUDAGraph._next_id
         CUDAGraph._next_id += 1
+        weakref.finalize(self, _release_graph, self._id)
 
     def capture_begin(self, pool: Any = None, capture_error_mode: str = "global") -> None:
         _exec(f"_capture_begin({self._id}, {capture_error_mode!r}, {pool!r})")
@@ -313,12 +320,6 @@ class CUDAGraph:
     def debug_dump(self, debug_path: str) -> None:
         pass
 
-    def __del__(self) -> None:
-        try:
-            if is_started():
-                _exec(f"_reset({self._id})")
-        except Exception:
-            pass
 
 
 class graph:

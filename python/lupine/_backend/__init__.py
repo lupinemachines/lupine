@@ -28,6 +28,7 @@ The extension is built from a repository checkout (see ``setup.py``)::
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 from pathlib import Path
@@ -62,7 +63,7 @@ def _preload_torch_libraries() -> None:
 def _extension() -> Any:
     _preload_torch_libraries()
     try:
-        from . import _C
+        _C = importlib.import_module(f"{__name__}._C")
     except ImportError as exc:
         from .. import LupineError
 
