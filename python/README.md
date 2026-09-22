@@ -46,7 +46,7 @@ native HTTP/2 connection, so:
   such workloads in a container against the same server.
 - **macOS** has no CUDA torch, so `lupine.connect()` there loads the torch
   backend instead (see below): the program's own torch gets a device whose
-  operators execute in a same-version CUDA torch in an arm64 Linux guest.
+  operators execute in a same-version CUDA torch running elsewhere.
 - **Native arm64 Python on Windows** gets the driver and NVML; run an x64
   Python for a CUDA PyTorch (see below).
 
@@ -76,10 +76,10 @@ that CUDA torch needs the x64 interpreter.
 ## Torch backend (macOS, or `LUPINE_TORCH_BACKEND=1`)
 
 PyTorch has no CUDA build for macOS, so the driver shims alone cannot give a
-Mac torch a GPU. `lupine.connect()` on macOS instead starts a **worker**, a
-CUDA PyTorch of the *same release* as the host torch running in an arm64
-Linux container against the driver shims, and loads a native torch backend
-into the host interpreter:
+Mac torch a GPU. `lupine.connect()` on macOS instead connects to a
+**worker**, a CUDA PyTorch of the *same release* as the host torch running
+against the driver shims, and loads a native torch backend into the host
+interpreter:
 
 ```
 host torch ──boxed aten ops, fire-and-forget──▶ lupine-torch-worker ──driver shims──▶ lupine server ─▶ GPU
@@ -106,18 +106,14 @@ host torch ──boxed aten ops, fire-and-forget──▶ lupine-torch-worker �
   backend as `torch.device("lupine")`.
 - `LUPINE_TORCH_BACKEND=1` selects the backend on any platform; the worker is
   then a subprocess of `LUPINE_WORKER_PYTHON`, an interpreter with the CUDA
-  torch of the same release (Linux, no container). `LUPINE_WORKER=host:port`
-  attaches to a worker started by hand (`lupine-torch-worker --listen ...`).
-- On macOS the worker image is `ghcr.io/lupinemachines/lupine-pytorch-worker:torch<release>-cu<xyz>`,
-  selected from the host torch release and the CUDA version the server
-  advertises; `LUPINE_WORKER_IMAGE` overrides it and `LUPINE_WORKER_RUNTIME`
-  picks `container` (Apple Container), `docker`, `podman` or `nerdctl`
-  (default: the first one installed). The worker's port is published on the
-  host loopback. The client bundle inside the guest comes from the server's
-  bundle negotiation like any other client.
+  torch of the same release. `LUPINE_WORKER=host:port` attaches to a worker
+  started by hand (`lupine-torch-worker --listen host:port` on a Linux machine
+  with that torch); on macOS, which has no CUDA torch to run as a subprocess,
+  that is the only way until the container worker lands (its own PR, branch
+  `python/torch-worker-container`), and `lupine.connect()` says so.
 - The extension in `lupine/_backend` is built per torch release from a
   repository checkout (`python python/lupine/_backend/setup.py build_ext --inplace`,
-  needs `libnghttp2`); the worker image builds it the same way. Host and
+  needs `libnghttp2`). Host and
   worker torch releases must match exactly (`2.12.1+cpu` and `2.12.1+cu130`
   do); the boxed operator schema is the wire contract.
 
@@ -202,8 +198,7 @@ lupine/
   _native.py     shim discovery + preloading
   _backend/      torch backend: host kernels + worker dispatch (C++), device module
   _worker.py     lupine-torch-worker entry point
-  _guest.py      worker provisioning (subprocess or container) and image selection
-  container.py   Apple Container / Docker / Podman / nerdctl launch
+  _guest.py      worker provisioning (subprocess) and attach by address
 ```
 
 No native object ships in the wheel. Server workflows publish the clients
