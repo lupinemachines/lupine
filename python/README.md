@@ -44,8 +44,11 @@ native HTTP/2 connection, so:
 - **CPU-only PyTorch builds** cannot gain a CUDA backend by linking (the
   backend is compiled out); use the driver shim directly via ctypes, or run
   such workloads in a container against the same server.
-- **macOS and native arm64 Python on Windows** get the driver and NVML
-  (#888); on Windows arm64 run an x64 Python for a CUDA PyTorch (see below).
+- **macOS** has no CUDA torch, so `lupine.connect()` there loads the torch
+  backend instead (see below): the program's own torch gets a device whose
+  operators execute in a same-version CUDA torch in an arm64 Linux guest.
+- **Native arm64 Python on Windows** gets the driver and NVML; run an x64
+  Python for a CUDA PyTorch (see below).
 
 ## Windows on ARM
 
@@ -69,6 +72,59 @@ py -3.12-64 -m venv .venv
 A native arm64 Python can still use the driver shim directly (ctypes, or a
 program built against the driver API); `session.device()` on one explains
 that CUDA torch needs the x64 interpreter.
+
+## Torch backend (macOS, or `LUPINE_TORCH_BACKEND=1`)
+
+PyTorch has no CUDA build for macOS, so the driver shims alone cannot give a
+Mac torch a GPU. `lupine.connect()` on macOS instead starts a **worker**, a
+CUDA PyTorch of the *same release* as the host torch running in an arm64
+Linux container against the driver shims, and loads a native torch backend
+into the host interpreter:
+
+```
+host torch ──boxed aten ops, fire-and-forget──▶ lupine-torch-worker ──driver shims──▶ lupine server ─▶ GPU
+```
+
+- Tensors on the device are host-side metadata (sizes, strides, dtype,
+  views, autograd) over a storage handle the worker owns. Every operator
+  reaches one boxed fallback that decides the result metadata with torch's
+  meta kernel (memoised per argument shapes) and forwards the call with
+  client-assigned result handles; the worker applies calls in issue order.
+  Only `.item()`, copies to the CPU and `torch.cuda.synchronize()` wait for
+  a reply. Storage release rides along with the next call.
+- On a torch with no CUDA build the backend owns the in-tree `cuda` device:
+  `torch.device("cuda")`, `.cuda()`, `torch.cuda.*`, `torch.autocast("cuda")`
+  and CUDA graphs (`torch.cuda.graph`, captured and replayed by the worker)
+  work unchanged, and the program prints what it prints on CUDA torch. torch
+  refuses to rename its PrivateUse1 backend to an in-tree name, so this is the
+  only way a program's `"cuda"` strings can keep working. A host torch that
+  does have a CUDA build keeps `cuda` for the driver path and reaches the
+  backend as `torch.device("lupine")`.
+- `LUPINE_TORCH_BACKEND=1` selects the backend on any platform; the worker is
+  then a subprocess of `LUPINE_WORKER_PYTHON`, an interpreter with the CUDA
+  torch of the same release (Linux, no container). `LUPINE_WORKER=host:port`
+  attaches to a worker started by hand (`lupine-torch-worker --listen ...`).
+- On macOS the worker image is `ghcr.io/lupinemachines/lupine-pytorch-worker:torch<release>-cu<xyz>`,
+  selected from the host torch release and the CUDA version the server
+  advertises; `LUPINE_WORKER_IMAGE` overrides it and `LUPINE_WORKER_RUNTIME`
+  picks `container` (Apple Container), `docker`, `podman` or `nerdctl`
+  (default: the first one installed). The worker's port is published on the
+  host loopback. The client bundle inside the guest comes from the server's
+  bundle negotiation like any other client.
+- The extension in `lupine/_backend` is built per torch release from a
+  repository checkout (`python python/lupine/_backend/setup.py build_ext --inplace`,
+  needs `libnghttp2`); the worker image builds it the same way. Host and
+  worker torch releases must match exactly (`2.12.1+cpu` and `2.12.1+cu130`
+  do); the boxed operator schema is the wire contract.
+
+Limits: CUDA extensions compiled against the host torch (flash-attn, apex,
+hand-written kernels) cannot run, since the host has no CUDA; `torch.compile`
+runs eagerly; sparse and quantized layouts are not supported; explicit
+`torch.Generator` objects are not forwarded (`torch.manual_seed` is);
+`torch.Generator(device="cuda")` is unavailable on a torch without CUDA.
+`LUPINE_TORCH_PROFILE=<path>` writes per-op host timings, `LUPINE_TORCH_TRACE=1`
+logs every forwarded op, and `LUPINE_WORKER_RPC_STATS=<path>` gives the
+worker's `LUPINE_RPC_STATS`.
 
 ## API
 
@@ -140,6 +196,10 @@ lupine/
   __init__.py    Session / connect() adapter
   _bundles.py    server bundle resolution, verification, and caching
   _native.py     shim discovery + preloading
+  _backend/      torch backend: host kernels + worker dispatch (C++), device module
+  _worker.py     lupine-torch-worker entry point
+  _guest.py      worker provisioning (subprocess or container) and image selection
+  container.py   Apple Container / Docker / Podman / nerdctl launch
 ```
 
 No native object ships in the wheel. Server workflows publish the clients

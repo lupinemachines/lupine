@@ -839,3 +839,10 @@
 #define LUPINE_RPC_lupineBulkRead 1532818193
 #define LUPINE_RPC_lupineMemcpyDtoHBulk 1646333528
 #define LUPINE_RPC_lupineStreamPoolInit 394532239
+#define LUPINE_RPC_lupineTorchOp 490174820
+#define LUPINE_RPC_lupineTorchOpSync 276604194
+#define LUPINE_RPC_lupineTorchCopyToHost 934617106
+#define LUPINE_RPC_lupineTorchCopyFromHost 1050604742
+#define LUPINE_RPC_lupineTorchExec 1141798447
+#define LUPINE_RPC_lupineTorchEval 977503152
+#define LUPINE_RPC_lupineTorchSync 1397411216

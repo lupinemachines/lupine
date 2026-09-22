@@ -37,3 +37,5 @@ test/rocm-examples/rocm-examples/
 test/rocm-examples/results/
 test/rocm-libraries/rocm-libraries/
 test/rocm-libraries/results/
+python/lupine/_backend/_C*.so
+python/lupine/_backend/build/
