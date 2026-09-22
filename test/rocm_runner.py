@@ -252,6 +252,7 @@ def stop_process(process):
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
+        # The grace period expired; force-kill the process group below.
         pass
     with contextlib.suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGKILL)
