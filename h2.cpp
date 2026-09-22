@@ -167,7 +167,7 @@ h2_stream &h2_get_stream(h2_transport *transport, int32_t stream_id) {
 void h2_fail_transport_locked(h2_transport *transport) {
   transport->transport_failed = true;
   for (auto &entry : transport->streams) {
-    pthread_cond_signal(&entry.second.read_ready);
+    pthread_cond_broadcast(&entry.second.read_ready);
   }
   pthread_cond_broadcast(&transport->session_progress);
 }
@@ -201,7 +201,7 @@ void receive_bytes(h2_transport *transport, int32_t stream_id,
     stream.read_destination += direct;
     stream.read_remaining -= direct;
     if (stream.read_remaining == 0) {
-      pthread_cond_signal(&stream.read_ready);
+      pthread_cond_broadcast(&stream.read_ready);
     }
     transport->read_stats.direct_bytes += direct;
     data += direct;
@@ -235,7 +235,7 @@ void h2_queue_output(h2_transport *transport, const struct iovec *iov,
                                data + iov[i].iov_len);
   }
   transport->output_generation.fetch_add(1, std::memory_order_release);
-  pthread_cond_signal(&transport->writer_ready);
+  pthread_cond_broadcast(&transport->writer_ready);
 }
 
 int h2_write_socket(h2_transport *transport, const unsigned char *data,
@@ -623,7 +623,7 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     stream.response_received = true;
-    pthread_cond_signal(&stream.read_ready);
+    pthread_cond_broadcast(&stream.read_ready);
   }
   if ((frame->hd.type == NGHTTP2_DATA || frame->hd.type == NGHTTP2_HEADERS) &&
       (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0) {
@@ -633,7 +633,7 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     stream.remote_end = true;
-    pthread_cond_signal(&stream.read_ready);
+    pthread_cond_broadcast(&stream.read_ready);
     bool retryable_rejection =
         h2_retryable_handshake_rejection(transport, stream);
     if (frame->hd.stream_id == transport->dispatch_stream_id &&
@@ -650,7 +650,7 @@ int h2_on_stream_close_callback(nghttp2_session *, int32_t stream_id, uint32_t,
   h2_stream &stream = h2_get_stream(transport, stream_id);
   h2_release_codecs(stream);
   stream.closed = true;
-  pthread_cond_signal(&stream.read_ready);
+  pthread_cond_broadcast(&stream.read_ready);
   bool retryable_rejection =
       h2_retryable_handshake_rejection(transport, stream);
   if (stream_id == transport->dispatch_stream_id && !retryable_rejection) {
@@ -1146,7 +1146,7 @@ void h2_stop_write_thread(h2_transport *transport) {
   pthread_mutex_lock(&transport->session_mutex);
   h2_drain_output_locked(transport);
   transport->write_stop = true;
-  pthread_cond_signal(&transport->writer_ready);
+  pthread_cond_broadcast(&transport->writer_ready);
   pthread_mutex_unlock(&transport->session_mutex);
   pthread_join(transport->write_thread, nullptr);
   transport->write_thread = 0;
@@ -1340,7 +1340,7 @@ int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
   int result = h2_write_stream_locked(transport, stream_id, cursors);
   pthread_mutex_unlock(&transport->session_mutex);
   transport->output_generation.fetch_add(1, std::memory_order_release);
-  pthread_cond_signal(&transport->writer_ready);
+  pthread_cond_broadcast(&transport->writer_ready);
   return result;
 }
 
