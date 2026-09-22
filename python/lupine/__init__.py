@@ -1,9 +1,9 @@
 """PyTorch adapter for LUPINE-backed CUDA devices.
 
 ``lupine.connect(...)`` points the process at one or more LUPINE GPU
-servers and preloads the server-selected native shims (driver API, runtime
-API, NVML, and the math libraries) so ordinary CUDA consumers — PyTorch
-included — transparently run on the remote GPUs:
+servers and preloads the server-selected client (the CUDA driver API and
+NVML) so ordinary CUDA consumers — PyTorch included — transparently run on
+the remote GPUs:
 
 .. code-block:: python
 
@@ -16,10 +16,10 @@ included — transparently run on the remote GPUs:
         print((x * 2).cpu())
 
 The adapter returns ordinary ``torch.device("cuda:N")`` objects; PyTorch
-keeps its built-in CUDA dispatch path while the LUPINE shims handle the
-driver, runtime, and math-library calls underneath it. No NVIDIA software is
-required on the client: the wheel is pure Python and the bound server
-supplies its compatible full client.
+keeps its built-in CUDA dispatch path, and its own CUDA runtime and
+libraries run against the LUPINE driver shim underneath it. No NVIDIA driver
+is required on the client: the wheel is pure Python and the bound server
+supplies its compatible client.
 """
 
 from __future__ import annotations
@@ -28,6 +28,8 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+from . import _bundles
 
 DEFAULT_PORT = 14833
 
@@ -160,7 +162,16 @@ class Session:
         torch = _torch()
         count = int(torch.cuda.device_count()) if self.servers else 0
         if index >= count or index < -count:
-            raise LupineError(f"device index {index} out of range ({count} devices)")
+            hint = ""
+            if count == 0 and _bundles.native_arm64_windows():
+                hint = (
+                    "; this is a native arm64 Python on Windows on ARM, which has "
+                    "no CUDA runtime: run an x64 Python (under the OS's x64 "
+                    "emulation) with the x64 CUDA torch wheel"
+                )
+            raise LupineError(
+                f"device index {index} out of range ({count} devices){hint}"
+            )
         return torch.device("cuda", range(count)[index])
 
 

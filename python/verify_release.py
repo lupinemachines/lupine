@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import sys
 import zipfile
@@ -22,6 +23,37 @@ def _project(path: Path) -> dict:
 
 def _normalized(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
+
+
+# The client a release loads: the driver and NVML per platform, nothing else.
+REQUIRED = {
+    "linux": ("libcuda.so.1", "libnvidia-ml.so.1"),
+    "darwin": ("libcuda.dylib", "libnvidia-ml.dylib"),
+    "win32": ("nvcuda.dll", "nvml.dll"),
+}
+CONDITIONAL = {"libnccl", "libnvshmem_host"}
+
+
+def verify_loader(source: bytes) -> None:
+    """Check that ``lupine/_native.py`` preloads only the driver and NVML."""
+
+    found: dict[str, object] = {}
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in (
+                    "_REQUIRED",
+                    "_CONDITIONAL",
+                ):
+                    found[target.id] = ast.literal_eval(node.value)
+    if found.get("_REQUIRED") != REQUIRED:
+        raise ValueError(
+            f"loader must require the driver and NVML, found {found.get('_REQUIRED')}"
+        )
+    if set(found.get("_CONDITIONAL", {})) != CONDITIONAL:
+        raise ValueError(
+            f"loader may condition only NCCL and nvSHMEM, found {found.get('_CONDITIONAL')}"
+        )
 
 
 def verify_metadata(tag: str | None = None) -> str:
@@ -46,6 +78,7 @@ def verify_metadata(tag: str | None = None) -> str:
     if tag is not None and tag != f"v{version}":
         raise ValueError(f"release tag {tag!r} does not match version {version}")
 
+    verify_loader((ROOT / "lupine" / "_native.py").read_bytes())
     return version
 
 
@@ -65,6 +98,8 @@ def verify_wheels(directory: Path, version: str) -> None:
             if len(metadata_paths) != 1:
                 raise ValueError(f"{wheel} has {len(metadata_paths)} METADATA files")
             metadata = BytesParser().parsebytes(archive.read(metadata_paths[0]))
+            if "lupine/_native.py" in names:
+                verify_loader(archive.read("lupine/_native.py"))
 
         name = _normalized(metadata["Name"])
         if name in found:

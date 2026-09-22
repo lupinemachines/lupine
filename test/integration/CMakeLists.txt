@@ -8,98 +8,51 @@ if(NOT LUPINE_LIB)
 endif()
 get_filename_component(LUPINE_LIB "${LUPINE_LIB}" ABSOLUTE)
 get_filename_component(shim_dir "${LUPINE_LIB}" DIRECTORY)
-# The runtime and library shims (libcudart, libcublas, libcufft, ...) share
-# the libcu prefix with the driver shim; NVRTC, nvJitLink, nvJPEG and NPP are
-# the ones without it.
-file(GLOB runtime_libs "${shim_dir}/libcu*.so*" "${shim_dir}/libnvrtc.so*"
-     "${shim_dir}/libnvJitLink.so*" "${shim_dir}/libnvjpeg.so*"
-     "${shim_dir}/libnpp*.so*")
-list(FILTER runtime_libs EXCLUDE REGEX "/libcuda\\.so")
-# NVML, NCCL and nvSHMEM need nothing but the driver shim, so both variants
-# load them.
-file(GLOB driver_libs "${shim_dir}/libnvidia-ml.so*" "${shim_dir}/libnccl.so*"
-     "${shim_dir}/libnvshmem_host.so*")
-if(NOT EXISTS "${LUPINE_LIB}" OR NOT EXISTS "${shim_dir}/libcudart.so")
-    message(FATAL_ERROR "Build lupine_cuda_client and lupine_runtime_clients before configuring integration tests")
+if(NOT EXISTS "${LUPINE_LIB}")
+    message(FATAL_ERROR "Build lupine_cuda_client before configuring integration tests")
 endif()
 
-# Both variants use one build. driver-only loads the driver-level shims with
-# NVIDIA's runtime and libraries; driver-runtime also loads every runtime and
-# library shim. Never put the full build directory on the driver-only search
-# path: that would expose the other shims too.
-set(variants driver-only driver-runtime)
-foreach(variant IN LISTS variants)
-    set(lib_dir "${CMAKE_CURRENT_BINARY_DIR}/${variant}/lib")
-    file(MAKE_DIRECTORY "${lib_dir}")
-    file(CREATE_LINK "${LUPINE_LIB}" "${lib_dir}/libcuda.so.1" SYMBOLIC)
-    file(CREATE_LINK "${LUPINE_LIB}" "${lib_dir}/libcuda.so" SYMBOLIC)
-    foreach(lib IN LISTS driver_libs)
-        get_filename_component(name "${lib}" NAME)
-        file(CREATE_LINK "${lib}" "${lib_dir}/${name}" SYMBOLIC)
-    endforeach()
-    if(variant STREQUAL "driver-runtime")
-        foreach(lib IN LISTS runtime_libs)
-            get_filename_component(name "${lib}" NAME)
-            file(CREATE_LINK "${lib}" "${lib_dir}/${name}" SYMBOLIC)
-        endforeach()
-    endif()
+# Every suite loads the driver shim under NVIDIA's own runtime and libraries,
+# with the NVML, NCCL and nvSHMEM shims beside it. Never put the full build
+# directory on the search path: that would expose the runtime and library shims
+# too.
+set(variant driver-only)
+set(lib_dir "${CMAKE_CURRENT_BINARY_DIR}/${variant}/lib")
+file(MAKE_DIRECTORY "${lib_dir}")
+file(CREATE_LINK "${LUPINE_LIB}" "${lib_dir}/libcuda.so.1" SYMBOLIC)
+file(CREATE_LINK "${LUPINE_LIB}" "${lib_dir}/libcuda.so" SYMBOLIC)
+file(GLOB shim_libs "${shim_dir}/libnvidia-ml.so*" "${shim_dir}/libnccl.so*"
+     "${shim_dir}/libnvshmem_host.so*")
+foreach(lib IN LISTS shim_libs)
+    get_filename_component(name "${lib}" NAME)
+    file(CREATE_LINK "${lib}" "${lib_dir}/${name}" SYMBOLIC)
 endforeach()
 
 set(results_dir "$ENV{INTEGRATION_RESULTS_DIR}")
 if(NOT results_dir)
     set(results_dir "${CMAKE_CURRENT_BINARY_DIR}/results")
 endif()
-set(custom_build_dir "${CMAKE_CURRENT_BINARY_DIR}/custom-bin")
-file(MAKE_DIRECTORY "${custom_build_dir}")
 set(port "$ENV{SERVER_PORT_BASE}")
 if(NOT port)
     set(port 14900)
 endif()
 
 function(add_suite suite script)
-    set(list_env ${ARGN})
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E env LIST_TESTS=1 SERVER_UPLOAD=0
-                ${list_env} "${script}"
+                ${ARGN} "${script}"
         OUTPUT_VARIABLE tests OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
     string(REPLACE "\n" ";" tests "${tests}")
 
     foreach(name IN LISTS tests)
-        if(suite STREQUAL "custom")
-            # Each executable is built once and shared by both loader variants.
-            add_test(NAME "build.custom.${name}" COMMAND "${script}" "${name}")
-            set_tests_properties("build.custom.${name}" PROPERTIES
-                ENVIRONMENT "BUILD_ONLY=1;BUILD_TESTS=1;BUILD_DIR=${custom_build_dir};SERVER_UPLOAD=0;LUPINE_LIB=${LUPINE_LIB};LD_LIBRARY_PATH=;LD_PRELOAD="
-                FIXTURES_SETUP "build.custom.${name}" TIMEOUT 900)
-        endif()
-        foreach(variant IN LISTS variants)
-            set(test "${variant}.${suite}.${name}")
-            set(lib_dir "${CMAKE_CURRENT_BINARY_DIR}/${variant}/lib")
-            set(test_env
-                "SERVER_PORT_BASE=${port}" "SERVER_UPLOAD=0"
-                "RESULTS_DIR=${results_dir}/cases/${variant}/${suite}/${name}"
-                "LUPINE_LIB=${lib_dir}/libcuda.so.1"
-                "LUPINE_TEST_VARIANT=${variant}"
-                "LUPINE_CUDART_LIB=${shim_dir}/libcudart.so"
-                "LD_LIBRARY_PATH=${lib_dir}" "LD_PRELOAD="
-                "NVJPEG_ASSETS_DIR=${results_dir}/assets/${variant}"
-                "NVJPEG2K_ASSETS_DIR=${results_dir}/assets/${variant}/nvjpeg2k"
-                "NVTIFF_ASSETS_DIR=${results_dir}/assets/${variant}/nvtiff"
-                "NPPPLUS_ASSETS_DIR=${results_dir}/assets/${variant}/nppplus"
-                ${ARGN})
-            add_test(NAME "${test}" COMMAND "${script}" "${name}")
-            set_tests_properties("${test}" PROPERTIES
-                ENVIRONMENT "${test_env}"
-                LABELS "${variant};${suite}"
-                RESOURCE_LOCK "${suite}.${name}"
-                SKIP_REGULAR_EXPRESSION "SKIP:" TIMEOUT 900)
-            if(suite STREQUAL "custom")
-                set_property(TEST "${test}" APPEND PROPERTY ENVIRONMENT
-                    "BUILD_TESTS=0" "BUILD_ONLY=0" "BUILD_DIR=${custom_build_dir}")
-                set_property(TEST "${test}" PROPERTY FIXTURES_REQUIRED "build.custom.${name}")
-            endif()
-            math(EXPR port "${port} + 10")
-        endforeach()
+        set(test "${variant}.${suite}.${name}")
+        add_test(NAME "${test}" COMMAND "${script}" "${name}")
+        set_tests_properties("${test}" PROPERTIES
+            ENVIRONMENT "SERVER_PORT_BASE=${port};SERVER_UPLOAD=0;RESULTS_DIR=${results_dir}/cases/${variant}/${suite}/${name};LUPINE_LIB=${lib_dir}/libcuda.so.1;LD_LIBRARY_PATH=${lib_dir};LD_PRELOAD=;NVJPEG_ASSETS_DIR=${results_dir}/assets;NVJPEG2K_ASSETS_DIR=${results_dir}/assets/nvjpeg2k;NVTIFF_ASSETS_DIR=${results_dir}/assets/nvtiff;NPPPLUS_ASSETS_DIR=${results_dir}/assets/nppplus;${ARGN}"
+            LABELS "${variant};${suite}"
+            RESOURCE_LOCK "${suite}.${name}"
+            SKIP_REGULAR_EXPRESSION "SKIP:" TIMEOUT 900)
+        math(EXPR port "${port} + 10")
     endforeach()
     set(port "${port}" PARENT_SCOPE)
 endfunction()
@@ -111,17 +64,15 @@ add_suite(cuda-python "${TEST_DIR}/run_cuda_python_tests.sh" CUDA_PYTHON_INSTALL
 add_suite(cuda-library "${TEST_DIR}/run_cuda_library_samples.sh" BUILD_SAMPLES=0)
 add_suite(custom "${TEST_DIR}/run_custom_tests.sh")
 
-# These samples read files another sample writes into the variant's assets dir.
-function(add_sample_dependency variant consumer producer)
+# These samples read files another sample writes into the assets dir.
+function(add_sample_dependency consumer producer)
     set(consumer "${variant}.cuda-library.${consumer}")
     set(producer "${variant}.cuda-library.${producer}")
     if(TEST "${consumer}" AND TEST "${producer}")
         set_property(TEST "${consumer}" APPEND PROPERTY DEPENDS "${producer}")
     endif()
 endfunction()
-foreach(variant IN LISTS variants)
-    add_sample_dependency(${variant} nvJPEG/nvJPEG-Encoder-MultipleInstances nvJPEG/nvJPEG-Decoder)
-    add_sample_dependency(${variant} nvJPEG2000/nvJPEG2000-Encoder nvJPEG2000/nvJPEG2000-Decoder)
-    add_sample_dependency(${variant} nvTIFF/nvTIFF-GeoTIFF-Decode-Encode nvTIFF/nvTIFF-Encode-Options)
-    add_sample_dependency(${variant} nvTIFF/nvTIFF-Image-Info-Multi-Image nvTIFF/nvTIFF-Encode-Options)
-endforeach()
+add_sample_dependency(nvJPEG/nvJPEG-Encoder-MultipleInstances nvJPEG/nvJPEG-Decoder)
+add_sample_dependency(nvJPEG2000/nvJPEG2000-Encoder nvJPEG2000/nvJPEG2000-Decoder)
+add_sample_dependency(nvTIFF/nvTIFF-GeoTIFF-Decode-Encode nvTIFF/nvTIFF-Encode-Options)
+add_sample_dependency(nvTIFF/nvTIFF-Image-Info-Multi-Image nvTIFF/nvTIFF-Encode-Options)

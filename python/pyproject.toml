@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lupine"
-version = "2.0.3"
-description = "CUDA on any host: server-selected LUPINE shims plus PyTorch adapter"
+version = "3.0.0"
+description = "CUDA on any host: server-selected LUPINE client plus PyTorch adapter"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -13,7 +13,7 @@ dependencies = []
 
 [project.optional-dependencies]
 torch = ["torch"]
-auto = ["lupine-auto==2.0.3"]
+auto = ["lupine-auto==3.0.0"]
 
 [project.scripts]
 lupine = "lupine.__main__:main"
@@ -26,9 +26,9 @@ lupine-auto = { path = "auto" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["lupine"]
-# The wheel is pure Python. Every native client — driver, runtime, math
-# libraries, NVML — is published by the bound server and resolved at run time,
-# so a stray local staging directory must never enter a distribution.
+# The wheel is pure Python. The native client — driver and NVML — is
+# published by the bound server and resolved at run time, so a stray local
+# staging directory must never enter a distribution.
 exclude = ["lupine/_libs/**"]
 
 [tool.hatch.build.targets.sdist]

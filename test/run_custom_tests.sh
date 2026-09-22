@@ -28,15 +28,11 @@ CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}"
 CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 NVCC="${NVCC:-$CUDA_HOME/bin/nvcc}"
 CUDA_SAMPLES_ARCH="${CUDA_SAMPLES_ARCH:-}"
-# cuDNN ships outside the toolkit: a directory with its include/ and lib/, such
-# as an nvidia-cudnn wheel's nvidia/cudnn.
-CUDNN_HOME="${CUDNN_HOME:-}"
-# NCCL too, such as an nvidia-nccl wheel's nvidia/nccl.
+# NCCL ships outside the toolkit: a directory with its include/ and lib/, such
+# as an nvidia-nccl wheel's nvidia/nccl.
 NCCL_HOME="${NCCL_HOME:-}"
 # nvSHMEM too, such as an nvidia-nvshmem wheel's nvidia/nvshmem.
 NVSHMEM_HOME="${NVSHMEM_HOME:-}"
-# cuSPARSELt too, such as an nvidia-cusparselt wheel's nvidia/cusparselt.
-CUSPARSELT_HOME="${CUSPARSELT_HOME:-}"
 BUILD_ONLY="${BUILD_ONLY:-0}"
 BUILD_TESTS="${BUILD_TESTS:-1}"
 if [[ -n "${BUILD_DIR:-}" ]]; then
@@ -96,67 +92,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cudnn_args=()
-if grep -q '#include <cudnn.h>' "$src"; then
-  cudnn_lib=""
-  if [[ -n "$CUDNN_HOME" ]]; then
-    cudnn_lib="$(ls "$CUDNN_HOME"/lib/libcudnn.so.[0-9]* 2>/dev/null | head -n 1 || true)"
-  fi
-  if [[ -z "$cudnn_lib" ]]; then
-    echo "SKIP: $name needs cuDNN; set CUDNN_HOME"
-    exit 0
-  fi
-  cudnn_args=(-I"$CUDNN_HOME/include" -L"$CUDNN_HOME/lib" -l:"$(basename "$cudnn_lib")")
-fi
+lib_args=()
 if grep -q '#include <nccl.h>' "$src"; then
   if [[ -z "$NCCL_HOME" || ! -e "$NCCL_HOME/lib/libnccl.so.2" ]]; then
     echo "SKIP: $name needs NCCL; set NCCL_HOME"
     exit 0
   fi
-  cudnn_args+=(-I"$NCCL_HOME/include" -L"$NCCL_HOME/lib" -l:libnccl.so.2)
+  lib_args+=(-I"$NCCL_HOME/include" -L"$NCCL_HOME/lib" -l:libnccl.so.2)
 fi
 if grep -q '#include <nvshmem_host.h>' "$src"; then
   if [[ -z "$NVSHMEM_HOME" || ! -e "$NVSHMEM_HOME/lib/libnvshmem_host.so.3" ]]; then
     echo "SKIP: $name needs nvSHMEM; set NVSHMEM_HOME"
     exit 0
   fi
-  cudnn_args+=(-I"$NVSHMEM_HOME/include" -L"$NVSHMEM_HOME/lib" -l:libnvshmem_host.so.3)
-fi
-
-nvjitlink_args=()
-if grep -q '#include <nvJitLink.h>' "$src"; then
-  if [[ ! -e "$CUDA_HOME/lib64/libnvJitLink.so" ]]; then
-    echo "SKIP: $name needs nvJitLink, which this toolkit does not have"
-    exit 0
-  fi
-  nvjitlink_args=(-lnvJitLink)
-fi
-
-cusparselt_args=()
-if grep -q '#include <cusparseLt.h>' "$src"; then
-  if [[ -z "$CUSPARSELT_HOME" || ! -e "$CUSPARSELT_HOME/lib/libcusparseLt.so.0" ]]; then
-    echo "SKIP: $name needs cuSPARSELt; set CUSPARSELT_HOME"
-    exit 0
-  fi
-  cusparselt_args=(-I"$CUSPARSELT_HOME/include" -L"$CUSPARSELT_HOME/lib" -l:libcusparseLt.so.0)
-fi
-
-cufile_args=()
-if grep -q '#include <cufile.h>' "$src"; then
-  if [[ ! -e "$CUDA_HOME/lib64/libcufile.so" ]]; then
-    echo "SKIP: $name needs cuFile, which this toolkit does not have"
-    exit 0
-  fi
-  cufile_args=(-lcufile)
-fi
-
-cupti_args=()
-if grep -q '#include <cupti.h>' "$src"; then
-  if [[ ! -e "$CUDA_HOME/lib64/libcupti.so" ]]; then
-    echo "SKIP: $name needs CUPTI, which this toolkit does not have"
-    exit 0
-  fi
-  cupti_args=(-lcupti)
+  lib_args+=(-I"$NVSHMEM_HOME/include" -L"$NVSHMEM_HOME/lib" -l:libnvshmem_host.so.3)
 fi
 
 if [[ "$BUILD_TESTS" == "1" ]]; then
@@ -164,26 +113,12 @@ if [[ "$BUILD_TESTS" == "1" ]]; then
   arch_arg="-arch=all"
   [[ -n "$CUDA_SAMPLES_ARCH" ]] && arch_arg="-arch=sm_$CUDA_SAMPLES_ARCH"
   "$NVCC" --cudart=shared -Wno-deprecated-gpu-targets "$arch_arg" \
-    "$src" -o "$exe" -lcuda -lcublas -lcublasLt -lcufft -lcusolver -lcusolverMg -lcurand -lnvrtc -lnvjpeg -lcusparse -lnppc -lnppial -lnppicc -lnppidei -lnppif -lnppig -lnppim -lnppist -lnppisu -lnppitc -lnpps -ldl -L"$CUDA_HOME/lib64/stubs" \
-    "${cudnn_args[@]}" "${nvjitlink_args[@]}" "${cusparselt_args[@]}" "${cufile_args[@]}" "${cupti_args[@]}"
+    "$src" -o "$exe" -lcuda -lcublas -ldl -L"$CUDA_HOME/lib64/stubs" "${lib_args[@]}"
 fi
 [[ -x "$exe" ]] || { echo "missing custom test executable: $exe" >&2; exit 1; }
 if [[ "$BUILD_ONLY" == "1" ]]; then
   exit 0
 fi
-if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <cufile.h>' "$src"; then
-  # NVIDIA's libcufile drives the local GPU and its nvidia-fs driver from the
-  # client, which a GPU-less client has neither of; only the cuFile shim runs.
-  echo "SKIP: $name runs cuFile on the client, which needs more than the driver shim"
-  exit 0
-fi
-if [[ "${LUPINE_TEST_VARIANT:-}" == "driver-only" ]] && grep -q '#include <cupti.h>' "$src"; then
-  # NVIDIA's libcupti attaches to the local driver to profile the local
-  # process, and a GPU-less client has neither; only the CUPTI shim runs.
-  echo "SKIP: $name runs CUPTI on the client, which needs more than the driver shim"
-  exit 0
-fi
-
 servers="$SERVER_HOST:$port"
 if [[ -n "$second_port" ]]; then
   start_remote_server "$pidfile" "$server_log" "$port" "CUDA_VISIBLE_DEVICES=0"
@@ -195,9 +130,9 @@ else
 fi
 if [[ -n "${RESULTS_DIR:-}" ]]; then
   mkdir -p "$RESULTS_DIR"
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}${LD_LIBRARY_PATH:-}" \
+  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${LD_LIBRARY_PATH:-}" \
     LUPINE_SERVER="$servers" "$exe" 2>&1 | tee "$RESULTS_DIR/client.log"
 else
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUDNN_HOME:+$CUDNN_HOME/lib:}${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}${LD_LIBRARY_PATH:-}" \
+  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${LD_LIBRARY_PATH:-}" \
     LUPINE_SERVER="$servers" "$exe"
 fi
