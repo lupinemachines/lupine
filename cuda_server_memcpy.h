@@ -61,7 +61,7 @@ struct lupine_graph_host_copy {
 enum class lupine_dtoh_storage { borrowed, heap, pinned };
 
 // A device-to-host copy the server holds until a synchronize collects it. The
-// copy handlers here produce these; the stream, event and context synchronize
+// copy handlers and graph launches produce these; stream, event and context
 // handlers in cuda_server.cpp drain them, so the registry is shared rather than
 // duplicated.
 struct lupine_pending_dtoh_item {
@@ -70,6 +70,9 @@ struct lupine_pending_dtoh_item {
   void *server_src = nullptr;
   size_t bytes = 0;
   lupine_dtoh_storage storage = lupine_dtoh_storage::borrowed;
+  CUcontext context = nullptr;
+  // Preserve graph dependencies inherited through cuStreamWaitEvent.
+  lupine_graph_resources *graph_resources = nullptr;
 };
 
 using lupine_pending_dtoh_items = std::vector<lupine_pending_dtoh_item>;
@@ -85,9 +88,10 @@ int lupine_write_captured_stdout(conn_t *conn,
                                  const lupine_captured_stdout &capture);
 void lupine_note_device_stdout_image(const unsigned char *image,
                                      size_t image_size);
-lupine_pending_dtoh_items lupine_detach_pending_dtoh_copies(conn_t *conn,
-                                                            CUstream stream,
-                                                            bool all_streams);
+lupine_pending_dtoh_items
+lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
+                                  bool all_streams,
+                                  CUcontext context = nullptr);
 lupine_pending_dtoh_items lupine_detach_event_dtoh_copies(conn_t *conn,
                                                           CUevent event);
 int lupine_write_pending_dtoh_copies(conn_t *conn,
@@ -105,6 +109,7 @@ libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies();
 lupine_graph_resources *lupine_get_graph_resources(CUgraph graph);
 lupine_graph_resources *lupine_get_stream_resources(CUstream stream);
+lupine_graph_resources *lupine_find_stream_resources(CUstream stream);
 lupine_graph_resources *lupine_captured_stream_resources(CUstream stream);
 lupine_graph_resources *lupine_begin_stream_capture_resources(CUstream stream);
 void lupine_discard_stream_capture_resources(lupine_graph_resources *resources);
@@ -115,21 +120,13 @@ void lupine_forget_event_capture_resources(CUevent event);
 void lupine_wait_event_capture_resources(CUstream stream, CUevent event);
 void lupine_clone_graph_resources(CUgraph clone, CUgraph original);
 void lupine_erase_graph_resources(CUgraph graph);
-void lupine_note_graph_launch(CUgraphExec exec, CUstream stream,
+void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
                               CUresult result);
 bool lupine_graph_has_capture_scratch(lupine_graph_resources *resources);
 bool lupine_graph_install_capture_scratch(lupine_graph_resources *resources,
                                           void *scratch, size_t size);
 std::vector<lupine_graph_host_copy>
 lupine_graph_dtoh_copy_snapshot(lupine_graph_resources *resources);
-// Reports the host copies a graph launched on this stream still owes the
-// client, exactly once per launch.
-std::vector<lupine_graph_host_copy>
-lupine_take_stream_dtoh_copies(CUstream stream);
-// After a successful context wait, include every launched graph in that
-// context in the ordinary deferred-copy response, without freeing its buffers.
-void lupine_collect_context_graph_dtoh_copies(
-    CUcontext context, lupine_pending_dtoh_items *pending);
 struct lupine_htod_graph_binding {
   CUgraph original = nullptr;
   CUgraph prepared = nullptr;

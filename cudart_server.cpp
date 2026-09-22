@@ -411,7 +411,7 @@ int handle_cudaGraphLaunch(conn_t *conn) {
   }
   cudaError_t result =
       LUPINE_CUDART_CALL(cudaGraphLaunch, function_not_found(), exec, stream);
-  lupine_note_graph_launch(exec, stream, static_cast<CUresult>(result));
+  lupine_note_graph_launch(conn, exec, stream, static_cast<CUresult>(result));
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
@@ -1079,26 +1079,14 @@ namespace {
 
 int write_completion(conn_t *conn, int request_id, cudaError_t result,
                      std::vector<lupine_pending_dtoh_item> *pending,
-                     const std::vector<lupine_graph_host_copy> &graph_copies,
                      const lupine_captured_stdout *capture) {
-  const uint32_t count =
-      static_cast<uint32_t>(pending->size() + graph_copies.size());
   bool failed = rpc_write_start_response(conn, request_id) < 0 ||
                 rpc_copy_alloc(conn, 2 * sizeof(uint64_t)) < 0 ||
-                rpc_write(conn, &count, sizeof(count)) < 0;
-  for (const auto &copy : graph_copies) {
-    if (failed) {
-      break;
-    }
-    failed = rpc_write(conn, &copy.client_dst, sizeof(copy.client_dst)) < 0 ||
-             rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) < 0 ||
-             rpc_write(conn, copy.server_src, copy.bytes) < 0;
-  }
-  failed =
-      failed || lupine_write_pending_dtoh_copies(conn, *pending, false) < 0 ||
-      (capture != nullptr &&
-       lupine_write_captured_stdout(conn, *capture) < 0) ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0;
+                lupine_write_pending_dtoh_copies(conn, *pending, true) < 0 ||
+                (capture != nullptr &&
+                 lupine_write_captured_stdout(conn, *capture) < 0) ||
+                rpc_write(conn, &result, sizeof(result)) < 0 ||
+                rpc_write_end(conn) < 0;
   lupine_cleanup_pending_dtoh_copies(pending);
   return failed ? -1 : 0;
 }
@@ -1125,13 +1113,14 @@ int handle_stream_completion(conn_t *conn, bool synchronize) {
     lupine_finish_stdout_capture(&capture);
   }
   std::vector<lupine_pending_dtoh_item> pending;
-  std::vector<lupine_graph_host_copy> graph_copies;
   if (result == cudaSuccess) {
-    pending =
-        lupine_detach_pending_dtoh_copies(conn, stream, stream == nullptr);
-    graph_copies = lupine_take_stream_dtoh_copies(stream);
+    CUcontext context = nullptr;
+    if (cuStreamGetCtx(stream, &context) == CUDA_SUCCESS) {
+      pending = lupine_detach_pending_dtoh_copies(conn, stream,
+                                                  stream == nullptr, context);
+    }
   }
-  return write_completion(conn, request_id, result, &pending, graph_copies,
+  return write_completion(conn, request_id, result, &pending,
                           synchronize ? &capture : nullptr);
 }
 
@@ -1160,7 +1149,7 @@ int handle_event_completion(conn_t *conn, bool synchronize) {
   if (result == cudaSuccess) {
     pending = lupine_detach_event_dtoh_copies(conn, event);
   }
-  return write_completion(conn, request_id, result, &pending, {},
+  return write_completion(conn, request_id, result, &pending,
                           synchronize ? &capture : nullptr);
 }
 
@@ -1208,13 +1197,12 @@ int handle_cudaDeviceSynchronize(conn_t *conn) {
   lupine_finish_stdout_capture(&capture);
   std::vector<lupine_pending_dtoh_item> pending;
   if (result == cudaSuccess) {
-    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
     CUcontext context = nullptr;
     if (cuCtxGetCurrent(&context) == CUDA_SUCCESS) {
-      lupine_collect_context_graph_dtoh_copies(context, &pending);
+      pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, context);
     }
   }
-  return write_completion(conn, request_id, result, &pending, {}, &capture);
+  return write_completion(conn, request_id, result, &pending, &capture);
 }
 
 int handle_cudaStreamSynchronize(conn_t *conn) {

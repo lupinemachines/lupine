@@ -769,38 +769,41 @@ static void *lupine_alloc_process_host_buffer(size_t bytes) {
   return ptr;
 }
 
-static void lupine_append_pending_dtoh_copies(
-    lupine_pending_dtoh_items::const_iterator begin,
-    lupine_pending_dtoh_items::const_iterator end,
-    std::vector<lupine_pending_dtoh_item> *copies) {
-  for (auto item = begin; item != end; ++item) {
-    if (item->event == nullptr) {
-      copies->push_back(*item);
-    }
-  }
-}
-
 std::vector<lupine_pending_dtoh_item>
 lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
-                                  bool all_streams) {
+                                  bool all_streams, CUcontext context) {
   std::vector<lupine_pending_dtoh_item> copies;
+  auto *inherited = lupine_find_stream_resources(stream);
   lupine_pending_dtoh_copies().erase_fn(
       conn, [&](lupine_pending_dtoh_streams &streams) {
-        if (all_streams) {
-          for (auto &entry : streams) {
-            lupine_append_pending_dtoh_copies(entry.second.begin(),
-                                              entry.second.end(), &copies);
+        for (auto it = streams.begin(); it != streams.end();) {
+          if (!all_streams && it->first != stream && inherited == nullptr) {
+            ++it;
+            continue;
           }
-          return true;
+          auto &items = it->second;
+          items.erase(std::remove_if(
+                          items.begin(), items.end(),
+                          [&](const auto &item) {
+                            if (!all_streams && it->first != stream &&
+                                item.graph_resources != inherited) {
+                              return false;
+                            }
+                            if (context != nullptr && item.context != context) {
+                              return false;
+                            }
+                            if (item.event == nullptr) {
+                              copies.push_back(item);
+                            }
+                            return true;
+                          }),
+                      items.end());
+          if (items.empty()) {
+            it = streams.erase(it);
+          } else {
+            ++it;
+          }
         }
-
-        auto stream_it = streams.find(stream);
-        if (stream_it == streams.end()) {
-          return false;
-        }
-        lupine_append_pending_dtoh_copies(stream_it->second.begin(),
-                                          stream_it->second.end(), &copies);
-        streams.erase(stream_it);
         return streams.empty();
       });
   return copies;
@@ -826,15 +829,19 @@ lupine_remove_event_dtoh_markers(lupine_pending_dtoh_streams *streams,
 }
 
 void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream) {
+  CUcontext context = nullptr;
+  (void)cuStreamGetCtx(stream, &context);
+  lupine_pending_dtoh_item marker{event};
+  marker.context = context;
   lupine_pending_dtoh_streams initial;
-  initial[stream].push_back({event});
+  initial[stream].push_back(marker);
   lupine_pending_dtoh_copies().upsert(
       conn,
-      [event, stream](lupine_pending_dtoh_streams &streams,
-                      libcuckoo::UpsertContext) {
+      [event, stream, marker](lupine_pending_dtoh_streams &streams,
+                              libcuckoo::UpsertContext) {
         lupine_remove_event_dtoh_markers(&streams, event);
         if (stream != nullptr) {
-          streams[stream].push_back({event});
+          streams[stream].push_back(marker);
           return;
         }
 
@@ -852,7 +859,7 @@ void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream) {
               continue;
             }
           }
-          entry.second.push_back({event});
+          entry.second.push_back(marker);
         }
       },
       std::move(initial));
@@ -881,10 +888,19 @@ lupine_detach_event_dtoh_copies(conn_t *conn, CUevent event) {
             ++stream_it;
             continue;
           }
+          const CUcontext context = marker->context;
           auto through_marker = std::next(marker);
-          lupine_append_pending_dtoh_copies(items.begin(), through_marker,
-                                            &copies);
-          items.erase(items.begin(), through_marker);
+          auto remaining = std::remove_if(items.begin(), through_marker,
+                                          [&](const auto &item) {
+                                            if (item.context != context) {
+                                              return false;
+                                            }
+                                            if (item.event == nullptr) {
+                                              copies.push_back(item);
+                                            }
+                                            return true;
+                                          });
+          items.erase(remaining, through_marker);
           if (items.empty()) {
             stream_it = streams.erase(stream_it);
           } else {
@@ -4458,10 +4474,9 @@ int handle_cuCtxSynchronize(conn_t *conn) {
   lupine_finish_stdout_capture(&capture);
   lupine_pending_dtoh_items pending;
   if (result == CUDA_SUCCESS) {
-    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
     CUcontext context = nullptr;
     if (cuCtxGetCurrent(&context) == CUDA_SUCCESS) {
-      lupine_collect_context_graph_dtoh_copies(context, &pending);
+      pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, context);
     }
   }
   bool failed = rpc_write_start_response(conn, request_id) < 0 ||
@@ -4490,8 +4505,7 @@ int handle_cuCtxSynchronize_v2(conn_t *conn) {
   lupine_finish_stdout_capture(&capture);
   lupine_pending_dtoh_items pending;
   if (result == CUDA_SUCCESS) {
-    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
-    lupine_collect_context_graph_dtoh_copies(ctx, &pending);
+    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, ctx);
   }
   bool failed = rpc_write_start_response(conn, request_id) < 0 ||
                 rpc_copy_alloc(conn, 2 * sizeof(uint64_t)) < 0 ||
@@ -4517,30 +4531,20 @@ int handle_cuStreamSynchronize(conn_t *conn) {
   lupine_start_stdout_capture(&capture);
   CUresult result = cuStreamSynchronize(stream);
   lupine_finish_stdout_capture(&capture);
-  uint32_t copy_count = 0;
-  std::vector<lupine_graph_host_copy> graph_copies =
-      lupine_take_stream_dtoh_copies(stream);
-  uint32_t graph_copy_count = static_cast<uint32_t>(graph_copies.size());
-  bool all_pending_streams = stream == nullptr;
-  auto pending =
-      lupine_detach_pending_dtoh_copies(conn, stream, all_pending_streams);
-  uint32_t pending_copy_count = static_cast<uint32_t>(pending.size());
-  copy_count = graph_copy_count + pending_copy_count;
-  bool failed =
-      rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_copy_alloc(conn, sizeof(uint64_t)) < 0 ||
-      rpc_write(conn, &copy_count, sizeof(copy_count)) < 0 ||
-      std::any_of(graph_copies.begin(), graph_copies.end(),
-                  [&](const lupine_graph_host_copy &copy) {
-                    return rpc_write(conn, &copy.client_dst,
-                                     sizeof(copy.client_dst)) < 0 ||
-                           rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) <
-                               0 ||
-                           rpc_write(conn, copy.server_src, copy.bytes) < 0;
-                  }) ||
-      lupine_write_pending_dtoh_copies(conn, pending, false) < 0 ||
-      lupine_write_captured_stdout(conn, capture) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0;
+  lupine_pending_dtoh_items pending;
+  if (result == CUDA_SUCCESS) {
+    CUcontext context = nullptr;
+    if (cuStreamGetCtx(stream, &context) == CUDA_SUCCESS) {
+      pending = lupine_detach_pending_dtoh_copies(conn, stream,
+                                                  stream == nullptr, context);
+    }
+  }
+  bool failed = rpc_write_start_response(conn, request_id) < 0 ||
+                rpc_copy_alloc(conn, 2 * sizeof(uint64_t)) < 0 ||
+                lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
+                lupine_write_captured_stdout(conn, capture) < 0 ||
+                rpc_write(conn, &result, sizeof(result)) < 0 ||
+                rpc_write_end(conn) < 0;
   lupine_cleanup_pending_dtoh_copies(&pending);
   return failed ? -1 : 0;
 }
@@ -4555,7 +4559,7 @@ int handle_cuGraphLaunch(conn_t *conn) {
       rpc_async_sequence_begin(conn, async_sequence) < 0) {
     return -1;
   }
-  lupine_note_graph_launch(exec, stream, cuGraphLaunch(exec, stream));
+  lupine_note_graph_launch(conn, exec, stream, cuGraphLaunch(exec, stream));
   rpc_async_sequence_end(conn);
   return 0;
 }
