@@ -287,11 +287,10 @@ static void lupine_serve_lanes(conn_t &conn,
             break;
           }
           if (rpc_server_dispatch(handlers, &conn, op) < 0) {
-            // Other lanes may be waiting on this request's publication.
+            // A failed async handler cannot satisfy another lane's prefix.
             rpc_shutdown_transport_socket(&conn);
             break;
           }
-          rpc_request_complete(&conn);
         }
         if (!conn.closed) {
           (void)rpc_http2_end_stream(&conn, lane->id);

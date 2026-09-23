@@ -1508,9 +1508,10 @@ int handle_cuKernelSetAttribute(conn_t *conn) {
   int val;
   CUkernel kernel;
   CUdevice dev;
+  uint64_t async_sequence = 0;
   int request_id;
-  CUresult return_value;
-  if (rpc_read(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
       rpc_read(conn, &val, sizeof(int)) < 0 ||
       rpc_read(conn, &kernel, sizeof(CUkernel)) < 0 ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
@@ -1520,12 +1521,13 @@ int handle_cuKernelSetAttribute(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuKernelSetAttribute(attrib, val, kernel, dev);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
+  if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
+
+  cuKernelSetAttribute(attrib, val, kernel, dev);
+
+  rpc_async_sequence_end(conn);
+
   return 0;
 ERROR_0:
   return -1;

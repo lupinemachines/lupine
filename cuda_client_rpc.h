@@ -29,9 +29,6 @@ int lupine_forward_remote_stdout(conn_t *conn);
 // Existing driver routing and ownership functions, shared with sibling shims.
 struct CUstream_st;
 struct CUevent_st;
-void *lupine_rpc_stream_dependency_begin(conn_t *conn,
-                                         struct CUstream_st *stream);
-void lupine_rpc_stream_dependency_end(void *scope);
 conn_t *lupine_rpc_conn_for_device(int *device);
 conn_t *lupine_rpc_conn_for_current_context(void);
 conn_t *lupine_rpc_conn_for_stream(struct CUstream_st *stream);

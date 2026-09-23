@@ -13,7 +13,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <memory>
 #include <nghttp2/nghttp2.h>
 #include <string>
 #include <thread>
@@ -1929,7 +1928,7 @@ void test_rpc_response_completed_hook() {
   server.join();
 }
 
-void wait_dependency_flag(const std::atomic<bool> &flag, const char *message) {
+void wait_async_flag(const std::atomic<bool> &flag, const char *message) {
   auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
   while (!flag.load(std::memory_order_acquire)) {
     require(std::chrono::steady_clock::now() < deadline, message);
@@ -1937,294 +1936,203 @@ void wait_dependency_flag(const std::atomic<bool> &flag, const char *message) {
   }
 }
 
-void test_rpc_dependencies_preserve_overlap_and_join() {
+void test_async_prefix_allows_overlap_and_joins_holes() {
   h2_pair pair;
   init_pair(&pair);
-  auto *stream = rpc_dependency_domain(&pair.client, 1, 100);
-  auto *independent = rpc_dependency_domain(&pair.client, 1, 200);
-  auto *context = rpc_dependency_domain(&pair.client, 2, 300);
-  std::atomic<bool> a_entered{false}, b_entered{false}, a_queued{false},
-      b_queued{false};
-  std::atomic<bool> a_running{false}, b_done{false}, c_running{false};
-  std::atomic<bool> d_running{false}, release_a{false}, finish_clients{false};
-  // A streaming handler may wait before consuming its payload. Receiving
-  // more than an HTTP/2 window must still progress while A is held below.
+  std::atomic<bool> a_running{false}, b_done{false}, release_a{false};
+  std::atomic<bool> waiting{false}, joined{false};
+  std::thread a([&] {
+    require(rpc_async_sequence_begin(&pair.server, 0) == 0, "A begin");
+    a_running = true;
+    wait_async_flag(release_a, "A was not released");
+    rpc_async_sequence_end(&pair.server);
+  });
+  wait_async_flag(a_running, "A did not begin");
+  std::thread b([&] {
+    require(rpc_async_sequence_begin(&pair.server, 1) == 0, "B begin");
+    rpc_async_sequence_end(&pair.server);
+    b_done = true;
+  });
+  wait_async_flag(b_done, "overlapping B could not complete before A");
+  std::thread consumer([&] {
+    waiting = true;
+    require(rpc_async_sequence_wait(&pair.server, 2) == 0, "prefix wait");
+    joined = true;
+  });
+  wait_async_flag(waiting, "consumer did not start");
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
+  require(!joined, "later completion skipped the unfinished prefix");
+  release_a = true;
+  a.join();
+  b.join();
+  consumer.join();
+  require(joined, "prefix did not advance through the completed hole");
+}
+
+void test_async_prefix_same_lane_elision_and_cross_lane_marker() {
+  h2_pair pair;
+  init_pair(&pair);
+  for (int i = 0; i < 2; ++i) {
+    uint64_t sequence;
+    require(rpc_write_start_async_request(&pair.client, 101, &sequence) == 0 &&
+                sequence == uint64_t(i) &&
+                rpc_write(&pair.client, &sequence, sizeof(sequence)) == 0 &&
+                rpc_write_end(&pair.client) > 0,
+            "same-lane enqueue failed");
+  }
+  int32_t lane = rpc_http2_accept_stream(&pair.server);
+  for (int i = 0; i < 2; ++i) {
+    int header[2];
+    uint64_t sequence;
+    require(rpc_http2_read_stream(&pair.server, lane, header, sizeof(header)) ==
+                    sizeof(header) &&
+                header[0] >= 2 && header[1] == 101 &&
+                rpc_http2_read_stream(&pair.server, lane, &sequence,
+                                      sizeof(sequence)) == sizeof(sequence) &&
+                sequence == uint64_t(i),
+            "same-lane FIFO emitted a marker or changed ordinary framing");
+  }
+  std::thread other([&] {
+    require(rpc_write_start_request(&pair.client, 102) == 0 &&
+                rpc_write_end(&pair.client) > 0,
+            "cross-lane enqueue failed");
+  });
+  other.join();
+  lane = rpc_http2_accept_stream(&pair.server);
+  int marker[2];
+  uint64_t published = 0;
+  require(rpc_http2_read_stream(&pair.server, lane, marker, sizeof(marker)) ==
+                  sizeof(marker) &&
+              marker[0] == 0 && marker[1] == 0 &&
+              rpc_http2_read_stream(&pair.server, lane, &published,
+                                    sizeof(published)) == sizeof(published) &&
+              published == 2,
+          "cross-lane consumer missed the published prefix");
+}
+
+void test_async_prefix_entry_precedes_builder_wait() {
+  h2_pair pair;
+  init_pair(&pair);
+  pthread_mutex_lock(&pair.client.write_mutex);
+  std::thread caller([&] {
+    uint64_t sequence;
+    require(rpc_write_start_async_request(&pair.client, 101, &sequence) == 0,
+            "blocked request start failed");
+    require(sequence == 1 && pair.client.write_dependency == 0,
+            "builder contention moved the entry snapshot to enqueue time");
+    require(rpc_write_end(&pair.client) > 0, "blocked request enqueue failed");
+    require(rpc_write_start_request(&pair.client, 102) == 0 &&
+                rpc_write_end(&pair.client) > 0,
+            "following request enqueue failed");
+  });
+  // The caller has captured its entry and acquired call_mutex, but cannot
+  // finish starting its builder until this test releases write_mutex.
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  for (;;) {
+    int result = pthread_mutex_trylock(&pair.client.call_mutex);
+    if (result == EBUSY) {
+      break;
+    }
+    require(result == 0, "trylock failed");
+    pthread_mutex_unlock(&pair.client.call_mutex);
+    require(std::chrono::steady_clock::now() < deadline,
+            "caller did not reach the builder wait");
+    std::this_thread::yield();
+  }
+  // Simulate another producer publishing sequence 0 during the overlap.
+  pair.client.issued_async_sequence = 1;
+  __atomic_store_n(&pair.client.published_async_sequence, uint64_t{1},
+                   __ATOMIC_RELEASE);
+  pthread_mutex_unlock(&pair.client.write_mutex);
+  caller.join();
+  int32_t lane = rpc_http2_accept_stream(&pair.server);
+  int headers[4];
+  uint64_t published = 0;
+  require(rpc_http2_read_stream(&pair.server, lane, headers, sizeof(headers)) ==
+                  sizeof(headers) &&
+              headers[0] >= 2 && headers[1] == 101 && headers[2] == 0 &&
+              headers[3] == 0 &&
+              rpc_http2_read_stream(&pair.server, lane, &published,
+                                    sizeof(published)) == sizeof(published) &&
+              published == 2,
+          "own-lane completion elided a hole belonging to another producer");
+}
+
+void test_async_prefix_wait_preserves_flow_control() {
+  h2_pair pair;
+  init_pair(&pair);
+  uint64_t sequence;
+  require(rpc_write_start_async_request(&pair.client, 101, &sequence) == 0 &&
+              rpc_write(&pair.client, &sequence, sizeof(sequence)) == 0 &&
+              rpc_write_end(&pair.client) > 0,
+          "producer enqueue");
+  int32_t producer_lane = rpc_http2_accept_stream(&pair.server);
+  require(rpc_bind_http2_stream(&pair.server, producer_lane) == 0 &&
+              rpc_dispatch(&pair.server, 0) == 101 &&
+              rpc_read(&pair.server, &sequence, sizeof(sequence)) >= 0 &&
+              rpc_read_end(&pair.server) > 0 &&
+              rpc_async_sequence_begin(&pair.server, sequence) == 0,
+          "producer dispatch");
   std::vector<unsigned char> payload(LUPINE_FF_STAGING_WINDOW_BYTES + 65537);
   uint32_t seed = 53;
   for (auto &byte : payload) {
     seed = seed * 1664525u + 1013904223u;
     byte = static_cast<unsigned char>(seed >> 24);
   }
-
-  auto send = [&](int op, bool async) {
-    uint64_t sequence = 0;
-    require((async ? rpc_write_start_async_request(&pair.client, op, &sequence)
-                   : rpc_write_start_request(&pair.client, op)) == 0,
-            "dependency request start failed");
-    require(rpc_write(&pair.client, &sequence, sizeof(sequence)) == 0,
-            "dependency request write failed");
-    if (op == 103) {
-      rpc_write_cursor cursor(payload.data(), payload.size());
-      require(rpc_write_cursors(&pair.client, &cursor, 1) == 0,
-              "dependency payload write failed");
-    }
-    require(rpc_write_end(&pair.client) > 0, "dependency request end failed");
-  };
-  std::thread a([&] {
-    rpc_dependency_call call(&pair.client, {stream}, {stream, context});
-    a_entered = true;
-    wait_dependency_flag(b_entered, "B did not enter before A published");
-    send(101, true);
-    a_queued = true;
-    wait_dependency_flag(finish_clients, "dependency clients did not finish");
+  std::thread sender([&] {
+    rpc_write_cursor cursor(payload.data(), payload.size());
+    require(rpc_write_start_request(&pair.client, 102) == 0 &&
+                rpc_write_cursors(&pair.client, &cursor, 1) == 0 &&
+                rpc_write_end(&pair.client) > 0,
+            "consumer enqueue");
   });
-  std::thread b([&] {
-    rpc_dependency_call call(&pair.client, {stream}, {stream, context});
-    b_entered = true;
-    wait_dependency_flag(a_queued, "A did not publish");
-    send(102, true);
-    b_queued = true;
-    wait_dependency_flag(finish_clients, "dependency clients did not finish");
+  int32_t consumer_lane = rpc_http2_accept_stream(&pair.server);
+  std::atomic<bool> consumed{false};
+  std::thread consumer([&] {
+    require(rpc_bind_http2_stream(&pair.server, consumer_lane) == 0 &&
+                rpc_dispatch(&pair.server, 0) == 102,
+            "consumer dispatch");
+    std::vector<unsigned char> received(payload.size());
+    require(rpc_read(&pair.server, received.data(), received.size()) >= 0 &&
+                received == payload && rpc_read_end(&pair.server) > 0,
+            "consumer payload corrupted");
+    consumed = true;
+    rpc_unbind_http2_stream(&pair.server);
   });
-  wait_dependency_flag(b_queued, "overlapping publishers did not finish");
-  std::thread c([&] {
-    rpc_dependency_call call(&pair.client, {stream});
-    auto required = rpc_dependency_prepare(&pair.client, 0);
-    require(required.size() == 2,
-            "consumer did not capture both completed client calls");
-    send(103, false);
-    wait_dependency_flag(finish_clients, "dependency clients did not finish");
-  });
-  std::thread d([&] {
-    rpc_dependency_call call(&pair.client, {independent},
-                             {independent, context});
-    require(rpc_dependency_prepare(&pair.client, 0).empty(),
-            "independent stream acquired a context-wide dependency");
-    send(104, false);
-    wait_dependency_flag(finish_clients, "dependency clients did not finish");
-  });
-
-  std::vector<std::thread> workers;
-  for (int i = 0; i < 4; ++i) {
-    int32_t lane = rpc_http2_accept_stream(&pair.server);
-    workers.emplace_back([&, lane] {
-      require(rpc_bind_http2_stream(&pair.server, lane) == 0,
-              "dependency bind failed");
-      int op = rpc_dispatch(&pair.server, 0);
-      uint64_t sequence;
-      require(op >= 101 && op <= 104 &&
-                  rpc_read(&pair.server, &sequence, sizeof(sequence)) >= 0,
-              "dependency dispatch failed");
-      if (op == 103) {
-        std::vector<unsigned char> received(payload.size());
-        require(rpc_read(&pair.server, received.data(), received.size()) >= 0 &&
-                    received == payload,
-                "streaming dependency payload was corrupted");
-      }
-      require(rpc_read_end(&pair.server) > 0, "dependency wait failed");
-      if (op == 101 || op == 102) {
-        require(rpc_async_sequence_begin(&pair.server, sequence) == 0,
-                "scoped async begin failed");
-        if (op == 101) {
-          a_running = true;
-          wait_dependency_flag(release_a, "A was not released");
-        } else {
-          wait_dependency_flag(a_running,
-                               "B could not overlap A's native call");
-        }
-        rpc_async_sequence_end(&pair.server);
-      } else if (op == 103) {
-        c_running = true;
-      } else {
-        d_running = true;
-      }
-      rpc_request_complete(&pair.server);
-      if (op == 102)
-        b_done = true;
-      rpc_unbind_http2_stream(&pair.server);
-    });
-  }
-  wait_dependency_flag(b_done, "B could not complete before A");
-  wait_dependency_flag(d_running, "independent stream was blocked");
   auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
   while (read_stats(&pair.server).staged_bytes < payload.size()) {
     require(std::chrono::steady_clock::now() < deadline,
-            "dependency wait stopped flow-control progress");
+            "prefix wait stopped flow-control progress");
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
-  std::this_thread::sleep_for(std::chrono::milliseconds(30));
-  require(!c_running, "consumer skipped the unfinished producer");
-  release_a = true;
-  wait_dependency_flag(c_running,
-                       "consumer did not resume after both prerequisites");
-  for (auto &worker : workers)
-    worker.join();
-  // Context aggregates collect producers without serializing their streams.
-  {
-    rpc_dependency_call barrier(&pair.client, {context});
-    auto required = rpc_dependency_prepare(&pair.client, 0);
-    require(required.size() == 2,
-            "context barrier missed a stream publication");
-    for (auto submission : required) {
-      require(rpc_dependency_wait(&pair.server, submission) == 0,
-              "context prerequisite did not complete");
-    }
-  }
-  finish_clients = true;
-  a.join();
-  b.join();
-  c.join();
-  d.join();
+  require(!consumed, "consumer skipped its unfinished prerequisite");
+  rpc_async_sequence_end(&pair.server);
+  rpc_unbind_http2_stream(&pair.server);
+  sender.join();
+  consumer.join();
 }
 
-void test_rpc_dependency_frontiers_and_thread_local_fences() {
-  h2_pair pair;
-  init_pair(&pair);
-  auto *stream = rpc_dependency_domain(&pair.client, 1, 100);
-  {
-    rpc_dependency_call call(&pair.client, {stream}, {stream});
-    rpc_dependency_publish(&pair.client, {1, 2}, true);
-  }
-  {
-    rpc_dependency_call call(&pair.client, {stream}, {stream});
-    require(rpc_dependency_prepare(&pair.client, 1).empty(),
-            "same-lane FIFO emitted a wait marker");
-    auto required = rpc_dependency_prepare(&pair.client, 3);
-    require(required.size() == 1 && required[0].lane == 1 &&
-                required[0].request == 2,
-            "handoff lost its prerequisite");
-    rpc_dependency_publish(&pair.client, {3, 4}, true);
-    require(rpc_dependency_prepare(&pair.client, 3).empty(),
-            "thread-local map repeated an already-sent fence");
-    std::thread other([&] {
-      rpc_dependency_call call(&pair.client, {stream});
-      require(rpc_dependency_prepare(&pair.client, 5).size() == 1,
-              "another thread inherited a fence it never sent");
+void test_async_prefix_shutdown_wakes_waiters() {
+  for (bool peer_failure : {false, true}) {
+    h2_pair pair;
+    init_pair(&pair);
+    exchange_settings(&pair);
+    std::atomic<bool> waiting{false}, finished{false};
+    std::thread waiter([&] {
+      waiting = true;
+      require(rpc_async_sequence_wait(&pair.server, 1) == -1,
+              "transport failure did not cancel the prefix wait");
+      finished = true;
     });
-    other.join();
-  }
-  {
-    rpc_dependency_call a(&pair.client, {stream}, {stream});
-    auto required = rpc_dependency_prepare(&pair.client, 5);
-    require(required.size() == 1 && required[0].lane == 3 &&
-                required[0].request == 4,
-            "handoff did not compact the frontier");
-    {
-      rpc_dependency_call b(&pair.client, {stream}, {stream});
-      rpc_dependency_publish(&pair.client, {7, 6}, true);
+    wait_async_flag(waiting, "prefix waiter did not start");
+    if (peer_failure) {
+      rpc_close_transport_socket(&pair.client);
+    } else {
+      rpc_shutdown_transport_socket(&pair.server);
     }
-    rpc_dependency_publish(&pair.client, {5, 8}, true);
+    wait_async_flag(finished, "shutdown stranded a prefix waiter");
+    waiter.join();
   }
-  {
-    rpc_dependency_call call(&pair.client, {stream});
-    auto required = rpc_dependency_prepare(&pair.client, 9);
-    require(required.size() == 2,
-            "overlapping publication was removed without a dependency");
-  }
-  auto *many = rpc_dependency_domain(&pair.client, 1, 200);
-  std::vector<std::unique_ptr<rpc_dependency_call>> producers;
-  for (int i = 0; i < 4; ++i) {
-    producers.emplace_back(
-        new rpc_dependency_call(&pair.client, {many}, {many}));
-  }
-  for (int i = 3; i >= 0; --i) {
-    rpc_dependency_publish(&pair.client, {i * 2 + 1, i * 2 + 2}, true);
-    producers.pop_back();
-  }
-  {
-    rpc_dependency_call join(&pair.client, {many}, {many});
-    require(rpc_dependency_prepare(&pair.client, 11).size() == 4,
-            "prerequisite list overflow lost a concurrent producer");
-    rpc_dependency_publish(&pair.client, {11, 10}, true);
-  }
-  {
-    rpc_dependency_call call(&pair.client, {many});
-    auto required = rpc_dependency_prepare(&pair.client, 13);
-    require(required.size() == 1 && required[0].lane == 11 &&
-                required[0].request == 10,
-            "joined frontier did not return to a single producer");
-  }
-}
-
-void test_rpc_dependency_snapshot_during_publication() {
-  h2_pair pair;
-  init_pair(&pair);
-  auto *stream = rpc_dependency_domain(&pair.client, 1, 100);
-  {
-    rpc_dependency_call call(&pair.client, {}, {stream});
-    rpc_dependency_publish(&pair.client, {5, 2}, true);
-  }
-  std::atomic<int> joined{2};
-  std::atomic<bool> ready{false}, done{false};
-  std::thread reader([&] {
-    ready = true;
-    do {
-      int minimum = joined.load();
-      rpc_dependency_call call(&pair.client, {stream});
-      auto required = rpc_dependency_prepare(&pair.client, 11);
-      require(!required.empty(), "snapshot lost every published prerequisite");
-      for (auto submission : required) {
-        require(submission.request >= minimum,
-                "snapshot missed a publication preceding call entry");
-      }
-    } while (!done.load());
-  });
-  wait_dependency_flag(ready, "snapshot reader did not start");
-  int request = 2;
-  auto publish = [&](int32_t lane) {
-    pthread_mutex_lock(&pair.client.call_mutex);
-    rpc_dependency_publish(&pair.client, {lane, request += 2}, true);
-    pthread_mutex_unlock(&pair.client.call_mutex);
-  };
-  for (int i = 0; i < 10000; ++i) {
-    {
-      rpc_dependency_call a(&pair.client, {stream}, {stream});
-      {
-        rpc_dependency_call b(&pair.client, {stream}, {stream});
-        publish(3);
-      }
-      publish(1);
-    }
-    {
-      rpc_dependency_call join(&pair.client, {stream}, {stream});
-      publish(5);
-    }
-    joined = request;
-  }
-  done = true;
-  reader.join();
-}
-
-void test_rpc_dependency_shutdown_wakes_waiter() {
-  h2_pair pair;
-  init_pair(&pair);
-  std::atomic<bool> waiting{false};
-  int result = 0;
-  std::thread waiter([&] {
-    waiting = true;
-    result = rpc_dependency_wait(&pair.server, {1, 2});
-  });
-  wait_dependency_flag(waiting, "dependency waiter did not start");
-  rpc_shutdown_transport_socket(&pair.server);
-  waiter.join();
-  require(result == -1, "closed connection did not cancel an dependency wait");
-}
-
-void test_rpc_dependency_peer_failure_wakes_waiter() {
-  h2_pair pair;
-  init_pair(&pair);
-  exchange_settings(&pair);
-  std::atomic<bool> waiting{false}, finished{false};
-  std::thread waiter([&] {
-    waiting = true;
-    require(rpc_dependency_wait(&pair.server, {1, 2}) == -1,
-            "peer failure did not cancel an dependency wait");
-    finished = true;
-  });
-  wait_dependency_flag(waiting, "peer-failure waiter did not start");
-  rpc_close_transport_socket(&pair.client);
-  wait_dependency_flag(finished, "peer failure stranded an dependency waiter");
-  waiter.join();
 }
 
 // Handlers start request chains without their own null checks; an unreachable
@@ -2329,12 +2237,12 @@ int main() {
   require(rpc_set_lifecycle_hooks(&hooks) == 0,
           "failed to install RPC test lifecycle hooks");
   RUN_CASE(test_server_rejects_request_without_lz4_encoding());
+  RUN_CASE(test_async_prefix_allows_overlap_and_joins_holes());
+  RUN_CASE(test_async_prefix_same_lane_elision_and_cross_lane_marker());
+  RUN_CASE(test_async_prefix_entry_precedes_builder_wait());
+  RUN_CASE(test_async_prefix_wait_preserves_flow_control());
+  RUN_CASE(test_async_prefix_shutdown_wakes_waiters());
   RUN_CASE(test_request_start_rejects_null_and_closed_conn());
-  RUN_CASE(test_rpc_dependencies_preserve_overlap_and_join());
-  RUN_CASE(test_rpc_dependency_frontiers_and_thread_local_fences());
-  RUN_CASE(test_rpc_dependency_snapshot_during_publication());
-  RUN_CASE(test_rpc_dependency_shutdown_wakes_waiter());
-  RUN_CASE(test_rpc_dependency_peer_failure_wakes_waiter());
 #if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__) &&           \
     !defined(_WIN32)
   RUN_CASE(test_rpc_read_uses_w_offset());

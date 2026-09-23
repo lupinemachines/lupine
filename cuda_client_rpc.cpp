@@ -1,16 +1,5 @@
 #include "cuda_client_rpc.h"
-#include "cuda_client_ordering.h"
 #include "rpc.h"
-
-extern "C" void *lupine_rpc_stream_dependency_begin(conn_t *conn,
-                                                    CUstream stream) {
-  return new rpc_dependency_call(
-      lupine_cuda_stream_call(stream, nullptr, false, conn));
-}
-
-extern "C" void lupine_rpc_stream_dependency_end(void *scope) {
-  delete static_cast<rpc_dependency_call *>(scope);
-}
 
 extern int rpc_open();
 extern int rpc_size();

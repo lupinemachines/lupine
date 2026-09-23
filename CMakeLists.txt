@@ -302,7 +302,6 @@ endif()
 # Accelerator-neutral wire protocol, HTTP/2, compression, and platform IPC.
 add_library(lupine_rpc_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc_dependencies.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dispatch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/device_stdout.cpp
@@ -365,7 +364,6 @@ if(LUPINE_BUILD_CUDA)
     add_library(lupine_cuda_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client_ordering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client_rpc.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/events.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/routing.cpp
@@ -809,13 +807,6 @@ if(BUILD_TESTING)
     add_test(NAME h2_test COMMAND h2_test)
     lupine_scaled_timeout(h2_timeout 60)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
-    if(LUPINE_BUILD_CUDA)
-        add_executable(cuda_ordering_test cuda_ordering_test.cpp cuda_client_ordering.cpp)
-        target_include_directories(cuda_ordering_test PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-        target_link_libraries(cuda_ordering_test PRIVATE lupine_rpc_core)
-        lupine_apply_sanitizer(cuda_ordering_test)
-        add_test(NAME cuda_ordering_test COMMAND cuda_ordering_test)
-    endif()
 endif()
 
 # Uses Unix socketpair().

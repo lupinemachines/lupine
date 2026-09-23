@@ -46,6 +46,24 @@ that status; otherwise it sends an ordinary request that carries the all-ones
 ticket and waits for the library's result. NCCL uses this for calls inside a
 group, which the library only queues.
 
+Fire-and-forget ordering is handled in the RPC layer. At request entry, before
+acquiring the builder lock, the client snapshots the connection's published
+async count. A successful fire-and-forget enqueue publishes its sequence;
+synchronous requests need no publication because their response already
+confirms submission. If the calling lane's FIFO does not already cover the
+snapshot, the client prepends a `{0, 0, uint64_t count}` wait marker to the
+ordinary request header. The server waits for native submission of that prefix
+before dispatch, while HTTP/2 continues receiving and crediting payload data.
+Client and server must both support this marker format.
+
+The existing `rpc_async_sequence_begin`/`end` calls record submission completion
+without holding an execution lock. Overlapping RPCs can complete out of order;
+the server retains those completions until the contiguous prefix catches up.
+These are RPC entry/enqueue boundaries, not whole CUDA wrapper boundaries or
+GPU completion. Tracking is per connection, so later requests on unrelated
+CUDA streams may also wait. No CUDA resource annotations or extra server
+acknowledgements are needed.
+
 Client routing can also be annotated for handles that belong to a specific LUPINE
 server connection. `@routingkey <kind> <param>` selects the connection for the
 generated client wrapper before it writes the RPC. Supported kinds are
@@ -178,57 +196,3 @@ Some improvements that can be made:
 
 - [ ] Currently, the RPC ID is not deterministic. This is fine for now as we are still in demo-phase but this won't work for backwards compatibility.
 - [ ] We could use C++ annotations to make the processing a little more "C++"-y. Worth investigating for a bit.
-
-## CUDA call ordering
-
-The client tracks outstanding native submissions for streams, events, and
-contexts as `(lane, request ID)` prerequisites. A wrapper snapshots these at
-entry; fire-and-forget requests publish their IDs after enqueueing. Before a
-request with a foreign-lane prerequisite, the transport emits a wait marker:
-`{0, prerequisite lane, prerequisite request ID}`. Ordinary request headers and
-bulk-copy framing stay unchanged. A thread-local map suppresses fences already
-sent by that thread; its own lane needs no marker because it executes FIFO.
-
-Small call scopes keep their prerequisites and publication targets on the
-stack. A resource with one producer stores its lane/request pair in an atomic
-word; multiple producers use a vector protected by the metadata mutex. Entry
-snapshots can therefore read an ordinary stream without that mutex. Publication
-uses the existing request builder lock, and a joined frontier returns to the
-single-producer representation. Larger scopes still spill to dynamic storage.
-
-The server records the last request whose native handler returned on each lane.
-It consumes wait markers before dispatching the next handler, while HTTP/2
-continues receiving and crediting payloads. This adds no acknowledgement and
-never waits for GPU completion. Completion watermarks survive lane retirement
-until the connection closes; transport failure cancels outstanding waits.
-
-Generated CUDA wrappers infer stream and event scopes from handle parameters.
-Use `@ordering LEGACY` for implicit legacy-stream operations, `@ordering CONTEXT
-[parameter]` for context barriers, `@ordering ALL_CONTEXTS` for resource teardown
-whose owning context is unavailable, and `@ordering NONE` for calls without
-submission dependencies. Handwritten wrappers use the same helpers from
-`cuda_client_ordering.h`; stream creation registers the owning context and flags.
-
-Ordinary stream calls do not wait for the context aggregate they publish.
-Context barriers consume that aggregate. Legacy-stream calls and blocking
-streams also participate in CUDA's implicit synchronization relationship;
-nonblocking streams do not. Event recording publishes an event domain consumed
-by event queries, waits, and synchronization. These are API submission
-relationships, not memory-alias analysis of kernel arguments.
-
-Non-stream mutations need their own policy: `cuKernelSetAttribute` uses an
-acknowledged request so subsequent launches observe its update. Resource
-teardown without context ownership metadata conservatively consumes the
-connection aggregate; ordinary stream calls never consume it.
-
-Overlapping calls retain separate prerequisites. Publishing a submission removes
-only earlier entries covered by that call's entry snapshot or its own lane's
-FIFO order. Thus ordinary stream handoffs compact to one prerequisite, while a
-later consumer of concurrent producers waits for both. Context aggregates
-collect producers without imposing an order between them.
-
-Publication is the wrapper's logical exit point immediately after enqueueing,
-so a caller entering during the small interval before the wrapper returns can
-conservatively acquire a dependency. Thread lanes preserve CUDA thread-local
-state; this mechanism does not infer memory dependencies between independent
-streams.

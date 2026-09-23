@@ -433,7 +433,6 @@ NCCL = Backend(
     not_supported="ncclInvalidUsage",
     async_success="ncclSuccess",
     alias_prefix="p",
-    stream_ordering=True,
 )
 
 ANNOTATION_FILES = {
@@ -555,9 +554,6 @@ def parse_annotation(
             line = line[2:]
         if line.strip().startswith("@async"):
             metadata.async_fire_forget = True
-            continue
-        if line.strip().startswith("@ordering"):
-            metadata.ordering = line.strip().removeprefix("@ordering").strip()
             continue
         if line.strip().startswith("@synchronize"):
             parts = line.split()
@@ -1259,7 +1255,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             "#include <unordered_map>\n"
             "#include <vector>\n\n"
             '#include "gen_rpc_ids.h"\n\n'
-            '#include "client_routing.h"\n#include "cuda_client_ordering.h"\n'
+            '#include "client_routing.h"\n'
             '#include "rpc.h"\n\n'
             "extern int rpc_size();\n"
             "extern conn_t *rpc_client_get_connection(unsigned int index);\n"
@@ -1432,9 +1428,6 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 f.write("    if (lupine_route_is_local(route))\n")
                 f.write(f"        return {local_call};\n")
             f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
-            ordering = cuda_ordering_call(function, metadata)
-            if ordering:
-                f.write(f"    auto dependency_call = {ordering};\n")
 
             for operation in operations:
                 if isinstance(operation, OpaqueTypeOperation):
@@ -1697,29 +1690,6 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
             )
         )
-
-
-def cuda_ordering_call(function, metadata):
-    events = [p.name for p in function.parameters if p.type.format() == "CUevent"]
-    if metadata.ordering:
-        kind, *args = metadata.ordering.split()
-        if kind == "CONTEXT":
-            context = args[0] if args else "nullptr"
-            return f"lupine_cuda_context_call({context}, false, conn, {{{', '.join(events)}}})"
-        if kind == "ALL_CONTEXTS":
-            return "lupine_cuda_context_call(nullptr, true, conn)"
-        if kind == "LEGACY":
-            return "lupine_cuda_stream_call(nullptr, nullptr, false, conn)"
-        if kind == "NONE":
-            return "rpc_dependency_call(conn, {})"
-        raise RuntimeError(f"Unknown CUDA ordering scope: {metadata.ordering}")
-    streams = [p.name for p in function.parameters if p.type.format() == "CUstream"]
-    if streams:
-        args = streams[:1] + (events[:1] or ["nullptr"]) + ["false", "conn"]
-        return "lupine_cuda_stream_call(" + ", ".join(args) + ")"
-    if events:
-        return "lupine_cuda_event_call({" + ", ".join(events) + "}, conn)"
-    return None
 
 
 def main():
