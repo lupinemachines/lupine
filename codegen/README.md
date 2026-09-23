@@ -46,24 +46,6 @@ that status; otherwise it sends an ordinary request that carries the all-ones
 ticket and waits for the library's result. NCCL uses this for calls inside a
 group, which the library only queues.
 
-Fire-and-forget ordering is handled in the RPC layer. At request entry, before
-acquiring the builder lock, the client snapshots the connection's published
-async count. A successful fire-and-forget enqueue publishes its sequence;
-synchronous requests need no publication because their response already
-confirms submission. If the calling lane's FIFO does not already cover the
-snapshot, the client prepends a `{0, 0, uint64_t count}` wait marker to the
-ordinary request header. The server waits for native submission of that prefix
-before dispatch, while HTTP/2 continues receiving and crediting payload data.
-Client and server must both support this marker format.
-
-The existing `rpc_async_sequence_begin`/`end` calls record submission completion
-without holding an execution lock. Overlapping RPCs can complete out of order;
-the server retains those completions until the contiguous prefix catches up.
-These are RPC entry/enqueue boundaries, not whole CUDA wrapper boundaries or
-GPU completion. Tracking is per connection, so later requests on unrelated
-CUDA streams may also wait. No CUDA resource annotations or extra server
-acknowledgements are needed.
-
 Client routing can also be annotated for handles that belong to a specific LUPINE
 server connection. `@routingkey <kind> <param>` selects the connection for the
 generated client wrapper before it writes the RPC. Supported kinds are

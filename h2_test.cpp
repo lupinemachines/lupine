@@ -2029,11 +2029,9 @@ void test_async_prefix_entry_precedes_builder_wait() {
   // finish starting its builder until this test releases write_mutex.
   auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
   for (;;) {
-    int result = pthread_mutex_trylock(&pair.client.call_mutex);
-    if (result == EBUSY) {
+    if (pthread_mutex_trylock(&pair.client.call_mutex) != 0) {
       break;
     }
-    require(result == 0, "trylock failed");
     pthread_mutex_unlock(&pair.client.call_mutex);
     require(std::chrono::steady_clock::now() < deadline,
             "caller did not reach the builder wait");

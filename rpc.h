@@ -116,8 +116,8 @@ struct conn_t {
   int write_op;
   int32_t write_stream_id;
   uint64_t write_dependency;
-  bool write_async;
-  uint64_t identity;
+  int32_t async_prefix_stream;
+  uint64_t async_prefix;
 
   pthread_t read_thread;
   pthread_mutex_t write_mutex, call_mutex, async_mutex;

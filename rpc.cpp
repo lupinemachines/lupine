@@ -335,8 +335,6 @@ static int rpc_write_queue_push(conn_t *conn, rpc_write_cursor cursor) {
 
 int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id) {
   *conn = {};
-  static std::atomic<uint64_t> next_identity{1};
-  conn->identity = next_identity.fetch_add(1, std::memory_order_relaxed);
   conn->connfd = connfd;
   conn->request_id = request_id;
   conn->local_request_parity = request_id & 1;
@@ -500,7 +498,6 @@ struct rpc_nested_write_frame {
   int write_op = 0;
   int32_t write_stream_id = -1;
   uint64_t write_dependency = 0;
-  bool write_async = false;
   std::vector<rpc_write_cursor> write_queue;
   unsigned char *write_copy_buffer = nullptr;
   size_t write_copy_capacity = 0;
@@ -528,7 +525,6 @@ void rpc_save_outer_response(conn_t *conn) {
   frame.write_op = conn->write_op;
   frame.write_stream_id = conn->write_stream_id;
   frame.write_dependency = conn->write_dependency;
-  frame.write_async = conn->write_async;
   frame.write_queue = std::move(conn->write_queue);
   frame.write_copy_buffer = conn->write_copy_buffer;
   frame.write_copy_capacity = conn->write_copy_capacity;
@@ -544,7 +540,6 @@ void rpc_restore_outer_response(conn_t *conn) {
   conn->write_op = frame.write_op;
   conn->write_stream_id = frame.write_stream_id;
   conn->write_dependency = frame.write_dependency;
-  conn->write_async = frame.write_async;
   conn->write_queue = std::move(frame.write_queue);
   conn->write_copy_buffer = frame.write_copy_buffer;
   conn->write_copy_capacity = frame.write_copy_capacity;
@@ -929,7 +924,6 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   conn->write_id = conn->request_id;
   conn->write_op = op;
   conn->write_dependency = dependency;
-  conn->write_async = false;
   conn->write_stream_id = rpc_http2_lane_stream(conn, rpc_tls_lane.id);
   if (conn->write_stream_id < 0) {
     rpc_release_write_builder(conn, request_nested_in_response);
@@ -947,7 +941,6 @@ int rpc_write_start_async_request(conn_t *conn, const int op,
   if (sequence == nullptr || rpc_write_start_request(conn, op) < 0) {
     return -1;
   }
-  conn->write_async = true;
   *sequence = conn->issued_async_sequence++;
   return 0;
 }
@@ -1071,15 +1064,6 @@ int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
   return 0;
 }
 
-// FIFO already supplies this prefix on the calling thread's lane. Scalar TLS
-// stays usable even when CUDA process-exit cleanup runs after TLS destructors.
-struct rpc_lane_prefix {
-  uint64_t identity = 0;
-  int32_t lane = -1;
-  uint64_t covered = 0;
-};
-static thread_local rpc_lane_prefix lane_prefix;
-
 // rpc_write_end finalizes the current request builder on the given connection
 // index and sends the request to the server.
 //
@@ -1102,36 +1086,39 @@ int rpc_write_end(conn_t *conn) {
   int32_t write_stream_id = conn->write_stream_id;
   int result = -1;
   bool client_request = request && conn->local_request_parity == 0;
-  if (client_request && (lane_prefix.identity != conn->identity ||
-                         lane_prefix.lane != write_stream_id)) {
-    lane_prefix = {conn->identity, write_stream_id, 0};
+  // Cache the last lane's FIFO coverage under the existing builder lock.
+  // Switching lanes can resend a fence, but needs no per-thread registry.
+  if (client_request && conn->async_prefix_stream != write_stream_id) {
+    conn->async_prefix_stream = write_stream_id;
+    conn->async_prefix = 0;
   }
   struct {
-    int marker_id = 0;
-    int marker_op = 0;
+    int marker_id;
+    int marker_op;
     uint64_t published;
     int request_id;
     int op;
-  } header = {0, 0, conn->write_dependency, write_id, conn->write_op};
+  } header;
   if (conn->write_queue.size() >= 2) {
     conn->write_queue[0] =
         rpc_write_cursor(&conn->write_id, sizeof(conn->write_id));
     conn->write_queue[1] =
         rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
-    if (client_request && conn->write_dependency > lane_prefix.covered) {
+    if (client_request && conn->write_dependency > conn->async_prefix) {
+      header = {0, 0, conn->write_dependency, write_id, conn->write_op};
       conn->write_queue[0] = rpc_write_cursor(&header, sizeof(header));
       conn->write_queue[1] = {};
     }
     result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
     if (result == 0 && client_request) {
-      lane_prefix.covered =
-          std::max(lane_prefix.covered, conn->write_dependency);
-      if (conn->write_async) {
-        uint64_t published = conn->issued_async_sequence;
+      conn->async_prefix = std::max(conn->async_prefix, conn->write_dependency);
+      uint64_t published = conn->issued_async_sequence;
+      if (published !=
+          __atomic_load_n(&conn->published_async_sequence, __ATOMIC_RELAXED)) {
         // Own-lane FIFO extends a contiguous prefix by one. A gap may belong
         // to an overlapping producer and must still be fenced on the next call.
-        if (published == lane_prefix.covered + 1) {
-          lane_prefix.covered = published;
+        if (published == conn->async_prefix + 1) {
+          conn->async_prefix = published;
         }
         __atomic_store_n(&conn->published_async_sequence, published,
                          __ATOMIC_RELEASE);
