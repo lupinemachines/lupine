@@ -682,8 +682,8 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
 CUresult cuMemFree_v2(CUdeviceptr dptr);
 /**
  * @routingkey DEVICEPTR dptr
- * @param pbase SEND_RECV
- * @param psize SEND_RECV
+ * @param pbase RECV_ONLY NULLABLE
+ * @param psize RECV_ONLY NULLABLE
  * @param dptr SEND_ONLY
  */
 CUresult cuMemGetAddressRange_v2(CUdeviceptr *pbase, size_t *psize,
@@ -1268,8 +1268,8 @@ CUresult
 cuMemGetAllocationPropertiesFromHandle(CUmemAllocationProp *prop,
                                        CUmemGenericAllocationHandle handle);
 /**
- * @param handle SEND_RECV
- * @param addr SEND_RECV
+ * @param handle RECV_ONLY
+ * @param addr SEND_ONLY
  */
 CUresult cuMemRetainAllocationHandle(CUmemGenericAllocationHandle *handle,
                                      void *addr);

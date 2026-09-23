@@ -1704,13 +1704,15 @@ ERROR_0:
 }
 
 int handle_cuMemGetAddressRange_v2(conn_t *conn) {
-  CUdeviceptr pbase{};
-  size_t psize{};
+  CUdeviceptr *pbase_null_check;
+  CUdeviceptr pbase;
+  size_t *psize_null_check;
+  size_t psize;
   CUdeviceptr dptr;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &pbase, sizeof(CUdeviceptr)) < 0 ||
-      rpc_read(conn, &psize, sizeof(size_t)) < 0 ||
+  if (rpc_read(conn, &pbase_null_check, sizeof(CUdeviceptr *)) < 0 ||
+      rpc_read(conn, &psize_null_check, sizeof(size_t *)) < 0 ||
       rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 || false)
     goto ERROR_0;
 
@@ -1718,11 +1720,15 @@ int handle_cuMemGetAddressRange_v2(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuMemGetAddressRange_v2(&pbase, &psize, dptr);
+  return_value =
+      cuMemGetAddressRange_v2(pbase_null_check ? &pbase : nullptr,
+                              psize_null_check ? &psize : nullptr, dptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pbase, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &psize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &pbase_null_check, sizeof(CUdeviceptr *)) < 0 ||
+      (pbase_null_check && rpc_write(conn, &pbase, sizeof(CUdeviceptr)) < 0) ||
+      rpc_write(conn, &psize_null_check, sizeof(size_t *)) < 0 ||
+      (psize_null_check && rpc_write(conn, &psize, sizeof(size_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -3211,6 +3217,31 @@ int handle_cuMemGetAllocationPropertiesFromHandle(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &prop, sizeof(CUmemAllocationProp)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuMemRetainAllocationHandle(conn_t *conn) {
+  CUmemGenericAllocationHandle handle{};
+  handle = {};
+  void *addr;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &addr, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuMemRetainAllocationHandle(&handle, addr);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;

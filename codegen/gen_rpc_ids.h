@@ -155,6 +155,7 @@
 #define RPC_cuMemImportFromShareableHandle 956879964
 #define RPC_cuMemGetAllocationGranularity 456804952
 #define RPC_cuMemGetAllocationPropertiesFromHandle 1832377395
+#define RPC_cuMemRetainAllocationHandle 1903553150
 #define RPC_cuMemFreeAsync 121394514
 #define RPC_cuMemAllocAsync 1816490266
 #define RPC_cuMemPoolTrimTo 1437163825
@@ -407,7 +408,6 @@
 #define RPC_cuMemPoolGetAttribute 830843819
 #define RPC_cuMemPoolSetAttribute 1050377512
 #define RPC_cuMemPrefetchAsync 596440383
-#define RPC_cuMemRetainAllocationHandle 1903553150
 #define RPC_cuMemcpyAtoHAsync_v2 1591028942
 #define RPC_cuParamSetv 1622049063
 #define RPC_cuPointerGetAttribute 599464150

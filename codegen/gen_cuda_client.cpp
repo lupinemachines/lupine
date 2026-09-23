@@ -1189,14 +1189,18 @@ CUresult cuMemGetAddressRange_v2(CUdeviceptr *pbase, size_t *psize,
     return lupine_call_real_cuda_fn("cuMemGetAddressRange_v2", pbase, psize,
                                     dptr);
   conn_t *conn = lupine_route_remote_conn(route);
+  CUdeviceptr *pbase_null_check;
+  size_t *psize_null_check;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemGetAddressRange_v2) < 0 ||
-      rpc_write(conn, pbase, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, psize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &pbase, sizeof(CUdeviceptr *)) < 0 ||
+      rpc_write(conn, &psize, sizeof(size_t *)) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pbase, sizeof(CUdeviceptr)) < 0 ||
-      rpc_read(conn, psize, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &pbase_null_check, sizeof(CUdeviceptr *)) < 0 ||
+      (pbase_null_check && rpc_read(conn, pbase, sizeof(CUdeviceptr)) < 0) ||
+      rpc_read(conn, &psize_null_check, sizeof(size_t *)) < 0 ||
+      (psize_null_check && rpc_read(conn, psize, sizeof(size_t)) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2320,6 +2324,25 @@ cuMemGetAllocationPropertiesFromHandle(CUmemAllocationProp *prop,
       rpc_write(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, prop, sizeof(CUmemAllocationProp)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+CUresult cuMemRetainAllocationHandle(CUmemGenericAllocationHandle *handle,
+                                     void *addr) {
+  lupine_route route = lupine_route_for_default();
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn("cuMemRetainAllocationHandle", handle,
+                                    addr);
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuMemRetainAllocationHandle) < 0 ||
+      rpc_write(conn, &addr, sizeof(void *)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -7449,6 +7472,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemGetAllocationGranularity", (void *)cuMemGetAllocationGranularity},
     {"cuMemGetAllocationPropertiesFromHandle",
      (void *)cuMemGetAllocationPropertiesFromHandle},
+    {"cuMemRetainAllocationHandle", (void *)cuMemRetainAllocationHandle},
     {"cuMemFreeAsync", (void *)cuMemFreeAsync},
     {"cuMemAllocAsync", (void *)cuMemAllocAsync},
     {"cuMemPoolTrimTo", (void *)cuMemPoolTrimTo},
