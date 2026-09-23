@@ -97,7 +97,6 @@ class _Dispatch(dict):
 
     def __init__(self, tensor: Callable[[torch.Tensor], Any], device: Callable[[torch.device], Any]):
         super().__init__()
-        self._tensor = tensor
         self[torch.Tensor] = tensor
         self[torch.nn.Parameter] = tensor
         self[torch.device] = device
@@ -105,8 +104,8 @@ class _Dispatch(dict):
 
     def __missing__(self, cls: type) -> Any:
         if issubclass(cls, torch.Tensor):
-            self[cls] = self._tensor
-            return self._tensor
+            self[cls] = self[torch.Tensor]
+            return self[cls]
         raise KeyError(cls)
 
 

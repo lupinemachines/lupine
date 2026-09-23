@@ -9,8 +9,7 @@ import threading
 import pytest
 
 import lupine
-from lupine import _backend
-from lupine._backend import transport
+import lupine._backend.transport
 
 
 def fake_worker(hello: dict, handler=None):
@@ -22,7 +21,7 @@ def fake_worker(hello: dict, handler=None):
     listener.listen(1)
 
     def serve():
-        server = transport.Server.accept(listener)
+        server = lupine._backend.transport.Server.accept(listener)
         server.hello(hello)
         for ticket, kind, meta, body, extra in server.requests():
             if handler is None:
@@ -44,7 +43,7 @@ def test_frames_round_trip_with_payload_and_error():
             return 1, b"boom"
         return 0, body[::-1]
 
-    client = transport.Client.connect(fake_worker({"torch": "x"}, handler))
+    client = lupine._backend.transport.Client.connect(fake_worker({"torch": "x"}, handler))
     assert client.hello == {"torch": "x"}
     assert client.send(1, b"m", b"fire", bytearray(b"z" * 100_000)) == 1
     assert client.call(2, b"", b"abc") == (0, b"cba")
@@ -58,18 +57,18 @@ def test_frames_round_trip_with_payload_and_error():
 
 
 def test_closed_connection_wakes_callers():
-    client = transport.Client.connect(fake_worker({"torch": "x"}))
-    with pytest.raises(transport.ConnectionClosed):
+    client = lupine._backend.transport.Client.connect(fake_worker({"torch": "x"}))
+    with pytest.raises(lupine._backend.transport.ConnectionClosed):
         client.call(2, b"", b"never answered")
 
 
 def test_release_rule_ignores_patch_and_local_version():
-    assert _backend.release_of("2.12.1+cpu") == _backend.release_of("2.12.0+cu130") == (2, 12)
-    assert _backend.release_of("2.11.2") != _backend.release_of("2.12.1")
+    assert lupine._backend.release_of("2.12.1+cpu") == lupine._backend.release_of("2.12.0+cu130") == (2, 12)
+    assert lupine._backend.release_of("2.11.2") != lupine._backend.release_of("2.12.1")
 
 
 def test_cross_minor_worker_is_refused_before_the_extension_loads(monkeypatch):
-    monkeypatch.setattr(_backend, "_started", {})
+    monkeypatch.setattr(lupine._backend, "_started", {})
     address = fake_worker({"torch": "1.0.0+cu130", "device_count": 1})
     with pytest.raises(lupine.LupineError, match=r"torch version mismatch.*1\.0\.0\+cu130.*same major\.minor"):
-        _backend.start(address)
+        lupine._backend.start(address)

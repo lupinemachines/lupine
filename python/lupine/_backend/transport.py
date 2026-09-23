@@ -84,6 +84,7 @@ class _Connection:
         try:
             self.sock.shutdown(socket.SHUT_RDWR)
         except OSError:
+            # The peer may already be gone; there is nothing left to release.
             pass
         self.sock.close()
 

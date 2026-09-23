@@ -403,6 +403,8 @@ class Backend:
             try:
                 self.synchronize()
             except RuntimeError:
+                # A worker that already failed cannot drain; closing the
+                # connection below is what releases it.
                 pass
         self.client.close()
 
