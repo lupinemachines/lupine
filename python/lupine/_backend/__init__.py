@@ -1,7 +1,7 @@
 """Host side of the LUPINE torch backend.
 
-The user's ``torch`` gets a device whose operators execute in a same-version
-CUDA torch running in the worker (``lupine._worker``).
+The user's ``torch`` gets a device whose operators execute in a CUDA torch
+of the same major.minor release running in the worker (``lupine._worker``).
 Tensors are host-side metadata over a storage handle the worker owns; a
 Python boxed fallback (``forward``) sends every operator over a plain
 socket (``transport``) pickled with tensor references (``wire``). The first
@@ -40,10 +40,12 @@ def _extension() -> Any:
     return ext.load()
 
 
-def base_version(version: str) -> str:
-    """``2.12.1+cu130`` -> ``2.12.1``: the operator schema is the wire contract."""
+def release_of(version: str) -> tuple[int, int]:
+    """``2.12.1+cu130`` -> ``(2, 12)``: the operator schema is the wire
+    contract, and it only changes between minor releases."""
 
-    return version.split("+", 1)[0]
+    parts = version.split("+", 1)[0].split(".")
+    return int(parts[0]), int(parts[1])
 
 
 def is_dual() -> bool:
@@ -74,12 +76,12 @@ def start(address: str) -> dict[str, Any]:
     client = transport.Client.connect(address)
     worker = client.hello
     host_version = ext.torch_version()
-    if base_version(host_version) != base_version(worker.get("torch", "")):
+    if release_of(host_version) != release_of(worker.get("torch", "0.0")):
         client.close()
         raise LupineError(
             f"torch version mismatch: this process runs torch {host_version} and "
-            f"the worker runs {worker.get('torch')}; the worker must run the same "
-            "torch release"
+            f"the worker runs {worker.get('torch')}; the worker must run a torch of the "
+            "same major.minor release"
         )
     C = _extension()
     from . import forward

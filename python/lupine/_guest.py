@@ -1,7 +1,7 @@
 """Provisioning of the torch worker for the torch backend.
 
-The worker is a CUDA torch of the host's release: a subprocess of another
-interpreter that has one (``LUPINE_WORKER_PYTHON``), or one started by hand
+The worker is a CUDA torch of the host's major.minor release: a subprocess of
+another interpreter that has one (``LUPINE_WORKER_PYTHON``), or one started by hand
 and attached by address (``LUPINE_WORKER=host:port``). It runs the client
 shims against the GPU server, so its CUDA traffic is the ordinary driver
 path. macOS has no CUDA torch to run as a subprocess; the container worker
@@ -24,7 +24,7 @@ from ._worker import READY_PREFIX
 
 # Passed through to the worker so it authenticates and selects devices the
 # way the host process would.
-_INHERITED_ENV = ("LUPINE_SESSION", "CUDA_VISIBLE_DEVICES", "LUPINE_LOG_LEVEL")
+_INHERITED_ENV = ("LUPINE_SESSION", "CUDA_VISIBLE_DEVICES", "LUPINE_LOG_LEVEL", "LUPINE_WORKER_DEVICE")
 
 
 @dataclass
@@ -40,9 +40,9 @@ class Worker:
         # Dropping the connection lets the worker leave through its own exit
         # path (LUPINE_RPC_STATS dumps at exit); a stuck one is terminated.
         try:
-            from ._backend import _extension
+            from . import _backend
 
-            _extension().disconnect()
+            _backend.close()
         except Exception as exc:
             print(f"lupine: worker disconnect failed: {exc}", file=sys.stderr)
         try:
@@ -78,7 +78,7 @@ def _subprocess_command(servers: tuple[str, ...]) -> tuple[list[str], dict[str, 
     if not python:
         raise LupineError(
             "LUPINE_WORKER_PYTHON must name an interpreter with a CUDA torch of the "
-            "same release to run the torch worker as a subprocess"
+            "same major.minor release to run the torch worker as a subprocess"
         )
     env = dict(os.environ)
     for name in (
