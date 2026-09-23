@@ -3,19 +3,20 @@
 Every operator torch dispatches to the backend device lands in ``fallback``
 through ``torch.library.Library("_", "IMPL").fallback``. The first call of
 an operator with a given argument metadata (the pickled call with its device
-tensors described by dtype, sizes and strides, storages numbered by first
-appearance; in-place ops key on their tensors alone) is a synchronous
+tensors described by device, dtype, sizes and strides, storages numbered by
+first appearance; in-place ops key on their tensors alone) is a synchronous
 request: the worker runs it and reports, per result tensor, a descriptor and
 what it is relative to the arguments (an argument itself, a view over an
 argument's storage, or a new storage). The host builds the results from the
-report and keeps it as the operator's *plan* for that key. Every later call
-with the same key builds its results from the plan over host-assigned
-handles and goes fire-and-forget with the expected descriptors, which the
-worker checks against what its kernel produced: once as a full frame that
-teaches the worker the plan's template, then as a plan replay carrying only
-the plan number, the storage handles and offsets and the result handles
-(``wire.OP_PLAN``). Ops whose output shape depends on data are synchronous
-every time. Storage releases ride at the front of the next request.
+report and keeps it as the operator's *plan* for that key; the worker keeps
+the same call as the plan's template. Every later call with the same key
+builds its results from the plan over host-assigned handles and goes
+fire-and-forget as a plan replay (``wire.OP_PLAN``): the plan number, the
+storage handles and offsets, the result handles, and the call only when it
+differs from the template's (an in-place op's scalar). The worker checks
+the replay's results against the plan. Ops whose output shape depends on
+data are synchronous every time. Storage releases ride at the front of the
+next request.
 
 Copies and ``_local_scalar_dense`` are Python kernels registered the same
 way; only the metadata kernels are C++ (``csrc``).
@@ -83,16 +84,16 @@ class _Op:
 class _Plan:
     __slots__ = ("rets", "groups", "needs_rpc", "number", "body")
 
-    def __init__(self, rets: list[Any], groups: list[tuple[int, bool]], needs_rpc: bool, number: int):
+    def __init__(self, rets: list[Any], groups: list[tuple[int, bool]], needs_rpc: bool, number: int, body: bytes):
         self.rets = rets
         # (nbytes, direct): direct when one output covers the storage from
         # offset 0, so torch.empty_strided makes it in one call.
         self.groups = groups
         self.needs_rpc = needs_rpc
-        # The plan's number on the wire (0: never replayed by number) and,
-        # once the worker has been taught the template, the call it holds.
+        # The plan's number on the wire and the call the worker's template
+        # holds under it.
         self.number = number
-        self.body: bytes | None = None
+        self.body = body
 
 
 # An output in a plan: (kind, index, same, dtype, sizes, strides, offset).
@@ -182,19 +183,19 @@ class Backend:
             enc = self.local.encoder = _Encoder(self.types, self.device_rule)
         return enc
 
-    def meta(self, descs: list[wire.Desc], expected: Any = None, plan: int = 0) -> bytes:
+    def meta(self, descs: list[wire.Desc], extra: Any = None, plan: int = 0) -> bytes:
         frees = self.frees
         if frees:
             self.frees = []
-        return wire.pack_meta(frees, descs, expected, plan)
+        return wire.pack_meta(frees, descs, extra, plan)
 
     def plan_meta(self, number: int, descs: list[wire.Desc], handles: list[int]) -> bytes:
         frees = self.frees
         if frees:
             self.frees = []
         ints = [number, len(frees), *frees]
-        for handle, nbytes, device, _, _, _, offset in descs:
-            ints += (handle, nbytes, device, offset)
+        for handle, nbytes, _, _, _, _, offset in descs:
+            ints += (handle, nbytes, offset)
         ints += handles
         return wire.pack_plan(ints)
 
@@ -240,7 +241,7 @@ class Backend:
                 return result
         if self.trace:
             print(f"lupine-torch sync {st.name}", file=sys.stderr)
-        result, plan = self.run_sync(st, table, descs, body, args)
+        result, plan = self.run_sync(st, table, descs, body, args, key is not None)
         if key is not None and plan is not None:
             st.plans[key] = plan
         if started:
@@ -253,14 +254,15 @@ class Backend:
             # size and the last stride, not on batch or sequence length, so
             # one answer serves a whole generation.
             shapes = []
-            for _, _, _, dtype, sizes, strides, _ in descs:
+            for _, _, device, dtype, sizes, strides, _ in descs:
                 ndim = len(sizes)
                 kept = tuple(s if i + 1 == ndim or (ndim == 4 and i == 1) else 0 for i, s in enumerate(sizes))
-                shapes.append((dtype, kept, 1 if strides and strides[-1] == 1 else 0))
+                shapes.append((device, dtype, kept, 1 if strides and strides[-1] == 1 else 0))
             return (body, tuple(shapes))
         ids: dict[int, int] = {}
         shapes = tuple(
-            (ids.setdefault(handle, len(ids)), dtype, sizes, strides) for handle, _, _, dtype, sizes, strides, _ in descs
+            (ids.setdefault(handle, len(ids)), device, dtype, sizes, strides)
+            for handle, _, device, dtype, sizes, strides, _ in descs
         )
         return (None if st.inplace else body, shapes)
 
@@ -308,23 +310,17 @@ class Backend:
         else:
             value = tuple(results)
         if plan.needs_rpc:
-            results = wire.result_tensors(value)
-            if plan.body == body:
-                handles = [t.untyped_storage().data_ptr() >> ext.HANDLE_SHIFT for t in results]
-                self.client.send(wire.OP_PLAN, self.plan_meta(plan.number, descs, handles), b"")
-            else:
-                # The first replay teaches the worker the template; a later
-                # one whose call differs (an in-place op's scalar) goes as a
-                # full frame the template never sees.
-                teach = plan.number if plan.body is None else 0
-                if teach:
-                    plan.body = body
-                expected = [(t.untyped_storage().data_ptr() >> ext.HANDLE_SHIFT, tuple(t.shape)) for t in results]
-                self.client.send(wire.OP, self.meta(descs, expected, teach), body)
+            handles = [t.untyped_storage().data_ptr() >> ext.HANDLE_SHIFT for t in wire.result_tensors(value)]
+            self.client.send(wire.OP_PLAN, self.plan_meta(plan.number, descs, handles), b"" if body == plan.body else body)
         return value
 
-    def run_sync(self, st: _Op, table: list[torch.Tensor], descs: list[wire.Desc], body: bytes, args: tuple[Any, ...]) -> tuple[Any, _Plan | None]:
-        payload = self.call(wire.OP_SYNC, self.meta(descs), body)
+    def run_sync(self, st: _Op, table: list[torch.Tensor], descs: list[wire.Desc], body: bytes, args: tuple[Any, ...], cacheable: bool) -> tuple[Any, _Plan | None]:
+        # The worker files this call as the plan's template under its number.
+        number = 0
+        if cacheable:
+            self.numbered += 1
+            number = self.numbered
+        payload = self.call(wire.OP_SYNC, self.meta(descs, plan=number), body)
         aliases, rdescs, rbody = pickle.loads(payload)
         device = self.result_device(table, args)
         outputs: dict[int, Any] = {}
@@ -367,7 +363,6 @@ class Backend:
                 if offset == 0 and _storage_nbytes(sizes, strides, dtype) == groups[g][0]:
                     groups[g] = (groups[g][0], True)
         rets: list[Any] = []
-        cacheable = True
         for v in (value,) if st.returns == 1 else (value if st.returns else ()):
             if isinstance(v, torch.Tensor):
                 rets.append((_TENSOR, outputs[id(v)]))
@@ -376,15 +371,8 @@ class Backend:
             elif v is None or type(v) in (bool, int, float):
                 rets.append((_VALUE, v))
             else:
-                cacheable = False
-        if not cacheable:
-            return value, None
-        # A memo plan serves calls of other shapes, which no template fits.
-        number = 0
-        if not st.memo:
-            self.numbered += 1
-            number = self.numbered
-        return value, _Plan(rets, groups, st.mutates or bool(groups), number)
+                return value, None
+        return value, _Plan(rets, groups, st.mutates or bool(groups), number, body)
 
     # --- copies, scalars, control ---------------------------------------
 

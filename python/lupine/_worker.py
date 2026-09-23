@@ -15,10 +15,10 @@ CUDA and the driver shim sees one client thread and one lane, ordered on the
 wire, as the driver path itself does. The socket buffers are the read-ahead:
 a host that issues faster than the worker runs blocks in its send.
 
-A plan the host replays is a template here (``_Template``): the first full
-frame sent with a plan number is decoded once into the operator, the argument
-skeleton and the table entries' specs, and every ``OP_PLAN`` frame after it
-carries only handles and offsets.
+A plan the host replays is a template here (``_Template``): the synchronous
+call that taught the host the plan names the plan number, and its operator,
+call and the table entries' specs are kept, so an ``OP_PLAN`` frame carries
+only handles and offsets, plus the call when it differs from the template's.
 """
 
 from __future__ import annotations
@@ -209,15 +209,16 @@ class _Slot:
 
 class _Template:
     """A plan as the worker replays it (see ``wire.OP_PLAN``): the operator,
-    each table entry's spec, a generated builder that puts the materialised
-    entries back into the call, and the results' sizes and specs."""
+    each table entry's spec and device, a generated builder that puts the
+    materialised entries back into the call, and the results' sizes and
+    specs."""
 
-    __slots__ = ("name", "op", "specs", "build", "consts", "sizes", "results")
+    __slots__ = ("name", "resolved", "slots", "build", "consts", "sizes", "results")
 
-    def __init__(self, name: str, op: Any, specs: list[_Spec], args: Any, kwargs: Any, sizes: list[Any], results: list[Any]):
+    def __init__(self, name: str, resolved: _Resolved, slots: list[tuple[_Spec, int]], args: Any, kwargs: Any, sizes: list[Any], results: list[Any]):
         self.name = name
-        self.op = op
-        self.specs = specs
+        self.resolved = resolved
+        self.slots = slots
         self.build, self.consts = _compile(args, kwargs)
         self.sizes = sizes
         self.results = results
@@ -384,7 +385,7 @@ class Executor:
     # A handle the host already holds (an argument the plan says the op
     # returns or views) must come back over the same storage; anything else
     # is a plan that does not describe this op.
-    def bind(self, name: str, results: list[Any], handles: Any, sizes: list[Any], seeds: list[Any] | None = None) -> None:
+    def bind(self, name: str, results: list[Any], handles: Any, sizes: list[Any], seeds: list[Any]) -> None:
         if len(results) != len(handles):
             raise RuntimeError(f"{name} returned {len(results)} tensors where the host's plan has {len(handles)}")
         for i, t in enumerate(results):
@@ -396,10 +397,7 @@ class Executor:
             storage = t.untyped_storage()
             entry = self.table.get(handles[i])
             if entry is None:
-                if seeds is None:
-                    self.file(handles[i], storage, t)
-                else:
-                    self.file(handles[i], storage, t, *seeds[i])
+                self.file(handles[i], storage, t, *seeds[i])
             elif entry.cdata != storage._cdata:
                 raise RuntimeError(
                     f"{name} returned a new storage where the host's plan has an argument's; "
@@ -423,7 +421,7 @@ class Executor:
 
     def run(self, meta: bytes, body: bytes) -> tuple[Any, list[Any], str]:
         started = time.perf_counter_ns() if self.profile is not None else 0
-        frees, descs, expected, plan = self.wire.unpack_meta(meta)
+        frees, descs, _, plan = self.wire.unpack_meta(meta)
         self.apply_frees(frees)
         inputs = [self.materialize(d) for d in descs]
         name, args, kwargs = self.wire.loads(body, inputs)
@@ -440,21 +438,19 @@ class Executor:
             value = 0
         else:
             value = resolved.op(*args, **kwargs)
-        if expected is not None:
+        if plan:
             results = self.wire.result_tensors(value)
-            sizes = [s for _, s in expected]
-            self.bind(name, results, [h for h, _ in expected], sizes)
-            if plan:
-                specs = [self.spec(dtype, sz, st) for _, _, _, dtype, sz, st, _ in descs]
-                seeds = [(self.spec_of(t), t.storage_offset()) for t in results]
-                _, slotted, skwargs = self.wire.loads(body, [_Slot(i) for i in range(len(descs))])
-                slotted = self.wrap_numbers(resolved, slotted)
-                self.templates[plan] = _Template(name, resolved.op, specs, slotted, skwargs, sizes, seeds)
+            slots = [(self.spec(dtype, sz, st), device) for _, _, device, dtype, sz, st, _ in descs]
+            _, slotted, skwargs = self.wire.loads(body, [_Slot(i) for i in range(len(descs))])
+            slotted = self.wrap_numbers(resolved, slotted)
+            sizes = [tuple(t.shape) for t in results]
+            seeds = [(self.spec_of(t), t.storage_offset()) for t in results]
+            self.templates[plan] = _Template(name, resolved, slots, slotted, skwargs, sizes, seeds)
         if started:
             self.note(name, started, decoded, time.perf_counter_ns())
         return value, inputs, name
 
-    def replay(self, meta: bytes) -> None:
+    def replay(self, meta: bytes, body: bytes) -> None:
         started = time.perf_counter_ns() if self.profile is not None else 0
         ints = self.wire.unpack_plan(meta)
         template = self.templates.get(ints[0])
@@ -465,22 +461,26 @@ class Executor:
             self.apply_frees(ints[2:p])
         table = self.table
         inputs = []
-        for spec in template.specs:
+        for spec, device in template.slots:
             handle = ints[p]
-            offset = ints[p + 3]
+            offset = ints[p + 2]
             entry = table.get(handle)
             view = entry.views.get((spec, offset)) if entry is not None and ints[p + 1] <= entry.nbytes else None
             if view is None:
-                view = self.view(handle, ints[p + 1], ints[p + 2], spec, offset)
+                view = self.view(handle, ints[p + 1], device, spec, offset)
             inputs.append(view)
-            p += 4
+            p += 3
         if inputs:
-            self.select_device(ints[4 + ints[1]])
+            self.select_device(template.slots[0][1])
         if self.trace:
             print(f"lupine-torch worker {template.name}", *(tuple(t.shape) for t in inputs), file=sys.stderr)
-        args, kwargs = template.build(inputs, template.consts)
+        if body:
+            _, args, kwargs = self.wire.loads(body, inputs)
+            args = self.wrap_numbers(template.resolved, args)
+        else:
+            args, kwargs = template.build(inputs, template.consts)
         decoded = time.perf_counter_ns() if started else 0
-        value = template.op(*args, **kwargs)
+        value = template.resolved.op(*args, **kwargs)
         self.bind(template.name, self.wire.result_tensors(value), ints[p:], template.sizes, template.results)
         if started:
             self.note(template.name, started, decoded, time.perf_counter_ns())
@@ -531,13 +531,7 @@ class Executor:
         ticket, kind, meta, body, extra = frame
         if kind == wire.OP_PLAN:
             try:
-                self.replay(meta)
-            except Exception as exc:
-                self.record(_message(exc))
-            return
-        if kind == wire.OP:
-            try:
-                self.run(meta, body)
+                self.replay(meta, body)
             except Exception as exc:
                 self.record(_message(exc))
             return

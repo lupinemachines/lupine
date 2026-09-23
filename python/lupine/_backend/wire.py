@@ -9,13 +9,14 @@ for the worker; dtypes, layouts and memory formats pickle as themselves.
 Results come back the same way plus, per table entry, what the tensor is
 relative to the arguments (see ``forward``).
 
-A plan replay (``OP_PLAN``) carries no pickle: its metadata is int64s
-``plan, nfrees, frees..., (handle, nbytes, device, offset) per table entry,
-result handles...`` and its body is empty. The worker's template for the
-plan holds the rest (the operator, the argument skeleton, each entry's
-dtype, sizes and strides, the result sizes), learned from the one full
-``OP`` frame the host sends with the plan number in its metadata before the
-first replay; a call the template does not describe goes as a full frame.
+A plan replay (``OP_PLAN``) carries int64s as its metadata, ``plan,
+nfrees, frees..., (handle, nbytes, offset) per table entry, result
+handles...``, and no body. The worker's template for the plan holds the
+rest (the operator, the call, each entry's device, dtype, sizes and
+strides, the result sizes), learned at the synchronous call that taught
+the host the plan, whose metadata names the plan number; a replay whose
+call differs from that one (an in-place op's scalar) carries the call as
+its body.
 """
 
 from __future__ import annotations
@@ -30,9 +31,8 @@ from typing import Any
 
 import torch
 
-# Request kinds. OP, OP_PLAN, COPY_FROM_HOST and EXEC are fire-and-forget; the
+# Request kinds. OP_PLAN, COPY_FROM_HOST and EXEC are fire-and-forget; the
 # rest wait for a response.
-OP = 1
 OP_SYNC = 2
 COPY_TO_HOST = 3
 COPY_FROM_HOST = 4
@@ -186,13 +186,13 @@ def device_as(target: str, types: tuple[str, ...]) -> Callable[[torch.device], A
 # --- frames -----------------------------------------------------------------
 
 
-def pack_meta(frees: list[int], table: list[Any], expected: Any = None, plan: int = 0) -> bytes:
+def pack_meta(frees: list[int], table: list[Any], extra: Any = None, plan: int = 0) -> bytes:
     """The part of a request in front of the pickled call: the storages the
     host released since its last request, the argument descriptors, what
-    the request kind needs (a replay's expected results), and the plan
-    number the worker should file this call under as a template."""
+    the request kind needs (a copy's dtype), and the plan number the worker
+    should file this call under as a template."""
 
-    return pickle.dumps((frees, table, expected, plan), protocol=pickle.HIGHEST_PROTOCOL)
+    return pickle.dumps((frees, table, extra, plan), protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def unpack_meta(data: bytes) -> tuple[list[int], list[Any], Any, int]:
@@ -210,8 +210,8 @@ def unpack_plan(data: bytes) -> tuple[int, ...]:
 def result_tensors(value: Any) -> list[torch.Tensor]:
     """The tensors of an op's return value in order: a tensor, or a tuple or
     list whose items are tensors, tensor lists and scalars (which contribute
-    nothing). Both ends walk a result this way, so a replay's expected
-    descriptors line up with the worker's results."""
+    nothing). Both ends walk a result this way, so a replay's result handles
+    line up with the worker's results."""
 
     if isinstance(value, torch.Tensor):
         return [value]

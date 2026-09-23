@@ -122,9 +122,25 @@ def test_split_cat_stack(backend):
         same(torch, torch.cat([d] * n).cpu(), torch.cat([x] * n))
 
 
+def test_inplace_replay_with_another_scalar(backend):
+    # An in-place op's plan is keyed on its tensors alone: the second call
+    # replays the plan with a call that differs from the template's.
+    torch, dev = backend
+    a = torch.ones(4).to(dev)
+    b = torch.ones(2).to(dev)
+    a.mul_(2.0)
+    a.mul_(3.0)
+    a.mul_(2.0)
+    same(torch, a.cpu(), torch.full((4,), 12.0))
+    torch._foreach_div_([a, b], [2.0, 4.0])
+    torch._foreach_div_([a, b], [3.0, 0.5])
+    same(torch, a.cpu(), torch.full((4,), 2.0))
+    same(torch, b.cpu(), torch.full((2,), 0.5))
+
+
 def test_replay_keeps_slots_apart_when_views_coincide(backend):
-    # The miss, then the replay that teaches the template with two slots over
-    # one view, then a replay whose slots differ.
+    # The miss, whose call is the template with two slots over one view,
+    # then a replay whose slots differ.
     torch, dev = backend
     data = torch.arange(20.0).to(dev)
 
