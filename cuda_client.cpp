@@ -5843,48 +5843,26 @@ static CUresult lupine_read_kernel_param_sizes(CUkernel kernel,
   }
 }
 
-// The parameter-buffer launch form hands the driver one packed blob, but the
-// wire carries each argument on its own, so point each argument at its offset
-// in the caller's blob, which the caller keeps until the launch is written. The
-// caller may pass fewer bytes than the signature declares (NCCL does), and the
-// driver leaves the rest untouched, so only arguments reaching past the blob
-// are staged, zero-filled beyond its end.
-static CUresult lupine_params_from_param_buffer(
-    void **extra, const std::vector<size_t> &offsets,
-    const std::vector<size_t> &sizes, std::vector<char> *storage,
-    std::vector<void *> *kernel_params) {
+// The parameter-buffer launch form packs the arguments into one blob, but the
+// wire and pointer translation take them one by one, so point each argument at
+// its offset in the caller's blob.
+static void **
+lupine_params_from_param_buffer(void **extra,
+                                const std::vector<size_t> &offsets,
+                                std::vector<void *> *params) {
   char *buffer = nullptr;
-  size_t buffer_size = 0;
   for (size_t i = 0; extra[i] != CU_LAUNCH_PARAM_END; i += 2) {
     if (extra[i] == CU_LAUNCH_PARAM_BUFFER_POINTER) {
       buffer = static_cast<char *>(extra[i + 1]);
-    } else if (extra[i] == CU_LAUNCH_PARAM_BUFFER_SIZE) {
-      buffer_size = *static_cast<const size_t *>(extra[i + 1]);
-    } else {
-      return CUDA_ERROR_INVALID_VALUE;
     }
   }
   if (buffer == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
+    return nullptr;
   }
-  size_t staged = buffer_size;
-  size_t declared = buffer_size;
-  for (size_t i = 0; i < offsets.size(); ++i) {
-    if (offsets[i] + sizes[i] > buffer_size) {
-      staged = std::min(staged, offsets[i]);
-      declared = std::max(declared, offsets[i] + sizes[i]);
-    }
-  }
-  storage->assign(declared - staged, 0);
-  memcpy(storage->data(), buffer + staged, buffer_size - staged);
-  kernel_params->clear();
-  kernel_params->reserve(offsets.size());
   for (size_t offset : offsets) {
-    kernel_params->push_back(offset < staged
-                                 ? buffer + offset
-                                 : storage->data() + (offset - staged));
+    params->push_back(buffer + offset);
   }
-  return CUDA_SUCCESS;
+  return params->data();
 }
 
 struct lupine_kernel_params {
@@ -6028,15 +6006,10 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
     return status;
   }
 
-  std::vector<char> param_storage;
   std::vector<void *> buffer_params;
   if (extra != nullptr) {
-    status = lupine_params_from_param_buffer(extra, param_offsets, param_sizes,
-                                             &param_storage, &buffer_params);
-    if (status != CUDA_SUCCESS) {
-      return status;
-    }
-    kernelParams = buffer_params.data();
+    kernelParams =
+        lupine_params_from_param_buffer(extra, param_offsets, &buffer_params);
   }
 
   for (size_t i = 0; i < param_sizes.size(); ++i) {
@@ -6128,15 +6101,10 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
     return status;
   }
 
-  std::vector<char> param_storage;
   std::vector<void *> buffer_params;
   if (extra != nullptr) {
-    status = lupine_params_from_param_buffer(extra, param_offsets, param_sizes,
-                                             &param_storage, &buffer_params);
-    if (status != CUDA_SUCCESS) {
-      return status;
-    }
-    kernelParams = buffer_params.data();
+    kernelParams =
+        lupine_params_from_param_buffer(extra, param_offsets, &buffer_params);
   }
 
   for (size_t i = 0; i < param_sizes.size(); ++i) {

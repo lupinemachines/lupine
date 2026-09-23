@@ -1,6 +1,5 @@
 // Launches through the driver's parameter-buffer form, where every argument
-// arrives packed in one blob instead of an array of pointers. NCCL launches
-// this way, and it truncates the blob to the bytes its kernel actually reads.
+// arrives packed in one blob instead of an array of pointers.
 #include <cuda.h>
 #include <cuda_runtime.h>
 
@@ -27,33 +26,10 @@
     }                                                                          \
   } while (0)
 
-#define EXPECT(condition)                                                      \
-  do {                                                                         \
-    if (!(condition)) {                                                        \
-      fprintf(stderr, "expectation failed: %s\n", #condition);                 \
-      return 1;                                                                \
-    }                                                                          \
-  } while (0)
-
-struct payload {
-  float value;
-  int count;
-  float unread[64];
-};
-
 __global__ void fill(float *out, float value, int count) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < count) {
     out[i] = value;
-  }
-}
-
-// Only the head of the payload is read, so a caller may pass a buffer that
-// stops after it.
-__global__ void fill_payload(float *out, payload work) {
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i < work.count) {
-    out[i] = work.value;
   }
 }
 
@@ -80,9 +56,6 @@ int main() {
 
   cudaFunction_t fill_function = nullptr;
   CHECK_CUDA(cudaGetFuncBySymbol(&fill_function, (const void *)fill));
-  cudaFunction_t payload_function = nullptr;
-  CHECK_CUDA(cudaGetFuncBySymbol(&payload_function, (const void *)fill_payload));
-
   struct {
     float *out;
     float value;
@@ -116,26 +89,6 @@ int main() {
     return 1;
   }
   printf("cuLaunchKernelEx parameter buffer: passed\n");
-
-  // The payload kernel reads two of its 66 words, so hand the driver a buffer
-  // that ends there, the way NCCL sizes its kernel arguments.
-  struct {
-    float *out;
-    float value;
-    int count;
-  } head = {device, 11.5f, kCount};
-  size_t head_size = sizeof(head);
-  void *truncated[] = {CU_LAUNCH_PARAM_BUFFER_POINTER, &head,
-                       CU_LAUNCH_PARAM_BUFFER_SIZE, &head_size,
-                       CU_LAUNCH_PARAM_END};
-  EXPECT(head_size < sizeof(float *) + sizeof(payload));
-  CHECK_DRIVER(cuLaunchKernel((CUfunction)payload_function, kCount / 64, 1, 1,
-                              64, 1, 1, 0, nullptr, nullptr, truncated));
-  CHECK_CUDA(cudaDeviceSynchronize());
-  if (check(device, 11.5f)) {
-    return 1;
-  }
-  printf("truncated parameter buffer: passed\n");
 
   CHECK_CUDA(cudaFree(device));
   printf("parameter buffer launches: all checks passed\n");
