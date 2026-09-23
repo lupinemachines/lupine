@@ -178,3 +178,41 @@ Some improvements that can be made:
 
 - [ ] Currently, the RPC ID is not deterministic. This is fine for now as we are still in demo-phase but this won't work for backwards compatibility.
 - [ ] We could use C++ annotations to make the processing a little more "C++"-y. Worth investigating for a bit.
+
+## CUDA call ordering
+
+CUDA requests carry optional ordering epochs in the RPC header. The CUDA
+backend identifies streams, events, and contexts; the RPC layer treats their
+ordering domains as opaque IDs. A wrapper snapshots prerequisites before
+building its request. Fire-and-forget requests publish epochs after enqueueing,
+and a server handler completes them after native submission, without waiting
+for GPU completion or sending an acknowledgement.
+
+Generated CUDA wrappers infer stream and event scopes from handle parameters.
+Use `@ordering LEGACY` for implicit legacy-stream operations, `@ordering CONTEXT
+[parameter]` for context barriers, `@ordering ALL_CONTEXTS` for resource teardown
+whose owning context is unavailable, and `@ordering NONE` for calls without
+submission dependencies. Handwritten wrappers use the same helpers from
+`cuda_client_epochs.h`; stream creation registers the owning context and flags.
+Streaming handlers must call `rpc_wait_dependencies` before their first native
+operation if it precedes `rpc_read_end`.
+
+Ordinary stream calls do not wait for the context aggregate they publish.
+Context barriers consume that aggregate. Legacy-stream calls and blocking
+streams also participate in CUDA's implicit synchronization relationship;
+nonblocking streams do not. Event recording publishes an event domain consumed
+by event queries, waits, and synchronization. These are API submission
+relationships, not memory-alias analysis of kernel arguments.
+
+Non-stream mutations need their own policy: `cuKernelSetAttribute` uses an
+acknowledged request so subsequent launches observe its update. Resource
+teardown without context ownership metadata conservatively consumes the
+connection aggregate; ordinary stream calls never consume it.
+
+Epoch values count publications within a domain, rather than imposing an
+execution order on overlapping calls. For example, two calls that both snapshot
+zero may run concurrently and complete in either order. A later call requiring
+epoch two waits for both; completing two never skips a hole at one. Publication
+is the wrapper's logical exit point immediately after enqueueing, so a caller
+entering during the small interval before the wrapper returns can conservatively
+acquire a dependency. Thread lanes still preserve CUDA thread-local state.

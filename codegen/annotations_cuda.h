@@ -176,6 +176,7 @@ CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags, CUdevice dev);
 CUresult cuCtxCreate_v3(CUcontext *pctx, CUexecAffinityParam *paramsArray,
                         int numParams, unsigned int flags, CUdevice dev);
 /**
+ * @ordering CONTEXT ctx
  * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
  */
@@ -235,24 +236,28 @@ CUresult cuCtxGetFlags(unsigned int *flags);
  */
 CUresult cuCtxGetId(CUcontext ctx, unsigned long long *ctxId);
 /**
+ * @ordering CONTEXT hCtx
  * @guard CUDA_VERSION >= 12050
  * @param hCtx SEND_ONLY
  * @param hEvent SEND_ONLY
  */
 CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent);
 /**
+ * @ordering CONTEXT hCtx
  * @guard CUDA_VERSION >= 12050
  * @param hCtx SEND_ONLY
  * @param hEvent SEND_ONLY
  */
 CUresult cuCtxWaitEvent(CUcontext hCtx, CUevent hEvent);
 /**
+ * @ordering CONTEXT
  * @disabled server
  * @synchronize DEFERRED_DTOH STDOUT
  * @routingkey CURRENT_CONTEXT
  */
 CUresult cuCtxSynchronize();
 /**
+ * @ordering CONTEXT ctx
  * @guard CUDA_VERSION >= 13000
  * @disabled server
  * @synchronize DEFERRED_DTOH STDOUT
@@ -275,6 +280,7 @@ CUresult cuCtxGetLimit(size_t *pvalue, CUlimit limit);
  */
 CUresult cuCtxGetCacheConfig(CUfunc_cache *pconfig);
 /**
+ * @ordering CONTEXT
  * @param config SEND_ONLY
  */
 CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
@@ -288,6 +294,7 @@ CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
  */
 CUresult cuCtxGetSharedMemConfig(CUsharedconfig *pConfig);
 /**
+ * @ordering CONTEXT
  * @param config SEND_ONLY
  */
 CUresult cuCtxSetSharedMemConfig(CUsharedconfig config);
@@ -318,6 +325,7 @@ CUresult cuCtxGetExecAffinity(CUexecAffinityParam *pExecAffinity,
  */
 CUresult cuCtxAttach(CUcontext *pctx, unsigned int flags);
 /**
+ * @ordering CONTEXT ctx
  * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
  */
@@ -353,6 +361,7 @@ CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
 /**
  * @routingkey MODULE hmod
  * @release MODULE hmod
+ * @ordering ALL_CONTEXTS
  * @param hmod SEND_ONLY
  */
 CUresult cuModuleUnload(CUmodule hmod) {
@@ -491,6 +500,7 @@ CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
 /**
  * @disabled server - manual server keeps the library loaded, see the handler
  * @async
+ * @ordering NONE
  * @routingkey LIBRARY library
  * @release LIBRARY library
  * @param library SEND_ONLY
@@ -599,7 +609,7 @@ CUresult cuLibraryGetUnifiedFunction(void **fptr, CUlibrary library,
 CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
                               CUkernel kernel, CUdevice dev);
 /**
- * @async
+ * @ordering ALL_CONTEXTS
  * @param attrib SEND_ONLY
  * @param val SEND_ONLY
  * @param kernel SEND_ONLY
@@ -615,6 +625,7 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
   return return_value;
 }
 /**
+ * @ordering ALL_CONTEXTS
  * @param kernel SEND_ONLY
  * @param config SEND_ONLY
  * @param dev SEND_ONLY
@@ -780,6 +791,7 @@ CUresult cuMemHostRegister_v2(void *p, size_t bytesize, unsigned int Flags);
  */
 CUresult cuMemHostUnregister(void *p);
 /**
+ * @ordering LEGACY
  * @disabled client
  * @routingkey DEVICEPTR dst
  * @crossservercopy dst src ByteCount
@@ -789,6 +801,7 @@ CUresult cuMemHostUnregister(void *p);
  */
 CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src, size_t ByteCount);
 /**
+ * @ordering LEGACY
  * @crossservercopy dstDevice srcDevice ByteCount
  * @param dstDevice SEND_ONLY
  * @param dstContext SEND_ONLY
@@ -800,6 +813,7 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
                       CUdeviceptr srcDevice, CUcontext srcContext,
                       size_t ByteCount);
 /**
+ * @ordering LEGACY
  * @disabled - manual client/server pipeline large host-to-device copies
  * @synchronize
  * @routingkey DEVICEPTR dstDevice
@@ -810,6 +824,7 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
 CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                          size_t ByteCount);
 /**
+ * @ordering LEGACY
  * @disabled - manual client/server chunk large host-copy responses
  * @routingkey DEVICEPTR srcDevice
  * @param srcDevice SEND_ONLY
@@ -819,6 +834,7 @@ CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
 CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
                          size_t ByteCount);
 /**
+ * @ordering LEGACY
  * @synchronize
  * @routingkey DEVICEPTR dstDevice
  * @crossservercopy dstDevice srcDevice ByteCount
@@ -829,6 +845,7 @@ CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
 CUresult cuMemcpyDtoD_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                          size_t ByteCount);
 /**
+ * @ordering LEGACY
  * @routingkey DEVICEPTR srcDevice
  * @param dstArray SEND_ONLY
  * @param dstOffset SEND_ONLY
@@ -838,6 +855,7 @@ CUresult cuMemcpyDtoD_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
 CUresult cuMemcpyDtoA_v2(CUarray dstArray, size_t dstOffset,
                          CUdeviceptr srcDevice, size_t ByteCount);
 /**
+ * @ordering LEGACY
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param srcArray SEND_ONLY
@@ -847,6 +865,7 @@ CUresult cuMemcpyDtoA_v2(CUarray dstArray, size_t dstOffset,
 CUresult cuMemcpyAtoD_v2(CUdeviceptr dstDevice, CUarray srcArray,
                          size_t srcOffset, size_t ByteCount);
 /**
+ * @ordering LEGACY
  * @disabled - manual client/server chunk large host-copy responses
  * @param srcArray SEND_ONLY
  * @param srcOffset SEND_ONLY
@@ -856,6 +875,7 @@ CUresult cuMemcpyAtoD_v2(CUdeviceptr dstDevice, CUarray srcArray,
 CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray, size_t srcOffset,
                          size_t ByteCount);
 /**
+ * @ordering LEGACY
  * @param dstArray SEND_ONLY
  * @param dstOffset SEND_ONLY
  * @param srcArray SEND_ONLY
@@ -865,21 +885,25 @@ CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray, size_t srcOffset,
 CUresult cuMemcpyAtoA_v2(CUarray dstArray, size_t dstOffset, CUarray srcArray,
                          size_t srcOffset, size_t ByteCount);
 /**
+ * @ordering LEGACY
  * @disabled
  * @param pCopy SEND_ONLY DEREF
  */
 CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy);
 /**
+ * @ordering LEGACY
  * @disabled
  * @param pCopy SEND_ONLY DEREF
  */
 CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy);
 /**
+ * @ordering LEGACY
  * @disabled
  * @param pCopy SEND_ONLY
  */
 CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy);
 /**
+ * @ordering LEGACY
  * @disabled
  * @param pCopy SEND_ONLY
  */
@@ -955,6 +979,7 @@ CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy, CUstream hStream);
  */
 CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy, CUstream hStream);
 /**
+ * @ordering LEGACY
  * @synchronize
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
@@ -963,6 +988,7 @@ CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy, CUstream hStream);
  */
 CUresult cuMemsetD8_v2(CUdeviceptr dstDevice, unsigned char uc, size_t N);
 /**
+ * @ordering LEGACY
  * @synchronize
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
@@ -971,6 +997,7 @@ CUresult cuMemsetD8_v2(CUdeviceptr dstDevice, unsigned char uc, size_t N);
  */
 CUresult cuMemsetD16_v2(CUdeviceptr dstDevice, unsigned short us, size_t N);
 /**
+ * @ordering LEGACY
  * @synchronize
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
@@ -979,6 +1006,7 @@ CUresult cuMemsetD16_v2(CUdeviceptr dstDevice, unsigned short us, size_t N);
  */
 CUresult cuMemsetD32_v2(CUdeviceptr dstDevice, unsigned int ui, size_t N);
 /**
+ * @ordering LEGACY
  * @synchronize
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
@@ -990,6 +1018,7 @@ CUresult cuMemsetD32_v2(CUdeviceptr dstDevice, unsigned int ui, size_t N);
 CUresult cuMemsetD2D8_v2(CUdeviceptr dstDevice, size_t dstPitch,
                          unsigned char uc, size_t Width, size_t Height);
 /**
+ * @ordering LEGACY
  * @synchronize
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
@@ -1001,6 +1030,7 @@ CUresult cuMemsetD2D8_v2(CUdeviceptr dstDevice, size_t dstPitch,
 CUresult cuMemsetD2D16_v2(CUdeviceptr dstDevice, size_t dstPitch,
                           unsigned short us, size_t Width, size_t Height);
 /**
+ * @ordering LEGACY
  * @synchronize
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
@@ -1498,30 +1528,35 @@ CUresult cuStreamCreate(CUstream *phStream, unsigned int Flags);
 CUresult cuStreamCreateWithPriority(CUstream *phStream, unsigned int flags,
                                     int priority);
 /**
+ * @ordering NONE
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param priority SEND_RECV
  */
 CUresult cuStreamGetPriority(CUstream hStream, int *priority);
 /**
+ * @ordering NONE
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param flags SEND_RECV
  */
 CUresult cuStreamGetFlags(CUstream hStream, unsigned int *flags);
 /**
+ * @ordering NONE
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param streamId SEND_RECV
  */
 CUresult cuStreamGetId(CUstream hStream, unsigned long long *streamId);
 /**
+ * @ordering NONE
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param pctx SEND_RECV
  */
 CUresult cuStreamGetCtx(CUstream hStream, CUcontext *pctx);
 /**
+ * @ordering NONE
  * @disabled client - manual client resolves the device of the stream's server
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
@@ -1632,6 +1667,7 @@ CUresult cuCtxFromGreenCtx(CUcontext *pContext, CUgreenCtx hCtx) {
   return return_value;
 }
 /**
+ * @ordering ALL_CONTEXTS
  * @guard CUDA_VERSION >= 12040
  * @routingkey CURRENT_CONTEXT
  * @param hCtx SEND_ONLY
@@ -1652,7 +1688,16 @@ CUresult cuGreenCtxDestroy(CUgreenCtx hCtx) {
  * @param priority SEND_ONLY
  */
 CUresult cuGreenCtxStreamCreate(CUstream *phStream, CUgreenCtx greenCtx,
-                                unsigned int flags, int priority);
+                                unsigned int flags, int priority) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && phStream != nullptr) {
+    CUcontext context = nullptr;
+    if (cuStreamGetCtx(*phStream, &context) == CUDA_SUCCESS)
+      lupine_cuda_stream_created(
+          *phStream, lupine_rpc_conn_for_stream(*phStream), context, flags);
+  }
+  return return_value;
+}
 /**
  * @guard CUDA_VERSION >= 13000
  * @routingkey CURRENT_CONTEXT
@@ -1661,6 +1706,7 @@ CUresult cuGreenCtxStreamCreate(CUstream *phStream, CUgreenCtx greenCtx,
  */
 CUresult cuGreenCtxGetId(CUgreenCtx greenCtx, unsigned long long *greenCtxId);
 /**
+ * @ordering ALL_CONTEXTS
  * @guard CUDA_VERSION >= 12040
  * @routingkey CURRENT_CONTEXT
  * @param hCtx SEND_ONLY
@@ -1668,6 +1714,7 @@ CUresult cuGreenCtxGetId(CUgreenCtx greenCtx, unsigned long long *greenCtxId);
  */
 CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent);
 /**
+ * @ordering ALL_CONTEXTS
  * @guard CUDA_VERSION >= 12040
  * @routingkey CURRENT_CONTEXT
  * @param hCtx SEND_ONLY
@@ -1949,6 +1996,7 @@ CUresult cuStreamBatchMemOp_v2(CUstream stream, unsigned int count,
 CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
                             CUfunction hfunc);
 /**
+ * @ordering ALL_CONTEXTS
  * @routingkey FUNCTION hfunc
  * @param hfunc SEND_ONLY
  * @param attrib SEND_ONLY
@@ -1971,6 +2019,7 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
   return return_value;
 }
 /**
+ * @ordering ALL_CONTEXTS
  * @routingkey FUNCTION hfunc
  * @param hfunc SEND_ONLY
  * @param config SEND_ONLY
@@ -1982,6 +2031,7 @@ CUresult cuFuncSetCacheConfig(CUfunction hfunc, CUfunc_cache config) {
   return return_value;
 }
 /**
+ * @ordering ALL_CONTEXTS
  * @routingkey FUNCTION hfunc
  * @param hfunc SEND_ONLY
  * @param config SEND_ONLY
@@ -2738,11 +2788,13 @@ CUresult cuGraphUpload(CUgraphExec hGraphExec, CUstream hStream);
  */
 CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream);
 /**
+ * @ordering ALL_CONTEXTS
  * @param hGraphExec SEND_ONLY
  * @disabled server
  */
 CUresult cuGraphExecDestroy(CUgraphExec hGraphExec);
 /**
+ * @ordering ALL_CONTEXTS
  * @param hGraph SEND_ONLY
  * @disabled server
  */

@@ -96,6 +96,14 @@ bool submit_async(conn_t *conn) {
   return group.depth != 0 && group.conn == conn;
 }
 
+struct stream_epoch_scope {
+  void *scope;
+  stream_epoch_scope(conn_t *conn, cudaStream_t stream)
+      : scope(lupine_rpc_stream_epoch_begin(
+            conn, reinterpret_cast<CUstream>(stream))) {}
+  ~stream_epoch_scope() { lupine_rpc_stream_epoch_end(scope); }
+};
+
 // ---------------------------------------------------------------------------
 // Routing
 // ---------------------------------------------------------------------------

@@ -229,6 +229,7 @@ void rpc_shutdown_socket(lupine_socket_t socket) {
 }
 
 void rpc_wake_async_waiters(conn_t *conn) {
+  rpc_epoch_shutdown(conn);
   if (!conn->async_sync_initialized) {
     return;
   }
@@ -356,6 +357,15 @@ int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id) {
     goto fail;
   }
   conn->async_sync_initialized = 1;
+  conn->epochs = rpc_epoch_create();
+  if (conn->epochs == nullptr) {
+    pthread_cond_destroy(&conn->async_cond);
+    pthread_mutex_destroy(&conn->async_mutex);
+    pthread_mutex_destroy(&conn->call_mutex);
+    pthread_mutex_destroy(&conn->write_mutex);
+    conn->async_sync_initialized = 0;
+    goto fail;
+  }
   return 0;
 
 fail:
@@ -365,7 +375,15 @@ fail:
   return -1;
 }
 
+// Scoped requests use the epoch header. Preserve the old path for callers
+// without backend ordering metadata, such as non-stream NCCL group operations.
+static constexpr uint64_t rpc_scoped_async = UINT64_MAX - 1;
+static thread_local bool rpc_holds_async_turn = false;
+
 int rpc_async_sequence_begin(conn_t *conn, uint64_t sequence) {
+  if (sequence == rpc_scoped_async) {
+    return 0;
+  }
   if (pthread_mutex_lock(&conn->async_mutex) != 0) {
     return -1;
   }
@@ -380,10 +398,15 @@ int rpc_async_sequence_begin(conn_t *conn, uint64_t sequence) {
     pthread_mutex_unlock(&conn->async_mutex);
     return -1;
   }
+  rpc_holds_async_turn = true;
   return 0;
 }
 
 void rpc_async_sequence_end(conn_t *conn) {
+  if (!rpc_holds_async_turn) {
+    return;
+  }
+  rpc_holds_async_turn = false;
   ++conn->serving_async_sequence;
   pthread_cond_broadcast(&conn->async_cond);
   pthread_mutex_unlock(&conn->async_mutex);
@@ -399,6 +422,8 @@ void rpc_conn_destroy(conn_t *conn) {
   rpc_write_buffer_release(conn);
   std::vector<rpc_write_cursor>().swap(conn->write_queue);
   std::vector<rpc_host_allocation_write>().swap(conn->host_allocation_writes);
+  rpc_epoch_destroy(conn->epochs);
+  conn->epochs = nullptr;
   conn->async_sync_initialized = 0;
   pthread_cond_destroy(&conn->async_cond);
   pthread_mutex_destroy(&conn->async_mutex);
@@ -467,6 +492,7 @@ struct rpc_read_frame {
   int32_t stream_id = -1;
   int request_id = 0;
   int op = 0;
+  std::vector<rpc_epoch> required;
 };
 
 struct rpc_response_route {
@@ -479,6 +505,7 @@ struct rpc_nested_write_frame {
   int write_id = 0;
   int write_op = 0;
   int32_t write_stream_id = -1;
+  bool write_async = false;
   std::vector<rpc_write_cursor> write_queue;
   unsigned char *write_copy_buffer = nullptr;
   size_t write_copy_capacity = 0;
@@ -490,6 +517,7 @@ struct rpc_thread_io {
   int32_t bound_stream = -1;
   conn_t *read_conn = nullptr;
   rpc_read_frame read;
+  std::vector<rpc_epoch> published;
   conn_t *write_conn = nullptr;
   rpc_nested_write_frame nested_write;
   conn_t *response_conn = nullptr;
@@ -505,6 +533,7 @@ void rpc_save_outer_response(conn_t *conn) {
   frame.write_id = conn->write_id;
   frame.write_op = conn->write_op;
   frame.write_stream_id = conn->write_stream_id;
+  frame.write_async = conn->write_async;
   frame.write_queue = std::move(conn->write_queue);
   frame.write_copy_buffer = conn->write_copy_buffer;
   frame.write_copy_capacity = conn->write_copy_capacity;
@@ -519,6 +548,7 @@ void rpc_restore_outer_response(conn_t *conn) {
   conn->write_id = frame.write_id;
   conn->write_op = frame.write_op;
   conn->write_stream_id = frame.write_stream_id;
+  conn->write_async = frame.write_async;
   conn->write_queue = std::move(frame.write_queue);
   conn->write_copy_buffer = frame.write_copy_buffer;
   conn->write_copy_capacity = frame.write_copy_capacity;
@@ -591,6 +621,25 @@ int rpc_dispatch(conn_t *conn, int parity) {
   }
   rpc_tls_io.read_conn = conn;
   rpc_tls_io.read = {stream_id, header[0], header[1]};
+  rpc_tls_io.published.clear();
+  if (parity == 0) {
+    uint32_t counts[2] = {};
+    if (rpc_read(conn, counts, sizeof(counts)) < 0 ||
+        counts[0] > RPC_MAX_REQUEST_EPOCHS ||
+        counts[1] > RPC_MAX_REQUEST_EPOCHS) {
+      rpc_mark_connection_closed(conn);
+      return -1;
+    }
+    rpc_tls_io.read.required.resize(counts[0]);
+    rpc_tls_io.published.resize(counts[1]);
+    if (rpc_read(conn, rpc_tls_io.read.required.data(),
+                 counts[0] * sizeof(rpc_epoch)) < 0 ||
+        rpc_read(conn, rpc_tls_io.published.data(),
+                 counts[1] * sizeof(rpc_epoch)) < 0) {
+      rpc_mark_connection_closed(conn);
+      return -1;
+    }
+  }
   return header[1];
 }
 
@@ -726,8 +775,26 @@ int rpc_drain(conn_t *conn, size_t size) {
   return 0;
 }
 
+int rpc_wait_dependencies(conn_t *conn) {
+  if (rpc_tls_io.read_conn != conn) {
+    return -1;
+  }
+  int result = rpc_epoch_wait(conn, rpc_tls_io.read.required);
+  if (result == 0) {
+    rpc_tls_io.read.required.clear();
+  }
+  return result;
+}
+
 int rpc_read_end(conn_t *conn) {
   if (rpc_tls_io.read_conn == conn) {
+    // Most handlers can consume their payload before waiting. Streaming
+    // handlers explicitly wait before they start submitting native work.
+    if (rpc_wait_dependencies(conn) < 0) {
+      rpc_tls_io.read_conn = nullptr;
+      rpc_tls_io.read = {};
+      return -1;
+    }
     int read_id = rpc_tls_io.read.request_id;
     int32_t stream_id = rpc_tls_io.read.stream_id;
     bool completed_response = rpc_tls_io.read.op == -1;
@@ -747,6 +814,11 @@ int rpc_read_end(conn_t *conn) {
     return -1;
   }
   return -1;
+}
+
+void rpc_request_complete(conn_t *conn) {
+  rpc_epoch_complete(conn, rpc_tls_io.published);
+  rpc_tls_io.published.clear();
 }
 
 // Per-op RPC statistics, enabled by setting LUPINE_RPC_STATS to an output
@@ -879,6 +951,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   conn->request_id = conn->request_id + 2; // leave the last bit the same
   conn->write_id = conn->request_id;
   conn->write_op = op;
+  conn->write_async = false;
   conn->write_stream_id = rpc_http2_lane_stream(conn, rpc_tls_lane.id);
   if (conn->write_stream_id < 0) {
     rpc_release_write_builder(conn, request_nested_in_response);
@@ -896,7 +969,9 @@ int rpc_write_start_async_request(conn_t *conn, const int op,
   if (sequence == nullptr || rpc_write_start_request(conn, op) < 0) {
     return -1;
   }
-  *sequence = conn->issued_async_sequence++;
+  conn->write_async = true;
+  *sequence =
+      rpc_epoch_scoped(conn) ? rpc_scoped_async : conn->issued_async_sequence++;
   return 0;
 }
 
@@ -1040,12 +1115,55 @@ int rpc_write_end(conn_t *conn) {
   int write_id = conn->write_id;
   int32_t write_stream_id = conn->write_stream_id;
   int result = -1;
-  if (conn->write_queue.size() >= 2) {
-    conn->write_queue[0] =
-        rpc_write_cursor(&conn->write_id, sizeof(conn->write_id));
-    conn->write_queue[1] =
-        rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
-    result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
+  rpc_request_epochs epochs;
+  // Keep the small framing fields together: adding a cursor for each epoch
+  // array adds allocator and compression work to every kernel launch.
+  struct {
+    int request_id;
+    int op;
+    uint32_t required;
+    uint32_t published;
+    rpc_epoch entries[2 * RPC_MAX_REQUEST_EPOCHS];
+  } header;
+  try {
+    if (conn->write_queue.size() >= 2) {
+      conn->write_queue[0] =
+          rpc_write_cursor(&conn->write_id, sizeof(conn->write_id));
+      conn->write_queue[1] =
+          rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
+      if (request && conn->local_request_parity == 0) {
+        epochs = rpc_epoch_prepare(conn, conn->write_async);
+        if (epochs.required.size() > RPC_MAX_REQUEST_EPOCHS ||
+            epochs.published.size() > RPC_MAX_REQUEST_EPOCHS) {
+          rpc_mark_connection_closed(conn);
+        } else {
+          header.request_id = conn->write_id;
+          header.op = conn->write_op;
+          header.required = static_cast<uint32_t>(epochs.required.size());
+          header.published = static_cast<uint32_t>(epochs.published.size());
+          auto next = std::copy(epochs.required.begin(), epochs.required.end(),
+                                header.entries);
+          std::copy(epochs.published.begin(), epochs.published.end(), next);
+          size_t bytes =
+              offsetof(decltype(header), entries) +
+              (header.required + header.published) * sizeof(rpc_epoch);
+          conn->write_queue[0] = rpc_write_cursor(&header, bytes);
+          conn->write_queue[1] = {};
+        }
+      }
+      if (!conn->closed) {
+        result =
+            rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
+      }
+      if (result == 0) {
+        // The existing call lock excludes other publishers until this store.
+        // Entry snapshots can proceed while the payload is being enqueued.
+        rpc_epoch_publish(conn, epochs);
+      }
+    }
+  } catch (const std::bad_alloc &) {
+    rpc_mark_connection_closed(conn);
+    result = -1;
   }
   rpc_release_write_builder(conn, request_nested_in_response);
   if (request) {

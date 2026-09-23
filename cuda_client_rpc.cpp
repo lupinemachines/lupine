@@ -1,5 +1,15 @@
 #include "cuda_client_rpc.h"
+#include "cuda_client_epochs.h"
 #include "rpc.h"
+
+extern "C" void *lupine_rpc_stream_epoch_begin(conn_t *conn, CUstream stream) {
+  return new rpc_epoch_call(
+      lupine_cuda_stream_call(stream, nullptr, false, conn));
+}
+
+extern "C" void lupine_rpc_stream_epoch_end(void *scope) {
+  delete static_cast<rpc_epoch_call *>(scope);
+}
 
 extern int rpc_open();
 extern int rpc_size();

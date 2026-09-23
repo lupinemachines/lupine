@@ -1928,6 +1928,187 @@ void test_rpc_response_completed_hook() {
   server.join();
 }
 
+void wait_epoch_flag(const std::atomic<bool> &flag, const char *message) {
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!flag.load(std::memory_order_acquire)) {
+    require(std::chrono::steady_clock::now() < deadline, message);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+}
+
+void test_rpc_epochs_preserve_overlap_and_join() {
+  h2_pair pair;
+  init_pair(&pair);
+  auto *stream = rpc_epoch_domain(&pair.client, 1, 100);
+  auto *independent = rpc_epoch_domain(&pair.client, 1, 200);
+  auto *context = rpc_epoch_domain(&pair.client, 2, 300);
+  std::atomic<bool> a_entered{false}, b_entered{false}, a_queued{false},
+      b_queued{false};
+  std::atomic<bool> a_running{false}, b_done{false}, c_arrived{false},
+      c_running{false};
+  std::atomic<bool> d_running{false}, release_a{false}, finish_clients{false};
+  // A streaming handler may wait before consuming its payload. Receiving
+  // more than an HTTP/2 window must still progress while A is held below.
+  std::vector<unsigned char> payload(LUPINE_FF_STAGING_WINDOW_BYTES + 65537);
+  uint32_t seed = 53;
+  for (auto &byte : payload) {
+    seed = seed * 1664525u + 1013904223u;
+    byte = static_cast<unsigned char>(seed >> 24);
+  }
+
+  auto send = [&](int op, bool async) {
+    uint64_t sequence = 0;
+    require((async ? rpc_write_start_async_request(&pair.client, op, &sequence)
+                   : rpc_write_start_request(&pair.client, op)) == 0,
+            "epoch request start failed");
+    require(rpc_write(&pair.client, &sequence, sizeof(sequence)) == 0,
+            "epoch request write failed");
+    if (op == 103) {
+      rpc_write_cursor cursor(payload.data(), payload.size());
+      require(rpc_write_cursors(&pair.client, &cursor, 1) == 0,
+              "epoch payload write failed");
+    }
+    require(rpc_write_end(&pair.client) > 0, "epoch request end failed");
+  };
+  std::thread a([&] {
+    rpc_epoch_call call(&pair.client, {stream}, {stream, context});
+    a_entered = true;
+    wait_epoch_flag(b_entered, "B did not enter before A published");
+    send(101, true);
+    a_queued = true;
+    wait_epoch_flag(finish_clients, "epoch clients did not finish");
+  });
+  std::thread b([&] {
+    rpc_epoch_call call(&pair.client, {stream}, {stream, context});
+    b_entered = true;
+    wait_epoch_flag(a_queued, "A did not publish");
+    send(102, true);
+    b_queued = true;
+    wait_epoch_flag(finish_clients, "epoch clients did not finish");
+  });
+  wait_epoch_flag(b_queued, "overlapping publishers did not finish");
+  std::thread c([&] {
+    rpc_epoch_call call(&pair.client, {stream});
+    auto epochs = rpc_epoch_prepare(&pair.client, false);
+    require(epochs.required.size() == 1 && epochs.required[0].value == 2,
+            "consumer did not capture both completed client calls");
+    send(103, false);
+    wait_epoch_flag(finish_clients, "epoch clients did not finish");
+  });
+  std::thread d([&] {
+    rpc_epoch_call call(&pair.client, {independent}, {independent, context});
+    require(rpc_epoch_prepare(&pair.client, false).required.empty(),
+            "independent stream acquired a context-wide dependency");
+    send(104, false);
+    wait_epoch_flag(finish_clients, "epoch clients did not finish");
+  });
+
+  std::vector<std::thread> workers;
+  for (int i = 0; i < 4; ++i) {
+    int32_t lane = rpc_http2_accept_stream(&pair.server);
+    workers.emplace_back([&, lane] {
+      require(rpc_bind_http2_stream(&pair.server, lane) == 0,
+              "epoch bind failed");
+      int op = rpc_dispatch(&pair.server, 0);
+      uint64_t sequence;
+      require(op >= 101 && op <= 104 &&
+                  rpc_read(&pair.server, &sequence, sizeof(sequence)) >= 0,
+              "epoch dispatch failed");
+      if (op == 103) {
+        c_arrived = true;
+        require(rpc_wait_dependencies(&pair.server) == 0,
+                "streaming dependency wait failed");
+        std::vector<unsigned char> received(payload.size());
+        require(rpc_read(&pair.server, received.data(), received.size()) >= 0 &&
+                    received == payload,
+                "streaming epoch payload was corrupted");
+      }
+      require(rpc_read_end(&pair.server) > 0, "epoch wait failed");
+      if (op == 101 || op == 102) {
+        require(rpc_async_sequence_begin(&pair.server, sequence) == 0,
+                "scoped async begin failed");
+        if (op == 101) {
+          a_running = true;
+          wait_epoch_flag(release_a, "A was not released");
+        } else {
+          wait_epoch_flag(a_running, "B could not overlap A's native call");
+        }
+        rpc_async_sequence_end(&pair.server);
+      } else if (op == 103) {
+        c_running = true;
+      } else {
+        d_running = true;
+      }
+      rpc_request_complete(&pair.server);
+      if (op == 102)
+        b_done = true;
+      rpc_unbind_http2_stream(&pair.server);
+    });
+  }
+  wait_epoch_flag(b_done, "B could not complete before A");
+  wait_epoch_flag(c_arrived, "consumer did not arrive");
+  wait_epoch_flag(d_running, "independent stream was blocked");
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (read_stats(&pair.server).staged_bytes < payload.size()) {
+    require(std::chrono::steady_clock::now() < deadline,
+            "dependency wait stopped flow-control progress");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
+  require(!c_running, "epoch 2 completion skipped the hole at epoch 1");
+  release_a = true;
+  wait_epoch_flag(c_running,
+                  "consumer did not resume after both prerequisites");
+  for (auto &worker : workers)
+    worker.join();
+  // Aggregate epochs are published without serializing their stream producers.
+  {
+    rpc_epoch_call barrier(&pair.client, {context});
+    auto epochs = rpc_epoch_prepare(&pair.client, false);
+    require(epochs.required.size() == 1 && epochs.required[0].value == 2,
+            "context barrier missed a stream publication");
+    require(rpc_epoch_wait(&pair.server, epochs.required) == 0,
+            "completed context aggregate did not advance");
+  }
+  finish_clients = true;
+  a.join();
+  b.join();
+  c.join();
+  d.join();
+}
+
+void test_rpc_epoch_shutdown_wakes_waiter() {
+  h2_pair pair;
+  init_pair(&pair);
+  std::atomic<bool> waiting{false};
+  int result = 0;
+  std::thread waiter([&] {
+    waiting = true;
+    result = rpc_epoch_wait(&pair.server, {{1, 1}});
+  });
+  wait_epoch_flag(waiting, "epoch waiter did not start");
+  rpc_shutdown_transport_socket(&pair.server);
+  waiter.join();
+  require(result == -1, "closed connection did not cancel an epoch wait");
+}
+
+void test_rpc_epoch_peer_failure_wakes_waiter() {
+  h2_pair pair;
+  init_pair(&pair);
+  exchange_settings(&pair);
+  std::atomic<bool> waiting{false}, finished{false};
+  std::thread waiter([&] {
+    waiting = true;
+    require(rpc_epoch_wait(&pair.server, {{1, 1}}) == -1,
+            "peer failure did not cancel an epoch wait");
+    finished = true;
+  });
+  wait_epoch_flag(waiting, "peer-failure waiter did not start");
+  rpc_close_transport_socket(&pair.client);
+  wait_epoch_flag(finished, "peer failure stranded an epoch waiter");
+  waiter.join();
+}
+
 // Handlers start request chains without their own null checks; an unreachable
 // server (null route conn) or a failed connection must fail the chain here
 // instead of dereferencing the conn.
@@ -2031,6 +2212,9 @@ int main() {
           "failed to install RPC test lifecycle hooks");
   RUN_CASE(test_server_rejects_request_without_lz4_encoding());
   RUN_CASE(test_request_start_rejects_null_and_closed_conn());
+  RUN_CASE(test_rpc_epochs_preserve_overlap_and_join());
+  RUN_CASE(test_rpc_epoch_shutdown_wakes_waiter());
+  RUN_CASE(test_rpc_epoch_peer_failure_wakes_waiter());
 #if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__) &&           \
     !defined(_WIN32)
   RUN_CASE(test_rpc_read_uses_w_offset());

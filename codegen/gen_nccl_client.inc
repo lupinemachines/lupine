@@ -1056,6 +1056,7 @@ static ncclResult_t lupine_rpc_ncclReduce(conn_t *conn, bool submit_async,
                                           ncclRedOp_t op, int root,
                                           ncclComm_t comm,
                                           cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {
@@ -1107,6 +1108,7 @@ static ncclResult_t lupine_rpc_ncclBcast(conn_t *conn, bool submit_async,
                                          void *buff, size_t count,
                                          ncclDataType_t datatype, int root,
                                          ncclComm_t comm, cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {
@@ -1153,6 +1155,7 @@ static ncclResult_t
 lupine_rpc_ncclBroadcast(conn_t *conn, bool submit_async, const void *sendbuff,
                          void *recvbuff, size_t count, ncclDataType_t datatype,
                          int root, ncclComm_t comm, cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {
@@ -1202,6 +1205,7 @@ static ncclResult_t
 lupine_rpc_ncclAllReduce(conn_t *conn, bool submit_async, const void *sendbuff,
                          void *recvbuff, size_t count, ncclDataType_t datatype,
                          ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {
@@ -1251,6 +1255,7 @@ static ncclResult_t lupine_rpc_ncclReduceScatter(
     conn_t *conn, bool submit_async, const void *sendbuff, void *recvbuff,
     size_t recvcount, ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm,
     cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {
@@ -1305,6 +1310,7 @@ static ncclResult_t lupine_rpc_ncclAllGather(conn_t *conn, bool submit_async,
                                              ncclDataType_t datatype,
                                              ncclComm_t comm,
                                              cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {
@@ -1352,6 +1358,7 @@ static ncclResult_t
 lupine_rpc_ncclAlltoAll(conn_t *conn, bool submit_async, const void *sendbuff,
                         void *recvbuff, size_t count, ncclDataType_t datatype,
                         ncclComm_t comm, cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {
@@ -1402,6 +1409,7 @@ static ncclResult_t lupine_rpc_ncclGather(conn_t *conn, bool submit_async,
                                           size_t count, ncclDataType_t datatype,
                                           int root, ncclComm_t comm,
                                           cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {
@@ -1454,6 +1462,7 @@ static ncclResult_t
 lupine_rpc_ncclScatter(conn_t *conn, bool submit_async, const void *sendbuff,
                        void *recvbuff, size_t count, ncclDataType_t datatype,
                        int root, ncclComm_t comm, cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {
@@ -1506,6 +1515,7 @@ static ncclResult_t lupine_rpc_ncclAllReduceConfig(
     conn_t *conn, bool submit_async, const void *sendbuff, void *recvbuff,
     size_t count, ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm,
     cudaStream_t stream, const ncclCollConfig_t *config) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t config_size = config != nullptr ? config->size : 0;
   uint32_t config_algSelection_len = 0;
@@ -1577,6 +1587,7 @@ static ncclResult_t lupine_rpc_ncclBroadcastConfig(
     conn_t *conn, bool submit_async, const void *sendbuff, void *recvbuff,
     size_t count, ncclDataType_t datatype, int root, ncclComm_t comm,
     cudaStream_t stream, const ncclCollConfig_t *config) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t config_size = config != nullptr ? config->size : 0;
   uint32_t config_algSelection_len = 0;
@@ -1648,6 +1659,7 @@ static ncclResult_t lupine_rpc_ncclReduceConfig(
     conn_t *conn, bool submit_async, const void *sendbuff, void *recvbuff,
     size_t count, ncclDataType_t datatype, ncclRedOp_t op, int root,
     ncclComm_t comm, cudaStream_t stream, const ncclCollConfig_t *config) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t config_size = config != nullptr ? config->size : 0;
   uint32_t config_algSelection_len = 0;
@@ -1722,6 +1734,7 @@ static ncclResult_t lupine_rpc_ncclAllGatherConfig(
     conn_t *conn, bool submit_async, const void *sendbuff, void *recvbuff,
     size_t sendcount, ncclDataType_t datatype, ncclComm_t comm,
     cudaStream_t stream, const ncclCollConfig_t *config) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t config_size = config != nullptr ? config->size : 0;
   uint32_t config_algSelection_len = 0;
@@ -1791,6 +1804,7 @@ static ncclResult_t lupine_rpc_ncclReduceScatterConfig(
     conn_t *conn, bool submit_async, const void *sendbuff, void *recvbuff,
     size_t recvcount, ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm,
     cudaStream_t stream, const ncclCollConfig_t *config) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t config_size = config != nullptr ? config->size : 0;
   uint32_t config_algSelection_len = 0;
@@ -1863,6 +1877,7 @@ static ncclResult_t lupine_rpc_ncclAlltoAllConfig(
     conn_t *conn, bool submit_async, const void *sendbuff, void *recvbuff,
     size_t count, ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream,
     const ncclCollConfig_t *config) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t config_size = config != nullptr ? config->size : 0;
   uint32_t config_algSelection_len = 0;
@@ -1933,6 +1948,7 @@ static ncclResult_t lupine_rpc_ncclGatherConfig(
     conn_t *conn, bool submit_async, const void *sendbuff, void *recvbuff,
     size_t count, ncclDataType_t datatype, int root, ncclComm_t comm,
     cudaStream_t stream, const ncclCollConfig_t *config) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t config_size = config != nullptr ? config->size : 0;
   uint32_t config_algSelection_len = 0;
@@ -2005,6 +2021,7 @@ static ncclResult_t lupine_rpc_ncclScatterConfig(
     conn_t *conn, bool submit_async, const void *sendbuff, void *recvbuff,
     size_t count, ncclDataType_t datatype, int root, ncclComm_t comm,
     cudaStream_t stream, const ncclCollConfig_t *config) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t config_size = config != nullptr ? config->size : 0;
   uint32_t config_algSelection_len = 0;
@@ -2076,6 +2093,7 @@ static ncclResult_t lupine_rpc_ncclSend(conn_t *conn, bool submit_async,
                                         const void *sendbuff, size_t count,
                                         ncclDataType_t datatype, int peer,
                                         ncclComm_t comm, cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {
@@ -2122,6 +2140,7 @@ static ncclResult_t lupine_rpc_ncclRecv(conn_t *conn, bool submit_async,
                                         void *recvbuff, size_t count,
                                         ncclDataType_t datatype, int peer,
                                         ncclComm_t comm, cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {
@@ -2171,6 +2190,7 @@ lupine_rpc_ncclPutSignal(conn_t *conn, bool submit_async, const void *localbuff,
                          ncclWindow_t peerWin, size_t peerWinOffset, int sigIdx,
                          int ctx, unsigned int flags, ncclComm_t comm,
                          cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {
@@ -2234,6 +2254,7 @@ static ncclResult_t lupine_rpc_ncclSignal(conn_t *conn, bool submit_async,
                                           int peer, int sigIdx, int ctx,
                                           unsigned int flags, ncclComm_t comm,
                                           cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {
@@ -2284,6 +2305,7 @@ static ncclResult_t lupine_rpc_ncclWaitSignal(conn_t *conn, bool submit_async,
                                               ncclWaitSignalDesc_t *signalDescs,
                                               ncclComm_t comm,
                                               cudaStream_t stream) {
+  stream_epoch_scope epoch_scope(conn, stream);
   ncclResult_t return_value = rpc_error();
   uint64_t async_sequence = ~uint64_t{0};
   if (submit_async) {

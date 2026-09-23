@@ -28,6 +28,7 @@
 #include "cache.h"
 #include "client_routing.h"
 #include "codegen/gen_rpc_ids.h"
+#include "cuda_client_epochs.h"
 #include "cuda_client_memcpy.h"
 #include "events.h"
 
@@ -1539,6 +1540,7 @@ static uint8_t lupine_infer_copy_direction(CUdeviceptr dst, CUdeviceptr src) {
 
 extern "C" CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src,
                              size_t ByteCount) {
+  auto epoch_call = lupine_cuda_stream_call(nullptr);
   if (ByteCount == 0) {
     return CUDA_SUCCESS;
   }
@@ -1568,6 +1570,7 @@ extern "C" CUresult cuMemcpy_ptds(CUdeviceptr dst, CUdeviceptr src,
 
 extern "C" CUresult cuMemcpyAsync(CUdeviceptr dst, CUdeviceptr src,
                                   size_t ByteCount, CUstream hStream) {
+  auto epoch_call = lupine_cuda_stream_call(hStream);
   switch (lupine_infer_copy_direction(dst, src)) {
   case LUPINE_COPY_DIRECTION_HTOH:
     memcpy(reinterpret_cast<void *>(dst), reinterpret_cast<const void *>(src),
@@ -2469,6 +2472,7 @@ extern "C" CUresult lupine_free_host_allocation(void *p,
 }
 
 extern "C" CUresult cuMemFreeHost(void *p) {
+  auto epoch_call = lupine_cuda_context_call(nullptr, true);
   return lupine_free_host_allocation(p, [](conn_t *conn, void *remote_host) {
     lupine_route route = conn == nullptr
                              ? lupine_route{LUPINE_ROUTE_LOCAL, nullptr}
@@ -2843,6 +2847,7 @@ lupine_unregister_host_allocation(void *p, lupine_host_free_fn release) {
 }
 
 extern "C" CUresult cuMemHostUnregister(void *p) {
+  auto epoch_call = lupine_cuda_context_call(nullptr, true);
   return lupine_unregister_host_allocation(p, [](conn_t *conn, void *host) {
     if (conn == nullptr) {
       return lupine_call_real_cuda_fn("cuMemHostUnregister", host);
@@ -2982,6 +2987,8 @@ lupine_free_device_allocation(CUdeviceptr dptr, lupine_device_free_fn release) {
 }
 
 extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
+  auto epoch_call =
+      lupine_cuda_context_call(lupine_context_for_deviceptr(dptr));
   return lupine_free_device_allocation(dptr, [](conn_t *conn, CUdeviceptr ptr) {
     if (conn == nullptr) {
       return lupine_call_real_cuda_fn("cuMemFree_v2", ptr);
@@ -3498,8 +3505,10 @@ static CUresult lupine_bulk_pull(conn_t *conn, lupine_bulk_lanes *lanes,
     struct {
       int request_id;
       int op;
+      uint32_t required_epochs;
+      uint32_t published_epochs;
       uint64_t copy_id;
-    } request = {2, LUPINE_RPC_lupineBulkRead, copy_id};
+    } request = {2, LUPINE_RPC_lupineBulkRead, 0, 0, copy_id};
     std::vector<rpc_write_cursor> cursors = {
         rpc_write_cursor(&request, sizeof(request))};
     if (rpc_http2_write_stream(bulk, stream_id, cursors) < 0) {
@@ -3608,6 +3617,7 @@ static CUresult lupine_copy_dtoh_pageable(conn_t *conn, void *dstHost,
 
 extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
                                     size_t ByteCount) {
+  auto epoch_call = lupine_cuda_stream_call(nullptr);
   lupine_route route = lupine_route_for_deviceptr(srcDevice);
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuMemcpyDtoH_v2", dstHost, srcDevice,
@@ -3660,6 +3670,8 @@ static uint64_t lupine_htod_pushed_bytes(bool is_server_authoritative,
 struct lupine_bulk_chunk_header {
   int request_id;
   int op;
+  uint32_t required_epochs;
+  uint32_t published_epochs;
   uint64_t copy_id;
   uint64_t total;
   uint64_t offset;
@@ -3693,7 +3705,8 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
       size_t chunk_bytes = std::min(
           static_cast<size_t>(LUPINE_RPC_TRANSFER_CHUNK_BYTES), bytes - offset);
       lupine_bulk_chunk_header header = {
-          2, LUPINE_RPC_lupineBulkChunk, copy_id, bytes, offset, chunk_bytes};
+          2,          LUPINE_RPC_lupineBulkChunk, 0, 0, copy_id, bytes, offset,
+          chunk_bytes};
       std::vector<rpc_write_cursor> cursors = {
           rpc_write_cursor(&header, sizeof(header)),
           rpc_write_cursor(data + offset, chunk_bytes)};
@@ -3734,6 +3747,7 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
 
 extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                                     size_t ByteCount) {
+  auto epoch_call = lupine_cuda_stream_call(nullptr);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
@@ -3799,6 +3813,7 @@ extern "C" CUresult cuMemcpyHtoD(CUdeviceptr dstDevice, const void *srcHost,
 extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
                                          const void *srcHost, size_t ByteCount,
                                          CUstream hStream) {
+  auto epoch_call = lupine_cuda_stream_call(hStream);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   if (lupine_stream_crosses_route(hStream, route)) {
     return cuMemcpyHtoD_v2(dstDevice, srcHost, ByteCount);
@@ -3904,6 +3919,7 @@ lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
 
 extern "C" CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray,
                                     size_t srcOffset, size_t ByteCount) {
+  auto epoch_call = lupine_cuda_stream_call(nullptr);
   lupine_route route = lupine_route_for_default();
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuMemcpyAtoH_v2", dstHost, srcArray,
@@ -3960,6 +3976,7 @@ extern "C" CUresult cuMemcpyAtoH(void *dstHost, CUarray srcArray,
 
 extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                                          size_t ByteCount, CUstream hStream) {
+  auto epoch_call = lupine_cuda_stream_call(hStream);
   lupine_route route = lupine_route_for_deviceptr(srcDevice);
   if (lupine_stream_crosses_route(hStream, route)) {
     return cuMemcpyDtoH_v2(dstHost, srcDevice, ByteCount);
@@ -4022,6 +4039,7 @@ extern "C" CUresult cuMemcpyDtoHAsync(void *dstHost, CUdeviceptr srcDevice,
 }
 
 extern "C" CUresult cuMemcpy2D_v2(const CUDA_MEMCPY2D *pCopy) {
+  auto epoch_call = lupine_cuda_stream_call(nullptr);
   if (pCopy == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -4178,6 +4196,7 @@ extern "C" CUresult cuMemcpy2D(const CUDA_MEMCPY2D *pCopy) {
 }
 
 extern "C" CUresult cuMemcpy2DUnaligned_v2(const CUDA_MEMCPY2D *pCopy) {
+  auto epoch_call = lupine_cuda_stream_call(nullptr);
   if (pCopy == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -4335,6 +4354,7 @@ extern "C" CUresult cuMemcpy2DUnaligned(const CUDA_MEMCPY2D *pCopy) {
 
 extern "C" CUresult cuMemcpy2DAsync_v2(const CUDA_MEMCPY2D *pCopy,
                                        CUstream hStream) {
+  auto epoch_call = lupine_cuda_stream_call(hStream);
   if (pCopy == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -4509,6 +4529,7 @@ extern "C" CUresult cuMemcpy2DAsync_ptsz(const CUDA_MEMCPY2D *pCopy,
 }
 
 extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
+  auto epoch_call = lupine_cuda_stream_call(nullptr);
   if (pCopy == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -4657,6 +4678,7 @@ extern "C" CUresult cuMemcpy3D_v2(const CUDA_MEMCPY3D *pCopy) {
 
 extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
                                        CUstream hStream) {
+  auto epoch_call = lupine_cuda_stream_call(hStream);
   if (pCopy == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -4807,6 +4829,7 @@ extern "C" CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy,
 }
 
 extern "C" CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy) {
+  auto epoch_call = lupine_cuda_stream_call(nullptr);
   if (pCopy == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -4912,6 +4935,7 @@ extern "C" CUresult cuMemcpy3DPeer(const CUDA_MEMCPY3D_PEER *pCopy) {
 
 extern "C" CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy,
                                         CUstream hStream) {
+  auto epoch_call = lupine_cuda_stream_call(hStream);
   if (pCopy == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }

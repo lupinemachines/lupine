@@ -166,6 +166,9 @@ h2_stream &h2_get_stream(h2_transport *transport, int32_t stream_id) {
 
 void h2_fail_transport_locked(h2_transport *transport) {
   transport->transport_failed = true;
+  if (transport->conn != nullptr) {
+    rpc_epoch_shutdown(transport->conn);
+  }
   for (auto &entry : transport->streams) {
     pthread_cond_broadcast(&entry.second.read_ready);
   }
