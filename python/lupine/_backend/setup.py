@@ -1,93 +1,43 @@
-"""Builds ``lupine._backend._C`` against the installed torch.
+"""Prebuilds ``lupine._backend._C`` against the installed torch.
 
-The extension carries the Lupine RPC core, so it is built from a source
-checkout of the repository (this directory sits at
-``python/lupine/_backend`` inside it). Rebuild it whenever the torch minor
-version changes: the boxed operator schema is the wire contract between the
-host and the worker.
+The extension is the device registration only (see ``csrc``), built with the
+CPython limited API, so one artifact serves one torch release (major.minor)
+on one platform for every Python. It links libtorch, never libtorch_python.
 
-    pip install torch==<version> ninja
-    python setup.py build_ext --inplace
+    pip install torch==<version> setuptools ninja
+    python python/lupine/_backend/setup.py build_ext --inplace
+
+drops ``_C.abi3.so`` next to this file, where ``lupine._backend`` finds it
+ahead of its own JIT build (``lupine._backend.ext``);
+``python setup.py bdist_wheel`` gives the same artifact as an abi3 wheel
+named after the torch release it was built for.
 """
 
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 
 from setuptools import setup
 from torch.utils.cpp_extension import BuildExtension, CppExtension
 
+from ext import SOURCES, extra_compile_args, torch_version
+
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[2]
-CSRC = HERE / "csrc"
-
-if not (ROOT / "rpc.cpp").is_file():
-    sys.exit(
-        "lupine._backend must be built from a repository checkout; "
-        f"{ROOT / 'rpc.cpp'} is missing"
-    )
-
-CORE = [
-    "rpc.cpp",
-    "h2.cpp",
-    "dispatch.cpp",
-    "client_bundle.cpp",
-    "transport.cpp",
-    "monitor_client.cpp",
-]
-LZ4 = ["lz4.c", "lz4frame.c", "lz4hc.c", "xxhash.c"]
-
-include_dirs = [str(ROOT), str(ROOT / "codegen"), str(ROOT / "third_party/lz4/lib")]
-library_dirs: list[str] = []
-prefix = os.environ.get("LUPINE_NGHTTP2_PREFIX")
-if prefix is None and sys.platform == "darwin":
-    for candidate in ("/opt/homebrew/opt/nghttp2", "/usr/local/opt/nghttp2"):
-        if Path(candidate, "include/nghttp2/nghttp2.h").is_file():
-            prefix = candidate
-            break
-if prefix:
-    include_dirs.append(str(Path(prefix, "include")))
-    library_dirs.append(str(Path(prefix, "lib")))
-
-_BuildExtension = BuildExtension.with_options(use_ninja=True)
-
-
-class build_ext(_BuildExtension):  # noqa: N801
-    """``build_ext --inplace`` links the vendored LZ4, so build it first."""
-
-    def run(self) -> None:
-        self.run_command("build_clib")
-        super().run()
-
 
 setup(
-    name="lupine-backend",
-    version="0",
-    libraries=[
-        (
-            "lupine_lz4",
-            {
-                "sources": [str(ROOT / "third_party/lz4/lib" / f) for f in LZ4],
-                "include_dirs": [str(ROOT / "third_party/lz4/lib")],
-                "cflags": ["-O2", "-fPIC"],
-            },
-        )
-    ],
+    name="lupine-torch-backend",
+    version=torch_version().split("+", 1)[0],
     ext_modules=[
         CppExtension(
             name="lupine._backend._C",
-            sources=[str(CSRC / f) for f in ("host.cpp", "worker.cpp", "module.cpp")]
-            + [str(ROOT / f) for f in CORE],
-            include_dirs=include_dirs + [str(CSRC)],
-            library_dirs=library_dirs,
-            libraries=["nghttp2", "lupine_lz4"],
-            extra_compile_args=["-O2", "-fvisibility=hidden", "-Wno-unused-parameter"],
+            sources=[str(path) for path in SOURCES],
+            include_dirs=[str(HERE / "csrc")],
+            extra_compile_args=extra_compile_args(),
+            py_limited_api=True,
         )
     ],
-    cmdclass={"build_ext": build_ext},
-    # --inplace then drops _C next to this file, inside the lupine package.
+    cmdclass={"build_ext": BuildExtension.with_options(use_ninja=True)},
+    options={"bdist_wheel": {"py_limited_api": "cp310"}},
     packages=["lupine._backend"],
     package_dir={"lupine._backend": "."},
 )

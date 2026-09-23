@@ -243,18 +243,6 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineStreamPoolInit",
 ]
 
-# Carried between the torch backend in the host process and its worker, never
-# by the GPU server, so they take ids but no server handler.
-TORCH_BACKEND_RPC_FUNCTIONS = [
-    "lupineTorchOp",
-    "lupineTorchOpSync",
-    "lupineTorchCopyToHost",
-    "lupineTorchCopyFromHost",
-    "lupineTorchExec",
-    "lupineTorchEval",
-    "lupineTorchSync",
-]
-
 REGISTRY_CPP_TEMPLATE = Template(
     r'''#include "rpc_server.h"
 
@@ -1246,7 +1234,7 @@ def write_rpc_ids(
                 name = function.name.format()
                 write_rpc_define(f"RPC_{name}", name)
         f.write("\n")
-        for name in PRIVATE_RPC_FUNCTIONS + TORCH_BACKEND_RPC_FUNCTIONS:
+        for name in PRIVATE_RPC_FUNCTIONS:
             write_rpc_define(f"LUPINE_RPC_{name}", name)
 
 
