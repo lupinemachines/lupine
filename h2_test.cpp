@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <nghttp2/nghttp2.h>
 #include <string>
 #include <thread>
@@ -2120,6 +2121,78 @@ void test_rpc_dependency_frontiers_and_thread_local_fences() {
     require(required.size() == 2,
             "overlapping publication was removed without a dependency");
   }
+  auto *many = rpc_dependency_domain(&pair.client, 1, 200);
+  std::vector<std::unique_ptr<rpc_dependency_call>> producers;
+  for (int i = 0; i < 4; ++i) {
+    producers.emplace_back(
+        new rpc_dependency_call(&pair.client, {many}, {many}));
+  }
+  for (int i = 3; i >= 0; --i) {
+    rpc_dependency_publish(&pair.client, {i * 2 + 1, i * 2 + 2}, true);
+    producers.pop_back();
+  }
+  {
+    rpc_dependency_call join(&pair.client, {many}, {many});
+    require(rpc_dependency_prepare(&pair.client, 11).size() == 4,
+            "prerequisite list overflow lost a concurrent producer");
+    rpc_dependency_publish(&pair.client, {11, 10}, true);
+  }
+  {
+    rpc_dependency_call call(&pair.client, {many});
+    auto required = rpc_dependency_prepare(&pair.client, 13);
+    require(required.size() == 1 && required[0].lane == 11 &&
+                required[0].request == 10,
+            "joined frontier did not return to a single producer");
+  }
+}
+
+void test_rpc_dependency_snapshot_during_publication() {
+  h2_pair pair;
+  init_pair(&pair);
+  auto *stream = rpc_dependency_domain(&pair.client, 1, 100);
+  {
+    rpc_dependency_call call(&pair.client, {}, {stream});
+    rpc_dependency_publish(&pair.client, {5, 2}, true);
+  }
+  std::atomic<int> joined{2};
+  std::atomic<bool> ready{false}, done{false};
+  std::thread reader([&] {
+    ready = true;
+    do {
+      int minimum = joined.load();
+      rpc_dependency_call call(&pair.client, {stream});
+      auto required = rpc_dependency_prepare(&pair.client, 11);
+      require(!required.empty(), "snapshot lost every published prerequisite");
+      for (auto submission : required) {
+        require(submission.request >= minimum,
+                "snapshot missed a publication preceding call entry");
+      }
+    } while (!done.load());
+  });
+  wait_dependency_flag(ready, "snapshot reader did not start");
+  int request = 2;
+  auto publish = [&](int32_t lane) {
+    pthread_mutex_lock(&pair.client.call_mutex);
+    rpc_dependency_publish(&pair.client, {lane, request += 2}, true);
+    pthread_mutex_unlock(&pair.client.call_mutex);
+  };
+  for (int i = 0; i < 10000; ++i) {
+    {
+      rpc_dependency_call a(&pair.client, {stream}, {stream});
+      {
+        rpc_dependency_call b(&pair.client, {stream}, {stream});
+        publish(3);
+      }
+      publish(1);
+    }
+    {
+      rpc_dependency_call join(&pair.client, {stream}, {stream});
+      publish(5);
+    }
+    joined = request;
+  }
+  done = true;
+  reader.join();
 }
 
 void test_rpc_dependency_shutdown_wakes_waiter() {
@@ -2259,6 +2332,7 @@ int main() {
   RUN_CASE(test_request_start_rejects_null_and_closed_conn());
   RUN_CASE(test_rpc_dependencies_preserve_overlap_and_join());
   RUN_CASE(test_rpc_dependency_frontiers_and_thread_local_fences());
+  RUN_CASE(test_rpc_dependency_snapshot_during_publication());
   RUN_CASE(test_rpc_dependency_shutdown_wakes_waiter());
   RUN_CASE(test_rpc_dependency_peer_failure_wakes_waiter());
 #if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__) &&           \

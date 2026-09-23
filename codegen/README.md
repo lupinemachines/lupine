@@ -189,6 +189,13 @@ request with a foreign-lane prerequisite, the transport emits a wait marker:
 bulk-copy framing stay unchanged. A thread-local map suppresses fences already
 sent by that thread; its own lane needs no marker because it executes FIFO.
 
+Small call scopes keep their prerequisites and publication targets on the
+stack. A resource with one producer stores its lane/request pair in an atomic
+word; multiple producers use a vector protected by the metadata mutex. Entry
+snapshots can therefore read an ordinary stream without that mutex. Publication
+uses the existing request builder lock, and a joined frontier returns to the
+single-producer representation. Larger scopes still spill to dynamic storage.
+
 The server records the last request whose native handler returned on each lane.
 It consumes wait markers before dispatching the next handler, while HTTP/2
 continues receiving and crediting payloads. This adds no acknowledgement and

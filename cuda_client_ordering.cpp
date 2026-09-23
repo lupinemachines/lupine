@@ -115,22 +115,19 @@ rpc_dependency_call lupine_cuda_stream_call(CUstream stream, CUevent event,
     return rpc_dependency_call(nullptr, {});
   }
   auto scope = stream_scope(conn, stream);
-  std::vector<rpc_ordering_domain *> required{scope.stream};
-  std::vector<rpc_ordering_domain *> published{scope.stream, scope.context,
-                                               scope.connection};
-  if (!scope.nonblocking) {
-    required.push_back(scope.is_legacy ? scope.blocking : scope.legacy);
-    published.push_back(scope.blocking);
-  }
-  if (event != nullptr) {
-    auto domain = rpc_dependency_domain(conn, event_domain,
-                                        reinterpret_cast<uintptr_t>(event));
-    required.push_back(domain);
-    if (record_event) {
-      published.push_back(domain);
-    }
-  }
-  return rpc_dependency_call(conn, required, std::move(published));
+  auto *event_dependency =
+      event == nullptr
+          ? nullptr
+          : rpc_dependency_domain(conn, event_domain,
+                                  reinterpret_cast<uintptr_t>(event));
+  auto *implicit_dependency = scope.is_legacy ? scope.blocking : scope.legacy;
+  return rpc_dependency_call(conn,
+                             {scope.stream,
+                              scope.nonblocking ? nullptr : implicit_dependency,
+                              event_dependency},
+                             {scope.stream, scope.context, scope.connection,
+                              scope.nonblocking ? nullptr : scope.blocking,
+                              record_event ? event_dependency : nullptr});
 }
 
 rpc_dependency_call
