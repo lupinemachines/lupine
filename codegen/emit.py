@@ -43,7 +43,7 @@ class Backend:
     # The library also exports every entry point under this prefix (NCCL's
     # profiling interface), as an alias of the same definition.
     alias_prefix: str = ""
-    stream_epochs: bool = False
+    stream_ordering: bool = False
 
 
 def optional_async(backend: "Backend", metadata) -> bool:
@@ -158,11 +158,11 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
     if params:
         f.write(f", {params}")
     f.write(") {\n")
-    if backend.stream_epochs:
+    if backend.stream_ordering:
         streams = [p.name for p in function.parameters
                    if p.type.format() == "cudaStream_t"]
         if streams:
-            f.write(f"  stream_epoch_scope epoch_scope(conn, {streams[0]});\n")
+            f.write(f"  stream_dependency_scope dependency_scope(conn, {streams[0]});\n")
     if result != "void":
         initial_value = "rpc_error()" if result == backend.result else "{}"
         f.write(f"  {result} return_value = {initial_value};\n")

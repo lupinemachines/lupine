@@ -1697,9 +1697,6 @@ static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
 static CUresult lupine_copy_pushed_host_to_device(conn_t *conn, CUstream stream,
                                                   bool blocking,
                                                   lupine_htod_copy copy) {
-  if (rpc_wait_dependencies(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
   // A captured copy is replayed by the graph without the client, so it keeps
   // pulling at launch and the pushed bytes are dropped.
   if (lupine_captured_stream_resources(stream) != nullptr) {

@@ -1,4 +1,4 @@
-#include "cuda_client_epochs.h"
+#include "cuda_client_ordering.h"
 #include "rpc.h"
 
 #include <cstdio>
@@ -17,11 +17,12 @@ void require(bool ok, const char *message) {
 }
 
 void publish() {
-  rpc_epoch_publish(&connection, rpc_epoch_prepare(&connection, true));
+  static int request = 0;
+  rpc_dependency_publish(&connection, {1, request += 2}, true);
 }
 
 bool has_dependencies() {
-  return !rpc_epoch_prepare(&connection, false).required.empty();
+  return !rpc_dependency_prepare(&connection, 0).empty();
 }
 } // namespace
 
@@ -34,6 +35,21 @@ extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext) {
 extern "C" conn_t *lupine_rpc_conn_for_event(CUevent) { return &connection; }
 
 int main() {
+  std::atexit([] {
+    conn_t late = {};
+    require(rpc_conn_init(&late, LUPINE_INVALID_SOCKET, 0) == 0, "exit init");
+    auto *domain = rpc_dependency_domain(&late, 1, 1);
+    {
+      rpc_dependency_call call(&late, {domain}, {domain});
+      rpc_dependency_publish(&late, {1, 2}, true);
+    }
+    {
+      rpc_dependency_call call(&late, {domain});
+      require(rpc_dependency_prepare(&late, 3).size() == 1,
+              "process-exit call lost its prerequisite after TLS destruction");
+    }
+    rpc_conn_destroy(&late);
+  });
   require(rpc_conn_init(&connection, LUPINE_INVALID_SOCKET, 0) == 0, "init");
   auto blocking = reinterpret_cast<CUstream>(10);
   auto other_blocking = reinterpret_cast<CUstream>(11);
@@ -104,14 +120,14 @@ int main() {
   std::thread other([&] {
     current = reinterpret_cast<CUcontext>(2);
     auto call = lupine_cuda_stream_call(CU_STREAM_PER_THREAD);
-    require(!has_dependencies(), "per-thread streams shared an epoch");
+    require(!has_dependencies(), "per-thread streams shared a prerequisite");
   });
   other.join();
   {
     auto call = lupine_cuda_stream_call(CU_STREAM_PER_THREAD);
     require(has_dependencies(), "per-thread stream lost its own work");
   }
-  lupine_cuda_epochs_forget_connection(&connection);
+  lupine_cuda_ordering_forget_connection(&connection);
   rpc_conn_destroy(&connection);
-  std::puts("cuda_epochs_test: PASS");
+  std::puts("cuda_ordering_test: PASS");
 }

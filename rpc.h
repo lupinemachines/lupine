@@ -2,7 +2,7 @@
 #define RPC_H
 
 #include "lupine_platform.h"
-#include "rpc_epochs.h"
+#include "rpc_dependencies.h"
 #include <stdint.h>
 #include <vector>
 
@@ -116,7 +116,7 @@ struct conn_t {
   int write_op;
   int32_t write_stream_id;
   bool write_async;
-  rpc_epoch_state *epochs;
+  rpc_dependency_state *dependencies;
 
   pthread_t read_thread;
   pthread_mutex_t write_mutex, call_mutex, async_mutex;
@@ -191,9 +191,6 @@ static inline int rpc_read_buffer(conn_t *conn, void *data, size_t size) {
 }
 extern int rpc_drain(conn_t *conn, size_t size);
 extern int rpc_read_end(conn_t *conn);
-// Streaming handlers use this before their first native operation. HTTP/2
-// continues receiving and crediting the payload while the worker waits.
-extern int rpc_wait_dependencies(conn_t *conn);
 // Complete the current server handler after all native submission has finished.
 extern void rpc_request_complete(conn_t *conn);
 

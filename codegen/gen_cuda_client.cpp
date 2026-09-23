@@ -15,7 +15,7 @@
 #include "gen_rpc_ids.h"
 
 #include "client_routing.h"
-#include "cuda_client_epochs.h"
+#include "cuda_client_ordering.h"
 #include "rpc.h"
 
 extern int rpc_size();
@@ -338,7 +338,7 @@ CUresult cuCtxDestroy_v2(CUcontext ctx) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(ctx, false, conn, {});
+  auto dependency_call = lupine_cuda_context_call(ctx, false, conn, {});
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxDestroy_v2) < 0 ||
       rpc_write(conn, &ctx, sizeof(CUcontext)) < 0 ||
@@ -396,7 +396,7 @@ CUresult cuCtxSynchronize() {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, false, conn, {});
+  auto dependency_call = lupine_cuda_context_call(nullptr, false, conn, {});
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxSynchronize) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -421,7 +421,7 @@ CUresult cuCtxSynchronize_v2(CUcontext ctx) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(ctx, false, conn, {});
+  auto dependency_call = lupine_cuda_context_call(ctx, false, conn, {});
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxSynchronize_v2) < 0 ||
       rpc_write(conn, &ctx, sizeof(CUcontext)) < 0 ||
@@ -498,7 +498,7 @@ CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, false, conn, {});
+  auto dependency_call = lupine_cuda_context_call(nullptr, false, conn, {});
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxSetCacheConfig) < 0 ||
       rpc_write(conn, &config, sizeof(CUfunc_cache)) < 0 ||
@@ -569,7 +569,7 @@ CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuCtxRecordEvent", hCtx, hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(hCtx, false, conn, {hEvent});
+  auto dependency_call = lupine_cuda_context_call(hCtx, false, conn, {hEvent});
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxRecordEvent) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUcontext)) < 0 ||
@@ -590,7 +590,7 @@ CUresult cuCtxWaitEvent(CUcontext hCtx, CUevent hEvent) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuCtxWaitEvent", hCtx, hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(hCtx, false, conn, {hEvent});
+  auto dependency_call = lupine_cuda_context_call(hCtx, false, conn, {hEvent});
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxWaitEvent) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUcontext)) < 0 ||
@@ -631,7 +631,7 @@ CUresult cuCtxDetach(CUcontext ctx) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(ctx, false, conn, {});
+  auto dependency_call = lupine_cuda_context_call(ctx, false, conn, {});
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxDetach) < 0 ||
       rpc_write(conn, &ctx, sizeof(CUcontext)) < 0 ||
@@ -666,7 +666,7 @@ CUresult cuCtxSetSharedMemConfig(CUsharedconfig config) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuCtxSetSharedMemConfig", config);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, false, conn, {});
+  auto dependency_call = lupine_cuda_context_call(nullptr, false, conn, {});
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxSetSharedMemConfig) < 0 ||
       rpc_write(conn, &config, sizeof(CUsharedconfig)) < 0 ||
@@ -689,7 +689,7 @@ CUresult cuModuleUnload(CUmodule hmod) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, true, conn);
+  auto dependency_call = lupine_cuda_context_call(nullptr, true, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuModuleUnload) < 0 ||
       rpc_write(conn, &hmod, sizeof(CUmodule)) < 0 ||
@@ -848,7 +848,7 @@ CUresult cuLibraryUnload(CUlibrary library) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = rpc_epoch_call(conn, {});
+  auto dependency_call = rpc_dependency_call(conn, {});
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_async_request(conn, RPC_cuLibraryUnload,
@@ -1014,7 +1014,7 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, true, conn);
+  auto dependency_call = lupine_cuda_context_call(nullptr, true, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuKernelSetAttribute) < 0 ||
       rpc_write(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
@@ -1046,7 +1046,7 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, true, conn);
+  auto dependency_call = lupine_cuda_context_call(nullptr, true, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuKernelSetCacheConfig) < 0 ||
       rpc_write(conn, &kernel, sizeof(CUkernel)) < 0 ||
@@ -1269,7 +1269,7 @@ CUresult cuIpcGetEventHandle(CUipcEventHandle *pHandle, CUevent event) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuIpcGetEventHandle", pHandle, event);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_event_call({event}, conn);
+  auto dependency_call = lupine_cuda_event_call({event}, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuIpcGetEventHandle) < 0 ||
       rpc_write(conn, pHandle, sizeof(CUipcEventHandle)) < 0 ||
@@ -1368,7 +1368,7 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
     return lupine_call_real_cuda_fn("cuMemcpyPeer", dstDevice, dstContext,
                                     srcDevice, srcContext, ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyPeer) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -1399,7 +1399,7 @@ CUresult cuMemcpyDtoD_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyDtoD_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -1422,7 +1422,7 @@ CUresult cuMemcpyDtoA_v2(CUarray dstArray, size_t dstOffset,
     return lupine_call_real_cuda_fn("cuMemcpyDtoA_v2", dstArray, dstOffset,
                                     srcDevice, ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyDtoA_v2) < 0 ||
       rpc_write(conn, &dstArray, sizeof(CUarray)) < 0 ||
@@ -1444,7 +1444,7 @@ CUresult cuMemcpyAtoD_v2(CUdeviceptr dstDevice, CUarray srcArray,
     return lupine_call_real_cuda_fn("cuMemcpyAtoD_v2", dstDevice, srcArray,
                                     srcOffset, ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyAtoD_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -1466,7 +1466,7 @@ CUresult cuMemcpyAtoA_v2(CUarray dstArray, size_t dstOffset, CUarray srcArray,
     return lupine_call_real_cuda_fn("cuMemcpyAtoA_v2", dstArray, dstOffset,
                                     srcArray, srcOffset, ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyAtoA_v2) < 0 ||
       rpc_write(conn, &dstArray, sizeof(CUarray)) < 0 ||
@@ -1494,7 +1494,7 @@ CUresult cuMemcpyPeerAsync(CUdeviceptr dstDevice, CUcontext dstContext,
     return lupine_call_real_cuda_fn("cuMemcpyPeerAsync", dstDevice, dstContext,
                                     srcDevice, srcContext, ByteCount, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyPeerAsync) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -1522,7 +1522,7 @@ CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
     return lupine_call_real_cuda_fn("cuMemcpyDtoDAsync_v2", dstDevice,
                                     srcDevice, ByteCount, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_async_request(conn, RPC_cuMemcpyDtoDAsync_v2,
@@ -1548,7 +1548,7 @@ CUresult cuMemsetD8_v2(CUdeviceptr dstDevice, unsigned char uc, size_t N) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemsetD8_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -1573,7 +1573,7 @@ CUresult cuMemsetD16_v2(CUdeviceptr dstDevice, unsigned short us, size_t N) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemsetD16_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -1598,7 +1598,7 @@ CUresult cuMemsetD32_v2(CUdeviceptr dstDevice, unsigned int ui, size_t N) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemsetD32_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -1625,7 +1625,7 @@ CUresult cuMemsetD2D8_v2(CUdeviceptr dstDevice, size_t dstPitch,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemsetD2D8_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -1654,7 +1654,7 @@ CUresult cuMemsetD2D16_v2(CUdeviceptr dstDevice, size_t dstPitch,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemsetD2D16_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -1683,7 +1683,7 @@ CUresult cuMemsetD2D32_v2(CUdeviceptr dstDevice, size_t dstPitch,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(nullptr, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemsetD2D32_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -1708,7 +1708,7 @@ CUresult cuMemsetD8Async(CUdeviceptr dstDevice, unsigned char uc, size_t N,
     return lupine_call_real_cuda_fn("cuMemsetD8Async", dstDevice, uc, N,
                                     hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_async_request(conn, RPC_cuMemsetD8Async,
@@ -1732,7 +1732,7 @@ CUresult cuMemsetD16Async(CUdeviceptr dstDevice, unsigned short us, size_t N,
     return lupine_call_real_cuda_fn("cuMemsetD16Async", dstDevice, us, N,
                                     hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_async_request(conn, RPC_cuMemsetD16Async,
@@ -1756,7 +1756,7 @@ CUresult cuMemsetD32Async(CUdeviceptr dstDevice, unsigned int ui, size_t N,
     return lupine_call_real_cuda_fn("cuMemsetD32Async", dstDevice, ui, N,
                                     hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_async_request(conn, RPC_cuMemsetD32Async,
@@ -1781,7 +1781,7 @@ CUresult cuMemsetD2D8Async(CUdeviceptr dstDevice, size_t dstPitch,
     return lupine_call_real_cuda_fn("cuMemsetD2D8Async", dstDevice, dstPitch,
                                     uc, Width, Height, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_async_request(conn, RPC_cuMemsetD2D8Async,
@@ -1808,7 +1808,7 @@ CUresult cuMemsetD2D16Async(CUdeviceptr dstDevice, size_t dstPitch,
     return lupine_call_real_cuda_fn("cuMemsetD2D16Async", dstDevice, dstPitch,
                                     us, Width, Height, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_async_request(conn, RPC_cuMemsetD2D16Async,
@@ -1835,7 +1835,7 @@ CUresult cuMemsetD2D32Async(CUdeviceptr dstDevice, size_t dstPitch,
     return lupine_call_real_cuda_fn("cuMemsetD2D32Async", dstDevice, dstPitch,
                                     ui, Width, Height, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_async_request(conn, RPC_cuMemsetD2D32Async,
@@ -2242,7 +2242,7 @@ CUresult cuMemMapArrayAsync(CUarrayMapInfo *mapInfoList, unsigned int count,
     return lupine_call_real_cuda_fn("cuMemMapArrayAsync", mapInfoList, count,
                                     hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemMapArrayAsync) < 0 ||
       rpc_write(conn, mapInfoList, sizeof(CUarrayMapInfo)) < 0 ||
@@ -2368,7 +2368,7 @@ CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemFreeAsync) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
@@ -2397,7 +2397,7 @@ CUresult cuMemAllocAsync(CUdeviceptr *dptr, size_t bytesize, CUstream hStream) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemAllocAsync) < 0 ||
       rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
@@ -2534,7 +2534,7 @@ CUresult cuMemAllocFromPoolAsync(CUdeviceptr *dptr, size_t bytesize,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemAllocFromPoolAsync) < 0 ||
       rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
@@ -2626,7 +2626,7 @@ CUresult cuStreamGetPriority(CUstream hStream, int *priority) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuStreamGetPriority", hStream, priority);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = rpc_epoch_call(conn, {});
+  auto dependency_call = rpc_dependency_call(conn, {});
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamGetPriority) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -2646,7 +2646,7 @@ CUresult cuStreamGetFlags(CUstream hStream, unsigned int *flags) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuStreamGetFlags", hStream, flags);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = rpc_epoch_call(conn, {});
+  auto dependency_call = rpc_dependency_call(conn, {});
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamGetFlags) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -2666,7 +2666,7 @@ CUresult cuStreamGetId(CUstream hStream, unsigned long long *streamId) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuStreamGetId", hStream, streamId);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = rpc_epoch_call(conn, {});
+  auto dependency_call = rpc_dependency_call(conn, {});
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamGetId) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -2686,7 +2686,7 @@ CUresult cuStreamGetCtx(CUstream hStream, CUcontext *pctx) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuStreamGetCtx", hStream, pctx);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = rpc_epoch_call(conn, {});
+  auto dependency_call = rpc_dependency_call(conn, {});
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamGetCtx) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -2708,7 +2708,7 @@ CUresult cuStreamAttachMemAsync(CUstream hStream, CUdeviceptr dptr,
     return lupine_call_real_cuda_fn("cuStreamAttachMemAsync", hStream, dptr,
                                     length, flags);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamAttachMemAsync) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -2733,7 +2733,7 @@ CUresult cuStreamQuery(CUstream hStream) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamQuery) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -2757,7 +2757,7 @@ CUresult cuStreamSynchronize(CUstream hStream) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamSynchronize) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -2783,7 +2783,7 @@ CUresult cuStreamDestroy_v2(CUstream hStream) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamDestroy_v2) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -2803,7 +2803,7 @@ CUresult cuStreamCopyAttributes(CUstream dst, CUstream src) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuStreamCopyAttributes", dst, src);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(dst, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(dst, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamCopyAttributes) < 0 ||
       rpc_write(conn, &dst, sizeof(CUstream)) < 0 ||
@@ -2824,7 +2824,7 @@ CUresult cuStreamGetAttribute(CUstream hStream, CUstreamAttrID attr,
     return lupine_call_real_cuda_fn("cuStreamGetAttribute", hStream, attr,
                                     value_out);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamGetAttribute) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -2847,7 +2847,7 @@ CUresult cuStreamSetAttribute(CUstream hStream, CUstreamAttrID attr,
     return lupine_call_real_cuda_fn("cuStreamSetAttribute", hStream, attr,
                                     value);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamSetAttribute) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -2896,7 +2896,7 @@ CUresult cuEventSynchronize(CUevent hEvent) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_event_call({hEvent}, conn);
+  auto dependency_call = lupine_cuda_event_call({hEvent}, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuEventSynchronize) < 0 ||
       rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
@@ -2919,7 +2919,7 @@ CUresult cuEventElapsedTime_v2(float *pMilliseconds, CUevent hStart,
     return lupine_call_real_cuda_fn("cuEventElapsedTime_v2", pMilliseconds,
                                     hStart, hEnd);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_event_call({hStart, hEnd}, conn);
+  auto dependency_call = lupine_cuda_event_call({hStart, hEnd}, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuEventElapsedTime_v2) < 0 ||
       rpc_write(conn, pMilliseconds, sizeof(float)) < 0 ||
@@ -3052,7 +3052,7 @@ CUresult cuSignalExternalSemaphoresAsync(
                                     extSemArray, paramsArray, numExtSems,
                                     stream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
   if (numExtSems * sizeof(const CUexternalSemaphore) != 0 &&
       extSemArray == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
@@ -3087,7 +3087,7 @@ CUresult cuWaitExternalSemaphoresAsync(
                                     extSemArray, paramsArray, numExtSems,
                                     stream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
   if (numExtSems * sizeof(const CUexternalSemaphore) != 0 &&
       extSemArray == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
@@ -3135,7 +3135,7 @@ CUresult cuStreamWaitValue32_v2(CUstream stream, CUdeviceptr addr,
     return lupine_call_real_cuda_fn("cuStreamWaitValue32_v2", stream, addr,
                                     value, flags);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamWaitValue32_v2) < 0 ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
@@ -3158,7 +3158,7 @@ CUresult cuStreamWaitValue64_v2(CUstream stream, CUdeviceptr addr,
     return lupine_call_real_cuda_fn("cuStreamWaitValue64_v2", stream, addr,
                                     value, flags);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamWaitValue64_v2) < 0 ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
@@ -3181,7 +3181,7 @@ CUresult cuStreamWriteValue32_v2(CUstream stream, CUdeviceptr addr,
     return lupine_call_real_cuda_fn("cuStreamWriteValue32_v2", stream, addr,
                                     value, flags);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamWriteValue32_v2) < 0 ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
@@ -3204,7 +3204,7 @@ CUresult cuStreamWriteValue64_v2(CUstream stream, CUdeviceptr addr,
     return lupine_call_real_cuda_fn("cuStreamWriteValue64_v2", stream, addr,
                                     value, flags);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamWriteValue64_v2) < 0 ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
@@ -3228,7 +3228,7 @@ CUresult cuStreamBatchMemOp_v2(CUstream stream, unsigned int count,
     return lupine_call_real_cuda_fn("cuStreamBatchMemOp_v2", stream, count,
                                     paramArray, flags);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(stream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamBatchMemOp_v2) < 0 ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
@@ -3264,7 +3264,7 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, true, conn);
+  auto dependency_call = lupine_cuda_context_call(nullptr, true, conn);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuFuncSetAttribute) < 0 ||
@@ -3300,7 +3300,7 @@ CUresult cuFuncSetCacheConfig(CUfunction hfunc, CUfunc_cache config) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, true, conn);
+  auto dependency_call = lupine_cuda_context_call(nullptr, true, conn);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuFuncSetCacheConfig) < 0 ||
@@ -3511,7 +3511,7 @@ CUresult cuLaunchGridAsync(CUfunction f, int grid_width, int grid_height,
     return lupine_call_real_cuda_fn("cuLaunchGridAsync", f, grid_width,
                                     grid_height, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   CUfunction f_rpc = lupine_translate_private_function_for_rpc(f);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuLaunchGridAsync) < 0 ||
@@ -3576,7 +3576,7 @@ CUresult cuFuncSetSharedMemConfig(CUfunction hfunc, CUsharedconfig config) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuFuncSetSharedMemConfig", hfunc, config);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, true, conn);
+  auto dependency_call = lupine_cuda_context_call(nullptr, true, conn);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuFuncSetSharedMemConfig) < 0 ||
@@ -3808,7 +3808,7 @@ CUresult cuGraphAddEventRecordNode(CUgraphNode *phGraphNode, CUgraph hGraph,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_event_call({event}, conn);
+  auto dependency_call = lupine_cuda_event_call({event}, conn);
   if (numDependencies * sizeof(const CUgraphNode) != 0 &&
       dependencies == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
@@ -3857,7 +3857,7 @@ CUresult cuGraphEventRecordNodeSetEvent(CUgraphNode hNode, CUevent event) {
     return lupine_call_real_cuda_fn("cuGraphEventRecordNodeSetEvent", hNode,
                                     event);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_event_call({event}, conn);
+  auto dependency_call = lupine_cuda_event_call({event}, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphEventRecordNodeSetEvent) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -3884,7 +3884,7 @@ CUresult cuGraphAddEventWaitNode(CUgraphNode *phGraphNode, CUgraph hGraph,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_event_call({event}, conn);
+  auto dependency_call = lupine_cuda_event_call({event}, conn);
   if (numDependencies * sizeof(const CUgraphNode) != 0 &&
       dependencies == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
@@ -3933,7 +3933,7 @@ CUresult cuGraphEventWaitNodeSetEvent(CUgraphNode hNode, CUevent event) {
     return lupine_call_real_cuda_fn("cuGraphEventWaitNodeSetEvent", hNode,
                                     event);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_event_call({event}, conn);
+  auto dependency_call = lupine_cuda_event_call({event}, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphEventWaitNodeSetEvent) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
@@ -4991,7 +4991,7 @@ CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
     return lupine_call_real_cuda_fn("cuGraphExecEventRecordNodeSetEvent",
                                     hGraphExec, hNode, event);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_event_call({event}, conn);
+  auto dependency_call = lupine_cuda_event_call({event}, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphExecEventRecordNodeSetEvent) <
           0 ||
@@ -5013,7 +5013,7 @@ CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
     return lupine_call_real_cuda_fn("cuGraphExecEventWaitNodeSetEvent",
                                     hGraphExec, hNode, event);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_event_call({event}, conn);
+  auto dependency_call = lupine_cuda_event_call({event}, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphExecEventWaitNodeSetEvent) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
@@ -5135,7 +5135,7 @@ CUresult cuGraphUpload(CUgraphExec hGraphExec, CUstream hStream) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuGraphUpload", hGraphExec, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphUpload) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
@@ -5153,7 +5153,7 @@ CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuGraphLaunch", hGraphExec, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_async_request(conn, RPC_cuGraphLaunch, &async_sequence) <
@@ -5173,7 +5173,7 @@ CUresult cuGraphExecDestroy(CUgraphExec hGraphExec) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuGraphExecDestroy", hGraphExec);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, true, conn);
+  auto dependency_call = lupine_cuda_context_call(nullptr, true, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphExecDestroy) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
@@ -5190,7 +5190,7 @@ CUresult cuGraphDestroy(CUgraph hGraph) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuGraphDestroy", hGraph);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, true, conn);
+  auto dependency_call = lupine_cuda_context_call(nullptr, true, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphDestroy) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
@@ -6336,7 +6336,7 @@ CUresult cuGraphicsMapResources(unsigned int count,
     return lupine_call_real_cuda_fn("cuGraphicsMapResources", count, resources,
                                     hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (count * sizeof(CUgraphicsResource) != 0 && resources == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -6361,7 +6361,7 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
     return lupine_call_real_cuda_fn("cuGraphicsUnmapResources", count,
                                     resources, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (count * sizeof(CUgraphicsResource) != 0 && resources == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -6462,7 +6462,7 @@ CUresult cuGreenCtxDestroy(CUgreenCtx hCtx) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, true, conn);
+  auto dependency_call = lupine_cuda_context_call(nullptr, true, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGreenCtxDestroy) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
@@ -6696,7 +6696,7 @@ CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuGreenCtxRecordEvent", hCtx, hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, true, conn);
+  auto dependency_call = lupine_cuda_context_call(nullptr, true, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGreenCtxRecordEvent) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
@@ -6717,7 +6717,7 @@ CUresult cuGreenCtxWaitEvent(CUgreenCtx hCtx, CUevent hEvent) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuGreenCtxWaitEvent", hCtx, hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, true, conn);
+  auto dependency_call = lupine_cuda_context_call(nullptr, true, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGreenCtxWaitEvent) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
@@ -6739,7 +6739,7 @@ CUresult cuStreamGetGreenCtx(CUstream hStream, CUgreenCtx *phCtx) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuStreamGetGreenCtx", hStream, phCtx);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamGetGreenCtx) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -6827,7 +6827,7 @@ CUresult cuStreamGetDevResource(CUstream hStream, CUdevResource *resource,
     return lupine_call_real_cuda_fn("cuStreamGetDevResource", hStream, resource,
                                     type);
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
+  auto dependency_call = lupine_cuda_stream_call(hStream, nullptr, false, conn);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamGetDevResource) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||

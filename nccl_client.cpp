@@ -96,12 +96,12 @@ bool submit_async(conn_t *conn) {
   return group.depth != 0 && group.conn == conn;
 }
 
-struct stream_epoch_scope {
+struct stream_dependency_scope {
   void *scope;
-  stream_epoch_scope(conn_t *conn, cudaStream_t stream)
-      : scope(lupine_rpc_stream_epoch_begin(
+  stream_dependency_scope(conn_t *conn, cudaStream_t stream)
+      : scope(lupine_rpc_stream_dependency_begin(
             conn, reinterpret_cast<CUstream>(stream))) {}
-  ~stream_epoch_scope() { lupine_rpc_stream_epoch_end(scope); }
+  ~stream_dependency_scope() { lupine_rpc_stream_dependency_end(scope); }
 };
 
 // ---------------------------------------------------------------------------

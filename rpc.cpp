@@ -229,7 +229,7 @@ void rpc_shutdown_socket(lupine_socket_t socket) {
 }
 
 void rpc_wake_async_waiters(conn_t *conn) {
-  rpc_epoch_shutdown(conn);
+  rpc_dependency_shutdown(conn);
   if (!conn->async_sync_initialized) {
     return;
   }
@@ -357,8 +357,8 @@ int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id) {
     goto fail;
   }
   conn->async_sync_initialized = 1;
-  conn->epochs = rpc_epoch_create();
-  if (conn->epochs == nullptr) {
+  conn->dependencies = rpc_dependency_create();
+  if (conn->dependencies == nullptr) {
     pthread_cond_destroy(&conn->async_cond);
     pthread_mutex_destroy(&conn->async_mutex);
     pthread_mutex_destroy(&conn->call_mutex);
@@ -375,7 +375,7 @@ fail:
   return -1;
 }
 
-// Scoped requests use the epoch header. Preserve the old path for callers
+// Scoped requests use lane wait markers. Preserve the old path for callers
 // without backend ordering metadata, such as non-stream NCCL group operations.
 static constexpr uint64_t rpc_scoped_async = UINT64_MAX - 1;
 static thread_local bool rpc_holds_async_turn = false;
@@ -422,8 +422,8 @@ void rpc_conn_destroy(conn_t *conn) {
   rpc_write_buffer_release(conn);
   std::vector<rpc_write_cursor>().swap(conn->write_queue);
   std::vector<rpc_host_allocation_write>().swap(conn->host_allocation_writes);
-  rpc_epoch_destroy(conn->epochs);
-  conn->epochs = nullptr;
+  rpc_dependency_destroy(conn->dependencies);
+  conn->dependencies = nullptr;
   conn->async_sync_initialized = 0;
   pthread_cond_destroy(&conn->async_cond);
   pthread_mutex_destroy(&conn->async_mutex);
@@ -492,7 +492,6 @@ struct rpc_read_frame {
   int32_t stream_id = -1;
   int request_id = 0;
   int op = 0;
-  std::vector<rpc_epoch> required;
 };
 
 struct rpc_response_route {
@@ -517,7 +516,7 @@ struct rpc_thread_io {
   int32_t bound_stream = -1;
   conn_t *read_conn = nullptr;
   rpc_read_frame read;
-  std::vector<rpc_epoch> published;
+  int dispatched_request = 0;
   conn_t *write_conn = nullptr;
   rpc_nested_write_frame nested_write;
   conn_t *response_conn = nullptr;
@@ -610,36 +609,37 @@ int rpc_dispatch(conn_t *conn, int parity) {
     return -1;
   }
   int header[2] = {};
-  int read_result =
-      rpc_http2_read_stream(conn, stream_id, header, sizeof(header));
-  if (read_result != sizeof(header) || header[0] < 2 ||
-      header[0] % 2 != parity) {
-    if (read_result != LUPINE_RPC_HTTP2_STREAM_END) {
-      rpc_mark_connection_closed(conn);
+  for (;;) {
+    int result = rpc_http2_read_stream(conn, stream_id, header, sizeof(header));
+    if (result != sizeof(header)) {
+      if (result != LUPINE_RPC_HTTP2_STREAM_END) {
+        rpc_mark_connection_closed(conn);
+      }
+      return -1;
     }
+    if (parity != 0 || header[0] != 0) {
+      break;
+    }
+    // Control marker: {0, prerequisite lane, prerequisite request}. Waiting
+    // here also covers handlers that submit native work while reading a body.
+    int request = 0;
+    if (header[1] <= 0 || header[1] == stream_id ||
+        rpc_http2_read_stream(conn, stream_id, &request, sizeof(request)) !=
+            sizeof(request) ||
+        request < 2 || request % 2 != 0 ||
+        rpc_dependency_wait(conn, {header[1], request}) < 0) {
+      rpc_mark_connection_closed(conn);
+      return -1;
+    }
+  }
+  if (header[0] < 2 || header[0] % 2 != parity) {
+    rpc_mark_connection_closed(conn);
     return -1;
   }
   rpc_tls_io.read_conn = conn;
   rpc_tls_io.read = {stream_id, header[0], header[1]};
-  rpc_tls_io.published.clear();
-  if (parity == 0) {
-    uint32_t counts[2] = {};
-    if (rpc_read(conn, counts, sizeof(counts)) < 0 ||
-        counts[0] > RPC_MAX_REQUEST_EPOCHS ||
-        counts[1] > RPC_MAX_REQUEST_EPOCHS) {
-      rpc_mark_connection_closed(conn);
-      return -1;
-    }
-    rpc_tls_io.read.required.resize(counts[0]);
-    rpc_tls_io.published.resize(counts[1]);
-    if (rpc_read(conn, rpc_tls_io.read.required.data(),
-                 counts[0] * sizeof(rpc_epoch)) < 0 ||
-        rpc_read(conn, rpc_tls_io.published.data(),
-                 counts[1] * sizeof(rpc_epoch)) < 0) {
-      rpc_mark_connection_closed(conn);
-      return -1;
-    }
-  }
+  // Reverse RPC responses overwrite the read frame, so retain this separately.
+  rpc_tls_io.dispatched_request = header[0];
   return header[1];
 }
 
@@ -775,26 +775,8 @@ int rpc_drain(conn_t *conn, size_t size) {
   return 0;
 }
 
-int rpc_wait_dependencies(conn_t *conn) {
-  if (rpc_tls_io.read_conn != conn) {
-    return -1;
-  }
-  int result = rpc_epoch_wait(conn, rpc_tls_io.read.required);
-  if (result == 0) {
-    rpc_tls_io.read.required.clear();
-  }
-  return result;
-}
-
 int rpc_read_end(conn_t *conn) {
   if (rpc_tls_io.read_conn == conn) {
-    // Most handlers can consume their payload before waiting. Streaming
-    // handlers explicitly wait before they start submitting native work.
-    if (rpc_wait_dependencies(conn) < 0) {
-      rpc_tls_io.read_conn = nullptr;
-      rpc_tls_io.read = {};
-      return -1;
-    }
     int read_id = rpc_tls_io.read.request_id;
     int32_t stream_id = rpc_tls_io.read.stream_id;
     bool completed_response = rpc_tls_io.read.op == -1;
@@ -817,8 +799,8 @@ int rpc_read_end(conn_t *conn) {
 }
 
 void rpc_request_complete(conn_t *conn) {
-  rpc_epoch_complete(conn, rpc_tls_io.published);
-  rpc_tls_io.published.clear();
+  rpc_dependency_complete(
+      conn, {rpc_tls_io.bound_stream, rpc_tls_io.dispatched_request});
 }
 
 // Per-op RPC statistics, enabled by setting LUPINE_RPC_STATS to an output
@@ -970,8 +952,8 @@ int rpc_write_start_async_request(conn_t *conn, const int op,
     return -1;
   }
   conn->write_async = true;
-  *sequence =
-      rpc_epoch_scoped(conn) ? rpc_scoped_async : conn->issued_async_sequence++;
+  *sequence = rpc_dependency_scoped(conn) ? rpc_scoped_async
+                                          : conn->issued_async_sequence++;
   return 0;
 }
 
@@ -1115,50 +1097,29 @@ int rpc_write_end(conn_t *conn) {
   int write_id = conn->write_id;
   int32_t write_stream_id = conn->write_stream_id;
   int result = -1;
-  rpc_request_epochs epochs;
-  // Keep the small framing fields together: adding a cursor for each epoch
-  // array adds allocator and compression work to every kernel launch.
-  struct {
-    int request_id;
-    int op;
-    uint32_t required;
-    uint32_t published;
-    rpc_epoch entries[2 * RPC_MAX_REQUEST_EPOCHS];
-  } header;
   try {
     if (conn->write_queue.size() >= 2) {
       conn->write_queue[0] =
           rpc_write_cursor(&conn->write_id, sizeof(conn->write_id));
       conn->write_queue[1] =
           rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
-      if (request && conn->local_request_parity == 0) {
-        epochs = rpc_epoch_prepare(conn, conn->write_async);
-        if (epochs.required.size() > RPC_MAX_REQUEST_EPOCHS ||
-            epochs.published.size() > RPC_MAX_REQUEST_EPOCHS) {
-          rpc_mark_connection_closed(conn);
-        } else {
-          header.request_id = conn->write_id;
-          header.op = conn->write_op;
-          header.required = static_cast<uint32_t>(epochs.required.size());
-          header.published = static_cast<uint32_t>(epochs.published.size());
-          auto next = std::copy(epochs.required.begin(), epochs.required.end(),
-                                header.entries);
-          std::copy(epochs.published.begin(), epochs.published.end(), next);
-          size_t bytes =
-              offsetof(decltype(header), entries) +
-              (header.required + header.published) * sizeof(rpc_epoch);
-          conn->write_queue[0] = rpc_write_cursor(&header, bytes);
+      std::vector<int> markers;
+      bool client_request = request && conn->local_request_parity == 0;
+      if (client_request) {
+        for (auto required : rpc_dependency_prepare(conn, write_stream_id)) {
+          markers.insert(markers.end(), {0, required.lane, required.request});
+        }
+        if (!markers.empty()) {
+          markers.insert(markers.end(), {write_id, conn->write_op});
+          conn->write_queue[0] =
+              rpc_write_cursor(markers.data(), markers.size() * sizeof(int));
           conn->write_queue[1] = {};
         }
       }
-      if (!conn->closed) {
-        result =
-            rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
-      }
-      if (result == 0) {
-        // The existing call lock excludes other publishers until this store.
-        // Entry snapshots can proceed while the payload is being enqueued.
-        rpc_epoch_publish(conn, epochs);
+      result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
+      if (result == 0 && client_request) {
+        rpc_dependency_publish(conn, {write_stream_id, write_id},
+                               conn->write_async);
       }
     }
   } catch (const std::bad_alloc &) {

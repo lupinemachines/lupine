@@ -51,8 +51,8 @@
 #include "client_routing.h"
 #include "codegen/gen_cuda_client.h"
 #include "codegen/gen_rpc_ids.h"
-#include "cuda_client_epochs.h"
 #include "cuda_client_memcpy.h"
+#include "cuda_client_ordering.h"
 #include "cuda_client_rpc.h"
 #include "cuda_profiler_compat.h"
 #include "events.h"
@@ -105,7 +105,7 @@ static void lupine_complete_pending_log_callbacks(conn_t *conn,
                                                   int32_t stream_id);
 
 static void lupine_rpc_connection_closed(conn_t *conn) {
-  lupine_cuda_epochs_forget_connection(conn);
+  lupine_cuda_ordering_forget_connection(conn);
   lupine_invalidate_current_context_cache();
   lupine_discard_pending_log_callbacks(conn);
 }
@@ -2450,8 +2450,8 @@ extern "C" CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
   }
   lupine_invalidate_primary_ctx_state(dev);
   lupine_forget_context_local_storage(context);
-  auto epoch_call = lupine_cuda_context_call(context, context == nullptr,
-                                             lupine_route_remote_conn(route));
+  auto dependency_call = lupine_cuda_context_call(
+      context, context == nullptr, lupine_route_remote_conn(route));
   lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
   return lupine_remote_primary_ctx_release(lupine_route_remote_conn(route),
                                            remote_dev);
@@ -2544,7 +2544,7 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  auto epoch_call = lupine_cuda_context_call(nullptr, true, conn);
+  auto dependency_call = lupine_cuda_context_call(nullptr, true, conn);
   std::lock_guard<std::mutex> lock(lupine_primary_ctx_retain_mutex());
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxReset_v2) < 0 ||
@@ -3915,7 +3915,7 @@ extern "C" CUresult cuStreamCreateWithPriority(CUstream *phStream,
 
 CUresult cuStreamDestroy_v2(CUstream hStream);
 extern "C" CUresult cuEventDestroy_v2(CUevent hEvent) {
-  auto epoch_call = lupine_cuda_event_call({hEvent});
+  auto dependency_call = lupine_cuda_event_call({hEvent});
   std::unique_lock<std::shared_mutex> event_lifecycle_lock(
       lupine_event_lifecycle_mutex());
   lupine_route route = lupine_route_for_event(hEvent);
@@ -4492,7 +4492,7 @@ extern "C" CUresult cuMemGetInfo(size_t *free, size_t *total) {
 
 extern "C" CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
                                        CUdevice dstDevice, CUstream hStream) {
-  auto epoch_call = lupine_cuda_stream_call(hStream);
+  auto dependency_call = lupine_cuda_stream_call(hStream);
   bool managed_alias = lupine_is_managed_host_alias(devPtr);
 
   CUdevice route_device = dstDevice;
@@ -4588,7 +4588,7 @@ extern "C" CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
                                           CUmemLocation location,
                                           unsigned int flags,
                                           CUstream hStream) {
-  auto epoch_call = lupine_cuda_stream_call(hStream);
+  auto dependency_call = lupine_cuda_stream_call(hStream);
   bool managed_alias = lupine_is_managed_host_alias(devPtr);
 
   CUmemLocation route_location = location;
@@ -5069,7 +5069,7 @@ extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
 
 extern "C" CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
                                       unsigned int Flags) {
-  auto epoch_call = lupine_cuda_stream_call(hStream, hEvent);
+  auto dependency_call = lupine_cuda_stream_call(hStream, hEvent);
   lupine_route route = hStream == nullptr ? lupine_route_for_default()
                                           : lupine_route_for_stream(hStream);
   lupine_route event_route = lupine_route_for_event(hEvent);
@@ -5103,7 +5103,7 @@ extern "C" CUresult cuStreamWaitEvent_ptsz(CUstream hStream, CUevent hEvent,
 }
 
 extern "C" CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
-  auto epoch_call = lupine_cuda_stream_call(hStream, hEvent, true);
+  auto dependency_call = lupine_cuda_stream_call(hStream, hEvent, true);
   lupine_route route = hStream != nullptr ? lupine_route_for_stream(hStream)
                                           : lupine_route_for_default();
   if (lupine_route_is_local(route)) {
@@ -5135,7 +5135,7 @@ extern "C" CUresult cuEventRecord_ptsz(CUevent hEvent, CUstream hStream) {
 
 extern "C" CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
                                            unsigned int flags) {
-  auto epoch_call = lupine_cuda_stream_call(hStream, hEvent, true);
+  auto dependency_call = lupine_cuda_stream_call(hStream, hEvent, true);
   lupine_route route = hStream != nullptr ? lupine_route_for_stream(hStream)
                                           : lupine_route_for_default();
   if (lupine_route_is_local(route)) {
@@ -5179,7 +5179,7 @@ static void lupine_prefetch_event_queries(CUevent exclude, conn_t *conn) {
   if (count == 0) {
     return;
   }
-  auto epoch_call = lupine_cuda_event_call(
+  auto dependency_call = lupine_cuda_event_call(
       std::vector<CUevent>(events, events + count), conn);
 
   CUresult results[kLupineEventQueryBatch];
@@ -5196,7 +5196,7 @@ static void lupine_prefetch_event_queries(CUevent exclude, conn_t *conn) {
 }
 
 extern "C" CUresult cuEventQuery(CUevent hEvent) {
-  auto epoch_call = lupine_cuda_event_call({hEvent});
+  auto dependency_call = lupine_cuda_event_call({hEvent});
   lupine_route route = lupine_route_for_event(hEvent);
   if (lupine_route_is_local(route)) {
     CUresult return_value = lupine_call_real_cuda_fn("cuEventQuery", hEvent);
@@ -5966,7 +5966,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   lupine_route launch_route = hStream != nullptr
                                   ? lupine_route_for_stream(hStream)
                                   : lupine_route_for_default();
-  auto epoch_call = lupine_cuda_stream_call(
+  auto dependency_call = lupine_cuda_stream_call(
       hStream, nullptr, false, lupine_route_remote_conn(launch_route));
   CUfunction route_function;
   CUresult status = lupine_resolve_launch_function_for_route(
@@ -6064,7 +6064,7 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   lupine_route launch_route = config->hStream != nullptr
                                   ? lupine_route_for_stream(config->hStream)
                                   : lupine_route_for_default();
-  auto epoch_call = lupine_cuda_stream_call(
+  auto dependency_call = lupine_cuda_stream_call(
       config->hStream, nullptr, false, lupine_route_remote_conn(launch_route));
   CUfunction route_function;
   CUresult status = lupine_resolve_launch_function_for_route(
@@ -6155,7 +6155,7 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
                           unsigned int blockDimX, unsigned int blockDimY,
                           unsigned int blockDimZ, unsigned int sharedMemBytes,
                           CUstream hStream, void **kernelParams) {
-  auto epoch_call = lupine_cuda_stream_call(hStream);
+  auto dependency_call = lupine_cuda_stream_call(hStream);
   bool kernel_handle = lupine_is_library_kernel(f);
   f = lupine_translate_private_function(f);
 
@@ -7351,7 +7351,7 @@ extern "C" CUresult cuGraphInstantiate(CUgraphExec *phGraphExec, CUgraph hGraph,
 
 extern "C" CUresult cuLaunchHostFunc(CUstream hStream, CUhostFn fn,
                                      void *userData) {
-  auto epoch_call = lupine_cuda_stream_call(hStream);
+  auto dependency_call = lupine_cuda_stream_call(hStream);
   if (fn == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -7378,7 +7378,7 @@ extern "C" CUresult cuLaunchHostFunc(CUstream hStream, CUhostFn fn,
 extern "C" CUresult cuStreamAddCallback(CUstream hStream,
                                         CUstreamCallback callback,
                                         void *userData, unsigned int flags) {
-  auto epoch_call = lupine_cuda_stream_call(hStream);
+  auto dependency_call = lupine_cuda_stream_call(hStream);
   if (callback == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -7751,7 +7751,7 @@ cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode) {
   for (int i = 0; i < rpc_size(); ++i) {
     conn_t *conn = rpc_client_get_connection(i);
     // This changes only the native lane's thread-local capture mode.
-    rpc_epoch_call epoch_call(conn, {});
+    rpc_dependency_call dependency_call(conn, {});
     uint64_t async_sequence = 0;
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_async_request(
@@ -7808,7 +7808,7 @@ extern "C" CUresult cuStreamIsCapturing(CUstream hStream,
 
 extern "C" CUresult cuStreamBeginCapture_v2(CUstream hStream,
                                             CUstreamCaptureMode mode) {
-  auto epoch_call = lupine_cuda_stream_call(hStream);
+  auto dependency_call = lupine_cuda_stream_call(hStream);
   lupine_materialize_host_allocations();
   lupine_capture_begin_guard capture_guard;
   lupine_route route = hStream != nullptr ? lupine_route_for_stream(hStream)
@@ -7832,7 +7832,7 @@ extern "C" CUresult cuStreamBeginCapture_v2(CUstream hStream,
 }
 
 extern "C" CUresult cuStreamEndCapture(CUstream hStream, CUgraph *phGraph) {
-  auto epoch_call = lupine_cuda_stream_call(hStream);
+  auto dependency_call = lupine_cuda_stream_call(hStream);
   lupine_route route = hStream != nullptr ? lupine_route_for_stream(hStream)
                                           : lupine_route_for_default();
   CUresult return_value;
@@ -7924,7 +7924,7 @@ cuStreamBeginCaptureToGraph(CUstream hStream, CUgraph hGraph,
                             const CUgraphNode *dependencies,
                             const CUgraphEdgeData *dependencyData,
                             size_t numDependencies, CUstreamCaptureMode mode) {
-  auto epoch_call = lupine_cuda_stream_call(hStream);
+  auto dependency_call = lupine_cuda_stream_call(hStream);
   if (dependencyData != nullptr) {
     return CUDA_ERROR_NOT_SUPPORTED;
   }
@@ -7966,7 +7966,7 @@ extern "C" CUresult cuStreamUpdateCaptureDependencies_v2(
     CUstream hStream, CUgraphNode *dependencies,
     const CUgraphEdgeData *dependencyData, size_t numDependencies,
     unsigned int flags) {
-  auto epoch_call = lupine_cuda_stream_call(hStream);
+  auto dependency_call = lupine_cuda_stream_call(hStream);
   if (dependencyData != nullptr) {
     return CUDA_ERROR_NOT_SUPPORTED;
   }
@@ -8008,7 +8008,7 @@ extern "C" CUresult
 cuStreamUpdateCaptureDependencies(CUstream hStream, CUgraphNode *dependencies,
                                   const CUgraphEdgeData *dependencyData,
                                   size_t numDependencies, unsigned int flags) {
-  auto epoch_call = lupine_cuda_stream_call(hStream);
+  auto dependency_call = lupine_cuda_stream_call(hStream);
   return cuStreamUpdateCaptureDependencies_v2(
       hStream, dependencies, dependencyData, numDependencies, flags);
 }

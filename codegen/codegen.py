@@ -433,7 +433,7 @@ NCCL = Backend(
     not_supported="ncclInvalidUsage",
     async_success="ncclSuccess",
     alias_prefix="p",
-    stream_epochs=True,
+    stream_ordering=True,
 )
 
 ANNOTATION_FILES = {
@@ -1259,7 +1259,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             "#include <unordered_map>\n"
             "#include <vector>\n\n"
             '#include "gen_rpc_ids.h"\n\n'
-            '#include "client_routing.h"\n#include "cuda_client_epochs.h"\n'
+            '#include "client_routing.h"\n#include "cuda_client_ordering.h"\n'
             '#include "rpc.h"\n\n'
             "extern int rpc_size();\n"
             "extern conn_t *rpc_client_get_connection(unsigned int index);\n"
@@ -1434,7 +1434,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
             ordering = cuda_ordering_call(function, metadata)
             if ordering:
-                f.write(f"    auto epoch_call = {ordering};\n")
+                f.write(f"    auto dependency_call = {ordering};\n")
 
             for operation in operations:
                 if isinstance(operation, OpaqueTypeOperation):
@@ -1711,7 +1711,7 @@ def cuda_ordering_call(function, metadata):
         if kind == "LEGACY":
             return "lupine_cuda_stream_call(nullptr, nullptr, false, conn)"
         if kind == "NONE":
-            return "rpc_epoch_call(conn, {})"
+            return "rpc_dependency_call(conn, {})"
         raise RuntimeError(f"Unknown CUDA ordering scope: {metadata.ordering}")
     streams = [p.name for p in function.parameters if p.type.format() == "CUstream"]
     if streams:

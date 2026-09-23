@@ -181,21 +181,26 @@ Some improvements that can be made:
 
 ## CUDA call ordering
 
-CUDA requests carry optional ordering epochs in the RPC header. The CUDA
-backend identifies streams, events, and contexts; the RPC layer treats their
-ordering domains as opaque IDs. A wrapper snapshots prerequisites before
-building its request. Fire-and-forget requests publish epochs after enqueueing,
-and a server handler completes them after native submission, without waiting
-for GPU completion or sending an acknowledgement.
+The client tracks outstanding native submissions for streams, events, and
+contexts as `(lane, request ID)` prerequisites. A wrapper snapshots these at
+entry; fire-and-forget requests publish their IDs after enqueueing. Before a
+request with a foreign-lane prerequisite, the transport emits a wait marker:
+`{0, prerequisite lane, prerequisite request ID}`. Ordinary request headers and
+bulk-copy framing stay unchanged. A thread-local map suppresses fences already
+sent by that thread; its own lane needs no marker because it executes FIFO.
+
+The server records the last request whose native handler returned on each lane.
+It consumes wait markers before dispatching the next handler, while HTTP/2
+continues receiving and crediting payloads. This adds no acknowledgement and
+never waits for GPU completion. Completion watermarks survive lane retirement
+until the connection closes; transport failure cancels outstanding waits.
 
 Generated CUDA wrappers infer stream and event scopes from handle parameters.
 Use `@ordering LEGACY` for implicit legacy-stream operations, `@ordering CONTEXT
 [parameter]` for context barriers, `@ordering ALL_CONTEXTS` for resource teardown
 whose owning context is unavailable, and `@ordering NONE` for calls without
 submission dependencies. Handwritten wrappers use the same helpers from
-`cuda_client_epochs.h`; stream creation registers the owning context and flags.
-Streaming handlers must call `rpc_wait_dependencies` before their first native
-operation if it precedes `rpc_read_end`.
+`cuda_client_ordering.h`; stream creation registers the owning context and flags.
 
 Ordinary stream calls do not wait for the context aggregate they publish.
 Context barriers consume that aggregate. Legacy-stream calls and blocking
@@ -209,10 +214,14 @@ acknowledged request so subsequent launches observe its update. Resource
 teardown without context ownership metadata conservatively consumes the
 connection aggregate; ordinary stream calls never consume it.
 
-Epoch values count publications within a domain, rather than imposing an
-execution order on overlapping calls. For example, two calls that both snapshot
-zero may run concurrently and complete in either order. A later call requiring
-epoch two waits for both; completing two never skips a hole at one. Publication
-is the wrapper's logical exit point immediately after enqueueing, so a caller
-entering during the small interval before the wrapper returns can conservatively
-acquire a dependency. Thread lanes still preserve CUDA thread-local state.
+Overlapping calls retain separate prerequisites. Publishing a submission removes
+only earlier entries covered by that call's entry snapshot or its own lane's
+FIFO order. Thus ordinary stream handoffs compact to one prerequisite, while a
+later consumer of concurrent producers waits for both. Context aggregates
+collect producers without imposing an order between them.
+
+Publication is the wrapper's logical exit point immediately after enqueueing,
+so a caller entering during the small interval before the wrapper returns can
+conservatively acquire a dependency. Thread lanes preserve CUDA thread-local
+state; this mechanism does not infer memory dependencies between independent
+streams.
