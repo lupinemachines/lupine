@@ -20,7 +20,6 @@ import base64
 import functools
 import gc
 import inspect
-import json
 import pickle
 import warnings
 import weakref
@@ -28,7 +27,7 @@ from typing import Any
 
 import torch
 
-from . import _extension, is_dual, is_started
+from . import _extension, forward, is_dual, is_started
 
 _DEVICE_NAME = "lupine"
 
@@ -56,11 +55,11 @@ def _index(device: Any) -> int:
 
 
 def _eval(code: str) -> Any:
-    return json.loads(_C().eval(code))
+    return forward.current().eval_(code)
 
 
 def _exec(code: str) -> None:
-    _C().exec(code)
+    forward.current().exec_(code)
 
 
 # --- forwarding to the worker's torch.cuda ----------------------------------
@@ -175,7 +174,7 @@ def get_amp_supported_dtype() -> list[torch.dtype]:
 
 
 def synchronize(device: Any = None) -> None:
-    _C().synchronize()
+    forward.current().synchronize()
 
 
 # --- streams and events -----------------------------------------------------

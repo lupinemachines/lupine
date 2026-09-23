@@ -1,17 +1,20 @@
 """Host side of the LUPINE torch backend.
 
 The user's ``torch`` gets a device whose operators execute in a same-version
-CUDA torch running in the worker (``lupine._worker``). Tensors are host-side
-metadata over a remote storage handle; one boxed fallback forwards every
-operator to the worker over the LUPINE RPC layer. The first call of an
-operator with a given argument metadata is a round trip: the worker runs it
-and reports what each result is (a new storage, an argument, a view of one),
-which becomes the operator's plan for that metadata; later calls build their
-results from the plan over host-assigned handles and go fire-and-forget.
+CUDA torch running in the worker (``lupine._worker``).
+Tensors are host-side metadata over a storage handle the worker owns; a
+Python boxed fallback (``forward``) sends every operator over a plain
+socket (``transport``) pickled with tensor references (``wire``). The first
+call of an operator with a given argument metadata is a round trip that
+teaches the host what the results look like; later calls build their results
+from that plan over host-assigned handles and go fire-and-forget.
 Synchronous round trips otherwise happen only where torch itself waits
 (``.item()``, copies to the CPU, ``synchronize()``) and for operators whose
-output shape depends on data (``nonzero``, ``masked_select``, ``unique``,
-boolean indexing).
+output shape depends on data.
+
+The C++ extension (``ext``, ``csrc``) is the device registration only:
+allocator, device guard, hooks, generator and the metadata kernels, which
+libtorch has no stable ABI for and so are built per torch release.
 
 When the host torch has no CUDA build (every macOS torch, or a CPU wheel)
 the kernels are registered on the in-tree CUDA dispatch key, so
@@ -20,63 +23,25 @@ backend; torch refuses to rename PrivateUse1 to an in-tree device name, so
 this is the only way the program's ``"cuda"`` strings can keep working. A
 host torch that does have a CUDA build keeps ``cuda`` for its own driver
 path and reaches the backend as the PrivateUse1 device ``torch.device("lupine")``.
-
-The extension is built from a repository checkout (see ``setup.py``)::
-
-    python python/lupine/_backend/setup.py build_ext --inplace
 """
 
 from __future__ import annotations
 
-import importlib
-import json
+import atexit
 import os
-from pathlib import Path
 from typing import Any
 
 _started: dict[str, Any] = {}
 
 
-def _preload_torch_libraries() -> None:
-    """Load libtorch for the extension without importing torch.
-
-    On a torch with no CUDA build the extension has to supply the CUDA
-    hooks before torch's own import first asks for them (they are created
-    once, on first use), so the extension must load before ``import torch``.
-    """
-
-    import ctypes
-    import importlib.util
-    import sys
-
-    spec = importlib.util.find_spec("torch")
-    if spec is None or not spec.submodule_search_locations:
-        return
-    lib = Path(next(iter(spec.submodule_search_locations))) / "lib"
-    suffix = {"darwin": ".dylib", "win32": ".dll"}.get(sys.platform, ".so")
-    for name in ("libc10", "libtorch_cpu", "libtorch", "libtorch_python"):
-        path = lib / f"{name}{suffix}"
-        if path.is_file():
-            ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
-
-
 def _extension() -> Any:
-    _preload_torch_libraries()
-    try:
-        _C = importlib.import_module(f"{__name__}._C")
-    except ImportError as exc:
-        from .. import LupineError
+    from . import ext
 
-        raise LupineError(
-            "the lupine torch backend extension is not built for this torch; "
-            "run `python python/lupine/_backend/setup.py build_ext --inplace` "
-            f"from a repository checkout ({exc})"
-        ) from exc
-    return _C
+    return ext.load()
 
 
 def base_version(version: str) -> str:
-    """``2.12.1+cu130`` -> ``2.12.1``: the boxed schema is the wire contract."""
+    """``2.12.1+cu130`` -> ``2.12.1``: the operator schema is the wire contract."""
 
     return version.split("+", 1)[0]
 
@@ -98,17 +63,27 @@ def info() -> dict[str, Any]:
 def start(address: str) -> dict[str, Any]:
     """Connect the backend to a worker at ``host:port`` and register it."""
 
-    if _started:
-        if _started["address"] != address:
-            from .. import LupineError
-
-            raise LupineError(
-                "the torch backend is already connected to a different worker"
-            )
-        return info()
     from .. import LupineError
 
-    ext = _extension()
+    if _started:
+        if _started["address"] != address:
+            raise LupineError("the torch backend is already connected to a different worker")
+        return info()
+    from . import ext, transport
+
+    client = transport.Client.connect(address)
+    worker = client.hello
+    host_version = ext.torch_version()
+    if base_version(host_version) != base_version(worker.get("torch", "")):
+        client.close()
+        raise LupineError(
+            f"torch version mismatch: this process runs torch {host_version} and "
+            f"the worker runs {worker.get('torch')}; the worker must run the same "
+            "torch release"
+        )
+    C = _extension()
+    from . import forward
+
     import torch
 
     dual = torch.version.cuda is None
@@ -116,16 +91,14 @@ def start(address: str) -> dict[str, Any]:
     # driver-path session in this process must not be offered to it.
     for name in ("LUPINE_CLIENT_ETAG", "LUPINE_CLIENT_PLATFORM"):
         os.environ.pop(name, None)
-    worker = json.loads(ext.connect(address, dual))
-    host_version = base_version(torch.__version__)
-    worker_version = base_version(worker.get("torch", ""))
-    if host_version != worker_version:
-        raise LupineError(
-            f"torch version mismatch: this process runs torch {torch.__version__} "
-            f"and the worker runs {worker.get('torch')}; the worker must run the "
-            "same torch release"
-        )
-    _started.update({"address": address, "dual": dual, "info": worker})
+    backend = forward.install(client, dual, C)
+    try:
+        C.register(int(worker["device_count"]), dual, backend.release, backend.synchronize)
+    except RuntimeError as exc:
+        client.close()
+        raise LupineError(str(exc)) from exc
+    atexit.register(C.unregister)
+    _started.update({"address": address, "dual": dual, "info": worker, "backend": backend})
 
     from . import device as device_module
 
@@ -141,3 +114,11 @@ def start(address: str) -> dict[str, Any]:
     device_module.forward_context_settings()
     device_module.keep_compile_eager()
     return info()
+
+
+def close() -> None:
+    """Drops the worker connection; a subprocess worker then exits."""
+
+    backend = _started.get("backend")
+    if backend is not None:
+        backend.close()
