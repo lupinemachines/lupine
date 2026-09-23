@@ -396,6 +396,7 @@ void rpc_async_sequence_end(conn_t *conn) {
   if (sequence == conn->serving_async_sequence) {
     ++conn->serving_async_sequence;
     while (
+        !conn->completed_async_sequences.empty() &&
         conn->completed_async_sequences.erase(conn->serving_async_sequence)) {
       ++conn->serving_async_sequence;
     }
