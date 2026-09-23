@@ -122,6 +122,21 @@ def test_split_cat_stack(backend):
         same(torch, torch.cat([d] * n).cpu(), torch.cat([x] * n))
 
 
+def test_replay_keeps_slots_apart_when_views_coincide(backend):
+    # The miss, then the replay that teaches the template with two slots over
+    # one view, then a replay whose slots differ.
+    torch, dev = backend
+    data = torch.arange(20.0).to(dev)
+
+    def batch(ix):
+        return torch.cat([data[i : i + 3] for i in ix]).cpu().tolist()
+
+    assert batch([2, 2]) == [2, 3, 4, 2, 3, 4]
+    assert batch([5, 5]) == [5, 6, 7, 5, 6, 7]
+    assert batch([1, 9]) == [1, 2, 3, 9, 10, 11]
+    assert batch([9, 1]) == [9, 10, 11, 1, 2, 3]
+
+
 def test_autograd_and_optimizer(backend):
     torch, dev = backend
     torch.manual_seed(0)

@@ -8,6 +8,14 @@ CPU tensor travels by value. ``torch.device`` values are renamed to ``cuda``
 for the worker; dtypes, layouts and memory formats pickle as themselves.
 Results come back the same way plus, per table entry, what the tensor is
 relative to the arguments (see ``forward``).
+
+A plan replay (``OP_PLAN``) carries no pickle: its metadata is int64s
+``plan, nfrees, frees..., (handle, nbytes, device, offset) per table entry,
+result handles...`` and its body is empty. The worker's template for the
+plan holds the rest (the operator, the argument skeleton, each entry's
+dtype, sizes and strides, the result sizes), learned from the one full
+``OP`` frame the host sends with the plan number in its metadata before the
+first replay; a call the template does not describe goes as a full frame.
 """
 
 from __future__ import annotations
@@ -15,14 +23,15 @@ from __future__ import annotations
 import ctypes
 import io
 import pickle
+import struct
 import threading
 from collections.abc import Callable
 from typing import Any
 
 import torch
 
-# Request kinds. OP and COPY_FROM_HOST and EXEC are fire-and-forget; the rest
-# wait for a response.
+# Request kinds. OP, OP_PLAN, COPY_FROM_HOST and EXEC are fire-and-forget; the
+# rest wait for a response.
 OP = 1
 OP_SYNC = 2
 COPY_TO_HOST = 3
@@ -30,6 +39,7 @@ COPY_FROM_HOST = 4
 EXEC = 5
 EVAL = 6
 SYNC = 7
+OP_PLAN = 8
 
 # Response statuses.
 OK = 0
@@ -109,14 +119,33 @@ class _Dispatch(dict):
         raise KeyError(cls)
 
 
+class Encoder:
+    """A pickler kept across calls with its dispatch table built once. The
+    memo is cleared after every dump: each body is unpickled on its own, an
+    object the caller mutates between calls must be pickled afresh, and the
+    memo's reference to a tensor would make autograd clone a gradient it
+    could otherwise hand over."""
+
+    def __init__(self, tensor: Callable[[torch.Tensor], Any], device: Callable[[torch.device], Any]):
+        self.buffer = io.BytesIO()
+        self.pickler = pickle.Pickler(self.buffer, protocol=pickle.HIGHEST_PROTOCOL)
+        self.pickler.dispatch_table = _Dispatch(tensor, device)
+
+    def dumps(self, value: Any) -> bytes:
+        buffer = self.buffer
+        buffer.seek(0)
+        buffer.truncate()
+        try:
+            self.pickler.dump(value)
+        finally:
+            self.pickler.clear_memo()
+        return buffer.getvalue()
+
+
 def dumps(value: Any, tensor: Callable[[torch.Tensor], Any], device: Callable[[torch.device], Any]) -> bytes:
     """Pickles ``value`` with tensors and devices reduced by the given rules."""
 
-    buffer = io.BytesIO()
-    pickler = pickle.Pickler(buffer, protocol=pickle.HIGHEST_PROTOCOL)
-    pickler.dispatch_table = _Dispatch(tensor, device)
-    pickler.dump(value)
-    return buffer.getvalue()
+    return Encoder(tensor, device).dumps(value)
 
 
 def loads(data: bytes, table: list[Any]) -> Any:
@@ -157,16 +186,25 @@ def device_as(target: str, types: tuple[str, ...]) -> Callable[[torch.device], A
 # --- frames -----------------------------------------------------------------
 
 
-def pack_meta(frees: list[int], table: list[Any], expected: Any) -> bytes:
+def pack_meta(frees: list[int], table: list[Any], expected: Any = None, plan: int = 0) -> bytes:
     """The part of a request in front of the pickled call: the storages the
-    host released since its last request, the argument descriptors, and
-    what the request kind needs (a replay's expected results)."""
+    host released since its last request, the argument descriptors, what
+    the request kind needs (a replay's expected results), and the plan
+    number the worker should file this call under as a template."""
 
-    return pickle.dumps((frees, table, expected), protocol=pickle.HIGHEST_PROTOCOL)
+    return pickle.dumps((frees, table, expected, plan), protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def unpack_meta(data: bytes) -> tuple[list[int], list[Any], Any]:
+def unpack_meta(data: bytes) -> tuple[list[int], list[Any], Any, int]:
     return pickle.loads(data)
+
+
+def pack_plan(ints: list[int]) -> bytes:
+    return struct.pack(f"<{len(ints)}q", *ints)
+
+
+def unpack_plan(data: bytes) -> tuple[int, ...]:
+    return struct.unpack(f"<{len(data) // 8}q", data)
 
 
 def result_tensors(value: Any) -> list[torch.Tensor]:

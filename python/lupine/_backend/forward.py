@@ -11,9 +11,11 @@ argument's storage, or a new storage). The host builds the results from the
 report and keeps it as the operator's *plan* for that key. Every later call
 with the same key builds its results from the plan over host-assigned
 handles and goes fire-and-forget with the expected descriptors, which the
-worker checks against what its kernel produced. Ops whose output shape
-depends on data are synchronous every time. Storage releases ride at the
-front of the next request.
+worker checks against what its kernel produced: once as a full frame that
+teaches the worker the plan's template, then as a plan replay carrying only
+the plan number, the storage handles and offsets and the result handles
+(``wire.OP_PLAN``). Ops whose output shape depends on data are synchronous
+every time. Storage releases ride at the front of the next request.
 
 Copies and ``_local_scalar_dense`` are Python kernels registered the same
 way; only the metadata kernels are C++ (``csrc``).
@@ -26,6 +28,7 @@ import json
 import os
 import pickle
 import sys
+import threading
 import time
 from typing import Any
 
@@ -78,20 +81,57 @@ class _Op:
 
 
 class _Plan:
-    __slots__ = ("rets", "groups", "needs_rpc")
+    __slots__ = ("rets", "groups", "needs_rpc", "number", "body")
 
-    def __init__(self, rets: list[Any], groups: list[tuple[int, bool]], needs_rpc: bool):
+    def __init__(self, rets: list[Any], groups: list[tuple[int, bool]], needs_rpc: bool, number: int):
         self.rets = rets
         # (nbytes, direct): direct when one output covers the storage from
         # offset 0, so torch.empty_strided makes it in one call.
         self.groups = groups
         self.needs_rpc = needs_rpc
+        # The plan's number on the wire (0: never replayed by number) and,
+        # once the worker has been taught the template, the call it holds.
+        self.number = number
+        self.body: bytes | None = None
 
 
 # An output in a plan: (kind, index, same, dtype, sizes, strides, offset).
 # kind INPUT: argument `index` returned as is (same: with its metadata
 # untouched); INPUT_STORAGE: a view over argument `index`'s storage; FRESH:
 # group `index`. The offset is relative to the argument's for the first two.
+
+
+class _Encoder(wire.Encoder):
+    """The host's pickler: device tensors file into ``table`` and pickle as
+    their index, CPU tensors go by value (a large one marks the call
+    uncacheable)."""
+
+    def __init__(self, types: tuple[str, ...], device: Any):
+        super().__init__(self.tensor, device)
+        self.types = types
+        self.table: list[torch.Tensor] = []
+        self.big_cpu = False
+
+    def tensor(self, t: torch.Tensor) -> Any:
+        if t.device.type in self.types:
+            self.table.append(t)
+            return (wire._at, (len(self.table) - 1,))
+        if t.device.type != "cpu":
+            raise RuntimeError(f"lupine: cannot send a tensor on {t.device} to the worker")
+        if t.numel() > _KEY_CPU_NUMEL:
+            self.big_cpu = True
+        return wire.cpu_value(t)
+
+    def encode(self, value: Any) -> tuple[bytes, list[torch.Tensor], bool]:
+        self.table = table = []
+        self.big_cpu = False
+        try:
+            body = self.dumps(value)
+        finally:
+            # The table must not outlive the call for the same reason the
+            # memo must not: a gradient with an extra reference gets cloned.
+            self.table = []
+        return body, table, self.big_cpu
 
 
 class Backend:
@@ -103,6 +143,8 @@ class Backend:
         self.types = ("cuda", "lupine") if dual else ("lupine",)
         self.frees: list[int] = []
         self.ops: dict[Any, _Op] = {}
+        self.numbered = 0
+        self.local = threading.local()
         self.devices: dict[int, torch.device] = {}
         self.device_rule = wire.device_as(client.hello.get("device", "cuda"), self.types)
         self.trace = os.environ.get("LUPINE_TORCH_TRACE") is not None
@@ -134,11 +176,27 @@ class Backend:
             t.storage_offset(),
         )
 
-    def meta(self, descs: list[wire.Desc], expected: Any = None) -> bytes:
+    def encoder(self) -> _Encoder:
+        enc = getattr(self.local, "encoder", None)
+        if enc is None:
+            enc = self.local.encoder = _Encoder(self.types, self.device_rule)
+        return enc
+
+    def meta(self, descs: list[wire.Desc], expected: Any = None, plan: int = 0) -> bytes:
         frees = self.frees
         if frees:
             self.frees = []
-        return wire.pack_meta(frees, descs, expected)
+        return wire.pack_meta(frees, descs, expected, plan)
+
+    def plan_meta(self, number: int, descs: list[wire.Desc], handles: list[int]) -> bytes:
+        frees = self.frees
+        if frees:
+            self.frees = []
+        ints = [number, len(frees), *frees]
+        for handle, nbytes, device, _, _, _, offset in descs:
+            ints += (handle, nbytes, device, offset)
+        ints += handles
+        return wire.pack_plan(ints)
 
     def raise_status(self, status: int, payload: bytes) -> None:
         message = payload.decode(errors="replace")
@@ -167,21 +225,7 @@ class Backend:
     def fallback(self, op: Any, *args: Any, **kwargs: Any) -> Any:
         st = self.op_state(op)
         started = time.perf_counter_ns() if self.profile_path else 0
-        table: list[torch.Tensor] = []
-        big_cpu = False
-
-        def tensor(t: torch.Tensor) -> Any:
-            nonlocal big_cpu
-            if t.device.type in self.types:
-                table.append(t)
-                return (wire._at, (len(table) - 1,))
-            if t.device.type != "cpu":
-                raise RuntimeError(f"lupine: cannot send a tensor on {t.device} to the worker")
-            if t.numel() > _KEY_CPU_NUMEL:
-                big_cpu = True
-            return wire.cpu_value(t)
-
-        body = wire.dumps((st.name, args, kwargs), tensor, self.device_rule)
+        body, table, big_cpu = self.encoder().encode((st.name, args, kwargs))
         descs = [self.describe(t) for t in table]
         key = None
         if not big_cpu and not st.sync and not (st.bool_index and _has_bool_index(args[1])):
@@ -264,8 +308,19 @@ class Backend:
         else:
             value = tuple(results)
         if plan.needs_rpc:
-            expected = [(t.untyped_storage().data_ptr() >> ext.HANDLE_SHIFT, tuple(t.shape)) for t in wire.result_tensors(value)]
-            self.client.send(wire.OP, self.meta(descs, expected), body)
+            results = wire.result_tensors(value)
+            if plan.body == body:
+                handles = [t.untyped_storage().data_ptr() >> ext.HANDLE_SHIFT for t in results]
+                self.client.send(wire.OP_PLAN, self.plan_meta(plan.number, descs, handles), b"")
+            else:
+                # The first replay teaches the worker the template; a later
+                # one whose call differs (an in-place op's scalar) goes as a
+                # full frame the template never sees.
+                teach = plan.number if plan.body is None else 0
+                if teach:
+                    plan.body = body
+                expected = [(t.untyped_storage().data_ptr() >> ext.HANDLE_SHIFT, tuple(t.shape)) for t in results]
+                self.client.send(wire.OP, self.meta(descs, expected, teach), body)
         return value
 
     def run_sync(self, st: _Op, table: list[torch.Tensor], descs: list[wire.Desc], body: bytes, args: tuple[Any, ...]) -> tuple[Any, _Plan | None]:
@@ -322,8 +377,14 @@ class Backend:
                 rets.append((_VALUE, v))
             else:
                 cacheable = False
-        plan = _Plan(rets, groups, st.mutates or bool(groups)) if cacheable else None
-        return value, plan
+        if not cacheable:
+            return value, None
+        # A memo plan serves calls of other shapes, which no template fits.
+        number = 0
+        if not st.memo:
+            self.numbered += 1
+            number = self.numbered
+        return value, _Plan(rets, groups, st.mutates or bool(groups), number)
 
     # --- copies, scalars, control ---------------------------------------
 
@@ -394,7 +455,7 @@ class Backend:
         if not self.profile_path:
             return
         with open(self.profile_path, "w") as f:
-            f.write(f"__messages__\t{self.client.messages}\t0\t0\n")
+            f.write(f"__messages__\t{self.client.messages}\t{self.client.bytes}\t{self.client.writes}\n")
             for name, (count, replay, sync) in self.profile.items():
                 f.write(f"{name}\t{count}\t{replay}\t{sync}\n")
 

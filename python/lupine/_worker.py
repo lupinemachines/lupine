@@ -14,6 +14,11 @@ and runs each before reading the next, so it is the only thread that touches
 CUDA and the driver shim sees one client thread and one lane, ordered on the
 wire, as the driver path itself does. The socket buffers are the read-ahead:
 a host that issues faster than the worker runs blocks in its send.
+
+A plan the host replays is a template here (``_Template``): the first full
+frame sent with a plan number is decoded once into the operator, the argument
+skeleton and the table entries' specs, and every ``OP_PLAN`` frame after it
+carries only handles and offsets.
 """
 
 from __future__ import annotations
@@ -149,9 +154,9 @@ def _prepare_namespace() -> None:
 
 
 class _Entry:
-    """A storage the host knows by handle, with a zero-element tensor per
-    dtype to take views from and the views taken so far by (dtype, sizes,
-    strides, offset); a view stays valid when the storage grows in place."""
+    """A storage the host knows by handle, with a tensor per dtype to take
+    views from and the views taken so far by (spec, offset); a view stays
+    valid when the storage grows in place."""
 
     __slots__ = ("storage", "cdata", "nbytes", "bases", "views")
 
@@ -161,6 +166,19 @@ class _Entry:
         self.nbytes = storage.nbytes()
         self.bases: dict[Any, Any] = {}
         self.views: dict[Any, Any] = {}
+
+
+class _Spec:
+    """A view's dtype, sizes and strides, interned per executor so views key
+    on the spec's identity."""
+
+    __slots__ = ("dtype", "sizes", "strides", "nbytes")
+
+    def __init__(self, dtype: Any, sizes: tuple[int, ...], strides: tuple[int, ...]):
+        self.dtype = dtype
+        self.sizes = sizes
+        self.strides = strides
+        self.nbytes = 0 if 0 in sizes else (1 + sum((s - 1) * st for s, st in zip(sizes, strides))) * dtype.itemsize
 
 
 class _Resolved:
@@ -176,6 +194,50 @@ class _Resolved:
         self.tensor_args = tuple(
             i for i, a in enumerate(op._schema.arguments) if not a.kwarg_only and str(a.type) in ("Tensor", "Tensor?")
         )
+
+
+class _Slot:
+    """Stands for table entry ``index`` when a call is unpickled to build its
+    template: two entries can materialise to one view (the same slice twice),
+    so slots are told apart by position, never by the tensor."""
+
+    __slots__ = ("index",)
+
+    def __init__(self, index: int):
+        self.index = index
+
+
+class _Template:
+    """A plan as the worker replays it (see ``wire.OP_PLAN``): the operator,
+    each table entry's spec, a generated builder that puts the materialised
+    entries back into the call, and the results' sizes and specs."""
+
+    __slots__ = ("name", "op", "specs", "build", "consts", "sizes", "results")
+
+    def __init__(self, name: str, op: Any, specs: list[_Spec], args: Any, kwargs: Any, sizes: list[Any], results: list[Any]):
+        self.name = name
+        self.op = op
+        self.specs = specs
+        self.build, self.consts = _compile(args, kwargs)
+        self.sizes = sizes
+        self.results = results
+
+
+def _compile(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[Any, list[Any]]:
+    consts: list[Any] = []
+
+    def gen(value: Any) -> str:
+        if type(value) is _Slot:
+            return f"i[{value.index}]"
+        if type(value) is tuple:
+            return "(" + "".join(gen(item) + "," for item in value) + ")"
+        if type(value) is list:
+            return "[" + ",".join(gen(item) for item in value) + "]"
+        consts.append(value)
+        return f"c[{len(consts) - 1}]"
+
+    source = "lambda i, c: (" + gen(args) + ", {" + ", ".join(f"{k!r}: {gen(v)}" for k, v in kwargs.items()) + "})"
+    return eval(source), consts
 
 
 _NUMBERS = (bool, int, float, complex)
@@ -194,6 +256,8 @@ class Executor:
         self.by_storage: dict[int, int] = {}
         self.next_handle = _FIRST_WORKER_HANDLE
         self.ops: dict[str, _Resolved] = {}
+        self.specs: dict[Any, _Spec] = {}
+        self.templates: dict[int, _Template] = {}
         self.wrapped: dict[Any, Any] = {}
         self.wrapped_dtype = {bool: torch.bool, int: torch.int64, float: torch.float64, complex: torch.complex128}
         self.kind = device_kind()
@@ -209,24 +273,41 @@ class Executor:
 
     # --- storages ---------------------------------------------------------
 
-    def entry(self, desc: Any) -> _Entry:
-        handle, nbytes, device, _, _, _, _ = desc
+    def spec(self, dtype: str, sizes: tuple[int, ...], strides: tuple[int, ...]) -> _Spec:
+        key = (dtype, sizes, strides)
+        spec = self.specs.get(key)
+        if spec is None:
+            spec = self.specs[key] = _Spec(self.wire.dtype_of(dtype), sizes, strides)
+        return spec
+
+    def view(self, handle: int, nbytes: int, device: int, spec: _Spec, offset: int) -> Any:
         entry = self.table.get(handle)
         if entry is None:
             # A storage the host allocated and never sent an op for is created
             # on first use; the current stream is the capture stream during
             # capture, so even that allocation lands in the graph.
+            if offset == 0 and spec.nbytes == nbytes:
+                t = self.torch.empty_strided(spec.sizes, spec.strides, dtype=spec.dtype, device=self.devices[device])
+                self.file(handle, t.untyped_storage(), t, spec, 0)
+                return t
             bytes_ = self.torch.empty(nbytes, dtype=self.torch.uint8, device=self.devices[device])
             entry = self.file(handle, bytes_.untyped_storage())
         elif nbytes > entry.nbytes:
             # The host grew it (resize_, set_); grow here in place, keeping
             # the contents and the storage identity every base refers to.
-            base = self.base(entry, self.torch.uint8)
-            base.resize_(nbytes)
+            self.torch.empty(0, dtype=self.torch.uint8, device=entry.storage.device).set_(entry.storage).resize_(nbytes)
             entry.nbytes = nbytes
-        return entry
+        key = (spec, offset)
+        view = entry.views.get(key)
+        if view is None:
+            view = entry.views[key] = self.base(entry, spec.dtype).as_strided(spec.sizes, spec.strides, offset)
+        return view
 
-    def file(self, handle: int, storage: Any, tensor: Any = None) -> _Entry:
+    def materialize(self, desc: Any) -> Any:
+        handle, nbytes, device, dtype, sizes, strides, offset = desc
+        return self.view(handle, nbytes, device, self.spec(dtype, sizes, strides), offset)
+
+    def file(self, handle: int, storage: Any, tensor: Any = None, spec: _Spec | None = None, offset: int = 0) -> _Entry:
         """Files a storage under a handle; a result tensor over it is the
         first base and view, so the op that consumes it next takes no
         as_strided."""
@@ -235,9 +316,15 @@ class Executor:
         self.table[handle] = entry
         self.by_storage[entry.cdata] = handle
         if tensor is not None:
-            entry.bases[tensor.dtype] = tensor
-            entry.views[(self.wire.dtype_name(tensor.dtype), tuple(tensor.shape), tensor.stride(), tensor.storage_offset())] = tensor
+            if spec is None:
+                spec = self.spec_of(tensor)
+                offset = tensor.storage_offset()
+            entry.bases[spec.dtype] = tensor
+            entry.views[(spec, offset)] = tensor
         return entry
+
+    def spec_of(self, t: Any) -> _Spec:
+        return self.spec(self.wire.dtype_name(t.dtype), tuple(t.shape), t.stride())
 
     def base(self, entry: _Entry, dtype: Any) -> Any:
         base = entry.bases.get(dtype)
@@ -245,13 +332,11 @@ class Executor:
             base = entry.bases[dtype] = self.torch.empty(0, dtype=dtype, device=entry.storage.device).set_(entry.storage)
         return base
 
-    def materialize(self, desc: Any) -> Any:
-        entry = self.entry(desc)
-        view = entry.views.get(desc[3:])
-        if view is None:
-            dtype = self.wire.dtype_of(desc[3])
-            view = entry.views[desc[3:]] = self.base(entry, dtype).as_strided(desc[4], desc[5], desc[6])
-        return view
+    def wrap_numbers(self, resolved: _Resolved, args: tuple[Any, ...]) -> tuple[Any, ...]:
+        for i in resolved.tensor_args:
+            if i < len(args) and type(args[i]) in _NUMBERS:
+                args = args[:i] + (self.wrap(args[i]),) + args[i + 1 :]
+        return args
 
     def wrap(self, value: Any) -> Any:
         """The tensor a wrapped number stands for, with the dtype wrapped
@@ -285,28 +370,36 @@ class Executor:
             t.storage_offset(),
         )
 
-    def apply_frees(self, frees: list[int]) -> None:
+    def apply_frees(self, frees: Any) -> None:
         for handle in frees:
             entry = self.table.pop(handle, None)
             if entry is not None:
                 self.by_storage.pop(entry.cdata, None)
 
+    def select_device(self, device: int) -> None:
+        if device != self.current_device and self.kind == "cuda":
+            self.current_device = device
+            self.torch.cuda.set_device(device)
+
     # A handle the host already holds (an argument the plan says the op
     # returns or views) must come back over the same storage; anything else
     # is a plan that does not describe this op.
-    def bind(self, name: str, results: list[Any], expected: list[Any]) -> None:
-        if len(results) != len(expected):
-            raise RuntimeError(f"{name} returned {len(results)} tensors where the host's plan has {len(expected)}")
-        for t, (handle, sizes) in zip(results, expected):
-            if tuple(t.shape) != sizes:
+    def bind(self, name: str, results: list[Any], handles: Any, sizes: list[Any], seeds: list[Any] | None = None) -> None:
+        if len(results) != len(handles):
+            raise RuntimeError(f"{name} returned {len(results)} tensors where the host's plan has {len(handles)}")
+        for i, t in enumerate(results):
+            if t.shape != sizes[i]:
                 raise RuntimeError(
-                    f"{name} produced shape {tuple(t.shape)} where the host's plan has {sizes}: "
+                    f"{name} produced shape {tuple(t.shape)} where the host's plan has {sizes[i]}: "
                     "its output shape depends on data, so it must run synchronously"
                 )
             storage = t.untyped_storage()
-            entry = self.table.get(handle)
+            entry = self.table.get(handles[i])
             if entry is None:
-                self.file(handle, storage, t)
+                if seeds is None:
+                    self.file(handles[i], storage, t)
+                else:
+                    self.file(handles[i], storage, t, *seeds[i])
             elif entry.cdata != storage._cdata:
                 raise RuntimeError(
                     f"{name} returned a new storage where the host's plan has an argument's; "
@@ -330,38 +423,75 @@ class Executor:
 
     def run(self, meta: bytes, body: bytes) -> tuple[Any, list[Any], str]:
         started = time.perf_counter_ns() if self.profile is not None else 0
-        frees, descs, expected = self.wire.unpack_meta(meta)
+        frees, descs, expected, plan = self.wire.unpack_meta(meta)
         self.apply_frees(frees)
         inputs = [self.materialize(d) for d in descs]
         name, args, kwargs = self.wire.loads(body, inputs)
         resolved = self.resolve(name)
-        for i in resolved.tensor_args:
-            if i < len(args) and type(args[i]) in _NUMBERS:
-                args = args[:i] + (self.wrap(args[i]),) + args[i + 1 :]
-        op = resolved.op
+        args = self.wrap_numbers(resolved, args)
         if self.trace:
             print(f"lupine-torch worker {name}", *(tuple(t.shape) for t in inputs), file=sys.stderr)
-        if descs and descs[0][2] != self.current_device and self.kind == "cuda":
-            self.current_device = descs[0][2]
-            self.torch.cuda.set_device(self.current_device)
+        if descs:
+            self.select_device(descs[0][2])
         decoded = time.perf_counter_ns() if started else 0
         if name == "aten::_fused_sdp_choice" and self.kind != "cuda":
             # The host's composite attention maps the answer to CUDA kernels;
             # the CPU worker of the tests has only the math path.
             value = 0
         else:
-            value = op(*args, **kwargs)
+            value = resolved.op(*args, **kwargs)
         if expected is not None:
-            self.bind(name, self.wire.result_tensors(value), expected)
+            results = self.wire.result_tensors(value)
+            sizes = [s for _, s in expected]
+            self.bind(name, results, [h for h, _ in expected], sizes)
+            if plan:
+                specs = [self.spec(dtype, sz, st) for _, _, _, dtype, sz, st, _ in descs]
+                seeds = [(self.spec_of(t), t.storage_offset()) for t in results]
+                _, slotted, skwargs = self.wire.loads(body, [_Slot(i) for i in range(len(descs))])
+                slotted = self.wrap_numbers(resolved, slotted)
+                self.templates[plan] = _Template(name, resolved.op, specs, slotted, skwargs, sizes, seeds)
         if started:
-            finished = time.perf_counter_ns()
-            entry = self.profile.get(name)
-            if entry is None:
-                entry = self.profile[name] = [0, 0, 0]
-            entry[0] += 1
-            entry[1] += decoded - started
-            entry[2] += finished - decoded
+            self.note(name, started, decoded, time.perf_counter_ns())
         return value, inputs, name
+
+    def replay(self, meta: bytes) -> None:
+        started = time.perf_counter_ns() if self.profile is not None else 0
+        ints = self.wire.unpack_plan(meta)
+        template = self.templates.get(ints[0])
+        if template is None:
+            raise RuntimeError(f"replay of plan {ints[0]} before its template")
+        p = 2 + ints[1]
+        if ints[1]:
+            self.apply_frees(ints[2:p])
+        table = self.table
+        inputs = []
+        for spec in template.specs:
+            handle = ints[p]
+            offset = ints[p + 3]
+            entry = table.get(handle)
+            view = entry.views.get((spec, offset)) if entry is not None and ints[p + 1] <= entry.nbytes else None
+            if view is None:
+                view = self.view(handle, ints[p + 1], ints[p + 2], spec, offset)
+            inputs.append(view)
+            p += 4
+        if inputs:
+            self.select_device(ints[4 + ints[1]])
+        if self.trace:
+            print(f"lupine-torch worker {template.name}", *(tuple(t.shape) for t in inputs), file=sys.stderr)
+        args, kwargs = template.build(inputs, template.consts)
+        decoded = time.perf_counter_ns() if started else 0
+        value = template.op(*args, **kwargs)
+        self.bind(template.name, self.wire.result_tensors(value), ints[p:], template.sizes, template.results)
+        if started:
+            self.note(template.name, started, decoded, time.perf_counter_ns())
+
+    def note(self, name: str, started: int, decoded: int, finished: int) -> None:
+        entry = self.profile.get(name)
+        if entry is None:
+            entry = self.profile[name] = [0, 0, 0]
+        entry[0] += 1
+        entry[1] += decoded - started
+        entry[2] += finished - decoded
 
     def report(self, value: Any, inputs: list[Any]) -> bytes:
         rtable: list[Any] = []
@@ -399,6 +529,12 @@ class Executor:
     def handle(self, frame: Any) -> None:
         wire = self.wire
         ticket, kind, meta, body, extra = frame
+        if kind == wire.OP_PLAN:
+            try:
+                self.replay(meta)
+            except Exception as exc:
+                self.record(_message(exc))
+            return
         if kind == wire.OP:
             try:
                 self.run(meta, body)
@@ -407,7 +543,7 @@ class Executor:
             return
         if kind == wire.COPY_FROM_HOST:
             try:
-                frees, descs, _ = wire.unpack_meta(meta)
+                frees, descs, _, _ = wire.unpack_meta(meta)
                 self.apply_frees(frees)
                 target = self.materialize(descs[0])
                 source = self.torch.frombuffer(extra, dtype=target.dtype).reshape(target.shape) if extra else self.torch.empty(target.shape, dtype=target.dtype)
@@ -417,7 +553,7 @@ class Executor:
             return
         if kind == wire.EXEC:
             try:
-                frees, _, _ = wire.unpack_meta(meta)
+                frees, _, _, _ = wire.unpack_meta(meta)
                 self.apply_frees(frees)
                 _exec(body.decode())
             except Exception as exc:
@@ -429,7 +565,7 @@ class Executor:
                 value, inputs, _ = self.run(meta, body)
                 payload = self.report(value, inputs)
             elif kind == wire.COPY_TO_HOST:
-                frees, descs, dtype = wire.unpack_meta(meta)
+                frees, descs, dtype, _ = wire.unpack_meta(meta)
                 self.apply_frees(frees)
                 t = self.materialize(descs[0])
                 if t.dtype != wire.dtype_of(dtype):
@@ -437,11 +573,11 @@ class Executor:
                 cpu = t.contiguous().cpu()
                 payload = wire.cpu_buffer(cpu)
             elif kind == wire.EVAL:
-                frees, _, _ = wire.unpack_meta(meta)
+                frees, _, _, _ = wire.unpack_meta(meta)
                 self.apply_frees(frees)
                 payload = _eval(body.decode()).encode()
             elif kind == wire.SYNC:
-                frees, _, _ = wire.unpack_meta(meta)
+                frees, _, _, _ = wire.unpack_meta(meta)
                 self.apply_frees(frees)
                 if self.kind == "cuda":
                     for i in range(len(self.devices)):

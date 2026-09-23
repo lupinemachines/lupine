@@ -8,6 +8,11 @@ Only some kinds get a response (ticket, status, payload); the host's reader
 thread hands each to the thread waiting on its ticket. The worker's first
 frame is a response with ticket 0 describing itself.
 
+Fire-and-forget requests are held back and written together: a request
+that waits for a response flushes what is pending in front of it, and so
+does reaching ``_COALESCE`` pending bytes, so nothing waits on the host
+for longer than a few dozen requests' worth of work.
+
 Nothing here knows torch. It is a plain socket, not the LUPINE RPC core:
 the hop is loopback for a subprocess worker and a LAN for an attached one.
 """
@@ -24,8 +29,9 @@ from typing import Any
 REQUEST = struct.Struct("<QBIIQ")
 RESPONSE = struct.Struct("<QBQ")
 # Payloads at least this large are sent on their own instead of copied into
-# the joined frame.
+# the pending bytes.
 _SEPARATE_SEND = 64 * 1024
+_COALESCE = 16384
 _READ_BUFFER = 256 * 1024
 
 Frame = tuple[int, int, bytes, bytes, bytearray | None]
@@ -46,21 +52,35 @@ class _Connection:
         self.sock = sock
         self.reader = sock.makefile("rb", buffering=_READ_BUFFER)
         self.write_lock = threading.Lock()
+        self.pending = bytearray()
         self.closed = False
         self.messages = 0
+        self.bytes = 0
+        self.writes = 0
 
     def _write(self, head: bytes, *parts: Any) -> None:
-        joined = [head]
-        separate: list[Any] = []
+        """Queues a frame under the write lock; a part too large to copy is
+        sent at once, behind what is pending."""
+
+        pending = self.pending
+        pending += head
         for part in parts:
             if len(part) >= _SEPARATE_SEND:
-                separate.append(part)
+                self._flush()
+                self._send(part)
             else:
-                joined.append(part)
+                pending += part
+
+    def _flush(self) -> None:
+        if self.pending:
+            self._send(self.pending)
+            del self.pending[:]
+
+    def _send(self, data: Any) -> None:
+        self.bytes += len(data)
+        self.writes += 1
         try:
-            self.sock.sendall(b"".join(joined))
-            for part in separate:
-                self.sock.sendall(part)
+            self.sock.sendall(data)
         except OSError as exc:
             self.closed = True
             raise ConnectionClosed(f"lupine: the torch worker connection is closed ({exc})") from exc
@@ -125,6 +145,8 @@ class Client(_Connection):
             self.next_ticket += 1
             self.messages += 1
             self._write(REQUEST.pack(ticket, kind, len(meta), len(body), len(extra)), meta, body, extra)
+            if len(self.pending) >= _COALESCE:
+                self._flush()
         return ticket
 
     def call(self, kind: int, meta: bytes, body: bytes, extra: Any = b"", into: Any = None) -> tuple[int, bytes]:
@@ -140,6 +162,7 @@ class Client(_Connection):
             self.messages += 1
             self.waiters[ticket] = waiter
             self._write(REQUEST.pack(ticket, kind, len(meta), len(body), len(extra)), meta, body, extra)
+            self._flush()
         waiter.done.wait()
         if waiter.status < 0:
             assert self.error is not None
@@ -186,6 +209,7 @@ class Server(_Connection):
     def hello(self, info: dict[str, Any]) -> None:
         payload = json.dumps(info).encode()
         self._write(RESPONSE.pack(0, 0, len(payload)), payload)
+        self._flush()
 
     def requests(self) -> Iterator[Frame]:
         while True:
@@ -207,3 +231,4 @@ class Server(_Connection):
     def respond(self, ticket: int, status: int, payload: Any = b"") -> None:
         with self.write_lock:
             self._write(RESPONSE.pack(ticket, status, len(memoryview(payload).cast("B")) if payload else 0), payload)
+            self._flush()
