@@ -121,6 +121,7 @@ CUDA_LIB_DIR="${CUDA_LIB_DIR:-/usr/local/cuda/lib64}"
 CUPQC_HOME="${CUPQC_HOME:-}"
 CUSPARSELT_HOME="${CUSPARSELT_HOME:-}"
 SAMPLE_TIMEOUT="${SAMPLE_TIMEOUT:-180}"
+LONG_SAMPLE_TIMEOUT="${LONG_SAMPLE_TIMEOUT:-600}"
 RESULTS_DIR="${RESULTS_DIR:-$repo_root/test/cuda-library-samples/results/$(date +%Y%m%d-%H%M%S)}"
 nvjpeg_assets="${NVJPEG_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg-assets}"
 nvjpeg2k_assets="${NVJPEG2K_ASSETS_DIR:-${TMPDIR:-/tmp}/lupine-nvjpeg2000-assets}"
@@ -164,6 +165,7 @@ Environment:
   SERVER_SSH_TARGET          GPU host. Default: $SERVER_SSH_TARGET
   SERVER_PORT_BASE           First per-unit server port. Default: $SERVER_PORT_BASE
   SAMPLE_TIMEOUT             Per-unit timeout in seconds. Default: $SAMPLE_TIMEOUT
+  LONG_SAMPLE_TIMEOUT        Timeout for long-running units. Default: $LONG_SAMPLE_TIMEOUT
   RESULTS_DIR                Output directory. Default: test/cuda-library-samples/results/<timestamp>
 EOF
 }
@@ -720,16 +722,24 @@ for i in "${!UNITS[@]}"; do
   cudss_lib="$CUDSS_HOME/lib"
   [[ "$unit" == cuSOLVERSp2cuDSS/* ]] && cudss_lib="$CUDSS_TRANSITION_HOME/lib"
 
+  timeout_seconds="$SAMPLE_TIMEOUT"
+  if [[ "$unit" == MathDx/cuSolverDx/blocked_potrf || "$unit" == cuSOLVER/MgSyevd/* ]]; then
+    # #899/#836: these unmodified upstream samples issue thousands of blocking
+    # driver calls and need room for a busy GPU integration lane.
+    timeout_seconds="$LONG_SAMPLE_TIMEOUT"
+  fi
+
   start_remote_server "$pidfile" "$server_log" "$port"
 
   set +e
   (
     cd "$cwd"
-    timeout --kill-after=5s "$SAMPLE_TIMEOUT" env \
+    # Keep progress in the log even if a sample hangs before its stdio flush.
+    timeout --kill-after=5s "$timeout_seconds" env \
       LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${CUSPARSELT_HOME:+$CUSPARSELT_HOME/lib:}$CUTENSOR_HOME/lib:$CUEST_HOME/lib:$NVJPEG2K_HOME/lib:$cudss_lib:$NVCOMP_HOME/lib:$NVTIFF_HOME/lib:$NPPPLUS_HOME/lib:${LD_LIBRARY_PATH:-}" \
       LUPINE_SERVER="$SERVER_HOST:$port" \
       LD_PRELOAD="$LUPINE_LIB" \
-      "$exe" "${argv[@]}"
+      stdbuf -oL -eL "$exe" "${argv[@]}"
   ) >"$log" 2>&1
   rc=$?
   set -e
@@ -752,7 +762,7 @@ for i in "${!UNITS[@]}"; do
   [[ -n "$signature" ]] || signature="$(tail -n1 "$log" | tr -d '\0')"
   signature="$(printf '%s' "$signature" | sed -E 's/[[:space:]]+/ /g' | cut -c1-240)"
   if [[ -z "$signature" && "$rc" == "124" ]]; then
-    signature="timed out after ${SAMPLE_TIMEOUT}s"
+    signature="timed out after ${timeout_seconds}s"
   fi
   printf '%s\t%s\t%s\n' "$unit" "$status" "$signature" | tee -a "$tsv"
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] library sample $unit -> $status in $((SECONDS - unit_start_seconds))s" >&2

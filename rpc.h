@@ -2,6 +2,7 @@
 #define RPC_H
 
 #include "lupine_platform.h"
+#include <set>
 #include <stdint.h>
 #include <vector>
 
@@ -114,12 +115,18 @@ struct conn_t {
   int write_id;
   int write_op;
   int32_t write_stream_id;
+  uint64_t write_dependency;
+  int32_t async_prefix_stream;
+  uint64_t async_prefix;
 
   pthread_t read_thread;
   pthread_mutex_t write_mutex, call_mutex, async_mutex;
   pthread_cond_t async_cond;
   uint64_t issued_async_sequence;
   uint64_t serving_async_sequence;
+  uint64_t published_async_sequence;
+  std::set<uint64_t> completed_async_sequences;
+  bool async_cancelled;
   int async_sync_initialized;
   std::vector<rpc_write_cursor> write_queue;
   std::vector<rpc_host_allocation_write> host_allocation_writes;
@@ -224,8 +231,13 @@ extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
 extern int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
                              size_t count);
 extern int rpc_write_end(conn_t *conn);
-// Server handlers wait only after receiving the complete async request, then
-// hold the turn through the native API submission.
+// Wait for all fire-and-forget calls published before an RPC's entry. These
+// waits order native submission, not GPU completion; overlapping calls remain
+// free to execute and complete in either order.
+extern int rpc_async_sequence_wait(conn_t *conn, uint64_t published);
+extern void rpc_cancel_async_waits(conn_t *conn);
+// Bracket native submission to record completion of the request's sequence.
+// No execution lock is held between begin and end.
 extern int rpc_async_sequence_begin(conn_t *conn, uint64_t sequence);
 extern void rpc_async_sequence_end(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);

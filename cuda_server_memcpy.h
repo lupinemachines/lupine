@@ -1,6 +1,8 @@
 #ifndef LUPINE_CUDA_SERVER_MEMCPY_H
 #define LUPINE_CUDA_SERVER_MEMCPY_H
 
+#include "device_stdout.h"
+
 #include <cuda.h>
 
 #include <memory>
@@ -76,16 +78,6 @@ struct lupine_pending_dtoh_item {
 };
 
 using lupine_pending_dtoh_items = std::vector<lupine_pending_dtoh_item>;
-struct lupine_captured_stdout {
-  int saved_stdout = -1;
-  bool active = false;
-  std::string output;
-};
-
-bool lupine_start_stdout_capture(lupine_captured_stdout *capture);
-void lupine_finish_stdout_capture(lupine_captured_stdout *capture);
-int lupine_write_captured_stdout(conn_t *conn,
-                                 const lupine_captured_stdout &capture);
 void lupine_note_device_stdout_image(const unsigned char *image,
                                      size_t image_size);
 lupine_pending_dtoh_items

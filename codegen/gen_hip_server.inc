@@ -5288,31 +5288,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_hipModuleUnload(conn_t *conn) {
-  hipModule_t module;
-  int request_id;
-  hipError_t return_value;
-  using fn_t = hipError_t (*)(hipModule_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &module, sizeof(hipModule_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = hip_symbol<fn_t>("hipModuleUnload");
-  return_value = fn == nullptr ? function_not_found() : fn(module);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_hipModuleGetFunction(conn_t *conn) {
   hipFunction_t function{};
   function = {};

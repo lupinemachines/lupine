@@ -1,3 +1,4 @@
+#include "device_stdout.h"
 #include "lupine_platform.h"
 
 #include <algorithm>
@@ -5035,22 +5036,7 @@ extern "C" CUresult cuLinkAddFile(CUlinkState state, CUjitInputType type,
 }
 
 extern "C" int lupine_forward_remote_stdout(conn_t *conn) {
-  uint64_t output_size = 0;
-  if (rpc_read_buffer(conn, &output_size, sizeof(output_size)) < 0) {
-    return -1;
-  }
-  if (output_size == 0) {
-    return 0;
-  }
-  std::string output;
-  output.resize(static_cast<size_t>(output_size));
-  if (rpc_read(conn, output.data(), output.size()) < 0) {
-    return -1;
-  }
-  fflush(stdout);
-  std::cout.flush();
-  return fwrite(output.data(), 1, output.size(), stdout) == output.size() ? 0
-                                                                          : -1;
+  return lupine_read_captured_stdout(conn);
 }
 
 extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
@@ -5116,7 +5102,6 @@ extern "C" CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuEventRecord", hEvent, hStream);
   }
-  lupine_event_invalidate_completion(hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -5128,6 +5113,8 @@ extern "C" CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  // Invalidate after enqueue so an overlapping query cannot retain old state.
+  lupine_event_invalidate_completion(hEvent);
   return CUDA_SUCCESS;
 }
 
@@ -5146,7 +5133,6 @@ extern "C" CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
     return lupine_call_real_cuda_fn("cuEventRecordWithFlags", hEvent, hStream,
                                     flags);
   }
-  lupine_event_invalidate_completion(hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -5158,6 +5144,7 @@ extern "C" CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
       rpc_write(conn, &flags, sizeof(flags)) < 0 || rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  lupine_event_invalidate_completion(hEvent);
   return CUDA_SUCCESS;
 }
 
@@ -9381,6 +9368,13 @@ void *rpc_client_dispatch_thread(void *arg) {
 
       callback(user_data);
 
+      // Acknowledging the callback lets queued device work resume. Publish its
+      // mapped-memory writes first, even when no application CUDA call follows.
+      if (lupine_prepare_rpc(conn) < 0) {
+        LUPINE_LOG_ERROR("Failed to flush host writes from host callback.");
+        goto close_connection;
+      }
+
       void *res = nullptr;
       if (rpc_write_start_response(conn, request_id) < 0 ||
           rpc_write(conn, &res, sizeof(void *)) < 0 ||
@@ -9409,6 +9403,11 @@ void *rpc_client_dispatch_thread(void *arg) {
 
       if (callback != nullptr) {
         callback(stream, status, user_data);
+      }
+
+      if (lupine_prepare_rpc(conn) < 0) {
+        LUPINE_LOG_ERROR("Failed to flush host writes from stream callback.");
+        break;
       }
 
       void *res = nullptr;

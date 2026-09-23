@@ -41,6 +41,14 @@ hipError_t hipGetLastError(void);
 hipError_t hipExtGetLastError(void);
 hipError_t hipPeekAtLastError(void);
 /**
+ * @disabled - returns a server description cached in client-owned storage
+ */
+const char *hipGetErrorString(hipError_t hip_error);
+/**
+ * @disabled - returns a server name cached in client-owned storage
+ */
+const char *hipGetErrorName(hipError_t hip_error);
+/**
  * @param prop RECV_ONLY
  * @param deviceId SEND_ONLY
  * @routingkey HIP_DEVICE deviceId
@@ -112,6 +120,9 @@ hipError_t hipDeviceGetPCIBusId(char *pciBusId, int len, int device);
  */
 hipError_t hipDeviceGetByPCIBusId(int *device, const char *pciBusId);
 hipError_t hipDeviceSynchronize();
+/**
+ * @disabled client - invalidates compiler-registered module handles on reset
+ */
 hipError_t hipDeviceReset();
 /**
  * @routingkey HIP_DEVICE device
@@ -1086,6 +1097,7 @@ hipError_t hipDevicePrimaryCtxReset(hipDevice_t dev);
  */
 hipError_t hipDevicePrimaryCtxSetFlags(hipDevice_t dev, unsigned int flags);
 /**
+ * @disabled server - releases the backing image after unloading the module
  * @param module SEND_ONLY
  */
 hipError_t hipModuleUnload(hipModule_t module);
@@ -1754,13 +1766,23 @@ hipError_t hipMemcpyWithStream(void *dst, const void *src, size_t sizeBytes,
                                hipMemcpyKind kind, hipStream_t stream);
 hipError_t hipHostMalloc(void **ptr, size_t size, unsigned int flags);
 hipError_t hipHostRegister(void *hostPtr, size_t sizeBytes, unsigned int flags);
+/**
+ * @disabled - uploads an uncompressed Clang offload bundle with its size
+ */
 hipError_t hipModuleLoadData(hipModule_t *module, const void *image);
+/**
+ * @disabled - argument-free launch and device stdout response
+ */
 hipError_t hipModuleLaunchKernel(hipFunction_t f, unsigned int gridDimX,
                                  unsigned int gridDimY, unsigned int gridDimZ,
                                  unsigned int blockDimX, unsigned int blockDimY,
                                  unsigned int blockDimZ,
                                  unsigned int sharedMemBytes, hipStream_t stream,
                                  void **kernelParams, void **extra);
+/**
+ * @disabled handle_hipModuleLaunchKernel - resolves compiler registration on
+ * the client, then uses the module launch wire format
+ */
 hipError_t hipLaunchKernel(const void *function_address, dim3 numBlocks,
                            dim3 dimBlocks, void **args, size_t sharedMemBytes,
                            hipStream_t stream);

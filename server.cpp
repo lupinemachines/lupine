@@ -287,7 +287,8 @@ static void lupine_serve_lanes(conn_t &conn,
             break;
           }
           if (rpc_server_dispatch(handlers, &conn, op) < 0) {
-            (void)rpc_read_end(&conn);
+            // A failed async handler cannot satisfy another lane's prefix.
+            rpc_shutdown_transport_socket(&conn);
             break;
           }
         }

@@ -182,7 +182,7 @@ COPY --from=client-build /opt/lupine/build/libnccl.so* /opt/lupine/lib/
 # The bracket keeps the COPY valid on toolkits without an nvSHMEM shim.
 COPY --from=client-build /opt/lupine/build/libnvshmem_hos[t].so* /opt/lupine/lib/
 COPY --from=client-build /opt/lupine/build/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so.1
-COPY --from=client-build /opt/lupine/build/libamdhip64.so.1 /opt/lupine/lib/libamdhip64.so.1
+COPY --from=client-build /opt/lupine/build/libamdhip64.so* /opt/lupine/lib/
 
 RUN ln -sf /opt/lupine/lib/libcuda.so.1 /opt/lupine/lib/libcuda.so \
     && ln -sf /opt/lupine/lib/libnvidia-ml.so.1 /opt/lupine/lib/libnvidia-ml.so \

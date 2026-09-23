@@ -74,3 +74,13 @@ add_sample_dependency(nvJPEG/nvJPEG-Encoder-MultipleInstances nvJPEG/nvJPEG-Deco
 add_sample_dependency(nvJPEG2000/nvJPEG2000-Encoder nvJPEG2000/nvJPEG2000-Decoder)
 add_sample_dependency(nvTIFF/nvTIFF-GeoTIFF-Decode-Encode nvTIFF/nvTIFF-Encode-Options)
 add_sample_dependency(nvTIFF/nvTIFF-Image-Info-Multi-Image nvTIFF/nvTIFF-Encode-Options)
+
+# The GPU must switch out a context stopped on a device-side assert. A
+# concurrent kernel that cannot be switched out within the driver's timeout has
+# its own context killed instead (Xid 109) and fails with
+# cudaErrorLaunchFailure (#834).
+foreach(name simpleAssert simpleAssert_nvrtc)
+    if(TEST "${variant}.cuda.${name}")
+        set_tests_properties("${variant}.cuda.${name}" PROPERTIES RUN_SERIAL TRUE)
+    endif()
+endforeach()

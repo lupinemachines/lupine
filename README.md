@@ -408,6 +408,11 @@ You can also use the local shell script to run your commands.
 ./local.sh run
 ```
 
+The opt-in [HIP / ROCm test runners](test/rocm/README.md) build and run upstream
+hip-tests, rocm-examples, and rocBLAS/hipBLAS clients locally or against an SSH
+server. They include native baseline runs and a separate CTest project; AMD
+hardware tests are not enabled in CI.
+
 ## Questions
 
 1. **What does LUPINE stand for?** Nothing, it just looks cool in all caps.

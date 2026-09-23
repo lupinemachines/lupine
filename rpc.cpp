@@ -228,16 +228,17 @@ void rpc_shutdown_socket(lupine_socket_t socket) {
 #endif
 }
 
-void rpc_wake_async_waiters(conn_t *conn) {
+} // namespace
+
+void rpc_cancel_async_waits(conn_t *conn) {
   if (!conn->async_sync_initialized) {
     return;
   }
   pthread_mutex_lock(&conn->async_mutex);
+  conn->async_cancelled = true;
   pthread_cond_broadcast(&conn->async_cond);
   pthread_mutex_unlock(&conn->async_mutex);
 }
-
-} // namespace
 
 void rpc_shutdown_transport_socket(conn_t *conn) {
   if (conn == nullptr) {
@@ -252,7 +253,7 @@ void rpc_shutdown_transport_socket(conn_t *conn) {
   const lupine_socket_t socket =
       __atomic_load_n(&conn->connfd, __ATOMIC_ACQUIRE);
 #endif
-  rpc_wake_async_waiters(conn);
+  rpc_cancel_async_waits(conn);
   if (conn->http2 != nullptr) {
     rpc_http2_shutdown(conn);
   } else if (socket != LUPINE_INVALID_SOCKET) {
@@ -274,7 +275,7 @@ void rpc_close_transport_socket(conn_t *conn) {
   lupine_socket_t socket = __atomic_exchange_n(
       &conn->connfd, LUPINE_INVALID_SOCKET, __ATOMIC_ACQ_REL);
 #endif
-  rpc_wake_async_waiters(conn);
+  rpc_cancel_async_waits(conn);
   if (socket == LUPINE_INVALID_SOCKET) {
     return;
   }
@@ -365,26 +366,43 @@ fail:
   return -1;
 }
 
-int rpc_async_sequence_begin(conn_t *conn, uint64_t sequence) {
-  if (pthread_mutex_lock(&conn->async_mutex) != 0) {
-    return -1;
-  }
-  while (!conn->closed && conn->serving_async_sequence != sequence) {
-    if (conn->serving_async_sequence > sequence ||
-        pthread_cond_wait(&conn->async_cond, &conn->async_mutex) != 0) {
+static thread_local uint64_t executing_async_sequence = 0;
+
+int rpc_async_sequence_wait(conn_t *conn, uint64_t published) {
+  pthread_mutex_lock(&conn->async_mutex);
+  while (!conn->async_cancelled && conn->serving_async_sequence < published) {
+    if (pthread_cond_wait(&conn->async_cond, &conn->async_mutex) != 0) {
       pthread_mutex_unlock(&conn->async_mutex);
       return -1;
     }
   }
+  bool cancelled = conn->async_cancelled;
+  pthread_mutex_unlock(&conn->async_mutex);
+  return cancelled ? -1 : 0;
+}
+
+int rpc_async_sequence_begin(conn_t *conn, uint64_t sequence) {
   if (conn->closed) {
-    pthread_mutex_unlock(&conn->async_mutex);
     return -1;
   }
+  // The sequence labels completion; it no longer holds an execution turn.
+  executing_async_sequence = sequence;
   return 0;
 }
 
 void rpc_async_sequence_end(conn_t *conn) {
-  ++conn->serving_async_sequence;
+  pthread_mutex_lock(&conn->async_mutex);
+  uint64_t sequence = executing_async_sequence;
+  if (sequence == conn->serving_async_sequence) {
+    ++conn->serving_async_sequence;
+    while (
+        !conn->completed_async_sequences.empty() &&
+        conn->completed_async_sequences.erase(conn->serving_async_sequence)) {
+      ++conn->serving_async_sequence;
+    }
+  } else if (sequence > conn->serving_async_sequence) {
+    conn->completed_async_sequences.insert(sequence);
+  }
   pthread_cond_broadcast(&conn->async_cond);
   pthread_mutex_unlock(&conn->async_mutex);
 }
@@ -396,6 +414,7 @@ void rpc_conn_destroy(conn_t *conn) {
   rpc_close_transport_socket(conn);
   rpc_http2_destroy(conn);
   lupine_va_release(conn);
+  conn->completed_async_sequences.clear();
   rpc_write_buffer_release(conn);
   std::vector<rpc_write_cursor>().swap(conn->write_queue);
   std::vector<rpc_host_allocation_write>().swap(conn->host_allocation_writes);
@@ -440,7 +459,7 @@ int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks) {
 
 static void rpc_mark_connection_closed(conn_t *conn) {
   conn->closed = 1;
-  rpc_wake_async_waiters(conn);
+  rpc_cancel_async_waits(conn);
   auto hook = connection_closed_hook.load(std::memory_order_acquire);
   if (hook != nullptr) {
     hook(conn);
@@ -479,6 +498,7 @@ struct rpc_nested_write_frame {
   int write_id = 0;
   int write_op = 0;
   int32_t write_stream_id = -1;
+  uint64_t write_dependency = 0;
   std::vector<rpc_write_cursor> write_queue;
   unsigned char *write_copy_buffer = nullptr;
   size_t write_copy_capacity = 0;
@@ -505,6 +525,7 @@ void rpc_save_outer_response(conn_t *conn) {
   frame.write_id = conn->write_id;
   frame.write_op = conn->write_op;
   frame.write_stream_id = conn->write_stream_id;
+  frame.write_dependency = conn->write_dependency;
   frame.write_queue = std::move(conn->write_queue);
   frame.write_copy_buffer = conn->write_copy_buffer;
   frame.write_copy_capacity = conn->write_copy_capacity;
@@ -519,6 +540,7 @@ void rpc_restore_outer_response(conn_t *conn) {
   conn->write_id = frame.write_id;
   conn->write_op = frame.write_op;
   conn->write_stream_id = frame.write_stream_id;
+  conn->write_dependency = frame.write_dependency;
   conn->write_queue = std::move(frame.write_queue);
   conn->write_copy_buffer = frame.write_copy_buffer;
   conn->write_copy_capacity = frame.write_copy_capacity;
@@ -579,27 +601,36 @@ int rpc_dispatch(conn_t *conn, int parity) {
   if (stream_id < 0) {
     return -1;
   }
-  int request_id = 0;
-  int op = 0;
-  int read_result =
-      rpc_http2_read_stream(conn, stream_id, &request_id, sizeof(request_id));
-  if (read_result != sizeof(request_id) || request_id < 2 ||
-      request_id % 2 != parity) {
-    if (read_result != LUPINE_RPC_HTTP2_STREAM_END) {
-      rpc_mark_connection_closed(conn);
+  int header[2] = {};
+  for (;;) {
+    int result = rpc_http2_read_stream(conn, stream_id, header, sizeof(header));
+    if (result != sizeof(header)) {
+      if (result != LUPINE_RPC_HTTP2_STREAM_END) {
+        rpc_mark_connection_closed(conn);
+      }
+      return -1;
     }
-    return -1;
+    if (parity != 0 || header[0] != 0) {
+      break;
+    }
+    // Optional wait marker: {0, 0, published async count}. HTTP/2 continues
+    // receiving the following payload while this lane waits for submission.
+    uint64_t published = 0;
+    if (header[1] != 0 ||
+        rpc_http2_read_stream(conn, stream_id, &published, sizeof(published)) !=
+            sizeof(published) ||
+        rpc_async_sequence_wait(conn, published) < 0) {
+      rpc_mark_connection_closed(conn);
+      return -1;
+    }
   }
-  read_result = rpc_http2_read_stream(conn, stream_id, &op, sizeof(op));
-  if (read_result != sizeof(op)) {
-    if (read_result != LUPINE_RPC_HTTP2_STREAM_END) {
-      rpc_mark_connection_closed(conn);
-    }
+  if (header[0] < 2 || header[0] % 2 != parity) {
+    rpc_mark_connection_closed(conn);
     return -1;
   }
   rpc_tls_io.read_conn = conn;
-  rpc_tls_io.read = {stream_id, request_id, op};
-  return op;
+  rpc_tls_io.read = {stream_id, header[0], header[1]};
+  return header[1];
 }
 
 // rpc_read_start waits for a response with a specific request id on the
@@ -615,19 +646,16 @@ int rpc_read_start(conn_t *conn, int write_id) {
     return -1;
   }
   int32_t stream_id = rpc_tls_io.response.stream_id;
-  int request_id = 0;
-  int op = 0;
-  if (rpc_http2_read_stream(conn, stream_id, &request_id, sizeof(request_id)) !=
-          sizeof(request_id) ||
-      request_id != write_id ||
-      rpc_http2_read_stream(conn, stream_id, &op, sizeof(op)) != sizeof(op) ||
-      op != -1) {
+  int header[2] = {};
+  if (rpc_http2_read_stream(conn, stream_id, header, sizeof(header)) !=
+          sizeof(header) ||
+      header[0] != write_id || header[1] != -1) {
     rpc_mark_connection_closed(conn);
     rpc_release_held_call_lock(conn);
     return -1;
   }
   rpc_tls_io.read_conn = conn;
-  rpc_tls_io.read = {stream_id, request_id, op};
+  rpc_tls_io.read = {stream_id, header[0], header[1]};
   return 0;
 }
 
@@ -821,9 +849,11 @@ int rpc_wait_for_response(conn_t *conn) {
   uint64_t start =
       lupine_rpc_stats_path() != nullptr ? lupine_rpc_stats_now_ns() : 0;
   int write_id = rpc_write_end(conn);
-  if (write_id < 0 || rpc_http2_flush(conn) < 0) {
+  if (write_id < 0) {
     return -1;
   }
+  // The writer sends queued requests independently. Waiting for this response
+  // must not also wait for unrelated output on other lanes to drain.
   rpc_http2_response_wait_begin(conn);
   int result = rpc_read_start(conn, write_id);
   rpc_http2_response_wait_end(conn);
@@ -851,6 +881,12 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   if (rpc_tls_io.write_conn != nullptr && !request_nested_in_response) {
     return -1;
   }
+  // Capture entry BEFORE the builder lock. Calls already waiting for that
+  // lock overlap this request and must not inherit its later publication.
+  uint64_t dependency =
+      conn->local_request_parity == 0
+          ? __atomic_load_n(&conn->published_async_sequence, __ATOMIC_ACQUIRE)
+          : 0;
   int call_lock_result = 0;
   if (request_nested_in_response) {
     // Never wait for a call that may itself be waiting for this response's
@@ -888,6 +924,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   conn->request_id = conn->request_id + 2; // leave the last bit the same
   conn->write_id = conn->request_id;
   conn->write_op = op;
+  conn->write_dependency = dependency;
   conn->write_stream_id = rpc_http2_lane_stream(conn, rpc_tls_lane.id);
   if (conn->write_stream_id < 0) {
     rpc_release_write_builder(conn, request_nested_in_response);
@@ -1049,12 +1086,45 @@ int rpc_write_end(conn_t *conn) {
   int write_id = conn->write_id;
   int32_t write_stream_id = conn->write_stream_id;
   int result = -1;
+  bool client_request = request && conn->local_request_parity == 0;
+  // Cache the last lane's FIFO coverage under the existing builder lock.
+  // Switching lanes can resend a fence, but needs no per-thread registry.
+  if (client_request && conn->async_prefix_stream != write_stream_id) {
+    conn->async_prefix_stream = write_stream_id;
+    conn->async_prefix = 0;
+  }
+  struct {
+    int marker_id;
+    int marker_op;
+    uint64_t published;
+    int request_id;
+    int op;
+  } header;
   if (conn->write_queue.size() >= 2) {
     conn->write_queue[0] =
         rpc_write_cursor(&conn->write_id, sizeof(conn->write_id));
     conn->write_queue[1] =
         rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
+    if (client_request && conn->write_dependency > conn->async_prefix) {
+      header = {0, 0, conn->write_dependency, write_id, conn->write_op};
+      conn->write_queue[0] = rpc_write_cursor(&header, sizeof(header));
+      conn->write_queue[1] = {};
+    }
     result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
+    if (result == 0 && client_request) {
+      conn->async_prefix = std::max(conn->async_prefix, conn->write_dependency);
+      uint64_t published = conn->issued_async_sequence;
+      if (published !=
+          __atomic_load_n(&conn->published_async_sequence, __ATOMIC_RELAXED)) {
+        // Own-lane FIFO extends a contiguous prefix by one. A gap may belong
+        // to an overlapping producer and must still be fenced on the next call.
+        if (published == conn->async_prefix + 1) {
+          conn->async_prefix = published;
+        }
+        __atomic_store_n(&conn->published_async_sequence, published,
+                         __ATOMIC_RELEASE);
+      }
+    }
   }
   rpc_release_write_builder(conn, request_nested_in_response);
   if (request) {
