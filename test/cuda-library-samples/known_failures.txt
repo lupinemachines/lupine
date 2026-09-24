@@ -18,11 +18,6 @@ cuSOLVER/gesv/cusolver_irs_expert
 cuSOLVER/gesv/cusolver_irs_lapack
 cuFFT/3d_mgpu_r2c_c2r/bin/3d_mgpu_r2c_c2r_example
 
-# #836 bicgstab intermittently hangs on CUDA 11.8: it alternates between ~2s
-# and the 120s timeout. This is not a near-budget workload; keep the skip until
-# the intermittent hang is understood.
-cuSPARSE/bicgstab/bicgstab_example
-
 # #832 cuFFTDx fills >=1GiB with one synchronous cudaMemcpy per CUDA block:
 # 2.75M blocking HtoD round trips before the first kernel. Passes natively.
 MathDx/cuFFTDx/08_mixed_precision/mixed_precision_fft_1d

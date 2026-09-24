@@ -706,6 +706,17 @@ for i in "${!UNITS[@]}"; do
     printf '%s\t%s\t%s\n' "$unit" "SKIP:disabled" "disabled by LIBRARY_SAMPLES_SKIP_LIST" | tee -a "$tsv"
     continue
   fi
+  # #836: CUDA 11.8 also hangs natively inside cusparseSpSV_analysis's GPU
+  # coloring kernel. NVIDIA fixed an intermittent analysis hang in CUDA 12.3;
+  # keep newer lanes covered instead of excluding bicgstab on every toolkit.
+  # See test/cuda-library-samples/bicgstab-hang.md for the reproduction.
+  if [[ "$unit" == cuSPARSE/bicgstab/bicgstab_example &&
+        -n "$cuda_version" && "$cuda_version" -lt 12030 ]]; then
+    skip=$((skip + 1))
+    printf '%s\t%s\t%s\n' "$unit" "SKIP:known" \
+      "CUDA < 12.3: native cusparseSpSV_analysis hang (#836)" | tee -a "$tsv"
+    continue
+  fi
   if in_list "$unit" "${known_failures[@]}"; then
     skip=$((skip + 1))
     printf '%s\t%s\t%s\n' "$unit" "SKIP:known" "listed in $(basename "$LIBRARY_SAMPLES_KNOWN_FAILURES")" | tee -a "$tsv"
