@@ -262,6 +262,13 @@ PATCH
   fi
   rm -f "$patch_file"
 
+  # NPP+ findContour needs its geometry buffers and a guard for empty contours.
+  # NVIDIA/CUDALibrarySamples#369; drop this once LIBRARY_SAMPLES_REF includes it.
+  patch_file="$repo_root/test/cuda-library-samples/patches/nppplus-find-contour.patch"
+  if ! git -C "$LIBRARY_SAMPLES_DIR" apply --reverse --check "$patch_file" 2>/dev/null; then
+    git -C "$LIBRARY_SAMPLES_DIR" apply "$patch_file"
+  fi
+
   # cuPQC ships a flat Makefile, not a CMake project, so discovery would not
   # see it. The archives hold LTO-IR only: the samples have to be compiled and
   # linked with -dlto, which CMake emits for INTERPROCEDURAL_OPTIMIZATION.
@@ -500,7 +507,9 @@ export LIBRARY_SAMPLES_DIR LIBRARY_SAMPLES_BUILD_DIR LIBRARY_SAMPLES_ARCH LIBRAR
 if [[ "$BUILD_SAMPLES" != "0" ]]; then
   to_build=()
   for sample in "${SAMPLES[@]}"; do
-    if [[ "$BUILD_SAMPLES" == "1" || ! -f "$LIBRARY_SAMPLES_BUILD_DIR/$sample/build.ninja" ]]; then
+    if [[ "$BUILD_SAMPLES" == "1" || ! -f "$LIBRARY_SAMPLES_BUILD_DIR/$sample/build.ninja" ||
+          ( "$sample" == "NPP+/findContour" &&
+            "$LIBRARY_SAMPLES_DIR/$sample/findContourNPPPlus.cpp" -nt "$LIBRARY_SAMPLES_BUILD_DIR/$sample/findContour" ) ]]; then
       to_build+=("$sample")
     fi
   done

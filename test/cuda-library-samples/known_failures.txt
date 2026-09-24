@@ -33,9 +33,3 @@ MathDx/cuFFTDx/08_mixed_precision/mixed_precision_fft_1d
 # beside them passes in 24s on the same lane.
 MathDx/cuBLASDx/16_dgemm_emulation/dgemm_emulation
 MathDx/cuBLASDx/20_dgemm_emulation_pipeline/dgemm_emulation_pipeline
-
-# Fails natively as well (not lupine), on every run on the RTX 4090: NPP+
-# findContour walks each contour to nMaxContourPixelCount - 1 in unsigned
-# arithmetic, and a count it reads back as 0 turns that into ~4G iterations of
-# writes through garbage coordinates until it segfaults.
-NPP+/findContour/findContour

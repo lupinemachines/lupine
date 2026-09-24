@@ -28,6 +28,7 @@ on:
     paths:
       - .github/workflows/gpu-integration-gcloud.yml
       - test/run_cuda_library_samples.sh
+      - test/cuda-library-samples/patches/**
       - test/run_cuda_python_tests.sh
   workflow_dispatch:
 
@@ -402,7 +403,8 @@ jobs:
           # cannot build are reported as SKIP:build-failed by the run step. The
           # cuSPARSELt ones need the PyTorch wheel's cuSPARSELt, so they build
           # after it, from whichever directory that release installs into.
-          COPY test/run_cuda_library_samples.sh /opt/lupine/run_cuda_library_samples.sh
+          COPY test/run_cuda_library_samples.sh /opt/lupine/test/run_cuda_library_samples.sh
+          COPY test/cuda-library-samples/patches /opt/lupine/test/cuda-library-samples/patches
           RUN bash <<'SCRIPT'
           set -euo pipefail
           site="$("$PYTHON_BIN" -c 'import site; print(site.getsitepackages()[0])')"
@@ -412,7 +414,7 @@ jobs:
             break
           done
           LIBRARY_SAMPLES_DIR=/opt/cuda-library-samples LIBRARY_SAMPLES_ARCH="$CUDA_SAMPLES_ARCH" \
-            BUILD_ONLY=1 bash /opt/lupine/run_cuda_library_samples.sh
+            BUILD_ONLY=1 bash /opt/lupine/test/run_cuda_library_samples.sh
           SCRIPT
           EOF
           cat > "$RUNNER_TEMP/gpu-integration.Dockerfile" <<'EOF'
@@ -497,6 +499,7 @@ jobs:
                 "${{ matrix.client_image }}" "${{ matrix.samples_ref }}" \
                 "${{ matrix.pytorch_index_url }}" "$CUDA_SAMPLES_ARCH" "$dockerfile_sha"
               sha256sum test/run_cuda_library_samples.sh test/run_cuda_python_tests.sh
+              sha256sum test/cuda-library-samples/patches/*.patch
             } | sha256sum | cut -d' ' -f1
           )"
           dependency_image="lupine-integration-deps:${{ matrix.label }}-$cache_inputs"

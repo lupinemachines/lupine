@@ -84,3 +84,6 @@ codegen/gen_cusparselt_client.inc linguist-generated=true
 codegen/gen_cusparselt_server.h linguist-generated=true
 codegen/gen_cusparselt_server.inc linguist-generated=true
 codegen/registry.cpp linguist-generated=true
+
+# Preserve the original whitespace in upstream patch context.
+test/cuda-library-samples/patches/*.patch -whitespace
