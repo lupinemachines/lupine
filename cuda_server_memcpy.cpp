@@ -2088,12 +2088,16 @@ int lupine_write_lifecycle_response(conn_t *conn, int request_id,
 int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   CUdeviceptr destination = 0;
   const void *source = nullptr;
+  uint8_t fire_and_forget = 0;
+  uint64_t async_sequence = 0;
   bool is_server_authoritative = false;
   uint64_t pushed_bytes = 0;
   size_t bytes = 0;
   CUresult result = CUDA_SUCCESS;
 
-  if (rpc_read(conn, &is_server_authoritative,
+  if (rpc_read(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
+      rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &is_server_authoritative,
                sizeof(is_server_authoritative)) < 0 ||
       rpc_read(conn, &destination, sizeof(destination)) < 0 ||
       rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
@@ -2104,6 +2108,14 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   if (pushed_bytes != 0 && pushed_bytes != bytes) {
     return -1;
   }
+  // A copy whose caller is not waiting takes its turn here rather than after
+  // the body: reading a pushed source and submitting it are one step, and the
+  // bytes are already on this lane, so nothing the turn waits for can depend
+  // on the read. The client only sends this form for a small copy, which is
+  // what keeps the window short.
+  if (fire_and_forget && rpc_async_sequence_begin(conn, async_sequence) < 0) {
+    return -1;
+  }
   if (pushed_bytes != 0) {
     result = lupine_copy_pushed_host_to_device(
         conn, CU_STREAM_LEGACY, true,
@@ -2111,6 +2123,9 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   }
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
+    if (fire_and_forget) {
+      rpc_async_sequence_end(conn);
+    }
     return -1;
   }
 
@@ -2121,6 +2136,14 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
     result = lupine_copy_client_host_to_device(
         conn, CU_STREAM_LEGACY, true,
         lupine_make_linear_htod_copy(destination, source, bytes));
+  }
+  // A fire-and-forget copy drops its result, matching launch semantics: the
+  // client checked the arguments it could check before sending, and an
+  // execution failure poisons the context and reaches the client from its next
+  // synchronize.
+  if (fire_and_forget) {
+    rpc_async_sequence_end(conn);
+    return 0;
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
