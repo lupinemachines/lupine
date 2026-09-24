@@ -269,6 +269,13 @@ PATCH
     git -C "$LIBRARY_SAMPLES_DIR" apply "$patch_file"
   fi
 
+  # CUDA 11 bicgstab uses csrsv2 level analysis to avoid the SpSV coloring hang.
+  # NVIDIA/CUDALibrarySamples#370; drop this once LIBRARY_SAMPLES_REF includes it.
+  patch_file="$repo_root/test/cuda-library-samples/patches/bicgstab-cuda11-analysis.patch"
+  if ! git -C "$LIBRARY_SAMPLES_DIR" apply --reverse --check "$patch_file" 2>/dev/null; then
+    git -C "$LIBRARY_SAMPLES_DIR" apply "$patch_file"
+  fi
+
   # cuPQC ships a flat Makefile, not a CMake project, so discovery would not
   # see it. The archives hold LTO-IR only: the samples have to be compiled and
   # linked with -dlto, which CMake emits for INTERPROCEDURAL_OPTIMIZATION.
@@ -509,7 +516,9 @@ if [[ "$BUILD_SAMPLES" != "0" ]]; then
   for sample in "${SAMPLES[@]}"; do
     if [[ "$BUILD_SAMPLES" == "1" || ! -f "$LIBRARY_SAMPLES_BUILD_DIR/$sample/build.ninja" ||
           ( "$sample" == "NPP+/findContour" &&
-            "$LIBRARY_SAMPLES_DIR/$sample/findContourNPPPlus.cpp" -nt "$LIBRARY_SAMPLES_BUILD_DIR/$sample/findContour" ) ]]; then
+            "$LIBRARY_SAMPLES_DIR/$sample/findContourNPPPlus.cpp" -nt "$LIBRARY_SAMPLES_BUILD_DIR/$sample/findContour" ) ||
+          ( "$sample" == "cuSPARSE/bicgstab" &&
+            "$LIBRARY_SAMPLES_DIR/$sample/bicgstab_example.c" -nt "$LIBRARY_SAMPLES_BUILD_DIR/$sample/bicgstab_example" ) ]]; then
       to_build+=("$sample")
     fi
   done
