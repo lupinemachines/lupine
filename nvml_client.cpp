@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -44,6 +45,7 @@ struct lupine_nvml_remote_device {
 
 std::vector<lupine_nvml_remote_device> devices;
 bool devices_ready = false;
+std::mutex devices_mutex;
 
 // Real NVML reference counts init/shutdown; this shim connects lazily, so
 // without a counter it could never report UNINITIALIZED.
@@ -183,6 +185,7 @@ nvmlReturn_t ensure_devices() {
   if (!nvml_initialized() || open_connection() < 0) {
     return rpc_error();
   }
+  std::lock_guard<std::mutex> lock(devices_mutex);
   if (devices_ready) {
     return NVML_SUCCESS;
   }
@@ -438,8 +441,6 @@ extern "C" nvmlReturn_t nvmlInit_v2(void) {
       first_error = result;
     }
   }
-  devices_ready = false;
-  devices.clear();
   return first_error;
 }
 
@@ -466,8 +467,6 @@ extern "C" nvmlReturn_t nvmlInitWithFlags(unsigned int flags) {
       first_error = result;
     }
   }
-  devices_ready = false;
-  devices.clear();
   return first_error;
 }
 
