@@ -220,6 +220,7 @@ static inline CUresult cuGraphExecUpdate_v2(CUgraphExec, CUgraph,
 typedef int CUdriverProcAddressQueryResult;
 #define CU_GET_PROC_ADDRESS_SUCCESS 0
 #define CU_GET_PROC_ADDRESS_SYMBOL_NOT_FOUND 1
+#define CU_GET_PROC_ADDRESS_VERSION_NOT_SUFFICIENT 2
 #endif
 
 // cuKernelGetLibrary was added in CUDA 12.5.

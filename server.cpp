@@ -295,6 +295,9 @@ static void lupine_serve_lanes(conn_t &conn,
         if (!conn.closed) {
           (void)rpc_http2_end_stream(&conn, lane->id);
         }
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+        lupine_server_cleanup_lane(&conn);
+#endif
         rpc_unbind_http2_stream(&conn);
       }
       lane->done.store(true, std::memory_order_release);

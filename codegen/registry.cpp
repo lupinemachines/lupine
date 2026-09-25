@@ -394,7 +394,25 @@
   HANDLER(RPC_cuGraphicsMapResources, handle_cuGraphicsMapResources, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphicsUnmapResources, handle_cuGraphicsUnmapResources, rpc_backend::cuda) \
   HANDLER(RPC_cuMemPrefetchAsync, handle_cuMemPrefetchAsync, rpc_backend::cuda) \
-  HANDLER(RPC_cuMemAdvise, handle_cuMemAdvise, rpc_backend::cuda)
+  HANDLER(RPC_cuMemAdvise, handle_cuMemAdvise, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemcpy2DUnaligned_v2_ptds, handle_cuMemcpy2DUnaligned_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemcpy2D_v2_ptds, handle_cuMemcpy2D_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemcpy3DPeer_ptds, handle_cuMemcpy3DPeer_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemcpy3D_v2_ptds, handle_cuMemcpy3D_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemcpyAtoA_v2_ptds, handle_cuMemcpyAtoA_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemcpyAtoD_v2_ptds, handle_cuMemcpyAtoD_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemcpyAtoH_v2_ptds, handle_cuMemcpyAtoH_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemcpyDtoA_v2_ptds, handle_cuMemcpyDtoA_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemcpyDtoD_v2_ptds, handle_cuMemcpyDtoD_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemcpyDtoH_v2_ptds, handle_cuMemcpyDtoH_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemcpyHtoD_v2_ptds, handle_cuMemcpyHtoD_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemcpyPeer_ptds, handle_cuMemcpyPeer_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemsetD16_v2_ptds, handle_cuMemsetD16_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemsetD2D16_v2_ptds, handle_cuMemsetD2D16_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemsetD2D32_v2_ptds, handle_cuMemsetD2D32_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemsetD2D8_v2_ptds, handle_cuMemsetD2D8_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemsetD32_v2_ptds, handle_cuMemsetD32_v2_ptds, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemsetD8_v2_ptds, handle_cuMemsetD8_v2_ptds, rpc_backend::cuda)
 #define LUPINE_NCCL_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_ncclGetErrorString, handle_ncclGetErrorString, rpc_backend::nccl) \
   HANDLER(RPC_ncclGetLastError, handle_ncclGetLastError, rpc_backend::nccl) \

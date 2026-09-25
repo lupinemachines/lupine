@@ -8,6 +8,7 @@
 #include "cuda_compat.h"
 #undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
+#include "codegen/gen_cuda_streams.h"
 #include "rpc.h"
 
 static constexpr int LUPINE_ROUTE_REMOTE = 0;
@@ -149,7 +150,8 @@ template <typename Fn = void,
 static CUresult lupine_call_real_cuda_fn(const char *name, Args &&...args) {
   using inferred_fn = CUresult(CUDAAPI *)(std::decay_t<Args>...);
   using real_fn = std::conditional_t<std::is_void_v<Fn>, inferred_fn, Fn>;
-  auto real = reinterpret_cast<real_fn>(lupine_real_cuda_symbol(name));
+  auto real = reinterpret_cast<real_fn>(
+      lupine_real_cuda_symbol(lupine_implicit_stream_symbol(name)));
   return real == nullptr ? MissingSymbol : real(std::forward<Args>(args)...);
 }
 

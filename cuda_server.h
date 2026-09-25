@@ -102,6 +102,7 @@ int handle_cuTensorMapEncodeTiled(conn_t *conn);
 #endif
 
 bool lupine_server_initialize_connection(conn_t *conn);
+void lupine_server_cleanup_lane(conn_t *conn);
 void lupine_server_cleanup_connection(conn_t *conn);
 // Fails every copy still waiting for chunks: a lost bulk connection can never
 // deliver them.
