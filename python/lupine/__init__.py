@@ -248,7 +248,6 @@ def connect(
     # Bind immediately: the caller may import torch right after connect()
     # without using the context manager form.
     session.__enter__()
-    session._previous_server = None  # keep LUPINE_SERVER configured on exit
     return session
 
 

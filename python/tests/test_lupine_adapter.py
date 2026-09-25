@@ -79,6 +79,14 @@ def test_session_configures_env_and_restores(monkeypatch):
     assert "LUPINE_SERVER" not in os.environ
 
 
+def test_connect_keeps_launcher_configured_env_on_exit(monkeypatch):
+    monkeypatch.setenv("LUPINE_SERVER", "gpu.example:14833")
+    monkeypatch.setattr(_native, "load", lambda missing_ok=True: {})
+    with connect(host="gpu.example:14833") as session:
+        assert session._loaded
+    assert os.environ["LUPINE_SERVER"] == "gpu.example:14833"
+
+
 def test_session_rejects_conflicting_env(monkeypatch):
     monkeypatch.setenv("LUPINE_SERVER", "other:14833")
     with pytest.raises(LupineError, match="configured differently"):
