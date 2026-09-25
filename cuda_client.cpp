@@ -1826,27 +1826,6 @@ static CUresult lupine_resolve_module_function_for_route(CUfunction function,
   return CUDA_SUCCESS;
 }
 
-static bool lupine_function_name_is(CUfunction function, const char *name) {
-  if (function == nullptr || name == nullptr) {
-    return false;
-  }
-  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-  auto module_it = lupine_module_functions().find(function);
-  if (module_it != lupine_module_functions().end() &&
-      module_it->second.name == name) {
-    return true;
-  }
-  auto library_it =
-      lupine_library_kernels().find(reinterpret_cast<CUkernel>(function));
-  return library_it != lupine_library_kernels().end() &&
-         library_it->second.name == name;
-}
-
-static bool lupine_managed_kernel_requires_launch_sync(CUfunction function) {
-  return lupine_function_name_is(function, "atomicKernel") ||
-         lupine_function_name_is(function, "_Z12atomicKernelPi");
-}
-
 static bool lupine_read_file_span(const char *path,
                                   std::vector<unsigned char> *bytes) {
   if (path == nullptr || bytes == nullptr) {
@@ -6446,10 +6425,6 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   }
   std::vector<rpc_write_cursor> rpc_params =
       lupine_kernel_param_cursors(params.pointers.data(), param_sizes);
-  bool sync_after_launch =
-      (lupine_managed_kernel_requires_launch_sync(requested_function) ||
-       lupine_managed_kernel_requires_launch_sync(route_function) ||
-       lupine_managed_kernel_requires_launch_sync(f));
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6473,9 +6448,6 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       rpc_write_cursors(conn, rpc_params.data(), rpc_params.size()) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (sync_after_launch) {
-    return cuStreamSynchronize(hStream);
   }
   return CUDA_SUCCESS;
 }
@@ -6540,10 +6512,6 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   }
   std::vector<rpc_write_cursor> rpc_params =
       lupine_kernel_param_cursors(params.pointers.data(), param_sizes);
-  bool sync_after_launch =
-      (lupine_managed_kernel_requires_launch_sync(requested_function) ||
-       lupine_managed_kernel_requires_launch_sync(route_function) ||
-       lupine_managed_kernel_requires_launch_sync(f));
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6562,9 +6530,6 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
       rpc_write_cursors(conn, rpc_params.data(), rpc_params.size()) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (sync_after_launch) {
-    return cuStreamSynchronize(config->hStream);
   }
   return CUDA_SUCCESS;
 #endif
