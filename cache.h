@@ -3,7 +3,22 @@
 
 #include <cuda.h>
 
+#include <cstddef>
 #include <cstdint>
+
+struct lupine_deviceptr_allocation_record {
+  size_t size = 0;
+  int route_id = -2;
+  CUcontext context = nullptr;
+};
+
+// The caller holds the routing mutex. Lookup results remain valid until the
+// next allocation cache mutation.
+const lupine_deviceptr_allocation_record *
+lupine_deviceptr_allocation_cache_lookup(CUdeviceptr ptr);
+void lupine_deviceptr_allocation_cache_insert(CUdeviceptr base, size_t size,
+                                             int route_id, CUcontext context);
+void lupine_deviceptr_allocation_cache_erase(CUdeviceptr base);
 
 bool lupine_current_context_device_cache_lookup(CUcontext context,
                                                 CUdevice *device);

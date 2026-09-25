@@ -766,7 +766,8 @@ endif()
 if(BUILD_TESTING)
     if(LUPINE_BUILD_CUDA)
         add_executable(deviceptr_allocations_test
-            ${CMAKE_CURRENT_SOURCE_DIR}/deviceptr_allocations_test.cpp)
+            ${CMAKE_CURRENT_SOURCE_DIR}/deviceptr_allocations_test.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp)
         target_include_directories(deviceptr_allocations_test PRIVATE
             ${CUDAToolkit_INCLUDE_DIRS})
         lupine_apply_sanitizer(deviceptr_allocations_test)
