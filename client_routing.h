@@ -174,14 +174,29 @@ extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
                                                        size_t size,
                                                        lupine_route route);
 
+// Resolves a driver entry point once per call site; name must be a literal.
+#define LUPINE_REAL_CUDA_SYMBOL(name)                                          \
+  ([] {                                                                        \
+    static void *const real = lupine_real_cuda_symbol(name);                   \
+    return real;                                                               \
+  }())
+
+template <typename Fn = void,
+          CUresult MissingSymbol = CUDA_ERROR_DEVICE_UNAVAILABLE,
+          typename... Args>
+static CUresult lupine_call_real_cuda_fn(void *symbol, Args &&...args) {
+  using inferred_fn = CUresult(CUDAAPI *)(std::decay_t<Args>...);
+  using real_fn = std::conditional_t<std::is_void_v<Fn>, inferred_fn, Fn>;
+  auto real = reinterpret_cast<real_fn>(symbol);
+  return real == nullptr ? MissingSymbol : real(std::forward<Args>(args)...);
+}
+
 template <typename Fn = void,
           CUresult MissingSymbol = CUDA_ERROR_DEVICE_UNAVAILABLE,
           typename... Args>
 static CUresult lupine_call_real_cuda_fn(const char *name, Args &&...args) {
-  using inferred_fn = CUresult(CUDAAPI *)(std::decay_t<Args>...);
-  using real_fn = std::conditional_t<std::is_void_v<Fn>, inferred_fn, Fn>;
-  auto real = reinterpret_cast<real_fn>(lupine_real_cuda_symbol(name));
-  return real == nullptr ? MissingSymbol : real(std::forward<Args>(args)...);
+  return lupine_call_real_cuda_fn<Fn, MissingSymbol>(
+      lupine_real_cuda_symbol(name), std::forward<Args>(args)...);
 }
 
 template <CUresult MissingSymbol, typename... Args>

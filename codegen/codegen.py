@@ -1420,7 +1420,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 param.name for param in function.parameters if param.name
             )
             helper_args = f", {call_args}" if call_args else ""
-            local_call = f'lupine_call_real_cuda_fn("{function.name.format()}"{helper_args})'
+            local_call = f'lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("{function.name.format()}"){helper_args})'
             local_post_call = io.StringIO()
             write_client_post_call(local_post_call, metadata)
             if local_post_call.getvalue():
