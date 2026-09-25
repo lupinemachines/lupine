@@ -5009,16 +5009,7 @@ extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
     return -1;
   }
   for (uint32_t i = 0; i < copy_count; ++i) {
-    void *dst = nullptr;
-    size_t bytes = 0;
-    if (rpc_read(conn, &dst, sizeof(dst)) < 0 ||
-        rpc_read(conn, &bytes, sizeof(bytes)) < 0) {
-      return -1;
-    }
-    if (bytes == 0) {
-      continue;
-    }
-    if (lupine_read_deferred_host_copy(conn, dst, bytes) < 0) {
+    if (lupine_read_deferred_rows(conn) < 0) {
       return -1;
     }
   }
@@ -6935,19 +6926,6 @@ static CUresult lupine_queue_graph_dependencies(conn_t *conn,
   return CUDA_SUCCESS;
 }
 
-static size_t lupine_memcpy3d_host_span_bytes(const CUDA_MEMCPY3D &params,
-                                              bool source) {
-  size_t width = params.WidthInBytes;
-  size_t height = params.Height == 0 ? 1 : params.Height;
-  size_t depth = params.Depth == 0 ? 1 : params.Depth;
-  size_t pitch = source ? params.srcPitch : params.dstPitch;
-  if (pitch == 0) {
-    pitch = width;
-  }
-  size_t rows = height * depth;
-  return pitch * rows;
-}
-
 static CUfunction lupine_client_function_for_remote(CUfunction remote) {
   if (remote == nullptr) {
     return nullptr;
@@ -7228,9 +7206,15 @@ cuGraphAddMemcpyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
     return status;
   }
 
+  // A host source travels as its copied rows alone.
   size_t host_src_bytes = 0;
+  size_t src_slice = copyParams->srcHeight * copyParams->srcPitch;
+  const char *src_rows =
+      (const char *)copyParams->srcHost + copyParams->srcZ * src_slice +
+      copyParams->srcY * copyParams->srcPitch + copyParams->srcXInBytes;
   if (copyParams->srcMemoryType == CU_MEMORYTYPE_HOST) {
-    host_src_bytes = lupine_memcpy3d_host_span_bytes(*copyParams, true);
+    host_src_bytes =
+        copyParams->WidthInBytes * copyParams->Height * copyParams->Depth;
     if (host_src_bytes != 0 && copyParams->srcHost == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
@@ -7258,7 +7242,10 @@ cuGraphAddMemcpyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       rpc_write(conn, copyParams, sizeof(*copyParams)) < 0 ||
       rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
       rpc_write(conn, &host_src_bytes, sizeof(host_src_bytes)) < 0 ||
-      rpc_write(conn, copyParams->srcHost, host_src_bytes) < 0 ||
+      (host_src_bytes != 0 &&
+       rpc_write_pitched(conn, src_rows, copyParams->WidthInBytes,
+                         copyParams->Height, copyParams->srcPitch,
+                         copyParams->Depth, src_slice) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(*phGraphNode)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -9328,16 +9315,7 @@ void *rpc_client_dispatch_thread(void *arg) {
       }
 
       for (int i = 0; i < found; ++i) {
-        void *dst = nullptr;
-        size_t count = 0;
-
-        if (rpc_read(conn, &dst, sizeof(void *)) < 0 ||
-            rpc_read(conn, &count, sizeof(size_t)) < 0) {
-          LUPINE_LOG_ERROR("Failed to read transfer parameters.");
-          goto close_connection;
-        }
-
-        if (rpc_read(conn, dst, count) < 0) {
+        if (lupine_read_deferred_rows(conn) < 0) {
           LUPINE_LOG_ERROR("Failed to read device data from server.");
           goto close_connection;
         }

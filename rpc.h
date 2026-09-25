@@ -24,6 +24,24 @@ static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOD = 1;
 static constexpr uint8_t LUPINE_COPY_DIRECTION_DTOH = 2;
 static constexpr uint8_t LUPINE_COPY_DIRECTION_DTOD = 3;
 
+// Where the dense bytes of a deferred device-to-host copy land in client
+// memory: depth slices of height rows of width bytes. A linear copy is one row.
+// Sent as-is ahead of the bytes.
+struct lupine_host_rows {
+  void *dst = nullptr;
+  size_t width = 0;
+  size_t height = 1;
+  size_t pitch = 0;
+  size_t depth = 1;
+  size_t slice = 0;
+
+  size_t bytes() const { return width * height * depth; }
+  unsigned char *row(size_t index) const {
+    return static_cast<unsigned char *>(dst) + index / height * slice +
+           index % height * pitch;
+  }
+};
+
 // References caller-owned bytes while an RPC is being serialized. Cursors are
 // consumed directly by the HTTP/2 transport.
 struct rpc_write_cursor;

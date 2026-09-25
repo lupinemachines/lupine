@@ -50,8 +50,8 @@ extern "C" CUresult lupine_sync_mapped_device_to_host();
 extern "C" void lupine_invalidate_launched_managed(CUdeviceptr pointer,
                                                    CUstream stream);
 extern thread_local bool lupine_in_host_callback;
-extern "C" int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
-                                              size_t bytes);
+// Reads one deferred device-to-host copy: its lupine_host_rows, then the rows.
+int lupine_read_deferred_rows(conn_t *conn);
 extern "C" void lupine_materialize_host_allocations();
 
 extern "C" void lupine_stream_capture_begin();

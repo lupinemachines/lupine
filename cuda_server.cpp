@@ -590,18 +590,6 @@ int handle_cuPrivateGetModuleNode(conn_t *conn) {
   return 0;
 }
 
-static size_t lupine_memcpy3d_host_span_bytes(const CUDA_MEMCPY3D &params,
-                                              bool source) {
-  size_t width = params.WidthInBytes;
-  size_t height = params.Height == 0 ? 1 : params.Height;
-  size_t depth = params.Depth == 0 ? 1 : params.Depth;
-  size_t pitch = source ? params.srcPitch : params.dstPitch;
-  if (pitch == 0) {
-    pitch = width;
-  }
-  return pitch * height * depth;
-}
-
 static int lupine_read_graph_dependencies(conn_t *conn,
                                           std::vector<CUgraphNode> *deps) {
   size_t count = 0;
@@ -782,13 +770,19 @@ int lupine_write_pending_dtoh_copies(
     *copy_count = static_cast<uint32_t>(pending.size());
   }
   for (const auto &copy : pending) {
-    if (rpc_write(conn, &copy.client_dst, sizeof(copy.client_dst)) < 0 ||
-        rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) < 0 ||
-        rpc_write(conn, copy.server_src, copy.bytes) < 0) {
+    if (lupine_write_dtoh_rows(conn, copy.client, copy.server_src) < 0) {
       return -1;
     }
   }
   return 0;
+}
+
+int lupine_write_dtoh_rows(conn_t *conn, const lupine_host_rows &client,
+                           const void *server_src) {
+  return rpc_write(conn, &client, sizeof(client)) < 0 ||
+                 rpc_write(conn, server_src, client.bytes()) < 0
+             ? -1
+             : 0;
 }
 
 void lupine_cleanup_pending_dtoh_copies(
@@ -2484,9 +2478,7 @@ void CUDA_CB lupine_graph_host_callback(void *userData) {
     if (failed) {
       break;
     }
-    failed = rpc_write(conn, &copy.client_dst, sizeof(copy.client_dst)) < 0 ||
-             rpc_write(conn, &copy.bytes, sizeof(copy.bytes)) < 0 ||
-             rpc_write(conn, copy.server_src, copy.bytes) < 0;
+    failed = lupine_write_dtoh_rows(conn, copy.client, copy.server_src) < 0;
   }
   CUhostFn fn = callback->fn;
   void *client_user_data = callback->userData;
@@ -2817,17 +2809,27 @@ int handle_cuGraphAddMemcpyNode(conn_t *conn) {
     if (host == nullptr || rpc_read(conn, host, host_src_bytes) < 0) {
       return -1;
     }
+    lupine_pack_host_source(copyParams);
     copyParams.srcHost = host;
   }
 
   if (copyParams.dstMemoryType == CU_MEMORYTYPE_HOST) {
-    size_t host_dst_bytes = lupine_memcpy3d_host_span_bytes(copyParams, false);
-    void *host = lupine_alloc_process_host_buffer(host_dst_bytes);
-    if (host == nullptr && host_dst_bytes != 0) {
+    size_t slice = copyParams.dstHeight * copyParams.dstPitch;
+    lupine_host_rows client{static_cast<unsigned char *>(copyParams.dstHost) +
+                                copyParams.dstZ * slice +
+                                copyParams.dstY * copyParams.dstPitch +
+                                copyParams.dstXInBytes,
+                            copyParams.WidthInBytes,
+                            copyParams.Height,
+                            copyParams.dstPitch,
+                            copyParams.Depth,
+                            slice};
+    lupine_pack_host_destination(copyParams);
+    void *host = lupine_alloc_process_host_buffer(client.bytes());
+    if (host == nullptr && client.bytes() != 0) {
       return -1;
     }
-    lupine_graph_note_dtoh_copy(resources, copyParams.dstHost, host,
-                                host_dst_bytes);
+    lupine_graph_note_dtoh_copy(resources, client, host);
     copyParams.dstHost = host;
   }
 
