@@ -116,7 +116,8 @@ class ArrayOperation:
         return self.length.name
 
     def transfer_size_expr(self) -> str:
-        if self.is_void_bytes:
+        # SIZE:<bytes> is a byte count whatever the pointee type.
+        if self.is_void_bytes or isinstance(self.length, int):
             return self.byte_count_expr()
         return f"{self.element_count_expr()} * sizeof({self.ptr.ptr_to.format()})"
 
@@ -127,7 +128,7 @@ class ArrayOperation:
         return self.length.name
 
     def server_transfer_size_expr(self) -> str:
-        if self.is_void_bytes:
+        if self.is_void_bytes or isinstance(self.length, int):
             return self.server_element_count_expr()
         return (
             f"{self.server_element_count_expr()} * "

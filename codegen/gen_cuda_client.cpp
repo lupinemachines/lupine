@@ -2281,13 +2281,14 @@ CUresult cuMemMapArrayAsync(CUarrayMapInfo *mapInfoList, unsigned int count,
         LUPINE_REAL_CUDA_SYMBOL("cuMemMapArrayAsync"), mapInfoList, count,
         hStream);
   conn_t *conn = lupine_route_remote_conn(route);
+  if (count * sizeof(CUarrayMapInfo) != 0 && mapInfoList == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemMapArrayAsync) < 0 ||
-      rpc_write(conn, mapInfoList, sizeof(CUarrayMapInfo)) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, mapInfoList, count * sizeof(CUarrayMapInfo)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, mapInfoList, sizeof(CUarrayMapInfo)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3328,14 +3329,16 @@ CUresult cuStreamBatchMemOp_v2(CUstream stream, unsigned int count,
         LUPINE_REAL_CUDA_SYMBOL("cuStreamBatchMemOp_v2"), stream, count,
         paramArray, flags);
   conn_t *conn = lupine_route_remote_conn(route);
+  if (count * sizeof(CUstreamBatchMemOpParams) != 0 && paramArray == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamBatchMemOp_v2) < 0 ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, paramArray, sizeof(CUstreamBatchMemOpParams)) < 0 ||
+      rpc_write(conn, paramArray, count * sizeof(CUstreamBatchMemOpParams)) <
+          0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, paramArray, sizeof(CUstreamBatchMemOpParams)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3631,29 +3634,14 @@ CUresult cuLaunchGridAsync(CUfunction f, int grid_width, int grid_height,
   return return_value;
 }
 
-CUresult
+extern "C" CUresult
 cuLaunchCooperativeKernelMultiDevice(CUDA_LAUNCH_PARAMS *launchParamsList,
                                      unsigned int numDevices,
                                      unsigned int flags) {
-  lupine_route route = lupine_route_for_default();
-  CUresult return_value;
-  if (lupine_route_is_local(route))
-    return lupine_call_real_cuda_fn(
-        LUPINE_REAL_CUDA_SYMBOL("cuLaunchCooperativeKernelMultiDevice"),
-        launchParamsList, numDevices, flags);
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLaunchCooperativeKernelMultiDevice) <
-          0 ||
-      rpc_write(conn, launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
-      rpc_write(conn, &numDevices, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, launchParamsList, sizeof(CUDA_LAUNCH_PARAMS)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  (void)launchParamsList;
+  (void)numDevices;
+  (void)flags;
+  return CUDA_ERROR_NOT_SUPPORTED;
 }
 
 CUresult cuParamSetTexRef(CUfunction hfunc, int texunit, CUtexref hTexRef) {
@@ -6055,9 +6043,8 @@ CUresult cuTexRefSetBorderColor(CUtexref hTexRef, float *pBorderColor) {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuTexRefSetBorderColor) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
-      rpc_write(conn, pBorderColor, sizeof(float)) < 0 ||
+      rpc_write(conn, pBorderColor, 16) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pBorderColor, sizeof(float)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6296,10 +6283,9 @@ CUresult cuTexRefGetBorderColor(float *pBorderColor, CUtexref hTexRef) {
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuTexRefGetBorderColor) < 0 ||
-      rpc_write(conn, pBorderColor, sizeof(float)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pBorderColor, sizeof(float)) < 0 ||
+      (16 != 0 && rpc_read(conn, pBorderColor, 16) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
