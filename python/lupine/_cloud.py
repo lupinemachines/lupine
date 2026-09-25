@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import json
 import os
 import threading
@@ -207,15 +208,13 @@ class CloudSession:
 
         def heartbeat() -> None:
             while not stop.is_set():
-                try:
+                with contextlib.suppress(Exception):
                     _request(
                         "POST",
                         self._session_url("/heartbeat"),
                         self.token or "",
                         expected=(200,),
                     )
-                except Exception:
-                    pass
                 stop.wait(_HEARTBEAT_INTERVAL)
 
         thread = threading.Thread(
