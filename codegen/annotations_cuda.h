@@ -770,16 +770,6 @@ CUresult cuIpcOpenMemHandle_v2(CUdeviceptr *pdptr, CUipcMemHandle handle,
  */
 CUresult cuIpcCloseMemHandle(CUdeviceptr dptr);
 /**
- * @param p SEND_RECV
- * @param bytesize SEND_ONLY
- * @param Flags SEND_ONLY
- */
-CUresult cuMemHostRegister_v2(void *p, size_t bytesize, unsigned int Flags);
-/**
- * @param p SEND_RECV
- */
-CUresult cuMemHostUnregister(void *p);
-/**
  * @disabled client
  * @routingkey DEVICEPTR dst
  * @crossservercopy dst src ByteCount
@@ -928,11 +918,12 @@ CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
 CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                               size_t ByteCount, CUstream hStream);
 /**
- * @param dstHost SEND_RECV
+ * @disabled - manual client/server chunk large host-copy responses
  * @param srcArray SEND_ONLY
  * @param srcOffset SEND_ONLY
  * @param ByteCount SEND_ONLY
  * @param hStream SEND_ONLY
+ * @param dstHost RECV_ONLY LENGTH:ByteCount
  */
 CUresult cuMemcpyAtoHAsync_v2(void *dstHost, CUarray srcArray, size_t srcOffset,
                               size_t ByteCount, CUstream hStream);
@@ -1166,11 +1157,11 @@ CUresult cuMipmappedArrayGetLevel(CUarray *pLevelArray,
  */
 CUresult cuMipmappedArrayDestroy(CUmipmappedArray hMipmappedArray);
 /**
- * @param handle SEND_RECV
  * @param dptr SEND_ONLY
  * @param size SEND_ONLY
  * @param handleType SEND_ONLY
  * @param flags SEND_ONLY
+ * @param handle RECV_ONLY SIZE:4
  */
 CUresult cuMemGetHandleForAddressRange(void *handle, CUdeviceptr dptr,
                                        size_t size,
@@ -1305,16 +1296,14 @@ CUresult cuMemPoolTrimTo(CUmemoryPool pool, size_t minBytesToKeep);
 /**
  * @param pool SEND_ONLY
  * @param attr SEND_ONLY
- * @param value SEND_RECV
- * @disabled server
+ * @disabled
  */
 CUresult cuMemPoolSetAttribute(CUmemoryPool pool, CUmemPool_attribute attr,
                                void *value);
 /**
  * @param pool SEND_ONLY
  * @param attr SEND_ONLY
- * @param value SEND_RECV
- * @disabled server
+ * @disabled
  */
 CUresult cuMemPoolGetAttribute(CUmemoryPool pool, CUmemPool_attribute attr,
                                void *value);
@@ -1422,10 +1411,9 @@ CUresult cuMemPoolExportPointer(CUmemPoolPtrExportData *shareData_out,
 CUresult cuMemPoolImportPointer(CUdeviceptr *ptr_out, CUmemoryPool pool,
                                 CUmemPoolPtrExportData *shareData);
 /**
- * @param data SEND_RECV
  * @param attribute SEND_ONLY
  * @param ptr SEND_ONLY
- * @disabled server
+ * @disabled
  */
 CUresult cuPointerGetAttribute(void *data, CUpointer_attribute attribute,
                                CUdeviceptr ptr);
@@ -1725,9 +1713,8 @@ CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param callback SEND_ONLY
- * @param userData SEND_RECV
  * @param flags SEND_ONLY
- * @disabled server
+ * @disabled
  */
 CUresult cuStreamAddCallback(CUstream hStream, CUstreamCallback callback,
                              void *userData, unsigned int flags);
@@ -2101,7 +2088,6 @@ cuLaunchCooperativeKernelMultiDevice(CUDA_LAUNCH_PARAMS *launchParamsList,
  * @disabled - manual host callback forwarding
  * @param hStream SEND_ONLY
  * @param fn SEND_ONLY
- * @param userData SEND_RECV
  */
 CUresult cuLaunchHostFunc(CUstream hStream, CUhostFn fn, void *userData);
 /**
@@ -2136,8 +2122,8 @@ CUresult cuParamSetf(CUfunction hfunc, int offset, float value);
 /**
  * @param hfunc SEND_ONLY
  * @param offset SEND_ONLY
- * @param ptr SEND_RECV
  * @param numbytes SEND_ONLY
+ * @param ptr SEND_ONLY LENGTH:numbytes
  */
 CUresult cuParamSetv(CUfunction hfunc, int offset, void *ptr,
                      unsigned int numbytes);
@@ -2533,16 +2519,14 @@ CUresult cuDeviceGraphMemTrim(CUdevice device);
 /**
  * @param device SEND_ONLY
  * @param attr SEND_ONLY
- * @param value SEND_RECV
- * @disabled server
+ * @disabled
  */
 CUresult cuDeviceGetGraphMemAttribute(CUdevice device,
                                       CUgraphMem_attribute attr, void *value);
 /**
  * @param device SEND_ONLY
  * @param attr SEND_ONLY
- * @param value SEND_RECV
- * @disabled server
+ * @disabled
  */
 CUresult cuDeviceSetGraphMemAttribute(CUdevice device,
                                       CUgraphMem_attribute attr, void *value);
@@ -2898,16 +2882,6 @@ CUresult cuGraphKernelNodeSetAttribute(CUgraphNode hNode,
 CUresult cuGraphDebugDotPrint(CUgraph hGraph, const char *path,
                               unsigned int flags);
 /**
- * @param object_out SEND_RECV
- * @param ptr SEND_RECV
- * @param destroy SEND_ONLY
- * @param initialRefcount SEND_ONLY
- * @param flags SEND_ONLY
- */
-CUresult cuUserObjectCreate(CUuserObject *object_out, void *ptr,
-                            CUhostFn destroy, unsigned int initialRefcount,
-                            unsigned int flags);
-/**
  * @param object SEND_ONLY
  * @param count SEND_ONLY
  */
@@ -3248,10 +3222,11 @@ CUresult cuTensorMapEncodeTiled(
     CUtensorMapSwizzle swizzle, CUtensorMapL2promotion l2Promotion,
     CUtensorMapFloatOOBfill oobFill);
 /**
+ * @disabled
  * @param tensorMap SEND_RECV
  * @param tensorDataType SEND_ONLY
  * @param tensorRank SEND_ONLY
- * @param globalAddress SEND_RECV
+ * @param globalAddress SEND_ONLY
  * @param globalDim SEND_RECV
  * @param globalStrides SEND_RECV
  * @param pixelBoxLowerCorner SEND_RECV
@@ -3263,6 +3238,7 @@ CUresult cuTensorMapEncodeTiled(
  * @param swizzle SEND_ONLY
  * @param l2Promotion SEND_ONLY
  * @param oobFill SEND_ONLY
+ * @guard CUDA_VERSION >= 12000
  */
 CUresult cuTensorMapEncodeIm2col(
     CUtensorMap *tensorMap, CUtensorMapDataType tensorDataType,
@@ -3273,8 +3249,10 @@ CUresult cuTensorMapEncodeIm2col(
     CUtensorMapInterleave interleave, CUtensorMapSwizzle swizzle,
     CUtensorMapL2promotion l2Promotion, CUtensorMapFloatOOBfill oobFill);
 /**
+ * @routingkey DEVICEPTR globalAddress
  * @param tensorMap SEND_RECV
- * @param globalAddress SEND_RECV
+ * @param globalAddress SEND_ONLY
+ * @guard CUDA_VERSION >= 12000
  */
 CUresult cuTensorMapReplaceAddress(CUtensorMap *tensorMap, void *globalAddress);
 /**

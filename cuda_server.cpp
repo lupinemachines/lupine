@@ -4680,6 +4680,63 @@ int handle_cuTensorMapEncodeTiled(conn_t *conn) {
   }
   return 0;
 }
+
+int handle_cuTensorMapEncodeIm2col(conn_t *conn) {
+  CUtensorMapDataType tensor_data_type;
+  cuuint32_t tensor_rank = 0;
+  void *global_address = nullptr;
+  std::array<cuuint64_t, 5> global_dim{};
+  std::array<cuuint64_t, 4> global_strides{};
+  std::array<int, 3> lower_corner{};
+  std::array<int, 3> upper_corner{};
+  cuuint32_t channels_per_pixel = 0;
+  cuuint32_t pixels_per_column = 0;
+  std::array<cuuint32_t, 5> element_strides{};
+  CUtensorMapInterleave interleave;
+  CUtensorMapSwizzle swizzle;
+  CUtensorMapL2promotion l2_promotion;
+  CUtensorMapFloatOOBfill oob_fill;
+
+  if (rpc_read(conn, &tensor_data_type, sizeof(tensor_data_type)) < 0 ||
+      rpc_read(conn, &tensor_rank, sizeof(tensor_rank)) < 0 ||
+      rpc_read(conn, &global_address, sizeof(global_address)) < 0 ||
+      rpc_read(conn, global_dim.data(), tensor_rank * sizeof(cuuint64_t)) < 0 ||
+      rpc_read(conn, global_strides.data(),
+               (tensor_rank - 1) * sizeof(cuuint64_t)) < 0 ||
+      rpc_read(conn, lower_corner.data(), (tensor_rank - 2) * sizeof(int)) <
+          0 ||
+      rpc_read(conn, upper_corner.data(), (tensor_rank - 2) * sizeof(int)) <
+          0 ||
+      rpc_read(conn, &channels_per_pixel, sizeof(channels_per_pixel)) < 0 ||
+      rpc_read(conn, &pixels_per_column, sizeof(pixels_per_column)) < 0 ||
+      rpc_read(conn, element_strides.data(), tensor_rank * sizeof(cuuint32_t)) <
+          0 ||
+      rpc_read(conn, &interleave, sizeof(interleave)) < 0 ||
+      rpc_read(conn, &swizzle, sizeof(swizzle)) < 0 ||
+      rpc_read(conn, &l2_promotion, sizeof(l2_promotion)) < 0 ||
+      rpc_read(conn, &oob_fill, sizeof(oob_fill)) < 0) {
+    return -1;
+  }
+
+  const int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  CUtensorMap tensor_map{};
+  CUresult result = cuTensorMapEncodeIm2col(
+      &tensor_map, tensor_data_type, tensor_rank, global_address,
+      global_dim.data(), global_strides.data(), lower_corner.data(),
+      upper_corner.data(), channels_per_pixel, pixels_per_column,
+      element_strides.data(), interleave, swizzle, l2_promotion, oob_fill);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &tensor_map, sizeof(tensor_map)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
 #endif
 
 // Context handlers. The staging bookkeeping they drive lives in

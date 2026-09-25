@@ -3269,17 +3269,19 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   return 0;
 }
 
-int handle_cuMemcpyAtoH_v2(conn_t *conn) {
+static int lupine_serve_memcpy_atoh(conn_t *conn, bool async) {
   CUarray srcArray = nullptr;
   size_t srcOffset = 0;
   size_t byteCount = 0;
+  CUstream stream = nullptr;
   int request_id = 0;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
   std::vector<unsigned char> dstHost;
 
   if (rpc_read(conn, &srcArray, sizeof(srcArray)) < 0 ||
       rpc_read(conn, &srcOffset, sizeof(srcOffset)) < 0 ||
-      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0) {
+      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
+      (async && rpc_read(conn, &stream, sizeof(stream)) < 0)) {
     return -1;
   }
 
@@ -3308,7 +3310,15 @@ int handle_cuMemcpyAtoH_v2(conn_t *conn) {
   do {
     size_t chunk = std::min(byteCount - offset, staging_size);
     void *chunk_dst = chunk == 0 ? nullptr : dstHost.data();
-    result = cuMemcpyAtoH_v2(chunk_dst, srcArray, srcOffset + offset, chunk);
+    if (async) {
+      result = cuMemcpyAtoHAsync_v2(chunk_dst, srcArray, srcOffset + offset,
+                                    chunk, stream);
+      if (result == CUDA_SUCCESS) {
+        result = cuStreamSynchronize(stream);
+      }
+    } else {
+      result = cuMemcpyAtoH_v2(chunk_dst, srcArray, srcOffset + offset, chunk);
+    }
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
@@ -3323,6 +3333,14 @@ int handle_cuMemcpyAtoH_v2(conn_t *conn) {
   } while (offset < byteCount);
 
   return 0;
+}
+
+int handle_cuMemcpyAtoH_v2(conn_t *conn) {
+  return lupine_serve_memcpy_atoh(conn, false);
+}
+
+int handle_cuMemcpyAtoHAsync_v2(conn_t *conn) {
+  return lupine_serve_memcpy_atoh(conn, true);
 }
 
 int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
