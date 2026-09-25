@@ -16,16 +16,12 @@
 static pthread_mutex_t lupine_stdout_capture_mutex = PTHREAD_MUTEX_INITIALIZER;
 static std::atomic<bool> lupine_stdout_capture_required{false};
 
-void lupine_require_stdout_capture() {
-  lupine_stdout_capture_required.store(true, std::memory_order_release);
-}
-
-// Device printf output is drained by the CUDA driver as a write to fd 1
-// (process stdout) during synchronization (see issue #294). The lupine server
-// writes all of its own diagnostics to stderr, so fd 1 is exclusively the
-// device-printf channel: the first capture points it at an anonymous file for
-// the rest of the process, and each synchronization then reads what was
-// appended since the last one through a second descriptor with its own offset.
+// The CUDA driver writes device printf output to fd 1 (process stdout) from its
+// own thread once a kernel finishes (see issue #294). The lupine server writes
+// all of its own diagnostics to stderr, so fd 1 is exclusively the
+// device-printf channel: it is pointed at an anonymous file for the rest of the
+// process, and each synchronization then reads what was appended since the
+// last one through a second descriptor with its own offset.
 static int lupine_stdout_capture_reader() {
   static int reader = []() -> int {
     FILE *file = nullptr;
@@ -48,6 +44,12 @@ static int lupine_stdout_capture_reader() {
     return result;
   }();
   return reader;
+}
+
+// Redirects before any kernel of a printf-capable image can run.
+void lupine_require_stdout_capture() {
+  (void)lupine_stdout_capture_reader();
+  lupine_stdout_capture_required.store(true, std::memory_order_release);
 }
 
 bool lupine_start_stdout_capture(lupine_captured_stdout *capture, bool force) {
