@@ -2179,8 +2179,8 @@ int handle_cuLibraryUnload(conn_t *conn) {
 }
 
 int handle_cuModuleGetGlobal_v2(conn_t *conn) {
-  CUdeviceptr *dptr_null_check = nullptr;
-  size_t *bytes_null_check = nullptr;
+  uint8_t dptr_present = 0;
+  uint8_t bytes_present = 0;
   CUdeviceptr dptr = 0;
   size_t bytes = 0;
   CUmodule module = nullptr;
@@ -2188,8 +2188,10 @@ int handle_cuModuleGetGlobal_v2(conn_t *conn) {
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &dptr_null_check, sizeof(dptr_null_check)) < 0 ||
-      rpc_read(conn, &bytes_null_check, sizeof(bytes_null_check)) < 0 ||
+  if (rpc_read(conn, &dptr_present, sizeof(dptr_present)) < 0 ||
+      (dptr_present && rpc_read(conn, &dptr, sizeof(dptr)) < 0) ||
+      rpc_read(conn, &bytes_present, sizeof(bytes_present)) < 0 ||
+      (bytes_present && rpc_read(conn, &bytes, sizeof(bytes)) < 0) ||
       rpc_read(conn, &module, sizeof(module)) < 0 ||
       rpc_read(conn, &name_len, sizeof(name_len)) < 0) {
     return -1;
@@ -2203,8 +2205,8 @@ int handle_cuModuleGetGlobal_v2(conn_t *conn) {
     return -1;
   }
 
-  result = cuModuleGetGlobal_v2(dptr_null_check ? &dptr : nullptr,
-                                bytes_null_check ? &bytes : nullptr, module,
+  result = cuModuleGetGlobal_v2(dptr_present ? &dptr : nullptr,
+                                bytes_present ? &bytes : nullptr, module,
                                 name.data());
   if (result != CUDA_SUCCESS) {
     CUlibrary library = nullptr;
@@ -2225,10 +2227,8 @@ int handle_cuModuleGetGlobal_v2(conn_t *conn) {
                                                     << " bytes=" << bytes);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &dptr_null_check, sizeof(dptr_null_check)) < 0 ||
-      (dptr_null_check && rpc_write(conn, &dptr, sizeof(dptr)) < 0) ||
-      rpc_write(conn, &bytes_null_check, sizeof(bytes_null_check)) < 0 ||
-      (bytes_null_check && rpc_write(conn, &bytes, sizeof(bytes)) < 0) ||
+      (dptr_present && rpc_write(conn, &dptr, sizeof(dptr)) < 0) ||
+      (bytes_present && rpc_write(conn, &bytes, sizeof(bytes)) < 0) ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -3671,14 +3671,16 @@ int handle_cuGraphClone(conn_t *conn) {
 int handle_cuGraphInstantiate_v2(conn_t *conn) {
   CUgraphExec exec = nullptr;
   CUgraph graph = nullptr;
-  CUgraphNode *error_node_out = nullptr;
+  uint8_t error_node_present = 0;
   CUgraphNode error_node = nullptr;
   size_t log_buffer_size = 0;
   char *log_buffer = nullptr;
   uint8_t log_buffer_null = 0;
 
   if (rpc_read(conn, &graph, sizeof(graph)) < 0 ||
-      rpc_read(conn, &error_node_out, sizeof(error_node_out)) < 0 ||
+      rpc_read(conn, &error_node_present, sizeof(error_node_present)) < 0 ||
+      (error_node_present &&
+       rpc_read(conn, &error_node, sizeof(error_node)) < 0) ||
       rpc_read(conn, &log_buffer_size, sizeof(log_buffer_size)) < 0 ||
       rpc_read(conn, &log_buffer_null, sizeof(log_buffer_null)) < 0) {
     return -1;
@@ -3701,10 +3703,9 @@ int handle_cuGraphInstantiate_v2(conn_t *conn) {
   CUresult result =
       lupine_prepare_graph_exec_resources(graph, &resources, &binding);
   if (result == CUDA_SUCCESS) {
-    result =
-        cuGraphInstantiate_v2(&exec, binding.prepared,
-                              error_node_out != nullptr ? &error_node : nullptr,
-                              log_buffer, log_buffer_size);
+    result = cuGraphInstantiate_v2(&exec, binding.prepared,
+                                   error_node_present ? &error_node : nullptr,
+                                   log_buffer, log_buffer_size);
   }
   if (result != CUDA_SUCCESS) {
     error_node = lupine_original_htod_graph_node(binding, error_node);
@@ -3722,8 +3723,7 @@ int handle_cuGraphInstantiate_v2(conn_t *conn) {
   bool failed =
       rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &exec, sizeof(exec)) < 0 ||
-      rpc_write(conn, &error_node_out, sizeof(error_node_out)) < 0 ||
-      (error_node_out != nullptr &&
+      (error_node_present &&
        rpc_write(conn, &error_node, sizeof(error_node)) < 0) ||
       rpc_write(conn, &log_buffer_has_data, sizeof(log_buffer_has_data)) < 0 ||
       (log_buffer_has_data != 0 && log_buffer_size != 0 &&

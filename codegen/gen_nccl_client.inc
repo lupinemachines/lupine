@@ -449,6 +449,7 @@ static ncclResult_t lupine_rpc_ncclCommGrow(conn_t *conn, ncclComm_t comm,
                                             int rank, ncclComm_t *newcomm,
                                             ncclConfig_t *config) {
   ncclResult_t return_value = rpc_error();
+  uint8_t uniqueId_present = uniqueId != nullptr;
   uint64_t config_size = config != nullptr ? config->size : 0;
   uint32_t config_netName_len = 0;
 #if NCCL_VERSION_CODE >= 21701
@@ -467,8 +468,8 @@ static ncclResult_t lupine_rpc_ncclCommGrow(conn_t *conn, ncclComm_t comm,
   if (conn == nullptr || rpc_write_start_request(conn, RPC_ncclCommGrow) < 0 ||
       rpc_write(conn, &comm, sizeof(ncclComm_t)) < 0 ||
       rpc_write(conn, &nRanks, sizeof(int)) < 0 ||
-      rpc_write(conn, &uniqueId, sizeof(const ncclUniqueId *)) < 0 ||
-      (uniqueId != nullptr &&
+      rpc_write(conn, &uniqueId_present, sizeof(uint8_t)) < 0 ||
+      (uniqueId_present &&
        rpc_write(conn, uniqueId, sizeof(const ncclUniqueId)) < 0) ||
       rpc_write(conn, &rank, sizeof(int)) < 0 ||
       rpc_write(conn, &config_size, sizeof(config_size)) < 0 ||

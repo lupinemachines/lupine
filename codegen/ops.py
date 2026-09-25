@@ -13,7 +13,9 @@ from dataclasses import dataclass
 @dataclass
 class NullableOperation:
     """
-    Nullable operations are operations that are passed as a pointer that can be null.
+    A pointer to one value that may be null; a presence byte leads it on the
+    wire. An out-value travels in with the caller's contents too, so a call
+    that fails without writing it leaves the caller's variable as it was.
     """
 
     send: bool
@@ -21,25 +23,24 @@ class NullableOperation:
     parameter: Parameter
     ptr: Pointer
 
-    def client_rpc_write(self, f):
-        if not (self.send or self.recv):
-            return
-        f.write(
-            f"        rpc_write(conn, &{self.parameter.name}, sizeof({self.ptr.format()})) < 0 ||\n"
+    @property
+    def base_type(self) -> str:
+        # void is treated differently from non void pointer types
+        return (
+            self.ptr.format()
+            if self.ptr.ptr_to.format() == "const void"
+            else self.ptr.ptr_to.format()
         )
 
-        if not self.send:
-            return
+    def client_declaration(self) -> str:
+        name = self.parameter.name
+        return f"    uint8_t {name}_present = {name} != nullptr;\n"
+
+    def client_rpc_write(self, f):
+        name = self.parameter.name
         f.write(
-            "        ({param_name} != nullptr && rpc_write(conn, {param_name}, sizeof({base_type})) < 0) ||\n".format(
-                param_name=self.parameter.name,
-                # void is treated differently from non void pointer types
-                base_type=(
-                    self.ptr.format()
-                    if self.ptr.ptr_to.format() == "const void"
-                    else self.ptr.ptr_to.format()
-                ),
-            )
+            f"        rpc_write(conn, &{name}_present, sizeof(uint8_t)) < 0 ||\n"
+            f"        ({name}_present && rpc_write(conn, {name}, sizeof({self.base_type})) < 0) ||\n"
         )
 
     @property
@@ -48,54 +49,35 @@ class NullableOperation:
         self.ptr.ptr_to.const = False
         # void is treated differently from non void pointer types
         s = (
-            f"    {self.ptr.format()} {self.parameter.name}_null_check;\n"
+            f"    uint8_t {self.parameter.name}_present = 0;\n"
             + f"""    {self.ptr.format() if self.ptr.ptr_to.format() == "void" else self.ptr.ptr_to.format()} {self.parameter.name};\n"""
         )
         self.ptr.ptr_to.const = c
         return s
 
     def server_rpc_read(self, f):
-        if not (self.send or self.recv):
-            return
+        name = self.parameter.name
         f.write(
-            f"        rpc_read(conn, &{self.parameter.name}_null_check, sizeof({self.ptr.format()})) < 0 ||\n"
-        )
-        if not self.send:
-            return
-        f.write(
-            "        ({param_name}_null_check && rpc_read(conn, &{param_name}, sizeof({base_type})) < 0) ||\n".format(
-                param_name=self.parameter.name,
-                # void is treated differently from non void pointer types
-                base_type=(
-                    self.ptr.format()
-                    if self.ptr.ptr_to.format() == "const void"
-                    else self.ptr.ptr_to.format()
-                ),
-            )
+            f"        rpc_read(conn, &{name}_present, sizeof(uint8_t)) < 0 ||\n"
+            f"        ({name}_present && rpc_read(conn, &{name}, sizeof({self.base_type})) < 0) ||\n"
         )
 
     @property
     def server_reference(self) -> str:
-        return f"{self.parameter.name}_null_check ? &{self.parameter.name} : nullptr"
+        return f"{self.parameter.name}_present ? &{self.parameter.name} : nullptr"
 
     def server_rpc_write(self, f):
         if not self.recv:
             return
         f.write(
-            f"        rpc_write(conn, &{self.parameter.name}_null_check, sizeof({self.ptr.format()})) < 0 ||\n"
-        )
-        f.write(
-            f"        ({self.parameter.name}_null_check && rpc_write(conn, &{self.parameter.name}, sizeof({self.ptr.ptr_to.format()})) < 0) ||\n"
+            f"        ({self.parameter.name}_present && rpc_write(conn, &{self.parameter.name}, sizeof({self.ptr.ptr_to.format()})) < 0) ||\n"
         )
 
     def client_rpc_read(self, f):
         if not self.recv:
             return
         f.write(
-            f"        rpc_read(conn, &{self.parameter.name}_null_check, sizeof({self.ptr.format()})) < 0 ||\n"
-        )
-        f.write(
-            f"        ({self.parameter.name}_null_check && rpc_read(conn, {self.parameter.name}, sizeof({self.ptr.ptr_to.format()})) < 0) ||\n"
+            f"        ({self.parameter.name}_present && rpc_read(conn, {self.parameter.name}, sizeof({self.ptr.ptr_to.format()})) < 0) ||\n"
         )
 
 

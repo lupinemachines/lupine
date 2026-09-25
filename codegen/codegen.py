@@ -1444,6 +1444,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 if (
                     isinstance(operation, InOutCountOperation)
                     or isinstance(operation, NullableArrayOperation)
+                    or isinstance(operation, NullableOperation)
                     or isinstance(operation, DeepStructOperation)
                     or (
                         isinstance(operation, NullTerminatedOperation)
@@ -1455,8 +1456,6 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             for operation in operations:
                 if isinstance(operation, NullTerminatedOperation) and operation.send:
                     f.write(f"    std::size_t {operation.parameter.name}_len = std::strlen({operation.parameter.name}) + 1;\n")
-                if isinstance(operation, NullableOperation) and operation.recv:
-                    f.write(f"    {operation.ptr.format()} {operation.parameter.name}_null_check;\n")
 
             # Reject invalid send buffers before lupine_prepare_rpc() flushes
             # pending writes and rpc_write_start_request() acquires the

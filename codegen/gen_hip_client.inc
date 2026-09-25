@@ -2560,20 +2560,20 @@ static hipError_t lupine_rpc_hipModuleGetGlobal(conn_t *conn,
                                                 size_t *bytes, hipModule_t hmod,
                                                 const char *name) {
   hipError_t return_value = rpc_error();
-  hipDeviceptr_t *dptr_null_check = nullptr;
-  size_t *bytes_null_check = nullptr;
+  uint8_t dptr_present = dptr != nullptr;
+  uint8_t bytes_present = bytes != nullptr;
   std::size_t name_len = static_cast<std::size_t>(std::strlen(name) + 1);
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_hipModuleGetGlobal) < 0 ||
-      rpc_write(conn, &dptr, sizeof(hipDeviceptr_t *)) < 0 ||
-      rpc_write(conn, &bytes, sizeof(size_t *)) < 0 ||
+      rpc_write(conn, &dptr_present, sizeof(uint8_t)) < 0 ||
+      (dptr_present && rpc_write(conn, dptr, sizeof(hipDeviceptr_t)) < 0) ||
+      rpc_write(conn, &bytes_present, sizeof(uint8_t)) < 0 ||
+      (bytes_present && rpc_write(conn, bytes, sizeof(size_t)) < 0) ||
       rpc_write(conn, &hmod, sizeof(hipModule_t)) < 0 ||
       rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||
       rpc_write(conn, name, name_len) < 0 || rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &dptr_null_check, sizeof(hipDeviceptr_t *)) < 0 ||
-      (dptr_null_check && rpc_read(conn, dptr, sizeof(hipDeviceptr_t)) < 0) ||
-      rpc_read(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
-      (bytes_null_check && rpc_read(conn, bytes, sizeof(size_t)) < 0) ||
+      (dptr_present && rpc_read(conn, dptr, sizeof(hipDeviceptr_t)) < 0) ||
+      (bytes_present && rpc_read(conn, bytes, sizeof(size_t)) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -3086,18 +3086,18 @@ static hipError_t lupine_rpc_hipMemGetAddressRange(conn_t *conn,
                                                    size_t *psize,
                                                    hipDeviceptr_t dptr) {
   hipError_t return_value = rpc_error();
-  hipDeviceptr_t *pbase_null_check = nullptr;
-  size_t *psize_null_check = nullptr;
+  uint8_t pbase_present = pbase != nullptr;
+  uint8_t psize_present = psize != nullptr;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_hipMemGetAddressRange) < 0 ||
-      rpc_write(conn, &pbase, sizeof(hipDeviceptr_t *)) < 0 ||
-      rpc_write(conn, &psize, sizeof(size_t *)) < 0 ||
+      rpc_write(conn, &pbase_present, sizeof(uint8_t)) < 0 ||
+      (pbase_present && rpc_write(conn, pbase, sizeof(hipDeviceptr_t)) < 0) ||
+      rpc_write(conn, &psize_present, sizeof(uint8_t)) < 0 ||
+      (psize_present && rpc_write(conn, psize, sizeof(size_t)) < 0) ||
       rpc_write(conn, &dptr, sizeof(hipDeviceptr_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &pbase_null_check, sizeof(hipDeviceptr_t *)) < 0 ||
-      (pbase_null_check && rpc_read(conn, pbase, sizeof(hipDeviceptr_t)) < 0) ||
-      rpc_read(conn, &psize_null_check, sizeof(size_t *)) < 0 ||
-      (psize_null_check && rpc_read(conn, psize, sizeof(size_t)) < 0) ||
+      (pbase_present && rpc_read(conn, pbase, sizeof(hipDeviceptr_t)) < 0) ||
+      (psize_present && rpc_read(conn, psize, sizeof(size_t)) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -3291,23 +3291,24 @@ static hipError_t lupine_rpc_hipArrayGetInfo(conn_t *conn,
                                              unsigned int *flags,
                                              hipArray_t array) {
   hipError_t return_value = rpc_error();
-  hipChannelFormatDesc *desc_null_check = nullptr;
-  hipExtent *extent_null_check = nullptr;
-  unsigned int *flags_null_check = nullptr;
+  uint8_t desc_present = desc != nullptr;
+  uint8_t extent_present = extent != nullptr;
+  uint8_t flags_present = flags != nullptr;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_hipArrayGetInfo) < 0 ||
-      rpc_write(conn, &desc, sizeof(hipChannelFormatDesc *)) < 0 ||
-      rpc_write(conn, &extent, sizeof(hipExtent *)) < 0 ||
-      rpc_write(conn, &flags, sizeof(unsigned int *)) < 0 ||
+      rpc_write(conn, &desc_present, sizeof(uint8_t)) < 0 ||
+      (desc_present &&
+       rpc_write(conn, desc, sizeof(hipChannelFormatDesc)) < 0) ||
+      rpc_write(conn, &extent_present, sizeof(uint8_t)) < 0 ||
+      (extent_present && rpc_write(conn, extent, sizeof(hipExtent)) < 0) ||
+      rpc_write(conn, &flags_present, sizeof(uint8_t)) < 0 ||
+      (flags_present && rpc_write(conn, flags, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &array, sizeof(hipArray_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &desc_null_check, sizeof(hipChannelFormatDesc *)) < 0 ||
-      (desc_null_check &&
+      (desc_present &&
        rpc_read(conn, desc, sizeof(hipChannelFormatDesc)) < 0) ||
-      rpc_read(conn, &extent_null_check, sizeof(hipExtent *)) < 0 ||
-      (extent_null_check && rpc_read(conn, extent, sizeof(hipExtent)) < 0) ||
-      rpc_read(conn, &flags_null_check, sizeof(unsigned int *)) < 0 ||
-      (flags_null_check && rpc_read(conn, flags, sizeof(unsigned int)) < 0) ||
+      (extent_present && rpc_read(conn, extent, sizeof(hipExtent)) < 0) ||
+      (flags_present && rpc_read(conn, flags, sizeof(unsigned int)) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -3651,13 +3652,13 @@ extern "C" hipError_t hipCtxDestroy(hipCtx_t ctx) {
 
 static hipError_t lupine_rpc_hipCtxPopCurrent(conn_t *conn, hipCtx_t *ctx) {
   hipError_t return_value = rpc_error();
-  hipCtx_t *ctx_null_check = nullptr;
+  uint8_t ctx_present = ctx != nullptr;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_hipCtxPopCurrent) < 0 ||
-      rpc_write(conn, &ctx, sizeof(hipCtx_t *)) < 0 ||
+      rpc_write(conn, &ctx_present, sizeof(uint8_t)) < 0 ||
+      (ctx_present && rpc_write(conn, ctx, sizeof(hipCtx_t)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &ctx_null_check, sizeof(hipCtx_t *)) < 0 ||
-      (ctx_null_check && rpc_read(conn, ctx, sizeof(hipCtx_t)) < 0) ||
+      (ctx_present && rpc_read(conn, ctx, sizeof(hipCtx_t)) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -4406,15 +4407,16 @@ static hipError_t lupine_rpc_hipCreateTextureObject(
     const hipResourceDesc *pResDesc, const hipTextureDesc *pTexDesc,
     const struct hipResourceViewDesc *pResViewDesc) {
   hipError_t return_value = rpc_error();
+  uint8_t pTexDesc_present = pTexDesc != nullptr;
+  uint8_t pResViewDesc_present = pResViewDesc != nullptr;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_hipCreateTextureObject) < 0 ||
       rpc_write(conn, pResDesc, sizeof(const hipResourceDesc)) < 0 ||
-      rpc_write(conn, &pTexDesc, sizeof(const hipTextureDesc *)) < 0 ||
-      (pTexDesc != nullptr &&
+      rpc_write(conn, &pTexDesc_present, sizeof(uint8_t)) < 0 ||
+      (pTexDesc_present &&
        rpc_write(conn, pTexDesc, sizeof(const hipTextureDesc)) < 0) ||
-      rpc_write(conn, &pResViewDesc,
-                sizeof(const struct hipResourceViewDesc *)) < 0 ||
-      (pResViewDesc != nullptr &&
+      rpc_write(conn, &pResViewDesc_present, sizeof(uint8_t)) < 0 ||
+      (pResViewDesc_present &&
        rpc_write(conn, pResViewDesc, sizeof(const struct hipResourceViewDesc)) <
            0) ||
       rpc_wait_for_response(conn) < 0 ||
@@ -4571,15 +4573,16 @@ lupine_rpc_hipTexObjectCreate(conn_t *conn, hipTextureObject_t *pTexObject,
                               const HIP_TEXTURE_DESC *pTexDesc,
                               const HIP_RESOURCE_VIEW_DESC *pResViewDesc) {
   hipError_t return_value = rpc_error();
+  uint8_t pTexDesc_present = pTexDesc != nullptr;
+  uint8_t pResViewDesc_present = pResViewDesc != nullptr;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_hipTexObjectCreate) < 0 ||
       rpc_write(conn, pResDesc, sizeof(const HIP_RESOURCE_DESC)) < 0 ||
-      rpc_write(conn, &pTexDesc, sizeof(const HIP_TEXTURE_DESC *)) < 0 ||
-      (pTexDesc != nullptr &&
+      rpc_write(conn, &pTexDesc_present, sizeof(uint8_t)) < 0 ||
+      (pTexDesc_present &&
        rpc_write(conn, pTexDesc, sizeof(const HIP_TEXTURE_DESC)) < 0) ||
-      rpc_write(conn, &pResViewDesc, sizeof(const HIP_RESOURCE_VIEW_DESC *)) <
-          0 ||
-      (pResViewDesc != nullptr &&
+      rpc_write(conn, &pResViewDesc_present, sizeof(uint8_t)) < 0 ||
+      (pResViewDesc_present &&
        rpc_write(conn, pResViewDesc, sizeof(const HIP_RESOURCE_VIEW_DESC)) <
            0) ||
       rpc_wait_for_response(conn) < 0 ||
@@ -4837,15 +4840,15 @@ lupine_rpc_hipStreamGetCaptureInfo(conn_t *conn, hipStream_t stream,
                                    hipStreamCaptureStatus *pCaptureStatus,
                                    unsigned long long *pId) {
   hipError_t return_value = rpc_error();
-  unsigned long long *pId_null_check = nullptr;
+  uint8_t pId_present = pId != nullptr;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_hipStreamGetCaptureInfo) < 0 ||
       rpc_write(conn, &stream, sizeof(hipStream_t)) < 0 ||
-      rpc_write(conn, &pId, sizeof(unsigned long long *)) < 0 ||
+      rpc_write(conn, &pId_present, sizeof(uint8_t)) < 0 ||
+      (pId_present && rpc_write(conn, pId, sizeof(unsigned long long)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pCaptureStatus, sizeof(hipStreamCaptureStatus)) < 0 ||
-      rpc_read(conn, &pId_null_check, sizeof(unsigned long long *)) < 0 ||
-      (pId_null_check && rpc_read(conn, pId, sizeof(unsigned long long)) < 0) ||
+      (pId_present && rpc_read(conn, pId, sizeof(unsigned long long)) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
@@ -5341,18 +5344,19 @@ lupine_rpc_hipGraphInstantiate(conn_t *conn, hipGraphExec_t *pGraphExec,
                                hipGraph_t graph, hipGraphNode_t *pErrorNode,
                                char *pLogBuffer, size_t bufferSize) {
   hipError_t return_value = rpc_error();
-  hipGraphNode_t *pErrorNode_null_check = nullptr;
+  uint8_t pErrorNode_present = pErrorNode != nullptr;
   uint8_t pLogBuffer_null = pLogBuffer == nullptr ? 1 : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_hipGraphInstantiate) < 0 ||
       rpc_write(conn, &graph, sizeof(hipGraph_t)) < 0 ||
-      rpc_write(conn, &pErrorNode, sizeof(hipGraphNode_t *)) < 0 ||
+      rpc_write(conn, &pErrorNode_present, sizeof(uint8_t)) < 0 ||
+      (pErrorNode_present &&
+       rpc_write(conn, pErrorNode, sizeof(hipGraphNode_t)) < 0) ||
       rpc_write(conn, &bufferSize, sizeof(size_t)) < 0 ||
       rpc_write(conn, &pLogBuffer_null, sizeof(uint8_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pGraphExec, sizeof(hipGraphExec_t)) < 0 ||
-      rpc_read(conn, &pErrorNode_null_check, sizeof(hipGraphNode_t *)) < 0 ||
-      (pErrorNode_null_check &&
+      (pErrorNode_present &&
        rpc_read(conn, pErrorNode, sizeof(hipGraphNode_t)) < 0) ||
       (pLogBuffer != nullptr && bufferSize != 0 &&
        rpc_read(conn, pLogBuffer, bufferSize * sizeof(char)) < 0) ||
@@ -5527,16 +5531,16 @@ lupine_rpc_hipGraphExecUpdate(conn_t *conn, hipGraphExec_t hGraphExec,
                               hipGraph_t hGraph, hipGraphNode_t *hErrorNode_out,
                               hipGraphExecUpdateResult *updateResult_out) {
   hipError_t return_value = rpc_error();
-  hipGraphNode_t *hErrorNode_out_null_check = nullptr;
+  uint8_t hErrorNode_out_present = hErrorNode_out != nullptr;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_hipGraphExecUpdate) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(hipGraphExec_t)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(hipGraph_t)) < 0 ||
-      rpc_write(conn, &hErrorNode_out, sizeof(hipGraphNode_t *)) < 0 ||
+      rpc_write(conn, &hErrorNode_out_present, sizeof(uint8_t)) < 0 ||
+      (hErrorNode_out_present &&
+       rpc_write(conn, hErrorNode_out, sizeof(hipGraphNode_t)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &hErrorNode_out_null_check, sizeof(hipGraphNode_t *)) <
-          0 ||
-      (hErrorNode_out_null_check &&
+      (hErrorNode_out_present &&
        rpc_read(conn, hErrorNode_out, sizeof(hipGraphNode_t)) < 0) ||
       rpc_read(conn, updateResult_out, sizeof(hipGraphExecUpdateResult)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
