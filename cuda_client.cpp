@@ -1115,40 +1115,32 @@ extern "C" CUresult cuCtxDisablePeerAccess(CUcontext peerContext) {
   return result;
 }
 
-extern "C" void lupine_record_library_image(CUlibrary library,
-                                            lupine_route route, uint32_t kind,
-                                            const unsigned char *image,
-                                            size_t image_size,
-                                            const void *code) {
+static void lupine_record_library_image(CUlibrary library, lupine_route route,
+                                        uint32_t kind,
+                                        std::vector<unsigned char> &&image,
+                                        const void *code) {
   int route_id = lupine_route_identity(route);
-  if (library == nullptr || image == nullptr || image_size == 0 ||
-      route_id == -2) {
+  if (library == nullptr || image.empty() || route_id == -2 ||
+      !lupine_devices_span_routes()) {
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-  auto &record = lupine_library_images()[library];
-  record.kind = kind;
-  record.code = code;
-  record.image.assign(image, image + image_size);
-  record.libraries_by_route[route_id] = library;
+  lupine_library_images()[library] = {
+      kind, code, std::move(image), {{route_id, library}}};
 }
 
-extern "C" void lupine_record_module_image(CUmodule module, lupine_route route,
-                                           uint32_t kind,
-                                           const unsigned char *image,
-                                           size_t image_size,
-                                           const void *image_ptr) {
+static void lupine_record_module_image(CUmodule module, lupine_route route,
+                                       uint32_t kind,
+                                       std::vector<unsigned char> &&image,
+                                       const void *image_ptr) {
   int route_id = lupine_route_identity(route);
-  if (module == nullptr || image == nullptr || image_size == 0 ||
-      route_id == -2) {
+  if (module == nullptr || image.empty() || route_id == -2 ||
+      !lupine_devices_span_routes()) {
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-  auto &record = lupine_module_images()[module];
-  record.kind = kind;
-  record.image_ptr = image_ptr;
-  record.image.assign(image, image + image_size);
-  record.modules_by_route[route_id] = module;
+  lupine_module_images()[module] = {
+      kind, image_ptr, std::move(image), {{route_id, module}}};
 }
 
 static void lupine_cache_library_kernel(CUkernel kernel, CUlibrary library,
@@ -5484,8 +5476,8 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
     if (result == CUDA_SUCCESS) {
       lupine_remember_loaded_module(*module);
       lupine_note_module_owner_route(*module, route);
-      lupine_record_module_image(*module, route, kind, image_bytes.data(),
-                                 image_bytes.size(), image);
+      lupine_record_module_image(*module, route, kind, std::move(image_bytes),
+                                 image);
     }
     return result;
   }
@@ -5514,8 +5506,7 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
     lupine_remember_loaded_module(*module);
     lupine_note_module_owner(*module, conn);
     lupine_record_module_image(*module, lupine_remote_route_for_conn(conn),
-                               kind, image_bytes.data(), image_bytes.size(),
-                               image);
+                               kind, std::move(image_bytes), image);
   }
   return return_value;
 }
@@ -5549,8 +5540,8 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
     if (result == CUDA_SUCCESS) {
       lupine_remember_loaded_module(*module);
       lupine_note_module_owner_route(*module, route);
-      lupine_record_module_image(*module, route, kind, image_bytes.data(),
-                                 image_bytes.size(), image);
+      lupine_record_module_image(*module, route, kind, std::move(image_bytes),
+                                 image);
     }
     return result;
   }
@@ -5577,8 +5568,7 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
     lupine_remember_loaded_module(*module);
     lupine_note_module_owner(*module, conn);
     lupine_record_module_image(*module, lupine_remote_route_for_conn(conn),
-                               kind, image_bytes.data(), image_bytes.size(),
-                               image);
+                               kind, std::move(image_bytes), image);
   }
   return return_value;
 }
@@ -6077,8 +6067,8 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
         numJitOptions, libraryOptions, libraryOptionValues, numLibraryOptions);
     if (result == CUDA_SUCCESS) {
       lupine_note_library_owner_route(*library, route);
-      lupine_record_library_image(*library, route, kind, image_bytes.data(),
-                                  image_bytes.size(), code);
+      lupine_record_library_image(*library, route, kind, std::move(image_bytes),
+                                  code);
     }
     return result;
   }
@@ -6121,8 +6111,7 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   if (return_value == CUDA_SUCCESS) {
     lupine_note_library_owner(*library, conn);
     lupine_record_library_image(*library, lupine_remote_route_for_conn(conn),
-                                kind, image_bytes.data(), image_bytes.size(),
-                                code);
+                                kind, std::move(image_bytes), code);
     if (profiled) {
       lupine_library_profile_record(route, ref);
     }
@@ -6837,6 +6826,7 @@ extern "C" void lupine_release_module_retained_strings(CUmodule module) {
     function = functions.erase(function);
   }
   lupine_library_modules().erase(module);
+  lupine_module_images().erase(module);
   auto is_unloaded = [&](CUfunction function) {
     return unloaded.count(function) != 0;
   };
@@ -6858,6 +6848,7 @@ extern "C" void lupine_release_module_retained_strings(CUmodule module) {
 
 extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
   std::scoped_lock lock(lupine_library_kernel_mutex(), g_retained_string_mutex);
+  lupine_library_images().erase(library);
   lupine_release_retained_strings_locked(
       reinterpret_cast<const void *>(library));
   auto &kernels = lupine_library_kernels();
