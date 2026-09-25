@@ -114,9 +114,6 @@ void lupine_clone_graph_resources(CUgraph clone, CUgraph original);
 void lupine_erase_graph_resources(CUgraph graph);
 void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
                               CUresult result);
-bool lupine_graph_has_capture_scratch(lupine_graph_resources *resources);
-bool lupine_graph_install_capture_scratch(lupine_graph_resources *resources,
-                                          void *scratch, size_t size);
 std::vector<lupine_graph_host_copy>
 lupine_graph_dtoh_copy_snapshot(lupine_graph_resources *resources);
 struct lupine_htod_graph_binding {
@@ -138,8 +135,7 @@ lupine_original_htod_graph_node(const lupine_htod_graph_binding &binding,
 CUgraphNode lupine_htod_graph_exec_node(CUgraphExec exec, CUgraphNode node);
 void lupine_release_htod_graph_binding(lupine_htod_graph_binding *binding);
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec);
-void *lupine_alloc_capture_scratch(lupine_graph_resources *resources,
-                                   size_t bytes);
+void *lupine_alloc_capture_scratch(size_t bytes);
 void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
                                  void *client_dst, void *server_src,
                                  size_t bytes);

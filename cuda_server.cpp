@@ -3586,20 +3586,7 @@ int handle_cuStreamBeginCapture(conn_t *conn) {
   }
 
   auto *resources = lupine_begin_stream_capture_resources(stream);
-  if (!lupine_graph_has_capture_scratch(resources)) {
-    static constexpr size_t scratch_size = 128ull * 1024ull * 1024ull;
-    void *scratch = nullptr;
-    if (cuMemAllocHost(&scratch, scratch_size) == CUDA_SUCCESS) {
-      if (!lupine_graph_install_capture_scratch(resources, scratch,
-                                                scratch_size)) {
-        cuMemFreeHost(scratch);
-      }
-    }
-  }
-
-  result = !lupine_graph_has_capture_scratch(resources)
-               ? CUDA_ERROR_OUT_OF_MEMORY
-               : lupine_server_prepare_htod_capture(conn);
+  result = lupine_server_prepare_htod_capture(conn);
   if (result == CUDA_SUCCESS) {
     result = cuStreamBeginCapture_v2(stream, mode);
   }
