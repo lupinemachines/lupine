@@ -590,18 +590,6 @@ int handle_cuPrivateGetModuleNode(conn_t *conn) {
   return 0;
 }
 
-static size_t lupine_memcpy3d_host_span_bytes(const CUDA_MEMCPY3D &params,
-                                              bool source) {
-  size_t width = params.WidthInBytes;
-  size_t height = params.Height == 0 ? 1 : params.Height;
-  size_t depth = params.Depth == 0 ? 1 : params.Depth;
-  size_t pitch = source ? params.srcPitch : params.dstPitch;
-  if (pitch == 0) {
-    pitch = width;
-  }
-  return pitch * height * depth;
-}
-
 static int lupine_read_graph_dependencies(conn_t *conn,
                                           std::vector<CUgraphNode> *deps) {
   size_t count = 0;
@@ -2828,17 +2816,25 @@ int handle_cuGraphAddMemcpyNode(conn_t *conn) {
     if (host == nullptr || rpc_read(conn, host, host_src_bytes) < 0) {
       return -1;
     }
+    lupine_pack_host_source(copyParams);
     copyParams.srcHost = host;
   }
 
   if (copyParams.dstMemoryType == CU_MEMORYTYPE_HOST) {
-    size_t host_dst_bytes = lupine_memcpy3d_host_span_bytes(copyParams, false);
+    size_t client_slice = copyParams.dstHeight * copyParams.dstPitch;
+    auto *client = static_cast<unsigned char *>(copyParams.dstHost) +
+                   copyParams.dstZ * client_slice +
+                   copyParams.dstY * copyParams.dstPitch +
+                   copyParams.dstXInBytes;
+    size_t client_pitch = copyParams.dstPitch;
+    size_t host_dst_bytes = lupine_pack_host_destination(copyParams);
     void *host = lupine_alloc_process_host_buffer(host_dst_bytes);
     if (host == nullptr && host_dst_bytes != 0) {
       return -1;
     }
-    lupine_graph_note_dtoh_copy(resources, copyParams.dstHost, host,
-                                host_dst_bytes);
+    lupine_graph_note_dtoh_copy(resources, client, host,
+                                copyParams.WidthInBytes, copyParams.Height,
+                                client_pitch, copyParams.Depth, client_slice);
     copyParams.dstHost = host;
   }
 

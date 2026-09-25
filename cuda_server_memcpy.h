@@ -140,9 +140,37 @@ void lupine_release_htod_graph_binding(lupine_htod_graph_binding *binding);
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec);
 void *lupine_alloc_capture_scratch(lupine_graph_resources *resources,
                                    size_t bytes);
+// The server side is dense; each row lands at the client's pitch.
 void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
                                  void *client_dst, void *server_src,
-                                 size_t bytes);
+                                 size_t width, size_t height = 1,
+                                 size_t client_pitch = 0, size_t depth = 1,
+                                 size_t client_slice = 0);
+
+// A host side staged on the server is dense: the client sends and receives
+// only the copied rows and keeps its own pitch and offsets.
+inline size_t lupine_pack_host_destination(CUDA_MEMCPY2D &copy) {
+  copy.dstXInBytes = 0;
+  copy.dstY = 0;
+  copy.dstPitch = copy.WidthInBytes;
+  return copy.WidthInBytes * copy.Height;
+}
+template <typename Copy> size_t lupine_pack_host_destination(Copy &copy) {
+  copy.dstXInBytes = 0;
+  copy.dstY = 0;
+  copy.dstZ = 0;
+  copy.dstPitch = copy.WidthInBytes;
+  copy.dstHeight = copy.Height;
+  return copy.WidthInBytes * copy.Height * copy.Depth;
+}
+template <typename Copy> size_t lupine_pack_host_source(Copy &copy) {
+  copy.srcXInBytes = 0;
+  copy.srcY = 0;
+  copy.srcZ = 0;
+  copy.srcPitch = copy.WidthInBytes;
+  copy.srcHeight = copy.Height;
+  return copy.WidthInBytes * copy.Height * copy.Depth;
+}
 
 // Frees a pinned staging block once the stream that is still reading from it
 // drains. Only the Windows host-to-device path defers a free this way.
