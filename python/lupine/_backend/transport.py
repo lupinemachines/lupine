@@ -173,7 +173,9 @@ class Client(_Connection):
         try:
             while True:
                 ticket, status, length = RESPONSE.unpack(self._read_exact(RESPONSE.size))
-                waiter = self.waiters.pop(ticket, None)
+                # Keep the active caller registered until its entire response
+                # arrives, so a broken payload wakes it with the other callers.
+                waiter = self.waiters.get(ticket)
                 if waiter is not None and waiter.into is not None and status == 0:
                     if length != len(memoryview(waiter.into).cast("B")):
                         raise ConnectionClosed(
@@ -184,6 +186,7 @@ class Client(_Connection):
                 else:
                     payload = self._read_exact(length) if length else b""
                 if waiter is not None:
+                    self.waiters.pop(ticket)
                     waiter.status = status
                     waiter.payload = payload
                     waiter.done.set()

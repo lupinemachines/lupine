@@ -62,6 +62,61 @@ def test_closed_connection_wakes_callers():
         client.call(2, b"", b"never answered")
 
 
+@pytest.mark.parametrize("failure", ["partial_header", "partial_body", "partial_copy", "copy_size"])
+def test_broken_response_wakes_active_and_pending_callers(failure):
+    transport = lupine._backend.transport
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    address = f"127.0.0.1:{listener.getsockname()[1]}"
+
+    def serve():
+        with listener:
+            server = transport.Server.accept(listener)
+            try:
+                server.hello({"torch": "x"})
+                requests = server.requests()
+                ticket, *_ = next(requests)
+                next(requests)  # Both callers must be waiting when the response fails.
+                header = transport.RESPONSE.pack(ticket, 0, 10)
+                if failure == "partial_header":
+                    server.sock.sendall(header[:5])
+                else:
+                    server.sock.sendall(header + b"xx")
+            finally:
+                server.close()
+
+    worker = threading.Thread(target=serve, daemon=True)
+    worker.start()
+    client = transport.Client.connect(address)
+    outcomes = []
+
+    def call():
+        into = None
+        if failure == "partial_copy":
+            into = bytearray(10)
+        elif failure == "copy_size":
+            into = bytearray(3)
+        try:
+            outcomes.append(client.call(2, b"", b"probe", into=into))
+        except Exception as exc:
+            outcomes.append(exc)
+
+    callers = [threading.Thread(target=call, daemon=True) for _ in range(2)]
+    try:
+        for caller in callers:
+            caller.start()
+        for caller in callers:
+            caller.join(timeout=3)
+        assert not any(caller.is_alive() for caller in callers), "a caller never woke up"
+        assert len(outcomes) == 2
+        assert all(isinstance(outcome, transport.ConnectionClosed) for outcome in outcomes)
+        assert not client.waiters
+    finally:
+        client.close()
+        worker.join(timeout=3)
+
+
 def test_release_rule_ignores_patch_and_local_version():
     assert lupine._backend.release_of("2.12.1+cpu") == lupine._backend.release_of("2.12.0+cu130") == (2, 12)
     assert lupine._backend.release_of("2.11.2") != lupine._backend.release_of("2.12.1")
