@@ -77,6 +77,37 @@ extern "C" bool lupine_translate_device_for_conn(conn_t *conn,
                                                  CUdevice *device);
 extern "C" CUdevice lupine_local_device_for_remote(conn_t *conn,
                                                    CUdevice remote_device);
+CUdevice lupine_virtual_device_for_route(lupine_route route,
+                                         CUdevice route_device);
+
+// Only DEVICE locations contain virtual CUDA ordinals. Host/NUMA identifiers
+// belong to the selected server and must pass through unchanged.
+static inline CUresult
+lupine_translate_mem_location(lupine_route route, CUmemLocation &location) {
+  if (location.type != CU_MEM_LOCATION_TYPE_DEVICE) {
+    return CUDA_SUCCESS;
+  }
+  CUdevice device = location.id;
+  lupine_route device_route = lupine_route_for_device(&device);
+  if (device_route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
+  if (device_route.kind == LUPINE_ROUTE_INVALID) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (!lupine_routes_share_server(route, device_route)) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  location.id = device;
+  return CUDA_SUCCESS;
+}
+
+static inline void
+lupine_restore_mem_location(lupine_route route, CUmemLocation &location) {
+  if (location.type == CU_MEM_LOCATION_TYPE_DEVICE) {
+    location.id = lupine_virtual_device_for_route(route, location.id);
+  }
+}
 
 using lupine_device_lookup_callback = CUresult (*)(void *context,
                                                    lupine_route route,

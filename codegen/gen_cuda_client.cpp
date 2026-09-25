@@ -2427,6 +2427,17 @@ CUresult cuMemPoolTrimTo(CUmemoryPool pool, size_t minBytesToKeep) {
 CUresult cuMemPoolSetAccess(CUmemoryPool pool, const CUmemAccessDesc *map,
                             size_t count) {
   lupine_route route = lupine_route_for_memory_pool(pool);
+  if (count > SIZE_MAX / sizeof(*map) || (count != 0 && map == nullptr))
+    return CUDA_ERROR_INVALID_VALUE;
+  std::vector<CUmemAccessDesc> route_map;
+  if (count != 0)
+    route_map.assign(map, map + count);
+  for (auto &desc : route_map) {
+    CUresult status = lupine_translate_mem_location(route, desc.location);
+    if (status != CUDA_SUCCESS)
+      return status;
+  }
+  map = route_map.data();
   CUresult return_value;
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuMemPoolSetAccess", pool, map, count);
@@ -2448,6 +2459,13 @@ CUresult cuMemPoolSetAccess(CUmemoryPool pool, const CUmemAccessDesc *map,
 CUresult cuMemPoolGetAccess(CUmemAccess_flags *flags, CUmemoryPool memPool,
                             CUmemLocation *location) {
   lupine_route route = lupine_route_for_memory_pool(memPool);
+  if (flags == nullptr || location == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  CUmemLocation route_location = *location;
+  CUresult status = lupine_translate_mem_location(route, route_location);
+  if (status != CUDA_SUCCESS)
+    return status;
+  location = &route_location;
   CUresult return_value;
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn("cuMemPoolGetAccess", flags, memPool,
@@ -2455,12 +2473,10 @@ CUresult cuMemPoolGetAccess(CUmemAccess_flags *flags, CUmemoryPool memPool,
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemPoolGetAccess) < 0 ||
-      rpc_write(conn, flags, sizeof(CUmemAccess_flags)) < 0 ||
       rpc_write(conn, &memPool, sizeof(CUmemoryPool)) < 0 ||
       rpc_write(conn, location, sizeof(CUmemLocation)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, flags, sizeof(CUmemAccess_flags)) < 0 ||
-      rpc_read(conn, location, sizeof(CUmemLocation)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2469,6 +2485,17 @@ CUresult cuMemPoolGetAccess(CUmemAccess_flags *flags, CUmemoryPool memPool,
 
 CUresult cuMemPoolCreate(CUmemoryPool *pool, const CUmemPoolProps *poolProps) {
   lupine_route route = lupine_route_for_default();
+  if (pool == nullptr || poolProps == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  CUmemPoolProps route_props = *poolProps;
+  if (route_props.location.type == CU_MEM_LOCATION_TYPE_DEVICE) {
+    CUdevice device = route_props.location.id;
+    route = lupine_route_for_device(&device);
+    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+      return CUDA_ERROR_INVALID_DEVICE;
+    route_props.location.id = device;
+  }
+  poolProps = &route_props;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn("cuMemPoolCreate", pool, poolProps);
@@ -4319,6 +4346,31 @@ CUresult cuGraphAddMemAllocNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                                 size_t numDependencies,
                                 CUDA_MEM_ALLOC_NODE_PARAMS *nodeParams) {
   lupine_route route = lupine_route_for_graph(hGraph);
+  if (nodeParams == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  CUDA_MEM_ALLOC_NODE_PARAMS *original_params = nodeParams;
+  CUDA_MEM_ALLOC_NODE_PARAMS route_params = *nodeParams;
+  CUresult status =
+      lupine_translate_mem_location(route, route_params.poolProps.location);
+  if (status != CUDA_SUCCESS)
+    return status;
+  if (route_params.accessDescCount >
+          SIZE_MAX / sizeof(*route_params.accessDescs) ||
+      (route_params.accessDescCount != 0 &&
+       route_params.accessDescs == nullptr))
+    return CUDA_ERROR_INVALID_VALUE;
+  std::vector<CUmemAccessDesc> route_descriptors;
+  if (route_params.accessDescCount != 0)
+    route_descriptors.assign(route_params.accessDescs,
+                             route_params.accessDescs +
+                                 route_params.accessDescCount);
+  for (auto &desc : route_descriptors) {
+    status = lupine_translate_mem_location(route, desc.location);
+    if (status != CUDA_SUCCESS)
+      return status;
+  }
+  route_params.accessDescs = route_descriptors.data();
+  nodeParams = &route_params;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value =
@@ -4327,6 +4379,8 @@ CUresult cuGraphAddMemAllocNode(CUgraphNode *phGraphNode, CUgraph hGraph,
     if (return_value == CUDA_SUCCESS && phGraphNode != nullptr) {
       lupine_note_graph_node_owner_route(*phGraphNode, route);
     }
+    if (return_value == CUDA_SUCCESS)
+      original_params->dptr = route_params.dptr;
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -4361,16 +4415,40 @@ CUresult cuGraphAddMemAllocNode(CUgraphNode *phGraphNode, CUgraph hGraph,
   if (return_value == CUDA_SUCCESS && phGraphNode != nullptr) {
     lupine_note_graph_node_owner_route(*phGraphNode, route);
   }
+  if (return_value == CUDA_SUCCESS)
+    original_params->dptr = route_params.dptr;
   return return_value;
 }
 
 CUresult cuGraphMemAllocNodeGetParams(CUgraphNode hNode,
                                       CUDA_MEM_ALLOC_NODE_PARAMS *params_out) {
   lupine_route route = lupine_route_for_graph_node(hNode);
+  if (params_out == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
   CUresult return_value;
-  if (lupine_route_is_local(route))
-    return lupine_call_real_cuda_fn("cuGraphMemAllocNodeGetParams", hNode,
-                                    params_out);
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn("cuGraphMemAllocNodeGetParams",
+                                            hNode, params_out);
+    if (return_value == CUDA_SUCCESS) {
+      lupine_restore_mem_location(route, params_out->poolProps.location);
+      // Remote descriptors already live in the node cache. Copy native output
+      // before translating it so the driver's immutable array is not changed.
+      if (lupine_route_is_local(route) && params_out->accessDescCount != 0) {
+        size_t bytes =
+            params_out->accessDescCount * sizeof(*params_out->accessDescs);
+        void *descriptors = lupine_deep_node_cache_get(hNode, 0, bytes);
+        if (descriptors == nullptr)
+          return CUDA_ERROR_OUT_OF_MEMORY;
+        std::memcpy(descriptors, params_out->accessDescs, bytes);
+        params_out->accessDescs = static_cast<CUmemAccessDesc *>(descriptors);
+      }
+      for (size_t i = 0; i < params_out->accessDescCount; ++i)
+        lupine_restore_mem_location(
+            route,
+            const_cast<CUmemAccessDesc &>(params_out->accessDescs[i]).location);
+    }
+    return return_value;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
   if (params_out == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
@@ -4397,6 +4475,24 @@ CUresult cuGraphMemAllocNodeGetParams(CUgraphNode hNode,
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS) {
+    lupine_restore_mem_location(route, params_out->poolProps.location);
+    // Remote descriptors already live in the node cache. Copy native output
+    // before translating it so the driver's immutable array is not changed.
+    if (lupine_route_is_local(route) && params_out->accessDescCount != 0) {
+      size_t bytes =
+          params_out->accessDescCount * sizeof(*params_out->accessDescs);
+      void *descriptors = lupine_deep_node_cache_get(hNode, 0, bytes);
+      if (descriptors == nullptr)
+        return CUDA_ERROR_OUT_OF_MEMORY;
+      std::memcpy(descriptors, params_out->accessDescs, bytes);
+      params_out->accessDescs = static_cast<CUmemAccessDesc *>(descriptors);
+    }
+    for (size_t i = 0; i < params_out->accessDescCount; ++i)
+      lupine_restore_mem_location(
+          route,
+          const_cast<CUmemAccessDesc &>(params_out->accessDescs[i]).location);
+  }
   return return_value;
 }
 

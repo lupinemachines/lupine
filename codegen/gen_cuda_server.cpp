@@ -3363,12 +3363,12 @@ ERROR_0:
 
 int handle_cuMemPoolGetAccess(conn_t *conn) {
   CUmemAccess_flags flags{};
+  flags = {};
   CUmemoryPool memPool;
   CUmemLocation location{};
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &flags, sizeof(CUmemAccess_flags)) < 0 ||
-      rpc_read(conn, &memPool, sizeof(CUmemoryPool)) < 0 ||
+  if (rpc_read(conn, &memPool, sizeof(CUmemoryPool)) < 0 ||
       rpc_read(conn, &location, sizeof(CUmemLocation)) < 0 || false)
     goto ERROR_0;
 
@@ -3380,7 +3380,6 @@ int handle_cuMemPoolGetAccess(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &flags, sizeof(CUmemAccess_flags)) < 0 ||
-      rpc_write(conn, &location, sizeof(CUmemLocation)) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;

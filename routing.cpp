@@ -298,8 +298,11 @@ CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal) {
   return CUDA_SUCCESS;
 }
 
-static CUdevice lupine_virtual_device_for_route(lupine_route route,
-                                                CUdevice route_device) {
+CUdevice lupine_virtual_device_for_route(lupine_route route,
+                                         CUdevice route_device) {
+  if (lupine_ensure_device_table() != CUDA_SUCCESS) {
+    return -1;
+  }
   int conn_index = -1;
   if (route.kind == LUPINE_ROUTE_REMOTE) {
     conn_index = lupine_conn_index(route.conn);
