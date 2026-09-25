@@ -11,7 +11,10 @@ Specifically, the order of `@param` annotations indicates the order in which the
 available are `NULL_TERMINATED` (to indicate that this is a null-terminated string), or `LENGTH:<param>` and
 `SIZE:<value>` to specify the size (aka width) of the parameter. If `LENGTH:<param>` is specified, `<param>` must
 be placed in front of the parameter referencing it, otherwise the generated code will not compile.
-`NULLABLE` marks a pointer that may be null. It composes with `LENGTH` on a
+`NULLABLE` marks a pointer that may be null. Alone, it is one optional value
+led on the wire by a presence byte; an out-value also travels in with the
+caller's contents, so a call that fails without writing it leaves the
+caller's variable as it was. It composes with `LENGTH` on a
 `RECV_ONLY` pointer to declare an optional out-array, and on a `SEND_ONLY`
 pointer to declare an optional in-array the caller may leave null
 (`ncclCommInitAll`'s `devlist`), which leads with a presence byte on the wire. A pointer count marked

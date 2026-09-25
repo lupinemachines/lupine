@@ -1355,17 +1355,19 @@ ERROR_0:
 }
 
 int handle_cuLibraryGetGlobal(conn_t *conn) {
-  CUdeviceptr *dptr_null_check;
+  uint8_t dptr_present = 0;
   CUdeviceptr dptr;
-  size_t *bytes_null_check;
+  uint8_t bytes_present = 0;
   size_t bytes;
   CUlibrary library;
   const char *name = nullptr;
   std::size_t name_len;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
-      rpc_read(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
+  if (rpc_read(conn, &dptr_present, sizeof(uint8_t)) < 0 ||
+      (dptr_present && rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0) ||
+      rpc_read(conn, &bytes_present, sizeof(uint8_t)) < 0 ||
+      (bytes_present && rpc_read(conn, &bytes, sizeof(size_t)) < 0) ||
       rpc_read(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
@@ -1379,14 +1381,12 @@ int handle_cuLibraryGetGlobal(conn_t *conn) {
     goto ERROR_0;
 
   return_value =
-      cuLibraryGetGlobal(dptr_null_check ? &dptr : nullptr,
-                         bytes_null_check ? &bytes : nullptr, library, name);
+      cuLibraryGetGlobal(dptr_present ? &dptr : nullptr,
+                         bytes_present ? &bytes : nullptr, library, name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
-      (dptr_null_check && rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0) ||
-      rpc_write(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
-      (bytes_null_check && rpc_write(conn, &bytes, sizeof(size_t)) < 0) ||
+      (dptr_present && rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0) ||
+      (bytes_present && rpc_write(conn, &bytes, sizeof(size_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1398,17 +1398,19 @@ ERROR_0:
 }
 
 int handle_cuLibraryGetManaged(conn_t *conn) {
-  CUdeviceptr *dptr_null_check;
+  uint8_t dptr_present = 0;
   CUdeviceptr dptr;
-  size_t *bytes_null_check;
+  uint8_t bytes_present = 0;
   size_t bytes;
   CUlibrary library;
   const char *name = nullptr;
   std::size_t name_len;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
-      rpc_read(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
+  if (rpc_read(conn, &dptr_present, sizeof(uint8_t)) < 0 ||
+      (dptr_present && rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0) ||
+      rpc_read(conn, &bytes_present, sizeof(uint8_t)) < 0 ||
+      (bytes_present && rpc_read(conn, &bytes, sizeof(size_t)) < 0) ||
       rpc_read(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
@@ -1422,14 +1424,12 @@ int handle_cuLibraryGetManaged(conn_t *conn) {
     goto ERROR_0;
 
   return_value =
-      cuLibraryGetManaged(dptr_null_check ? &dptr : nullptr,
-                          bytes_null_check ? &bytes : nullptr, library, name);
+      cuLibraryGetManaged(dptr_present ? &dptr : nullptr,
+                          bytes_present ? &bytes : nullptr, library, name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &dptr_null_check, sizeof(CUdeviceptr *)) < 0 ||
-      (dptr_null_check && rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0) ||
-      rpc_write(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
-      (bytes_null_check && rpc_write(conn, &bytes, sizeof(size_t)) < 0) ||
+      (dptr_present && rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0) ||
+      (bytes_present && rpc_write(conn, &bytes, sizeof(size_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1704,15 +1704,17 @@ ERROR_0:
 }
 
 int handle_cuMemGetAddressRange_v2(conn_t *conn) {
-  CUdeviceptr *pbase_null_check;
+  uint8_t pbase_present = 0;
   CUdeviceptr pbase;
-  size_t *psize_null_check;
+  uint8_t psize_present = 0;
   size_t psize;
   CUdeviceptr dptr;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &pbase_null_check, sizeof(CUdeviceptr *)) < 0 ||
-      rpc_read(conn, &psize_null_check, sizeof(size_t *)) < 0 ||
+  if (rpc_read(conn, &pbase_present, sizeof(uint8_t)) < 0 ||
+      (pbase_present && rpc_read(conn, &pbase, sizeof(CUdeviceptr)) < 0) ||
+      rpc_read(conn, &psize_present, sizeof(uint8_t)) < 0 ||
+      (psize_present && rpc_read(conn, &psize, sizeof(size_t)) < 0) ||
       rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 || false)
     goto ERROR_0;
 
@@ -1720,15 +1722,12 @@ int handle_cuMemGetAddressRange_v2(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value =
-      cuMemGetAddressRange_v2(pbase_null_check ? &pbase : nullptr,
-                              psize_null_check ? &psize : nullptr, dptr);
+  return_value = cuMemGetAddressRange_v2(
+      pbase_present ? &pbase : nullptr, psize_present ? &psize : nullptr, dptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pbase_null_check, sizeof(CUdeviceptr *)) < 0 ||
-      (pbase_null_check && rpc_write(conn, &pbase, sizeof(CUdeviceptr)) < 0) ||
-      rpc_write(conn, &psize_null_check, sizeof(size_t *)) < 0 ||
-      (psize_null_check && rpc_write(conn, &psize, sizeof(size_t)) < 0) ||
+      (pbase_present && rpc_write(conn, &pbase, sizeof(CUdeviceptr)) < 0) ||
+      (psize_present && rpc_write(conn, &psize, sizeof(size_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1790,13 +1789,14 @@ ERROR_0:
 }
 
 int handle_cuDeviceGetByPCIBusId(conn_t *conn) {
-  CUdevice *dev_null_check;
+  uint8_t dev_present = 0;
   CUdevice dev;
   const char *pciBusId = nullptr;
   std::size_t pciBusId_len;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &dev_null_check, sizeof(CUdevice *)) < 0 ||
+  if (rpc_read(conn, &dev_present, sizeof(uint8_t)) < 0 ||
+      (dev_present && rpc_read(conn, &dev, sizeof(CUdevice)) < 0) ||
       rpc_read(conn, &pciBusId_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
   pciBusId = (const char *)malloc(pciBusId_len);
@@ -1808,12 +1808,10 @@ int handle_cuDeviceGetByPCIBusId(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value =
-      cuDeviceGetByPCIBusId(dev_null_check ? &dev : nullptr, pciBusId);
+  return_value = cuDeviceGetByPCIBusId(dev_present ? &dev : nullptr, pciBusId);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &dev_null_check, sizeof(CUdevice *)) < 0 ||
-      (dev_null_check && rpc_write(conn, &dev, sizeof(CUdevice)) < 0) ||
+      (dev_present && rpc_write(conn, &dev, sizeof(CUdevice)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -7991,21 +7989,19 @@ ERROR_0:
 int handle_cuTexObjectCreate(conn_t *conn) {
   CUtexObject pTexObject{};
   CUDA_RESOURCE_DESC pResDesc{};
-  CUDA_TEXTURE_DESC *pTexDesc_null_check;
+  uint8_t pTexDesc_present = 0;
   CUDA_TEXTURE_DESC pTexDesc;
-  CUDA_RESOURCE_VIEW_DESC *pResViewDesc_null_check;
+  uint8_t pResViewDesc_present = 0;
   CUDA_RESOURCE_VIEW_DESC pResViewDesc;
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &pTexObject, sizeof(CUtexObject)) < 0 ||
       rpc_read(conn, &pResDesc, sizeof(const CUDA_RESOURCE_DESC)) < 0 ||
-      rpc_read(conn, &pTexDesc_null_check, sizeof(const CUDA_TEXTURE_DESC *)) <
-          0 ||
-      (pTexDesc_null_check &&
+      rpc_read(conn, &pTexDesc_present, sizeof(uint8_t)) < 0 ||
+      (pTexDesc_present &&
        rpc_read(conn, &pTexDesc, sizeof(const CUDA_TEXTURE_DESC)) < 0) ||
-      rpc_read(conn, &pResViewDesc_null_check,
-               sizeof(const CUDA_RESOURCE_VIEW_DESC *)) < 0 ||
-      (pResViewDesc_null_check &&
+      rpc_read(conn, &pResViewDesc_present, sizeof(uint8_t)) < 0 ||
+      (pResViewDesc_present &&
        rpc_read(conn, &pResViewDesc, sizeof(const CUDA_RESOURCE_VIEW_DESC)) <
            0) ||
       false)
@@ -8016,8 +8012,8 @@ int handle_cuTexObjectCreate(conn_t *conn) {
     goto ERROR_0;
 
   return_value = cuTexObjectCreate(
-      &pTexObject, &pResDesc, pTexDesc_null_check ? &pTexDesc : nullptr,
-      pResViewDesc_null_check ? &pResViewDesc : nullptr);
+      &pTexObject, &pResDesc, pTexDesc_present ? &pTexDesc : nullptr,
+      pResViewDesc_present ? &pResViewDesc : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pTexObject, sizeof(CUtexObject)) < 0 ||
@@ -8760,7 +8756,7 @@ int handle_cuDevSmResourceSplitByCount(conn_t *conn) {
   CUdevResource *result = nullptr;
   uint8_t result_null = 0;
   CUdevResource input{};
-  CUdevResource *remainder_null_check;
+  uint8_t remainder_present = 0;
   CUdevResource remainder;
   unsigned int flags;
   unsigned int minCount;
@@ -8778,7 +8774,9 @@ int handle_cuDevSmResourceSplitByCount(conn_t *conn) {
       goto ERROR_0;
   }
   if (rpc_read(conn, &input, sizeof(const CUdevResource)) < 0 ||
-      rpc_read(conn, &remainder_null_check, sizeof(CUdevResource *)) < 0 ||
+      rpc_read(conn, &remainder_present, sizeof(uint8_t)) < 0 ||
+      (remainder_present &&
+       rpc_read(conn, &remainder, sizeof(CUdevResource)) < 0) ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 ||
       rpc_read(conn, &minCount, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
@@ -8788,7 +8786,7 @@ int handle_cuDevSmResourceSplitByCount(conn_t *conn) {
     goto ERROR_0;
 
   return_value = cuDevSmResourceSplitByCount(
-      result, &nbGroups, &input, remainder_null_check ? &remainder : nullptr,
+      result, &nbGroups, &input, remainder_present ? &remainder : nullptr,
       flags, minCount);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8798,8 +8796,7 @@ int handle_cuDevSmResourceSplitByCount(conn_t *conn) {
            conn, result,
            (nbGroups < nbGroups_requested ? nbGroups : nbGroups_requested) *
                sizeof(CUdevResource)) < 0) ||
-      rpc_write(conn, &remainder_null_check, sizeof(CUdevResource *)) < 0 ||
-      (remainder_null_check &&
+      (remainder_present &&
        rpc_write(conn, &remainder, sizeof(CUdevResource)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -8819,7 +8816,7 @@ int handle_cuDevSmResourceSplit(conn_t *conn) {
   CUdevResource *result = nullptr;
   uint8_t result_null = 0;
   CUdevResource input{};
-  CUdevResource *remainder_null_check;
+  uint8_t remainder_present = 0;
   CUdevResource remainder;
   unsigned int flags;
   CU_DEV_SM_RESOURCE_GROUP_PARAMS *groupParams = nullptr;
@@ -8836,7 +8833,9 @@ int handle_cuDevSmResourceSplit(conn_t *conn) {
       goto ERROR_0;
   }
   if (rpc_read(conn, &input, sizeof(const CUdevResource)) < 0 ||
-      rpc_read(conn, &remainder_null_check, sizeof(CUdevResource *)) < 0 ||
+      rpc_read(conn, &remainder_present, sizeof(uint8_t)) < 0 ||
+      (remainder_present &&
+       rpc_read(conn, &remainder, sizeof(CUdevResource)) < 0) ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
   groupParams_size = nbGroups * sizeof(CU_DEV_SM_RESOURCE_GROUP_PARAMS);
@@ -8853,16 +8852,14 @@ int handle_cuDevSmResourceSplit(conn_t *conn) {
     goto ERROR_0;
 
   return_value = cuDevSmResourceSplit(
-      result, nbGroups, &input, remainder_null_check ? &remainder : nullptr,
-      flags,
+      result, nbGroups, &input, remainder_present ? &remainder : nullptr, flags,
       (nbGroups * sizeof(CU_DEV_SM_RESOURCE_GROUP_PARAMS) == 0 ? nullptr
                                                                : groupParams));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (!result_null &&
        rpc_write(conn, result, nbGroups * sizeof(CUdevResource)) < 0) ||
-      rpc_write(conn, &remainder_null_check, sizeof(CUdevResource *)) < 0 ||
-      (remainder_null_check &&
+      (remainder_present &&
        rpc_write(conn, &remainder, sizeof(CUdevResource)) < 0) ||
       rpc_write(conn, groupParams,
                 nbGroups * sizeof(CU_DEV_SM_RESOURCE_GROUP_PARAMS)) < 0 ||
@@ -9095,12 +9092,14 @@ ERROR_0:
 
 #if CUDA_VERSION >= 12090
 int handle_cuLogsCurrent(conn_t *conn) {
-  CUlogIterator *iterator_out_null_check;
+  uint8_t iterator_out_present = 0;
   CUlogIterator iterator_out;
   unsigned int flags;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &iterator_out_null_check, sizeof(CUlogIterator *)) < 0 ||
+  if (rpc_read(conn, &iterator_out_present, sizeof(uint8_t)) < 0 ||
+      (iterator_out_present &&
+       rpc_read(conn, &iterator_out, sizeof(CUlogIterator)) < 0) ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
 
@@ -9109,11 +9108,10 @@ int handle_cuLogsCurrent(conn_t *conn) {
     goto ERROR_0;
 
   return_value =
-      cuLogsCurrent(iterator_out_null_check ? &iterator_out : nullptr, flags);
+      cuLogsCurrent(iterator_out_present ? &iterator_out : nullptr, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &iterator_out_null_check, sizeof(CUlogIterator *)) < 0 ||
-      (iterator_out_null_check &&
+      (iterator_out_present &&
        rpc_write(conn, &iterator_out, sizeof(CUlogIterator)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -9127,15 +9125,15 @@ ERROR_0:
 
 #if CUDA_VERSION >= 12090
 int handle_cuLogsDumpToFile(conn_t *conn) {
-  CUlogIterator *iterator_null_check;
+  uint8_t iterator_present = 0;
   CUlogIterator iterator;
   const char *pathToFile = nullptr;
   std::size_t pathToFile_len;
   unsigned int flags;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &iterator_null_check, sizeof(CUlogIterator *)) < 0 ||
-      (iterator_null_check &&
+  if (rpc_read(conn, &iterator_present, sizeof(uint8_t)) < 0 ||
+      (iterator_present &&
        rpc_read(conn, &iterator, sizeof(CUlogIterator)) < 0) ||
       rpc_read(conn, &pathToFile_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
@@ -9149,12 +9147,11 @@ int handle_cuLogsDumpToFile(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuLogsDumpToFile(iterator_null_check ? &iterator : nullptr,
+  return_value = cuLogsDumpToFile(iterator_present ? &iterator : nullptr,
                                   pathToFile, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &iterator_null_check, sizeof(CUlogIterator *)) < 0 ||
-      (iterator_null_check &&
+      (iterator_present &&
        rpc_write(conn, &iterator, sizeof(CUlogIterator)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -9170,7 +9167,7 @@ ERROR_0:
 
 #if CUDA_VERSION >= 12090
 int handle_cuLogsDumpToMemory(conn_t *conn) {
-  CUlogIterator *iterator_null_check;
+  uint8_t iterator_present = 0;
   CUlogIterator iterator;
   size_t size = 0;
   size_t size_requested = 0;
@@ -9179,8 +9176,8 @@ int handle_cuLogsDumpToMemory(conn_t *conn) {
   unsigned int flags;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &iterator_null_check, sizeof(CUlogIterator *)) < 0 ||
-      (iterator_null_check &&
+  if (rpc_read(conn, &iterator_present, sizeof(uint8_t)) < 0 ||
+      (iterator_present &&
        rpc_read(conn, &iterator, sizeof(CUlogIterator)) < 0) ||
       rpc_read(conn, &size_requested, sizeof(size_t)) < 0 ||
       ((size = size_requested), false) ||
@@ -9199,12 +9196,11 @@ int handle_cuLogsDumpToMemory(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuLogsDumpToMemory(iterator_null_check ? &iterator : nullptr,
+  return_value = cuLogsDumpToMemory(iterator_present ? &iterator : nullptr,
                                     buffer, &size, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &iterator_null_check, sizeof(CUlogIterator *)) < 0 ||
-      (iterator_null_check &&
+      (iterator_present &&
        rpc_write(conn, &iterator, sizeof(CUlogIterator)) < 0) ||
       rpc_write(conn, &size, sizeof(size_t)) < 0 ||
       (!buffer_null &&
@@ -9282,17 +9278,21 @@ ERROR_0:
 int handle_cuGraphExecUpdate(conn_t *conn) {
   CUgraphExec hGraphExec;
   CUgraph hGraph;
-  CUgraphNode *hErrorNode_out_null_check;
+  uint8_t hErrorNode_out_present = 0;
   CUgraphNode hErrorNode_out;
-  CUgraphExecUpdateResult *updateResult_out_null_check;
+  uint8_t updateResult_out_present = 0;
   CUgraphExecUpdateResult updateResult_out;
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_read(conn, &hErrorNode_out_null_check, sizeof(CUgraphNode *)) < 0 ||
-      rpc_read(conn, &updateResult_out_null_check,
-               sizeof(CUgraphExecUpdateResult *)) < 0 ||
+      rpc_read(conn, &hErrorNode_out_present, sizeof(uint8_t)) < 0 ||
+      (hErrorNode_out_present &&
+       rpc_read(conn, &hErrorNode_out, sizeof(CUgraphNode)) < 0) ||
+      rpc_read(conn, &updateResult_out_present, sizeof(uint8_t)) < 0 ||
+      (updateResult_out_present &&
+       rpc_read(conn, &updateResult_out, sizeof(CUgraphExecUpdateResult)) <
+           0) ||
       false)
     goto ERROR_0;
 
@@ -9301,16 +9301,13 @@ int handle_cuGraphExecUpdate(conn_t *conn) {
     goto ERROR_0;
 
   return_value = cuGraphExecUpdate(
-      hGraphExec, hGraph, hErrorNode_out_null_check ? &hErrorNode_out : nullptr,
-      updateResult_out_null_check ? &updateResult_out : nullptr);
+      hGraphExec, hGraph, hErrorNode_out_present ? &hErrorNode_out : nullptr,
+      updateResult_out_present ? &updateResult_out : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &hErrorNode_out_null_check, sizeof(CUgraphNode *)) < 0 ||
-      (hErrorNode_out_null_check &&
+      (hErrorNode_out_present &&
        rpc_write(conn, &hErrorNode_out, sizeof(CUgraphNode)) < 0) ||
-      rpc_write(conn, &updateResult_out_null_check,
-                sizeof(CUgraphExecUpdateResult *)) < 0 ||
-      (updateResult_out_null_check &&
+      (updateResult_out_present &&
        rpc_write(conn, &updateResult_out, sizeof(CUgraphExecUpdateResult)) <
            0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||

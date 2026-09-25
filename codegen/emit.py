@@ -166,6 +166,7 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
             (
                 InOutCountOperation,
                 NullableArrayOperation,
+                NullableOperation,
                 ScalarOperation,
                 VersionedStructOperation,
             ),
@@ -174,10 +175,6 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
         elif isinstance(operation, NullTerminatedOperation):
             f.write(
                 f"  {operation.length_type} {operation.parameter.name}_len = static_cast<{operation.length_type}>(std::strlen({operation.parameter.name}) + 1);\n"
-            )
-        elif isinstance(operation, NullableOperation) and operation.recv:
-            f.write(
-                f"  {operation.ptr.format()} {operation.parameter.name}_null_check = nullptr;\n"
             )
 
     opening = "  if (conn == nullptr ||\n      " if backend.guard_null_conn else "  if ("
