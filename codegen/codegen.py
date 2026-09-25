@@ -1271,7 +1271,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             "extern void rpc_close(conn_t *conn);\n"
             'extern "C" void *lupine_deep_node_cache_get(CUgraphNode node, size_t slot, size_t bytes);\n'
             'extern "C" void lupine_deep_node_cache_reset(CUgraphNode node);\n'
-            'extern "C" std::vector<CUgraphNode> lupine_deep_cache_graph_nodes(CUgraph graph);\n\n'
+            'std::vector<CUgraphNode> lupine_deep_cache_graph_nodes(CUgraph graph);\n\n'
             'extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);\n'
             'extern "C" conn_t *lupine_rpc_conn_for_current_context();\n'
             'extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx);\n'

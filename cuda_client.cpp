@@ -6882,8 +6882,7 @@ extern "C" void lupine_deep_node_cache_reset(CUgraphNode node) {
   g_deep_cache.erase(node);
 }
 
-extern "C" std::vector<CUgraphNode>
-lupine_deep_cache_graph_nodes(CUgraph graph) {
+std::vector<CUgraphNode> lupine_deep_cache_graph_nodes(CUgraph graph) {
   {
     std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
     if (g_deep_cache.empty())

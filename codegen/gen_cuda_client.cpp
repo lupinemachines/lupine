@@ -23,8 +23,7 @@ extern void rpc_close(conn_t *conn);
 extern "C" void *lupine_deep_node_cache_get(CUgraphNode node, size_t slot,
                                             size_t bytes);
 extern "C" void lupine_deep_node_cache_reset(CUgraphNode node);
-extern "C" std::vector<CUgraphNode>
-lupine_deep_cache_graph_nodes(CUgraph graph);
+std::vector<CUgraphNode> lupine_deep_cache_graph_nodes(CUgraph graph);
 
 extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);
 extern "C" conn_t *lupine_rpc_conn_for_current_context();
