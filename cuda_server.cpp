@@ -3466,10 +3466,11 @@ template <typename BeginCapture>
 static CUresult lupine_begin_capture(conn_t *conn, CUstream stream,
                                      CUgraph graph, BeginCapture begin) {
   CUstreamCaptureStatus status = CU_STREAM_CAPTURE_STATUS_NONE;
-  if (cuStreamIsCapturing(stream, &status) != CUDA_SUCCESS ||
+  if (stream == nullptr || stream == CU_STREAM_LEGACY ||
+      cuStreamIsCapturing(stream, &status) != CUDA_SUCCESS ||
       status != CU_STREAM_CAPTURE_STATUS_NONE) {
-    // Let CUDA report invalid/repeated captures without replacing live state
-    // or issuing allocation calls during an existing global capture.
+    // Let CUDA reject unsupported, invalid, or repeated captures without
+    // allocating staging or replacing live state during an existing capture.
     return begin();
   }
   auto resources = graph == nullptr ? lupine_make_stream_capture_resources()
