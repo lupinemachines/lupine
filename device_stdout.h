@@ -5,7 +5,6 @@
 struct conn_t;
 
 struct lupine_captured_stdout {
-  int saved_stdout = -1;
   bool active = false;
   std::string output;
 };

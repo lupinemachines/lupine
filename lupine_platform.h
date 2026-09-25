@@ -595,19 +595,30 @@ inline ssize_t lupine_socket_sendv(lupine_socket_t socket,
   return static_cast<ssize_t>(sent);
 }
 
-inline int lupine_fd_dup(int fd) { return _dup(fd); }
 inline int lupine_fd_dup2(int source, int dest) { return _dup2(source, dest); }
-inline int lupine_fd_close(int fd) { return _close(fd); }
 inline ssize_t lupine_fd_read(int fd, void *data, size_t size) {
   return _read(fd, data,
                static_cast<unsigned int>(std::min<size_t>(size, UINT_MAX)));
 }
-inline long lupine_fd_seek(int fd, long offset, int origin) {
-  return _lseek(fd, offset, origin);
-}
 inline int lupine_fd_fileno(FILE *file) { return _fileno(file); }
-inline int lupine_fd_truncate(int fd, long length) {
-  return _chsize(fd, length);
+// Opens `fd`'s file again through a new handle with its own file pointer.
+inline int lupine_fd_reopen(int fd) {
+  HANDLE handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
+  if (handle == INVALID_HANDLE_VALUE) {
+    return -1;
+  }
+  HANDLE reopened =
+      ReOpenFile(handle, GENERIC_READ | GENERIC_WRITE,
+                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
+  if (reopened == INVALID_HANDLE_VALUE) {
+    return -1;
+  }
+  int result = _open_osfhandle(reinterpret_cast<intptr_t>(reopened),
+                               _O_RDWR | _O_BINARY);
+  if (result < 0) {
+    CloseHandle(reopened);
+  }
+  return result;
 }
 
 #else
@@ -663,20 +674,16 @@ inline ssize_t lupine_socket_sendv(lupine_socket_t socket,
 #endif
 }
 
-inline int lupine_fd_dup(int fd) { return dup(fd); }
 inline int lupine_fd_dup2(int source, int dest) { return dup2(source, dest); }
-inline int lupine_fd_close(int fd) { return close(fd); }
 inline ssize_t lupine_fd_read(int fd, void *data, size_t size) {
   return read(fd, data, size);
 }
-inline off_t lupine_fd_seek(int fd, off_t offset, int origin) {
-  return lseek(fd, offset, origin);
-}
 inline int lupine_fd_fileno(FILE *file) { return fileno(file); }
-// Truncates the open file description behind `fd` to exactly `length` bytes.
-// Used to reset the reused device-printf capture file to empty.
-inline int lupine_fd_truncate(int fd, off_t length) {
-  return ftruncate(fd, length);
+// Opens `fd`'s file again as a new open file description with its own offset.
+inline int lupine_fd_reopen(int fd) {
+  char path[32];
+  snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+  return open(path, O_RDWR | O_CLOEXEC);
 }
 
 #endif
