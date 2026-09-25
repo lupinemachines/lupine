@@ -652,6 +652,10 @@ int h2_on_stream_close_callback(nghttp2_session *, int32_t stream_id, uint32_t,
   auto *transport = static_cast<h2_transport *>(user_data);
   h2_stream &stream = h2_get_stream(transport, stream_id);
   h2_release_codecs(stream);
+  // The entry stays: lookup recreates missing streams, so a late reader would
+  // wait on a fresh stream forever instead of seeing it closed.
+  std::vector<unsigned char>().swap(stream.encoded);
+  stream.local_out.clear();
   stream.closed = true;
   pthread_cond_broadcast(&stream.read_ready);
   bool retryable_rejection =
