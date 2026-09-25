@@ -2159,6 +2159,30 @@ CUresult cuMipmappedArrayDestroy(CUmipmappedArray hMipmappedArray) {
   return return_value;
 }
 
+CUresult cuMemGetHandleForAddressRange(void *handle, CUdeviceptr dptr,
+                                       size_t size,
+                                       CUmemRangeHandleType handleType,
+                                       unsigned long long flags) {
+  lupine_route route = lupine_route_for_deviceptr(dptr);
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn("cuMemGetHandleForAddressRange", handle,
+                                    dptr, size, handleType, flags);
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuMemGetHandleForAddressRange) < 0 ||
+      rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
+      rpc_write(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &handleType, sizeof(CUmemRangeHandleType)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (4 != 0 && rpc_read(conn, handle, 4) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
 CUresult cuMemAddressReserve(CUdeviceptr *ptr, size_t size, size_t alignment,
                              CUdeviceptr addr, unsigned long long flags) {
   lupine_route route = lupine_route_for_deviceptr(addr);
@@ -3557,6 +3581,29 @@ CUresult cuParamSetf(CUfunction hfunc, int offset, float value) {
       rpc_write(conn, &offset, sizeof(int)) < 0 ||
       rpc_write(conn, &value, sizeof(float)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+CUresult cuParamSetv(CUfunction hfunc, int offset, void *ptr,
+                     unsigned int numbytes) {
+  lupine_route route = lupine_route_for_function(hfunc);
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn("cuParamSetv", hfunc, offset, ptr,
+                                    numbytes);
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  if (numbytes != 0 && ptr == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuParamSetv) < 0 ||
+      rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
+      rpc_write(conn, &offset, sizeof(int)) < 0 ||
+      rpc_write(conn, &numbytes, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, ptr, numbytes) < 0 || rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6561,6 +6608,30 @@ CUresult cuSurfObjectGetResourceDesc(CUDA_RESOURCE_DESC *pResDesc,
   return return_value;
 }
 
+#if CUDA_VERSION >= 12000
+CUresult cuTensorMapReplaceAddress(CUtensorMap *tensorMap,
+                                   void *globalAddress) {
+  lupine_route route =
+      lupine_route_for_deviceptr(reinterpret_cast<CUdeviceptr>(globalAddress));
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn("cuTensorMapReplaceAddress", tensorMap,
+                                    globalAddress);
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuTensorMapReplaceAddress) < 0 ||
+      rpc_write(conn, tensorMap, sizeof(CUtensorMap)) < 0 ||
+      rpc_write(conn, &globalAddress, sizeof(void *)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, tensorMap, sizeof(CUtensorMap)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+#endif
+
 CUresult cuGraphicsUnregisterResource(CUgraphicsResource resource) {
   lupine_route route = lupine_route_for_default();
   CUresult return_value;
@@ -7841,6 +7912,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemcpyHtoDAsync_v2", (void *)cuMemcpyHtoDAsync_v2},
     {"cuMemcpyDtoHAsync_v2", (void *)cuMemcpyDtoHAsync_v2},
     {"cuMemcpyDtoDAsync_v2", (void *)cuMemcpyDtoDAsync_v2},
+    {"cuMemcpyAtoHAsync_v2", (void *)cuMemcpyAtoHAsync_v2},
     {"cuMemcpy2DAsync_v2", (void *)cuMemcpy2DAsync_v2},
     {"cuMemcpy3DAsync_v2", (void *)cuMemcpy3DAsync_v2},
     {"cuMemcpy3DPeerAsync", (void *)cuMemcpy3DPeerAsync},
@@ -7871,6 +7943,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMipmappedArrayCreate", (void *)cuMipmappedArrayCreate},
     {"cuMipmappedArrayGetLevel", (void *)cuMipmappedArrayGetLevel},
     {"cuMipmappedArrayDestroy", (void *)cuMipmappedArrayDestroy},
+    {"cuMemGetHandleForAddressRange", (void *)cuMemGetHandleForAddressRange},
     {"cuMemAddressReserve", (void *)cuMemAddressReserve},
     {"cuMemAddressFree", (void *)cuMemAddressFree},
     {"cuMemCreate", (void *)cuMemCreate},
@@ -7889,6 +7962,8 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemFreeAsync", (void *)cuMemFreeAsync},
     {"cuMemAllocAsync", (void *)cuMemAllocAsync},
     {"cuMemPoolTrimTo", (void *)cuMemPoolTrimTo},
+    {"cuMemPoolSetAttribute", (void *)cuMemPoolSetAttribute},
+    {"cuMemPoolGetAttribute", (void *)cuMemPoolGetAttribute},
     {"cuMemPoolSetAccess", (void *)cuMemPoolSetAccess},
     {"cuMemPoolGetAccess", (void *)cuMemPoolGetAccess},
     {"cuMemPoolCreate", (void *)cuMemPoolCreate},
@@ -7900,6 +7975,7 @@ std::unordered_map<std::string, void *> functionMap = {
      (void *)cuMemPoolImportFromShareableHandle},
     {"cuMemPoolExportPointer", (void *)cuMemPoolExportPointer},
     {"cuMemPoolImportPointer", (void *)cuMemPoolImportPointer},
+    {"cuPointerGetAttribute", (void *)cuPointerGetAttribute},
 #if CUDA_VERSION >= 12020
     {"cuMemPrefetchAsync_v2", (void *)cuMemPrefetchAsync_v2},
 #endif
@@ -7918,6 +7994,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamGetId", (void *)cuStreamGetId},
     {"cuStreamGetCtx", (void *)cuStreamGetCtx},
     {"cuStreamWaitEvent", (void *)cuStreamWaitEvent},
+    {"cuStreamAddCallback", (void *)cuStreamAddCallback},
     {"cuStreamBeginCapture_v2", (void *)cuStreamBeginCapture_v2},
     {"cuThreadExchangeStreamCaptureMode",
      (void *)cuThreadExchangeStreamCaptureMode},
@@ -7962,11 +8039,13 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuLaunchKernel", (void *)cuLaunchKernel},
     {"cuLaunchKernelEx", (void *)cuLaunchKernelEx},
     {"cuLaunchCooperativeKernel", (void *)cuLaunchCooperativeKernel},
+    {"cuLaunchHostFunc", (void *)cuLaunchHostFunc},
     {"cuFuncSetBlockShape", (void *)cuFuncSetBlockShape},
     {"cuFuncSetSharedSize", (void *)cuFuncSetSharedSize},
     {"cuParamSetSize", (void *)cuParamSetSize},
     {"cuParamSeti", (void *)cuParamSeti},
     {"cuParamSetf", (void *)cuParamSetf},
+    {"cuParamSetv", (void *)cuParamSetv},
     {"cuLaunch", (void *)cuLaunch},
     {"cuLaunchGrid", (void *)cuLaunchGrid},
     {"cuLaunchGridAsync", (void *)cuLaunchGridAsync},
@@ -8018,6 +8097,8 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuGraphAddMemFreeNode", (void *)cuGraphAddMemFreeNode},
     {"cuGraphMemFreeNodeGetParams", (void *)cuGraphMemFreeNodeGetParams},
     {"cuDeviceGraphMemTrim", (void *)cuDeviceGraphMemTrim},
+    {"cuDeviceGetGraphMemAttribute", (void *)cuDeviceGetGraphMemAttribute},
+    {"cuDeviceSetGraphMemAttribute", (void *)cuDeviceSetGraphMemAttribute},
     {"cuGraphClone", (void *)cuGraphClone},
     {"cuGraphNodeFindInClone", (void *)cuGraphNodeFindInClone},
     {"cuGraphNodeGetType", (void *)cuGraphNodeGetType},
@@ -8135,6 +8216,12 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuSurfObjectGetResourceDesc", (void *)cuSurfObjectGetResourceDesc},
 #if CUDA_VERSION >= 12000
     {"cuTensorMapEncodeTiled", (void *)cuTensorMapEncodeTiled},
+#endif
+#if CUDA_VERSION >= 12000
+    {"cuTensorMapEncodeIm2col", (void *)cuTensorMapEncodeIm2col},
+#endif
+#if CUDA_VERSION >= 12000
+    {"cuTensorMapReplaceAddress", (void *)cuTensorMapReplaceAddress},
 #endif
     {"cuDeviceCanAccessPeer", (void *)cuDeviceCanAccessPeer},
     {"cuCtxEnablePeerAccess", (void *)cuCtxEnablePeerAccess},

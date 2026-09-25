@@ -1003,6 +1003,8 @@ def client_routing_key_expr(
         name = f"&{name}"
     elif kind == "FUNCTION" and param.type.format() == "CUkernel":
         name = f"reinterpret_cast<CUfunction>({name})"
+    elif kind == "DEVICEPTR" and isinstance(param.type, Pointer):
+        name = f"reinterpret_cast<CUdeviceptr>({name})"
     elif kind == "STREAM":
         # The default stream belongs to no route, so a null handle falls back.
         fallback = (
@@ -1779,8 +1781,9 @@ def main():
         try:
             metadata = parse_annotation(annotation.doxygen, function.parameters)
         except Exception as e:
-            print(f"Error parsing annotation for {function.name}: {e}")
-            continue
+            raise RuntimeError(
+                f"Error parsing annotation for {function.name.format()}"
+            ) from e
         attach_client_call_template(function, metadata, client_call_templates)
         validate_async_annotation(function, metadata)
         functions_with_annotations.append(

@@ -2916,6 +2916,42 @@ ERROR_0:
   return -1;
 }
 
+int handle_cuMemGetHandleForAddressRange(conn_t *conn) {
+  CUdeviceptr dptr;
+  size_t size;
+  CUmemRangeHandleType handleType;
+  unsigned long long flags;
+  void *handle = nullptr;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
+      rpc_read(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &handleType, sizeof(CUmemRangeHandleType)) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned long long)) < 0 || false)
+    goto ERROR_0;
+  handle = (void *)calloc(4, 1);
+  if ((4 != 0 && handle == nullptr) || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value =
+      cuMemGetHandleForAddressRange(handle, dptr, size, handleType, flags);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, handle, 4) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)handle);
+  return 0;
+ERROR_0:
+  free((void *)handle);
+  return -1;
+}
+
 int handle_cuMemAddressReserve(conn_t *conn) {
   CUdeviceptr ptr{};
   size_t size;
@@ -4736,6 +4772,43 @@ int handle_cuParamSetf(conn_t *conn) {
     goto ERROR_0;
   return 0;
 ERROR_0:
+  return -1;
+}
+
+int handle_cuParamSetv(conn_t *conn) {
+  CUfunction hfunc;
+  int offset;
+  unsigned int numbytes;
+  void *ptr = nullptr;
+  size_t ptr_size;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &hfunc, sizeof(CUfunction)) < 0 ||
+      rpc_read(conn, &offset, sizeof(int)) < 0 ||
+      rpc_read(conn, &numbytes, sizeof(unsigned int)) < 0 || false)
+    goto ERROR_0;
+  ptr_size = numbytes;
+  ptr = (void *)malloc(ptr_size);
+  if (ptr_size != 0 && ptr == nullptr)
+    goto ERROR_0;
+  if ((ptr_size != 0 && rpc_read(conn, ptr, ptr_size) < 0) || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value =
+      cuParamSetv(hfunc, offset, (numbytes == 0 ? nullptr : ptr), numbytes);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)ptr);
+  return 0;
+ERROR_0:
+  free((void *)ptr);
   return -1;
 }
 
@@ -8193,6 +8266,34 @@ int handle_cuSurfObjectGetResourceDesc(conn_t *conn) {
 ERROR_0:
   return -1;
 }
+
+#if CUDA_VERSION >= 12000
+int handle_cuTensorMapReplaceAddress(conn_t *conn) {
+  CUtensorMap tensorMap{};
+  void *globalAddress;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &tensorMap, sizeof(CUtensorMap)) < 0 ||
+      rpc_read(conn, &globalAddress, sizeof(void *)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuTensorMapReplaceAddress(&tensorMap, globalAddress);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &tensorMap, sizeof(CUtensorMap)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+#endif
 
 int handle_cuDeviceCanAccessPeer(conn_t *conn) {
   int canAccessPeer{};

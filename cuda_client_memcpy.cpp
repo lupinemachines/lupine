@@ -3907,20 +3907,30 @@ lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
   return CUDA_SUCCESS;
 }
 
-extern "C" CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray,
-                                    size_t srcOffset, size_t ByteCount) {
-  lupine_route route = lupine_route_for_default();
+static CUresult lupine_memcpy_atoh(void *dstHost, CUarray srcArray,
+                                   size_t srcOffset, size_t ByteCount,
+                                   const CUstream *hStream) {
+  lupine_route route = hStream != nullptr
+                           ? lupine_route_for_stream_or_default(*hStream)
+                           : lupine_route_for_default();
   if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn("cuMemcpyAtoH_v2", dstHost, srcArray,
-                                    srcOffset, ByteCount);
+    return hStream != nullptr
+               ? lupine_call_real_cuda_fn("cuMemcpyAtoHAsync_v2", dstHost,
+                                          srcArray, srcOffset, ByteCount,
+                                          *hStream)
+               : lupine_call_real_cuda_fn("cuMemcpyAtoH_v2", dstHost, srcArray,
+                                          srcOffset, ByteCount);
   }
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemcpyAtoH_v2) < 0 ||
+      rpc_write_start_request(conn, hStream != nullptr
+                                        ? RPC_cuMemcpyAtoHAsync_v2
+                                        : RPC_cuMemcpyAtoH_v2) < 0 ||
       rpc_write(conn, &srcArray, sizeof(srcArray)) < 0 ||
       rpc_write(conn, &srcOffset, sizeof(srcOffset)) < 0 ||
-      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0) {
+      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
+      (hStream != nullptr && rpc_write(conn, hStream, sizeof(*hStream)) < 0)) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   int request_id = rpc_write_end(conn);
@@ -3953,6 +3963,17 @@ extern "C" CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray,
     }
   } while (offset < ByteCount);
   return return_value;
+}
+
+extern "C" CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray,
+                                    size_t srcOffset, size_t ByteCount) {
+  return lupine_memcpy_atoh(dstHost, srcArray, srcOffset, ByteCount, nullptr);
+}
+
+extern "C" CUresult cuMemcpyAtoHAsync_v2(void *dstHost, CUarray srcArray,
+                                         size_t srcOffset, size_t ByteCount,
+                                         CUstream hStream) {
+  return lupine_memcpy_atoh(dstHost, srcArray, srcOffset, ByteCount, &hStream);
 }
 
 #ifdef cuMemcpyAtoH
