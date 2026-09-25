@@ -214,7 +214,7 @@ class CloudSession:
                         self.token or "",
                         expected=(200,),
                     )
-                except LupineError:
+                except Exception:
                     pass
                 stop.wait(_HEARTBEAT_INTERVAL)
 
