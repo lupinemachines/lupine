@@ -25,14 +25,11 @@
 namespace {
 
 // Responses land straight in caller buffers, so the client keeps an
-// effectively unlimited receive window; the server's window is the staging
-// budget it is willing to have pinned on a client's behalf.
+// effectively unlimited receive window; the server's window bounds what a
+// client can have in flight to it.
 constexpr uint32_t kH2ClientWindow = 0x7fffffffU;
 constexpr uint32_t kH2ServerWindow =
     static_cast<uint32_t>(LUPINE_FF_STAGING_WINDOW_BYTES);
-// Ceiling on uncredited bytes, leaving the reader window for the bytes it is
-// blocked on.
-constexpr uint64_t kH2MaxHeldBytes = LUPINE_FF_STAGING_WINDOW_BYTES / 2;
 constexpr uint32_t kH2MaxFrame = (16 * 1024 * 1024) - 1;
 constexpr size_t kH2FrameHeaderLen = 9;
 // LZ4F_max4MB, the encoder's block size. Input short of a block stays inside
@@ -91,8 +88,6 @@ struct h2_stream {
   int response_status = 0;
   std::string requested_va_base;
   std::string requested_va_size;
-  bool window_hold = false;
-  uint64_t window_hold_bytes = 0;
 };
 
 struct h2_transport {
@@ -107,9 +102,6 @@ struct h2_transport {
   std::unordered_map<int32_t, h2_stream> streams;
   std::deque<int32_t> incoming_streams;
   std::unordered_map<uint64_t, int32_t> local_lanes;
-  rpc_http2_read_stats read_stats = {};
-  uint64_t staged_bytes = 0;
-  uint64_t window_held = 0;
   // Drained staging buffers, kept for their capacity. A saturated stream
   // stages one buffer per DATA frame, and reallocating each one costs more
   // than the copy into it. Capped because a reader that falls behind can stage
@@ -206,7 +198,6 @@ void receive_bytes(h2_transport *transport, int32_t stream_id,
     if (stream.read_remaining == 0) {
       pthread_cond_broadcast(&stream.read_ready);
     }
-    transport->read_stats.direct_bytes += direct;
     data += direct;
     len -= direct;
   }
@@ -222,11 +213,6 @@ void receive_bytes(h2_transport *transport, int32_t stream_id,
   buffer.offset = 0;
   buffer.data.assign(data, data + len);
   stream.local_out.push_back(std::move(buffer));
-  transport->read_stats.staged_bytes += len;
-  ++transport->read_stats.staged_buffers;
-  transport->staged_bytes += len;
-  transport->read_stats.peak_staged_bytes = std::max(
-      transport->read_stats.peak_staged_bytes, transport->staged_bytes);
 }
 
 // Callers hold session_mutex, as every nghttp2_session_send does.
@@ -319,22 +305,11 @@ int h2_send_data_callback(nghttp2_session *, nghttp2_frame *frame,
   auto *transport = static_cast<h2_transport *>(user_data);
   h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
 
-  std::array<struct iovec, 4> iov = {};
-  int iov_count = 0;
-  iov[iov_count++] = {const_cast<uint8_t *>(framehd), kH2FrameHeaderLen};
-
-  unsigned char padlen = 0;
-  if (frame->data.padlen > 0) {
-    padlen = static_cast<unsigned char>(frame->data.padlen - 1);
-    iov[iov_count++] = {&padlen, 1};
-  }
-  iov[iov_count++] = {stream.encoded.data() + stream.encoded_offset, length};
-
-  unsigned char padding[256] = {};
-  if (frame->data.padlen > 1) {
-    iov[iov_count++] = {padding, frame->data.padlen - 1};
-  }
-  h2_queue_output(transport, iov.data(), iov_count);
+  std::array<struct iovec, 2> iov = {{
+      {const_cast<uint8_t *>(framehd), kH2FrameHeaderLen},
+      {stream.encoded.data() + stream.encoded_offset, length},
+  }};
+  h2_queue_output(transport, iov.data(), static_cast<int>(iov.size()));
 
   stream.encoded_offset += length;
   if (stream.encoded_offset == stream.encoded_size) {
@@ -364,24 +339,11 @@ ssize_t h2_data_source_read_length_callback(nghttp2_session *, uint8_t,
   return static_cast<ssize_t>(std::max<size_t>(1, max_len));
 }
 
-int h2_on_data_chunk_recv_callback(nghttp2_session *session, uint8_t,
+int h2_on_data_chunk_recv_callback(nghttp2_session *, uint8_t,
                                    int32_t stream_id, const uint8_t *data,
                                    size_t len, void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
   h2_stream &stream = h2_get_stream(transport, stream_id);
-  if (transport->server) {
-    size_t held = 0;
-    if (stream.window_hold && transport->window_held < kH2MaxHeldBytes) {
-      held = std::min<size_t>(
-          len, static_cast<size_t>(kH2MaxHeldBytes - transport->window_held));
-      transport->window_held += held;
-      stream.window_hold_bytes += held;
-    }
-    if (len > held &&
-        nghttp2_session_consume(session, stream_id, len - held) != 0) {
-      return NGHTTP2_ERR_CALLBACK_FAILURE;
-    }
-  }
   if (!stream.lz4_encoded || stream.decoder_finished) {
     return NGHTTP2_ERR_CALLBACK_FAILURE;
   }
@@ -1191,26 +1153,11 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   nghttp2_session_callbacks_set_on_header_callback(callbacks,
                                                    h2_on_header_callback);
 
-  // The server credits received DATA back by hand so a fire-and-forget payload
-  // keeps its window charged for as long as its staging buffer lives.
-  nghttp2_option *option = nullptr;
-  if (server) {
-    if (nghttp2_option_new(&option) != 0) {
-      nghttp2_session_callbacks_del(callbacks);
-      delete transport;
-      return -1;
-    }
-    nghttp2_option_set_no_auto_window_update(option, 1);
-  }
-  int session_result =
-      server ? nghttp2_session_server_new2(&transport->session, callbacks,
-                                           transport, option)
-             : nghttp2_session_client_new(&transport->session, callbacks,
-                                          transport);
+  int session_result = server ? nghttp2_session_server_new(&transport->session,
+                                                           callbacks, transport)
+                              : nghttp2_session_client_new(
+                                    &transport->session, callbacks, transport);
   nghttp2_session_callbacks_del(callbacks);
-  if (option != nullptr) {
-    nghttp2_option_del(option);
-  }
   if (session_result != 0) {
     delete transport;
     return -1;
@@ -1277,8 +1224,6 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
     memcpy(out + copied, front.data.data() + front.offset, chunk);
     front.offset += chunk;
     copied += chunk;
-    transport->read_stats.staged_read_bytes += chunk;
-    transport->staged_bytes -= chunk;
     if (front.offset == front.data.size()) {
       if (transport->buffer_pool_bytes + front.data.capacity() <=
           kH2StagingPoolBytes) {
@@ -1325,11 +1270,6 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
   return result;
 }
 
-int rpc_http2_read(conn_t *conn, void *data, size_t size) {
-  auto *transport = static_cast<h2_transport *>(conn->http2);
-  return rpc_http2_read_stream(conn, transport->dispatch_stream_id, data, size);
-}
-
 int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
                            std::vector<rpc_write_cursor> &cursors) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
@@ -1345,11 +1285,6 @@ int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
   transport->output_generation.fetch_add(1, std::memory_order_release);
   pthread_cond_broadcast(&transport->writer_ready);
   return result;
-}
-
-int rpc_http2_write(conn_t *conn, std::vector<rpc_write_cursor> &cursors) {
-  auto *transport = static_cast<h2_transport *>(conn->http2);
-  return rpc_http2_write_stream(conn, transport->dispatch_stream_id, cursors);
 }
 
 int32_t rpc_http2_dispatch_stream(conn_t *conn) {
@@ -1421,24 +1356,6 @@ int h2_end_stream_locked(h2_transport *transport, int32_t stream_id) {
 
 } // namespace
 
-// Emits the encoder tails on the caller instead of the write thread: for a
-// message the caller is about to wait on, nothing is gained by deferring, and
-// the flush would only drag the encoder and framing state onto the other core.
-int rpc_http2_flush(conn_t *conn) {
-  if (conn == nullptr || conn->http2 == nullptr) {
-    return -1;
-  }
-  auto *transport = static_cast<h2_transport *>(conn->http2);
-  pthread_mutex_lock(&transport->session_mutex);
-  if (h2_flush_pending_locked(transport) < 0) {
-    transport->write_failed = true;
-  }
-  h2_drain_output_locked(transport);
-  int result = transport->write_failed ? -1 : 0;
-  pthread_mutex_unlock(&transport->session_mutex);
-  return result;
-}
-
 int rpc_http2_end_stream(conn_t *conn, int32_t stream_id) {
   if (conn == nullptr || conn->http2 == nullptr || stream_id < 0) {
     return -1;
@@ -1495,17 +1412,6 @@ const char *rpc_http2_session_id(conn_t *conn) {
                                        : transport->session_id.c_str();
 }
 
-int rpc_http2_get_read_stats(conn_t *conn, rpc_http2_read_stats *stats) {
-  if (conn == nullptr || conn->http2 == nullptr || stats == nullptr) {
-    return -1;
-  }
-  auto *transport = static_cast<h2_transport *>(conn->http2);
-  pthread_mutex_lock(&transport->session_mutex);
-  *stats = transport->read_stats;
-  pthread_mutex_unlock(&transport->session_mutex);
-  return 0;
-}
-
 void rpc_http2_response_wait_begin(conn_t *conn) {
   if (conn == nullptr || conn->http2 == nullptr) {
     return;
@@ -1530,55 +1436,6 @@ void rpc_http2_response_wait_end(conn_t *conn) {
   pthread_mutex_lock(&transport->session_mutex);
   if (transport->response_waiters > 0) {
     --transport->response_waiters;
-  }
-  pthread_mutex_unlock(&transport->session_mutex);
-}
-
-void rpc_http2_window_hold_begin(conn_t *conn) {
-  if (conn == nullptr || conn->http2 == nullptr) {
-    return;
-  }
-  auto *transport = static_cast<h2_transport *>(conn->http2);
-  int32_t stream_id = rpc_current_http2_stream(conn);
-  pthread_mutex_lock(&transport->session_mutex);
-  h2_stream &stream = h2_get_stream(transport, stream_id);
-  stream.window_hold = true;
-  stream.window_hold_bytes = 0;
-  pthread_mutex_unlock(&transport->session_mutex);
-}
-
-rpc_http2_window_credit rpc_http2_window_hold_end(conn_t *conn) {
-  if (conn == nullptr || conn->http2 == nullptr) {
-    return {};
-  }
-  auto *transport = static_cast<h2_transport *>(conn->http2);
-  int32_t stream_id = rpc_current_http2_stream(conn);
-  pthread_mutex_lock(&transport->session_mutex);
-  h2_stream &stream = h2_get_stream(transport, stream_id);
-  rpc_http2_window_credit credit{stream_id, stream.window_hold_bytes};
-  stream.window_hold = false;
-  stream.window_hold_bytes = 0;
-  pthread_mutex_unlock(&transport->session_mutex);
-  return credit;
-}
-
-// Whichever thread retires the staging emits the credit itself, under
-// session_mutex alone: the transport never takes a staging lock, and nothing
-// holding session_mutex waits on staging, so a reader starved of window is
-// never queued behind the release that would feed it. kH2MaxHeldBytes closes
-// the other half of the cycle -- staging that never retires cannot shut the
-// window on the reads that would retire it.
-void rpc_http2_window_release(conn_t *conn, rpc_http2_window_credit credit) {
-  if (conn == nullptr || conn->http2 == nullptr || credit.bytes == 0 ||
-      credit.stream_id < 0) {
-    return;
-  }
-  auto *transport = static_cast<h2_transport *>(conn->http2);
-  pthread_mutex_lock(&transport->session_mutex);
-  transport->window_held -= std::min(credit.bytes, transport->window_held);
-  if (nghttp2_session_consume(transport->session, credit.stream_id,
-                              credit.bytes) == 0) {
-    (void)h2_flush_session_locked(transport);
   }
   pthread_mutex_unlock(&transport->session_mutex);
 }
@@ -1730,10 +1587,6 @@ const char *rpc_http2_peer_bulk_token(conn_t *conn) {
                           : transport->peer_bulk_token.c_str();
   pthread_mutex_unlock(&transport->session_mutex);
   return token;
-}
-
-int rpc_http2_server_init(conn_t *conn) {
-  return rpc_http2_server_init_with_metadata(conn, nullptr);
 }
 
 int rpc_http2_server_init_with_metadata(

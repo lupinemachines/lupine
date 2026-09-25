@@ -412,7 +412,6 @@ void rpc_conn_destroy(conn_t *conn) {
     return;
   }
   rpc_close_transport_socket(conn);
-  rpc_http2_destroy(conn);
   lupine_va_release(conn);
   conn->completed_async_sequences.clear();
   rpc_write_buffer_release(conn);
@@ -782,9 +781,6 @@ int rpc_read_end(conn_t *conn) {
     return read_id;
   }
   rpc_release_held_call_lock(conn);
-  if (conn != nullptr && !conn->closed) {
-    return -1;
-  }
   return -1;
 }
 
