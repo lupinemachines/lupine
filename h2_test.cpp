@@ -103,7 +103,8 @@ void init_pair(h2_pair *pair) {
   init_pair_sockets(pair);
   require(rpc_http2_client_init(&pair->client) == 0, "client h2 init failed");
   rpc_http2_client_start_heartbeat(&pair->client);
-  require(rpc_http2_server_init(&pair->server) == 0, "server h2 init failed");
+  require(rpc_http2_server_init_with_metadata(&pair->server, nullptr) == 0,
+          "server h2 init failed");
 }
 
 void init_pair_sockets(h2_pair *pair) {
@@ -115,18 +116,27 @@ void init_pair_sockets(h2_pair *pair) {
           "server RPC init failed");
 }
 
+int read_dispatch(conn_t *conn, void *data, size_t size) {
+  return rpc_http2_read_stream(conn, rpc_http2_dispatch_stream(conn), data,
+                               size);
+}
+
+int write_dispatch(conn_t *conn, std::vector<rpc_write_cursor> &cursors) {
+  return rpc_http2_write_stream(conn, rpc_http2_dispatch_stream(conn), cursors);
+}
+
 void write_all(conn_t *conn, const std::vector<std::string> &chunks) {
   std::vector<rpc_write_cursor> cursors;
   cursors.reserve(chunks.size());
   for (const std::string &chunk : chunks) {
     cursors.push_back(rpc_write_cursor(chunk.data(), chunk.size()));
   }
-  require(rpc_http2_write(conn, cursors) == 0, "h2 write failed");
+  require(write_dispatch(conn, cursors) == 0, "h2 write failed");
 }
 
 int write_bytes(conn_t *conn, const void *data, size_t size) {
   std::vector<rpc_write_cursor> cursors = {rpc_write_cursor(data, size)};
-  return rpc_http2_write(conn, cursors);
+  return write_dispatch(conn, cursors);
 }
 
 int write_stream_bytes(conn_t *conn, int32_t stream_id, const void *data,
@@ -137,16 +147,10 @@ int write_stream_bytes(conn_t *conn, int32_t stream_id, const void *data,
 
 std::string read_string(conn_t *conn, size_t size) {
   std::string output(size, '\0');
-  require(rpc_http2_read(conn, output.data(), output.size()) ==
+  require(read_dispatch(conn, output.data(), output.size()) ==
               static_cast<int>(output.size()),
           "h2 read failed");
   return output;
-}
-
-rpc_http2_read_stats read_stats(conn_t *conn) {
-  rpc_http2_read_stats stats = {};
-  require(rpc_http2_get_read_stats(conn, &stats) == 0, "read stats failed");
-  return stats;
 }
 
 bool raw_write_all(lupine_socket_t socket, const unsigned char *data,
@@ -232,7 +236,7 @@ void test_server_rejects_request_without_lz4_encoding() {
           "raw client request submission failed");
   require(nghttp2_session_send(session) == 0, "raw client request send failed");
 
-  require(rpc_http2_server_init(&pair.server) > 0,
+  require(rpc_http2_server_init_with_metadata(&pair.server, nullptr) > 0,
           "server accepted a request without content-encoding: lz4");
   nghttp2_session_del(session);
 }
@@ -431,7 +435,7 @@ void test_head_probe_cuda_version_metadata(const char *expected_cuda_version) {
     server_result =
         rpc_http2_server_init_with_metadata(&pair.server, &metadata);
   } else {
-    server_result = rpc_http2_server_init(&pair.server);
+    server_result = rpc_http2_server_init_with_metadata(&pair.server, nullptr);
   }
   probe.join();
 
@@ -528,8 +532,9 @@ void test_client_retries_va_conflict_on_same_connection() {
   lupine_socket_t socket = pair.client.connfd;
 
   int server_result = -1;
-  std::thread server(
-      [&] { server_result = rpc_http2_server_init(&pair.server); });
+  std::thread server([&] {
+    server_result = rpc_http2_server_init_with_metadata(&pair.server, nullptr);
+  });
   require(rpc_http2_client_init(&pair.client) == LUPINE_RPC_HTTP2_VA_CONFLICT,
           "server did not reject the occupied test arena");
 
@@ -602,7 +607,8 @@ void test_client_metadata_report(int metadata_status) {
     require(rpc_read_end(&pair.client) > 0, "follow-up response end failed");
   });
 
-  require(rpc_http2_server_init(&pair.server) == 0, "server h2 init failed");
+  require(rpc_http2_server_init_with_metadata(&pair.server, nullptr) == 0,
+          "server h2 init failed");
   int32_t stream_id = rpc_http2_accept_stream(&pair.server);
   require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
           "metadata stream bind failed");
@@ -760,7 +766,8 @@ void test_client_await_ready_reports_va_window() {
             "client was not accepted");
     stated = rpc_http2_peer_va_window(&pair.client, &peer);
   });
-  require(rpc_http2_server_init(&pair.server) == 0, "server h2 init failed");
+  require(rpc_http2_server_init_with_metadata(&pair.server, nullptr) == 0,
+          "server h2 init failed");
   client.join();
 
   const lupine_va_window local = lupine_va_local_window();
@@ -807,7 +814,6 @@ void test_fragmented_frames_direct() {
   h2_pair pair;
   init_pair(&pair);
   exchange_settings(&pair);
-  const rpc_http2_read_stats before = read_stats(&pair.server);
   const std::string expected = "fragmented-data";
   std::string received;
   std::thread reader(
@@ -818,11 +824,6 @@ void test_fragmented_frames_direct() {
   write_all(&pair.client, {"-data"});
   reader.join();
   require(received == expected, "fragmented frame mismatch");
-  const rpc_http2_read_stats after = read_stats(&pair.server);
-  require(after.direct_bytes - before.direct_bytes == received.size(),
-          "fragmented frames were not read directly");
-  require(after.staged_bytes == before.staged_bytes,
-          "fragmented frames unexpectedly staged bytes");
 }
 
 void test_partial_read_stages_only_overflow() {
@@ -834,31 +835,18 @@ void test_partial_read_stages_only_overflow() {
     payload[i] = static_cast<char>(i & 0x7f);
   }
   std::string received(payload.size(), '\0');
-  const rpc_http2_read_stats before = read_stats(&pair.server);
   std::thread reader([&] {
-    require(rpc_http2_read(&pair.server, received.data(), 7) == 7,
+    require(read_dispatch(&pair.server, received.data(), 7) == 7,
             "partial prefix read failed");
-    require(rpc_http2_read(&pair.server, received.data() + 7,
-                           received.size() - 7) ==
-                static_cast<int>(received.size() - 7),
-            "partial suffix read failed");
+    require(
+        read_dispatch(&pair.server, received.data() + 7, received.size() - 7) ==
+            static_cast<int>(received.size() - 7),
+        "partial suffix read failed");
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   write_all(&pair.client, {payload});
   reader.join();
   require(received == payload, "partial read payload mismatch");
-  const rpc_http2_read_stats after = read_stats(&pair.server);
-  require(after.direct_bytes - before.direct_bytes == 7,
-          "partial read direct byte count mismatch");
-  require(after.staged_bytes - before.staged_bytes == payload.size() - 7,
-          "partial read staged byte count mismatch");
-  require(after.staged_read_bytes - before.staged_read_bytes ==
-              payload.size() - 7,
-          "partial read staged-copy count mismatch");
-  require(after.staged_buffers - before.staged_buffers == 1,
-          "partial read staging allocation count mismatch");
-  require(after.peak_staged_bytes >= payload.size() - 7,
-          "partial read peak staging mismatch");
 }
 
 void test_truncated_read_clears_direct_destination() {
@@ -869,11 +857,11 @@ void test_truncated_read_clears_direct_destination() {
   const std::string prefix = "truncated";
   int read_result = 0;
   std::thread reader([&] {
-    read_result = rpc_http2_read(&pair.server, guarded.data() + 8, 32);
+    read_result = read_dispatch(&pair.server, guarded.data() + 8, 32);
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   write_all(&pair.client, {prefix});
-  require(rpc_http2_flush(&pair.client) == 0, "truncated writer flush failed");
+  rpc_http2_destroy(&pair.client);
   require(shutdown(pair.client.connfd, LUPINE_TEST_SHUT_WR) == 0,
           "truncated writer shutdown failed");
   reader.join();
@@ -904,7 +892,7 @@ void test_shutdown_wakes_idle_reader() {
   int result = 0;
   std::thread reader([&] {
     char byte;
-    result = rpc_http2_read(&pair.client, &byte, sizeof(byte));
+    result = read_dispatch(&pair.client, &byte, sizeof(byte));
   });
   // Keep the peer alive and silent while the local socket reader blocks.
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -1107,7 +1095,7 @@ void test_socket_reader_hands_off_between_streams() {
   char lane_value = '\0';
   std::atomic<bool> lane_done{false};
   std::thread dispatch_reader([&] {
-    require(rpc_http2_read(&pair.client, &dispatch_value, 1) == 1,
+    require(read_dispatch(&pair.client, &dispatch_value, 1) == 1,
             "dispatch stream handoff read failed");
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -1171,8 +1159,7 @@ void test_large_payload() {
                                rpc_http2_dispatch_stream(&pair.client)) == 0,
           "large payload stream end failed");
   char extra;
-  require(rpc_http2_read(&pair.server, &extra, 1) ==
-              LUPINE_RPC_HTTP2_STREAM_END,
+  require(read_dispatch(&pair.server, &extra, 1) == LUPINE_RPC_HTTP2_STREAM_END,
           "reader did not observe the end of the payload stream");
 }
 
@@ -1199,7 +1186,7 @@ void test_payload_larger_than_flow_control_window() {
     std::array<unsigned char, 64 * 1024> buffer = {};
     while (received < payload_size) {
       size_t chunk = std::min(buffer.size(), payload_size - received);
-      if (rpc_http2_read(&pair.server, buffer.data(), chunk) !=
+      if (read_dispatch(&pair.server, buffer.data(), chunk) !=
           static_cast<int>(chunk)) {
         read_failed = true;
         break;
@@ -1217,7 +1204,7 @@ void test_payload_larger_than_flow_control_window() {
   // peer's WINDOW_UPDATE frames is what lets a large write make progress.
   std::thread client_control_reader([&] {
     unsigned char unused = 0;
-    (void)rpc_http2_read(&pair.client, &unused, sizeof(unused));
+    (void)read_dispatch(&pair.client, &unused, sizeof(unused));
   });
 
   int write_result = write_bytes(&pair.client, payload.data(), payload.size());
@@ -1232,107 +1219,6 @@ void test_payload_larger_than_flow_control_window() {
   require(write_result == 0, "flow-controlled write failed before completion");
   require(!read_failed, "flow-controlled read failed");
   require(received == payload_size, "flow-controlled payload was truncated");
-}
-
-// A server-side hold keeps received payload bytes uncredited until the staging
-// they landed in retires. Held bytes saturate at a cap so the reader filling
-// the hold always has credit left for the bytes it is blocked on, and the
-// release hands the rest back.
-void test_server_window_hold_caps_and_releases() {
-  h2_pair pair;
-  init_pair(&pair);
-  exchange_settings(&pair);
-
-  constexpr size_t kBurst = LUPINE_FF_STAGING_WINDOW_BYTES;
-  std::vector<char> payload(kBurst);
-  uint32_t seed = 17;
-  for (char &byte : payload) {
-    seed = seed * 1664525u + 1013904223u;
-    byte = static_cast<char>(seed >> 24);
-  }
-  std::vector<char> received(kBurst, '\0');
-  rpc_http2_window_credit held;
-
-  // As on a production connection, the client's dispatch thread is what applies
-  // the server's WINDOW_UPDATE frames; it releases when the server replies.
-  std::thread client_control_reader([&] {
-    unsigned char unused = 0;
-    (void)rpc_http2_read(&pair.client, &unused, sizeof(unused));
-  });
-
-  std::thread reader([&] {
-    rpc_http2_window_hold_begin(&pair.server);
-    require(rpc_http2_read(&pair.server, received.data(), received.size()) ==
-                static_cast<int>(received.size()),
-            "held payload read failed");
-    held = rpc_http2_window_hold_end(&pair.server);
-  });
-  require(write_bytes(&pair.client, payload.data(), payload.size()) == 0,
-          "held write failed");
-  reader.join();
-  require(received == payload, "held payload mismatch");
-  require(held.bytes == LUPINE_FF_STAGING_WINDOW_BYTES / 2,
-          "held bytes did not saturate at the cap");
-
-  // The cap is connection-wide, not per stream: otherwise enough busy lanes
-  // could consume the connection window and starve control traffic.
-  constexpr size_t kSecondLaneBurst = 1024 * 1024;
-  int32_t client_lane = rpc_http2_lane_stream(&pair.client, 303);
-  int32_t server_lane = rpc_http2_accept_stream(&pair.server);
-  require(client_lane > 0 && server_lane == client_lane,
-          "second held lane setup failed");
-  std::vector<char> second_payload(kSecondLaneBurst);
-  for (char &byte : second_payload) {
-    seed = seed * 1664525u + 1013904223u;
-    byte = static_cast<char>(seed >> 24);
-  }
-  std::vector<char> second_received(kSecondLaneBurst, '\0');
-  rpc_http2_window_credit second_held;
-  std::thread second_reader([&] {
-    require(rpc_bind_http2_stream(&pair.server, server_lane) == 0,
-            "second held lane bind failed");
-    rpc_http2_window_hold_begin(&pair.server);
-    require(rpc_http2_read_stream(&pair.server, server_lane,
-                                  second_received.data(),
-                                  second_received.size()) ==
-                static_cast<int>(second_received.size()),
-            "second held lane read failed");
-    second_held = rpc_http2_window_hold_end(&pair.server);
-    rpc_unbind_http2_stream(&pair.server);
-  });
-  require(write_stream_bytes(&pair.client, client_lane, second_payload.data(),
-                             second_payload.size()) == 0,
-          "second held lane write failed");
-  second_reader.join();
-  require(second_received == second_payload,
-          "second held lane payload mismatch");
-  require(second_held.bytes == 0,
-          "window hold cap was incorrectly applied per stream");
-
-  // Still holding: the uncapped remainder must have been credited, so another
-  // window's worth of payload still flows.
-  std::fill(received.begin(), received.end(), '\0');
-  std::thread held_reader([&] {
-    require(rpc_http2_read(&pair.server, received.data(), received.size()) ==
-                static_cast<int>(received.size()),
-            "read under an outstanding hold failed");
-  });
-  require(write_bytes(&pair.client, payload.data(), payload.size()) == 0,
-          "write under an outstanding hold failed");
-  held_reader.join();
-  require(received == payload, "payload under an outstanding hold mismatch");
-
-  rpc_http2_window_release(&pair.server, held);
-  std::string tail = "released";
-  std::string received_tail;
-  std::thread tail_reader(
-      [&] { received_tail = read_string(&pair.server, tail.size()); });
-  write_all(&pair.client, {tail});
-  tail_reader.join();
-  require(received_tail == tail, "payload after release mismatch");
-
-  write_all(&pair.server, {"z"});
-  client_control_reader.join();
 }
 
 void test_reset_wakes_flow_controlled_writer() {
@@ -1432,11 +1318,11 @@ void test_lz4_content_encoding_round_trip() {
   std::thread reader([&] {
     received_prefix = read_string(&pair.server, prefix.size());
     size_t first = LUPINE_RPC_TRANSFER_CHUNK_BYTES;
-    require(rpc_http2_read(&pair.server, received.data(), first) ==
+    require(read_dispatch(&pair.server, received.data(), first) ==
                 static_cast<int>(first),
             "LZ4 read part 1 failed");
-    require(rpc_http2_read(&pair.server, received.data() + first,
-                           received.size() - first) ==
+    require(read_dispatch(&pair.server, received.data() + first,
+                          received.size() - first) ==
                 static_cast<int>(received.size() - first),
             "LZ4 read part 2 failed");
     received_suffix = read_string(&pair.server, suffix.size());
@@ -1446,7 +1332,7 @@ void test_lz4_content_encoding_round_trip() {
       rpc_write_cursor(prefix.data(), prefix.size()),
       rpc_write_cursor(payload.data(), payload.size()),
       rpc_write_cursor(suffix.data(), suffix.size())};
-  require(rpc_http2_write(&pair.client, cursors) == 0, "LZ4 write failed");
+  require(write_dispatch(&pair.client, cursors) == 0, "LZ4 write failed");
   reader.join();
   require(received_prefix == prefix, "LZ4 prefix mismatch");
   require(received == payload, "LZ4 payload mismatch");
@@ -1494,7 +1380,7 @@ void test_refillable_cursor_round_trip() {
       rpc_write_cursor(prefix.data(), prefix.size()),
       rpc_write_cursor(refill_next_chunk, &source),
       rpc_write_cursor(suffix.data(), suffix.size())};
-  require(rpc_http2_write(&pair.client, cursors) == 0,
+  require(write_dispatch(&pair.client, cursors) == 0,
           "refillable cursor write failed");
   reader.join();
 
@@ -1525,7 +1411,7 @@ void test_refillable_cursor_across_flow_control_window() {
   });
   rpc_write_cursor cursor(refill_next_chunk, &source);
   std::vector<rpc_write_cursor> cursors = {cursor};
-  require(rpc_http2_write(&pair.client, cursors) == 0,
+  require(write_dispatch(&pair.client, cursors) == 0,
           "flow-controlled refillable cursor write failed");
   reader.join();
 
@@ -2071,18 +1957,21 @@ void test_async_prefix_wait_preserves_flow_control() {
               rpc_read_end(&pair.server) > 0 &&
               rpc_async_sequence_begin(&pair.server, sequence) == 0,
           "producer dispatch");
-  std::vector<unsigned char> payload(LUPINE_FF_STAGING_WINDOW_BYTES + 65537);
+  // Twice the window: the sender finishes only if the server keeps crediting.
+  std::vector<unsigned char> payload(2 * LUPINE_FF_STAGING_WINDOW_BYTES);
   uint32_t seed = 53;
   for (auto &byte : payload) {
     seed = seed * 1664525u + 1013904223u;
     byte = static_cast<unsigned char>(seed >> 24);
   }
+  std::atomic<bool> sent{false};
   std::thread sender([&] {
     rpc_write_cursor cursor(payload.data(), payload.size());
     require(rpc_write_start_request(&pair.client, 102) == 0 &&
                 rpc_write_cursors(&pair.client, &cursor, 1) == 0 &&
                 rpc_write_end(&pair.client) > 0,
             "consumer enqueue");
+    sent = true;
   });
   int32_t consumer_lane = rpc_http2_accept_stream(&pair.server);
   std::atomic<bool> consumed{false};
@@ -2097,8 +1986,8 @@ void test_async_prefix_wait_preserves_flow_control() {
     consumed = true;
     rpc_unbind_http2_stream(&pair.server);
   });
-  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (read_stats(&pair.server).staged_bytes < payload.size()) {
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  while (!sent) {
     require(std::chrono::steady_clock::now() < deadline,
             "prefix wait stopped flow-control progress");
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -2289,7 +2178,6 @@ int main() {
   RUN_CASE(test_refillable_cursor_across_flow_control_window());
 #endif
   RUN_CASE(test_payload_larger_than_flow_control_window());
-  RUN_CASE(test_server_window_hold_caps_and_releases());
   RUN_CASE(test_reset_wakes_flow_controlled_writer());
   std::cout << "h2_test: PASS" << std::endl;
   return 0;

@@ -50,14 +50,6 @@ struct rpc_write_cursor {
   bool pending() const { return size != 0 || refill != nullptr; }
 };
 
-struct rpc_http2_read_stats {
-  uint64_t direct_bytes;
-  uint64_t staged_bytes;
-  uint64_t staged_read_bytes;
-  uint64_t staged_buffers;
-  uint64_t peak_staged_bytes;
-};
-
 // Remote accelerator and pinned-host addresses live in this upper canonical
 // VA band. Driver shims map their application and transport views at fixed
 // offsets from that address, so the RPC core can translate without knowing
@@ -266,18 +258,13 @@ constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;
 // The selected native client object no longer matches the server. Retrying an
 // arena slot cannot help; the launcher must fetch the advertised bundle.
 constexpr int LUPINE_RPC_HTTP2_CLIENT_MISMATCH = -4;
-extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
 extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                                  size_t size);
-extern int rpc_http2_write(conn_t *conn,
-                           std::vector<rpc_write_cursor> &cursors);
 extern int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
                                   std::vector<rpc_write_cursor> &cursors);
 extern int32_t rpc_http2_dispatch_stream(conn_t *conn);
 extern int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id);
 extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);
-// Blocks until every queued wire byte has reached the socket.
-extern int rpc_http2_flush(conn_t *conn);
 extern int32_t rpc_http2_accept_stream(conn_t *conn);
 extern int rpc_http2_client_init(conn_t *conn);
 // Sends another arena preflight on the existing HTTP/2 connection and waits
@@ -321,7 +308,6 @@ extern const char *rpc_http2_peer_bulk_token(conn_t *conn);
 extern bool rpc_http2_peer_va_window(conn_t *conn, lupine_va_window *window);
 // Returns -1 on failure, 0 for an RPC connection, and a positive value when
 // the HTTP layer has already handled the request.
-extern int rpc_http2_server_init(conn_t *conn);
 extern int
 rpc_http2_server_init_with_metadata(conn_t *conn,
                                     const rpc_http2_server_metadata *metadata);
@@ -332,28 +318,11 @@ extern int rpc_http2_server_graceful_shutdown(conn_t *conn);
 // Returns the x-lupine-session request header after the server has consumed
 // the HTTP/2 request headers, or nullptr when no session was supplied.
 extern const char *rpc_http2_session_id(conn_t *conn);
-extern int rpc_http2_get_read_stats(conn_t *conn, rpc_http2_read_stats *stats);
 
 // Keeps the client-to-server TCP path active while a synchronous RPC waits for
 // its response. The heartbeat is transport-only: it emits HTTP/2 PING frames
 // and does not add, combine, or otherwise change application RPCs.
 extern void rpc_http2_response_wait_begin(conn_t *conn);
 extern void rpc_http2_response_wait_end(conn_t *conn);
-
-// Server-side flow control for payloads that outlive the read that received
-// them. Between hold_begin and hold_end the transport stops crediting received
-// DATA bytes back to the peer; hold_end returns the byte count the caller now
-// owns and must hand to rpc_http2_window_release once the buffer those bytes
-// landed in is idle. Credit stays tagged with its stream because HTTP/2 flow
-// control is stream-specific. Held bytes are capped, so a caller that never
-// releases costs window but cannot close it.
-struct rpc_http2_window_credit {
-  int32_t stream_id = -1;
-  uint64_t bytes = 0;
-};
-extern void rpc_http2_window_hold_begin(conn_t *conn);
-extern rpc_http2_window_credit rpc_http2_window_hold_end(conn_t *conn);
-extern void rpc_http2_window_release(conn_t *conn,
-                                     rpc_http2_window_credit credit);
 
 #endif
