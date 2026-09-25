@@ -241,9 +241,6 @@ inline int fstat(int fd, lupine_file_stat *status) {
 inline int close(int fd) { return _close(fd); }
 
 inline char *strdup(const char *value) { return _strdup(value); }
-inline int strcasecmp(const char *first, const char *second) {
-  return _stricmp(first, second);
-}
 
 #ifndef O_RDONLY
 #define O_RDONLY _O_RDONLY

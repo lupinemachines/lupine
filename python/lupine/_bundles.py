@@ -258,12 +258,10 @@ def _download(
     server: str,
     platform_key: str,
     required_names: tuple[str, ...],
-    *,
-    unconditional: bool = False,
 ) -> tuple[Path, str]:
     cache = _cache_root()
     selector = _selector_path(cache, server, platform_key)
-    previous = None if unconditional else _read_selector(selector)
+    previous = _read_selector(selector)
     headers = {"Accept": "application/vnd.lupine.client-bundle.v1+zip"}
     session = os.environ.get("LUPINE_SESSION")
     if session:
@@ -280,15 +278,7 @@ def _download(
         response = urllib.request.urlopen(request, timeout=300)
     except urllib.error.HTTPError as exc:
         if exc.code == 304 and previous:
-            candidate = cache / "clients" / _etag_digest(previous)
-            if _validate_directory(candidate, previous, platform_key, required_names):
-                return candidate, previous
-            return _download(
-                server,
-                platform_key,
-                required_names,
-                unconditional=True,
-            )
+            return cache / "clients" / _etag_digest(previous), previous
         raise
 
     with response:

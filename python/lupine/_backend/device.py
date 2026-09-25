@@ -89,8 +89,7 @@ def _forwarded(name: str) -> Any:
     def call(*args: Any, **kwargs: Any) -> Any:
         payload = ([_to_worker(a) for a in args], {k: _to_worker(v) for k, v in kwargs.items()})
         encoded = base64.b64encode(pickle.dumps(payload)).decode()
-        result = _eval(f"_cuda({name!r}, {encoded!r}, {_C().current_device()})")
-        return pickle.loads(base64.b64decode(result))
+        return _eval(f"_cuda({name!r}, {encoded!r}, {_C().current_device()})")
 
     call.__name__ = name
     return call
