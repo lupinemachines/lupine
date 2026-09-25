@@ -583,7 +583,7 @@ class Executor:
             self.server.respond(ticket, wire.MISSING_OP, str(exc).encode())
             return
         except Exception as exc:
-            error = _message(exc)
+            error = self.take_error() or _message(exc)
         if error is not None:
             self.server.respond(ticket, wire.ERROR, error.encode())
         else:
