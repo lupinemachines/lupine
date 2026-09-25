@@ -22,10 +22,6 @@ from typing import IO
 from . import LupineError
 from ._worker import READY_PREFIX
 
-# Passed through to the worker so it authenticates and selects devices the
-# way the host process would.
-_INHERITED_ENV = ("LUPINE_SESSION", "CUDA_VISIBLE_DEVICES", "LUPINE_LOG_LEVEL", "LUPINE_WORKER_DEVICE")
-
 
 @dataclass
 class Worker:
@@ -58,9 +54,7 @@ class Worker:
 
 
 def _worker_environment(servers: tuple[str, ...]) -> dict[str, str]:
-    env = {name: os.environ[name] for name in _INHERITED_ENV if os.environ.get(name)}
-    env["LUPINE_SERVER"] = ",".join(servers)
-    env["PYTHONUNBUFFERED"] = "1"
+    env = {"LUPINE_SERVER": ",".join(servers), "PYTHONUNBUFFERED": "1"}
     libdir = os.environ.get("LUPINE_WORKER_LIBDIR")
     if libdir:
         env["LUPINE_LIBDIR"] = libdir

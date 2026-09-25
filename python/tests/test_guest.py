@@ -22,16 +22,22 @@ def test_subprocess_worker_needs_an_interpreter(monkeypatch):
         lupine._guest._subprocess_command(("h:1",))
 
 
-def test_worker_environment_inherits_session_and_devices(monkeypatch):
-    monkeypatch.setenv("LUPINE_SESSION", "lease")
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-abc")
+def test_worker_environment_sets_server_and_libdir(monkeypatch):
     monkeypatch.setenv("LUPINE_WORKER_LIBDIR", "/tmp/libs")
     env = lupine._guest._worker_environment(("a:1", "b:2"))
     assert env["LUPINE_SERVER"] == "a:1,b:2"
-    assert env["LUPINE_SESSION"] == "lease"
-    assert env["CUDA_VISIBLE_DEVICES"] == "GPU-abc"
     assert env["LUPINE_LIBDIR"] == "/tmp/libs"
     assert os.environ.get("LUPINE_LIBDIR") is None
+
+
+def test_subprocess_command_inherits_session_and_devices(monkeypatch):
+    monkeypatch.setenv("LUPINE_WORKER_PYTHON", "python3")
+    monkeypatch.setenv("LUPINE_SESSION", "lease")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "GPU-abc")
+    _, env = lupine._guest._subprocess_command(("a:1", "b:2"))
+    assert env["LUPINE_SERVER"] == "a:1,b:2"
+    assert env["LUPINE_SESSION"] == "lease"
+    assert env["CUDA_VISIBLE_DEVICES"] == "GPU-abc"
 
 
 def test_macos_without_a_worker_to_attach_names_the_follow_up(monkeypatch):

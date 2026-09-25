@@ -24,7 +24,6 @@ only handles and offsets, plus the call when it differs from the template's.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import socket
 import sys
@@ -64,16 +63,16 @@ def _exec(code: str) -> None:
     exec(code, _namespace)
 
 
-def _eval(code: str) -> str:
+def _eval(code: str) -> Any:
     if "torch" not in _namespace:
         _prepare_namespace()
-    return json.dumps(eval(code, _namespace))
+    return eval(code, _namespace)
 
 
 # The host's torch.cuda module forwards its queries and setters here (see
 # _backend.device): pickled arguments, the host's current device selected,
-# a pickled result. Device properties are rebuilt as the host's own class.
-def _cuda(name: str, payload: str, device: int) -> str:
+# the result. Device properties are rebuilt as the host's own class.
+def _cuda(name: str, payload: str, device: int) -> Any:
     import base64
     import pickle
 
@@ -102,7 +101,7 @@ def _cuda(name: str, payload: str, device: int) -> str:
                 for value in [getattr(result, key)]
             }
         )
-    return base64.b64encode(pickle.dumps(result)).decode()
+    return result
 
 
 # CUDA graph capture happens here, on the worker's torch: every op runs on
@@ -567,9 +566,11 @@ class Executor:
                 cpu = t.contiguous().cpu()
                 payload = wire.cpu_buffer(cpu)
             elif kind == wire.EVAL:
+                import pickle
+
                 frees, _, _, _ = wire.unpack_meta(meta)
                 self.apply_frees(frees)
-                payload = _eval(body.decode()).encode()
+                payload = pickle.dumps(_eval(body.decode()))
             elif kind == wire.SYNC:
                 frees, _, _, _ = wire.unpack_meta(meta)
                 self.apply_frees(frees)

@@ -25,7 +25,6 @@ way; only the metadata kernels are C++ (``csrc``).
 from __future__ import annotations
 
 import atexit
-import json
 import os
 import pickle
 import sys
@@ -427,7 +426,7 @@ class Backend:
         self.client.send(wire.EXEC, self.meta([]), code.encode())
 
     def eval_(self, code: str) -> Any:
-        return json.loads(self.call(wire.EVAL, self.meta([]), code.encode()))
+        return pickle.loads(self.call(wire.EVAL, self.meta([]), code.encode()))
 
     def release(self, handle: int) -> None:
         self.frees.append(handle)
