@@ -1194,8 +1194,8 @@ CUresult cuMemMap(CUdeviceptr ptr, size_t size, size_t offset,
                   CUmemGenericAllocationHandle handle,
                   unsigned long long flags);
 /**
- * @param mapInfoList SEND_RECV
  * @param count SEND_ONLY
+ * @param mapInfoList SEND_ONLY LENGTH:count
  * @param hStream SEND_ONLY
  */
 CUresult cuMemMapArrayAsync(CUarrayMapInfo *mapInfoList, unsigned int count,
@@ -1948,7 +1948,7 @@ CUresult cuStreamWriteValue64_v2(CUstream stream, CUdeviceptr addr,
 /**
  * @param stream SEND_ONLY
  * @param count SEND_ONLY
- * @param paramArray SEND_RECV
+ * @param paramArray SEND_ONLY LENGTH:count
  * @param flags SEND_ONLY
  */
 CUresult cuStreamBatchMemOp_v2(CUstream stream, unsigned int count,
@@ -2066,9 +2066,6 @@ CUresult cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
                                    unsigned int sharedMemBytes,
                                    CUstream hStream, void **kernelParams);
 /**
- * @param launchParamsList SEND_RECV
- * @param numDevices SEND_ONLY
- * @param flags SEND_ONLY
  */
 CUresult
 cuLaunchCooperativeKernelMultiDevice(CUDA_LAUNCH_PARAMS *launchParamsList,
@@ -3045,7 +3042,7 @@ CUresult cuTexRefSetMipmapLevelClamp(CUtexref hTexRef,
 CUresult cuTexRefSetMaxAnisotropy(CUtexref hTexRef, unsigned int maxAniso);
 /**
  * @param hTexRef SEND_ONLY
- * @param pBorderColor SEND_RECV
+ * @param pBorderColor SEND_ONLY SIZE:16
  */
 CUresult cuTexRefSetBorderColor(CUtexref hTexRef, float *pBorderColor);
 /**
@@ -3111,7 +3108,7 @@ CUresult cuTexRefGetMipmapLevelClamp(float *pminMipmapLevelClamp,
  */
 CUresult cuTexRefGetMaxAnisotropy(int *pmaxAniso, CUtexref hTexRef);
 /**
- * @param pBorderColor SEND_RECV
+ * @param pBorderColor RECV_ONLY SIZE:16
  * @param hTexRef SEND_ONLY
  */
 CUresult cuTexRefGetBorderColor(float *pBorderColor, CUtexref hTexRef);

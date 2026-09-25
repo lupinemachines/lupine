@@ -402,6 +402,7 @@ CUDA = Backend(
     # The driver shim links against libcuda, so its handlers call the entry
     # point directly instead of resolving it by name.
     symbol_lookup="",
+    not_supported="CUDA_ERROR_NOT_SUPPORTED",
 )
 
 NVML = Backend(
@@ -1338,6 +1339,12 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             if metadata.guard is not None:
                 f.write(f"#if {metadata.guard}\n")
 
+            if unsupported(function, metadata):
+                write_stub(f, CUDA, function)
+                if metadata.guard is not None:
+                    f.write("#endif\n\n")
+                continue
+
             joined_params = ", ".join(format_function_params(function))
 
             f.write(f"{function.return_type.format()} {function.name.format()}({joined_params})\n")
@@ -1661,7 +1668,11 @@ def write_cuda_server(
                 f"{name}({params});\n\n"
             )
         for function, _, operations, metadata in server_functions_with_annotations:
-            if metadata.disabled_server or function.name.format() in server_bindings:
+            if (
+                metadata.disabled_server
+                or unsupported(function, metadata)
+                or function.name.format() in server_bindings
+            ):
                 continue
             write_server_handler(f, CUDA, function, operations, metadata)
 
@@ -2021,6 +2032,7 @@ def main():
         )
         for function, _, _, metadata in server_functions_with_annotations
         if not metadata.disabled_server
+        and not unsupported(function, metadata)
         and function.name.format() not in server_bindings
     ]
     generated_bindings.extend(
