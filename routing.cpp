@@ -281,6 +281,16 @@ CUresult lupine_virtual_device_count(int *count) {
   return CUDA_SUCCESS;
 }
 
+bool lupine_devices_span_routes() {
+  (void)lupine_ensure_device_table();
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  const auto &devices = lupine_device_table();
+  return std::any_of(devices.begin(), devices.end(), [&](const auto &entry) {
+    return entry.local != devices.front().local ||
+           (!entry.local && entry.conn_index != devices.front().conn_index);
+  });
+}
+
 CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal) {
   if (device == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
