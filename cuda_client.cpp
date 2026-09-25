@@ -6528,25 +6528,10 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
       rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_write(conn, param_sizes.data(),
                 param_sizes.size() * sizeof(*param_sizes.data())) < 0 ||
-      rpc_write_cursors(conn, rpc_params.data(), rpc_params.size()) < 0) {
+      rpc_write_cursors(conn, rpc_params.data(), rpc_params.size()) < 0 ||
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (config->numAttrs == 0) {
-    if (rpc_write_end(conn) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  } else {
-    CUresult return_value;
-    if (rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-        rpc_read_end(conn) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    if (return_value != CUDA_SUCCESS) {
-      return return_value;
-    }
-  }
-
   if (sync_after_launch) {
     return cuStreamSynchronize(config->hStream);
   }
@@ -6596,7 +6581,6 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
       lupine_kernel_param_cursors(params.pointers.data(), param_sizes);
 
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -6617,12 +6601,10 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
       rpc_write(conn, param_sizes.data(),
                 param_sizes.size() * sizeof(*param_sizes.data())) < 0 ||
       rpc_write_cursors(conn, rpc_params.data(), rpc_params.size()) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  return CUDA_SUCCESS;
 }
 
 #ifdef cuLaunchCooperativeKernel_ptsz
