@@ -3491,6 +3491,7 @@ static CUresult lupine_bulk_pull(conn_t *conn, lupine_bulk_lanes *lanes,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
 
+  void *alias = rpc_host_allocation_alias(conn, destination, bytes);
   std::atomic<bool> received{true};
   auto pull = [&](unsigned int lane) {
     conn_t *bulk = lanes->conn[lane];
@@ -3506,7 +3507,8 @@ static CUresult lupine_bulk_pull(conn_t *conn, lupine_bulk_lanes *lanes,
       received = false;
       return;
     }
-    auto *data = static_cast<unsigned char *>(destination);
+    auto *data =
+        static_cast<unsigned char *>(alias != nullptr ? alias : destination);
     for (;;) {
       struct {
         int request_id;
@@ -3539,6 +3541,9 @@ static CUresult lupine_bulk_pull(conn_t *conn, lupine_bulk_lanes *lanes,
   }
   if (!received) {
     lanes->failed = true;
+  } else if (alias != nullptr &&
+             rpc_note_host_allocation_write(conn, destination, bytes) < 0) {
+    received = false;
   }
   pthread_mutex_unlock(&lanes->mutex);
 

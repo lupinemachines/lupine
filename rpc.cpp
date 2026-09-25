@@ -659,31 +659,25 @@ int rpc_read_start(conn_t *conn, int write_id) {
   return 0;
 }
 
-static int rpc_read_into_context(conn_t *conn, void *data, size_t size,
-                                 int (*read)(conn_t *, void *, size_t)) {
-  void *destination = data;
-  bool host_allocation = false;
+void *rpc_host_allocation_alias(conn_t *conn, void *data, size_t size) {
   uintptr_t address = reinterpret_cast<uintptr_t>(data);
   if (conn->va_size != 0 && conn->w_offset != 0 &&
       lupine_va_contains(conn, address, size)) {
-    destination = reinterpret_cast<void *>(address + conn->w_offset);
-    host_allocation = true;
-  } else if (conn->va_size == 0 && conn->w_offset != 0) {
+    return reinterpret_cast<void *>(address + conn->w_offset);
+  }
+  if (conn->va_size == 0 && conn->w_offset != 0) {
     uintptr_t read_base =
         LUPINE_HOST_ALLOCATION_SERVER_BASE + LUPINE_HOST_ALLOCATION_R_OFFSET;
     if (address >= read_base && size <= LUPINE_HOST_ALLOCATION_WINDOW_SIZE &&
         address - read_base <= LUPINE_HOST_ALLOCATION_WINDOW_SIZE - size) {
       uintptr_t server_address = address - LUPINE_HOST_ALLOCATION_R_OFFSET;
-      destination = reinterpret_cast<void *>(server_address + conn->w_offset);
-      host_allocation = true;
+      return reinterpret_cast<void *>(server_address + conn->w_offset);
     }
   }
-  int result = read(conn, destination, size);
-  if (result < 0 || !host_allocation) {
-    return result;
-  }
+  return nullptr;
+}
 
-  size_t written = static_cast<size_t>(result);
+int rpc_note_host_allocation_write(conn_t *conn, void *data, size_t written) {
   if (pthread_mutex_lock(&conn->write_mutex) != 0) {
     return -1;
   }
@@ -726,7 +720,7 @@ static int rpc_read_into_context(conn_t *conn, void *data, size_t size,
       return -1;
     }
   }
-  return result;
+  return 0;
 }
 
 static int rpc_read_http2(conn_t *conn, void *data, size_t size) {
@@ -736,7 +730,12 @@ static int rpc_read_http2(conn_t *conn, void *data, size_t size) {
 }
 
 int rpc_read(conn_t *conn, void *data, size_t size) {
-  return rpc_read_into_context(conn, data, size, rpc_read_http2);
+  void *alias = rpc_host_allocation_alias(conn, data, size);
+  int result = rpc_read_http2(conn, alias != nullptr ? alias : data, size);
+  if (result < 0 || alias == nullptr) {
+    return result;
+  }
+  return rpc_note_host_allocation_write(conn, data, result) < 0 ? -1 : result;
 }
 
 int rpc_read_pitched(conn_t *conn, void *data, size_t width, size_t rows,
