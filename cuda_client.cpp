@@ -56,10 +56,12 @@
 #include "checkpoint.h"
 #include "client_routing.h"
 #include "codegen/gen_cuda_client.h"
+#include "codegen/gen_cuda_streams.h"
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_client_memcpy.h"
 #include "cuda_client_rpc.h"
 #include "cuda_profiler_compat.h"
+#include "cuda_stream_identity.h"
 #include "events.h"
 #include "ipc.h"
 #include "log_callbacks.h"
@@ -4435,13 +4437,6 @@ extern "C" CUresult cuStreamGetDevice(CUstream hStream, CUdevice *device) {
   return return_value;
 }
 
-#ifdef cuStreamGetDevice_ptsz
-#undef cuStreamGetDevice_ptsz
-#endif
-extern "C" CUresult cuStreamGetDevice_ptsz(CUstream hStream, CUdevice *device) {
-  return cuStreamGetDevice(hStream, device);
-}
-
 extern "C" CUresult cuMemPoolGetAttribute(CUmemoryPool pool,
                                           CUmemPool_attribute attr,
                                           void *value) {
@@ -4532,12 +4527,6 @@ extern "C" CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return return_value;
-}
-
-extern "C" CUresult cuMemPrefetchAsync_ptsz(CUdeviceptr devPtr, size_t count,
-                                            CUdevice dstDevice,
-                                            CUstream hStream) {
-  return cuMemPrefetchAsync(devPtr, count, dstDevice, hStream);
 }
 
 extern "C" CUresult cuMemAdvise(CUdeviceptr devPtr, size_t count,
@@ -5090,14 +5079,6 @@ extern "C" CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
   return result;
 }
 
-#ifdef cuStreamWaitEvent_ptsz
-#undef cuStreamWaitEvent_ptsz
-#endif
-extern "C" CUresult cuStreamWaitEvent_ptsz(CUstream hStream, CUevent hEvent,
-                                           unsigned int Flags) {
-  return cuStreamWaitEvent(hStream, hEvent, Flags);
-}
-
 extern "C" CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
   lupine_route route = hStream != nullptr ? lupine_route_for_stream(hStream)
                                           : lupine_route_for_default();
@@ -5118,13 +5099,6 @@ extern "C" CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
   // Invalidate after enqueue so an overlapping query cannot retain old state.
   lupine_event_invalidate_completion(hEvent);
   return CUDA_SUCCESS;
-}
-
-#ifdef cuEventRecord_ptsz
-#undef cuEventRecord_ptsz
-#endif
-extern "C" CUresult cuEventRecord_ptsz(CUevent hEvent, CUstream hStream) {
-  return cuEventRecord(hEvent, hStream);
 }
 
 extern "C" CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
@@ -5148,15 +5122,6 @@ extern "C" CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
   }
   lupine_event_invalidate_completion(hEvent);
   return CUDA_SUCCESS;
-}
-
-#ifdef cuEventRecordWithFlags_ptsz
-#undef cuEventRecordWithFlags_ptsz
-#endif
-extern "C" CUresult cuEventRecordWithFlags_ptsz(CUevent hEvent,
-                                                CUstream hStream,
-                                                unsigned int flags) {
-  return cuEventRecordWithFlags(hEvent, hStream, flags);
 }
 
 // Best-effort cache warming for events other than the one the caller queried.
@@ -6625,19 +6590,6 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
   return return_value;
 }
 
-#ifdef cuLaunchCooperativeKernel_ptsz
-#undef cuLaunchCooperativeKernel_ptsz
-#endif
-extern "C" CUresult cuLaunchCooperativeKernel_ptsz(
-    CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
-    unsigned int gridDimZ, unsigned int blockDimX, unsigned int blockDimY,
-    unsigned int blockDimZ, unsigned int sharedMemBytes, CUstream hStream,
-    void **kernelParams) {
-  return cuLaunchCooperativeKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX,
-                                   blockDimY, blockDimZ, sharedMemBytes,
-                                   hStream, kernelParams);
-}
-
 extern "C" CUresult lupine_cuFuncGetAttribute_safe(int *pi,
                                                    CUfunction_attribute attrib,
                                                    CUfunction hfunc) {
@@ -7954,10 +7906,12 @@ struct lupine_stream_capture_entry {
 };
 static std::atomic<uint64_t> lupine_stream_capture_epoch{0};
 
-static libcuckoo::cuckoohash_map<CUstream, lupine_stream_capture_entry> &
+static libcuckoo::cuckoohash_map<lupine_stream_key,
+                                 lupine_stream_capture_entry> &
 lupine_stream_capture_cache() {
   static auto *cache =
-      new libcuckoo::cuckoohash_map<CUstream, lupine_stream_capture_entry>();
+      new libcuckoo::cuckoohash_map<lupine_stream_key,
+                                    lupine_stream_capture_entry>();
   return *cache;
 }
 
@@ -8019,7 +7973,9 @@ static CUresult lupine_cuStreamGetCaptureInfo(
   lupine_stream_capture_entry cached;
   if (dependencies_out == nullptr && edgeData_out == nullptr &&
       numDependencies_out == nullptr &&
-      lupine_stream_capture_cache().find(stream, cached) &&
+      lupine_stream_capture_cache().find(
+          lupine_stream_identity(stream, lupine_current_context_hint()),
+          cached) &&
       cached.epoch == epoch) {
     if (captureStatus_out != nullptr) {
       *captureStatus_out = CU_STREAM_CAPTURE_STATUS_ACTIVE;
@@ -8095,7 +8051,8 @@ static CUresult lupine_cuStreamGetCaptureInfo(
     if (status == CU_STREAM_CAPTURE_STATUS_ACTIVE && stream != nullptr &&
         stream != CU_STREAM_LEGACY && stream != CU_STREAM_PER_THREAD) {
       lupine_stream_capture_cache().insert_or_assign(
-          stream, lupine_stream_capture_entry{epoch, id, graph});
+          lupine_stream_identity(stream, lupine_current_context_hint()),
+          lupine_stream_capture_entry{epoch, id, graph});
     }
   }
   return return_value;
@@ -8180,7 +8137,9 @@ extern "C" CUresult cuStreamIsCapturing(CUstream hStream,
     return CUDA_SUCCESS;
   }
   lupine_stream_capture_entry cached;
-  if (lupine_stream_capture_cache().find(hStream, cached) &&
+  if (lupine_stream_capture_cache().find(
+          lupine_stream_identity(hStream, lupine_current_context_hint()),
+          cached) &&
       cached.epoch == lupine_stream_capture_epoch.load()) {
     *captureStatus = CU_STREAM_CAPTURE_STATUS_ACTIVE;
     return CUDA_SUCCESS;
@@ -8265,26 +8224,8 @@ extern "C" CUresult cuStreamEndCapture(CUstream hStream, CUgraph *phGraph) {
 #ifdef cuStreamBeginCapture
 #undef cuStreamBeginCapture
 #endif
-extern "C" CUresult cuStreamBeginCapture(CUstream hStream,
-                                         CUstreamCaptureMode mode) {
-  return cuStreamBeginCapture_v2(hStream, mode);
-}
-
-#ifdef cuStreamEndCapture_ptsz
-#undef cuStreamEndCapture_ptsz
-#endif
-extern "C" CUresult cuStreamEndCapture_ptsz(CUstream hStream,
-                                            CUgraph *phGraph) {
-  return cuStreamEndCapture(hStream, phGraph);
-}
-
-#ifdef cuStreamIsCapturing_ptsz
-#undef cuStreamIsCapturing_ptsz
-#endif
-extern "C" CUresult
-cuStreamIsCapturing_ptsz(CUstream hStream,
-                         CUstreamCaptureStatus *captureStatus) {
-  return cuStreamIsCapturing(hStream, captureStatus);
+extern "C" CUresult cuStreamBeginCapture(CUstream hStream) {
+  return cuStreamBeginCapture_v2(hStream, CU_STREAM_CAPTURE_MODE_GLOBAL);
 }
 
 extern "C" CUresult cuStreamGetCaptureInfo_v3(
@@ -8399,15 +8340,6 @@ extern "C" CUresult cuStreamUpdateCaptureDependencies_v2(
 #ifdef cuStreamUpdateCaptureDependencies
 #undef cuStreamUpdateCaptureDependencies
 #endif
-#if CUDA_VERSION >= 13000
-extern "C" CUresult
-cuStreamUpdateCaptureDependencies(CUstream hStream, CUgraphNode *dependencies,
-                                  const CUgraphEdgeData *dependencyData,
-                                  size_t numDependencies, unsigned int flags) {
-  return cuStreamUpdateCaptureDependencies_v2(
-      hStream, dependencies, dependencyData, numDependencies, flags);
-}
-#else
 extern "C" CUresult cuStreamUpdateCaptureDependencies(CUstream hStream,
                                                       CUgraphNode *dependencies,
                                                       size_t numDependencies,
@@ -8415,24 +8347,6 @@ extern "C" CUresult cuStreamUpdateCaptureDependencies(CUstream hStream,
   return cuStreamUpdateCaptureDependencies_v2(hStream, dependencies, nullptr,
                                               numDependencies, flags);
 }
-#endif
-
-#if CUDA_VERSION >= 13000
-extern "C" CUresult cuStreamUpdateCaptureDependencies_ptsz(
-    CUstream hStream, CUgraphNode *dependencies,
-    const CUgraphEdgeData *dependencyData, size_t numDependencies,
-    unsigned int flags) {
-  return cuStreamUpdateCaptureDependencies_v2(
-      hStream, dependencies, dependencyData, numDependencies, flags);
-}
-#else
-extern "C" CUresult cuStreamUpdateCaptureDependencies_ptsz(
-    CUstream hStream, CUgraphNode *dependencies, size_t numDependencies,
-    unsigned int flags) {
-  return cuStreamUpdateCaptureDependencies_v2(hStream, dependencies, nullptr,
-                                              numDependencies, flags);
-}
-#endif
 
 static bool lupine_uuid_equals(const CUuuid *uuid, const unsigned char *bytes) {
   return uuid != nullptr && memcmp(uuid->bytes, bytes, 16) == 0;
@@ -9193,7 +9107,6 @@ static void *lupine_make_missing_stub(const char *symbol) {
   }
 
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxCreate)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuModuleLoadData)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryLoadData)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryGetKernelCount)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryEnumerateKernels)
@@ -9209,9 +9122,6 @@ LUPINE_DEFINE_UNSUPPORTED_STUB(cuPointerGetAttribute)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemcpyDtoHAsync)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemcpy2DUnaligned)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemcpy2DAsync)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuMemcpy3D)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuGetErrorString)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuGetErrorName)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuGraphInstantiate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuUserObjectCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuStreamBeginCaptureToGraph)
@@ -9298,7 +9208,6 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
 #define LUPINE_STUB_ENTRY(name)                                                \
   { #name, (void *)&lupine_unsupported_##name }
       LUPINE_STUB_ENTRY(cuCtxCreate),
-      LUPINE_STUB_ENTRY(cuModuleLoadData),
       LUPINE_STUB_ENTRY(cuLibraryLoadData),
       LUPINE_STUB_ENTRY(cuLibraryGetKernelCount),
       LUPINE_STUB_ENTRY(cuLibraryEnumerateKernels),
@@ -9314,9 +9223,6 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
       LUPINE_STUB_ENTRY(cuMemcpyDtoHAsync),
       LUPINE_STUB_ENTRY(cuMemcpy2DUnaligned),
       LUPINE_STUB_ENTRY(cuMemcpy2DAsync),
-      LUPINE_STUB_ENTRY(cuMemcpy3D),
-      LUPINE_STUB_ENTRY(cuGetErrorString),
-      LUPINE_STUB_ENTRY(cuGetErrorName),
       LUPINE_STUB_ENTRY(cuGraphInstantiate),
       LUPINE_STUB_ENTRY(cuUserObjectCreate),
       LUPINE_STUB_ENTRY(cuStreamBeginCaptureToGraph),
@@ -9696,6 +9602,41 @@ extern "C" CUresult cuTensorMapEncodeTiled(
 extern "C" CUresult cuGetProcAddress(const char *symbol, void **pfn,
                                      int cudaVersion, cuuint64_t flags);
 
+// CUDA passes the caller's original handle to stream callbacks, including a
+// literal zero supplied to a _ptsz entry point.
+struct lupine_per_thread_callback {
+  CUstreamCallback callback;
+  void *user_data;
+};
+
+static void CUDA_CB lupine_per_thread_stream_callback(CUstream, CUresult status,
+                                                      void *opaque) {
+  auto *data = static_cast<lupine_per_thread_callback *>(opaque);
+  CUstreamCallback callback = data->callback;
+  void *user_data = data->user_data;
+  delete data;
+  callback(nullptr, status, user_data);
+}
+
+CUresult lupine_stream_add_callback_per_thread(CUstream stream,
+                                               CUstreamCallback callback,
+                                               void *user_data,
+                                               unsigned int flags) {
+  if (stream != nullptr || callback == nullptr) {
+    return cuStreamAddCallback(lupine_per_thread_stream(stream), callback,
+                               user_data, flags);
+  }
+  auto *data =
+      new (std::nothrow) lupine_per_thread_callback{callback, user_data};
+  if (data == nullptr)
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  CUresult result = cuStreamAddCallback(
+      CU_STREAM_PER_THREAD, lupine_per_thread_stream_callback, data, flags);
+  if (result != CUDA_SUCCESS)
+    delete data;
+  return result;
+}
+
 static const std::unordered_map<std::string, void *> &
 lupine_manual_function_map();
 
@@ -9703,18 +9644,23 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
                              cuuint64_t flags,
                              CUdriverProcAddressQueryResult *symbolStatus) {
   LUPINE_TRACE_LOG("cuGetProcAddress getting symbol: " << symbol);
-  // Most wrappers route purely by symbol name. A few CUDA APIs changed ABI
-  // without changing the name and must also use the requested API version.
-  (void)flags;
-
-  if (strcmp(symbol, "cuStreamGetCaptureInfo") == 0) {
-    if (cudaVersion >= 12030) {
-      *pfn = reinterpret_cast<void *>(&cuStreamGetCaptureInfo_v3);
-    } else if (cudaVersion >= 11030) {
-      *pfn = reinterpret_cast<void *>(&cuStreamGetCaptureInfo_v2);
-    } else {
-      *pfn = reinterpret_cast<void *>(&cuStreamGetCaptureInfo);
+  constexpr cuuint64_t supported_flags =
+      CU_GET_PROC_ADDRESS_LEGACY_STREAM |
+      CU_GET_PROC_ADDRESS_PER_THREAD_DEFAULT_STREAM;
+  if (symbol == nullptr || pfn == nullptr || (flags & ~supported_flags) != 0) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  const bool per_thread =
+      (flags & CU_GET_PROC_ADDRESS_PER_THREAD_DEFAULT_STREAM) != 0;
+  if (void *stream_function =
+          lupine_stream_function(symbol, cudaVersion, per_thread)) {
+    if (per_thread && cudaVersion < 7000) {
+      *pfn = nullptr;
+      if (symbolStatus != nullptr)
+        *symbolStatus = CU_GET_PROC_ADDRESS_VERSION_NOT_SUFFICIENT;
+      return CUDA_SUCCESS;
     }
+    *pfn = stream_function;
     if (symbolStatus != nullptr) {
       *symbolStatus = CU_GET_PROC_ADDRESS_SUCCESS;
     }
@@ -9817,15 +9763,6 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
     return CUDA_SUCCESS;
   }
 #if CUDA_VERSION >= 12020
-  if (symbol != nullptr && cudaVersion >= 12020 &&
-      (strcmp(symbol, "cuMemPrefetchAsync") == 0 ||
-       strcmp(symbol, "cuMemPrefetchAsync_ptsz") == 0)) {
-    *pfn = reinterpret_cast<void *>(&cuMemPrefetchAsync_v2);
-    if (symbolStatus != nullptr) {
-      *symbolStatus = CU_GET_PROC_ADDRESS_SUCCESS;
-    }
-    return CUDA_SUCCESS;
-  }
   if (symbol != nullptr && cudaVersion >= 12020 &&
       strcmp(symbol, "cuMemAdvise") == 0) {
     *pfn = reinterpret_cast<void *>(&cuMemAdvise_v2);
@@ -9961,7 +9898,8 @@ extern "C" CUresult cuGetProcAddress(const char *symbol, void **pfn,
   if (result != CUDA_SUCCESS) {
     return result;
   }
-  if (status == CU_GET_PROC_ADDRESS_SYMBOL_NOT_FOUND) {
+  if (status == CU_GET_PROC_ADDRESS_SYMBOL_NOT_FOUND ||
+      status == CU_GET_PROC_ADDRESS_VERSION_NOT_SUFFICIENT) {
     return CUDA_ERROR_NOT_FOUND;
   }
   *pfn = resolved;
@@ -10065,7 +10003,6 @@ lupine_manual_function_map() {
       {"cuMemPoolSetAttribute", (void *)cuMemPoolSetAttribute},
       {"cuMemPoolGetAttribute", (void *)cuMemPoolGetAttribute},
       {"cuStreamQuery", (void *)cuStreamQuery},
-      {"cuStreamQuery_ptsz", (void *)cuStreamQuery_ptsz},
       {"cuMemAllocHost", (void *)cuMemAllocHost_v2},
       {"cuMemAllocHost_v2", (void *)cuMemAllocHost_v2},
       {"cuMemFree", (void *)cuMemFree_v2},
@@ -10082,7 +10019,6 @@ lupine_manual_function_map() {
       {"cuMemGetInfo", (void *)cuMemGetInfo},
       {"cuMemAdvise", (void *)cuMemAdvise},
       {"cuMemPrefetchAsync", (void *)cuMemPrefetchAsync},
-      {"cuMemPrefetchAsync_ptsz", (void *)cuMemPrefetchAsync_ptsz},
       {"cuMemRangeGetAttributes", (void *)cuMemRangeGetAttributes},
       {"cuArrayCreate", (void *)cuArrayCreate_v2},
       {"cuArrayCreate_v2", (void *)cuArrayCreate_v2},
@@ -10101,7 +10037,6 @@ lupine_manual_function_map() {
       {"cuMemcpyHtoD", (void *)cuMemcpyHtoD_v2},
       {"cuMemcpyHtoD_v2", (void *)cuMemcpyHtoD_v2},
       {"cuMemcpy", (void *)cuMemcpy},
-      {"cuMemcpy_ptds", (void *)cuMemcpy},
       {"cuMemcpyDtoH", (void *)cuMemcpyDtoH_v2},
       {"cuMemcpyDtoH_v2", (void *)cuMemcpyDtoH_v2},
       {"cuMemcpyDtoA", (void *)cuMemcpyDtoA_v2},
@@ -10118,16 +10053,12 @@ lupine_manual_function_map() {
       {"cuMemcpy2DUnaligned_v2", (void *)cuMemcpy2DUnaligned_v2},
       {"cuMemcpy2DAsync", (void *)cuMemcpy2DAsync_v2},
       {"cuMemcpy2DAsync_v2", (void *)cuMemcpy2DAsync_v2},
-      {"cuMemcpy2DAsync_ptsz", (void *)cuMemcpy2DAsync_v2},
       {"cuMemcpy3D", (void *)cuMemcpy3D_v2},
       {"cuMemcpy3D_v2", (void *)cuMemcpy3D_v2},
       {"cuMemcpy3DAsync", (void *)cuMemcpy3DAsync_v2},
       {"cuMemcpy3DAsync_v2", (void *)cuMemcpy3DAsync_v2},
-      {"cuMemcpy3DAsync_ptsz", (void *)cuMemcpy3DAsync_v2},
       {"cuMemcpy3DPeer", (void *)cuMemcpy3DPeer},
-      {"cuMemcpy3DPeer_ptds", (void *)cuMemcpy3DPeer},
       {"cuMemcpy3DPeerAsync", (void *)cuMemcpy3DPeerAsync},
-      {"cuMemcpy3DPeerAsync_ptsz", (void *)cuMemcpy3DPeerAsync},
       {"cuPointerGetAttribute", (void *)cuPointerGetAttribute},
       {"cuPointerSetAttribute", (void *)cuPointerSetAttribute},
       {"cuGetExportTable", (void *)cuGetExportTable},
@@ -10141,10 +10072,7 @@ lupine_manual_function_map() {
       {"cuLinkAddFile", (void *)cuLinkAddFile_v2},
       {"cuLaunchKernel", (void *)cuLaunchKernel},
       {"cuLaunchKernelEx", (void *)cuLaunchKernelEx},
-      {"cuLaunchCooperativeKernel_ptsz",
-       (void *)cuLaunchCooperativeKernel_ptsz},
       {"cuMemcpyAsync", (void *)cuMemcpyAsync},
-      {"cuMemcpyAsync_ptsz", (void *)cuMemcpyAsync},
       {"cuMemcpyHtoDAsync", (void *)cuMemcpyHtoDAsync_v2},
       {"cuMemcpyHtoDAsync_v2", (void *)cuMemcpyHtoDAsync_v2},
       {"cuMemcpyDtoHAsync", (void *)cuMemcpyDtoHAsync_v2},
@@ -10152,11 +10080,8 @@ lupine_manual_function_map() {
       {"cuStreamWaitValue32", (void *)cuStreamWaitValue32_v2},
       {"cuStreamWaitValue64", (void *)cuStreamWaitValue64_v2},
       {"cuStreamWaitEvent", (void *)cuStreamWaitEvent},
-      {"cuStreamWaitEvent_ptsz", (void *)cuStreamWaitEvent_ptsz},
       {"cuEventRecord", (void *)cuEventRecord},
-      {"cuEventRecord_ptsz", (void *)cuEventRecord_ptsz},
       {"cuEventRecordWithFlags", (void *)cuEventRecordWithFlags},
-      {"cuEventRecordWithFlags_ptsz", (void *)cuEventRecordWithFlags_ptsz},
       {"cuStreamWriteValue32", (void *)cuStreamWriteValue32_v2},
       {"cuStreamWriteValue64", (void *)cuStreamWriteValue64_v2},
       {"cuStreamBatchMemOp", (void *)cuStreamBatchMemOp_v2},
@@ -10165,8 +10090,6 @@ lupine_manual_function_map() {
       {"cuStreamGetCaptureInfo_v3", (void *)cuStreamGetCaptureInfo_v3},
       {"cuCtxSynchronize", (void *)cuCtxSynchronize},
       {"cuStreamSynchronize", (void *)cuStreamSynchronize},
-      {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize_ptsz},
-      {"cuStreamGetDevice_ptsz", (void *)cuStreamGetDevice_ptsz},
       {"cuEventQuery", (void *)cuEventQuery},
       {"cuEventSynchronize", (void *)cuEventSynchronize},
       {"cuGetErrorName", (void *)cuGetErrorName},
@@ -10228,24 +10151,17 @@ lupine_manual_function_map() {
       {"cuGraphInstantiate", (void *)cuGraphInstantiate},
       {"cuKernelGetLibrary", (void *)cuKernelGetLibrary},
       {"cuLaunchHostFunc", (void *)cuLaunchHostFunc},
-      {"cuLaunchHostFunc_ptsz", (void *)cuLaunchHostFunc},
       {"cuStreamAddCallback", (void *)cuStreamAddCallback},
-      {"cuStreamAddCallback_ptsz", (void *)cuStreamAddCallback},
 #if CUDA_VERSION >= 12090
       {"cuLogsRegisterCallback", (void *)cuLogsRegisterCallback},
       {"cuLogsUnregisterCallback", (void *)cuLogsUnregisterCallback},
 #endif
-      {"cuStreamBeginCapture", (void *)cuStreamBeginCapture_v2},
-      {"cuStreamEndCapture_ptsz", (void *)cuStreamEndCapture},
-      {"cuStreamIsCapturing_ptsz", (void *)cuStreamIsCapturing},
+      {"cuStreamBeginCapture", (void *)cuStreamBeginCapture},
       {"cuStreamBeginCaptureToGraph", (void *)cuStreamBeginCaptureToGraph},
-      {"cuStreamBeginCaptureToGraph_ptsz", (void *)cuStreamBeginCaptureToGraph},
       {"cuStreamUpdateCaptureDependencies",
        (void *)cuStreamUpdateCaptureDependencies},
       {"cuStreamUpdateCaptureDependencies_v2",
        (void *)cuStreamUpdateCaptureDependencies_v2},
-      {"cuStreamUpdateCaptureDependencies_ptsz",
-       (void *)cuStreamUpdateCaptureDependencies_ptsz},
 #if CUDA_VERSION >= 12000
       {"cuTensorMapEncodeTiled", (void *)cuTensorMapEncodeTiled},
 #endif

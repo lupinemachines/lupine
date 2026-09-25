@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "cuda_stream_identity.h"
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
@@ -22,12 +23,14 @@ struct lupine_host_callback_data {
   void *userData = nullptr;
   std::weak_ptr<lupine_graph_resources> resources;
   std::optional<CUstream> stream;
+  lupine_stream_key stream_key;
 };
 
 struct lupine_stream_callback_data {
   conn_t *conn = nullptr;
   CUstreamCallback callback = nullptr;
   void *userData = nullptr;
+  lupine_stream_key stream_key;
 };
 
 void CUDA_CB lupine_graph_host_callback(void *userData);
@@ -83,8 +86,8 @@ void lupine_note_device_stdout_image(const unsigned char *image,
                                      size_t image_size);
 lupine_pending_dtoh_items
 lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
-                                  bool all_streams,
-                                  CUcontext context = nullptr);
+                                  bool all_streams, CUcontext context = nullptr,
+                                  const lupine_stream_key *identity = nullptr);
 lupine_pending_dtoh_items lupine_detach_event_dtoh_copies(conn_t *conn,
                                                           CUevent event);
 int lupine_write_pending_dtoh_copies(conn_t *conn,
@@ -96,12 +99,14 @@ void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream);
 void lupine_forget_event_dtoh_marker(conn_t *conn, CUevent event);
 
 using lupine_pending_dtoh_streams =
-    std::unordered_map<CUstream, lupine_pending_dtoh_items>;
+    std::unordered_map<lupine_stream_key, lupine_pending_dtoh_items>;
 
 libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies();
 lupine_graph_resource_ptr lupine_get_graph_resources(CUgraph graph);
 lupine_graph_resource_ptr lupine_find_stream_resources(CUstream stream);
+lupine_graph_resource_ptr
+lupine_find_stream_resources(const lupine_stream_key &stream);
 lupine_graph_resource_ptr lupine_captured_stream_resources(CUstream stream);
 lupine_graph_resource_ptr lupine_make_stream_capture_resources();
 void lupine_begin_stream_capture_resources(

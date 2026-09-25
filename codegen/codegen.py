@@ -19,6 +19,7 @@ import subprocess
 import textwrap
 import zlib
 from client_templates import collect_client_call_templates
+from cuda_streams import StreamRegistry
 from emit import (
     Backend,
     format_call_args,
@@ -89,50 +90,6 @@ MANUAL_REMAPPINGS = [
     ("cuMemsetD2D32", "cuMemsetD2D32_v2"),
     ("cuIpcOpenMemHandle", "cuIpcOpenMemHandle_v2"),
     ("cuStreamBeginCapture", "cuStreamBeginCapture_v2"),
-    ("cuMemcpy_ptds", "cuMemcpy"),
-    ("cuMemcpyAsync_ptsz", "cuMemcpyAsync"),
-    ("cuMemcpyPeer_ptds", "cuMemcpyPeer"),
-    ("cuMemcpyPeerAsync_ptsz", "cuMemcpyPeerAsync"),
-    ("cuMemcpy3DPeer_ptds", "cuMemcpy3DPeer"),
-    ("cuMemcpy3DPeerAsync_ptsz", "cuMemcpy3DPeerAsync"),
-    ("cuMemPrefetchAsync_ptsz", "cuMemPrefetchAsync"),
-    ("cuMemsetD8Async_ptsz", "cuMemsetD8Async"),
-    ("cuMemsetD16Async_ptsz", "cuMemsetD16Async"),
-    ("cuMemsetD32Async_ptsz", "cuMemsetD32Async"),
-    ("cuMemsetD2D8Async_ptsz", "cuMemsetD2D8Async"),
-    ("cuMemsetD2D16Async_ptsz", "cuMemsetD2D16Async"),
-    ("cuMemsetD2D32Async_ptsz", "cuMemsetD2D32Async"),
-    ("cuStreamGetPriority_ptsz", "cuStreamGetPriority"),
-    ("cuStreamGetId_ptsz", "cuStreamGetId"),
-    ("cuStreamGetFlags_ptsz", "cuStreamGetFlags"),
-    ("cuStreamGetCtx_ptsz", "cuStreamGetCtx"),
-    ("cuStreamWaitEvent_ptsz", "cuStreamWaitEvent"),
-    ("cuStreamEndCapture_ptsz", "cuStreamEndCapture"),
-    ("cuStreamIsCapturing_ptsz", "cuStreamIsCapturing"),
-    ("cuStreamUpdateCaptureDependencies_ptsz", "cuStreamUpdateCaptureDependencies"),
-    ("cuStreamAddCallback_ptsz", "cuStreamAddCallback"),
-    ("cuStreamAttachMemAsync_ptsz", "cuStreamAttachMemAsync"),
-    ("cuStreamQuery_ptsz", "cuStreamQuery"),
-    ("cuStreamSynchronize_ptsz", "cuStreamSynchronize"),
-    ("cuEventRecord_ptsz", "cuEventRecord"),
-    ("cuEventRecordWithFlags_ptsz", "cuEventRecordWithFlags"),
-    ("cuLaunchKernel_ptsz", "cuLaunchKernel"),
-    ("cuLaunchKernelEx_ptsz", "cuLaunchKernelEx"),
-    ("cuLaunchHostFunc_ptsz", "cuLaunchHostFunc"),
-    ("cuGraphicsMapResources_ptsz", "cuGraphicsMapResources"),
-    ("cuGraphicsUnmapResources_ptsz", "cuGraphicsUnmapResources"),
-    ("cuSignalExternalSemaphoresAsync_ptsz", "cuSignalExternalSemaphoresAsync"),
-    ("cuWaitExternalSemaphoresAsync_ptsz", "cuWaitExternalSemaphoresAsync"),
-    ("cuGraphInstantiateWithParams_ptsz", "cuGraphInstantiateWithParams"),
-    ("cuGraphUpload_ptsz", "cuGraphUpload"),
-    ("cuGraphLaunch_ptsz", "cuGraphLaunch"),
-    ("cuStreamCopyAttributes_ptsz", "cuStreamCopyAttributes"),
-    ("cuStreamGetAttribute_ptsz", "cuStreamGetAttribute"),
-    ("cuStreamSetAttribute_ptsz", "cuStreamSetAttribute"),
-    ("cuMemMapArrayAsync_ptsz", "cuMemMapArrayAsync"),
-    ("cuMemFreeAsync_ptsz", "cuMemFreeAsync"),
-    ("cuMemAllocAsync_ptsz", "cuMemAllocAsync"),
-    ("cuMemAllocFromPoolAsync_ptsz", "cuMemAllocFromPoolAsync"),
 ]
 
 # Versioned graph-query ABIs are also exported under their public, unversioned
@@ -1239,7 +1196,7 @@ def write_rpc_ids(
             write_rpc_define(f"LUPINE_RPC_{name}", name)
 
 
-def write_cuda_client(functions_with_annotations, legacy_abi_functions):
+def write_cuda_client(functions_with_annotations, legacy_abi_functions, streams):
     with open("gen_cuda_client.cpp", "w") as f:
         f.write(
             "#include <cuda.h>\n"
@@ -1257,6 +1214,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             "#include <vector>\n\n"
             '#include "gen_rpc_ids.h"\n\n'
             '#include "client_routing.h"\n'
+            '#include "gen_cuda_streams.h"\n'
             '#include "rpc.h"\n\n'
             "extern int rpc_size();\n"
             "extern conn_t *rpc_client_get_connection(unsigned int index);\n"
@@ -1574,7 +1532,9 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             else:
                 f.write(f"    return {call};\n")
                 f.write("}\n\n")
+        streams.write_client_wrappers(f)
         f.write("std::unordered_map<std::string, void *> functionMap = {\n")
+        streams.write_map_entries(f)
         for function, _, _, metadata in functions_with_annotations:
             if metadata.guard is not None:
                 f.write(f"#if {metadata.guard}\n")
@@ -1629,6 +1589,7 @@ def write_cuda_server(
     legacy_abi_functions,
     server_bindings,
     annotation_only_server_functions,
+    streams,
 ):
     with open("gen_cuda_server.cpp", "w") as f:
         f.write(
@@ -1642,6 +1603,7 @@ def write_cuda_server(
             '#include <vector>\n\n'
             '#include <cstdio>\n\n'
             '#include "cuda_server_memcpy.h"\n'
+            '#include "gen_cuda_streams_server.h"\n'
             '#include "rpc.h"\n\n'
         )
         annotation_only_functions = (
@@ -1659,6 +1621,8 @@ def write_cuda_server(
             if metadata.disabled_server or function.name.format() in server_bindings:
                 continue
             write_server_handler(f, CUDA, function, operations, metadata)
+
+        streams.write_server_wrappers(f)
 
 
 def write_registry(registry_entries, guarded_declarations, guarded_handlers):
@@ -1884,9 +1848,17 @@ def main():
         }
     )
 
+    streams = StreamRegistry(
+        cuda_header,
+        cuda_ast.namespace.functions,
+        cuda_annotations.namespace.functions,
+        {function.name.format() for function, _, _, _ in functions_with_annotations}
+        | set(server_bindings),
+    )
+    streams.write_headers()
     write_rpc_ids(
         functions_with_annotations,
-        annotated_names,
+        annotated_names + [e[0] + "_ptds" for e in streams.implicit],
         hip_functions_with_annotations,
         nccl_functions_with_annotations,
     )
@@ -1997,13 +1969,14 @@ def main():
                 if metadata.guard is not None:
                     f.write("#endif\n")
 
-    write_cuda_client(functions_with_annotations, legacy_abi_functions)
+    write_cuda_client(functions_with_annotations, legacy_abi_functions, streams)
 
     write_cuda_server(
         server_functions_with_annotations,
         legacy_abi_functions,
         server_bindings,
         annotation_only_server_functions,
+        streams,
     )
 
     generated_bindings = [
@@ -2042,6 +2015,8 @@ def main():
         and function.name.format() not in server_bindings
     )
     bindings = list(server_bindings.values()) + generated_bindings
+    streams.add_server_bindings(bindings, ServerBinding)
+    streams.rewrite_generated_calls()
 
     operations_by_id = {}
     for binding in bindings:
@@ -2089,6 +2064,8 @@ def main():
             "clang-format",
             "-i",
             "gen_cuda_client.cpp",
+            "gen_cuda_streams.h",
+            "gen_cuda_streams_server.h",
             "gen_nvml_client.inc",
             "gen_nvml_server.h",
             "gen_nvml_server.inc",
