@@ -2409,6 +2409,7 @@ CUresult cuGraphExecBatchMemOpNodeSetParams(
  * @param numDependencies SEND_ONLY
  * @param dependencies SEND_ONLY LENGTH:numDependencies
  * @param nodeParams SEND_RECV
+ * @deeparray nodeParams accessDescs accessDescCount
  */
 CUresult cuGraphAddMemAllocNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                                 const CUgraphNode *dependencies,
@@ -2416,7 +2417,8 @@ CUresult cuGraphAddMemAllocNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                                 CUDA_MEM_ALLOC_NODE_PARAMS *nodeParams);
 /**
  * @param hNode SEND_ONLY
- * @param params_out SEND_RECV
+ * @param params_out RECV_ONLY
+ * @deeparray params_out accessDescs accessDescCount NODE:hNode
  */
 CUresult cuGraphMemAllocNodeGetParams(CUgraphNode hNode,
                                       CUDA_MEM_ALLOC_NODE_PARAMS *params_out);
@@ -2570,7 +2572,12 @@ CUresult cuGraphRemoveDependencies(CUgraph hGraph, const CUgraphNode *from,
 /**
  * @param hNode SEND_ONLY
  */
-CUresult cuGraphDestroyNode(CUgraphNode hNode);
+CUresult cuGraphDestroyNode(CUgraphNode hNode) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_deep_node_cache_reset(hNode);
+  return return_value;
+}
 /**
  * @disabled server - manual server retains graph staging resources
  * @recordowner GRAPH_EXEC phGraphExec
@@ -2746,7 +2753,15 @@ CUresult cuGraphExecDestroy(CUgraphExec hGraphExec);
  * @param hGraph SEND_ONLY
  * @disabled server
  */
-CUresult cuGraphDestroy(CUgraph hGraph);
+CUresult cuGraphDestroy(CUgraph hGraph) {
+  auto cached_nodes = lupine_deep_cache_graph_nodes(hGraph);
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS) {
+    for (CUgraphNode node : cached_nodes)
+      lupine_deep_node_cache_reset(node);
+  }
+  return return_value;
+}
 #ifdef cuGraphExecUpdate
 #undef cuGraphExecUpdate
 #endif

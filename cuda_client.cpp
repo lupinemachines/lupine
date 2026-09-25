@@ -6752,13 +6752,13 @@ lupine_validate_graph_dependencies(const CUgraphNode *dependencies,
   return CUDA_SUCCESS;
 }
 
-// Backing store for codegen DeepStructOperation RECV params (e.g. the
-// *GetParams node-params queries). CUDA returns arrays owned by the node; we
-// mirror that by keeping the deserialized copies alive, keyed by the caller's
-// out-pointer, until the next deep query into the same struct. Generic across
-// all deep structs so codegen needs no per-type globals.
+// Backing store shared by deep-array queries. Output-keyed arrays last until
+// the next query into that struct; immutable node-keyed arrays last until
+// their node or graph is destroyed.
 static std::mutex g_deep_cache_mutex;
-static std::map<const void *, std::vector<void *>> g_deep_cache;
+// The bool separates node handles from caller output addresses.
+static std::map<std::pair<const void *, bool>,
+                std::vector<std::vector<unsigned char>>> g_deep_cache;
 // Release paths acquire the handle-association mutex and this mutex together;
 // no path acquires them separately in the opposite order.
 static std::mutex g_retained_string_mutex;
@@ -6868,23 +6868,51 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
 
 extern "C" void lupine_deep_cache_reset(const void *key) {
   std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
-  auto it = g_deep_cache.find(key);
-  if (it != g_deep_cache.end()) {
-    for (void *ptr : it->second) {
-      free(ptr);
-    }
-    it->second.clear();
-  }
+  g_deep_cache.erase({key, false});
 }
 
 extern "C" void *lupine_deep_cache_add(const void *key, size_t bytes) {
-  void *ptr = bytes != 0 ? malloc(bytes) : nullptr;
-  if (bytes != 0 && ptr == nullptr) {
-    return nullptr;
-  }
   std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
-  g_deep_cache[key].push_back(ptr);
-  return ptr;
+  auto &arrays = g_deep_cache[{key, false}];
+  arrays.emplace_back(bytes);
+  return arrays.back().data();
+}
+
+extern "C" void *lupine_deep_node_cache_get(CUgraphNode node, size_t slot,
+                                           size_t bytes) {
+  std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
+  auto &arrays = g_deep_cache[{node, true}];
+  if (arrays.size() <= slot)
+    arrays.resize(slot + 1);
+  // NODE annotations are for immutable arrays. Repeated queries must reuse
+  // the same storage, including queries into different caller output structs.
+  arrays[slot].resize(bytes);
+  return arrays[slot].data();
+}
+
+extern "C" void lupine_deep_node_cache_reset(CUgraphNode node) {
+  std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
+  g_deep_cache.erase({node, true});
+}
+
+extern "C" std::vector<CUgraphNode>
+lupine_deep_cache_graph_nodes(CUgraph graph) {
+  {
+    std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
+    if (std::none_of(g_deep_cache.begin(), g_deep_cache.end(),
+                     [](const auto &entry) { return entry.first.second; }))
+      return {};
+  }
+  // Enumerate before destruction: this also covers allocation nodes created
+  // by stream capture, for which the client never observed an AddNode call.
+  size_t count = 0;
+  if (cuGraphGetNodes(graph, nullptr, &count) != CUDA_SUCCESS)
+    return {};
+  std::vector<CUgraphNode> nodes(count);
+  if (count != 0 && cuGraphGetNodes(graph, nodes.data(), &count) != CUDA_SUCCESS)
+    return {};
+  nodes.resize(count);
+  return nodes;
 }
 
 static CUresult lupine_queue_graph_dependencies(conn_t *conn,

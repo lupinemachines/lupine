@@ -526,6 +526,7 @@ def parse_annotation(
     # @deeparray <param> <array_member> <count_member> entries, grouped by the
     # struct-pointer param they describe (see DeepStructOperation).
     deep_arrays: dict[str, list[tuple[str, str]]] = {}
+    deep_node_owners: dict[str, str] = {}
 
     if not annotation:
         metadata.routing_kind, metadata.routing_parameter = infer_routing_key(params)
@@ -645,6 +646,10 @@ def parse_annotation(
             if len(parts) < 4:
                 continue
             deep_arrays.setdefault(parts[1], []).append((parts[2], parts[3]))
+            if len(parts) == 5 and parts[4].startswith("NODE:"):
+                node = parts[4].split(":", 1)[1]
+                annotation_param(params, node)
+                deep_node_owners[parts[1]] = node
             continue
         if line.startswith("@param"):
             parts = line.split()
@@ -941,6 +946,7 @@ def parse_annotation(
                     parameter=op.parameter,
                     ptr=op.parameter.type,
                     members=members,
+                    node_owner=deep_node_owners.get(pname),
                 )
                 break
     # An array is sized from another parameter, so that parameter has to be on
@@ -1263,7 +1269,10 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             "extern void rpc_close(conn_t *conn);\n"
             'extern "C" void lupine_deep_cache_reset(const void *key);\n'
             'extern "C" void *lupine_deep_cache_add(const void *key, '
-            "size_t bytes);\n\n"
+            "size_t bytes);\n"
+            'extern "C" void *lupine_deep_node_cache_get(CUgraphNode node, size_t slot, size_t bytes);\n'
+            'extern "C" void lupine_deep_node_cache_reset(CUgraphNode node);\n'
+            'extern "C" std::vector<CUgraphNode> lupine_deep_cache_graph_nodes(CUgraph graph);\n\n'
             'extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);\n'
             'extern "C" conn_t *lupine_rpc_conn_for_current_context();\n'
             'extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx);\n'

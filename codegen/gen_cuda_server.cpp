@@ -5758,7 +5758,8 @@ int handle_cuGraphAddMemAllocNode(conn_t *conn) {
   size_t numDependencies;
   CUgraphNode *dependencies = nullptr;
   size_t dependencies_size;
-  CUDA_MEM_ALLOC_NODE_PARAMS nodeParams{};
+  CUDA_MEM_ALLOC_NODE_PARAMS nodeParams = {};
+  std::vector<unsigned char> nodeParams_accessDescs_buf;
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
@@ -5771,7 +5772,16 @@ int handle_cuGraphAddMemAllocNode(conn_t *conn) {
     goto ERROR_0;
   if ((dependencies_size != 0 &&
        rpc_read(conn, dependencies, dependencies_size) < 0) ||
-      rpc_read(conn, &nodeParams, sizeof(CUDA_MEM_ALLOC_NODE_PARAMS)) < 0 ||
+      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      ((nodeParams_accessDescs_buf.resize(nodeParams.accessDescCount *
+                                          sizeof(*nodeParams.accessDescs)),
+        false)) ||
+      (nodeParams.accessDescCount != 0 &&
+       rpc_read(conn, nodeParams_accessDescs_buf.data(),
+                nodeParams_accessDescs_buf.size()) < 0) ||
+      ((nodeParams.accessDescs = (decltype(nodeParams.accessDescs))
+                                     nodeParams_accessDescs_buf.data()),
+       false) ||
       false)
     goto ERROR_0;
 
@@ -5787,7 +5797,7 @@ int handle_cuGraphAddMemAllocNode(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phGraphNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_write(conn, &nodeParams, sizeof(CUDA_MEM_ALLOC_NODE_PARAMS)) < 0 ||
+      rpc_write(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -5800,12 +5810,10 @@ ERROR_0:
 
 int handle_cuGraphMemAllocNodeGetParams(conn_t *conn) {
   CUgraphNode hNode;
-  CUDA_MEM_ALLOC_NODE_PARAMS params_out{};
+  CUDA_MEM_ALLOC_NODE_PARAMS params_out = {};
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_read(conn, &params_out, sizeof(CUDA_MEM_ALLOC_NODE_PARAMS)) < 0 ||
-      false)
+  if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -5815,7 +5823,10 @@ int handle_cuGraphMemAllocNodeGetParams(conn_t *conn) {
   return_value = cuGraphMemAllocNodeGetParams(hNode, &params_out);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &params_out, sizeof(CUDA_MEM_ALLOC_NODE_PARAMS)) < 0 ||
+      rpc_write(conn, &params_out, sizeof(params_out)) < 0 ||
+      rpc_write(conn, params_out.accessDescs,
+                params_out.accessDescCount * sizeof(*params_out.accessDescs)) <
+          0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
