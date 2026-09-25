@@ -603,7 +603,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
   int header[2] = {};
   for (;;) {
     int result = rpc_http2_read_stream(conn, stream_id, header, sizeof(header));
-    if (result != sizeof(header)) {
+    if (result != 0) {
       if (result != LUPINE_RPC_HTTP2_STREAM_END) {
         rpc_mark_connection_closed(conn);
       }
@@ -617,7 +617,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
     uint64_t published = 0;
     if (header[1] != 0 ||
         rpc_http2_read_stream(conn, stream_id, &published, sizeof(published)) !=
-            sizeof(published) ||
+            0 ||
         rpc_async_sequence_wait(conn, published) < 0) {
       rpc_mark_connection_closed(conn);
       return -1;
@@ -646,8 +646,7 @@ int rpc_read_start(conn_t *conn, int write_id) {
   }
   int32_t stream_id = rpc_tls_io.response.stream_id;
   int header[2] = {};
-  if (rpc_http2_read_stream(conn, stream_id, header, sizeof(header)) !=
-          sizeof(header) ||
+  if (rpc_http2_read_stream(conn, stream_id, header, sizeof(header)) != 0 ||
       header[0] != write_id || header[1] != -1) {
     rpc_mark_connection_closed(conn);
     rpc_release_held_call_lock(conn);
@@ -734,7 +733,7 @@ int rpc_read(conn_t *conn, void *data, size_t size) {
   if (result < 0 || alias == nullptr) {
     return result;
   }
-  return rpc_note_host_allocation_write(conn, data, result) < 0 ? -1 : result;
+  return rpc_note_host_allocation_write(conn, data, size) < 0 ? -1 : 0;
 }
 
 int rpc_read_pitched(conn_t *conn, void *data, size_t width, size_t rows,

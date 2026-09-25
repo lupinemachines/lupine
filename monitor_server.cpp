@@ -721,8 +721,7 @@ void lupine_monitoring_unregister_pid(int64_t server_pid) {
 
 int handle_lupine_client_metadata(conn_t *conn) {
   lupine_client_metadata_header header = {};
-  if (conn == nullptr ||
-      rpc_read(conn, &header, sizeof(header)) != sizeof(header)) {
+  if (conn == nullptr || rpc_read(conn, &header, sizeof(header)) != 0) {
     return -1;
   }
   lupine_client_metadata metadata = {};
@@ -733,8 +732,7 @@ int handle_lupine_client_metadata(conn_t *conn) {
   } else {
     std::array<unsigned char, LUPINE_CLIENT_METADATA_MAX_PAYLOAD> payload = {};
     if (header.payload_size != 0 &&
-        rpc_read(conn, payload.data(), header.payload_size) !=
-            static_cast<int>(header.payload_size)) {
+        rpc_read(conn, payload.data(), header.payload_size) != 0) {
       return -1;
     }
     if (header.version == LUPINE_CLIENT_METADATA_VERSION &&

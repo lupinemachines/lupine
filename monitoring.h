@@ -48,7 +48,7 @@ inline void lupine_monitoring_register_child() {}
 inline void lupine_monitoring_unregister_pid(int64_t) {}
 inline int handle_lupine_client_metadata(conn_t *conn) {
   lupine_client_metadata_header header = {};
-  if (rpc_read(conn, &header, sizeof(header)) != sizeof(header) ||
+  if (rpc_read(conn, &header, sizeof(header)) != 0 ||
       rpc_drain(conn, header.payload_size) < 0) {
     return -1;
   }

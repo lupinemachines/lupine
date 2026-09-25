@@ -263,6 +263,7 @@ constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;
 // The selected native client object no longer matches the server. Retrying an
 // arena slot cannot help; the launcher must fetch the advertised bundle.
 constexpr int LUPINE_RPC_HTTP2_CLIENT_MISMATCH = -4;
+// 0 once all `size` bytes arrived, else LUPINE_RPC_HTTP2_STREAM_END or -1.
 extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                                  size_t size);
 extern int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,

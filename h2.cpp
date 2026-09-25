@@ -1239,7 +1239,7 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
   }
   if (copied == size) {
     pthread_mutex_unlock(&transport->session_mutex);
-    return static_cast<int>(size);
+    return 0;
   }
   if (stream.read_destination != nullptr ||
       (stream.response_status != 0 && stream.response_status != 200)) {
@@ -1266,7 +1266,7 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
   stream.read_remaining = 0;
   int result = -1;
   if (complete) {
-    result = static_cast<int>(size);
+    result = 0;
   } else if (stream.remote_end) {
     result = LUPINE_RPC_HTTP2_STREAM_END;
   }
