@@ -22,7 +22,6 @@ struct lupine_host_callback_data {
   void *userData = nullptr;
   std::weak_ptr<lupine_graph_resources> resources;
   std::optional<CUstream> stream;
-  bool persistent = true;
 };
 
 struct lupine_stream_callback_data {
@@ -102,7 +101,6 @@ using lupine_pending_dtoh_streams =
 libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies();
 lupine_graph_resource_ptr lupine_get_graph_resources(CUgraph graph);
-lupine_graph_resource_ptr lupine_get_graph_exec_resources(CUgraphExec exec);
 lupine_graph_resource_ptr lupine_find_stream_resources(CUstream stream);
 lupine_graph_resource_ptr lupine_captured_stream_resources(CUstream stream);
 lupine_graph_resource_ptr lupine_make_stream_capture_resources();
@@ -110,10 +108,6 @@ void lupine_begin_stream_capture_resources(
     CUstream stream, const lupine_graph_resource_ptr &resources);
 CUresult lupine_finish_stream_capture_resources(CUstream stream, CUgraph graph,
                                                 bool success);
-void lupine_graph_retain_host_data(const lupine_graph_resource_ptr &resources,
-                                   std::shared_ptr<void> data);
-void *lupine_graph_alloc_host_buffer(const lupine_graph_resource_ptr &resources,
-                                     size_t bytes);
 void lupine_record_event_capture_resources(CUevent event, CUstream stream);
 void lupine_forget_event_capture_resources(CUevent event);
 void lupine_wait_event_capture_resources(CUstream stream, CUevent event);

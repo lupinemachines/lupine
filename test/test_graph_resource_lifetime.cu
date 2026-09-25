@@ -1,6 +1,6 @@
 // Graph host storage follows graphs, clones, executable graphs and queued work.
 // LUPINE_TEST_SERVER_RSS
-// Run --memory-steps through check_graph_capture_memory.py to check server RSS.
+// The custom-test runner samples server RSS at each --memory-steps handshake.
 // The capture/clone/replay sequence also occurs in NVIDIA simpleCudaGraphs.
 #include <cuda.h>
 

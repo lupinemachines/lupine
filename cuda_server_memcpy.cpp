@@ -221,6 +221,14 @@ lupine_retain_native_graph_resources(CUgraph graph,
   return result;
 }
 
+struct lupine_graph_host_copy_node {
+  explicit lupine_graph_host_copy_node(lupine_graph_host_copy node_copy)
+      : copy(node_copy) {}
+
+  lupine_graph_host_copy copy;
+  lupine_graph_host_copy_node *next = nullptr;
+};
+
 struct lupine_graph_capture_scratch {
   lupine_graph_capture_scratch(void *scratch_ptr, size_t scratch_size)
       : ptr(scratch_ptr), size(scratch_size) {}
@@ -231,12 +239,18 @@ struct lupine_graph_capture_scratch {
 };
 
 static void lupine_prune_graph_associations();
+static void lupine_erase_htod_graph_state(lupine_graph_resources *resources);
 
 struct lupine_graph_resources : lupine_graph_cleanup {
   ~lupine_graph_resources() override {
     lupine_prune_graph_associations();
-    for (const auto &copy : dtoh_copies) {
-      lupine_forget_undelivered_dtoh(copy.server_src);
+    lupine_erase_htod_graph_state(this);
+    auto *node = dtoh_copies.load();
+    while (node != nullptr) {
+      lupine_forget_undelivered_dtoh(node->copy.server_src);
+      auto *next = node->next;
+      delete node;
+      node = next;
     }
     auto *scratch = capture_scratch.load();
     if (scratch != nullptr) {
@@ -245,19 +259,23 @@ struct lupine_graph_resources : lupine_graph_cleanup {
     }
   }
 
-  mutable std::mutex mutex;
-  std::vector<lupine_graph_host_copy> dtoh_copies;
-  std::vector<std::shared_ptr<void>> host_data;
-  std::shared_ptr<void> htod_state;
-
   void add_dtoh_copy(lupine_graph_host_copy copy) {
-    std::lock_guard<std::mutex> lock(mutex);
-    dtoh_copies.push_back(copy);
+    auto *node = new lupine_graph_host_copy_node(copy);
+    node->next = dtoh_copies.load(std::memory_order_relaxed);
+    while (!dtoh_copies.compare_exchange_weak(node->next, node,
+                                              std::memory_order_release,
+                                              std::memory_order_relaxed)) {
+    }
   }
 
   std::vector<lupine_graph_host_copy> dtoh_copy_snapshot() const {
-    std::lock_guard<std::mutex> lock(mutex);
-    return dtoh_copies;
+    std::vector<lupine_graph_host_copy> copies;
+    for (auto *node = dtoh_copies.load(std::memory_order_acquire);
+         node != nullptr; node = node->next) {
+      copies.push_back(node->copy);
+    }
+    std::reverse(copies.begin(), copies.end());
+    return copies;
   }
 
   bool has_capture_scratch() const {
@@ -304,6 +322,7 @@ struct lupine_graph_resources : lupine_graph_cleanup {
     }
   }
 
+  std::atomic<lupine_graph_host_copy_node *> dtoh_copies{nullptr};
   std::atomic<lupine_graph_capture_scratch *> capture_scratch{nullptr};
 };
 
@@ -574,31 +593,6 @@ void lupine_graph_note_dtoh_copy(const lupine_graph_resource_ptr &resources,
   resources->add_dtoh_copy({client_dst, server_src, bytes});
 }
 
-void lupine_graph_retain_host_data(const lupine_graph_resource_ptr &resources,
-                                   std::shared_ptr<void> data) {
-  std::lock_guard<std::mutex> lock(resources->mutex);
-  resources->host_data.push_back(std::move(data));
-}
-
-void *lupine_graph_alloc_host_buffer(const lupine_graph_resource_ptr &resources,
-                                     size_t bytes) {
-  if (resources == nullptr || bytes == 0) {
-    return nullptr;
-  }
-  void *pointer = nullptr;
-  if (cuMemAllocHost(&pointer, bytes) == CUDA_SUCCESS) {
-    lupine_graph_retain_host_data(resources,
-                                  std::shared_ptr<void>(pointer, [](void *p) {
-                                    (void)cuMemFreeHost(p);
-                                  }));
-  } else {
-    pointer = malloc(bytes);
-    lupine_graph_retain_host_data(resources,
-                                  std::shared_ptr<void>(pointer, free));
-  }
-  return pointer;
-}
-
 // A DtoH the stream has executed whose bytes have not been delivered to the
 // client yet. Set from a host callback queued behind the copy, so it reflects
 // execution order (and re-arms on every graph replay), not enqueue order;
@@ -652,17 +646,9 @@ static void lupine_note_dtoh_undelivered(conn_t *conn, CUstream stream,
                                          size_t bytes, bool persistent) {
   auto *undelivered = new (std::nothrow)
       lupine_undelivered_dtoh{conn, client_dst, server_src, bytes, persistent};
-  if (undelivered == nullptr) {
-    return;
-  }
-  if (persistent) {
-    lupine_graph_retain_host_data(
-        lupine_captured_stream_resources(stream),
-        std::shared_ptr<lupine_undelivered_dtoh>(undelivered));
-  }
-  if (cuLaunchHostFunc(stream, lupine_dtoh_undelivered_callback, undelivered) !=
-          CUDA_SUCCESS &&
-      !persistent) {
+  if (undelivered != nullptr &&
+      cuLaunchHostFunc(stream, lupine_dtoh_undelivered_callback, undelivered) !=
+          CUDA_SUCCESS) {
     delete undelivered;
   }
 }
@@ -1135,15 +1121,38 @@ struct lupine_htod_graph_state {
   std::vector<std::shared_ptr<lupine_htod_callback_data>> callbacks;
 };
 
+using lupine_htod_graph_registry =
+    libcuckoo::cuckoohash_map<lupine_graph_resources *,
+                              std::shared_ptr<lupine_htod_graph_state>>;
+
+static lupine_htod_graph_registry &lupine_htod_graph_states() {
+  static auto *states = new lupine_htod_graph_registry();
+  return *states;
+}
+
+static void lupine_erase_htod_graph_state(lupine_graph_resources *resources) {
+  lupine_htod_graph_states().erase(resources);
+}
+
 static std::shared_ptr<lupine_htod_graph_state> lupine_htod_graph_state_for(
     const lupine_graph_resource_ptr &resources,
     const std::shared_ptr<lupine_htod_side_effect_ring> &ring) {
-  std::lock_guard<std::mutex> lock(resources->mutex);
-  if (resources->htod_state == nullptr) {
-    resources->htod_state = std::make_shared<lupine_htod_graph_state>(ring);
+  std::shared_ptr<lupine_htod_graph_state> state;
+  if (lupine_htod_graph_states().find(resources.get(), state)) {
+    return state;
   }
-  return std::static_pointer_cast<lupine_htod_graph_state>(
-      resources->htod_state);
+  try {
+    auto candidate = std::make_shared<lupine_htod_graph_state>(ring);
+    state = candidate;
+    lupine_htod_graph_states().upsert(
+        resources.get(),
+        [&state](std::shared_ptr<lupine_htod_graph_state> &existing,
+                 libcuckoo::UpsertContext) { state = existing; },
+        std::move(candidate));
+  } catch (...) {
+    return nullptr;
+  }
+  return state;
 }
 
 struct lupine_htod_exec_callbacks : lupine_graph_cleanup {
@@ -1162,7 +1171,7 @@ struct lupine_htod_exec_resources {
     }
   }
 
-  std::shared_ptr<lupine_htod_exec_callbacks> callbacks;
+  std::vector<std::shared_ptr<lupine_htod_callback_data>> callbacks;
   // Exec-node APIs require a node from the graph used for instantiation. Keep
   // the private ring-rebound clone so client nodes can be translated to it.
   CUgraph original = nullptr;
@@ -1198,11 +1207,11 @@ lupine_prepare_htod_graph_exec(CUgraph graph,
   *binding = {};
   binding->original = graph;
   binding->prepared = graph;
-  if (resources == nullptr || resources->htod_state == nullptr) {
+  std::shared_ptr<lupine_htod_graph_state> captured_state;
+  if (resources == nullptr ||
+      !lupine_htod_graph_states().find(resources.get(), captured_state)) {
     return CUDA_SUCCESS;
   }
-  auto captured_state =
-      std::static_pointer_cast<lupine_htod_graph_state>(resources->htod_state);
   auto captured_execution = captured_state->execution;
 
   bool prepared_in_place = false;
@@ -1426,7 +1435,7 @@ lupine_prepare_htod_graph_exec(CUgraph graph,
       return result;
     }
     auto resources = std::make_shared<lupine_htod_exec_resources>();
-    resources->callbacks = std::move(retained_callbacks);
+    resources->callbacks = callbacks;
     resources->original = binding->original;
     resources->prepared = binding->prepared;
     resources->context = ring->context();
@@ -1536,16 +1545,38 @@ void lupine_release_htod_graph_binding(lupine_htod_graph_binding *binding) {
   *binding = {};
 }
 
-lupine_graph_resource_ptr lupine_get_graph_exec_resources(CUgraphExec exec) {
-  return lupine_find_graph_resources(lupine_graph_exec_resource_map(), exec);
+static CUresult lupine_release_htod_graph_exec(CUgraphExec exec) {
+  std::shared_ptr<lupine_htod_exec_resources> resources;
+  if (!lupine_htod_exec_resource_map().find(exec, resources)) {
+    return CUDA_SUCCESS;
+  }
+
+  // cuGraphExecDestroy leaves in-flight launches running. Keep callback data,
+  // events, and the pinned ring alive until no launch can still reference
+  // them. This synchronization is confined to destroying graph execs that
+  // contain pageable HtoD side effects.
+  CUresult result = cuCtxPushCurrent_v2(resources->context);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  result = cuCtxSynchronize();
+  CUcontext popped = nullptr;
+  CUresult pop_result = cuCtxPopCurrent_v2(&popped);
+  if (result == CUDA_SUCCESS) {
+    result = pop_result;
+  }
+  if (result == CUDA_SUCCESS) {
+    lupine_htod_exec_resource_map().erase(exec);
+  }
+  return result;
 }
 
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec) {
-  // CUDA user objects retain callback data until queued launches finish, even
-  // when the executable and its private source graph have been destroyed.
-  lupine_htod_exec_resource_map().erase(exec);
-  lupine_graph_exec_resource_map().erase(exec);
-  return CUDA_SUCCESS;
+  CUresult result = lupine_release_htod_graph_exec(exec);
+  if (result == CUDA_SUCCESS) {
+    lupine_graph_exec_resource_map().erase(exec);
+  }
+  return result;
 }
 
 static CUresult lupine_enqueue_htod_callback(

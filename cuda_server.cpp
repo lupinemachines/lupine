@@ -623,6 +623,17 @@ static int lupine_read_graph_dependencies(conn_t *conn,
   return 0;
 }
 
+static void *lupine_alloc_process_host_buffer(size_t bytes) {
+  void *ptr = nullptr;
+  if (bytes == 0) {
+    return nullptr;
+  }
+  if (cuMemAllocHost(&ptr, bytes) != CUDA_SUCCESS) {
+    return malloc(bytes);
+  }
+  return ptr;
+}
+
 std::vector<lupine_pending_dtoh_item>
 lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
                                   bool all_streams, CUcontext context) {
@@ -2478,8 +2489,9 @@ void CUDA_CB lupine_graph_host_callback(void *userData) {
     return;
   }
 
+  auto resources = callback->resources.lock();
   std::vector<lupine_graph_host_copy> copies =
-      lupine_graph_dtoh_copy_snapshot(callback->resources.lock());
+      lupine_graph_dtoh_copy_snapshot(resources);
   conn_t *conn = callback->conn;
   auto pending =
       callback->stream.has_value()
@@ -2509,9 +2521,6 @@ void CUDA_CB lupine_graph_host_callback(void *userData) {
     rpc_read_end(conn);
   }
   lupine_cleanup_pending_dtoh_copies(&pending);
-  if (!callback->persistent) {
-    delete callback;
-  }
 }
 
 void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
@@ -2823,7 +2832,7 @@ int handle_cuGraphAddMemcpyNode(conn_t *conn) {
 
   auto resources = lupine_get_graph_resources(hGraph);
   if (host_src_bytes != 0) {
-    void *host = lupine_graph_alloc_host_buffer(resources, host_src_bytes);
+    void *host = lupine_alloc_process_host_buffer(host_src_bytes);
     if (host == nullptr || rpc_read(conn, host, host_src_bytes) < 0) {
       return -1;
     }
@@ -2832,7 +2841,7 @@ int handle_cuGraphAddMemcpyNode(conn_t *conn) {
 
   if (copyParams.dstMemoryType == CU_MEMORYTYPE_HOST) {
     size_t host_dst_bytes = lupine_memcpy3d_host_span_bytes(copyParams, false);
-    void *host = lupine_graph_alloc_host_buffer(resources, host_dst_bytes);
+    void *host = lupine_alloc_process_host_buffer(host_dst_bytes);
     if (host == nullptr && host_dst_bytes != 0) {
       return -1;
     }
@@ -2904,19 +2913,16 @@ int handle_cuGraphAddHostNode(conn_t *conn) {
     return -1;
   }
 
-  auto resources = lupine_get_graph_resources(hGraph);
-  if (resources != nullptr) {
-    auto callback =
-        std::make_shared<lupine_host_callback_data>(lupine_host_callback_data{
-            conn, nodeParams.fn, nodeParams.userData, resources});
-    lupine_graph_retain_host_data(resources, callback);
-    CUDA_HOST_NODE_PARAMS serverParams{};
-    serverParams.fn = lupine_graph_host_callback;
-    serverParams.userData = callback.get();
-    result = cuGraphAddHostNode(&graphNode, hGraph,
-                                deps.empty() ? nullptr : deps.data(),
-                                deps.size(), &serverParams);
-  }
+  auto *callback =
+      new lupine_host_callback_data{conn, nodeParams.fn, nodeParams.userData,
+                                    lupine_get_graph_resources(hGraph)};
+  CUDA_HOST_NODE_PARAMS serverParams = {};
+  serverParams.fn = lupine_graph_host_callback;
+  serverParams.userData = callback;
+
+  result = cuGraphAddHostNode(&graphNode, hGraph,
+                              deps.empty() ? nullptr : deps.data(), deps.size(),
+                              &serverParams);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &graphNode, sizeof(graphNode)) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
@@ -3053,14 +3059,13 @@ int handle_cuGraphAddNode(conn_t *conn) {
   return 0;
 }
 
-static std::shared_ptr<lupine_host_callback_data>
-lupine_make_host_setparams_callback(
-    conn_t *conn, const CUDA_HOST_NODE_PARAMS &params,
-    const lupine_graph_resource_ptr &resources) {
-  auto callback = std::make_shared<lupine_host_callback_data>(
-      lupine_host_callback_data{conn, params.fn, params.userData, resources});
-  lupine_graph_retain_host_data(resources, callback);
-  return callback;
+// Host-node callbacks set after node creation have no graph handle to own their
+// trampoline data. The server process is their lifetime boundary, so allocate
+// them directly without a synchronized container that never reclaimed them.
+static lupine_host_callback_data *
+lupine_make_host_setparams_callback(conn_t *conn,
+                                    const CUDA_HOST_NODE_PARAMS &params) {
+  return new lupine_host_callback_data{conn, params.fn, params.userData, {}};
 }
 
 int handle_cuGraphHostNodeSetParams(conn_t *conn) {
@@ -3077,24 +3082,11 @@ int handle_cuGraphHostNodeSetParams(conn_t *conn) {
     return -1;
   }
 
-  CUDA_HOST_NODE_PARAMS previous{};
-  result = cuGraphHostNodeGetParams(hNode, &previous);
-  lupine_graph_resource_ptr resources;
-  if (result == CUDA_SUCCESS && previous.fn == lupine_graph_host_callback &&
-      previous.userData != nullptr) {
-    resources = static_cast<lupine_host_callback_data *>(previous.userData)
-                    ->resources.lock();
-  }
-  if (resources != nullptr) {
-    auto callback =
-        lupine_make_host_setparams_callback(conn, params, resources);
-    CUDA_HOST_NODE_PARAMS serverParams{};
-    serverParams.fn = lupine_graph_host_callback;
-    serverParams.userData = callback.get();
-    result = cuGraphHostNodeSetParams(hNode, &serverParams);
-  } else if (result == CUDA_SUCCESS) {
-    result = CUDA_ERROR_INVALID_VALUE;
-  }
+  auto *callback = lupine_make_host_setparams_callback(conn, params);
+  CUDA_HOST_NODE_PARAMS serverParams{};
+  serverParams.fn = lupine_graph_host_callback;
+  serverParams.userData = callback;
+  result = cuGraphHostNodeSetParams(hNode, &serverParams);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
@@ -3118,16 +3110,12 @@ int handle_cuGraphExecHostNodeSetParams(conn_t *conn) {
     return -1;
   }
 
-  auto resources = lupine_get_graph_exec_resources(hGraphExec);
-  if (resources != nullptr) {
-    auto callback =
-        lupine_make_host_setparams_callback(conn, params, resources);
-    CUDA_HOST_NODE_PARAMS serverParams{};
-    serverParams.fn = lupine_graph_host_callback;
-    serverParams.userData = callback.get();
-    hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
-    result = cuGraphExecHostNodeSetParams(hGraphExec, hNode, &serverParams);
-  }
+  auto *callback = lupine_make_host_setparams_callback(conn, params);
+  CUDA_HOST_NODE_PARAMS serverParams{};
+  serverParams.fn = lupine_graph_host_callback;
+  serverParams.userData = callback;
+  hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
+  result = cuGraphExecHostNodeSetParams(hGraphExec, hNode, &serverParams);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
@@ -3180,18 +3168,10 @@ int handle_cuLaunchHostFunc(conn_t *conn) {
     return -1;
   }
 
-  auto resources = lupine_captured_stream_resources(stream);
-  auto callback =
-      std::make_unique<lupine_host_callback_data>(lupine_host_callback_data{
-          conn, fn, userData, resources, stream, resources != nullptr});
-  auto *data = callback.get();
-  if (resources != nullptr) {
-    lupine_graph_retain_host_data(resources, std::move(callback));
-  }
-  result = cuLaunchHostFunc(stream, lupine_graph_host_callback, data);
-  if (resources == nullptr && result == CUDA_SUCCESS) {
-    callback.release(); // One-shot callback deletes itself after delivery.
-  }
+  auto resources = lupine_find_stream_resources(stream);
+  auto *callback =
+      new lupine_host_callback_data{conn, fn, userData, resources, stream};
+  result = cuLaunchHostFunc(stream, lupine_graph_host_callback, callback);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
