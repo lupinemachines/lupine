@@ -42,12 +42,6 @@ class NullableOperation:
             )
         )
 
-    def client_unified_copy(self, f, direction, error):
-        f.write(
-            f"    if (maybe_copy_unified_arg(conn, (void*){self.parameter.name}, cudaMemcpyDeviceToHost) < 0)\n"
-        )
-        f.write(f"      return {error};\n")
-
     @property
     def server_declaration(self) -> str:
         c = self.ptr.ptr_to.const
@@ -206,51 +200,6 @@ class ArrayOperation:
             f.write(
                 f"        rpc_write(conn, {self.parameter.name}, {self.transfer_size_expr()}) < 0 ||\n"
             )
-
-
-    def client_unified_copy(self, f, direction, error):
-        f.write(
-            f"    if (maybe_copy_unified_arg(conn, (void*){self.parameter.name}, {direction}) < 0)\n"
-        )
-        f.write(f"      return {error};\n")
-
-        if isinstance(self.length, int):
-            f.write(
-                f"    for (int i = 0; i < {self.length} && is_unified_pointer(conn, (void*){self.parameter.name}); i++)\n"
-            )
-            f.write(
-                f"      if (maybe_copy_unified_arg(conn, (void*)&{self.parameter.name}[i], {direction}) < 0 )\n"
-            )
-            f.write(f"        return {error};\n")
-
-            return
-
-        if hasattr(self.length.type, "ptr_to"):
-            # need to cast the int a bit differently here
-            f.write(
-                f"    for (int i = 0; i < static_cast<int>(*{self.length.name}) && is_unified_pointer(conn, (void*){self.parameter.name}); i++)\n"
-            )
-            f.write(
-                f"      if (maybe_copy_unified_arg(conn, (void*)&{self.parameter.name}[i], {direction}) < 0)\n"
-            )
-            f.write(f"        return {error};\n")
-        else:
-            if hasattr(self.parameter.type, "ptr_to"):
-                f.write(
-                    f"    for (int i = 0; i < static_cast<int>({self.length.name}) && is_unified_pointer(conn, (void*){self.parameter.name}); i++)\n"
-                )
-                f.write(
-                    f"      if (maybe_copy_unified_arg(conn, (void*)&{self.parameter.name}[i], {direction}) < 0)\n"
-                )
-                f.write(f"        return {error};\n")
-            else:
-                f.write(
-                    f"    for (int i = 0; i < static_cast<int>({self.length.name}) && is_unified_pointer(conn, (void*){self.parameter.name}); i++)\n"
-                )
-                f.write(
-                    f"      if (maybe_copy_unified_arg(conn, (void*){self.parameter.name}[i], {direction}) < 0)\n"
-                )
-                f.write(f"        return {error};\n")
 
     @property
     def server_declaration(self) -> str:
@@ -788,12 +737,6 @@ class NullTerminatedOperation:
             f"        return {error_return};\n"
         )
 
-    def client_unified_copy(self, f, direction, error):
-        f.write(
-            f"    if (maybe_copy_unified_arg(conn, (void*){self.parameter.name}, {direction}) < 0)\n"
-        )
-        f.write(f"      return {error};\n")
-
     def server_rpc_read(self, f) -> Optional[str]:
         if not self.send:
             return None
@@ -920,18 +863,6 @@ class OpaqueTypeOperation:
         else:
             return f"    {self.type_.format()} {self.parameter.name};\n"
 
-    def client_unified_copy(self, f, direction, error):
-        if isinstance(self.type_, Pointer):
-            f.write(
-                f"    if (maybe_copy_unified_arg(conn, (void*){self.parameter.name}, {direction}) < 0)\n"
-            )
-            f.write(f"      return {error};\n")
-        else:
-            f.write(
-                f"    if (maybe_copy_unified_arg(conn, (void*)&{self.parameter.name}, {direction}) < 0)\n"
-            )
-            f.write(f"      return {error};\n")
-
     def server_rpc_read(self, f):
         if not self.send:
             return
@@ -993,12 +924,6 @@ class DereferenceOperation:
         f.write(
             f"        rpc_read(conn, &{self.parameter.name}, sizeof({self.type_.ptr_to.format()})) < 0 ||\n"
         )
-
-    def client_unified_copy(self, f, direction, error):
-        f.write(
-            f"    if (maybe_copy_unified_arg(conn, (void*){self.parameter.name}, {direction}) < 0)\n"
-        )
-        f.write(f"      return {error};\n")
 
     @property
     def server_reference(self) -> str:
