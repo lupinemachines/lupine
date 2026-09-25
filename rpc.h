@@ -128,6 +128,7 @@ struct conn_t {
   std::set<uint64_t> completed_async_sequences;
   bool async_cancelled;
   int async_sync_initialized;
+  int first_async_error;
   std::vector<rpc_write_cursor> write_queue;
   std::vector<rpc_host_allocation_write> host_allocation_writes;
   int host_allocation_writes_pending;
