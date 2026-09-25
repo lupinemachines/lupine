@@ -20,6 +20,9 @@
 #include <utility>
 #include <vector>
 
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
 #ifndef _WIN32
 #include <fcntl.h>
 #include <poll.h>
@@ -1075,6 +1078,59 @@ void test_independent_stream_lanes() {
   require(received_response == independent_response,
           "second lane response payload mismatch");
 }
+
+#ifdef __GLIBC__
+size_t heap_in_use() {
+  struct mallinfo2 info = mallinfo2();
+  return info.uordblks + info.hblkhd;
+}
+
+// Every exited client thread leaves a closed lane on both peers; a lane that
+// once carried a large message must not keep its buffers after it closes.
+void test_closed_lanes_release_buffers() {
+  h2_pair pair;
+  init_pair(&pair);
+  exchange_settings(&pair);
+
+  std::vector<unsigned char> payload(4 * 1024 * 1024);
+  uint32_t seed = 29;
+  for (unsigned char &byte : payload) {
+    seed = seed * 1664525u + 1013904223u;
+    byte = static_cast<unsigned char>(seed >> 24);
+  }
+  std::vector<unsigned char> received(payload.size());
+  size_t baseline = 0;
+  for (uint64_t lane_id = 1; lane_id <= 50; ++lane_id) {
+    int32_t client_lane = rpc_http2_lane_stream(&pair.client, lane_id);
+    require(client_lane > 0 &&
+                rpc_http2_accept_stream(&pair.server) == client_lane,
+            "released lane setup failed");
+    require(write_stream_bytes(&pair.client, client_lane, payload.data(),
+                               payload.size()) == 0 &&
+                rpc_http2_read_stream(&pair.server, client_lane,
+                                      received.data(), received.size()) >= 0,
+            "released lane request failed");
+    require(write_stream_bytes(&pair.server, client_lane, payload.data(),
+                               payload.size()) == 0 &&
+                rpc_http2_read_stream(&pair.client, client_lane,
+                                      received.data(), received.size()) >= 0,
+            "released lane response failed");
+    unsigned char byte = 0;
+    require(rpc_write_lane_termination(&pair.client, lane_id) == 0 &&
+                rpc_http2_read_stream(&pair.server, client_lane, &byte, 1) ==
+                    LUPINE_RPC_HTTP2_STREAM_END &&
+                rpc_http2_end_stream(&pair.server, client_lane) == 0 &&
+                rpc_http2_read_stream(&pair.client, client_lane, &byte, 1) ==
+                    LUPINE_RPC_HTTP2_STREAM_END,
+            "released lane close failed");
+    if (lane_id == 1) {
+      baseline = heap_in_use();
+    }
+  }
+  size_t retained = heap_in_use() - std::min(baseline, heap_in_use());
+  require(retained < 32 * 1024 * 1024, "closed lanes retained their buffers");
+}
+#endif
 
 void test_socket_reader_hands_off_between_streams() {
   h2_pair pair;
@@ -2165,6 +2221,9 @@ int main() {
   RUN_CASE(test_abort_failed_transport_with_queued_data());
   RUN_CASE(test_independent_stream_lanes());
   RUN_CASE(test_socket_reader_hands_off_between_streams());
+#ifdef __GLIBC__
+  RUN_CASE(test_closed_lanes_release_buffers());
+#endif
   RUN_CASE(test_large_payload());
   RUN_CASE(test_lz4_content_encoding_round_trip());
   RUN_CASE(test_refillable_cursor_round_trip());
