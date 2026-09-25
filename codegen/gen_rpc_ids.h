@@ -461,6 +461,9 @@
 #define RPC_nvmlDeviceGetGraphicsRunningProcesses_v2 1346129566
 #define RPC_nvmlDeviceGetMPSComputeRunningProcesses 770735307
 #define RPC_nvmlDeviceGetMPSComputeRunningProcesses_v2 182354437
+#define RPC_nvmlDeviceGetComputeRunningProcesses_v3 1662120183
+#define RPC_nvmlDeviceGetGraphicsRunningProcesses_v3 658210312
+#define RPC_nvmlDeviceGetMPSComputeRunningProcesses_v3 2111419027
 #define RPC_nvmlEventSetCreate 218928397
 #define RPC_nvmlEventSetFree 1100770030
 #define RPC_nvmlEventSetWait_v2 91923698

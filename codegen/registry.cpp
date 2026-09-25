@@ -425,10 +425,13 @@
 #define LUPINE_NVML_RPC_HANDLERS(HANDLER) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses, handle_nvmlDeviceGetComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v2, handle_nvmlDeviceGetComputeRunningProcesses_v2, rpc_backend::nvml) \
+  HANDLER(RPC_nvmlDeviceGetComputeRunningProcesses_v3, handle_nvmlDeviceGetComputeRunningProcesses_v3, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetGraphicsRunningProcesses, handle_nvmlDeviceGetGraphicsRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetGraphicsRunningProcesses_v2, handle_nvmlDeviceGetGraphicsRunningProcesses_v2, rpc_backend::nvml) \
+  HANDLER(RPC_nvmlDeviceGetGraphicsRunningProcesses_v3, handle_nvmlDeviceGetGraphicsRunningProcesses_v3, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetMPSComputeRunningProcesses, handle_nvmlDeviceGetMPSComputeRunningProcesses, rpc_backend::nvml) \
   HANDLER(RPC_nvmlDeviceGetMPSComputeRunningProcesses_v2, handle_nvmlDeviceGetMPSComputeRunningProcesses_v2, rpc_backend::nvml) \
+  HANDLER(RPC_nvmlDeviceGetMPSComputeRunningProcesses_v3, handle_nvmlDeviceGetMPSComputeRunningProcesses_v3, rpc_backend::nvml) \
   HANDLER(RPC_nvmlInit_v2, handle_nvmlInit_v2, rpc_backend::nvml) \
   HANDLER(RPC_nvmlInitWithFlags, handle_nvmlInitWithFlags, rpc_backend::nvml) \
   HANDLER(RPC_nvmlShutdown, handle_nvmlShutdown, rpc_backend::nvml) \
