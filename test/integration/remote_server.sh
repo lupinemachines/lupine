@@ -11,6 +11,15 @@ ssh_with_timeout() {
 stop_remote_server() {
   local pidfile="$1"
   local server_log="$2"
+  local saved_log=/dev/null cleanup_fd
+  if [[ -n "${RESULTS_DIR:-}" ]] && mkdir -p "$RESULTS_DIR"; then
+    saved_log="$RESULTS_DIR/${server_log##*/}"
+  fi
+  # Open before SSH so a log-path failure cannot suppress server cleanup.
+  if ! exec {cleanup_fd}>>"$saved_log"; then
+    exec {cleanup_fd}>/dev/null
+  fi
+  printf '\nServer log for %s\n' "${unit:-${sample:-$pidfile}}" >&"$cleanup_fd" || true
 
   ssh_with_timeout "
     if [ -f '$pidfile' ]; then
@@ -36,8 +45,10 @@ stop_remote_server() {
         kill -9 \"\$pid\" \$children >/dev/null 2>&1 || true
       fi
     fi
+    if [ -f '$server_log' ]; then cat '$server_log'; fi
     rm -f '$pidfile' '$server_log'
-  " >/dev/null 2>&1 || true
+  " >&"$cleanup_fd" 2>&1 || true
+  exec {cleanup_fd}>&-
 }
 
 start_remote_server() {
