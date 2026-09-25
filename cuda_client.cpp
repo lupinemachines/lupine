@@ -6987,7 +6987,7 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
     return CUDA_ERROR_INVALID_VALUE;
   }
 
-  lupine_route route = lupine_route_for_default();
+  lupine_route route = lupine_route_for_graph_node(hNode);
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuGraphKernelNodeGetParams_v2", hNode,
                                     nodeParams);
@@ -7066,7 +7066,7 @@ cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
     return CUDA_ERROR_INVALID_VALUE;
   }
 
-  lupine_route route = lupine_route_for_default();
+  lupine_route route = lupine_route_for_graph_node(hNode);
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuGraphKernelNodeSetParams_v2", hNode,
                                     nodeParams);
