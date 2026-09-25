@@ -6411,7 +6411,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn(
         "cuLaunchKernel", f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
-        blockDimZ, sharedMemBytes, hStream, params.pointers.data(), extra);
+        blockDimZ, sharedMemBytes, hStream, params.pointers.data(), nullptr);
   }
   std::vector<rpc_write_cursor> rpc_params =
       lupine_kernel_param_cursors(params.pointers.data(), param_sizes);
@@ -6505,7 +6505,7 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   }
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn<CUDA_ERROR_NOT_SUPPORTED>(
-        "cuLaunchKernelEx", config, f, params.pointers.data(), extra);
+        "cuLaunchKernelEx", config, f, params.pointers.data(), nullptr);
   }
   std::vector<rpc_write_cursor> rpc_params =
       lupine_kernel_param_cursors(params.pointers.data(), param_sizes);
