@@ -3,6 +3,8 @@
 # SSH_ARGS, SSH_COMMAND_TIMEOUT, SERVER_SSH_TARGET, SERVER_REMOTE_BIN, and
 # SERVER_LD_LIBRARY_PATH. The remote host needs iproute2 (ss).
 
+source "$(dirname "${BASH_SOURCE[0]}")/nvcomp_diagnostics.sh"
+
 ssh_with_timeout() {
   timeout --kill-after=5s "$SSH_COMMAND_TIMEOUT" \
     ssh "${SSH_ARGS[@]}" "$SERVER_SSH_TARGET" "$@"
@@ -11,6 +13,7 @@ ssh_with_timeout() {
 stop_remote_server() {
   local pidfile="$1"
   local server_log="$2"
+  lupine_stop_sample_diagnostics
   local saved_log=/dev/null cleanup_fd
   if [[ -n "${RESULTS_DIR:-}" ]] && mkdir -p "$RESULTS_DIR"; then
     saved_log="$RESULTS_DIR/${server_log##*/}"
@@ -67,6 +70,7 @@ start_remote_server() {
     printf -v server_environment 'LD_LIBRARY_PATH=%q %s' \
       "$SERVER_LD_LIBRARY_PATH" "$server_environment"
   fi
+  lupine_configure_sample_diagnostics
 
   for attempt in 1 2 3; do
     stop_remote_server "$pidfile" "$server_log"
@@ -84,6 +88,7 @@ start_remote_server() {
       echo 'Server did not listen on port $port' >&2
       exit 1
     "; then
+      lupine_start_sample_diagnostics "$pidfile" "$server_log"
       return 0
     fi
     if (( attempt < 3 )); then
