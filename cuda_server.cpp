@@ -412,6 +412,25 @@ lupine_logs_callbacks() {
 }
 #endif
 
+// A fire-and-forget failure is reported by the next synchronizing response.
+static void lupine_keep_async_error(conn_t *conn, CUresult result) {
+  int none = CUDA_SUCCESS;
+  if (result != CUDA_SUCCESS) {
+    __atomic_compare_exchange_n(&conn->first_async_error, &none,
+                                static_cast<int>(result), false,
+                                __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+  }
+}
+
+CUresult lupine_take_async_error(conn_t *conn, CUresult result) {
+  if (__atomic_load_n(&conn->first_async_error, __ATOMIC_RELAXED) == 0) {
+    return result;
+  }
+  int error =
+      __atomic_exchange_n(&conn->first_async_error, 0, __ATOMIC_RELAXED);
+  return error == CUDA_SUCCESS ? result : static_cast<CUresult>(error);
+}
+
 static bool lupine_is_event_dtoh_marker(const lupine_pending_dtoh_item &item,
                                         CUevent event) {
   return item.event != nullptr && item.event == event;
@@ -2315,6 +2334,7 @@ int handle_cuLaunchKernel(conn_t *conn) {
         cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
                        blockDimZ, sharedMemBytes, hStream, params, nullptr);
   }
+  lupine_keep_async_error(conn, result);
   rpc_async_sequence_end(conn);
   std::free(param_sizes);
   std::free(params);
@@ -2390,6 +2410,7 @@ int handle_cuLaunchKernelEx(conn_t *conn) {
     result = cuLaunchKernelEx(&config, f, params, nullptr);
   }
 #endif
+  lupine_keep_async_error(conn, result);
   rpc_async_sequence_end(conn);
   std::free(attributes);
   std::free(param_sizes);
@@ -3351,6 +3372,7 @@ static int handle_cuEventRecordCommon(conn_t *conn, bool with_flags) {
     lupine_record_event_capture_resources(event, stream);
     lupine_note_event_record(conn, event, stream);
   }
+  lupine_keep_async_error(conn, result);
   rpc_async_sequence_end(conn);
   return 0;
 }
@@ -3417,6 +3439,7 @@ int handle_cuEventQuery(conn_t *conn) {
   if (results[0] == CUDA_SUCCESS) {
     pending = lupine_detach_event_dtoh_copies(conn, events[0]);
   }
+  results[0] = lupine_take_async_error(conn, results[0]);
   bool failed = rpc_copy_alloc(conn, sizeof(uint32_t)) < 0 ||
                 lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
                 rpc_write(conn, results, (count + 1) * sizeof(*results)) < 0 ||
@@ -4407,7 +4430,9 @@ int handle_cuGraphLaunch(conn_t *conn) {
       rpc_async_sequence_begin(conn, async_sequence) < 0) {
     return -1;
   }
-  lupine_note_graph_launch(conn, exec, stream, cuGraphLaunch(exec, stream));
+  CUresult result = cuGraphLaunch(exec, stream);
+  lupine_note_graph_launch(conn, exec, stream, result);
+  lupine_keep_async_error(conn, result);
   rpc_async_sequence_end(conn);
   return 0;
 }

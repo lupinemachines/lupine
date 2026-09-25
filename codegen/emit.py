@@ -434,7 +434,8 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     if deferred:
         f.write("  if (return_value == CUDA_SUCCESS) {\n")
         f.write(deferred_dtoh_detach(metadata))
-        f.write("  }\n\n")
+        f.write("  }\n")
+        f.write("  return_value = lupine_take_async_error(conn, return_value);\n\n")
     if metadata.clear_fields:
         write_cleared_fields(f, metadata, "  ", ".")
         f.write("\n")
