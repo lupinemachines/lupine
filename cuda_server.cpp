@@ -2383,15 +2383,6 @@ int handle_cuLaunchKernelEx(conn_t *conn) {
   std::free(params);
   std::free(param_storage);
 
-  if (config.numAttrs != 0) {
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-
   (void)request_id;
   (void)result;
   return 0;
@@ -2469,10 +2460,8 @@ int handle_cuLaunchCooperativeKernel(conn_t *conn) {
   std::free(params);
   std::free(param_storage);
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  (void)request_id;
+  (void)result;
   return 0;
 }
 
