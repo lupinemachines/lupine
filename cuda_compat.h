@@ -93,16 +93,6 @@ static inline CUresult cuStreamGetId(CUstream stream, unsigned long long *id) {
   LUPINE_FORWARD_DRIVER(cuStreamGetId, stream, id);
 }
 
-static inline CUresult cuLibraryLoadFromFile(
-    CUlibrary *library, const char *fileName, CUjit_option *jitOptions,
-    void **jitOptionsValues, unsigned int numJitOptions,
-    CUlibraryOption *libraryOptions, void **libraryOptionValues,
-    unsigned int numLibraryOptions) {
-  LUPINE_FORWARD_DRIVER(cuLibraryLoadFromFile, library, fileName, jitOptions,
-                        jitOptionsValues, numJitOptions, libraryOptions,
-                        libraryOptionValues, numLibraryOptions);
-}
-
 static inline CUresult
 cuLibraryLoadData(CUlibrary *library, const void *code,
                   CUjit_option *jitOptions, void **jitOptionsValues,

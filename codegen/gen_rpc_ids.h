@@ -65,7 +65,6 @@
 #define RPC_cuModuleGetTexRef 1045070758
 #define RPC_cuModuleGetSurfRef 819563562
 #define RPC_cuLibraryLoadData 2017545720
-#define RPC_cuLibraryLoadFromFile 1976247272
 #define RPC_cuLibraryUnload 537528411
 #define RPC_cuLibraryGetKernel 1052861029
 #define RPC_cuLibraryGetModule 1865932518

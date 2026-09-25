@@ -796,59 +796,6 @@ CUresult cuModuleGetSurfRef(CUsurfref *pSurfRef, CUmodule hmod,
   return return_value;
 }
 
-CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
-                               CUjit_option *jitOptions,
-                               void **jitOptionsValues,
-                               unsigned int numJitOptions,
-                               CUlibraryOption *libraryOptions,
-                               void **libraryOptionValues,
-                               unsigned int numLibraryOptions) {
-  lupine_route route = lupine_route_for_default();
-  CUresult return_value;
-  if (lupine_route_is_local(route)) {
-    return_value = lupine_call_real_cuda_fn(
-        LUPINE_REAL_CUDA_SYMBOL("cuLibraryLoadFromFile"), library, fileName,
-        jitOptions, jitOptionsValues, numJitOptions, libraryOptions,
-        libraryOptionValues, numLibraryOptions);
-    if (return_value == CUDA_SUCCESS && library != nullptr) {
-      lupine_note_library_owner_route(*library, route);
-    }
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  std::size_t fileName_len = std::strlen(fileName) + 1;
-  if (numJitOptions * sizeof(CUjit_option) != 0 && jitOptions == nullptr)
-    return CUDA_ERROR_INVALID_VALUE;
-  if (numJitOptions * sizeof(void *) != 0 && jitOptionsValues == nullptr)
-    return CUDA_ERROR_INVALID_VALUE;
-  if (numLibraryOptions * sizeof(CUlibraryOption) != 0 &&
-      libraryOptions == nullptr)
-    return CUDA_ERROR_INVALID_VALUE;
-  if (numLibraryOptions * sizeof(void *) != 0 && libraryOptionValues == nullptr)
-    return CUDA_ERROR_INVALID_VALUE;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLibraryLoadFromFile) < 0 ||
-      rpc_write(conn, &fileName_len, sizeof(std::size_t)) < 0 ||
-      rpc_write(conn, fileName, fileName_len) < 0 ||
-      rpc_write(conn, &numJitOptions, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, jitOptions, numJitOptions * sizeof(CUjit_option)) < 0 ||
-      rpc_write(conn, jitOptionsValues, numJitOptions * sizeof(void *)) < 0 ||
-      rpc_write(conn, &numLibraryOptions, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, libraryOptions,
-                numLibraryOptions * sizeof(CUlibraryOption)) < 0 ||
-      rpc_write(conn, libraryOptionValues, numLibraryOptions * sizeof(void *)) <
-          0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, library, sizeof(CUlibrary)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS && library != nullptr) {
-    lupine_note_library_owner_route(*library, route);
-  }
-  return return_value;
-}
-
 CUresult cuLibraryUnload(CUlibrary library) {
   lupine_route route = lupine_route_for_library(library);
   CUresult return_value;
@@ -7800,7 +7747,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuModuleGetTexRef", (void *)cuModuleGetTexRef},
     {"cuModuleGetSurfRef", (void *)cuModuleGetSurfRef},
     {"cuLibraryLoadData", (void *)cuLibraryLoadData},
-    {"cuLibraryLoadFromFile", (void *)cuLibraryLoadFromFile},
     {"cuLibraryUnload", (void *)cuLibraryUnload},
     {"cuLibraryGetKernel", (void *)cuLibraryGetKernel},
     {"cuLibraryGetModule", (void *)cuLibraryGetModule},

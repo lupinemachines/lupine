@@ -471,24 +471,6 @@ CUresult cuLibraryLoadData(CUlibrary *library, const void *code,
                            void **libraryOptionValues,
                            unsigned int numLibraryOptions);
 /**
- * @recordowner LIBRARY library
- * @param library RECV_ONLY
- * @param fileName SEND_ONLY NULL_TERMINATED
- * @param numJitOptions SEND_ONLY
- * @param jitOptions SEND_ONLY LENGTH:numJitOptions
- * @param jitOptionsValues SEND_ONLY LENGTH:numJitOptions
- * @param numLibraryOptions SEND_ONLY
- * @param libraryOptions SEND_ONLY LENGTH:numLibraryOptions
- * @param libraryOptionValues SEND_ONLY LENGTH:numLibraryOptions
- */
-CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
-                               CUjit_option *jitOptions,
-                               void **jitOptionsValues,
-                               unsigned int numJitOptions,
-                               CUlibraryOption *libraryOptions,
-                               void **libraryOptionValues,
-                               unsigned int numLibraryOptions);
-/**
  * @disabled server - manual server keeps the library loaded, see the handler
  * @async
  * @routingkey LIBRARY library

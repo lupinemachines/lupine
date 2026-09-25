@@ -6124,6 +6124,39 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   return return_value;
 }
 
+// The file is read on the client and loaded as an image, like cuModuleLoad.
+extern "C" CUresult cuLibraryLoadFromFile(
+    CUlibrary *library, const char *fileName, CUjit_option *jitOptions,
+    void **jitOptionsValues, unsigned int numJitOptions,
+    CUlibraryOption *libraryOptions, void **libraryOptionValues,
+    unsigned int numLibraryOptions) {
+  if (library == nullptr || fileName == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  std::ifstream file(fileName, std::ios::binary);
+  if (!file) {
+    return CUDA_ERROR_FILE_NOT_FOUND;
+  }
+  // The string's terminator ends a PTX image.
+  std::string code((std::istreambuf_iterator<char>(file)),
+                   std::istreambuf_iterator<char>());
+  if (code.empty()) {
+    return CUDA_ERROR_INVALID_IMAGE;
+  }
+  CUresult result = cuLibraryLoadData(
+      library, code.data(), jitOptions, jitOptionsValues, numJitOptions,
+      libraryOptions, libraryOptionValues, numLibraryOptions);
+  if (result == CUDA_SUCCESS) {
+    // code dies with this call; route replays load the recorded image.
+    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+    auto it = lupine_library_images().find(*library);
+    if (it != lupine_library_images().end()) {
+      it->second.code = it->second.image.data();
+    }
+  }
+  return result;
+}
+
 static CUresult lupine_read_func_param_sizes(CUfunction function,
                                              std::vector<size_t> *sizes,
                                              std::vector<size_t> *offsets) {
@@ -10086,6 +10119,7 @@ lupine_manual_function_map() {
       {"cuModuleLoadFatBinary", (void *)cuModuleLoadFatBinary},
       {"cuModuleLoadDataEx", (void *)cuModuleLoadDataEx},
       {"cuLibraryLoadData", (void *)cuLibraryLoadData},
+      {"cuLibraryLoadFromFile", (void *)cuLibraryLoadFromFile},
       {"cuLinkCreate", (void *)cuLinkCreate_v2},
       {"cuLinkAddData", (void *)cuLinkAddData_v2},
       {"cuLinkAddFile", (void *)cuLinkAddFile_v2},
