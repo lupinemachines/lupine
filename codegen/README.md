@@ -188,5 +188,4 @@ need an escape hatch.
 
 Some improvements that can be made:
 
-- [ ] Currently, the RPC ID is not deterministic. This is fine for now as we are still in demo-phase but this won't work for backwards compatibility.
 - [ ] We could use C++ annotations to make the processing a little more "C++"-y. Worth investigating for a bit.

@@ -2166,8 +2166,9 @@ CUresult cuMemGetHandleForAddressRange(void *handle, CUdeviceptr dptr,
   lupine_route route = lupine_route_for_deviceptr(dptr);
   CUresult return_value;
   if (lupine_route_is_local(route))
-    return lupine_call_real_cuda_fn("cuMemGetHandleForAddressRange", handle,
-                                    dptr, size, handleType, flags);
+    return lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuMemGetHandleForAddressRange"), handle, dptr,
+        size, handleType, flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemGetHandleForAddressRange) < 0 ||
@@ -3595,8 +3596,8 @@ CUresult cuParamSetv(CUfunction hfunc, int offset, void *ptr,
   lupine_route route = lupine_route_for_function(hfunc);
   CUresult return_value;
   if (lupine_route_is_local(route))
-    return lupine_call_real_cuda_fn("cuParamSetv", hfunc, offset, ptr,
-                                    numbytes);
+    return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuParamSetv"),
+                                    hfunc, offset, ptr, numbytes);
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (numbytes != 0 && ptr == nullptr)
@@ -6601,8 +6602,9 @@ CUresult cuTensorMapReplaceAddress(CUtensorMap *tensorMap,
       lupine_route_for_deviceptr(reinterpret_cast<CUdeviceptr>(globalAddress));
   CUresult return_value;
   if (lupine_route_is_local(route))
-    return lupine_call_real_cuda_fn("cuTensorMapReplaceAddress", tensorMap,
-                                    globalAddress);
+    return lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuTensorMapReplaceAddress"), tensorMap,
+        globalAddress);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuTensorMapReplaceAddress) < 0 ||
