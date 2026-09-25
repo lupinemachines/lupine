@@ -106,18 +106,13 @@ int lupine_report_client_metadata(conn_t *conn, const char *connection_kind) {
   fill_process_name(metadata.client_process_name);
   fill_hostname(metadata.client_hostname, sizeof(metadata.client_hostname));
 
-  int status = -1;
+  // Fire-and-forget: the server sends no response.
   if (rpc_write_start_request(conn, LUPINE_RPC_CLIENT_METADATA) < 0 ||
       rpc_write(conn, &header, sizeof(header)) < 0 ||
       rpc_write(conn, &metadata, sizeof(metadata)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &status, sizeof(status)) < 0 || rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     LUPINE_LOG_ERROR("Failed to send client metadata");
     return -1;
-  }
-  if (status != 0) {
-    LUPINE_LOG_ERROR("LUPINE server rejected client metadata with status "
-                     << status);
   }
   return 0;
 }

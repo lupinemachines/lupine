@@ -725,10 +725,8 @@ int handle_lupine_client_metadata(conn_t *conn) {
       rpc_read(conn, &header, sizeof(header)) != sizeof(header)) {
     return -1;
   }
-  int status = 0;
   lupine_client_metadata metadata = {};
   if (header.payload_size > LUPINE_CLIENT_METADATA_MAX_PAYLOAD) {
-    status = 2;
     if (rpc_drain(conn, header.payload_size) < 0) {
       return -1;
     }
@@ -739,24 +737,15 @@ int handle_lupine_client_metadata(conn_t *conn) {
             static_cast<int>(header.payload_size)) {
       return -1;
     }
-    if (header.version != LUPINE_CLIENT_METADATA_VERSION ||
-        header.payload_size < sizeof(metadata)) {
-      status = 1;
-    } else {
+    if (header.version == LUPINE_CLIENT_METADATA_VERSION &&
+        header.payload_size >= sizeof(metadata)) {
       memcpy(&metadata, payload.data(), sizeof(metadata));
       terminate_strings(&metadata);
       std::string address = peer_address(conn->connfd);
-      if (!store_metadata(child_slot, metadata, address.c_str())) {
-        status = 3;
-      }
+      store_metadata(child_slot, metadata, address.c_str());
     }
   }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0 || rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &status, sizeof(status)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return rpc_read_end(conn) < 0 ? -1 : 0;
 }
 
 void lupine_monitoring_begin_context_create(int cuda_device) {

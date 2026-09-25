@@ -581,7 +581,7 @@ void test_client_await_ready_reports_bulk_token(bool advertise) {
           "bulk token was reported incorrectly");
 }
 
-void test_client_metadata_report(int metadata_status) {
+void test_client_metadata_report() {
   h2_pair pair;
   init_pair_sockets(&pair);
 
@@ -630,11 +630,6 @@ void test_client_metadata_report(int metadata_status) {
           "metadata payload was invalid");
   int request_id = rpc_read_end(&pair.server);
   require(request_id > 0, "metadata request end failed");
-  require(rpc_write_start_response(&pair.server, request_id) == 0 &&
-              rpc_write(&pair.server, &metadata_status,
-                        sizeof(metadata_status)) == 0 &&
-              rpc_write_end(&pair.server) == request_id,
-          "metadata response failed");
   op = rpc_dispatch(&pair.server, 0);
 
   require(op == kFollowupOp, "metadata blocked the next RPC");
@@ -2155,8 +2150,7 @@ int main() {
 #endif
   RUN_CASE(test_client_await_ready_reports_bulk_token(true));
   RUN_CASE(test_client_await_ready_reports_bulk_token(false));
-  RUN_CASE(test_client_metadata_report(0));
-  RUN_CASE(test_client_metadata_report(3));
+  RUN_CASE(test_client_metadata_report());
   RUN_CASE(test_client_await_ready_reports_va_window());
   RUN_CASE(test_va_window_and_aliases_are_disjoint());
   RUN_CASE(test_va_claim_bumps_within_arena());
