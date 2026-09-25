@@ -11,6 +11,7 @@
 #include <cstdio>
 
 #include "cuda_server_memcpy.h"
+#include "device_stdout.h"
 #include "rpc.h"
 
 #ifdef cuGraphInstantiate_v2
@@ -737,6 +738,80 @@ int handle_cuCtxGetId(conn_t *conn) {
 ERROR_0:
   return -1;
 }
+
+int handle_cuCtxSynchronize(conn_t *conn) {
+  lupine_pending_dtoh_items pending;
+  lupine_captured_stdout capture;
+  int request_id;
+  CUresult return_value;
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  lupine_start_stdout_capture(&capture);
+  return_value = cuCtxSynchronize();
+
+  lupine_finish_stdout_capture(&capture);
+  if (return_value == CUDA_SUCCESS) {
+    CUcontext context = nullptr;
+    if (cuCtxGetCurrent(&context) == CUDA_SUCCESS)
+      pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, context);
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_copy_alloc(conn, 2 * sizeof(uint64_t)) < 0 ||
+      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
+      lupine_write_captured_stdout(conn, capture) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  lupine_cleanup_pending_dtoh_copies(&pending);
+  return 0;
+ERROR_0:
+  lupine_cleanup_pending_dtoh_copies(&pending);
+  return -1;
+}
+
+#if CUDA_VERSION >= 13000
+int handle_cuCtxSynchronize_v2(conn_t *conn) {
+  CUcontext ctx;
+  lupine_pending_dtoh_items pending;
+  lupine_captured_stdout capture;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &ctx, sizeof(CUcontext)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  lupine_start_stdout_capture(&capture);
+  return_value = cuCtxSynchronize_v2(ctx);
+
+  lupine_finish_stdout_capture(&capture);
+  if (return_value == CUDA_SUCCESS) {
+    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, ctx);
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_copy_alloc(conn, 2 * sizeof(uint64_t)) < 0 ||
+      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
+      lupine_write_captured_stdout(conn, capture) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  lupine_cleanup_pending_dtoh_copies(&pending);
+  return 0;
+ERROR_0:
+  lupine_cleanup_pending_dtoh_copies(&pending);
+  return -1;
+}
+
+#endif
 
 int handle_cuCtxSetLimit(conn_t *conn) {
   CUlimit limit;
@@ -3827,6 +3902,7 @@ ERROR_0:
 
 int handle_cuStreamQuery(conn_t *conn) {
   CUstream hStream;
+  lupine_pending_dtoh_items pending;
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
@@ -3838,12 +3914,61 @@ int handle_cuStreamQuery(conn_t *conn) {
 
   return_value = cuStreamQuery(hStream);
 
+  if (return_value == CUDA_SUCCESS) {
+    CUcontext context = nullptr;
+    if (cuStreamGetCtx(hStream, &context) == CUDA_SUCCESS)
+      pending = lupine_detach_pending_dtoh_copies(conn, hStream,
+                                                  hStream == nullptr, context);
+  }
+
   if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_copy_alloc(conn, sizeof(uint32_t)) < 0 ||
+      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
+  lupine_cleanup_pending_dtoh_copies(&pending);
   return 0;
 ERROR_0:
+  lupine_cleanup_pending_dtoh_copies(&pending);
+  return -1;
+}
+
+int handle_cuStreamSynchronize(conn_t *conn) {
+  CUstream hStream;
+  lupine_pending_dtoh_items pending;
+  lupine_captured_stdout capture;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  lupine_start_stdout_capture(&capture);
+  return_value = cuStreamSynchronize(hStream);
+
+  lupine_finish_stdout_capture(&capture);
+  if (return_value == CUDA_SUCCESS) {
+    CUcontext context = nullptr;
+    if (cuStreamGetCtx(hStream, &context) == CUDA_SUCCESS)
+      pending = lupine_detach_pending_dtoh_copies(conn, hStream,
+                                                  hStream == nullptr, context);
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_copy_alloc(conn, 2 * sizeof(uint64_t)) < 0 ||
+      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
+      lupine_write_captured_stdout(conn, capture) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  lupine_cleanup_pending_dtoh_copies(&pending);
+  return 0;
+ERROR_0:
+  lupine_cleanup_pending_dtoh_copies(&pending);
   return -1;
 }
 
@@ -3968,6 +4093,41 @@ int handle_cuEventCreate(conn_t *conn) {
     goto ERROR_0;
   return 0;
 ERROR_0:
+  return -1;
+}
+
+int handle_cuEventSynchronize(conn_t *conn) {
+  CUevent hEvent;
+  lupine_pending_dtoh_items pending;
+  lupine_captured_stdout capture;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  lupine_start_stdout_capture(&capture);
+  return_value = cuEventSynchronize(hEvent);
+
+  lupine_finish_stdout_capture(&capture);
+  if (return_value == CUDA_SUCCESS) {
+    pending = lupine_detach_event_dtoh_copies(conn, hEvent);
+  }
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_copy_alloc(conn, 2 * sizeof(uint64_t)) < 0 ||
+      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
+      lupine_write_captured_stdout(conn, capture) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  lupine_cleanup_pending_dtoh_copies(&pending);
+  return 0;
+ERROR_0:
+  lupine_cleanup_pending_dtoh_copies(&pending);
   return -1;
 }
 

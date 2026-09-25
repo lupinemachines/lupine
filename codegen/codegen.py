@@ -1639,6 +1639,7 @@ def write_cuda_server(
             '#include <vector>\n\n'
             '#include <cstdio>\n\n'
             '#include "cuda_server_memcpy.h"\n'
+            '#include "device_stdout.h"\n'
             '#include "rpc.h"\n\n'
         )
         annotation_only_functions = (

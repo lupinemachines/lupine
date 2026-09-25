@@ -247,14 +247,12 @@ CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent);
  */
 CUresult cuCtxWaitEvent(CUcontext hCtx, CUevent hEvent);
 /**
- * @disabled server
  * @synchronize DEFERRED_DTOH STDOUT
  * @routingkey CURRENT_CONTEXT
  */
 CUresult cuCtxSynchronize();
 /**
  * @guard CUDA_VERSION >= 13000
- * @disabled server
  * @synchronize DEFERRED_DTOH STDOUT
  * @routingkey CONTEXT ctx
  * @param ctx SEND_ONLY
@@ -1742,13 +1740,12 @@ CUresult cuStreamUpdateCaptureDependencies(CUstream hStream,
 CUresult cuStreamAttachMemAsync(CUstream hStream, CUdeviceptr dptr,
                                 size_t length, unsigned int flags);
 /**
- * @synchronize
+ * @synchronize DEFERRED_DTOH
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  */
 CUresult cuStreamQuery(CUstream hStream);
 /**
- * @disabled server
  * @synchronize DEFERRED_DTOH STDOUT
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
@@ -1819,7 +1816,6 @@ CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
  */
 CUresult cuEventQuery(CUevent hEvent);
 /**
- * @disabled server
  * @synchronize DEFERRED_DTOH STDOUT
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY

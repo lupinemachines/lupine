@@ -17,7 +17,6 @@
   HANDLER(RPC_cuDevicePrimaryCtxReset_v2, handle_cuDevicePrimaryCtxReset_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuCtxCreate_v2, handle_cuCtxCreate_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuCtxDestroy_v2, handle_cuCtxDestroy_v2, rpc_backend::cuda) \
-  HANDLER(RPC_cuCtxSynchronize, handle_cuCtxSynchronize, rpc_backend::cuda) \
   HANDLER(RPC_cuCtxAttach, handle_cuCtxAttach, rpc_backend::cuda) \
   HANDLER(RPC_cuCtxDetach, handle_cuCtxDetach, rpc_backend::cuda) \
   HANDLER(RPC_cuModuleLoad, handle_cuModuleLoad, rpc_backend::cuda) \
@@ -64,11 +63,9 @@
   HANDLER(RPC_cuStreamAddCallback, handle_cuStreamAddCallback, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamBeginCapture_v2, handle_cuStreamBeginCapture, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamEndCapture, handle_cuStreamEndCapture, rpc_backend::cuda) \
-  HANDLER(RPC_cuStreamSynchronize, handle_cuStreamSynchronize, rpc_backend::cuda) \
   HANDLER(RPC_cuEventRecord, handle_cuEventRecord, rpc_backend::cuda) \
   HANDLER(RPC_cuEventRecordWithFlags, handle_cuEventRecordWithFlags, rpc_backend::cuda) \
   HANDLER(RPC_cuEventQuery, handle_cuEventQuery, rpc_backend::cuda) \
-  HANDLER(RPC_cuEventSynchronize, handle_cuEventSynchronize, rpc_backend::cuda) \
   HANDLER(RPC_cuEventDestroy_v2, handle_cuEventDestroy_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuLaunchKernel, handle_cuLaunchKernel, rpc_backend::cuda) \
   HANDLER(RPC_cuLaunchKernelEx, handle_cuLaunchKernelEx, rpc_backend::cuda) \
@@ -139,6 +136,7 @@
   HANDLER(RPC_cuCtxGetDevice, handle_cuCtxGetDevice, rpc_backend::cuda) \
   HANDLER(RPC_cuCtxGetFlags, handle_cuCtxGetFlags, rpc_backend::cuda) \
   HANDLER(RPC_cuCtxGetId, handle_cuCtxGetId, rpc_backend::cuda) \
+  HANDLER(RPC_cuCtxSynchronize, handle_cuCtxSynchronize, rpc_backend::cuda) \
   HANDLER(RPC_cuCtxSetLimit, handle_cuCtxSetLimit, rpc_backend::cuda) \
   HANDLER(RPC_cuCtxGetLimit, handle_cuCtxGetLimit, rpc_backend::cuda) \
   HANDLER(RPC_cuCtxGetCacheConfig, handle_cuCtxGetCacheConfig, rpc_backend::cuda) \
@@ -246,11 +244,13 @@
   HANDLER(RPC_cuStreamIsCapturing, handle_cuStreamIsCapturing, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamAttachMemAsync, handle_cuStreamAttachMemAsync, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamQuery, handle_cuStreamQuery, rpc_backend::cuda) \
+  HANDLER(RPC_cuStreamSynchronize, handle_cuStreamSynchronize, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamDestroy_v2, handle_cuStreamDestroy_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamCopyAttributes, handle_cuStreamCopyAttributes, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamGetAttribute, handle_cuStreamGetAttribute, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamSetAttribute, handle_cuStreamSetAttribute, rpc_backend::cuda) \
   HANDLER(RPC_cuEventCreate, handle_cuEventCreate, rpc_backend::cuda) \
+  HANDLER(RPC_cuEventSynchronize, handle_cuEventSynchronize, rpc_backend::cuda) \
   HANDLER(RPC_cuEventElapsedTime_v2, handle_cuEventElapsedTime_v2, rpc_backend::cuda) \
   HANDLER(RPC_cuImportExternalMemory, handle_cuImportExternalMemory, rpc_backend::cuda) \
   HANDLER(RPC_cuExternalMemoryGetMappedBuffer, handle_cuExternalMemoryGetMappedBuffer, rpc_backend::cuda) \
@@ -761,10 +761,6 @@
   int handler(conn_t *conn);
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 LUPINE_CUDA_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-#if CUDA_VERSION >= 13000
-LUPINE_DECLARE_HANDLER(RPC_cuCtxSynchronize_v2, handle_cuCtxSynchronize_v2,
-                       rpc_backend::cuda)
-#endif
 #if CUDA_VERSION >= 12000
 LUPINE_DECLARE_HANDLER(RPC_cuTensorMapEncodeTiled,
                        handle_cuTensorMapEncodeTiled, rpc_backend::cuda)
@@ -783,6 +779,10 @@ LUPINE_DECLARE_HANDLER(RPC_cuLogsUnregisterCallback,
 #endif
 #if CUDA_VERSION >= 13000
 LUPINE_DECLARE_HANDLER(RPC_cuCtxGetDevice_v2, handle_cuCtxGetDevice_v2,
+                       rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13000
+LUPINE_DECLARE_HANDLER(RPC_cuCtxSynchronize_v2, handle_cuCtxSynchronize_v2,
                        rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12050
@@ -1120,9 +1120,6 @@ const rpc_handler_registry &lupine_rpc_handlers() {
   static const rpc_handler_registry handlers = {
 #ifdef LUPINE_BUILD_CUDA_BACKEND
       LUPINE_CUDA_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-#if CUDA_VERSION >= 13000
-      LUPINE_REGISTER_HANDLER(RPC_cuCtxSynchronize_v2, handle_cuCtxSynchronize_v2, rpc_backend::cuda)
-#endif
 #if CUDA_VERSION >= 12000
       LUPINE_REGISTER_HANDLER(RPC_cuTensorMapEncodeTiled, handle_cuTensorMapEncodeTiled, rpc_backend::cuda)
 #endif
@@ -1137,6 +1134,9 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #if CUDA_VERSION >= 13000
       LUPINE_REGISTER_HANDLER(RPC_cuCtxGetDevice_v2, handle_cuCtxGetDevice_v2, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 13000
+      LUPINE_REGISTER_HANDLER(RPC_cuCtxSynchronize_v2, handle_cuCtxSynchronize_v2, rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12050
       LUPINE_REGISTER_HANDLER(RPC_cuCtxRecordEvent, handle_cuCtxRecordEvent, rpc_backend::cuda)

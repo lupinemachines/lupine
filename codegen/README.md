@@ -147,9 +147,11 @@ Client-dirty mapped pages are flushed centrally before each CUDA RPC request.
 `@routingfallback <kind> <param>` can be paired with stream routing for APIs
 that route by stream when a stream is supplied and by another object otherwise.
 `@synchronize [DEFERRED_DTOH] [STDOUT]` refreshes mapped host allocations after
-a successful call.
-The optional flags consume response fields emitted by a manual server handler
-before the generated wrapper reads the CUDA result.
+a successful call. `DEFERRED_DTOH` returns the deferred device-to-host copies a
+successful call completes, scoped by the routing key (current context, context,
+stream or event), and `STDOUT` returns the device printf output captured around
+the call. Both sides are generated: the server writes these fields ahead of the
+CUDA result and the client reads them in the same order.
 
 Keep function-specific code in manual files when the behavior cannot be
 described by annotations without embedding C++ for that exact API. Typical

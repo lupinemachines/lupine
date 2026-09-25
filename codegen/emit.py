@@ -293,6 +293,29 @@ def write_server_buffer_cleanup(f, owned_buffers, indent):
         f.write(f"{indent}free((void *){buffer_name});\n")
 
 
+def deferred_dtoh_detach(metadata) -> str:
+    """Detaches the copies a successful synchronize owes, scoped by its route."""
+    kind = metadata.routing_kind
+    target = metadata.routing_parameter.name if metadata.routing_parameter else None
+    if kind == "CURRENT_CONTEXT":
+        return (
+            "    CUcontext context = nullptr;\n"
+            "    if (cuCtxGetCurrent(&context) == CUDA_SUCCESS)\n"
+            "      pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, context);\n"
+        )
+    if kind == "CONTEXT":
+        return f"    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, {target});\n"
+    if kind == "STREAM":
+        return (
+            "    CUcontext context = nullptr;\n"
+            f"    if (cuStreamGetCtx({target}, &context) == CUDA_SUCCESS)\n"
+            f"      pending = lupine_detach_pending_dtoh_copies(conn, {target}, {target} == nullptr, context);\n"
+        )
+    if kind == "EVENT":
+        return f"    pending = lupine_detach_event_dtoh_copies(conn, {target});\n"
+    raise RuntimeError(f"@synchronize DEFERRED_DTOH has no scope for {kind}")
+
+
 def write_server_handler(f, backend: Backend, function, operations, metadata):
     name = function.name.format()
     result = function.return_type.format()
@@ -318,6 +341,13 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
                 f.write(f"  {argument} = {{}};\n")
     submit = optional_async(backend, metadata)
     always_async = metadata.async_fire_forget and not submit
+    sync = metadata.synchronize
+    deferred = sync is not None and sync.deferred_dtoh
+    stdout = deferred and sync.stdout
+    if deferred:
+        f.write("  lupine_pending_dtoh_items pending;\n")
+    if stdout:
+        f.write("  lupine_captured_stdout capture;\n")
     if metadata.async_fire_forget:
         f.write("  uint64_t async_sequence = 0;\n")
     f.write("  int request_id;\n")
@@ -360,6 +390,8 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
             "    goto ERROR_0;\n\n"
         )
 
+    if stdout:
+        f.write("  lupine_start_stdout_capture(&capture);\n")
     call_args = []
     for parameter in function.parameters:
         operation = next(
@@ -397,11 +429,24 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         write_server_buffer_cleanup(f, owned_buffers, "    ")
         f.write("    return 0;\n  }\n\n")
 
+    if stdout:
+        f.write("  lupine_finish_stdout_capture(&capture);\n")
+    if deferred:
+        f.write("  if (return_value == CUDA_SUCCESS) {\n")
+        f.write(deferred_dtoh_detach(metadata))
+        f.write("  }\n\n")
     if metadata.clear_fields:
         write_cleared_fields(f, metadata, "  ", ".")
         f.write("\n")
     if not always_async:
         f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
+        if deferred:
+            # The copy count, then the stdout length, live in the copy buffer.
+            size = "2 * sizeof(uint64_t)" if stdout else "sizeof(uint32_t)"
+            f.write(f"      rpc_copy_alloc(conn, {size}) < 0 ||\n")
+            f.write("      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||\n")
+        if stdout:
+            f.write("      lupine_write_captured_stdout(conn, capture) < 0 ||\n")
         for operation in operations:
             operation.server_rpc_write(f)
         if result != "void":
@@ -409,9 +454,13 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write("      rpc_write_end(conn) < 0)\n")
         f.write("    goto ERROR_0;\n")
     write_server_buffer_cleanup(f, owned_buffers, "  ")
+    if deferred:
+        f.write("  lupine_cleanup_pending_dtoh_copies(&pending);\n")
     f.write("  return 0;\n")
     f.write("ERROR_0:\n")
     write_server_buffer_cleanup(f, owned_buffers, "  ")
+    if deferred:
+        f.write("  lupine_cleanup_pending_dtoh_copies(&pending);\n")
     f.write("  return -1;\n")
     f.write("}\n\n")
     if metadata.guard is not None:
