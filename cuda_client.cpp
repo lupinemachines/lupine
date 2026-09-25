@@ -5159,31 +5159,6 @@ extern "C" CUresult cuEventRecordWithFlags_ptsz(CUevent hEvent,
   return cuEventRecordWithFlags(hEvent, hStream, flags);
 }
 
-// Best-effort cache warming for events other than the one the caller queried.
-// This is intentionally a separate RPC: failures must not affect the result
-// already produced by RPC_cuEventQuery.
-static void lupine_prefetch_event_queries(CUevent exclude, conn_t *conn) {
-  CUevent events[kLupineEventQueryBatch];
-  uint64_t records[kLupineEventQueryBatch];
-  uint32_t count =
-      lupine_event_collect_query_batch(exclude, conn, events, records);
-  if (count == 0) {
-    return;
-  }
-
-  CUresult results[kLupineEventQueryBatch];
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, LUPINE_RPC_lupineEventQueryBatch) < 0 ||
-      rpc_write(conn, &count, sizeof(count)) < 0 ||
-      rpc_write(conn, events, count * sizeof(*events)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, results, count * sizeof(*results)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return;
-  }
-  lupine_event_cache_completions(events, records, results, count);
-}
-
 extern "C" CUresult cuEventQuery(CUevent hEvent) {
   lupine_route route = lupine_route_for_event(hEvent);
   if (lupine_route_is_local(route)) {
@@ -5197,26 +5172,29 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
   }
   std::shared_lock<std::shared_mutex> event_lifecycle_lock(
       lupine_event_lifecycle_mutex());
-  uint64_t record = 0;
-  if (!lupine_event_query_needed(hEvent, &record)) {
+  CUevent events[kLupineEventQueryBatch + 1] = {hEvent};
+  uint64_t records[kLupineEventQueryBatch + 1];
+  CUresult results[kLupineEventQueryBatch + 1];
+  if (!lupine_event_query_needed(hEvent, &records[0])) {
     return lupine_sync_mapped_device_to_host();
   }
-  CUresult result = CUDA_ERROR_UNKNOWN;
+  // Other pending events on this server ride along to warm the cache.
+  uint32_t count =
+      lupine_event_collect_query_batch(hEvent, conn, events + 1, records + 1);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuEventQuery) < 0 ||
       rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_write(conn, events + 1, count * sizeof(*events)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       lupine_read_deferred_dtoh_copies(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+      rpc_read(conn, results, (count + 1) * sizeof(*results)) < 0 ||
+      rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  lupine_event_cache_completions(&hEvent, &record, &result, 1);
-
-  if (result == CUDA_SUCCESS) {
-    result = lupine_sync_mapped_device_to_host();
-  }
-  lupine_prefetch_event_queries(hEvent, conn);
-  return result;
+  lupine_event_cache_completions(events, records, results, count + 1);
+  return results[0] == CUDA_SUCCESS ? lupine_sync_mapped_device_to_host()
+                                    : results[0];
 }
 
 extern "C" CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags,

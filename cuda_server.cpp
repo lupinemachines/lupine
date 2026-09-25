@@ -41,6 +41,7 @@
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_server.h"
 #include "cuda_server_memcpy.h"
+#include "events.h"
 #include "ipc.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
@@ -3350,8 +3351,11 @@ int handle_cuEventDestroy_v2(conn_t *conn) {
 }
 
 int handle_cuEventQuery(conn_t *conn) {
-  CUevent event = nullptr;
-  if (rpc_read(conn, &event, sizeof(event)) < 0) {
+  CUevent events[kLupineEventQueryBatch + 1] = {};
+  uint32_t count = 0;
+  if (rpc_read(conn, &events[0], sizeof(events[0])) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0 ||
+      rpc_read(conn, events + 1, count * sizeof(*events)) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -3359,59 +3363,24 @@ int handle_cuEventQuery(conn_t *conn) {
     return -1;
   }
 
-  CUresult result = cuEventQuery(event);
+  CUresult results[kLupineEventQueryBatch + 1];
+  for (uint32_t i = 0; i <= count; ++i) {
+    results[i] = cuEventQuery(events[i]);
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0) {
     return -1;
   }
   std::vector<lupine_pending_dtoh_item> pending;
-  if (result == CUDA_SUCCESS) {
-    pending = lupine_detach_event_dtoh_copies(conn, event);
+  if (results[0] == CUDA_SUCCESS) {
+    pending = lupine_detach_event_dtoh_copies(conn, events[0]);
   }
   bool failed = rpc_copy_alloc(conn, sizeof(uint32_t)) < 0 ||
                 lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
-                rpc_write(conn, &result, sizeof(result)) < 0 ||
+                rpc_write(conn, results, (count + 1) * sizeof(*results)) < 0 ||
                 rpc_write_end(conn) < 0;
   lupine_cleanup_pending_dtoh_copies(&pending);
   return failed ? -1 : 0;
-}
-
-int handle_lupineEventQueryBatch(conn_t *conn) {
-  constexpr uint32_t kEventQueryBatchMax = 16;
-  uint32_t count = 0;
-  if (rpc_read(conn, &count, sizeof(count)) < 0 || count == 0 ||
-      count > kEventQueryBatchMax) {
-    LUPINE_LOG_ERROR(
-        "cuEventQuery RPC failed while reading count: count=" << count);
-    return -1;
-  }
-  CUevent events[kEventQueryBatchMax];
-  if (rpc_read(conn, events, count * sizeof(*events)) < 0) {
-    LUPINE_LOG_ERROR("cuEventQuery RPC failed while reading events");
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    LUPINE_LOG_ERROR("cuEventQuery RPC failed while finishing request");
-    return -1;
-  }
-
-  CUresult results[kEventQueryBatchMax];
-  for (uint32_t i = 0; i < count; ++i) {
-    results[i] = cuEventQuery(events[i]);
-    if (results[i] != CUDA_SUCCESS && results[i] != CUDA_ERROR_NOT_READY) {
-      LUPINE_LOG_ERROR("cuEventQuery failed on the server: result="
-                       << results[i] << " event=" << events[i]
-                       << " batch_index=" << i);
-    }
-  }
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, results, count * sizeof(*results)) < 0 ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
 }
 
 int handle_cuStreamWaitEvent(conn_t *conn) {
