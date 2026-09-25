@@ -12,19 +12,13 @@
 #include "cache.h"
 #include "client_routing.h"
 #include "codegen/gen_rpc_ids.h"
+#include "deviceptr_allocations.h"
 #include "events.h"
 #include "visible_devices.h"
 
 extern int rpc_open();
 extern int rpc_size();
 extern conn_t *rpc_client_get_connection(unsigned int index);
-
-struct lupine_deviceptr_allocation_record {
-  CUdeviceptr base = 0;
-  size_t size = 0;
-  int route_id = -2;
-  CUcontext context = nullptr;
-};
 
 struct lupine_device_entry {
   bool local = false;
@@ -60,10 +54,8 @@ static std::unordered_map<Handle, lupine_owner_record> &lupine_owners() {
   return *owners;
 }
 
-static std::unordered_map<CUdeviceptr, lupine_deviceptr_allocation_record> &
-lupine_deviceptr_allocations() {
-  static auto *allocations =
-      new std::unordered_map<CUdeviceptr, lupine_deviceptr_allocation_record>();
+static lupine_deviceptr_allocation_index &lupine_deviceptr_allocations() {
+  static auto *allocations = new lupine_deviceptr_allocation_index();
   return *allocations;
 }
 
@@ -517,12 +509,7 @@ static void lupine_note_deviceptr_allocation_owner_locked(CUdeviceptr ptr,
   auto &owner = lupine_owners<CUdeviceptr>()[ptr];
   owner.route_id = route_id;
   owner.pointer_context = context;
-  if (size == 0) {
-    lupine_deviceptr_allocations().erase(ptr);
-    return;
-  }
-  lupine_deviceptr_allocations()[ptr] =
-      lupine_deviceptr_allocation_record{ptr, size, route_id, context};
+  lupine_deviceptr_allocations().insert_or_assign(ptr, size, route_id, context);
 }
 
 extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
@@ -734,16 +721,7 @@ extern "C" bool lupine_deviceptr_is_tracked(CUdeviceptr ptr) {
   if (lupine_owners<CUdeviceptr>().count(ptr) != 0) {
     return true;
   }
-  for (const auto &entry : lupine_deviceptr_allocations()) {
-    const auto &allocation = entry.second;
-    if (allocation.base == 0 || allocation.size == 0 || ptr < allocation.base) {
-      continue;
-    }
-    if (static_cast<uint64_t>(ptr - allocation.base) < allocation.size) {
-      return true;
-    }
-  }
-  return false;
+  return lupine_deviceptr_allocations().find(ptr) != nullptr;
 }
 
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
@@ -753,16 +731,8 @@ extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
     if (it != lupine_owners<CUdeviceptr>().end()) {
       return lupine_route_from_identity(it->second.route_id);
     }
-    for (const auto &entry : lupine_deviceptr_allocations()) {
-      const auto &allocation = entry.second;
-      if (allocation.base == 0 || allocation.size == 0 ||
-          ptr < allocation.base) {
-        continue;
-      }
-      uint64_t offset = static_cast<uint64_t>(ptr - allocation.base);
-      if (offset < allocation.size) {
-        return lupine_route_from_identity(allocation.route_id);
-      }
+    if (const auto *allocation = lupine_deviceptr_allocations().find(ptr)) {
+      return lupine_route_from_identity(allocation->route_id);
     }
   }
   return lupine_route_for_default();
@@ -775,15 +745,8 @@ extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr) {
       owner->second.pointer_context != nullptr) {
     return owner->second.pointer_context;
   }
-  for (const auto &entry : lupine_deviceptr_allocations()) {
-    const auto &allocation = entry.second;
-    if (allocation.base != 0 && allocation.size != 0 &&
-        ptr >= allocation.base &&
-        static_cast<uint64_t>(ptr - allocation.base) < allocation.size) {
-      return allocation.context;
-    }
-  }
-  return nullptr;
+  const auto *allocation = lupine_deviceptr_allocations().find(ptr);
+  return allocation != nullptr ? allocation->context : nullptr;
 }
 
 CUresult lupine_set_current_context_on_route(lupine_route route,

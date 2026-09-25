@@ -764,6 +764,15 @@ endif()
 # on socketpair(), MAP_FIXED_NOREPLACE and memfd_create(); anything free of
 # those belongs here instead, so it covers every platform the client ships for.
 if(BUILD_TESTING)
+    if(LUPINE_BUILD_CUDA)
+        add_executable(deviceptr_allocations_test
+            ${CMAKE_CURRENT_SOURCE_DIR}/deviceptr_allocations_test.cpp)
+        target_include_directories(deviceptr_allocations_test PRIVATE
+            ${CUDAToolkit_INCLUDE_DIRS})
+        lupine_apply_sanitizer(deviceptr_allocations_test)
+        add_test(NAME deviceptr_allocations_test COMMAND deviceptr_allocations_test)
+    endif()
+
     add_executable(transport_test
         ${CMAKE_CURRENT_SOURCE_DIR}/transport_test.cpp)
     target_link_libraries(transport_test PRIVATE lupine_rpc_core)
