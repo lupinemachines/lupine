@@ -3825,28 +3825,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_cuStreamQuery(conn_t *conn) {
-  CUstream hStream;
-  int request_id;
-  CUresult return_value;
-  if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  return_value = cuStreamQuery(hStream);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_cuStreamDestroy_v2(conn_t *conn) {
   CUstream hStream;
   int request_id;

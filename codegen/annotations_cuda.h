@@ -1742,7 +1742,8 @@ CUresult cuStreamUpdateCaptureDependencies(CUstream hStream,
 CUresult cuStreamAttachMemAsync(CUstream hStream, CUdeviceptr dptr,
                                 size_t length, unsigned int flags);
 /**
- * @synchronize
+ * @disabled server
+ * @synchronize DEFERRED_DTOH
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  */

@@ -90,6 +90,7 @@ int handle_cuMemAllocManaged(conn_t *conn);
 int handle_cuMemFree_v2(conn_t *conn);
 void lupine_server_cleanup_identity_allocations(conn_t *conn);
 int handle_cuCtxSynchronize(conn_t *conn);
+int handle_cuStreamQuery(conn_t *conn);
 int handle_cuStreamSynchronize(conn_t *conn);
 int handle_cuGraphLaunch(conn_t *conn);
 int handle_cuEventSynchronize(conn_t *conn);
