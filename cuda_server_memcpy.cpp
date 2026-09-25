@@ -31,11 +31,65 @@
 extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *context,
                                            unsigned int flags, CUdevice device);
 
+// Native context teardown frees its CUDA resources. A retained token prevents
+// deferred cleanup from using their old handles, even if CUcontext is reused.
+struct lupine_context_cleanup {
+  bool alive = true;
+};
+
+// Held across native context teardown and resource destruction. Recursive
+// locking permits destruction of resources owned by another cleanup object.
+static std::recursive_mutex &lupine_cuda_cleanup_mutex() {
+  static auto *mutex = new std::recursive_mutex();
+  return *mutex;
+}
+
+// Token lookup must not wait for cleanup: active staging operations need it
+// before a lifecycle transaction can finish draining those operations.
+static std::mutex &lupine_context_cleanup_registry_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+static auto &lupine_context_cleanups() {
+  static auto *contexts =
+      new std::unordered_map<CUcontext,
+                             std::weak_ptr<lupine_context_cleanup>>();
+  return *contexts;
+}
+
+static std::shared_ptr<lupine_context_cleanup>
+lupine_context_cleanup_for(CUcontext context) {
+  std::lock_guard<std::mutex> lock(lupine_context_cleanup_registry_mutex());
+  auto &entry = lupine_context_cleanups()[context];
+  auto lifetime = entry.lock();
+  if (lifetime == nullptr) {
+    lifetime = std::make_shared<lupine_context_cleanup>();
+    entry = lifetime;
+  }
+  return lifetime;
+}
+
+static void lupine_retire_context_cleanup(CUcontext context) {
+  std::lock_guard<std::recursive_mutex> lock(lupine_cuda_cleanup_mutex());
+  std::lock_guard<std::mutex> registry_lock(
+      lupine_context_cleanup_registry_mutex());
+  auto &contexts = lupine_context_cleanups();
+  auto found = contexts.find(context);
+  if (found != contexts.end()) {
+    if (auto lifetime = found->second.lock()) {
+      lifetime->alive = false;
+    }
+    contexts.erase(found);
+  }
+}
+
 class lupine_htod_side_effect_ring;
 
 struct lupine_staging_state {
   conn_t *conn = nullptr;
   std::mutex lifecycle_mutex;
+  bool cleanup_locked = false;
   std::mutex mutex;
   std::condition_variable condition;
   bool staging_operation_active = false;
@@ -231,10 +285,15 @@ struct lupine_graph_host_copy_node {
 
 struct lupine_graph_capture_scratch {
   lupine_graph_capture_scratch(void *scratch_ptr, size_t scratch_size)
-      : ptr(scratch_ptr), size(scratch_size) {}
+      : ptr(scratch_ptr), size(scratch_size) {
+    CUcontext context = nullptr;
+    (void)cuCtxGetCurrent(&context);
+    lifetime = lupine_context_cleanup_for(context);
+  }
 
   void *ptr;
   size_t size;
+  std::shared_ptr<lupine_context_cleanup> lifetime;
   std::atomic<size_t> offset{0};
 };
 
@@ -254,7 +313,10 @@ struct lupine_graph_resources : lupine_graph_cleanup {
     }
     auto *scratch = capture_scratch.load();
     if (scratch != nullptr) {
-      (void)cuMemFreeHost(scratch->ptr);
+      std::lock_guard<std::recursive_mutex> lock(lupine_cuda_cleanup_mutex());
+      if (scratch->lifetime->alive) {
+        (void)cuMemFreeHost(scratch->ptr);
+      }
       delete scratch;
     }
   }
@@ -791,11 +853,14 @@ public:
   static constexpr size_t storage_bytes =
       (fragment_bytes + storage_headroom + 127) & ~size_t(127);
 
-  lupine_htod_side_effect_ring(conn_t *conn, CUcontext context)
-      : conn_(conn), context_(context) {}
+  lupine_htod_side_effect_ring(conn_t *conn, CUcontext context,
+                               std::shared_ptr<lupine_context_cleanup> lifetime)
+      : conn_(conn), context_(context), lifetime_(std::move(lifetime)) {}
 
   ~lupine_htod_side_effect_ring() {
-    if (context_ != nullptr && cuCtxPushCurrent_v2(context_) == CUDA_SUCCESS) {
+    std::lock_guard<std::recursive_mutex> lock(lupine_cuda_cleanup_mutex());
+    if (lifetime_->alive && context_ != nullptr &&
+        cuCtxPushCurrent_v2(context_) == CUDA_SUCCESS) {
       if (transfer_stream_ != nullptr) {
         (void)cuStreamDestroy_v2(transfer_stream_);
       }
@@ -809,7 +874,9 @@ public:
       (void)cuCtxPopCurrent_v2(&popped);
     }
     if (storage_ != nullptr) {
-      (void)cuMemHostUnregister(storage_);
+      if (lifetime_->alive) {
+        (void)cuMemHostUnregister(storage_);
+      }
       free_storage(storage_);
     }
   }
@@ -870,6 +937,10 @@ public:
     ordering_event_ = ordering_event;
     smemcpy_module_ = smemcpy_module;
     return CUDA_SUCCESS;
+  }
+
+  const std::shared_ptr<lupine_context_cleanup> &lifetime() const {
+    return lifetime_;
   }
 
   void acquire_execution() {
@@ -1008,6 +1079,7 @@ private:
 
   conn_t *conn_ = nullptr;
   CUcontext context_ = nullptr;
+  std::shared_ptr<lupine_context_cleanup> lifetime_;
   std::mutex prepare_mutex_;
   std::mutex execution_mutex_;
   std::mutex smemcpy_functions_mutex_;
@@ -1023,10 +1095,13 @@ private:
 
 struct lupine_htod_capture_events {
   explicit lupine_htod_capture_events(CUcontext event_context)
-      : context(event_context) {}
+      : context(event_context),
+        lifetime(lupine_context_cleanup_for(event_context)) {}
 
   ~lupine_htod_capture_events() {
-    if (context == nullptr || cuCtxPushCurrent_v2(context) != CUDA_SUCCESS) {
+    std::lock_guard<std::recursive_mutex> lock(lupine_cuda_cleanup_mutex());
+    if (!lifetime->alive || context == nullptr ||
+        cuCtxPushCurrent_v2(context) != CUDA_SUCCESS) {
       return;
     }
     if (join != nullptr) {
@@ -1040,6 +1115,7 @@ struct lupine_htod_capture_events {
   }
 
   CUcontext context = nullptr;
+  std::shared_ptr<lupine_context_cleanup> lifetime;
   CUevent fork = nullptr;
   CUevent join = nullptr;
 };
@@ -1066,6 +1142,7 @@ static CUresult lupine_make_htod_capture_events(
 static std::shared_ptr<lupine_htod_side_effect_ring>
 lupine_prepare_htod_side_effect_ring(lupine_staging_state &state,
                                      CUcontext context, CUresult &result) {
+  auto lifetime = lupine_context_cleanup_for(context);
   std::shared_ptr<lupine_htod_side_effect_ring> ring;
   {
     std::lock_guard<std::mutex> lock(state.mutex);
@@ -1074,8 +1151,8 @@ lupine_prepare_htod_side_effect_ring(lupine_staging_state &state,
       ring = existing->second;
     } else {
       try {
-        ring =
-            std::make_shared<lupine_htod_side_effect_ring>(state.conn, context);
+        ring = std::make_shared<lupine_htod_side_effect_ring>(
+            state.conn, context, lifetime);
         state.htod_rings.emplace(context, ring);
       } catch (...) {
         result = CUDA_ERROR_OUT_OF_MEMORY;
@@ -1161,7 +1238,9 @@ struct lupine_htod_exec_callbacks : lupine_graph_cleanup {
 
 struct lupine_htod_exec_resources {
   ~lupine_htod_exec_resources() {
-    if (prepared == nullptr || prepared == original) {
+    std::lock_guard<std::recursive_mutex> lock(lupine_cuda_cleanup_mutex());
+    if (lifetime == nullptr || !lifetime->alive || prepared == nullptr ||
+        prepared == original) {
       return;
     }
     if (context != nullptr && cuCtxPushCurrent_v2(context) == CUDA_SUCCESS) {
@@ -1177,6 +1256,7 @@ struct lupine_htod_exec_resources {
   CUgraph original = nullptr;
   CUgraph prepared = nullptr;
   CUcontext context = nullptr;
+  std::shared_ptr<lupine_context_cleanup> lifetime;
 };
 
 static libcuckoo::cuckoohash_map<CUgraphExec,
@@ -1234,7 +1314,8 @@ lupine_prepare_htod_graph_exec(CUgraph graph,
   std::shared_ptr<lupine_htod_graph_execution> execution;
   try {
     ring = std::make_shared<lupine_htod_side_effect_ring>(
-        captured_ring->connection(), captured_ring->context());
+        captured_ring->connection(), captured_ring->context(),
+        captured_ring->lifetime());
     execution = std::make_shared<lupine_htod_graph_execution>(
         ring, captured_execution->callback_count());
   } catch (...) {
@@ -1439,6 +1520,7 @@ lupine_prepare_htod_graph_exec(CUgraph graph,
     resources->original = binding->original;
     resources->prepared = binding->prepared;
     resources->context = ring->context();
+    resources->lifetime = ring->lifetime();
     binding->resources = std::move(resources);
     if (prepared_in_place) {
       std::lock_guard<std::mutex> lock(captured_state->callbacks_mutex);
@@ -2021,6 +2103,7 @@ lupine_make_3d_htod_copy(const CUDA_MEMCPY3D &original) {
 
 static void lupine_server_forget_context_metadata(lupine_staging_state &state,
                                                   CUcontext context) {
+  lupine_retire_context_cleanup(context);
   state.created_contexts.erase(context);
   state.htod_rings.erase(context);
   for (auto it = state.primary_contexts.begin();
@@ -2070,6 +2153,10 @@ void lupine_server_begin_lifecycle_transaction(conn_t *conn) {
 void lupine_server_end_lifecycle_transaction(conn_t *conn) {
   auto *state = lupine_staging_state_for(conn);
   if (state != nullptr) {
+    if (state->cleanup_locked) {
+      state->cleanup_locked = false;
+      lupine_cuda_cleanup_mutex().unlock();
+    }
     state->lifecycle_mutex.unlock();
   }
 }
@@ -2129,6 +2216,8 @@ void lupine_server_prepare_primary_context(conn_t *conn, CUdevice device) {
       }
     }
   }
+  lupine_cuda_cleanup_mutex().lock();
+  state->cleanup_locked = true;
   ring.reset();
 }
 
@@ -2155,8 +2244,6 @@ void lupine_server_finish_primary_context(conn_t *conn, CUdevice device,
       context != nullptr && (reset || result != CUDA_SUCCESS ||
                              state_result != CUDA_SUCCESS || active == 0);
   if (forget) {
-    state->condition.wait(lock,
-                          [&] { return !state->staging_operation_active; });
     lupine_server_forget_context_metadata(*state, context);
   }
   state->teardown_devices.erase(device);
@@ -2180,6 +2267,8 @@ void lupine_server_prepare_context_destroy(conn_t *conn, CUcontext context) {
       state->htod_rings.erase(it);
     }
   }
+  lupine_cuda_cleanup_mutex().lock();
+  state->cleanup_locked = true;
   // Streams, modules, and mapped registrations belong to the live context.
   // Drop the registry's ownership while the caller still has it current.
   ring.reset();
@@ -2193,7 +2282,6 @@ void lupine_server_finish_context_destroy(conn_t *conn, CUcontext context,
     return;
   }
   std::unique_lock<std::mutex> lock(state->mutex);
-  state->condition.wait(lock, [&] { return !state->staging_operation_active; });
   // Destructive APIs can return a deferred error after taking effect. Detach
   // every old handle on any result; leaking is safer than stale-handle reuse.
   lupine_server_forget_context_metadata(*state, context);
@@ -2210,8 +2298,6 @@ void lupine_server_finish_context_detach(conn_t *conn, CUcontext context,
   CUresult query_result = cuCtxGetApiVersion(context, &version);
   std::unique_lock<std::mutex> lock(state->mutex);
   if (result != CUDA_SUCCESS || query_result != CUDA_SUCCESS) {
-    state->condition.wait(lock,
-                          [&] { return !state->staging_operation_active; });
     lupine_server_forget_context_metadata(*state, context);
   }
   state->teardown_contexts.erase(context);

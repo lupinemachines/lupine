@@ -282,6 +282,42 @@ static int check_exec_update(CUstream stream, CUdeviceptr device, bool legacy) {
   return 0;
 }
 
+// Destruction may reach CUDA's user-object callbacks after GraphDestroy
+// returns. Tear down and recreate contexts while that cleanup is pending.
+static int check_context_teardown() {
+  for (int iteration = 0; iteration < 8; ++iteration) {
+    CUcontext context;
+#if CUDA_VERSION >= 13000
+    DRV(cuCtxCreate(&context, nullptr, 0, 0));
+#else
+    DRV(cuCtxCreate(&context, 0, 0));
+#endif
+    CUstream stream;
+    CUdeviceptr device;
+    DRV(cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING));
+    DRV(cuMemAlloc(&device, sizeof(unsigned int)));
+    unsigned int source = 91;
+    CUgraph graphs[3];
+    CUgraphExec executables[3];
+    for (int i = 0; i < 3; ++i) {
+      DRV(cuStreamBeginCapture(stream, CU_STREAM_CAPTURE_MODE_GLOBAL));
+      DRV(cuMemcpyHtoDAsync(device, &source, sizeof(source), stream));
+      DRV(cuStreamEndCapture(stream, &graphs[i]));
+      DRV(cuGraphInstantiateWithFlags(&executables[i], graphs[i], 0));
+      DRV(cuGraphLaunch(executables[i], stream));
+      DRV(cuStreamSynchronize(stream));
+    }
+    for (int i = 0; i < 3; ++i) {
+      DRV(cuGraphExecDestroy(executables[i]));
+      DRV(cuGraphDestroy(graphs[i]));
+    }
+    DRV(cuMemFree(device));
+    DRV(cuStreamDestroy(stream));
+    DRV(cuCtxDestroy(context));
+  }
+  return 0;
+}
+
 int main(int argc, char **argv) {
   setbuf(stdout, nullptr);
   DRV(cuInit(0));
@@ -316,6 +352,10 @@ int main(int argc, char **argv) {
   ) {
     return 1;
   }
+  if (check_context_teardown()) {
+    return 1;
+  }
+  DRV(cuCtxSetCurrent(context));
   DRV(cuMemFree(device));
   DRV(cuStreamDestroy(stream));
   DRV(cuDevicePrimaryCtxRelease(0));
