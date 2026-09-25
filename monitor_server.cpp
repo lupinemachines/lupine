@@ -27,6 +27,7 @@
 #include <pthread.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "lupine_log.h"
@@ -328,10 +329,16 @@ struct host_pid_probe {
   nvmlDevice_t device = nullptr;
   std::set<unsigned int> before_pids;
   bool lock_held = false;
-  bool pid_can_appear = false;
 };
 
 thread_local std::unique_ptr<host_pid_probe> active_host_pid_probe;
+
+// PROC_PID_INIT_INO: the kernel's fixed inode for the initial PID namespace,
+// where getpid() is already the PID that NVML reports.
+bool in_initial_pid_namespace() {
+  struct stat ns = {};
+  return stat("/proc/self/ns/pid", &ns) == 0 && ns.st_ino == 0xEFFFFFFCU;
+}
 
 void note_discovery_failure() {
   if (registry != nullptr && lock_shared_mutex(&registry->registry_mutex)) {
@@ -342,9 +349,7 @@ void note_discovery_failure() {
 
 // NVML lists a process on a device for as long as it holds a context there, so
 // a retain or a create can only add our PID to that list while we hold none
-// yet. An active primary context means this process is already listed and no
-// new PID can appear, so end_context_probe skips its poll; the probe still runs
-// to the end, which counts the connection as a discovery failure.
+// yet, so there is nothing to probe once a primary context is active.
 bool primary_context_active(int cuda_device) {
   unsigned int flags = 0;
   int active = 0;
@@ -355,17 +360,12 @@ bool primary_context_active(int cuda_device) {
 
 void begin_context_probe(int cuda_device) {
   if (registry == nullptr || child_slot < 0 || slot_has_host_pid(child_slot) ||
-      active_host_pid_probe != nullptr) {
+      active_host_pid_probe != nullptr || primary_context_active(cuda_device)) {
     return;
   }
   std::unique_ptr<host_pid_probe> probe(new (std::nothrow) host_pid_probe());
   if (probe == nullptr) {
     note_discovery_failure();
-    return;
-  }
-  if (primary_context_active(cuda_device)) {
-    probe->slot_index = child_slot;
-    active_host_pid_probe = std::move(probe);
     return;
   }
   probe->session.emplace();
@@ -404,7 +404,6 @@ void begin_context_probe(int cuda_device) {
     probe->before_pids.insert(process.pid);
   }
   probe->slot_index = child_slot;
-  probe->pid_can_appear = true;
   active_host_pid_probe = std::move(probe);
 }
 
@@ -415,7 +414,7 @@ void end_context_probe(bool context_created) {
   }
   bool resolved = false;
   bool ambiguous = false;
-  if (context_created && probe->pid_can_appear) {
+  if (context_created) {
     for (int attempt = 0; attempt < 50; ++attempt) {
       bool query_ok = false;
       std::vector<nvmlProcessInfo_t> after =
@@ -691,6 +690,9 @@ void lupine_monitoring_register_child() {
     }
     memset(slot, 0, sizeof(*slot));
     slot->server_pid = static_cast<int32_t>(getpid());
+    if (in_initial_pid_namespace()) {
+      slot->host_pid = slot->server_pid;
+    }
     slot->state = kSlotActive;
     child_slot = static_cast<int>(index);
     pthread_mutex_unlock(&registry->registry_mutex);
