@@ -180,6 +180,11 @@ extern void rpc_unbind_http2_stream(conn_t *conn);
 extern int32_t rpc_current_http2_stream(conn_t *conn);
 extern int rpc_read_start(conn_t *conn, int write_id);
 extern int rpc_read(conn_t *conn, void *data, size_t size);
+// A read into a host allocation's client view lands through its writable
+// alias, then is recorded so the view is refreshed before it is next used.
+extern void *rpc_host_allocation_alias(conn_t *conn, void *data, size_t size);
+extern int rpc_note_host_allocation_write(conn_t *conn, void *data,
+                                          size_t written);
 // Reads a field emitted by rpc_write_buffer. Keeping buffered reads distinct
 // makes request and response serializers exact field-for-field inverses.
 static inline int rpc_read_buffer(conn_t *conn, void *data, size_t size) {
