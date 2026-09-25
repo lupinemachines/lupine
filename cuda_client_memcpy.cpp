@@ -3972,8 +3972,12 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
   // through the same bounded, chunked path the synchronous copy uses, issued on
   // this stream so they stay ordered behind its prior work. Capture is the
   // exception: there the copy only becomes a graph node and must not block.
+  // Another thread's capture on another stream leaves this one blocking.
+  CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
   if (ByteCount != 0 && !lupine_host_ptr_is_page_locked(dstHost) &&
-      lupine_active_stream_captures.load(std::memory_order_relaxed) == 0) {
+      (lupine_active_stream_captures.load(std::memory_order_relaxed) == 0 ||
+       cuStreamIsCapturing(hStream, &capture_status) != CUDA_SUCCESS ||
+       capture_status == CU_STREAM_CAPTURE_STATUS_NONE)) {
     if (lupine_route_is_local(route)) {
       return lupine_call_real_cuda_fn("cuMemcpyDtoH_v2", dstHost, srcDevice,
                                       ByteCount);
