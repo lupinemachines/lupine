@@ -77,6 +77,8 @@ int handle_cuGraphClone(conn_t *conn);
 int handle_cuGraphInstantiate_v2(conn_t *conn);
 int handle_cuGraphInstantiateWithFlags(conn_t *conn);
 int handle_cuGraphInstantiateWithParams(conn_t *conn);
+int handle_cuGraphExecUpdate(conn_t *conn);
+int handle_cuGraphExecUpdate_v2(conn_t *conn);
 int handle_cuGraphExecDestroy(conn_t *conn);
 int handle_cuGraphDestroy(conn_t *conn);
 int handle_cuMemcpyHtoDAsync_v2(conn_t *conn);

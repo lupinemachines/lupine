@@ -128,11 +128,16 @@ if [[ -n "$second_port" ]]; then
 else
   start_remote_server "$pidfile" "$server_log" "$port"
 fi
+client_command=("$exe")
+if grep -q 'LUPINE_TEST_SERVER_RSS' "$src"; then
+  client_command=(python3 "$repo_root/test/check_graph_capture_memory.py"
+    --ssh "$SERVER_SSH_TARGET" --pid-file "$pidfile" -- "$exe")
+fi
 if [[ -n "${RESULTS_DIR:-}" ]]; then
   mkdir -p "$RESULTS_DIR"
   env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${LD_LIBRARY_PATH:-}" \
-    LUPINE_SERVER="$servers" "$exe" 2>&1 | tee "$RESULTS_DIR/client.log"
+    LUPINE_SERVER="$servers" "${client_command[@]}" 2>&1 | tee "$RESULTS_DIR/client.log"
 else
   env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${LD_LIBRARY_PATH:-}" \
-    LUPINE_SERVER="$servers" "$exe"
+    LUPINE_SERVER="$servers" "${client_command[@]}"
 fi
