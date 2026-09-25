@@ -2,6 +2,7 @@
 #define LUPINE_CUDA_COMPAT_H
 
 #include <cuda.h>
+#include <string.h>
 
 #ifndef LUPINE_CUDA_COMPAT_TYPES_ONLY
 #ifdef _WIN32
@@ -36,6 +37,68 @@ static inline void *lupine_driver_symbol(const char *name) {
 // Attribute-snapshot wire entry carrying the function's device (the server's
 // current device at snapshot time); sits below every real CUfunction_attribute.
 #define LUPINE_FUNC_ATTRIBUTE_DEVICE (-1)
+
+// 2D and peer copies travel as the 3D descriptor: a 2D copy is one slice, and
+// a peer copy's contexts sit in the reserved slots it shares a layout with.
+static inline CUDA_MEMCPY3D lupine_memcpy3d_of(const CUDA_MEMCPY2D &flat) {
+  CUDA_MEMCPY3D copy = {};
+  copy.srcXInBytes = flat.srcXInBytes;
+  copy.srcY = flat.srcY;
+  copy.srcMemoryType = flat.srcMemoryType;
+  copy.srcHost = flat.srcHost;
+  copy.srcDevice = flat.srcDevice;
+  copy.srcArray = flat.srcArray;
+  copy.srcPitch = flat.srcPitch;
+  copy.srcHeight = flat.Height;
+  copy.dstXInBytes = flat.dstXInBytes;
+  copy.dstY = flat.dstY;
+  copy.dstMemoryType = flat.dstMemoryType;
+  copy.dstHost = flat.dstHost;
+  copy.dstDevice = flat.dstDevice;
+  copy.dstArray = flat.dstArray;
+  copy.dstPitch = flat.dstPitch;
+  copy.dstHeight = flat.Height;
+  copy.WidthInBytes = flat.WidthInBytes;
+  copy.Height = flat.Height;
+  copy.Depth = 1;
+  return copy;
+}
+
+static inline CUDA_MEMCPY2D lupine_memcpy2d_of(const CUDA_MEMCPY3D &copy) {
+  CUDA_MEMCPY2D flat = {};
+  flat.srcXInBytes = copy.srcXInBytes;
+  flat.srcY = copy.srcY;
+  flat.srcMemoryType = copy.srcMemoryType;
+  flat.srcHost = copy.srcHost;
+  flat.srcDevice = copy.srcDevice;
+  flat.srcArray = copy.srcArray;
+  flat.srcPitch = copy.srcPitch;
+  flat.dstXInBytes = copy.dstXInBytes;
+  flat.dstY = copy.dstY;
+  flat.dstMemoryType = copy.dstMemoryType;
+  flat.dstHost = copy.dstHost;
+  flat.dstDevice = copy.dstDevice;
+  flat.dstArray = copy.dstArray;
+  flat.dstPitch = copy.dstPitch;
+  flat.WidthInBytes = copy.WidthInBytes;
+  flat.Height = copy.Height;
+  return flat;
+}
+
+static_assert(sizeof(CUDA_MEMCPY3D) == sizeof(CUDA_MEMCPY3D_PEER),
+              "peer copies travel as CUDA_MEMCPY3D");
+static inline CUDA_MEMCPY3D lupine_memcpy3d_of(const CUDA_MEMCPY3D_PEER &peer) {
+  CUDA_MEMCPY3D copy;
+  memcpy(&copy, &peer, sizeof(copy));
+  return copy;
+}
+
+static inline CUDA_MEMCPY3D_PEER
+lupine_memcpy3d_peer_of(const CUDA_MEMCPY3D &copy) {
+  CUDA_MEMCPY3D_PEER peer;
+  memcpy(&peer, &copy, sizeof(peer));
+  return peer;
+}
 
 #if CUDA_VERSION < 12000
 typedef struct CUlibrary_st *CUlibrary;

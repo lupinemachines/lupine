@@ -149,13 +149,7 @@ void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
 
 // A host side staged on the server is dense: the client sends and receives
 // only the copied rows and keeps its own pitch and offsets.
-inline size_t lupine_pack_host_destination(CUDA_MEMCPY2D &copy) {
-  copy.dstXInBytes = 0;
-  copy.dstY = 0;
-  copy.dstPitch = copy.WidthInBytes;
-  return copy.WidthInBytes * copy.Height;
-}
-template <typename Copy> size_t lupine_pack_host_destination(Copy &copy) {
+inline size_t lupine_pack_host_destination(CUDA_MEMCPY3D &copy) {
   copy.dstXInBytes = 0;
   copy.dstY = 0;
   copy.dstZ = 0;
@@ -163,7 +157,7 @@ template <typename Copy> size_t lupine_pack_host_destination(Copy &copy) {
   copy.dstHeight = copy.Height;
   return copy.WidthInBytes * copy.Height * copy.Depth;
 }
-template <typename Copy> size_t lupine_pack_host_source(Copy &copy) {
+inline size_t lupine_pack_host_source(CUDA_MEMCPY3D &copy) {
   copy.srcXInBytes = 0;
   copy.srcY = 0;
   copy.srcZ = 0;
