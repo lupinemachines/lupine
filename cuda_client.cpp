@@ -5077,17 +5077,17 @@ extern "C" CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
                                     Flags);
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuStreamWaitEvent) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuStreamWaitEvent,
+                                    &async_sequence) < 0 ||
+      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
-      rpc_write(conn, &Flags, sizeof(Flags)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+      rpc_write(conn, &Flags, sizeof(Flags)) < 0 || rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return result;
+  return CUDA_SUCCESS;
 }
 
 #ifdef cuStreamWaitEvent_ptsz
