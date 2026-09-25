@@ -71,6 +71,13 @@ static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
 #define DEFAULT_PORT 14833
 #define MAX_CLIENTS 10
 
+#ifdef cuGraphExecUpdate
+#undef cuGraphExecUpdate
+#endif
+extern "C" CUresult CUDAAPI
+cuGraphExecUpdate(CUgraphExec exec, CUgraph graph, CUgraphNode *error_node,
+                  CUgraphExecUpdateResult *update_result);
+
 #ifdef cuGraphInstantiate_v2
 #undef cuGraphInstantiate_v2
 #endif
@@ -631,7 +638,7 @@ std::vector<lupine_pending_dtoh_item>
 lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
                                   bool all_streams, CUcontext context) {
   std::vector<lupine_pending_dtoh_item> copies;
-  auto *inherited = lupine_find_stream_resources(stream);
+  auto inherited = lupine_find_stream_resources(stream);
   lupine_pending_dtoh_copies().erase_fn(
       conn, [&](lupine_pending_dtoh_streams &streams) {
         for (auto it = streams.begin(); it != streams.end();) {
@@ -2482,8 +2489,9 @@ void CUDA_CB lupine_graph_host_callback(void *userData) {
     return;
   }
 
+  auto resources = callback->resources.lock();
   std::vector<lupine_graph_host_copy> copies =
-      lupine_graph_dtoh_copy_snapshot(callback->resources);
+      lupine_graph_dtoh_copy_snapshot(resources);
   conn_t *conn = callback->conn;
   auto pending =
       callback->stream.has_value()
@@ -3057,8 +3065,7 @@ int handle_cuGraphAddNode(conn_t *conn) {
 static lupine_host_callback_data *
 lupine_make_host_setparams_callback(conn_t *conn,
                                     const CUDA_HOST_NODE_PARAMS &params) {
-  return new lupine_host_callback_data{conn, params.fn, params.userData,
-                                       nullptr};
+  return new lupine_host_callback_data{conn, params.fn, params.userData, {}};
 }
 
 int handle_cuGraphHostNodeSetParams(conn_t *conn) {
@@ -3161,7 +3168,7 @@ int handle_cuLaunchHostFunc(conn_t *conn) {
     return -1;
   }
 
-  auto *resources = lupine_get_stream_resources(stream);
+  auto resources = lupine_find_stream_resources(stream);
   auto *callback =
       new lupine_host_callback_data{conn, fn, userData, resources, stream};
   result = cuLaunchHostFunc(stream, lupine_graph_host_callback, callback);
@@ -3455,6 +3462,47 @@ int handle_cuStreamWaitEvent(conn_t *conn) {
   return 0;
 }
 
+template <typename BeginCapture>
+static CUresult lupine_begin_capture(conn_t *conn, CUstream stream,
+                                     CUgraph graph, BeginCapture begin) {
+  CUstreamCaptureStatus status = CU_STREAM_CAPTURE_STATUS_NONE;
+  if (stream == nullptr || stream == CU_STREAM_LEGACY ||
+      cuStreamIsCapturing(stream, &status) != CUDA_SUCCESS ||
+      status != CU_STREAM_CAPTURE_STATUS_NONE) {
+    // Let CUDA reject unsupported, invalid, or repeated captures without
+    // allocating staging or replacing live state during an existing capture.
+    return begin();
+  }
+  auto resources = graph == nullptr ? lupine_make_stream_capture_resources()
+                                    : lupine_get_graph_resources(graph);
+  if (resources == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  if (!lupine_graph_has_capture_scratch(resources)) {
+    // CUDA disallows pinning host memory during global capture. Reserve before
+    // capture, then release with the last graph/exec/launch or client delivery.
+    constexpr size_t scratch_size = 128ull * 1024ull * 1024ull;
+    void *scratch = nullptr;
+    CUresult result = cuMemAllocHost(&scratch, scratch_size);
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+    if (!lupine_graph_install_capture_scratch(resources, scratch,
+                                              scratch_size)) {
+      (void)cuMemFreeHost(scratch);
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+  }
+  CUresult result = lupine_server_prepare_htod_capture(conn);
+  if (result == CUDA_SUCCESS) {
+    result = begin();
+  }
+  if (result == CUDA_SUCCESS) {
+    lupine_begin_stream_capture_resources(stream, resources);
+  }
+  return result;
+}
+
 int handle_cuStreamBeginCaptureToGraph(conn_t *conn) {
   CUstream stream = nullptr;
   CUgraph graph = nullptr;
@@ -3473,16 +3521,11 @@ int handle_cuStreamBeginCaptureToGraph(conn_t *conn) {
     return -1;
   }
 
-  auto *resources = lupine_begin_stream_capture_resources(stream);
-  result = lupine_server_prepare_htod_capture(conn);
-  if (result == CUDA_SUCCESS) {
-    result = cuStreamBeginCaptureToGraph(stream, graph,
-                                         deps.empty() ? nullptr : deps.data(),
-                                         nullptr, deps.size(), mode);
-  }
-  if (result != CUDA_SUCCESS) {
-    lupine_discard_stream_capture_resources(resources);
-  }
+  result = lupine_begin_capture(conn, stream, graph, [&] {
+    return cuStreamBeginCaptureToGraph(stream, graph,
+                                       deps.empty() ? nullptr : deps.data(),
+                                       nullptr, deps.size(), mode);
+  });
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
@@ -3585,27 +3628,9 @@ int handle_cuStreamBeginCapture(conn_t *conn) {
     return -1;
   }
 
-  auto *resources = lupine_begin_stream_capture_resources(stream);
-  if (!lupine_graph_has_capture_scratch(resources)) {
-    static constexpr size_t scratch_size = 128ull * 1024ull * 1024ull;
-    void *scratch = nullptr;
-    if (cuMemAllocHost(&scratch, scratch_size) == CUDA_SUCCESS) {
-      if (!lupine_graph_install_capture_scratch(resources, scratch,
-                                                scratch_size)) {
-        cuMemFreeHost(scratch);
-      }
-    }
-  }
-
-  result = !lupine_graph_has_capture_scratch(resources)
-               ? CUDA_ERROR_OUT_OF_MEMORY
-               : lupine_server_prepare_htod_capture(conn);
-  if (result == CUDA_SUCCESS) {
-    result = cuStreamBeginCapture_v2(stream, mode);
-  }
-  if (result != CUDA_SUCCESS) {
-    lupine_discard_stream_capture_resources(resources);
-  }
+  result = lupine_begin_capture(conn, stream, nullptr, [&] {
+    return cuStreamBeginCapture_v2(stream, mode);
+  });
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
@@ -3630,7 +3655,19 @@ int handle_cuStreamEndCapture(conn_t *conn) {
   }
 
   result = cuStreamEndCapture(stream, &graph);
-  lupine_finish_stream_capture_resources(stream, graph, result == CUDA_SUCCESS);
+  CUstreamCaptureStatus status = CU_STREAM_CAPTURE_STATUS_NONE;
+  bool capture_ended = result == CUDA_SUCCESS ||
+                       (cuStreamIsCapturing(stream, &status) == CUDA_SUCCESS &&
+                        status == CU_STREAM_CAPTURE_STATUS_NONE);
+  if (capture_ended) {
+    CUresult resource_result = lupine_finish_stream_capture_resources(
+        stream, graph, result == CUDA_SUCCESS);
+    if (result == CUDA_SUCCESS && resource_result != CUDA_SUCCESS) {
+      (void)cuGraphDestroy(graph);
+      graph = nullptr;
+      result = resource_result;
+    }
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &graph_out, sizeof(graph_out)) < 0 ||
@@ -3696,7 +3733,7 @@ int handle_cuGraphInstantiate_v2(conn_t *conn) {
     return -1;
   }
 
-  lupine_graph_resources *resources = nullptr;
+  lupine_graph_resource_ptr resources;
   lupine_htod_graph_binding binding;
   CUresult result =
       lupine_prepare_graph_exec_resources(graph, &resources, &binding);
@@ -3749,7 +3786,7 @@ int handle_cuGraphInstantiateWithFlags(conn_t *conn) {
     return -1;
   }
 
-  lupine_graph_resources *resources = nullptr;
+  lupine_graph_resource_ptr resources;
   lupine_htod_graph_binding binding;
   result = lupine_prepare_graph_exec_resources(graph, &resources, &binding);
   if (result == CUDA_SUCCESS) {
@@ -3788,7 +3825,7 @@ int handle_cuGraphInstantiateWithParams(conn_t *conn) {
     return -1;
   }
 
-  lupine_graph_resources *resources = nullptr;
+  lupine_graph_resource_ptr resources;
   lupine_htod_graph_binding binding;
   result = lupine_prepare_graph_exec_resources(graph, &resources, &binding);
   if (result == CUDA_SUCCESS) {
@@ -3812,6 +3849,99 @@ int handle_cuGraphInstantiateWithParams(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &exec, sizeof(exec)) < 0 ||
       rpc_write(conn, &params, sizeof(params)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+template <typename Update>
+static CUresult lupine_update_graph_exec(CUgraphExec exec, CUgraph graph,
+                                         Update update) {
+  lupine_graph_resource_ptr resources;
+  lupine_htod_graph_binding binding;
+  CUresult result =
+      lupine_prepare_graph_exec_resources(graph, &resources, &binding);
+  if (result == CUDA_SUCCESS) {
+    result = update(binding);
+  }
+  if (result == CUDA_SUCCESS) {
+    // Exec-node setters still use nodes from the original instantiation graph.
+    // Keep that private node mapping; CUDA retains the new prepared graph's
+    // callback user objects after its temporary graph is destroyed below.
+    result = lupine_associate_graph_exec_resources(exec, resources, {});
+  }
+  lupine_release_htod_graph_binding(&binding);
+  return result;
+}
+
+int handle_cuGraphExecUpdate_v2(conn_t *conn) {
+  CUgraphExec exec = nullptr;
+  CUgraph graph = nullptr;
+  CUgraphExecUpdateResultInfo info{};
+  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &info, sizeof(info)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUresult result =
+      lupine_update_graph_exec(exec, graph, [&](const auto &binding) {
+        CUresult result = cuGraphExecUpdate_v2(exec, binding.prepared, &info);
+        if (result != CUDA_SUCCESS) {
+          info.errorNode =
+              lupine_original_htod_graph_node(binding, info.errorNode);
+#if CUDA_VERSION >= 12000
+          info.errorFromNode =
+              lupine_original_htod_graph_node(binding, info.errorFromNode);
+#endif
+        }
+        return result;
+      });
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &info, sizeof(info)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cuGraphExecUpdate(conn_t *conn) {
+  CUgraphExec exec = nullptr;
+  CUgraph graph = nullptr;
+  CUgraphNode *error_out = nullptr;
+  CUgraphExecUpdateResult *update_out = nullptr;
+  CUgraphNode error = nullptr;
+  CUgraphExecUpdateResult update_result = CU_GRAPH_EXEC_UPDATE_ERROR;
+  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &error_out, sizeof(error_out)) < 0 ||
+      rpc_read(conn, &update_out, sizeof(update_out)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUresult result =
+      lupine_update_graph_exec(exec, graph, [&](const auto &binding) {
+        CUresult result = cuGraphExecUpdate(
+            exec, binding.prepared, error_out != nullptr ? &error : nullptr,
+            update_out != nullptr ? &update_result : nullptr);
+        if (result != CUDA_SUCCESS) {
+          error = lupine_original_htod_graph_node(binding, error);
+        }
+        return result;
+      });
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &error_out, sizeof(error_out)) < 0 ||
+      (error_out != nullptr && rpc_write(conn, &error, sizeof(error)) < 0) ||
+      rpc_write(conn, &update_out, sizeof(update_out)) < 0 ||
+      (update_out != nullptr &&
+       rpc_write(conn, &update_result, sizeof(update_result)) < 0) ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -3848,7 +3978,9 @@ int handle_cuGraphDestroy(conn_t *conn) {
     return -1;
   }
   CUresult result = cuGraphDestroy(graph);
-  lupine_erase_graph_resources(graph);
+  if (result == CUDA_SUCCESS) {
+    lupine_erase_graph_resources(graph);
+  }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;

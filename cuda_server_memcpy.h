@@ -14,12 +14,13 @@
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
 struct lupine_graph_resources;
+using lupine_graph_resource_ptr = std::shared_ptr<lupine_graph_resources>;
 
 struct lupine_host_callback_data {
   conn_t *conn = nullptr;
   CUhostFn fn = nullptr;
   void *userData = nullptr;
-  lupine_graph_resources *resources = nullptr;
+  std::weak_ptr<lupine_graph_resources> resources;
   std::optional<CUstream> stream;
 };
 
@@ -74,7 +75,7 @@ struct lupine_pending_dtoh_item {
   lupine_dtoh_storage storage = lupine_dtoh_storage::borrowed;
   CUcontext context = nullptr;
   // Preserve graph dependencies inherited through cuStreamWaitEvent.
-  lupine_graph_resources *graph_resources = nullptr;
+  lupine_graph_resource_ptr graph_resources;
 };
 
 using lupine_pending_dtoh_items = std::vector<lupine_pending_dtoh_item>;
@@ -99,14 +100,14 @@ using lupine_pending_dtoh_streams =
 
 libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies();
-lupine_graph_resources *lupine_get_graph_resources(CUgraph graph);
-lupine_graph_resources *lupine_get_stream_resources(CUstream stream);
-lupine_graph_resources *lupine_find_stream_resources(CUstream stream);
-lupine_graph_resources *lupine_captured_stream_resources(CUstream stream);
-lupine_graph_resources *lupine_begin_stream_capture_resources(CUstream stream);
-void lupine_discard_stream_capture_resources(lupine_graph_resources *resources);
-void lupine_finish_stream_capture_resources(CUstream stream, CUgraph graph,
-                                            bool success);
+lupine_graph_resource_ptr lupine_get_graph_resources(CUgraph graph);
+lupine_graph_resource_ptr lupine_find_stream_resources(CUstream stream);
+lupine_graph_resource_ptr lupine_captured_stream_resources(CUstream stream);
+lupine_graph_resource_ptr lupine_make_stream_capture_resources();
+void lupine_begin_stream_capture_resources(
+    CUstream stream, const lupine_graph_resource_ptr &resources);
+CUresult lupine_finish_stream_capture_resources(CUstream stream, CUgraph graph,
+                                                bool success);
 void lupine_record_event_capture_resources(CUevent event, CUstream stream);
 void lupine_forget_event_capture_resources(CUevent event);
 void lupine_wait_event_capture_resources(CUstream stream, CUevent event);
@@ -114,11 +115,12 @@ void lupine_clone_graph_resources(CUgraph clone, CUgraph original);
 void lupine_erase_graph_resources(CUgraph graph);
 void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
                               CUresult result);
-bool lupine_graph_has_capture_scratch(lupine_graph_resources *resources);
-bool lupine_graph_install_capture_scratch(lupine_graph_resources *resources,
-                                          void *scratch, size_t size);
+bool lupine_graph_has_capture_scratch(
+    const lupine_graph_resource_ptr &resources);
+bool lupine_graph_install_capture_scratch(
+    const lupine_graph_resource_ptr &resources, void *scratch, size_t size);
 std::vector<lupine_graph_host_copy>
-lupine_graph_dtoh_copy_snapshot(lupine_graph_resources *resources);
+lupine_graph_dtoh_copy_snapshot(const lupine_graph_resource_ptr &resources);
 struct lupine_htod_graph_binding {
   CUgraph original = nullptr;
   CUgraph prepared = nullptr;
@@ -126,21 +128,20 @@ struct lupine_htod_graph_binding {
 };
 CUresult
 lupine_prepare_graph_exec_resources(CUgraph graph,
-                                    lupine_graph_resources **resources,
+                                    lupine_graph_resource_ptr *resources,
                                     lupine_htod_graph_binding *binding);
-CUresult
-lupine_associate_graph_exec_resources(CUgraphExec exec,
-                                      lupine_graph_resources *resources,
-                                      const lupine_htod_graph_binding &binding);
+CUresult lupine_associate_graph_exec_resources(
+    CUgraphExec exec, const lupine_graph_resource_ptr &resources,
+    const lupine_htod_graph_binding &binding);
 CUgraphNode
 lupine_original_htod_graph_node(const lupine_htod_graph_binding &binding,
                                 CUgraphNode node);
 CUgraphNode lupine_htod_graph_exec_node(CUgraphExec exec, CUgraphNode node);
 void lupine_release_htod_graph_binding(lupine_htod_graph_binding *binding);
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec);
-void *lupine_alloc_capture_scratch(lupine_graph_resources *resources,
+void *lupine_alloc_capture_scratch(const lupine_graph_resource_ptr &resources,
                                    size_t bytes);
-void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
+void lupine_graph_note_dtoh_copy(const lupine_graph_resource_ptr &resources,
                                  void *client_dst, void *server_src,
                                  size_t bytes);
 

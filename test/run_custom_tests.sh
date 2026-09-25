@@ -128,11 +128,57 @@ if [[ -n "$second_port" ]]; then
 else
   start_remote_server "$pidfile" "$server_log" "$port"
 fi
+client_environment=(env
+  LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${LD_LIBRARY_PATH:-}"
+  LUPINE_SERVER="$servers")
+
+run_client() {
+  if ! grep -q 'LUPINE_TEST_SERVER_RSS' "$src"; then
+    "${client_environment[@]}" "$exe"
+    return
+  fi
+
+  # The lifetime test waits for a newline after each capture/destroy cycle.
+  # Observe this runner's server child while the client remains connected.
+  coproc CAPTURE { exec "${client_environment[@]}" "$exe" --memory-steps; }
+  local client_pid=$CAPTURE_PID input output line rss baseline=0 maximum=0 samples=0 failed=0
+  exec {input}>&"${CAPTURE[1]}" {output}<&"${CAPTURE[0]}"
+  while true; do
+    if IFS= read -r -t 60 line <&"$output"; then
+      printf '%s\n' "$line"
+    else
+      [[ $? -le 128 ]] || failed=1
+      break
+    fi
+    [[ "$line" == memory-step=* ]] || continue
+    # User-object cleanup is asynchronous even after stream synchronization.
+    for attempt in {1..25}; do
+      sleep 0.2
+      rss=$(ssh_with_timeout "ps -o rss= --ppid \"\$(cat '$pidfile')\"") || { failed=1; break; }
+      [[ "$rss" =~ ^[[:space:]]*[0-9]+[[:space:]]*$ ]] || { failed=1; break; }
+      (( samples == 0 || rss <= baseline + 32768 )) && break
+    done
+    if (( failed || (samples > 0 && rss > baseline + 32768) )); then
+      echo "FAIL: server RSS grew from $baseline to $rss KiB" >&2
+      failed=1
+      break
+    fi
+    (( samples != 0 )) || baseline=$rss
+    (( rss <= maximum )) || maximum=$rss
+    samples=$((samples + 1))
+    echo "server RSS: $rss KiB"
+    printf '\n' >&"$input"
+  done
+  (( failed == 0 )) || kill "$client_pid" 2>/dev/null || true
+  exec {input}>&- {output}<&-
+  wait "$client_pid" || failed=1
+  (( failed == 0 && samples == 9 )) || return 1
+  echo "PASS: server RSS growth $((maximum - baseline)) KiB"
+}
+
 if [[ -n "${RESULTS_DIR:-}" ]]; then
   mkdir -p "$RESULTS_DIR"
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${LD_LIBRARY_PATH:-}" \
-    LUPINE_SERVER="$servers" "$exe" 2>&1 | tee "$RESULTS_DIR/client.log"
+  run_client 2>&1 | tee "$RESULTS_DIR/client.log"
 else
-  env LD_LIBRARY_PATH="$LUPINE_LIB_DIR:$CUDA_LIB_DIR:${NCCL_HOME:+$NCCL_HOME/lib:}${NVSHMEM_HOME:+$NVSHMEM_HOME/lib:}${LD_LIBRARY_PATH:-}" \
-    LUPINE_SERVER="$servers" "$exe"
+  run_client
 fi
