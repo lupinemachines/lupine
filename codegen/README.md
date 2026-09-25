@@ -79,11 +79,11 @@ route-local device back to its virtual client ordinal before returning it.
 `@deeparray <param> <array-member> <count-member>` copies an embedded array
 along with its struct. SEND_RECV returns the struct's scalar fields and preserves
 the caller's input array pointer and contents. RECV_ONLY provides client-owned
-array storage; by default a subsequent query into the same output struct
-replaces it. For immutable node parameters, append `NODE:<node-param>` to keep
-one copy per node, valid until node or graph destruction. Graph destruction
-collects node handles only when such cached arrays exist, then releases their
-storage after CUDA successfully destroys the graph.
+array storage owned by the graph node already identified by routing metadata.
+All graph-node parameter getters share this storage, which remains valid until
+the node's parameters change or the node is destroyed. Graph destruction
+collects node handles only when cached arrays exist, then releases their storage
+after CUDA successfully destroys the graph.
 
 `@disabled client` leaves server/RPC generation enabled while requiring a
 manual client implementation with the original API name. These manual symbols

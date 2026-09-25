@@ -20,8 +20,6 @@
 extern int rpc_size();
 extern conn_t *rpc_client_get_connection(unsigned int index);
 extern void rpc_close(conn_t *conn);
-extern "C" void lupine_deep_cache_reset(const void *key);
-extern "C" void *lupine_deep_cache_add(const void *key, size_t bytes);
 extern "C" void *lupine_deep_node_cache_get(CUgraphNode node, size_t slot,
                                             size_t bytes);
 extern "C" void lupine_deep_node_cache_reset(CUgraphNode node);
@@ -3977,14 +3975,14 @@ CUresult cuGraphExternalSemaphoresSignalNodeGetParams(
           conn, RPC_cuGraphExternalSemaphoresSignalNodeGetParams) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (lupine_deep_cache_reset((const void *)params_out), false) ||
       rpc_read(conn, params_out, sizeof(*params_out)) < 0 ||
       ((params_out->extSemArray =
             (params_out->numExtSems != 0
-                 ? (decltype(params_out->extSemArray))lupine_deep_cache_add(
-                       (const void *)params_out,
-                       params_out->numExtSems *
-                           sizeof(*params_out->extSemArray))
+                 ? (decltype(params_out->extSemArray))
+                       lupine_deep_node_cache_get(
+                           hNode, 0,
+                           params_out->numExtSems *
+                               sizeof(*params_out->extSemArray))
                  : nullptr)),
        false) ||
       (params_out->numExtSems != 0 && params_out->extSemArray == nullptr) ||
@@ -3994,10 +3992,11 @@ CUresult cuGraphExternalSemaphoresSignalNodeGetParams(
            0) ||
       ((params_out->paramsArray =
             (params_out->numExtSems != 0
-                 ? (decltype(params_out->paramsArray))lupine_deep_cache_add(
-                       (const void *)params_out,
-                       params_out->numExtSems *
-                           sizeof(*params_out->paramsArray))
+                 ? (decltype(params_out->paramsArray))
+                       lupine_deep_node_cache_get(
+                           hNode, 1,
+                           params_out->numExtSems *
+                               sizeof(*params_out->paramsArray))
                  : nullptr)),
        false) ||
       (params_out->numExtSems != 0 && params_out->paramsArray == nullptr) ||
@@ -4112,14 +4111,14 @@ CUresult cuGraphExternalSemaphoresWaitNodeGetParams(
           conn, RPC_cuGraphExternalSemaphoresWaitNodeGetParams) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (lupine_deep_cache_reset((const void *)params_out), false) ||
       rpc_read(conn, params_out, sizeof(*params_out)) < 0 ||
       ((params_out->extSemArray =
             (params_out->numExtSems != 0
-                 ? (decltype(params_out->extSemArray))lupine_deep_cache_add(
-                       (const void *)params_out,
-                       params_out->numExtSems *
-                           sizeof(*params_out->extSemArray))
+                 ? (decltype(params_out->extSemArray))
+                       lupine_deep_node_cache_get(
+                           hNode, 0,
+                           params_out->numExtSems *
+                               sizeof(*params_out->extSemArray))
                  : nullptr)),
        false) ||
       (params_out->numExtSems != 0 && params_out->extSemArray == nullptr) ||
@@ -4129,10 +4128,11 @@ CUresult cuGraphExternalSemaphoresWaitNodeGetParams(
            0) ||
       ((params_out->paramsArray =
             (params_out->numExtSems != 0
-                 ? (decltype(params_out->paramsArray))lupine_deep_cache_add(
-                       (const void *)params_out,
-                       params_out->numExtSems *
-                           sizeof(*params_out->paramsArray))
+                 ? (decltype(params_out->paramsArray))
+                       lupine_deep_node_cache_get(
+                           hNode, 1,
+                           params_out->numExtSems *
+                               sizeof(*params_out->paramsArray))
                  : nullptr)),
        false) ||
       (params_out->numExtSems != 0 && params_out->paramsArray == nullptr) ||
@@ -4239,14 +4239,14 @@ cuGraphBatchMemOpNodeGetParams(CUgraphNode hNode,
       rpc_write_start_request(conn, RPC_cuGraphBatchMemOpNodeGetParams) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (lupine_deep_cache_reset((const void *)nodeParams_out), false) ||
       rpc_read(conn, nodeParams_out, sizeof(*nodeParams_out)) < 0 ||
       ((nodeParams_out->paramArray =
             (nodeParams_out->count != 0
-                 ? (decltype(nodeParams_out->paramArray))lupine_deep_cache_add(
-                       (const void *)nodeParams_out,
-                       nodeParams_out->count *
-                           sizeof(*nodeParams_out->paramArray))
+                 ? (decltype(nodeParams_out->paramArray))
+                       lupine_deep_node_cache_get(
+                           hNode, 0,
+                           nodeParams_out->count *
+                               sizeof(*nodeParams_out->paramArray))
                  : nullptr)),
        false) ||
       (nodeParams_out->count != 0 && nodeParams_out->paramArray == nullptr) ||

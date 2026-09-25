@@ -615,10 +615,9 @@ class DeepStructOperation:
 
     SEND is an input deep-copy (cuGraphAdd* / *SetParams). RECV fills the
     caller's struct from node-owned memory (*GetParams); the array storage lives
-    in a per-output-pointer client cache (lupine_deep_cache_*) so the returned
-    pointers stay valid until the next deep query into the same struct.
-    NODE:<param> instead retains immutable arrays until their graph node is
-    destroyed. SEND_RECV returns struct fields while preserving caller-owned
+    in a per-node client cache until the node's parameters change or the node
+    is destroyed. Routing metadata identifies the owner; no extra annotation
+    is needed. SEND_RECV returns struct fields while preserving caller-owned
     input arrays; these are not written back.
     """
 
@@ -715,10 +714,6 @@ class DeepStructOperation:
         if not self.recv:
             return
         name = self.parameter.name
-        if not self.send and self.node_owner is None:
-            f.write(
-                f"        (lupine_deep_cache_reset((const void *){name}), false) ||\n"
-            )
         f.write(f"        rpc_read(conn, {name}, sizeof(*{name})) < 0 ||\n")
         for index, (member, count) in enumerate(self.members):
             esz = f"{name}->{count} * sizeof(*{name}->{member})"
@@ -729,16 +724,10 @@ class DeepStructOperation:
                     f"        (({name}->{member} = {name}_{member}_input), false) ||\n"
                 )
                 continue
-            if self.node_owner is not None:
-                storage = (
-                    f"(decltype({name}->{member}))lupine_deep_node_cache_get("
-                    f"{self.node_owner}, {index}, {esz})"
-                )
-            else:
-                storage = (
-                    f"(decltype({name}->{member}))"
-                    f"lupine_deep_cache_add((const void *){name}, {esz})"
-                )
+            storage = (
+                f"(decltype({name}->{member}))lupine_deep_node_cache_get("
+                f"{self.node_owner}, {index}, {esz})"
+            )
             f.write(
                 f"        (({name}->{member} = ({name}->{count} != 0 ? "
                 f"{storage} : nullptr)), false) ||\n"

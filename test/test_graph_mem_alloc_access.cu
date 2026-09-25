@@ -98,6 +98,48 @@ static int test_alloc(CUdevice device, bool explicit_access) {
   return 0;
 }
 
+static int test_batch_params(CUcontext context) {
+  CUdeviceptr value = 0;
+  CHECK(cuMemAlloc(&value, sizeof(unsigned int)));
+  CUgraph graph = nullptr;
+  CHECK(cuGraphCreate(&graph, 0));
+  CUstreamBatchMemOpParams ops[2] = {};
+  for (unsigned int i = 0; i < 2; ++i) {
+    ops[i].writeValue.operation = CU_STREAM_MEM_OP_WRITE_VALUE_32;
+    ops[i].writeValue.address = value;
+    ops[i].writeValue.value = i + 1;
+  }
+  CUDA_BATCH_MEM_OP_NODE_PARAMS params = {};
+  params.ctx = context;
+  params.count = 1;
+  params.paramArray = ops;
+  CUgraphNode first = nullptr, second = nullptr;
+  CHECK(cuGraphAddBatchMemOpNode(&first, graph, nullptr, 0, &params));
+  params.paramArray = ops + 1;
+  CHECK(cuGraphAddBatchMemOpNode(&second, graph, nullptr, 0, &params));
+
+  CUDA_BATCH_MEM_OP_NODE_PARAMS queried = {};
+  CHECK(cuGraphBatchMemOpNodeGetParams(first, &queried));
+  const auto *saved = queried.paramArray;
+  REQUIRE(saved != nullptr && saved[0].writeValue.value == 1);
+  CHECK(cuGraphBatchMemOpNodeGetParams(second, &queried));
+  REQUIRE(queried.paramArray != nullptr && queried.paramArray[0].writeValue.value == 2);
+  REQUIRE(saved[0].writeValue.value == 1);
+  CHECK(cuGraphDestroyNode(second));
+  CHECK(cuGraphBatchMemOpNodeGetParams(first, &queried));
+  REQUIRE(saved[0].writeValue.value == 1);
+
+  // Parameter changes may replace the array, including a change in its size.
+  params.count = 2;
+  params.paramArray = ops;
+  CHECK(cuGraphBatchMemOpNodeSetParams(first, &params));
+  CHECK(cuGraphBatchMemOpNodeGetParams(first, &queried));
+  REQUIRE(queried.count == 2 && queried.paramArray[1].writeValue.value == 2);
+  CHECK(cuGraphDestroy(graph));
+  CHECK(cuMemFree(value));
+  return 0;
+}
+
 int main() {
   CHECK(cuInit(0));
   CUdevice device = 0;
@@ -107,6 +149,7 @@ int main() {
   CHECK(cuCtxSetCurrent(context));
   REQUIRE(test_alloc(device, false) == 0);
   REQUIRE(test_alloc(device, true) == 0);
+  REQUIRE(test_batch_params(context) == 0);
   CHECK(cuDevicePrimaryCtxRelease(device));
-  std::puts("graph allocation descriptors: PASS");
+  std::puts("graph parameter arrays: PASS");
 }

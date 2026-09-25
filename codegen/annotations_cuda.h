@@ -2418,7 +2418,7 @@ CUresult cuGraphAddMemAllocNode(CUgraphNode *phGraphNode, CUgraph hGraph,
 /**
  * @param hNode SEND_ONLY
  * @param params_out RECV_ONLY
- * @deeparray params_out accessDescs accessDescCount NODE:hNode
+ * @deeparray params_out accessDescs accessDescCount
  */
 CUresult cuGraphMemAllocNodeGetParams(CUgraphNode hNode,
                                       CUDA_MEM_ALLOC_NODE_PARAMS *params_out);

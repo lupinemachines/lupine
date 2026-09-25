@@ -6752,13 +6752,12 @@ lupine_validate_graph_dependencies(const CUgraphNode *dependencies,
   return CUDA_SUCCESS;
 }
 
-// Backing store shared by deep-array queries. Output-keyed arrays last until
-// the next query into that struct; immutable node-keyed arrays last until
-// their node or graph is destroyed.
+// Returned graph parameter arrays belong to their node, independent of the
+// caller's output struct. Repeated queries reuse storage until parameters
+// change.
 static std::mutex g_deep_cache_mutex;
-// The bool separates node handles from caller output addresses.
-static std::map<std::pair<const void *, bool>,
-                std::vector<std::vector<unsigned char>>> g_deep_cache;
+static std::map<CUgraphNode, std::vector<std::vector<unsigned char>>>
+    g_deep_cache;
 // Release paths acquire the handle-association mutex and this mutex together;
 // no path acquires them separately in the opposite order.
 static std::mutex g_retained_string_mutex;
@@ -6866,41 +6865,28 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
   }
 }
 
-extern "C" void lupine_deep_cache_reset(const void *key) {
-  std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
-  g_deep_cache.erase({key, false});
-}
-
-extern "C" void *lupine_deep_cache_add(const void *key, size_t bytes) {
-  std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
-  auto &arrays = g_deep_cache[{key, false}];
-  arrays.emplace_back(bytes);
-  return arrays.back().data();
-}
-
 extern "C" void *lupine_deep_node_cache_get(CUgraphNode node, size_t slot,
                                            size_t bytes) {
   std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
-  auto &arrays = g_deep_cache[{node, true}];
+  auto &arrays = g_deep_cache[node];
   if (arrays.size() <= slot)
     arrays.resize(slot + 1);
-  // NODE annotations are for immutable arrays. Repeated queries must reuse
-  // the same storage, including queries into different caller output structs.
+  // Repeated queries must reuse storage, including queries into different
+  // output structs. Resizing is safe when a setter changed the parameters.
   arrays[slot].resize(bytes);
   return arrays[slot].data();
 }
 
 extern "C" void lupine_deep_node_cache_reset(CUgraphNode node) {
   std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
-  g_deep_cache.erase({node, true});
+  g_deep_cache.erase(node);
 }
 
 extern "C" std::vector<CUgraphNode>
 lupine_deep_cache_graph_nodes(CUgraph graph) {
   {
     std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
-    if (std::none_of(g_deep_cache.begin(), g_deep_cache.end(),
-                     [](const auto &entry) { return entry.first.second; }))
+    if (g_deep_cache.empty())
       return {};
   }
   // Enumerate before destruction: this also covers allocation nodes created
