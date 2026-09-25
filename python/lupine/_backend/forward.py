@@ -372,7 +372,7 @@ class Backend:
                 rets.append((_VALUE, v))
             else:
                 return value, None
-        return value, _Plan(rets, groups, st.mutates or bool(groups), number, body)
+        return value, _Plan(rets, groups, st.mutates or bool(groups) or st.returns == 0, number, body)
 
     # --- copies, scalars, control ---------------------------------------
 
