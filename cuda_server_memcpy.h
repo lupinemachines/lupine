@@ -21,6 +21,8 @@ struct lupine_host_callback_data {
   void *userData = nullptr;
   lupine_graph_resources *resources = nullptr;
   std::optional<CUstream> stream;
+  // Uncaptured launches run once; a captured one is replayed by its graph.
+  bool one_shot = false;
 };
 
 struct lupine_stream_callback_data {

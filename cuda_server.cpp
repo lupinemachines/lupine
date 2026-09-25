@@ -2499,6 +2499,9 @@ void CUDA_CB lupine_graph_host_callback(void *userData) {
     rpc_read_end(conn);
   }
   lupine_cleanup_pending_dtoh_copies(&pending);
+  if (callback->one_shot) {
+    delete callback;
+  }
 }
 
 void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
@@ -3147,10 +3150,18 @@ int handle_cuLaunchHostFunc(conn_t *conn) {
     return -1;
   }
 
+  CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
+  if (stream != nullptr) {
+    cuStreamIsCapturing(stream, &capture_status);
+  }
   auto *resources = lupine_get_stream_resources(stream);
-  auto *callback =
-      new lupine_host_callback_data{conn, fn, userData, resources, stream};
+  auto *callback = new lupine_host_callback_data{
+      conn,      fn,     userData,
+      resources, stream, capture_status == CU_STREAM_CAPTURE_STATUS_NONE};
   result = cuLaunchHostFunc(stream, lupine_graph_host_callback, callback);
+  if (result != CUDA_SUCCESS) {
+    delete callback;
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
