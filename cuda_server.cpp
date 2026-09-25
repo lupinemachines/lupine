@@ -3395,28 +3395,22 @@ int handle_cuEventQuery(conn_t *conn) {
 }
 
 int handle_cuStreamWaitEvent(conn_t *conn) {
+  uint64_t async_sequence = 0;
   CUstream stream = nullptr;
   CUevent event = nullptr;
   unsigned int flags = 0;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 ||
       rpc_read(conn, &event, sizeof(event)) < 0 ||
-      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+      rpc_read(conn, &flags, sizeof(flags)) < 0 || rpc_read_end(conn) < 0 ||
+      rpc_async_sequence_begin(conn, async_sequence) < 0) {
     return -1;
   }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
   lupine_wait_event_capture_resources(stream, event);
-
-  result = cuStreamWaitEvent(stream, event, flags);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  // Fire-and-forget like cuEventRecord: a failure surfaces at the next sync.
+  cuStreamWaitEvent(stream, event, flags);
+  rpc_async_sequence_end(conn);
   return 0;
 }
 
