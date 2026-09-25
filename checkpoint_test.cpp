@@ -161,12 +161,55 @@ bool test_drains_all_lanes_and_blocks_new_dispatches() {
   return passed;
 }
 
+bool test_drain_excludes_concurrent_dispatches() {
+  constexpr int lane_count = 4;
+  std::atomic<bool> stop{false};
+  std::atomic<bool> held{false};
+  std::atomic<int> inside{0};
+  std::atomic<bool> violated{false};
+  std::vector<std::unique_ptr<task_thread>> lanes;
+  for (int i = 0; i < lane_count; ++i) {
+    lanes.push_back(std::make_unique<task_thread>([&] {
+      while (!stop) {
+        lupine_checkpoint::cuda_call_guard dispatch_guard;
+        inside.fetch_add(1);
+        if (held) {
+          violated = true;
+        }
+        inside.fetch_sub(1);
+      }
+    }));
+  }
+  auto deadline = std::chrono::steady_clock::now() + 1s;
+  for (int i = 0; i < 50 || std::chrono::steady_clock::now() < deadline; ++i) {
+    lupine_checkpoint_drain_cuda_calls();
+    held = true;
+    for (int check = 0; check < 4; ++check) {
+      if (inside.load() != 0) {
+        violated = true;
+      }
+    }
+    std::this_thread::yield();
+    held = false;
+    lupine_checkpoint_resume_cuda_calls();
+  }
+  stop = true;
+  for (auto &lane : lanes) {
+    wait_done(*lane);
+  }
+  if (violated) {
+    std::cerr << "FAIL: a dispatch ran while the drain gate was held\n";
+  }
+  return !violated;
+}
+
 } // namespace
 
 int main() {
   if (!test_waits_for_active_capture_and_blocks_new_capture() ||
       !test_waits_for_in_flight_begin() ||
-      !test_drains_all_lanes_and_blocks_new_dispatches()) {
+      !test_drains_all_lanes_and_blocks_new_dispatches() ||
+      !test_drain_excludes_concurrent_dispatches()) {
     return 1;
   }
   std::cout << "checkpoint gate tests passed\n";
