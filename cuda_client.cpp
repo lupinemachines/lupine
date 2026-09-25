@@ -794,10 +794,6 @@ static void lupine_remember_loaded_module(CUmodule module) {
   }
 }
 
-extern "C" void lupine_remember_loaded_module_for_rpc(CUmodule module) {
-  lupine_remember_loaded_module(module);
-}
-
 static void *lupine_local_libcuda_handle() {
   static std::once_flag once;
   static void *handle = nullptr;
@@ -2804,21 +2800,6 @@ extern "C" CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
     *pi = value;
   }
   return return_value;
-}
-
-extern "C" void lupine_invalidate_kernel_attribute_cache() {
-  lupine_kernel_attribute_cache().clear();
-}
-
-extern "C" void lupine_kernel_attribute_cache_erase(int route_id,
-                                                    CUkernel kernel, int attrib,
-                                                    int dev) {
-  lupine_kernel_attribute_cache().erase(
-      lupine_kernel_attribute_key{route_id, kernel, attrib, dev});
-}
-
-extern "C" void lupine_invalidate_function_attribute_cache() {
-  lupine_function_attribute_cache().clear();
 }
 
 // A function is one kernel instantiated in one context, so a set on it moves

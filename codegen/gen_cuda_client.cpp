@@ -84,11 +84,6 @@ extern "C" void lupine_invalidate_current_context_cache();
 extern "C" void lupine_forget_destroyed_context(CUcontext ctx);
 extern "C" void lupine_mark_context_green(CUcontext ctx);
 extern "C" void lupine_invalidate_function_caches();
-extern "C" void lupine_invalidate_kernel_attribute_cache();
-extern "C" void lupine_kernel_attribute_cache_erase(int route_id,
-                                                    CUkernel kernel, int attrib,
-                                                    int dev);
-extern "C" void lupine_invalidate_function_attribute_cache();
 extern "C" void lupine_function_attribute_cache_erase(int route_id,
                                                       CUfunction function,
                                                       int attrib);

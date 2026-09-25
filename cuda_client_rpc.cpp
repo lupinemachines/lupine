@@ -1,18 +1,6 @@
 #include "cuda_client_rpc.h"
 #include "rpc.h"
 
-extern int rpc_open();
-extern int rpc_size();
-extern conn_t *rpc_client_get_connection(unsigned int index);
-
-extern "C" int lupine_rpc_open() { return rpc_open(); }
-
-extern "C" int lupine_rpc_size() { return rpc_size(); }
-
-extern "C" conn_t *lupine_rpc_client_get_connection(unsigned int index) {
-  return rpc_client_get_connection(index);
-}
-
 extern "C" int lupine_rpc_write_start_request(conn_t *conn, int op) {
   return rpc_write_start_request(conn, op);
 }
