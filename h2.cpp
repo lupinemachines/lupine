@@ -35,11 +35,11 @@ constexpr uint32_t kH2ServerWindow =
 constexpr uint64_t kH2MaxHeldBytes = LUPINE_FF_STAGING_WINDOW_BYTES / 2;
 constexpr uint32_t kH2MaxFrame = (16 * 1024 * 1024) - 1;
 constexpr size_t kH2FrameHeaderLen = 9;
-// LZ4F_max4MB, the encoder's block size. Input short of a block stays inside
+// LZ4F_max256KB, the encoder's block size. Input short of a block stays inside
 // LZ4F until a flush, and each compression step feeds exactly one block so a
 // very compressible body cannot delay its first byte until all of it has been
 // compressed.
-constexpr size_t kH2Lz4BlockBytes = 4 * 1024 * 1024;
+constexpr size_t kH2Lz4BlockBytes = 256 * 1024;
 constexpr size_t kH2MaxDataFrameBytes = 1024 * 1024;
 constexpr size_t kH2DecodeBufferBytes = 64 * 1024;
 // Retained capacity for drained staging buffers, a few frames' worth.
@@ -288,7 +288,7 @@ ssize_t h2_send_callback(nghttp2_session *, const uint8_t *data, size_t length,
 
 LZ4F_preferences_t h2_lz4_preferences() {
   LZ4F_preferences_t preferences = {};
-  preferences.frameInfo.blockSizeID = LZ4F_max4MB;
+  preferences.frameInfo.blockSizeID = LZ4F_max256KB;
   preferences.frameInfo.blockMode = LZ4F_blockLinked;
   // Linked blocks retain compression history across each RPC message flush.
   return preferences;
