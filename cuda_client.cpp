@@ -214,16 +214,12 @@ static const char *lupine_dlsym_glibc_version() {
 }
 
 static void *lupine_real_dlsym(void *handle, const char *name) {
-  static lupine_dlsym_fn real_dlsym = nullptr;
-  static bool initialized = false;
-  if (!initialized) {
-    initialized = true;
+  static const lupine_dlsym_fn real_dlsym = [] {
     const char *version = lupine_dlsym_glibc_version();
-    if (version != nullptr) {
-      real_dlsym = reinterpret_cast<lupine_dlsym_fn>(
-          dlvsym(RTLD_NEXT, "dlsym", version));
-    }
-  }
+    return version == nullptr ? nullptr
+                              : reinterpret_cast<lupine_dlsym_fn>(
+                                    dlvsym(RTLD_NEXT, "dlsym", version));
+  }();
   return real_dlsym != nullptr ? real_dlsym(handle, name) : nullptr;
 }
 #else
