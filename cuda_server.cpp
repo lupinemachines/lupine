@@ -4197,8 +4197,9 @@ CUresult lupine_server_managed_alloc(conn_t *conn, CUdeviceptr *pointer,
       [](CUdeviceptr ptr) { return cuMemFree_v2(ptr); });
 }
 
-CUresult lupine_free_server_allocation_locked(
-    uintptr_t address, const lupine_server_allocation &allocation) {
+CUresult
+lupine_free_server_allocation(uintptr_t address,
+                              const lupine_server_allocation &allocation) {
   CUresult result = CUDA_SUCCESS;
   if (allocation.kind == lupine_server_allocation_kind::host) {
     result = allocation.unregister_host(reinterpret_cast<void *>(address));
@@ -4214,39 +4215,54 @@ CUresult lupine_free_server_allocation_locked(
   return result;
 }
 
+// The native free runs unlocked: cuMemFree synchronizes the device, and other
+// lanes' allocations must not wait behind it.
+bool lupine_take_server_allocation(uintptr_t address,
+                                   lupine_server_allocation_kind kind,
+                                   lupine_server_allocation *allocation) {
+  std::lock_guard<std::mutex> lock(lupine_server_state.mutex);
+  auto &allocations = lupine_server_state.allocations;
+  auto it = allocations.find(address);
+  if (it == allocations.end() || it->second.kind != kind) {
+    return false;
+  }
+  *allocation = it->second;
+  allocations.erase(it);
+  return true;
+}
+
+CUresult
+lupine_release_server_allocation(uintptr_t address,
+                                 const lupine_server_allocation &allocation) {
+  CUresult result = lupine_free_server_allocation(address, allocation);
+  if (result != CUDA_SUCCESS) {
+    (void)lupine_record_server_allocation(address, allocation);
+  }
+  return result;
+}
+
 } // namespace
 
 CUresult lupine_server_free_host_allocation(void *pointer,
                                             CUresult (*native_free)(void *)) {
-  std::lock_guard<std::mutex> lock(lupine_server_state.mutex);
-  auto &allocations = lupine_server_state.allocations;
-  auto it = allocations.find(reinterpret_cast<uintptr_t>(pointer));
-  if (it == allocations.end() ||
-      it->second.kind != lupine_server_allocation_kind::host) {
+  uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
+  lupine_server_allocation allocation;
+  if (!lupine_take_server_allocation(
+          address, lupine_server_allocation_kind::host, &allocation)) {
     return native_free(pointer);
   }
-  CUresult result = lupine_free_server_allocation_locked(it->first, it->second);
-  if (result == CUDA_SUCCESS) {
-    allocations.erase(it);
-  }
-  return result;
+  return lupine_release_server_allocation(address, allocation);
 }
 
 CUresult
 lupine_server_free_device_allocation(CUdeviceptr pointer,
                                      CUresult (*native_free)(CUdeviceptr)) {
-  std::lock_guard<std::mutex> lock(lupine_server_state.mutex);
-  auto &allocations = lupine_server_state.allocations;
-  auto it = allocations.find(pointer);
-  if (it == allocations.end() ||
-      it->second.kind != lupine_server_allocation_kind::managed) {
+  lupine_server_allocation allocation;
+  if (!lupine_take_server_allocation(
+          pointer, lupine_server_allocation_kind::managed, &allocation)) {
     return native_free(pointer);
   }
-  CUresult result = lupine_free_server_allocation_locked(it->first, it->second);
-  if (result == CUDA_SUCCESS) {
-    allocations.erase(it);
-  }
-  return result;
+  return lupine_release_server_allocation(pointer, allocation);
 }
 
 bool lupine_server_host_allocation_flags(void *pointer, unsigned int *flags) {
@@ -4399,7 +4415,7 @@ void lupine_server_cleanup_identity_allocations(conn_t *conn) {
       ++it;
       continue;
     }
-    (void)lupine_free_server_allocation_locked(it->first, it->second);
+    (void)lupine_free_server_allocation(it->first, it->second);
     it = allocations.erase(it);
   }
 }
