@@ -1,35 +1,52 @@
 #include "checkpoint.h"
 
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <mutex>
 
 namespace {
 
+// Dispatches admit and release with atomics alone while no drain is pending.
+// begin() publishes its count before re-reading pending_, and drain() publishes
+// pending_ before reading the count (all seq_cst), so either begin() backs off
+// or drain() waits for it.
 class cuda_call_gate {
 public:
   void begin() {
+    if (!pending_.load()) {
+      active_calls_.fetch_add(1);
+      if (!pending_.load()) {
+        return;
+      }
+      end();
+    }
     std::unique_lock<std::mutex> lock(mutex_);
     condition_.wait(lock, [this] { return !draining_ && drain_waiters_ == 0; });
-    ++active_calls_;
+    active_calls_.fetch_add(1);
   }
 
   void end() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (active_calls_ == 0) {
-      return;
+    std::size_t active = active_calls_.load();
+    do {
+      if (active == 0) {
+        return;
+      }
+    } while (!active_calls_.compare_exchange_weak(active, active - 1));
+    if (active == 1 && pending_.load()) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      condition_.notify_all();
     }
-    --active_calls_;
-    condition_.notify_all();
   }
 
   void drain() {
     std::unique_lock<std::mutex> lock(mutex_);
     ++drain_waiters_;
+    pending_.store(true);
     condition_.wait(lock, [this] { return !draining_; });
     --drain_waiters_;
     draining_ = true;
-    condition_.wait(lock, [this] { return active_calls_ == 0; });
+    condition_.wait(lock, [this] { return active_calls_.load() == 0; });
   }
 
   void resume() {
@@ -38,13 +55,15 @@ public:
       return;
     }
     draining_ = false;
+    pending_.store(drain_waiters_ != 0);
     condition_.notify_all();
   }
 
 private:
   std::mutex mutex_;
   std::condition_variable condition_;
-  std::size_t active_calls_ = 0;
+  std::atomic<std::size_t> active_calls_{0};
+  std::atomic<bool> pending_{false};
   std::size_t drain_waiters_ = 0;
   bool draining_ = false;
 };
