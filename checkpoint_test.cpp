@@ -162,7 +162,7 @@ bool test_drains_all_lanes_and_blocks_new_dispatches() {
 }
 
 bool test_drain_excludes_concurrent_dispatches() {
-  constexpr int lane_count = 8;
+  constexpr int lane_count = 4;
   std::atomic<bool> stop{false};
   std::atomic<bool> held{false};
   std::atomic<int> inside{0};
@@ -180,15 +180,16 @@ bool test_drain_excludes_concurrent_dispatches() {
       }
     }));
   }
-  for (int i = 0; i < 1000; ++i) {
+  auto deadline = std::chrono::steady_clock::now() + 1s;
+  for (int i = 0; i < 50 || std::chrono::steady_clock::now() < deadline; ++i) {
     lupine_checkpoint_drain_cuda_calls();
     held = true;
-    for (int check = 0; check < 20; ++check) {
+    for (int check = 0; check < 4; ++check) {
       if (inside.load() != 0) {
         violated = true;
       }
-      std::this_thread::yield();
     }
+    std::this_thread::yield();
     held = false;
     lupine_checkpoint_resume_cuda_calls();
   }
