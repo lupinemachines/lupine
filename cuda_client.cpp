@@ -23,6 +23,7 @@
 #include <thread>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -682,11 +683,12 @@ lupine_library_kernel_names() {
 }
 
 // Filled from module-load responses; serves cuModuleGetFunction without a
-// round trip. A loaded module's function set is fixed until it unloads, and
-// unloading a module or destroying the context that holds it drops the whole
-// cache through lupine_invalidate_function_caches; those are the only ways the
-// server frees a module handle, so a recycled one never resolves against the
-// functions of the module that held it before.
+// round trip. A loaded module's function set is fixed until it unloads.
+// Unloading a module erases its entries and its functions' cached layouts and
+// attributes (lupine_release_module_retained_strings); destroying the context
+// that holds it drops the whole cache. Those are the only ways the server frees
+// a module handle, so a recycled one never resolves against the functions of
+// the module that held it before.
 struct lupine_module_function_name_key {
   CUmodule module = nullptr;
   std::string name;
@@ -2822,8 +2824,8 @@ extern "C" void lupine_invalidate_function_attribute_cache() {
 }
 
 // A function is one kernel instantiated in one context, so a set on it moves
-// exactly one kernel-attribute entry; without that pairing the whole cache is
-// the only safe target.
+// exactly one kernel-attribute entry, and a function of a plain module moves
+// none; without either pairing the whole cache is the only safe target.
 extern "C" void lupine_kernel_attribute_cache_erase_for_function(
     int route_id, CUfunction function, int attrib) {
   CUkernel kernel = nullptr;
@@ -2833,6 +2835,12 @@ extern "C" void lupine_kernel_attribute_cache_erase_for_function(
     auto it = lupine_function_kernels().find(function);
     if (it != lupine_function_kernels().end()) {
       kernel = it->second;
+    } else {
+      auto record = lupine_module_functions().find(function);
+      if (record != lupine_module_functions().end() &&
+          lupine_library_modules().count(record->second.module) == 0) {
+        return;
+      }
     }
   }
   if (kernel == nullptr ||
@@ -2854,6 +2862,14 @@ extern "C" void lupine_function_attribute_cache_erase(int route_id,
       lupine_function_attribute_key{route_id, function, attrib});
 }
 
+template <typename Cache, typename Match>
+static void lupine_cache_erase_if(Cache &cache, Match match) {
+  auto table = cache.lock_table();
+  for (auto it = table.begin(); it != table.end();) {
+    it = match(it->first, it->second) ? table.erase(it) : std::next(it);
+  }
+}
+
 // Drops the occupancy answers that depend on one kernel, whichever handle the
 // caller queried it through. Occupancy of every other kernel stays valid.
 extern "C" void lupine_occupancy_cache_erase_function(int route_id,
@@ -2872,13 +2888,11 @@ extern "C" void lupine_occupancy_cache_erase_function(int route_id,
       }
     }
   }
-  auto table = lupine_occupancy_cache().lock_table();
-  for (auto it = table.begin(); it != table.end();) {
-    bool match = it->first.route_id == route_id &&
-                 std::find(handles.begin(), handles.end(),
-                           it->first.function) != handles.end();
-    it = match ? table.erase(it) : std::next(it);
-  }
+  lupine_cache_erase_if(lupine_occupancy_cache(), [&](const auto &key,
+                                                      const auto &) {
+    return key.route_id == route_id && std::find(handles.begin(), handles.end(),
+                                                 key.function) != handles.end();
+  });
 }
 
 // The set is fire-and-forget, so the caller was already told it succeeded;
@@ -6801,6 +6815,14 @@ extern "C" const char *lupine_retain_returned_string(const void *handle,
 }
 
 extern "C" void lupine_release_module_retained_strings(CUmodule module) {
+  std::unordered_set<CUfunction> unloaded;
+  lupine_cache_erase_if(lupine_module_function_names(),
+                        [&](const auto &key, CUfunction function) {
+                          if (key.module == module) {
+                            unloaded.insert(function);
+                          }
+                          return key.module == module;
+                        });
   std::scoped_lock lock(lupine_library_kernel_mutex(), g_retained_string_mutex);
   lupine_release_retained_strings_locked(
       reinterpret_cast<const void *>(module));
@@ -6810,11 +6832,29 @@ extern "C" void lupine_release_module_retained_strings(CUmodule module) {
       ++function;
       continue;
     }
+    unloaded.insert(function->first);
     lupine_release_retained_strings_locked(
         reinterpret_cast<const void *>(function->first));
     function = functions.erase(function);
   }
   lupine_library_modules().erase(module);
+  auto is_unloaded = [&](CUfunction function) {
+    return unloaded.count(function) != 0;
+  };
+  lupine_cache_erase_if(lupine_param_info_cache(), [&](const auto &key,
+                                                       const auto &) {
+    return !key.kernel && is_unloaded(reinterpret_cast<CUfunction>(key.handle));
+  });
+  lupine_cache_erase_if(lupine_param_layout_count_cache(), [&](const auto &key,
+                                                               const auto &) {
+    return !key.kernel && is_unloaded(reinterpret_cast<CUfunction>(key.handle));
+  });
+  lupine_cache_erase_if(
+      lupine_function_attribute_cache(),
+      [&](const auto &key, const auto &) { return is_unloaded(key.function); });
+  lupine_cache_erase_if(
+      lupine_occupancy_cache(),
+      [&](const auto &key, const auto &) { return is_unloaded(key.function); });
 }
 
 extern "C" void lupine_release_library_retained_strings(CUlibrary library) {

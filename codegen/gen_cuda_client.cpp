@@ -677,8 +677,6 @@ CUresult cuModuleUnload(CUmodule hmod) {
     return_value = lupine_call_real_cuda_fn("cuModuleUnload", hmod);
     if (return_value == CUDA_SUCCESS)
       lupine_release_module_retained_strings(hmod);
-    if (return_value == CUDA_SUCCESS)
-      lupine_invalidate_function_caches();
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -691,8 +689,6 @@ CUresult cuModuleUnload(CUmodule hmod) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS)
     lupine_release_module_retained_strings(hmod);
-  if (return_value == CUDA_SUCCESS)
-    lupine_invalidate_function_caches();
   return return_value;
 }
 
@@ -835,8 +831,6 @@ CUresult cuLibraryUnload(CUlibrary library) {
     return_value = lupine_call_real_cuda_fn("cuLibraryUnload", library);
     if (return_value == CUDA_SUCCESS)
       lupine_release_library_retained_strings(library);
-    if (return_value == CUDA_SUCCESS)
-      lupine_invalidate_function_caches();
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -852,8 +846,6 @@ CUresult cuLibraryUnload(CUlibrary library) {
   return_value = CUDA_SUCCESS;
   if (return_value == CUDA_SUCCESS)
     lupine_release_library_retained_strings(library);
-  if (return_value == CUDA_SUCCESS)
-    lupine_invalidate_function_caches();
   return return_value;
 }
 

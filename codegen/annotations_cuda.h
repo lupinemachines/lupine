@@ -355,12 +355,7 @@ CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
  * @release MODULE hmod
  * @param hmod SEND_ONLY
  */
-CUresult cuModuleUnload(CUmodule hmod) {
-  CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS)
-    lupine_invalidate_function_caches();
-  return return_value;
-}
+CUresult cuModuleUnload(CUmodule hmod);
 /**
  * @disabled client - manual client caches the mode per route
  * @param mode RECV_ONLY
@@ -495,12 +490,7 @@ CUresult cuLibraryLoadFromFile(CUlibrary *library, const char *fileName,
  * @release LIBRARY library
  * @param library SEND_ONLY
  */
-CUresult cuLibraryUnload(CUlibrary library) {
-  CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS)
-    lupine_invalidate_function_caches();
-  return return_value;
-}
+CUresult cuLibraryUnload(CUlibrary library);
 /**
  * @disabled client - manual client serves the library kernel table
  * @routingkey LIBRARY library
