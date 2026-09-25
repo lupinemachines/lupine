@@ -777,29 +777,6 @@ nvmlReturn_t
 nvmlDeviceGetBridgeChipInfo(nvmlDevice_t device,
                             nvmlBridgeChipHierarchy_t *bridgeHierarchy);
 /**
- * @param device SEND_ONLY
- * @param infoCount SEND_RECV
- * @param infos RECV_ONLY LENGTH:infoCount
- */
-nvmlReturn_t nvmlDeviceGetComputeRunningProcesses_v3(nvmlDevice_t device,
-                                                     unsigned int *infoCount,
-                                                     nvmlProcessInfo_t *infos);
-/**
- * @param device SEND_ONLY
- * @param infoCount SEND_RECV
- * @param infos RECV_ONLY LENGTH:infoCount
- */
-nvmlReturn_t nvmlDeviceGetGraphicsRunningProcesses_v3(nvmlDevice_t device,
-                                                      unsigned int *infoCount,
-                                                      nvmlProcessInfo_t *infos);
-/**
- * @param device SEND_ONLY
- * @param infoCount SEND_RECV
- * @param infos RECV_ONLY LENGTH:infoCount
- */
-nvmlReturn_t nvmlDeviceGetMPSComputeRunningProcesses_v3(
-    nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_t *infos);
-/**
  * @param device1 SEND_ONLY
  * @param device2 SEND_ONLY
  * @param onSameBoard RECV_ONLY
@@ -1977,11 +1954,17 @@ void nvmlDeviceGetComputeRunningProcesses();
 /** @disabled */
 void nvmlDeviceGetComputeRunningProcesses_v2();
 /** @disabled */
+void nvmlDeviceGetComputeRunningProcesses_v3();
+/** @disabled */
 void nvmlDeviceGetGraphicsRunningProcesses();
 /** @disabled */
 void nvmlDeviceGetGraphicsRunningProcesses_v2();
 /** @disabled */
+void nvmlDeviceGetGraphicsRunningProcesses_v3();
+/** @disabled */
 void nvmlDeviceGetMPSComputeRunningProcesses();
 /** @disabled */
 void nvmlDeviceGetMPSComputeRunningProcesses_v2();
+/** @disabled */
+void nvmlDeviceGetMPSComputeRunningProcesses_v3();
 #endif
