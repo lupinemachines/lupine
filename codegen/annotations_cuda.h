@@ -3437,8 +3437,6 @@ void cuGraphConditionalHandleCreate();
 /** @disabled handle_cuGraphAddNode */
 void cuGraphAddNode_v2();
 /** @disabled */
-void lupineEventQueryBatch();
-/** @disabled */
 void lupineStreamPoolInit();
 /** @disabled */
 void lupineLibraryLoadBatch();
