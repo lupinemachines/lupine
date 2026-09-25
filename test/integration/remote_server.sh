@@ -70,7 +70,6 @@ start_remote_server() {
     printf -v server_environment 'LD_LIBRARY_PATH=%q %s' \
       "$SERVER_LD_LIBRARY_PATH" "$server_environment"
   fi
-  lupine_configure_sample_diagnostics
 
   for attempt in 1 2 3; do
     stop_remote_server "$pidfile" "$server_log"

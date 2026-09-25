@@ -1,16 +1,7 @@
 #!/usr/bin/env bash
 # Temporary diagnostics for the intermittent nvCOMP quickstart CI timeout.
 # Remove this file and its remote_server.sh hooks after the cause is identified.
-lupine_original_sample_trace="${LUPINE_TRACE:-}"
 lupine_sample_watchdog=""
-
-lupine_configure_sample_diagnostics() {
-  export LUPINE_TRACE="$lupine_original_sample_trace"
-  if [[ "${unit:-}" == nvCOMP/examples/dynamic_bin/high_level_quickstart_example ]]; then
-    export LUPINE_TRACE=1
-    server_environment="LUPINE_TRACE=1 $server_environment"
-  fi
-}
 
 lupine_stop_sample_diagnostics() {
   if [[ -n "$lupine_sample_watchdog" ]]; then
