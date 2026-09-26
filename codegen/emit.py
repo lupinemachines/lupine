@@ -8,7 +8,7 @@ nothing here asks which one it is writing.
 from dataclasses import dataclass
 import textwrap
 
-from cxxheaderparser.types import Array, Function, FunctionType, Parameter, Pointer
+from cxxheaderparser.types import Function, FunctionType, Parameter, Pointer
 
 from ops import (
     ArrayOperation,
@@ -19,7 +19,6 @@ from ops import (
     NullTerminatedOperation,
     ScalarOperation,
     VersionedStructOperation,
-    format_array,
 )
 
 
@@ -69,16 +68,7 @@ def write_stub(f, backend: Backend, function):
 def format_function_params(function: Function) -> list[str]:
     params = []
     for param in function.parameters:
-        if param.name and "[]" in param.type.format():
-            params.append(
-                "{type} {name}".format(
-                    type=param.type.format().replace("[]", ""),
-                    name=param.name + "[]",
-                )
-            )
-        elif param.name and isinstance(param.type, Array):
-            params.append(format_array(param.type, param.name))
-        elif param.name and isinstance(param.type, Pointer) and isinstance(
+        if param.name and isinstance(param.type, Pointer) and isinstance(
             param.type.ptr_to, FunctionType
         ):
             params.append(param.type.format_decl(param.name))
@@ -178,31 +168,27 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
             )
 
     opening = "  if (conn == nullptr ||\n      " if backend.guard_null_conn else "  if ("
+    start = f"rpc_write_start_request(conn, RPC_{name})"
+    wait, returned = "rpc_wait_for_response(conn) < 0 ||", "return_value"
     if submit:
         # The ticket leads the request; a request that expects its answer
         # carries the all-ones ticket instead of one.
         f.write("  uint64_t async_sequence = ~uint64_t{0};\n")
-        f.write("  if (submit_async) {\n")
-        f.write(
-            f"  {opening}rpc_write_start_async_request(conn, RPC_{name}, &async_sequence) < 0 ||\n"
-            "      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||\n"
+        start = (
+            f"(submit_async ? rpc_write_start_async_request(conn, RPC_{name}, &async_sequence) : {start}) < 0 ||\n"
+            "      rpc_write(conn, &async_sequence, sizeof(async_sequence))"
         )
-        for operation in operations:
-            operation.client_rpc_write(f)
-        f.write("      rpc_write_end(conn) < 0) {\n")
-        f.write("    return rpc_error();\n  }\n")
-        f.write(f"  return {backend.async_success};\n  }}\n")
-    f.write(f"{opening}rpc_write_start_request(conn, RPC_{name}) < 0 ||\n")
-    if submit:
-        f.write("      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||\n")
+        wait = "(submit_async ? rpc_write_end(conn) : rpc_wait_for_response(conn)) < 0 ||\n      (!submit_async && ("
+        returned = f"submit_async ? {backend.async_success} : return_value"
+    f.write(f"{opening}{start} < 0 ||\n")
     for operation in operations:
         operation.client_rpc_write(f)
-    f.write("      rpc_wait_for_response(conn) < 0 ||\n")
+    f.write(f"      {wait}\n")
     for operation in operations:
         operation.client_rpc_read(f)
     if result != "void":
         f.write("      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||\n")
-    f.write("      rpc_read_end(conn) < 0) {\n")
+    f.write(f"      rpc_read_end(conn) < 0{')))' if submit else ')'} {{\n")
     write_cleared_fields(f, metadata, "    ", "->")
     if result == backend.result:
         f.write("    return rpc_error();\n")
@@ -213,7 +199,7 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
     f.write("  }\n")
     write_cleared_fields(f, metadata, "  ", "->")
     if result != "void":
-        f.write("  return return_value;\n")
+        f.write(f"  return {returned};\n")
     f.write("}\n\n")
 
 
@@ -339,10 +325,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write(f"  {result} return_value;\n")
     if backend.symbol_lookup:
         fn_params = ", ".join(
-            format_array(parameter.type)
-            if isinstance(parameter.type, Array)
-            else parameter.type.format()
-            for parameter in function.parameters
+            parameter.type.format() for parameter in function.parameters
         )
         f.write(f"  using fn_t = {result} (*)({fn_params});\n")
         f.write("  fn_t fn = nullptr;\n")

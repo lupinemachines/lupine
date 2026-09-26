@@ -4,7 +4,7 @@
 # ///
 from cxxheaderparser.simple import parse_file, ParsedData, ParserOptions
 from cxxheaderparser.preprocessor import make_gcc_preprocessor
-from cxxheaderparser.types import Type, Pointer, Parameter, Function, Array
+from cxxheaderparser.types import Type, Pointer, Parameter, Function
 from typing import Optional, Union
 from dataclasses import dataclass
 from string import Template
@@ -470,7 +470,7 @@ def infer_routing_key(
     params: list[Parameter],
 ) -> tuple[Optional[str], Optional[Parameter]]:
     for param in params:
-        if isinstance(param.type, (Pointer, Array)):
+        if isinstance(param.type, Pointer):
             continue
         type_name = param.type.format().replace("const ", "").strip()
         if type_name == "nvmlDevice_t":
@@ -888,21 +888,6 @@ def parse_annotation(
                         recv=recv,
                         parameter=param,
                         type_=param.type,
-                    )
-                )
-            elif isinstance(param.type, Array):
-                length_param = next(
-                    p for p in params if p.name == length_arg.split(":")[1]
-                )
-                if param.type.const:
-                    recv = False
-                operations.append(
-                    ArrayOperation(
-                        send=send,
-                        recv=recv,
-                        parameter=param,
-                        ptr=param.type,
-                        length=length_param,
                     )
                 )
             else:
