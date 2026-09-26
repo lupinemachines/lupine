@@ -28,6 +28,9 @@ lupine_route lupine_route_from_identity(int route_id);
 conn_t *lupine_thread_conn_by_index(unsigned int index);
 CUresult lupine_virtual_device_count(int *count);
 CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal);
+// Only then can a module or library handle be used on a route other than the
+// one that loaded it.
+bool lupine_devices_span_routes();
 CUresult lupine_set_current_context_on_route(lupine_route route, CUcontext ctx);
 bool lupine_local_cuda_available();
 extern "C" CUcontext lupine_current_context_hint();
