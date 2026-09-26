@@ -3516,13 +3516,11 @@ static CUresult lupine_bulk_pull(conn_t *conn, lupine_bulk_lanes *lanes,
         uint64_t offset;
         uint64_t bytes;
       } frame;
-      if (rpc_http2_read_stream(bulk, stream_id, &frame, sizeof(frame)) !=
-              sizeof(frame) ||
+      if (rpc_http2_read_stream(bulk, stream_id, &frame, sizeof(frame)) != 0 ||
           frame.op != -1 ||
           (frame.bytes != 0 &&
            rpc_http2_read_stream(bulk, stream_id, data + frame.offset,
-                                 frame.bytes) !=
-               static_cast<int>(frame.bytes))) {
+                                 frame.bytes) != 0)) {
         received = false;
         return;
       }

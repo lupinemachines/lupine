@@ -150,8 +150,7 @@ int write_stream_bytes(conn_t *conn, int32_t stream_id, const void *data,
 
 std::string read_string(conn_t *conn, size_t size) {
   std::string output(size, '\0');
-  require(read_dispatch(conn, output.data(), output.size()) ==
-              static_cast<int>(output.size()),
+  require(read_dispatch(conn, output.data(), output.size()) == 0,
           "h2 read failed");
   return output;
 }
@@ -605,7 +604,7 @@ void test_client_metadata_report() {
     require(rpc_wait_for_response(&pair.client) == 0,
             "follow-up response wait failed");
     require(rpc_read(&pair.client, &followup_result, sizeof(followup_result)) ==
-                sizeof(followup_result),
+                0,
             "follow-up response read failed");
     require(rpc_read_end(&pair.client) > 0, "follow-up response end failed");
   });
@@ -620,13 +619,12 @@ void test_client_metadata_report() {
   require(op == LUPINE_RPC_CLIENT_METADATA, "metadata RPC was not sent");
   lupine_client_metadata_header header = {};
   lupine_client_metadata received = {};
-  require(rpc_read(&pair.server, &header, sizeof(header)) == sizeof(header),
+  require(rpc_read(&pair.server, &header, sizeof(header)) == 0,
           "metadata header read failed");
   require(header.version == LUPINE_CLIENT_METADATA_VERSION &&
               header.payload_size == sizeof(received),
           "metadata header was invalid");
-  require(rpc_read(&pair.server, &received, sizeof(received)) ==
-              sizeof(received),
+  require(rpc_read(&pair.server, &received, sizeof(received)) == 0,
           "metadata payload read failed");
   require(received.client_pid != 0 &&
               std::string(received.connection_kind) == "test",
@@ -637,8 +635,7 @@ void test_client_metadata_report() {
 
   require(op == kFollowupOp, "metadata blocked the next RPC");
   int followup_value = 0;
-  require(rpc_read(&pair.server, &followup_value, sizeof(followup_value)) ==
-              sizeof(followup_value),
+  require(rpc_read(&pair.server, &followup_value, sizeof(followup_value)) == 0,
           "follow-up request read failed");
   request_id = rpc_read_end(&pair.server);
   require(request_id > 0 && followup_value == kFollowupValue,
@@ -834,12 +831,11 @@ void test_partial_read_stages_only_overflow() {
   }
   std::string received(payload.size(), '\0');
   std::thread reader([&] {
-    require(read_dispatch(&pair.server, received.data(), 7) == 7,
+    require(read_dispatch(&pair.server, received.data(), 7) == 0,
             "partial prefix read failed");
-    require(
-        read_dispatch(&pair.server, received.data() + 7, received.size() - 7) ==
-            static_cast<int>(received.size() - 7),
-        "partial suffix read failed");
+    require(read_dispatch(&pair.server, received.data() + 7,
+                          received.size() - 7) == 0,
+            "partial suffix read failed");
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   write_all(&pair.client, {payload});
@@ -1053,8 +1049,7 @@ void test_independent_stream_lanes() {
   std::string received_request(independent_request.size(), '\0');
   require(rpc_http2_read_stream(&pair.server, server_second,
                                 received_request.data(),
-                                received_request.size()) ==
-              static_cast<int>(received_request.size()),
+                                received_request.size()) == 0,
           "second lane request was blocked by the first lane");
   require(received_request == independent_request,
           "second lane request payload mismatch");
@@ -1072,8 +1067,7 @@ void test_independent_stream_lanes() {
   std::string received_response(independent_response.size(), '\0');
   require(rpc_http2_read_stream(&pair.client, client_second,
                                 received_response.data(),
-                                received_response.size()) ==
-              static_cast<int>(received_response.size()),
+                                received_response.size()) == 0,
           "second lane response was blocked by the first lane");
   require(received_response == independent_response,
           "second lane response payload mismatch");
@@ -1146,13 +1140,13 @@ void test_socket_reader_hands_off_between_streams() {
   char lane_value = '\0';
   std::atomic<bool> lane_done{false};
   std::thread dispatch_reader([&] {
-    require(read_dispatch(&pair.client, &dispatch_value, 1) == 1,
+    require(read_dispatch(&pair.client, &dispatch_value, 1) == 0,
             "dispatch stream handoff read failed");
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
   std::thread lane_reader([&] {
     require(rpc_http2_read_stream(&pair.client, client_lane, &lane_value, 1) ==
-                1,
+                0,
             "lane handoff read failed");
     lane_done.store(true, std::memory_order_release);
   });
@@ -1237,8 +1231,7 @@ void test_payload_larger_than_flow_control_window() {
     std::array<unsigned char, 64 * 1024> buffer = {};
     while (received < payload_size) {
       size_t chunk = std::min(buffer.size(), payload_size - received);
-      if (read_dispatch(&pair.server, buffer.data(), chunk) !=
-          static_cast<int>(chunk)) {
+      if (read_dispatch(&pair.server, buffer.data(), chunk) != 0) {
         read_failed = true;
         break;
       }
@@ -1369,12 +1362,10 @@ void test_lz4_content_encoding_round_trip() {
   std::thread reader([&] {
     received_prefix = read_string(&pair.server, prefix.size());
     size_t first = LUPINE_RPC_TRANSFER_CHUNK_BYTES;
-    require(read_dispatch(&pair.server, received.data(), first) ==
-                static_cast<int>(first),
+    require(read_dispatch(&pair.server, received.data(), first) == 0,
             "LZ4 read part 1 failed");
     require(read_dispatch(&pair.server, received.data() + first,
-                          received.size() - first) ==
-                static_cast<int>(received.size() - first),
+                          received.size() - first) == 0,
             "LZ4 read part 2 failed");
     received_suffix = read_string(&pair.server, suffix.size());
   });
@@ -1475,6 +1466,60 @@ void test_refillable_cursor_across_flow_control_window() {
           "flow-controlled refillable cursor did not reach EOF exactly once");
 }
 
+#ifndef __SANITIZE_THREAD__
+struct repeated_chunk {
+  std::vector<unsigned char> chunk;
+  size_t remaining = 0;
+};
+
+int refill_repeated_chunk(void *opaque, rpc_write_cursor *cursor) {
+  auto *source = static_cast<repeated_chunk *>(opaque);
+  if (source->remaining == 0) {
+    return 0;
+  }
+  --source->remaining;
+  cursor->data = source->chunk.data();
+  cursor->size = source->chunk.size();
+  return 1;
+}
+
+// One span of 2 GiB or more is how a deferred pinned DtoH reaches the client.
+void test_read_larger_than_int_max() {
+  h2_pair pair;
+  init_pair(&pair);
+  exchange_settings(&pair);
+
+  repeated_chunk source;
+  source.chunk.resize(1024 * 1024);
+  for (size_t i = 0; i < source.chunk.size(); ++i) {
+    source.chunk[i] = static_cast<unsigned char>(i % 251);
+  }
+  source.remaining = 2112;
+  const size_t total = source.chunk.size() * source.remaining;
+  std::vector<unsigned char> received(total);
+
+  int read_result = 0;
+  std::thread reader([&] {
+    read_result = rpc_http2_read_stream(&pair.server,
+                                        rpc_http2_dispatch_stream(&pair.server),
+                                        received.data(), received.size());
+  });
+  std::vector<rpc_write_cursor> cursors = {
+      rpc_write_cursor(refill_repeated_chunk, &source)};
+  require(rpc_http2_write_stream(&pair.client,
+                                 rpc_http2_dispatch_stream(&pair.client),
+                                 cursors) == 0,
+          ">INT_MAX write failed");
+  reader.join();
+  require(read_result == 0, ">INT_MAX read reported failure");
+  for (size_t offset = 0; offset < total; offset += source.chunk.size()) {
+    require(memcmp(received.data() + offset, source.chunk.data(),
+                   source.chunk.size()) == 0,
+            ">INT_MAX payload mismatch");
+  }
+}
+#endif
+
 void test_rpc_write_queue_grows() {
   conn_t zero_length = {};
   require(rpc_write(&zero_length, nullptr, 0) == 0,
@@ -1500,8 +1545,7 @@ void test_rpc_write_queue_grows() {
     require(rpc_dispatch(&pair.server, 0) == kOp,
             "large queue dispatch failed");
     for (int i = 0; i < kCount; ++i) {
-      require(rpc_read(&pair.server, &received[i], sizeof(received[i])) ==
-                  static_cast<int>(sizeof(received[i])),
+      require(rpc_read(&pair.server, &received[i], sizeof(received[i])) == 0,
               "large queue payload read failed");
     }
     require(rpc_read_end(&pair.server) > 0, "large queue read_end failed");
@@ -1631,15 +1675,12 @@ void test_rpc_small_payload_round_trip() {
             "payload stream bind failed");
     require(rpc_dispatch(&pair.server, 0) == kOp, "payload dispatch failed");
     require(rpc_read(&pair.server, received_prefix.data(),
-                     received_prefix.size()) ==
-                static_cast<int>(received_prefix.size()),
+                     received_prefix.size()) == 0,
             "payload prefix read failed");
-    require(rpc_read(&pair.server, received.data(), received.size()) ==
-                static_cast<int>(received.size()),
+    require(rpc_read(&pair.server, received.data(), received.size()) == 0,
             "payload read failed");
     require(rpc_read(&pair.server, received_suffix.data(),
-                     received_suffix.size()) ==
-                static_cast<int>(received_suffix.size()),
+                     received_suffix.size()) == 0,
             "payload suffix read failed");
     require(rpc_read_end(&pair.server) > 0, "payload read_end failed");
     rpc_unbind_http2_stream(&pair.server);
@@ -1708,10 +1749,9 @@ void test_rpc_repeated_responses_on_lane() {
             "repeated response read start failed");
     int chunk = -1;
     std::vector<char> received(payload.size());
-    require(rpc_read(&pair.client, &chunk, sizeof(chunk)) == sizeof(chunk),
+    require(rpc_read(&pair.client, &chunk, sizeof(chunk)) == 0,
             "repeated response index read failed");
-    require(rpc_read(&pair.client, received.data(), received.size()) ==
-                static_cast<int>(received.size()),
+    require(rpc_read(&pair.client, received.data(), received.size()) == 0,
             "repeated response payload read failed");
     require(rpc_read_end(&pair.client) == request_id,
             "repeated response read end failed");
@@ -1736,8 +1776,7 @@ void test_rpc_request_nested_in_response_builder() {
     require(rpc_dispatch(&pair.client, 1) == kNestedOp,
             "nested request dispatch failed");
     int nested_value = 0;
-    require(rpc_read(&pair.client, &nested_value, sizeof(nested_value)) ==
-                sizeof(nested_value),
+    require(rpc_read(&pair.client, &nested_value, sizeof(nested_value)) == 0,
             "nested request payload read failed");
     require(nested_value == kNestedValue, "nested request payload mismatch");
     int nested_id = rpc_read_end(&pair.client);
@@ -1781,7 +1820,7 @@ void test_rpc_request_nested_in_response_builder() {
             "nested request response wait failed");
     int nested_response = 0;
     require(rpc_read(&pair.server, &nested_response, sizeof(nested_response)) ==
-                sizeof(nested_response),
+                0,
             "nested response payload read failed");
     require(nested_response == kNestedResponse,
             "nested response payload mismatch");
@@ -1804,9 +1843,9 @@ void test_rpc_request_nested_in_response_builder() {
           "outer response read start failed");
   int before = 0;
   int after = 0;
-  require(rpc_read(&pair.client, &before, sizeof(before)) == sizeof(before),
+  require(rpc_read(&pair.client, &before, sizeof(before)) == 0,
           "outer response first payload read failed");
-  require(rpc_read(&pair.client, &after, sizeof(after)) == sizeof(after),
+  require(rpc_read(&pair.client, &after, sizeof(after)) == 0,
           "outer response second payload read failed");
   require(rpc_read_end(&pair.client) == outer_id,
           "outer response read end failed");
@@ -1847,8 +1886,7 @@ void test_rpc_response_completed_hook() {
   require(rpc_read_start(&pair.client, request_id) == 0,
           "response-hook response start failed");
   int response = 0;
-  require(rpc_read(&pair.client, &response, sizeof(response)) ==
-              sizeof(response),
+  require(rpc_read(&pair.client, &response, sizeof(response)) == 0,
           "response-hook payload read failed");
   require(response == kResponse, "response-hook payload mismatch");
 
@@ -1922,10 +1960,10 @@ void test_async_prefix_same_lane_elision_and_cross_lane_marker() {
     int header[2];
     uint64_t sequence;
     require(rpc_http2_read_stream(&pair.server, lane, header, sizeof(header)) ==
-                    sizeof(header) &&
+                    0 &&
                 header[0] >= 2 && header[1] == 101 &&
                 rpc_http2_read_stream(&pair.server, lane, &sequence,
-                                      sizeof(sequence)) == sizeof(sequence) &&
+                                      sizeof(sequence)) == 0 &&
                 sequence == uint64_t(i),
             "same-lane FIFO emitted a marker or changed ordinary framing");
   }
@@ -1939,10 +1977,10 @@ void test_async_prefix_same_lane_elision_and_cross_lane_marker() {
   int marker[2];
   uint64_t published = 0;
   require(rpc_http2_read_stream(&pair.server, lane, marker, sizeof(marker)) ==
-                  sizeof(marker) &&
+                  0 &&
               marker[0] == 0 && marker[1] == 0 &&
               rpc_http2_read_stream(&pair.server, lane, &published,
-                                    sizeof(published)) == sizeof(published) &&
+                                    sizeof(published)) == 0 &&
               published == 2,
           "cross-lane consumer missed the published prefix");
 }
@@ -1984,11 +2022,11 @@ void test_async_prefix_entry_precedes_builder_wait() {
   int headers[4];
   uint64_t published = 0;
   require(rpc_http2_read_stream(&pair.server, lane, headers, sizeof(headers)) ==
-                  sizeof(headers) &&
+                  0 &&
               headers[0] >= 2 && headers[1] == 101 && headers[2] == 0 &&
               headers[3] == 0 &&
               rpc_http2_read_stream(&pair.server, lane, &published,
-                                    sizeof(published)) == sizeof(published) &&
+                                    sizeof(published)) == 0 &&
               published == 2,
           "own-lane completion elided a hole belonging to another producer");
 }
@@ -2146,8 +2184,7 @@ void test_rpc_read_uses_w_offset() {
   require(request_id > 0, "alias request write end failed");
   require(rpc_read_start(&pair.client, request_id) == 0,
           "alias response read start failed");
-  require(rpc_read(&pair.client, read_view, expected.size()) ==
-              static_cast<int>(expected.size()),
+  require(rpc_read(&pair.client, read_view, expected.size()) == 0,
           "alias response read failed");
   require(rpc_read_end(&pair.client) == request_id,
           "alias response read end failed");
@@ -2231,6 +2268,9 @@ int main() {
   RUN_CASE(test_refillable_cursor_across_flow_control_window());
 #endif
   RUN_CASE(test_payload_larger_than_flow_control_window());
+#ifndef __SANITIZE_THREAD__
+  RUN_CASE(test_read_larger_than_int_max());
+#endif
   RUN_CASE(test_reset_wakes_flow_controlled_writer());
   std::cout << "h2_test: PASS" << std::endl;
   return 0;
