@@ -115,6 +115,8 @@ struct lupine_host_allocation {
   conn_t *stale_fetch_conn = nullptr;
   // Captured with it; the fetch binds it on whichever lane ends up faulting.
   CUcontext stale_fetch_context = nullptr;
+  // Captured with it; a launch-time invalidation fetches behind the launch.
+  CUstream stale_fetch_stream = CU_STREAM_PER_THREAD;
   // Fetch owner; its own nested faults unprotect instead of self-waiting.
   volatile pid_t stale_fetch_tid = 0;
   // Per-chunk fetched flags; owner (state 2) sets, invalidator (3) clears.
@@ -210,6 +212,7 @@ static lupine_dirty_host_range_queue
 static uint64_t lupine_dirty_host_epoch = 0;
 static thread_local uint64_t lupine_required_host_epoch = 0;
 static volatile sig_atomic_t lupine_device_work_pending = 0;
+thread_local bool lupine_in_host_callback = false;
 static std::atomic<uint64_t> lupine_flushed_host_epoch{0};
 static std::mutex lupine_host_flush_mutex;
 
@@ -864,7 +867,8 @@ lupine_find_mapped_host_pointer_locked(CUdeviceptr pointer, size_t *offset) {
 
 CUresult lupine_translate_mapped_host_pointer(lupine_route route,
                                               CUdeviceptr argument,
-                                              CUdeviceptr *translated) {
+                                              CUdeviceptr *translated,
+                                              bool *managed) {
   if (translated == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -878,6 +882,7 @@ CUresult lupine_translate_mapped_host_pointer(lupine_route route,
   }
   auto &allocation = it->second;
   lupine_expose_host_device_pointer(it->first, allocation);
+  *managed = allocation.managed;
   if (allocation.managed ||
       (allocation.flags & CU_MEMHOSTALLOC_PORTABLE) == 0) {
     return CUDA_SUCCESS;
@@ -1641,12 +1646,11 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
     }
   }
   // The stream running a host-func callback stays blocked until the client
-  // answers it, and the legacy stream orders behind every stream in the
-  // context, so a fetch queued there would wait on the callback that is
-  // waiting on it. The per-thread stream orders behind nothing, and the bytes
-  // are already final: an invalidation is published only after the client has
-  // observed the device work that produced them.
-  CUstream fetch_stream = CU_STREAM_PER_THREAD;
+  // answers it, so a fetch queued behind a launch there would wait on the
+  // callback that is waiting on it; the launch that callback follows is done.
+  CUstream fetch_stream = lupine_in_host_callback
+                              ? CU_STREAM_PER_THREAD
+                              : allocation->stale_fetch_stream;
   if (rpc_write_start_request(conn, RPC_cuMemcpyDtoH_v2) < 0 ||
       rpc_write(conn, &src, sizeof(src)) < 0 ||
       rpc_write(conn, &bytes, sizeof(bytes)) < 0 ||
@@ -1982,6 +1986,7 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
                                           __ATOMIC_ACQUIRE)) {
             allocation.stale_fetch_conn = conn;
             allocation.stale_fetch_context = fetch_context;
+            allocation.stale_fetch_stream = CU_STREAM_PER_THREAD;
             if (allocation.fresh_chunks != nullptr) {
               memset(allocation.fresh_chunks, 0, allocation.fresh_chunk_count);
             }
@@ -2035,6 +2040,51 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
     }
   }
   return CUDA_SUCCESS;
+}
+
+// A launch may write the managed memory it was passed. Until the next sync the
+// host must not keep, and later flush back over the kernel's writes, bytes from
+// before the launch, so its next touch fetches behind the launch instead.
+extern "C" void lupine_invalidate_launched_managed(CUdeviceptr pointer,
+                                                   CUstream stream) {
+  if (lupine_active_stream_captures.load(std::memory_order_relaxed) != 0) {
+    return;
+  }
+  CUcontext fetch_context = lupine_demand_fetch_context(pointer);
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  auto it =
+      lupine_find_host_allocation_locked(reinterpret_cast<void *>(pointer));
+  if (it == lupine_mutable_host_allocations_locked().end()) {
+    return;
+  }
+  auto &allocation = it->second;
+  conn_t *conn =
+      lupine_route_remote_conn(lupine_route_from_identity(allocation.route_id));
+  sig_atomic_t previous =
+      __atomic_load_n(&allocation.device_stale, __ATOMIC_ACQUIRE);
+  sig_atomic_t expected = previous;
+  if (!allocation.managed || !allocation.tracking_enabled || conn == nullptr ||
+      previous == 2 ||
+      !__atomic_compare_exchange_n(&allocation.device_stale, &expected, 3,
+                                   false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    return;
+  }
+  if (previous == 1 && allocation.stale_fetch_stream != stream &&
+      allocation.stale_fetch_stream != CU_STREAM_PER_THREAD) {
+    stream = CU_STREAM_LEGACY;
+  }
+  allocation.stale_fetch_conn = conn;
+  allocation.stale_fetch_context = fetch_context;
+  allocation.stale_fetch_stream = stream;
+  if (allocation.fresh_chunks != nullptr) {
+    memset(allocation.fresh_chunks, 0, allocation.fresh_chunk_count);
+  }
+  allocation.fetch_seq_next = 0;
+  allocation.fetch_readahead = 0;
+  bool protected_range =
+      lupine_protect_host_range(it->first, allocation.storage_size, PROT_NONE);
+  __atomic_store_n(&allocation.device_stale, protected_range ? 1 : previous,
+                   __ATOMIC_RELEASE);
 }
 
 static lupine_host_allocation_map::iterator
