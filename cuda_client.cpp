@@ -1,4 +1,5 @@
 #include "device_stdout.h"
+#include "fatbin_filter.h"
 #include "lupine_platform.h"
 
 #include <algorithm>
@@ -512,6 +513,15 @@ static libcuckoo::cuckoohash_map<conn_t *, bool> &
 lupine_device_snapshot_attempts() {
   static auto *attempts = new libcuckoo::cuckoohash_map<conn_t *, bool>();
   return *attempts;
+}
+
+// Unlike the virtual device table, this includes devices hidden by the client's
+// CUDA_VISIBLE_DEVICES: a CUlibrary is available to all contexts on its server.
+static libcuckoo::cuckoohash_map<conn_t *, std::vector<unsigned>> &
+lupine_server_compute_capabilities() {
+  static auto *cache =
+      new libcuckoo::cuckoohash_map<conn_t *, std::vector<unsigned>>();
+  return *cache;
 }
 
 // PyTorch's pin-memory path polls cuDevicePrimaryCtxGetState continuously
@@ -2090,6 +2100,7 @@ static void lupine_prefill_device_snapshot(conn_t *conn) {
     return;
   }
   std::vector<int32_t> pairs;
+  std::vector<unsigned> capabilities;
   for (uint32_t ordinal = 0; ordinal < device_count; ++ordinal) {
     lupine_device_snapshot_info info;
     uint32_t pair_count = 0;
@@ -2104,6 +2115,19 @@ static void lupine_prefill_device_snapshot(conn_t *conn) {
         rpc_read(conn, pairs.data(), pairs.size() * sizeof(int32_t)) < 0) {
       return;
     }
+    int major = 0;
+    int minor = -1;
+    for (uint32_t pair = 0; pair < pair_count; ++pair) {
+      if (pairs[pair * 2] == CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR) {
+        major = pairs[pair * 2 + 1];
+      } else if (pairs[pair * 2] ==
+                 CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR) {
+        minor = pairs[pair * 2 + 1];
+      }
+    }
+    capabilities.push_back(major > 0 && major <= 999 && minor >= 0 && minor <= 9
+                               ? static_cast<unsigned>(major * 10 + minor)
+                               : 0);
     CUdevice local_dev =
         lupine_local_device_for_remote(conn, static_cast<CUdevice>(ordinal));
     if (local_dev < 0) {
@@ -2124,7 +2148,9 @@ static void lupine_prefill_device_snapshot(conn_t *conn) {
     lupine_device_snapshot_cache().insert_or_assign(static_cast<int>(local_dev),
                                                     info);
   }
-  rpc_read_end(conn);
+  if (rpc_read_end(conn) >= 0) {
+    lupine_server_compute_capabilities().insert_or_assign(conn, capabilities);
+  }
 }
 
 extern "C" CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib,
@@ -5796,13 +5822,36 @@ static const unsigned char *lupine_mapped_fatbin(lupine_library_reference *) {
 }
 #endif
 
-// Writes one image as kind, size, bytes and the option tail, all from
-// caller-owned storage: rpc_write queues pointers until the response.
+// Both the length and filtered bytes belong to the RPC's caller, not to the
+// serializer. rpc_write borrows their storage through response completion.
+struct lupine_library_wire_image {
+  const unsigned char *original;
+  uint64_t size;
+  std::vector<unsigned char> filtered;
+};
+
+static lupine_library_wire_image
+lupine_prepare_library_image(conn_t *conn, const lupine_library_reference &ref,
+                             const unsigned char *image, bool filter = true) {
+  lupine_library_wire_image wire{image, ref.size, {}};
+  std::vector<unsigned> devices;
+  if (filter && lupine_server_compute_capabilities().find(conn, devices)) {
+    wire.filtered = lupine_filter_fatbin(image, ref.size, devices);
+    if (!wire.filtered.empty()) {
+      wire.size = wire.filtered.size();
+    }
+  }
+  return wire;
+}
+
 static int lupine_write_library_image(conn_t *conn,
                                       const lupine_library_reference &ref,
-                                      const unsigned char *image) {
-  return rpc_write(conn, ref.record.data(), 12) < 0 ||
-                 rpc_write(conn, image, ref.size) < 0
+                                      const lupine_library_wire_image &image) {
+  const auto *bytes =
+      image.filtered.empty() ? image.original : image.filtered.data();
+  return rpc_write(conn, &ref.kind, sizeof(ref.kind)) < 0 ||
+                 rpc_write(conn, &image.size, sizeof(image.size)) < 0 ||
+                 rpc_write(conn, bytes, image.size) < 0
              ? -1
              : 0;
 }
@@ -5910,16 +5959,23 @@ static void lupine_library_batch_main(conn_t *conn, CUcontext context) {
       sent.push_back(&entry);
     }
   }
+  // Finish selection before opening the request. The vector and its byte
+  // buffers stay alive until every batch response has been consumed.
+  std::vector<lupine_library_wire_image> images;
+  images.reserve(sent.size());
+  for (auto *entry : sent) {
+    images.push_back(
+        lupine_prepare_library_image(conn, entry->ref, entry->image));
+  }
   auto count = static_cast<uint32_t>(sent.size());
   bool ok =
       count != 0 && lupine_prepare_rpc(conn) >= 0 &&
       rpc_write_start_request(conn, LUPINE_RPC_lupineLibraryLoadBatch) >= 0 &&
       rpc_write(conn, &context, sizeof(context)) >= 0 &&
       rpc_write(conn, &count, sizeof(count)) >= 0;
-  for (auto *entry : sent) {
-    ok = ok &&
-         lupine_write_library_image(conn, entry->ref, entry->image) >= 0 &&
-         lupine_write_library_options(conn, entry->ref) >= 0;
+  for (size_t i = 0; i < sent.size(); ++i) {
+    ok = ok && lupine_write_library_image(conn, sent[i]->ref, images[i]) >= 0 &&
+         lupine_write_library_options(conn, sent[i]->ref) >= 0;
   }
   ok = ok && rpc_wait_for_response(conn) >= 0;
   uint32_t loaded = 0;
@@ -6062,10 +6118,16 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
                                   numLibraryOptions);
   lupine_library_batch_start(route);
   CUresult return_value = CUDA_SUCCESS;
-  if (!(profiled && lupine_library_batch_claim(route, ref, library)) &&
+  const bool claimed =
+      profiled && lupine_library_batch_claim(route, ref, library);
+  // JIT options can request a target other than a server device, so preserve
+  // those images verbatim. Profiles and cross-route replays retain originals.
+  auto wire = lupine_prepare_library_image(conn, ref, image_bytes.data(),
+                                           !claimed && numJitOptions == 0);
+  if (!claimed &&
       (lupine_prepare_rpc(conn) < 0 ||
        rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
-       lupine_write_library_image(conn, ref, image_bytes.data()) < 0 ||
+       lupine_write_library_image(conn, ref, wire) < 0 ||
        rpc_write(conn, &numJitOptions, sizeof(numJitOptions)) < 0 ||
        rpc_write(conn, jitOptions, numJitOptions * sizeof(*jitOptions)) < 0 ||
        rpc_write(conn, jitOptionsValues,
