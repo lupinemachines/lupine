@@ -240,6 +240,7 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineBulkRead",
     "lupineMemcpyDtoHBulk",
     "lupineStreamPoolInit",
+    "lupineEventCreateBatch",
     "lupineLibraryLoadBatch",
 ]
 

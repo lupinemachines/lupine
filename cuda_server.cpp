@@ -4676,6 +4676,52 @@ int handle_cuCtxCreate_v2(conn_t *conn) {
   return 0;
 }
 
+// The first event is the caller's allocation; later creations are speculative.
+// A failure stops the batch. If the first creation failed, report it without
+// modifying the caller's output; otherwise hand out only real, created events.
+int handle_lupineEventCreateBatch(conn_t *conn) {
+  constexpr uint32_t kBatchSize = 32;
+  CUcontext context = nullptr;
+  unsigned int flags = 0;
+  if (rpc_read(conn, &context, sizeof(context)) < 0 ||
+      rpc_read(conn, &flags, sizeof(flags)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUevent events[kBatchSize];
+  CUdevice device = -1;
+  uint32_t count = 0;
+  CUresult result = cuCtxPushCurrent(context);
+  if (result == CUDA_SUCCESS) {
+    result = cuCtxGetDevice(&device);
+    if (result == CUDA_SUCCESS) {
+      for (; count < kBatchSize; ++count) {
+        result = cuEventCreate(&events[count], flags);
+        if (result != CUDA_SUCCESS) {
+          break;
+        }
+      }
+    }
+    CUcontext popped = nullptr;
+    cuCtxPopCurrent(&popped);
+  }
+  if (count != 0) {
+    result = CUDA_SUCCESS;
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      rpc_write(conn, &device, sizeof(device)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_write(conn, events, count * sizeof(*events)) < 0 ||
+      rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 // Creates the client's stream pool under the context it names in one round
 // trip: kStreamPoolPerPriority streams at each usable priority from the least
 // downward, capped at kStreamPoolMaxPriorities, in torch's c10 creation order

@@ -2290,6 +2290,8 @@ static void lupine_stream_pool_init(lupine_route route, CUdevice dev,
                                     CUcontext ctx);
 static void lupine_stream_pool_discard(int route_id, CUdevice dev,
                                        CUcontext ctx);
+static void lupine_event_pool_discard(int route_id, CUdevice remote_device,
+                                      CUcontext ctx);
 static void lupine_forget_context_local_storage(CUcontext ctx);
 
 // One forwarded retain keeps a device's primary context alive for every
@@ -2415,6 +2417,7 @@ extern "C" CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
   lupine_invalidate_primary_ctx_state(dev);
   lupine_forget_context_local_storage(context);
   lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
+  lupine_event_pool_discard(lupine_route_identity(route), remote_dev, nullptr);
   return lupine_remote_primary_ctx_release(lupine_route_remote_conn(route),
                                            remote_dev);
 }
@@ -2496,6 +2499,7 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
   // lupine_forget_destroyed_context.
   lupine_invalidate_function_caches();
   lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
+  lupine_event_pool_discard(lupine_route_identity(route), remote_dev, nullptr);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value =
@@ -3868,6 +3872,116 @@ extern "C" CUresult cuStreamCreateWithPriority(CUstream *phStream,
 }
 
 CUresult cuStreamDestroy_v2(CUstream hStream);
+// Allocate ordinary events on first use, in bounded batches per route, context
+// and flags. IPC events retain the driver's one-at-a-time path. Handed-out
+// events are never recycled: destroy still reaches CUDA, so an old handle can
+// never refer to a cached replacement event. Unclaimed events die with context.
+static constexpr uint32_t kLupineEventBatchSize = 32;
+
+struct lupine_event_pool {
+  CUdevice remote_device = -1;
+  std::vector<CUevent> events;
+};
+
+static std::mutex &lupine_event_pool_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+static std::map<std::tuple<int, CUcontext, unsigned>, lupine_event_pool> &
+lupine_event_pools() {
+  static auto *pools =
+      new std::map<std::tuple<int, CUcontext, unsigned>, lupine_event_pool>();
+  return *pools;
+}
+
+static void lupine_event_pool_discard(int route_id, CUdevice remote_device,
+                                      CUcontext ctx) {
+  std::lock_guard<std::mutex> lock(lupine_event_pool_mutex());
+  auto &pools = lupine_event_pools();
+  for (auto it = pools.begin(); it != pools.end();) {
+    const bool matches =
+        std::get<0>(it->first) == route_id &&
+        (ctx != nullptr ? std::get<1>(it->first) == ctx
+                        : it->second.remote_device == remote_device);
+    it = matches ? pools.erase(it) : std::next(it);
+  }
+}
+
+extern "C" CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags) {
+  lupine_route route = lupine_route_for_current_context();
+  if (lupine_route_is_local(route)) {
+    CUresult result = lupine_call_real_cuda_fn("cuEventCreate", phEvent, Flags);
+    if (result == CUDA_SUCCESS && phEvent != nullptr) {
+      lupine_note_event_owner_route(*phEvent, route);
+    }
+    return result;
+  }
+  if (phEvent == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUcontext context = lupine_current_context_hint();
+  constexpr unsigned pool_flags =
+      CU_EVENT_BLOCKING_SYNC | CU_EVENT_DISABLE_TIMING;
+  if (context != nullptr && (Flags & ~pool_flags) == 0) {
+    std::lock_guard<std::mutex> lock(lupine_event_pool_mutex());
+    auto &pool =
+        lupine_event_pools()[{lupine_route_identity(route), context, Flags}];
+    if (pool.events.empty()) {
+      CUevent events[kLupineEventBatchSize];
+      CUdevice device = -1;
+      uint32_t count = 0;
+      CUresult result = CUDA_ERROR_UNKNOWN;
+      if (lupine_prepare_rpc(conn) < 0 ||
+          rpc_write_start_request(conn, LUPINE_RPC_lupineEventCreateBatch) <
+              0 ||
+          rpc_write(conn, &context, sizeof(context)) < 0 ||
+          rpc_write(conn, &Flags, sizeof(Flags)) < 0 ||
+          rpc_wait_for_response(conn) < 0 ||
+          rpc_read(conn, &result, sizeof(result)) < 0 ||
+          rpc_read(conn, &device, sizeof(device)) < 0 ||
+          rpc_read(conn, &count, sizeof(count)) < 0 ||
+          count > kLupineEventBatchSize ||
+          rpc_read(conn, events, count * sizeof(*events)) < 0 ||
+          rpc_read_end(conn) < 0) {
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+      }
+      if (result != CUDA_SUCCESS) {
+        return result;
+      }
+      if (count == 0) {
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+      }
+      pool.remote_device = device;
+      // Preserve creation order when popping the next handle.
+      pool.events.assign(std::reverse_iterator<CUevent *>(events + count),
+                         std::reverse_iterator<CUevent *>(events));
+    }
+    *phEvent = pool.events.back();
+    pool.events.pop_back();
+    lupine_note_event_owner_route(*phEvent, route);
+    return CUDA_SUCCESS;
+  }
+
+  // Preserve the ordinary RPC for IPC, unknown flags and an unknown current
+  // context, including its unchanged output value on a driver error.
+  CUresult result;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuEventCreate) < 0 ||
+      rpc_write(conn, phEvent, sizeof(*phEvent)) < 0 ||
+      rpc_write(conn, &Flags, sizeof(Flags)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, phEvent, sizeof(*phEvent)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (result == CUDA_SUCCESS) {
+    lupine_note_event_owner_route(*phEvent, route);
+  }
+  return result;
+}
+
 extern "C" CUresult cuEventDestroy_v2(CUevent hEvent) {
   std::unique_lock<std::shared_mutex> event_lifecycle_lock(
       lupine_event_lifecycle_mutex());
@@ -3995,6 +4109,8 @@ extern "C" void lupine_forget_destroyed_context(CUcontext ctx) {
   // cached against it go too.
   lupine_invalidate_function_caches();
   lupine_invalidate_current_context_cache();
+  lupine_event_pool_discard(
+      lupine_route_identity(lupine_route_for_context(ctx)), -1, ctx);
   lupine_forget_context_owner(ctx);
   lupine_forget_context_local_storage(ctx);
   lupine_stream_pool_discard(-1, -1, ctx);
