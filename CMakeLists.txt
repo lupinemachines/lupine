@@ -820,7 +820,8 @@ if(BUILD_TESTING)
 
     add_executable(adaptive_compression_test
         adaptive_compression_test.cpp adaptive_compression.cpp)
-    target_link_libraries(adaptive_compression_test PRIVATE lupine_lz4 lupine_zstd)
+    target_link_libraries(adaptive_compression_test PRIVATE
+        lupine_lz4 lupine_zstd Threads::Threads)
     lupine_apply_sanitizer(adaptive_compression_test)
     add_test(NAME adaptive_compression_test COMMAND adaptive_compression_test)
 
