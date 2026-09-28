@@ -781,6 +781,10 @@ endif()
 # on socketpair(), MAP_FIXED_NOREPLACE and memfd_create(); anything free of
 # those belongs here instead, so it covers every platform the client ships for.
 if(BUILD_TESTING)
+    add_executable(fatbin_filter_test fatbin_filter_test.cpp)
+    lupine_apply_sanitizer(fatbin_filter_test)
+    add_test(NAME fatbin_filter_test COMMAND fatbin_filter_test)
+
     if(LUPINE_BUILD_CUDA)
         add_executable(deviceptr_allocations_test
             ${CMAKE_CURRENT_SOURCE_DIR}/deviceptr_allocations_test.cpp

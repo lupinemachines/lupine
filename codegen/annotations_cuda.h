@@ -1786,6 +1786,7 @@ CUresult cuStreamSetAttribute(CUstream hStream, CUstreamAttrID attr,
 /**
  * @routingkey CURRENT_CONTEXT
  * @recordowner EVENT phEvent
+ * @disabled client - ordinary events are created in bounded batches
  * @param phEvent SEND_RECV
  * @param Flags SEND_ONLY
  */
@@ -3381,6 +3382,8 @@ void cuGraphConditionalHandleCreate();
 void cuGraphAddNode_v2();
 /** @disabled */
 void lupineStreamPoolInit();
+/** @disabled */
+void lupineEventCreateBatch();
 /** @disabled */
 void lupineLibraryLoadBatch();
 /** @disabled */

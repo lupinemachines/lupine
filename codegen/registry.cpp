@@ -99,6 +99,7 @@
   HANDLER(LUPINE_RPC_cuGraphConditionalHandleCreate, handle_cuGraphConditionalHandleCreate, rpc_backend::cuda) \
   HANDLER(RPC_cuGraphAddNode_v2, handle_cuGraphAddNode, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineStreamPoolInit, handle_lupineStreamPoolInit, rpc_backend::cuda) \
+  HANDLER(LUPINE_RPC_lupineEventCreateBatch, handle_lupineEventCreateBatch, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineLibraryLoadBatch, handle_lupineLibraryLoadBatch, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_cuStreamBeginCaptureToGraph, handle_cuStreamBeginCaptureToGraph, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamUpdateCaptureDependencies_v2, handle_cuStreamUpdateCaptureDependencies, rpc_backend::cuda) \
