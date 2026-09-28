@@ -14,6 +14,6 @@ cuda-fatbin-decompression
    See the License for the specific language governing permissions and
    limitations under the License.
 
-Zstandard v1.5.7 (vendored as a git subtree in third_party/zstd)
+Zstandard v1.5.7 (vendored library subset in third_party/zstd)
 Copyright (c) Meta Platforms, Inc. and affiliates.
 Distributed under the BSD 3-Clause License; see third_party/zstd/LICENSE.
