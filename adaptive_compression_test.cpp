@@ -131,6 +131,33 @@ static void round_trips() {
     require(d.consume(wire.data(), size, collect, &actual) && !d.finished());
   }
 }
+static void linked_bulk() {
+  std::vector<unsigned char> data(block_size);
+  for (size_t i = 0; i < data.size(); ++i)
+    data[i] = i % 17;
+  policy selection;
+  selection.delivery_rate(1e9);
+  auto choice = selection.choose(data.data(), data.size());
+  for (unsigned i = 0; i < 2; ++i)
+    selection.observe(choice.bucket, block_size, block_size / 10, 10000,
+                      block_size / 20, 100000);
+  encoder encoded;
+  std::vector<unsigned char> wire;
+  require(encoded.encode(data.data(), data.size(), selection, wire));
+  require(encoded.encode(data.data(), data.size(), selection, wire));
+  require(selection.blocks[1] == 2);
+  require(encoded.finish(wire));
+  decoder decoded;
+  std::vector<unsigned char> output;
+  for (size_t at = 0; at < wire.size(); at += 37)
+    require(decoded.consume(wire.data() + at,
+                            std::min<size_t>(37, wire.size() - at), collect,
+                            &output));
+  require(decoded.finished() && output.size() == data.size() * 2);
+  require(std::equal(data.begin(), data.end(), output.begin()));
+  require(std::equal(data.begin(), data.end(), output.begin() + data.size()));
+}
+
 static void malformed() {
   for (auto wire :
        {header(codec::raw, 0, 0), header(codec::raw, 1, block_size + 1),
@@ -189,6 +216,7 @@ int main() {
   delivery_tests();
   policy_tests();
   round_trips();
+  linked_bulk();
   malformed();
   std::puts("adaptive_compression_test: PASS");
 }
