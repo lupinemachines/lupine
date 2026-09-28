@@ -286,19 +286,6 @@ function(lupine_scaled_timeout out base)
     set(${out} ${scaled} PARENT_SCOPE)
 endfunction()
 
-# Vendored LZ4 keeps the neutral core independent of host package versions.
-add_library(lupine_lz4 STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4frame.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4hc.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/xxhash.c)
-set_target_properties(lupine_lz4 PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(lupine_lz4 PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib)
-if(NOT MSVC AND NOT CMAKE_BUILD_TYPE)
-    target_compile_options(lupine_lz4 PRIVATE -O2)
-endif()
-
 # Pin the codec implementation on every supported client/server platform.
 file(GLOB LUPINE_ZSTD_SOURCES CONFIGURE_DEPENDS
     third_party/zstd/lib/common/*.c
@@ -319,7 +306,6 @@ endif()
 add_library(lupine_rpc_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/adaptive_compression.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dispatch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/device_stdout.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client_bundle.cpp
@@ -329,7 +315,7 @@ target_include_directories(lupine_rpc_core
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE ${NGHTTP2_INCLUDE_DIR})
 target_link_libraries(lupine_rpc_core PUBLIC
-    Threads::Threads ${NGHTTP2_LIBRARY} lupine_lz4 lupine_zstd)
+    Threads::Threads ${NGHTTP2_LIBRARY} lupine_zstd)
 if(LUPINE_MANYLINUX)
     add_dependencies(lupine_rpc_core lupine_manylinux_openssl_external)
 endif()
@@ -821,13 +807,6 @@ if(BUILD_TESTING)
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     lupine_scaled_timeout(ckpt_timeout 10)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
-
-    add_executable(adaptive_compression_test
-        adaptive_compression_test.cpp adaptive_compression.cpp)
-    target_link_libraries(adaptive_compression_test PRIVATE
-        lupine_lz4 lupine_zstd Threads::Threads)
-    lupine_apply_sanitizer(adaptive_compression_test)
-    add_test(NAME adaptive_compression_test COMMAND adaptive_compression_test)
 
     add_executable(h2_test
         ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp

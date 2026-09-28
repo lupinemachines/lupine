@@ -1,6 +1,4 @@
-#include "adaptive_compression.h"
 #include "client_bundle.h"
-#include "compression_delivery.h"
 #include "lupine_log.h"
 #include "rpc.h"
 
@@ -9,11 +7,11 @@
 #include <atomic>
 #include <chrono>
 #include <climits>
+#include <cstdlib>
 #include <deque>
 #include <errno.h>
-#include <lz4frame.h>
-#include <memory>
 #include <nghttp2/nghttp2.h>
+#include <zstd.h>
 #ifdef LUPINE_TLS_OPENSSL
 #include <openssl/ssl.h>
 #endif
@@ -35,11 +33,11 @@ constexpr uint32_t kH2ServerWindow =
     static_cast<uint32_t>(LUPINE_FF_STAGING_WINDOW_BYTES);
 constexpr uint32_t kH2MaxFrame = (16 * 1024 * 1024) - 1;
 constexpr size_t kH2FrameHeaderLen = 9;
-// LZ4F_max256KB, the encoder's block size. Input short of a block stays inside
-// LZ4F until a flush, and each compression step feeds exactly one block so a
-// very compressible body cannot delay its first byte until all of it has been
-// compressed.
-constexpr size_t kH2Lz4BlockBytes = 256 * 1024;
+// Level -1 uses a 512 KiB history window; pin it to bound peer memory use.
+constexpr int kH2ZstdWindowLog = 19;
+// Bound input per compression step so large compressible writes start
+// reaching the socket before their whole payload is compressed.
+constexpr size_t kH2CompressionBlockBytes = 256 * 1024;
 constexpr size_t kH2MaxDataFrameBytes = 1024 * 1024;
 constexpr size_t kH2DecodeBufferBytes = 64 * 1024;
 // Retained capacity for drained staging buffers, a few frames' worth.
@@ -70,13 +68,7 @@ struct h2_stream {
   bool response_received = false;
   bool response_sent = false;
   bool content_encoding_seen = false;
-  bool lz4_encoded = false;
-  bool incoming_blocks = false;
-  bool outgoing_blocks = false;
-  bool accepts_blocks = false;
-  std::unique_ptr<lupine_compression::encoder> block_encoder;
-  std::unique_ptr<lupine_compression::decoder> block_decoder;
-  std::vector<unsigned char> block_input;
+  bool zstd_encoded = false;
   bool encoder_started = false;
   bool encoder_finished = false;
   bool decoder_finished = false;
@@ -85,15 +77,13 @@ struct h2_stream {
   bool provider_submitted = false;
   bool provider_deferred = false;
   bool flush_queued = false;
-  // Input LZ4F holds back for its next block; only a flush emits it.
-  size_t buffered = 0;
   // Compressed output nghttp2 has not framed yet: valid up to encoded_size,
   // consumed up to encoded_offset. Capacity is retained across bursts.
   std::vector<unsigned char> encoded;
   size_t encoded_size = 0;
   size_t encoded_offset = 0;
-  LZ4F_compressionContext_t encoder = nullptr;
-  LZ4F_decompressionContext_t decoder = nullptr;
+  ZSTD_CCtx *encoder = nullptr;
+  ZSTD_DCtx *decoder = nullptr;
   int response_status = 0;
   std::string requested_va_base;
   std::string requested_va_size;
@@ -103,10 +93,6 @@ struct h2_transport {
   lupine_socket_t netfd = LUPINE_INVALID_SOCKET;
   void *tls = nullptr; // Borrowed SSL* (owned by conn_t).
   bool server = false;
-  bool peer_accepts_blocks = false;
-  lupine_compression::policy compression;
-  lupine_compression::delivery_estimator delivery;
-  uint64_t data_queued = 0;
   bool request_received = false;
   bool request_handled = false;
   int request_status = 0;
@@ -187,15 +173,12 @@ bool h2_retryable_handshake_rejection(const h2_transport *transport,
 }
 
 void h2_release_codecs(h2_stream &stream) {
-  stream.block_encoder.reset();
-  stream.block_decoder.reset();
-  std::vector<unsigned char>().swap(stream.block_input);
   if (stream.encoder != nullptr) {
-    LZ4F_freeCompressionContext(stream.encoder);
+    ZSTD_freeCCtx(stream.encoder);
     stream.encoder = nullptr;
   }
   if (stream.decoder != nullptr) {
-    LZ4F_freeDecompressionContext(stream.decoder);
+    ZSTD_freeDCtx(stream.decoder);
     stream.decoder = nullptr;
   }
 }
@@ -288,14 +271,6 @@ ssize_t h2_send_callback(nghttp2_session *, const uint8_t *data, size_t length,
   return static_cast<ssize_t>(length);
 }
 
-LZ4F_preferences_t h2_lz4_preferences() {
-  LZ4F_preferences_t preferences = {};
-  preferences.frameInfo.blockSizeID = LZ4F_max256KB;
-  preferences.frameInfo.blockMode = LZ4F_blockLinked;
-  // Linked blocks retain compression history across each RPC message flush.
-  return preferences;
-}
-
 ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
                                      uint8_t *, size_t length,
                                      uint32_t *data_flags,
@@ -326,7 +301,6 @@ int h2_send_data_callback(nghttp2_session *, nghttp2_frame *frame,
       {stream.encoded.data() + stream.encoded_offset, length},
   }};
   h2_queue_output(transport, iov.data(), static_cast<int>(iov.size()));
-  transport->data_queued += length;
 
   stream.encoded_offset += length;
   if (stream.encoded_offset == stream.encoded_size) {
@@ -361,28 +335,14 @@ int h2_on_data_chunk_recv_callback(nghttp2_session *, uint8_t,
                                    size_t len, void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
   h2_stream &stream = h2_get_stream(transport, stream_id);
-  if (stream.incoming_blocks) {
-    if (!stream.block_decoder)
-      stream.block_decoder = std::make_unique<lupine_compression::decoder>();
-    struct receive_target {
-      h2_transport *transport;
-      int32_t id;
-    } target{transport, stream_id};
-    auto emit = [](void *context, const unsigned char *bytes, size_t size) {
-      auto *out = static_cast<receive_target *>(context);
-      receive_bytes(out->transport, out->id, bytes, size);
-    };
-    if (!stream.block_decoder->consume(data, len, emit, &target))
-      return NGHTTP2_ERR_CALLBACK_FAILURE;
-    stream.decoder_finished = stream.block_decoder->finished();
-    return 0;
-  }
-  if (!stream.lz4_encoded || stream.decoder_finished) {
+  if (!stream.zstd_encoded || stream.decoder_finished) {
     return NGHTTP2_ERR_CALLBACK_FAILURE;
   }
   if (stream.decoder == nullptr) {
-    if (LZ4F_isError(
-            LZ4F_createDecompressionContext(&stream.decoder, LZ4F_VERSION))) {
+    stream.decoder = ZSTD_createDCtx();
+    if (stream.decoder == nullptr ||
+        ZSTD_isError(ZSTD_DCtx_setParameter(stream.decoder, ZSTD_d_windowLogMax,
+                                            kH2ZstdWindowLog))) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
   }
@@ -390,11 +350,13 @@ int h2_on_data_chunk_recv_callback(nghttp2_session *, uint8_t,
   size_t offset = 0;
   std::array<unsigned char, kH2DecodeBufferBytes> output;
   for (;;) {
-    size_t input = len - offset;
-    size_t produced = output.size();
-    size_t result = LZ4F_decompress(stream.decoder, output.data(), &produced,
-                                    data + offset, &input, nullptr);
-    if (LZ4F_isError(result)) {
+    ZSTD_inBuffer source{data + offset, len - offset, 0};
+    ZSTD_outBuffer destination{output.data(), output.size(), 0};
+    size_t result =
+        ZSTD_decompressStream(stream.decoder, &destination, &source);
+    size_t input = source.pos;
+    size_t produced = destination.pos;
+    if (ZSTD_isError(result)) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     receive_bytes(transport, stream_id, output.data(), produced);
@@ -412,7 +374,7 @@ int h2_on_data_chunk_recv_callback(nghttp2_session *, uint8_t,
       }
       break;
     }
-    // LZ4F can consume the complete encoded block while retaining decoded
+    // Zstd can consume the complete encoded block while retaining decoded
     // output internally. Drain it before waiting for the next DATA frame.
     if (offset == len && produced < output.size()) {
       break;
@@ -438,10 +400,7 @@ constexpr char kLupineClientPlatformHeader[] = "x-lupine-client-platform";
 constexpr char kLupineVaWindowBaseHeader[] = "x-lupine-va-window-base";
 constexpr char kLupineVaWindowSizeHeader[] = "x-lupine-va-window-size";
 constexpr char kContentEncodingHeader[] = "content-encoding";
-constexpr char kLz4Encoding[] = "lz4";
-constexpr char kBlockEncoding[] = "lupine-block-v1";
-constexpr char kAcceptBlocksHeader[] = "x-lupine-accept-encoding";
-constexpr std::array<uint8_t, 4> kProgressPing = {'l', 'p', 'c', '1'};
+constexpr char kZstdEncoding[] = "zstd";
 
 std::string h2_hex(uint64_t value) {
   std::ostringstream result;
@@ -493,12 +452,8 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
     status_text = "426";
   }
   std::vector<nghttp2_nv> headers = {h2_nv(":status", status_text)};
-  headers.push_back(h2_nv(kAcceptBlocksHeader, kBlockEncoding));
   if (!end_stream) {
-    stream.outgoing_blocks = stream.accepts_blocks;
-    headers.push_back(h2_nv(kContentEncodingHeader, stream.outgoing_blocks
-                                                        ? kBlockEncoding
-                                                        : kLz4Encoding));
+    headers.push_back(h2_nv(kContentEncodingHeader, kZstdEncoding));
   }
   if (!transport->server_version.empty()) {
     headers.push_back(
@@ -544,17 +499,6 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
 int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
                               void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
-  if (frame->hd.type == NGHTTP2_PING && (frame->hd.flags & NGHTTP2_FLAG_ACK) &&
-      std::memcmp(frame->ping.opaque_data, kProgressPing.data(), 4) == 0) {
-    uint32_t id = 0;
-    for (unsigned i = 0; i < 4; ++i)
-      id |= uint32_t(frame->ping.opaque_data[4 + i]) << (8 * i);
-    uint64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                       std::chrono::steady_clock::now().time_since_epoch())
-                       .count();
-    transport->compression.delivery_rate(
-        transport->delivery.acknowledge(id, now));
-  }
   if (transport->server && frame->hd.type == NGHTTP2_PING &&
       (frame->hd.flags & NGHTTP2_FLAG_ACK) != 0 &&
       memcmp(frame->ping.opaque_data, kH2ShutdownPing.data(),
@@ -586,8 +530,11 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
     h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
     transport->request_received = true;
     bool probe = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
-    int status =
-        stream.lz4_encoded || stream.incoming_blocks || probe ? 200 : 400;
+    int status = stream.zstd_encoded || probe ? 200 : 400;
+    if (status == 400) {
+      LUPINE_LOG_ERROR("LUPINE RPC request requires content-encoding: zstd; "
+                       "update the client and server together");
+    }
     if (!probe && status == 200 &&
         (!transport->client_etag.empty() ||
          !transport->client_platform.empty())) {
@@ -636,7 +583,9 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
              frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
     h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
     if ((frame->hd.flags & NGHTTP2_FLAG_END_STREAM) == 0 &&
-        !stream.lz4_encoded && !stream.incoming_blocks) {
+        !stream.zstd_encoded) {
+      LUPINE_LOG_ERROR("LUPINE RPC response requires content-encoding: zstd; "
+                       "update the client and server together");
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     stream.response_received = true;
@@ -645,9 +594,7 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
   if ((frame->hd.type == NGHTTP2_DATA || frame->hd.type == NGHTTP2_HEADERS) &&
       (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0) {
     h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
-    if (frame->hd.type == NGHTTP2_DATA &&
-        (stream.lz4_encoded || stream.incoming_blocks) &&
-        !stream.decoder_finished) {
+    if (stream.zstd_encoded && !stream.decoder_finished) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     stream.remote_end = true;
@@ -693,21 +640,10 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
   h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
   if (namelen == strlen(kContentEncodingHeader) &&
       memcmp(name, kContentEncodingHeader, namelen) == 0) {
-    stream.incoming_blocks = !stream.content_encoding_seen &&
-                             valuelen == strlen(kBlockEncoding) &&
-                             memcmp(value, kBlockEncoding, valuelen) == 0;
-    stream.lz4_encoded = !stream.content_encoding_seen &&
-                         valuelen == strlen(kLz4Encoding) &&
-                         memcmp(value, kLz4Encoding, valuelen) == 0;
+    stream.zstd_encoded = !stream.content_encoding_seen &&
+                          valuelen == strlen(kZstdEncoding) &&
+                          memcmp(value, kZstdEncoding, valuelen) == 0;
     stream.content_encoding_seen = true;
-    return 0;
-  }
-  if (namelen == strlen(kAcceptBlocksHeader) &&
-      memcmp(name, kAcceptBlocksHeader, namelen) == 0) {
-    bool supported = valuelen == strlen(kBlockEncoding) &&
-                     memcmp(value, kBlockEncoding, valuelen) == 0;
-    stream.accepts_blocks = supported;
-    transport->peer_accepts_blocks = supported;
     return 0;
   }
   if (transport->server) {
@@ -810,109 +746,49 @@ unsigned char *h2_reserve_encoded(h2_stream &stream, size_t capacity) {
 }
 
 int h2_start_encoder_locked(h2_stream &stream) {
-  if (stream.outgoing_blocks) {
-    stream.block_encoder = std::make_unique<lupine_compression::encoder>();
-    stream.encoder_started = true;
-    return 0;
-  }
-  if (LZ4F_isError(
-          LZ4F_createCompressionContext(&stream.encoder, LZ4F_VERSION))) {
+  stream.encoder = ZSTD_createCCtx();
+  if (stream.encoder == nullptr ||
+      ZSTD_isError(ZSTD_CCtx_setParameter(stream.encoder,
+                                          ZSTD_c_compressionLevel, -1)) ||
+      ZSTD_isError(ZSTD_CCtx_setParameter(stream.encoder, ZSTD_c_windowLog,
+                                          kH2ZstdWindowLog))) {
     return -1;
   }
-  const LZ4F_preferences_t preferences = h2_lz4_preferences();
-  unsigned char *destination = h2_reserve_encoded(stream, LZ4F_HEADER_SIZE_MAX);
-  size_t header = LZ4F_compressBegin(stream.encoder, destination,
-                                     LZ4F_HEADER_SIZE_MAX, &preferences);
-  if (LZ4F_isError(header)) {
-    return -1;
-  }
-  stream.encoded_size += header;
   stream.encoder_started = true;
   return 0;
 }
 
-// Only the blocks the input completes come out; the remainder waits inside
-// LZ4F until a flush. LZ4F_compressBound reserves a whole worst-case block
-// even for tiny input, and `encoded` keeps that capacity across bursts.
-int h2_encode_locked(h2_transport *transport, h2_stream &stream,
-                     const unsigned char *data, size_t input) {
-  if (stream.outgoing_blocks) {
-    while (input) {
-      if (stream.block_input.empty() &&
-          input >= lupine_compression::block_size) {
-        stream.encoded.resize(stream.encoded_size);
-        if (!stream.block_encoder->encode(data, lupine_compression::block_size,
-                                          transport->compression,
-                                          stream.encoded))
-          return -1;
-        stream.encoded_size = stream.encoded.size();
-        data += lupine_compression::block_size;
-        input -= lupine_compression::block_size;
-        continue;
-      }
-      size_t n = std::min(input, lupine_compression::block_size -
-                                     stream.block_input.size());
-      stream.block_input.insert(stream.block_input.end(), data, data + n);
-      data += n;
-      input -= n;
-      if (stream.block_input.size() == lupine_compression::block_size) {
-        stream.encoded.resize(stream.encoded_size);
-        if (!stream.block_encoder->encode(
-                stream.block_input.data(), stream.block_input.size(),
-                transport->compression, stream.encoded))
-          return -1;
-        stream.encoded_size = stream.encoded.size();
-        stream.block_input.clear();
-      }
+int h2_encode_locked(h2_stream &stream, const unsigned char *data,
+                     size_t input) {
+  ZSTD_inBuffer source{data, input, 0};
+  do {
+    size_t capacity = ZSTD_CStreamOutSize();
+    ZSTD_outBuffer destination{h2_reserve_encoded(stream, capacity), capacity,
+                               0};
+    size_t result = ZSTD_compressStream2(stream.encoder, &destination, &source,
+                                         ZSTD_e_continue);
+    if (ZSTD_isError(result)) {
+      return -1;
     }
-    return 0;
-  }
-  const LZ4F_preferences_t preferences = h2_lz4_preferences();
-  size_t capacity = stream.buffered + input < kH2Lz4BlockBytes
-                        ? 8
-                        : LZ4F_compressBound(input, &preferences);
-  unsigned char *destination = h2_reserve_encoded(stream, capacity);
-  size_t encoded = LZ4F_compressUpdate(stream.encoder, destination, capacity,
-                                       data, input, nullptr);
-  if (LZ4F_isError(encoded)) {
-    return -1;
-  }
-  stream.encoded_size += encoded;
-  stream.buffered = (stream.buffered + input) % kH2Lz4BlockBytes;
+    stream.encoded_size += destination.pos;
+  } while (source.pos < source.size);
   return 0;
 }
 
-// Emits the block LZ4F is holding (nothing when it holds none), or the frame
-// end.
-int h2_encode_terminal_locked(h2_transport *transport, h2_stream &stream,
-                              bool finish) {
-  if (stream.outgoing_blocks) {
-    stream.encoded.resize(stream.encoded_size);
-    if (!stream.block_input.empty()) {
-      if (!stream.block_encoder->encode(stream.block_input.data(),
-                                        stream.block_input.size(),
-                                        transport->compression, stream.encoded))
-        return -1;
-      stream.block_input.clear();
+int h2_encode_terminal_locked(h2_stream &stream, bool finish) {
+  ZSTD_inBuffer source{nullptr, 0, 0};
+  size_t remaining;
+  do {
+    size_t capacity = ZSTD_CStreamOutSize();
+    ZSTD_outBuffer destination{h2_reserve_encoded(stream, capacity), capacity,
+                               0};
+    remaining = ZSTD_compressStream2(stream.encoder, &destination, &source,
+                                     finish ? ZSTD_e_end : ZSTD_e_flush);
+    if (ZSTD_isError(remaining)) {
+      return -1;
     }
-    if (finish) {
-      if (!stream.block_encoder->finish(stream.encoded))
-        return -1;
-      stream.encoder_finished = true;
-    }
-    stream.encoded_size = stream.encoded.size();
-    return 0;
-  }
-  size_t capacity = stream.buffered + 16;
-  unsigned char *destination = h2_reserve_encoded(stream, capacity);
-  size_t terminal =
-      finish ? LZ4F_compressEnd(stream.encoder, destination, capacity, nullptr)
-             : LZ4F_flush(stream.encoder, destination, capacity, nullptr);
-  if (LZ4F_isError(terminal)) {
-    return -1;
-  }
-  stream.encoded_size += terminal;
-  stream.buffered = 0;
+    stream.encoded_size += destination.pos;
+  } while (remaining);
   if (finish) {
     stream.encoder_finished = true;
   }
@@ -975,11 +851,9 @@ int h2_write_stream_locked(h2_transport *transport, int32_t stream_id,
         }
         continue;
       }
-      size_t input = std::min(cursor.size, stream.outgoing_blocks
-                                               ? lupine_compression::block_size
-                                               : kH2Lz4BlockBytes);
+      size_t input = std::min(cursor.size, kH2CompressionBlockBytes);
       size_t encoded_before = stream.encoded_size;
-      if (h2_encode_locked(transport, stream, cursor.data, input) < 0 ||
+      if (h2_encode_locked(stream, cursor.data, input) < 0 ||
           (stream.encoded_size != encoded_before &&
            h2_pump_stream_locked(transport, stream_id, stream) < 0)) {
         return -1;
@@ -1017,7 +891,7 @@ int h2_flush_pending_locked(h2_transport *transport) {
     if (stream.closed || stream.encoder_finished) {
       continue;
     }
-    if (h2_encode_terminal_locked(transport, stream, false) < 0 ||
+    if (h2_encode_terminal_locked(stream, false) < 0 ||
         h2_pump_stream_locked(transport, stream_id, stream) < 0) {
       result = -1;
     }
@@ -1057,26 +931,6 @@ void *h2_write_main(void *arg) {
     }
     int result = h2_flush_pending_locked(transport);
     if (result == 0 && !transport->outbound.empty()) {
-      uint64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                         std::chrono::steady_clock::now().time_since_epoch())
-                         .count();
-      transport->delivery.begin_send(now);
-      uint64_t bytes = transport->data_queued;
-      uint32_t id =
-          transport->peer_accepts_blocks ? transport->delivery.mark(bytes) : 0;
-      if (id != 0) {
-        std::array<uint8_t, 8> ping{};
-        std::copy(kProgressPing.begin(), kProgressPing.end(), ping.begin());
-        for (unsigned i = 0; i < 4; ++i)
-          ping[4 + i] = id >> (8 * i);
-        if (nghttp2_submit_ping(transport->session, NGHTTP2_FLAG_NONE,
-                                ping.data()) != 0 ||
-            h2_flush_session_locked(transport) < 0) {
-          h2_fail_transport_locked(transport);
-          transport->write_failed = true;
-          break;
-        }
-      }
       chunk.clear();
       chunk.swap(transport->outbound);
       transport->write_busy = true;
@@ -1084,10 +938,6 @@ void *h2_write_main(void *arg) {
       result = h2_write_socket(transport, chunk.data(), chunk.size());
       pthread_mutex_lock(&transport->session_mutex);
       transport->write_busy = false;
-      transport->delivery.end_send(
-          std::chrono::duration_cast<std::chrono::nanoseconds>(
-              std::chrono::steady_clock::now().time_since_epoch())
-              .count());
     }
     if (result < 0) {
       transport->write_failed = true;
@@ -1206,8 +1056,7 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
       h2_nv(":authority", "lupine"),
   };
   if (!probe) {
-    headers.push_back(h2_nv(kContentEncodingHeader, kLz4Encoding));
-    headers.push_back(h2_nv(kAcceptBlocksHeader, kBlockEncoding));
+    headers.push_back(h2_nv(kContentEncodingHeader, kZstdEncoding));
     const char *client_etag = getenv("LUPINE_CLIENT_ETAG");
     const char *client_platform = getenv("LUPINE_CLIENT_PLATFORM");
     const char *session_id = getenv("LUPINE_SESSION");
@@ -1469,22 +1318,18 @@ int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id) {
     return -1;
   }
 
-  std::array<nghttp2_nv, 6> headers = {
+  std::array<nghttp2_nv, 5> headers = {
       h2_nv(":method", "POST"),
       h2_nv(":scheme", "http"),
       h2_nv(":path", "/"),
       h2_nv(":authority", "lupine"),
-      h2_nv(kContentEncodingHeader,
-            transport->peer_accepts_blocks ? kBlockEncoding : kLz4Encoding),
-      h2_nv(kAcceptBlocksHeader, kBlockEncoding),
+      h2_nv(kContentEncodingHeader, kZstdEncoding),
   };
   int32_t stream_id =
       nghttp2_submit_headers(transport->session, NGHTTP2_FLAG_NONE, -1, nullptr,
                              headers.data(), headers.size(), nullptr);
   if (stream_id >= 0) {
     h2_get_stream(transport, stream_id);
-    h2_get_stream(transport, stream_id).outgoing_blocks =
-        transport->peer_accepts_blocks;
     transport->local_lanes.emplace(lane_id, stream_id);
     if (h2_flush_session_locked(transport) < 0) {
       stream_id = -1;
@@ -1501,7 +1346,7 @@ int h2_end_stream_locked(h2_transport *transport, int32_t stream_id) {
   h2_stream &stream = h2_get_stream(transport, stream_id);
   if (stream.closed || stream.encoder_finished ||
       (!stream.encoder_started && h2_start_encoder_locked(stream) < 0) ||
-      h2_encode_terminal_locked(transport, stream, true) < 0) {
+      h2_encode_terminal_locked(stream, true) < 0) {
     return -1;
   }
   return h2_pump_stream_locked(transport, stream_id, stream);
@@ -1847,13 +1692,6 @@ void rpc_http2_destroy(conn_t *conn) {
   if (transport->session != nullptr) {
     nghttp2_session_del(transport->session);
     transport->session = nullptr;
-  }
-  if (transport->peer_accepts_blocks && lupine_h2_debug_enabled()) {
-    const auto &c = transport->compression;
-    LUPINE_LOG_DEBUG("adaptive compression: raw="
-                     << c.blocks[0] << " lz4=" << c.blocks[1]
-                     << " zstd=" << c.blocks[2] << " samples=" << c.samples
-                     << " delivery_Bps=" << c.rate());
   }
   for (auto &[stream_id, stream] : transport->streams) {
     (void)stream_id;

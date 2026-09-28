@@ -71,7 +71,8 @@
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 #include "transport.h"
-#include "xxhash.h"
+// Reuse Zstd's bundled xxHash to preserve existing profile-cache keys.
+#include "third_party/zstd/lib/common/xxhash.h"
 
 #ifdef cuMemPrefetchAsync
 #undef cuMemPrefetchAsync
