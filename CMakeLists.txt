@@ -299,10 +299,27 @@ if(NOT MSVC AND NOT CMAKE_BUILD_TYPE)
     target_compile_options(lupine_lz4 PRIVATE -O2)
 endif()
 
+# Pin the codec implementation on every supported client/server platform.
+file(GLOB LUPINE_ZSTD_SOURCES CONFIGURE_DEPENDS
+    third_party/zstd/lib/common/*.c
+    third_party/zstd/lib/compress/*.c
+    third_party/zstd/lib/decompress/*.c)
+add_library(lupine_zstd STATIC ${LUPINE_ZSTD_SOURCES})
+set_target_properties(lupine_zstd PROPERTIES
+    POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+target_include_directories(lupine_zstd PUBLIC third_party/zstd/lib)
+target_compile_definitions(lupine_zstd PRIVATE
+    ZSTD_DISABLE_ASM ZSTD_LEGACY_SUPPORT=0
+    ZSTDLIB_VISIBLE= ZSTDERRORLIB_VISIBLE=)
+if(NOT MSVC AND NOT CMAKE_BUILD_TYPE)
+    target_compile_options(lupine_zstd PRIVATE -O2)
+endif()
+
 # Accelerator-neutral wire protocol, HTTP/2, compression, and platform IPC.
 add_library(lupine_rpc_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/adaptive_compression.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dispatch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/device_stdout.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client_bundle.cpp
@@ -312,7 +329,7 @@ target_include_directories(lupine_rpc_core
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE ${NGHTTP2_INCLUDE_DIR})
 target_link_libraries(lupine_rpc_core PUBLIC
-    Threads::Threads ${NGHTTP2_LIBRARY} lupine_lz4)
+    Threads::Threads ${NGHTTP2_LIBRARY} lupine_lz4 lupine_zstd)
 if(LUPINE_MANYLINUX)
     add_dependencies(lupine_rpc_core lupine_manylinux_openssl_external)
 endif()
@@ -800,6 +817,12 @@ if(BUILD_TESTING)
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     lupine_scaled_timeout(ckpt_timeout 10)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
+
+    add_executable(adaptive_compression_test
+        adaptive_compression_test.cpp adaptive_compression.cpp)
+    target_link_libraries(adaptive_compression_test PRIVATE lupine_lz4 lupine_zstd)
+    lupine_apply_sanitizer(adaptive_compression_test)
+    add_test(NAME adaptive_compression_test COMMAND adaptive_compression_test)
 
     add_executable(h2_test
         ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp

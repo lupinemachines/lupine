@@ -1339,6 +1339,157 @@ void test_reset_wakes_flow_controlled_writer() {
 
 // The transport LZ4-encodes the complete HTTP/2 body, including small RPC
 // fields and large transfer data spread across several caller-owned cursors.
+// Minimal legacy peers deliberately omit the new capability header. Keeping
+// them independent of h2.cpp catches accidental negotiation-by-version or
+// unconditional use of the new encoding in either direction.
+struct legacy_h2_peer {
+  lupine_socket_t socket;
+  nghttp2_session *session = nullptr;
+  unsigned headers = 0;
+  std::vector<std::string> encodings;
+
+  legacy_h2_peer(lupine_socket_t socket, bool server) : socket(socket) {
+    nghttp2_session_callbacks *callbacks = nullptr;
+    require(nghttp2_session_callbacks_new(&callbacks) == 0, "legacy callbacks");
+    nghttp2_session_callbacks_set_send_callback(
+        callbacks,
+        [](nghttp2_session *, const uint8_t *data, size_t length, int,
+           void *context) -> ssize_t {
+          auto *peer = static_cast<legacy_h2_peer *>(context);
+          return raw_write_all(peer->socket, data, length)
+                     ? static_cast<ssize_t>(length)
+                     : -1;
+        });
+    nghttp2_session_callbacks_set_on_header_callback(
+        callbacks, [](nghttp2_session *, const nghttp2_frame *,
+                      const uint8_t *name, size_t n, const uint8_t *value,
+                      size_t size, uint8_t, void *context) {
+          if (n == 16 && std::memcmp(name, "content-encoding", 16) == 0)
+            static_cast<legacy_h2_peer *>(context)->encodings.emplace_back(
+                reinterpret_cast<const char *>(value), size);
+          return 0;
+        });
+    nghttp2_session_callbacks_set_on_frame_recv_callback(
+        callbacks, [](nghttp2_session *session, const nghttp2_frame *frame,
+                      void *context) {
+          if (frame->hd.type == NGHTTP2_HEADERS) {
+            ++static_cast<legacy_h2_peer *>(context)->headers;
+            if (frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
+              std::array<nghttp2_nv, 2> response = {
+                  raw_h2_header(":status", "200"),
+                  raw_h2_header("content-encoding", "lz4")};
+              require(nghttp2_submit_headers(session, NGHTTP2_FLAG_NONE,
+                                             frame->hd.stream_id, nullptr,
+                                             response.data(), response.size(),
+                                             nullptr) == 0,
+                      "legacy response");
+            }
+          }
+          return 0;
+        });
+    int result = server ? nghttp2_session_server_new(&session, callbacks, this)
+                        : nghttp2_session_client_new(&session, callbacks, this);
+    nghttp2_session_callbacks_del(callbacks);
+    require(result == 0, "legacy session");
+    require(nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, nullptr, 0) ==
+                0,
+            "legacy settings");
+    require(nghttp2_session_send(session) == 0, "legacy settings send");
+  }
+  ~legacy_h2_peer() { nghttp2_session_del(session); }
+  void receive_headers(unsigned count) {
+    while (headers < count) {
+      std::array<unsigned char, 65536> data;
+      ssize_t size = lupine_socket_recv(socket, data.data(), data.size());
+      require(size > 0, "legacy receive");
+      require(nghttp2_session_mem_recv(session, data.data(), size) == size,
+              "legacy parse");
+      require(nghttp2_session_send(session) == 0, "legacy response send");
+    }
+  }
+};
+
+void test_adaptive_negotiation_legacy_peers() {
+  {
+    h2_pair pair;
+    init_pair_sockets(&pair);
+    require(rpc_http2_client_init(&pair.client) == 0, "new client init");
+    legacy_h2_peer server(pair.server.connfd, true);
+    server.receive_headers(1);
+    require(rpc_http2_client_await_ready(&pair.client) == 0,
+            "legacy server handshake");
+    require(rpc_http2_lane_stream(&pair.client, 1234) > 0,
+            "legacy request lane");
+    server.receive_headers(2);
+    require(server.encodings == std::vector<std::string>({"lz4", "lz4"}),
+            "new client did not retain LZ4 for legacy server");
+  }
+  {
+    h2_pair pair;
+    init_pair_sockets(&pair);
+    legacy_h2_peer client(pair.client.connfd, false);
+    std::array<nghttp2_nv, 5> headers = {
+        raw_h2_header(":method", "POST"), raw_h2_header(":scheme", "http"),
+        raw_h2_header(":path", "/"), raw_h2_header(":authority", "lupine"),
+        raw_h2_header("content-encoding", "lz4")};
+    require(nghttp2_submit_headers(client.session, NGHTTP2_FLAG_NONE, -1,
+                                   nullptr, headers.data(), headers.size(),
+                                   nullptr) > 0,
+            "legacy request");
+    require(nghttp2_session_send(client.session) == 0, "legacy request send");
+    require(rpc_http2_server_init_with_metadata(&pair.server, nullptr) == 0,
+            "new server init");
+    client.receive_headers(1);
+    require(client.encodings == std::vector<std::string>({"lz4"}),
+            "new server did not retain LZ4 for legacy client");
+  }
+}
+
+// New peers must negotiate before opening a new adaptive request lane.
+// The first dispatch request deliberately remains a legacy LZ4 frame.
+void test_adaptive_lane_round_trip() {
+  h2_pair pair;
+  init_pair(&pair);
+  require(rpc_http2_client_await_ready(&pair.client) == 0,
+          "adaptive negotiation failed");
+  int32_t stream = rpc_http2_lane_stream(&pair.client, 919);
+  require(stream > 0 && rpc_http2_accept_stream(&pair.server) == stream,
+          "adaptive lane missing");
+  std::vector<unsigned char> payload(3 * 256 * 1024 + 17);
+  uint32_t seed = 913;
+  for (size_t i = 0; i < payload.size(); ++i) {
+    seed = seed * 1664525u + 1013904223u;
+    payload[i] = i < 256 * 1024 ? 0 : static_cast<unsigned char>(seed >> 24);
+  }
+  std::vector<unsigned char> received(payload.size());
+  std::thread server([&] {
+    require(rpc_http2_read_stream(&pair.server, stream, received.data(),
+                                  received.size()) == 0,
+            "adaptive request decode failed");
+    require(received == payload, "adaptive request mismatch");
+    unsigned char byte;
+    require(rpc_http2_read_stream(&pair.server, stream, &byte, 1) ==
+                LUPINE_RPC_HTTP2_STREAM_END,
+            "adaptive request terminator missing");
+    require(write_stream_bytes(&pair.server, stream, received.data(),
+                               received.size()) == 0,
+            "adaptive response write failed");
+    require(rpc_http2_end_stream(&pair.server, stream) == 0,
+            "adaptive response end failed");
+  });
+  require(write_stream_bytes(&pair.client, stream, payload.data(),
+                             payload.size()) == 0,
+          "adaptive request write failed");
+  require(rpc_http2_end_stream(&pair.client, stream) == 0,
+          "adaptive request end failed");
+  std::vector<unsigned char> response(payload.size());
+  require(rpc_http2_read_stream(&pair.client, stream, response.data(),
+                                response.size()) == 0,
+          "adaptive response decode failed");
+  server.join();
+  require(response == payload, "adaptive response mismatch");
+}
+
 void test_lz4_content_encoding_round_trip() {
   h2_pair pair;
   init_pair(&pair);
@@ -2263,6 +2414,8 @@ int main() {
 #endif
   RUN_CASE(test_large_payload());
   RUN_CASE(test_lz4_content_encoding_round_trip());
+  RUN_CASE(test_adaptive_lane_round_trip());
+  RUN_CASE(test_adaptive_negotiation_legacy_peers());
   RUN_CASE(test_refillable_cursor_round_trip());
 #ifndef _WIN32
   RUN_CASE(test_refillable_cursor_across_flow_control_window());

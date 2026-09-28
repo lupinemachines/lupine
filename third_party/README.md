@@ -32,3 +32,14 @@ git subtree pull \
   0b0ffe0718c7995ca2a20266b1c02dd5a0138fde \
   --squash
 ```
+
+## Zstandard
+
+[Zstandard](https://github.com/facebook/zstd) v1.5.7 is vendored as a squashed
+subtree in `third_party/zstd`. The neutral transport builds only its common,
+compression and decompression C sources, without worker threads or legacy codecs.
+No system Zstd dependency or user configuration is needed on any platform.
+
+```sh
+git subtree pull --prefix=third_party/zstd https://github.com/facebook/zstd.git v1.5.7 --squash
+```
