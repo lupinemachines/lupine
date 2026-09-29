@@ -9,6 +9,9 @@
 #undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
 #include "rpc.h"
+#ifdef __linux__
+#include "device_ioctl_guard.h"
+#endif
 
 static constexpr int LUPINE_ROUTE_REMOTE = 0;
 static constexpr int LUPINE_ROUTE_LOCAL = 1;
@@ -191,6 +194,9 @@ static CUresult lupine_call_real_cuda_fn(void *symbol, Args &&...args) {
   using inferred_fn = CUresult(CUDAAPI *)(std::decay_t<Args>...);
   using real_fn = std::conditional_t<std::is_void_v<Fn>, inferred_fn, Fn>;
   auto real = reinterpret_cast<real_fn>(symbol);
+#ifdef __linux__
+  lupine_native_cuda_call_guard native_call;
+#endif
   return real == nullptr ? MissingSymbol : real(std::forward<Args>(args)...);
 }
 

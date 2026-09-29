@@ -798,6 +798,9 @@ static void *lupine_local_libcuda_handle() {
   static std::once_flag once;
   static void *handle = nullptr;
   std::call_once(once, []() {
+#ifdef __linux__
+    lupine_native_cuda_call_guard native_call;
+#endif
     const char *override_path = getenv("LUPINE_REAL_LIBCUDA");
 #if defined(_WIN32)
     if (override_path != nullptr && override_path[0] != '\0') {

@@ -836,3 +836,7 @@
 #define LUPINE_RPC_lupineStreamPoolInit 394532239
 #define LUPINE_RPC_lupineEventCreateBatch 178746252
 #define LUPINE_RPC_lupineLibraryLoadBatch 1285236640
+#define LUPINE_RPC_lupineDeviceOpen 1273631741
+#define LUPINE_RPC_lupineDeviceClose 31060484
+#define LUPINE_RPC_lupineDeviceIoctl 1717277260
+#define LUPINE_RPC_lupineUvmCreate 93626298

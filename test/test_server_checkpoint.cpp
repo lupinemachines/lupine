@@ -1,5 +1,6 @@
 #include "server_checkpoint.h"
 
+#include <cerrno>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -46,6 +47,20 @@ int main(int argc, char **argv) {
   }
   if (!expect(lupine_server_checkpoint_connection_ready("lease-123"),
               "failed to restore connection checkpoint")) {
+    return 1;
+  }
+  bool operation_called = false;
+  int rm_fd;
+  uint32_t client, memory;
+  int capture_result = lupine_server_checkpoint_capture_rm(
+      [](void *value) {
+        *static_cast<bool *>(value) = true;
+        return 0;
+      },
+      &operation_called, &rm_fd, &client, &memory);
+  if (!expect(capture_result == ENOSYS && !operation_called,
+              "old/missing provider must decline capture without running "
+              "allocation")) {
     return 1;
   }
 

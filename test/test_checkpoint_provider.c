@@ -39,9 +39,13 @@ static int test_checkpoint(const char *connection_id) {
 static void test_stop(void) { append_event("stop", NULL); }
 
 static const lupine_checkpoint_provider_v1 provider = {
-    sizeof(provider), LUPINE_CHECKPOINT_PROVIDER_ABI_VERSION,
-    test_start,       test_restore,
-    test_checkpoint,  test_stop};
+    offsetof(lupine_checkpoint_provider_v1, capture_rm_alloc),
+    LUPINE_CHECKPOINT_PROVIDER_ABI_VERSION,
+    test_start,
+    test_restore,
+    test_checkpoint,
+    test_stop,
+    NULL};
 
 const lupine_checkpoint_provider_v1 *lupinecr_get_lupine_provider_v1(void) {
   return &provider;

@@ -30,6 +30,13 @@ typedef struct lupine_checkpoint_provider_v1 {
 
   // Stops observation and releases provider-owned process state.
   void (*stop)(void);
+
+  // Optional tail extension. A provider that already traces this process can
+  // capture the successful native RM allocation made by operation(argument).
+  // Return ENOSYS without calling operation when capture is unavailable.
+  // Other failures must never cause the operation to be retried.
+  int (*capture_rm_alloc)(int (*operation)(void *), void *argument, int *rm_fd,
+                          uint32_t *h_client, uint32_t *h_memory);
 } lupine_checkpoint_provider_v1;
 
 typedef const lupine_checkpoint_provider_v1 *(

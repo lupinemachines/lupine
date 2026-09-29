@@ -778,6 +778,22 @@ LUPINE_DECLARE_HANDLER(RPC_cuLogsRegisterCallback,
 LUPINE_DECLARE_HANDLER(RPC_cuLogsUnregisterCallback,
                        handle_cuLogsUnregisterCallback, rpc_backend::cuda)
 #endif
+#if defined(__linux__)
+LUPINE_DECLARE_HANDLER(LUPINE_RPC_lupineDeviceOpen, handle_lupineDeviceOpen,
+                       rpc_backend::cuda)
+#endif
+#if defined(__linux__)
+LUPINE_DECLARE_HANDLER(LUPINE_RPC_lupineDeviceClose, handle_lupineDeviceClose,
+                       rpc_backend::cuda)
+#endif
+#if defined(__linux__)
+LUPINE_DECLARE_HANDLER(LUPINE_RPC_lupineDeviceIoctl, handle_lupineDeviceIoctl,
+                       rpc_backend::cuda)
+#endif
+#if defined(__linux__)
+LUPINE_DECLARE_HANDLER(LUPINE_RPC_lupineUvmCreate, handle_lupineUvmCreate,
+                       rpc_backend::cuda)
+#endif
 #if CUDA_VERSION >= 13000
 LUPINE_DECLARE_HANDLER(RPC_cuCtxGetDevice_v2, handle_cuCtxGetDevice_v2,
                        rpc_backend::cuda)
@@ -1132,6 +1148,18 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #if CUDA_VERSION >= 12090
       LUPINE_REGISTER_HANDLER(RPC_cuLogsUnregisterCallback, handle_cuLogsUnregisterCallback, rpc_backend::cuda)
+#endif
+#if defined(__linux__)
+      LUPINE_REGISTER_HANDLER(LUPINE_RPC_lupineDeviceOpen, handle_lupineDeviceOpen, rpc_backend::cuda)
+#endif
+#if defined(__linux__)
+      LUPINE_REGISTER_HANDLER(LUPINE_RPC_lupineDeviceClose, handle_lupineDeviceClose, rpc_backend::cuda)
+#endif
+#if defined(__linux__)
+      LUPINE_REGISTER_HANDLER(LUPINE_RPC_lupineDeviceIoctl, handle_lupineDeviceIoctl, rpc_backend::cuda)
+#endif
+#if defined(__linux__)
+      LUPINE_REGISTER_HANDLER(LUPINE_RPC_lupineUvmCreate, handle_lupineUvmCreate, rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 13000
       LUPINE_REGISTER_HANDLER(RPC_cuCtxGetDevice_v2, handle_cuCtxGetDevice_v2, rpc_backend::cuda)

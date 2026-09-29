@@ -114,6 +114,46 @@ policy for unkeyed connections; Lupine does not select a checkpoint directory.
 `LUPINE_CHECKPOINT_LIBRARY` can override the provider library path for a
 private deployment.
 
+## Linux device ioctls
+
+On Linux amd64 and arm64, preloading the CUDA shim also forwards the private
+UVM ioctls used by exact-address checkpoint restore. Set both the driver search
+path and preload path so calls made directly through libc reach the shim:
+
+```bash
+export LUPINE_SERVER=<server>:14833
+export LD_LIBRARY_PATH=/opt/lupine/lib
+export LD_PRELOAD=/opt/lupine/lib/libcuda.so.1
+./your_cuda_program
+```
+
+After CUDA initialization, opens of `/dev/nvidia-uvm` and `/dev/nvidiactl`
+return local proxy descriptors for the current remote route. `close`, `dup`,
+`dup2`, `dup3`, and `fcntl` duplication preserve their remote lifetime. The
+supported UVM commands are `UVM_CREATE_EXTERNAL_RANGE` (73),
+`UVM_MAP_EXTERNAL_ALLOCATION` (33), `UVM_FREE` (34),
+`UVM_UNMAP_EXTERNAL_ALLOCATION` (66), and `UVM_MAP_EXTERNAL_SPARSE` (74).
+Their fixed layouts follow NVIDIA's 590.48.01 private ABI; kernel errno and
+the driver's status field are returned to the caller.
+
+[`device_ioctl.h`](device_ioctl.h) exposes the optional
+`lupine_uvm_create_v1` extension for restore libraries. It creates a native VMM
+allocation on the selected remote device and returns its captured RM handles,
+CUDA allocation handle, and owned RM/UVM proxy descriptors. The embedded RM fd
+in a map request is translated to its server descriptor and must belong to the
+same route and allocation. Release the CUDA handle after mapping and close
+both descriptors when finished; retain the UVM descriptor for later rollback.
+
+Native RM capture uses a temporary ptrace helper, or the optional checkpoint
+provider's capture callback when that provider already observes the process.
+The server must permit ptrace attachment. An unavailable capture fails the
+allocation and releases any handle already created.
+
+This supports the restore operations above. Other device ioctls return
+`ENOTTY`, and mapping a proxy device fd with `mmap` returns `ENODEV`. Direct
+syscall instructions, static binaries, descriptor transfer between processes,
+and descriptors inherited across `exec` are outside the preload interface.
+
 ## Connection Stability
 
 Each client/server connection is a single long-lived TCP stream. Long-running

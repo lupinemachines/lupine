@@ -2,6 +2,10 @@
   global:
     cu*;
     dlsym;
+    open; open64; openat; openat64;
+    __open_2; __open64_2; __openat_2; __openat64_2;
+    ioctl; close; dup; dup2; dup3; fcntl; fcntl64; mmap; mmap64;
+    lupine_uvm_*;
     lupine_checkpoint_*;
     lupine_rpc_*;
     lupine_prepare_rpc;

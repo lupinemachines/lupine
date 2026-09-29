@@ -242,6 +242,10 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineStreamPoolInit",
     "lupineEventCreateBatch",
     "lupineLibraryLoadBatch",
+    "lupineDeviceOpen",
+    "lupineDeviceClose",
+    "lupineDeviceIoctl",
+    "lupineUvmCreate",
 ]
 
 REGISTRY_CPP_TEMPLATE = Template(
@@ -1749,6 +1753,8 @@ def main():
             if name in server_bindings and server_bindings[name] != binding:
                 raise RuntimeError(f"Conflicting @disabled for {name}")
             server_bindings[name] = binding
+    for name in ("lupineDeviceOpen", "lupineDeviceClose", "lupineDeviceIoctl", "lupineUvmCreate"):
+        server_bindings[name] = ServerBinding(name, "CUDA", f"handle_{name}", "defined(__linux__)")
     functions = [
         function
         for function in cuda_ast.namespace.functions
