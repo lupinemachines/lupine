@@ -747,7 +747,13 @@ for i in "${!UNITS[@]}"; do
     timeout_seconds="$LONG_SAMPLE_TIMEOUT"
   fi
 
-  start_remote_server "$pidfile" "$server_log" "$port"
+  server_environment=""
+  if [[ "$unit" == nvCOMP/examples/*/high_level_quickstart_example ]]; then
+    # This sample can hang before printing anything. Retain the server's RPC
+    # trace so a timeout identifies the last operations it received.
+    server_environment="LUPINE_TRACE=1"
+  fi
+  start_remote_server "$pidfile" "$server_log" "$port" "$server_environment"
 
   set +e
   (
@@ -762,6 +768,9 @@ for i in "${!UNITS[@]}"; do
   rc=$?
   set -e
 
+  # stop_remote_server removes its log, so copy it into the result artifacts
+  # first. A diagnostic-copy failure must not change the sample's exit status.
+  ssh_with_timeout "cat '$server_log'" >"${log%.log}.server.log" 2>&1 || true
   stop_remote_server "$pidfile" "$server_log"
 
   # cuSPARSE and cuFFT samples report wrong results as "test FAILED" /
