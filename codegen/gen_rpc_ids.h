@@ -839,4 +839,3 @@
 #define LUPINE_RPC_lupineDeviceOpen 1273631741
 #define LUPINE_RPC_lupineDeviceClose 31060484
 #define LUPINE_RPC_lupineDeviceIoctl 1717277260
-#define LUPINE_RPC_lupineUvmCreate 93626298

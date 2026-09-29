@@ -605,7 +605,7 @@ if(LUPINE_BUILD_SERVER)
             LUPINE_RPC_SERVER)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             target_sources(lupine_cuda_server PRIVATE
-                device_ioctl_server.cpp device_ioctl_capture.cpp)
+                device_ioctl_server.cpp)
         endif()
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LUPINE_BUILD_NVML)
             target_compile_definitions(lupine_cuda_server PRIVATE
@@ -848,16 +848,11 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(device_ioctl_proxy_test PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
     lupine_apply_sanitizer(device_ioctl_proxy_test)
     add_test(NAME device_ioctl_proxy_test COMMAND device_ioctl_proxy_test)
-    add_executable(device_ioctl_capture_test device_ioctl_capture_test.cpp device_ioctl_capture.cpp)
-    target_link_libraries(device_ioctl_capture_test PRIVATE Threads::Threads)
-    lupine_apply_sanitizer(device_ioctl_capture_test)
-    add_test(NAME device_ioctl_capture_test COMMAND device_ioctl_capture_test)
-    set_tests_properties(device_ioctl_capture_test PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77)
 
     if(LUPINE_BUILD_CUDA)
         add_executable(device_ioctl_rpc_test device_ioctl_rpc_test.cpp
             device_ioctl_client.cpp device_ioctl_proxy.cpp
-            device_ioctl_server.cpp device_ioctl_capture.cpp)
+            device_ioctl_server.cpp)
         target_include_directories(device_ioctl_rpc_test PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
         target_link_libraries(device_ioctl_rpc_test PRIVATE lupine_rpc_core)
         lupine_apply_sanitizer(device_ioctl_rpc_test)

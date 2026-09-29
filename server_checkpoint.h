@@ -1,7 +1,6 @@
 #pragma once
 
 #include "lupine_platform.h"
-#include <stdint.h>
 
 // Initializes SIGTERM coordination and attempts to load the optional LupineCR
 // provider. Must be called in the connection child before its first CUDA call.
@@ -16,7 +15,3 @@ bool lupine_server_checkpoint_connection_ready(const char *connection_id);
 // CUDA handlers and invokes the optional provider. Returns zero when shutdown
 // can proceed, including when no provider is installed.
 int lupine_server_checkpoint_child_finish();
-
-int lupine_server_checkpoint_capture_rm(int (*operation)(void *),
-                                        void *argument, int *rm_fd,
-                                        uint32_t *h_client, uint32_t *h_memory);

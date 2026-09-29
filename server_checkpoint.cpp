@@ -235,23 +235,6 @@ bool lupine_server_checkpoint_connection_ready(const char *connection_id) {
 #endif
 }
 
-int lupine_server_checkpoint_capture_rm(int (*operation)(void *),
-                                        void *argument, int *rm_fd,
-                                        uint32_t *h_client,
-                                        uint32_t *h_memory) {
-#ifdef _WIN32
-  return ENOSYS;
-#else
-  auto *api = checkpoint_state().provider.api;
-  constexpr size_t required =
-      offsetof(lupine_checkpoint_provider_v1, capture_rm_alloc) +
-      sizeof(lupine_checkpoint_provider_v1::capture_rm_alloc);
-  if (!api || api->struct_size < required || !api->capture_rm_alloc)
-    return ENOSYS;
-  return api->capture_rm_alloc(operation, argument, rm_fd, h_client, h_memory);
-#endif
-}
-
 int lupine_server_checkpoint_child_finish() {
 #ifdef _WIN32
   return 0;

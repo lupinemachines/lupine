@@ -20,12 +20,10 @@
 int handle_lupineDeviceOpen(conn_t *);
 int handle_lupineDeviceClose(conn_t *);
 int handle_lupineDeviceIoctl(conn_t *);
-int handle_lupineUvmCreate(conn_t *);
 
 static conn_t connection{};
 static int native_uvm, native_rm;
-static std::atomic<int> native_calls, released_handles, ioctl_error,
-    capture_error;
+static std::atomic<int> native_calls, ioctl_error;
 static std::atomic<uint32_t> driver_status;
 static uint64_t tracked_address;
 
@@ -59,9 +57,6 @@ static void serve(conn_t *conn) {
     case LUPINE_RPC_lupineDeviceIoctl:
       result = handle_lupineDeviceIoctl(conn);
       break;
-    case LUPINE_RPC_lupineUvmCreate:
-      result = handle_lupineUvmCreate(conn);
-      break;
     }
     require(result == 0, "server handler response");
   }
@@ -71,12 +66,6 @@ static void serve(conn_t *conn) {
 extern "C" int lupine_prepare_rpc(conn_t *) { return 0; }
 extern "C" lupine_route lupine_route_for_current_context() {
   return {LUPINE_ROUTE_REMOTE, &connection};
-}
-extern "C" lupine_route lupine_route_for_device(CUdevice *device) {
-  if (*device != 7)
-    return {LUPINE_ROUTE_UNKNOWN_DEVICE, nullptr};
-  *device = 3;
-  return lupine_route_for_current_context();
 }
 extern "C" bool lupine_route_is_local(lupine_route) { return false; }
 extern "C" conn_t *lupine_route_remote_conn(lupine_route route) {
@@ -97,29 +86,6 @@ extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr address) {
   tracked_address = 0;
 }
 
-extern "C" CUresult CUDAAPI cuMemCreate(CUmemGenericAllocationHandle *handle,
-                                        size_t size,
-                                        const CUmemAllocationProp *properties,
-                                        unsigned long long) {
-  require(size == 8192 && properties->location.id == 3,
-          "virtual device translated");
-  *handle = 100;
-  return CUDA_SUCCESS;
-}
-extern "C" CUresult CUDAAPI cuMemRelease(CUmemGenericAllocationHandle handle) {
-  require(handle == 100, "allocation released on capture failure");
-  ++released_handles;
-  return CUDA_SUCCESS;
-}
-int lupine_server_checkpoint_capture_rm(int (*allocate)(void *), void *argument,
-                                        int *fd, uint32_t *client,
-                                        uint32_t *memory) {
-  require(allocate(argument) == 0, "native allocation callback");
-  *fd = native_rm;
-  *client = 123;
-  *memory = 456;
-  return capture_error;
-}
 extern "C" ssize_t readlink(const char *path, char *buffer,
                             size_t size) noexcept {
   constexpr const char *prefix = "/proc/self/fd/";
@@ -148,6 +114,11 @@ extern "C" int ioctl(int fd, unsigned long command, ...) noexcept {
     int rm = lupine_uvm::get<int32_t>(buffer, lupine_uvm::rm_fd_offset);
     require(rm != native_rm && fcntl(rm, F_GETFD) >= 0,
             "nested descriptor translated");
+    require(lupine_uvm::get<uint32_t>(buffer, lupine_uvm::rm_client_offset) ==
+                    123 &&
+                lupine_uvm::get<uint32_t>(buffer,
+                                          lupine_uvm::rm_memory_offset) == 456,
+            "RM handles forwarded to native driver");
   }
   lupine_uvm::put(buffer, lupine_uvm::describe(command).status,
                   driver_status.load());
@@ -170,85 +141,64 @@ int main() {
           "RPC connections");
   std::thread server(serve, &server_connection);
   require(rpc_http2_client_init(&connection) == 0, "client h2 init");
-  int opened = lupine_device_open("/dev/nvidia-uvm", O_RDWR | O_CLOEXEC);
-  require(opened >= 0, "open initialized UVM descriptor");
-  lupine_device_proxy_close(opened);
-  lupine_uvm_allocation_v1 allocation{sizeof(allocation)};
-  require(lupine_uvm_create_v1(8192, 99, &allocation) ==
-              CUDA_ERROR_INVALID_DEVICE,
-          "invalid device");
-  require(lupine_uvm_create_v1(8192, 7, &allocation) == CUDA_SUCCESS,
-          "create RPC");
-  require(allocation.handle == 100 && allocation.h_client == 123 &&
-              allocation.h_memory == 456,
-          "captured RM metadata");
+  int uvm_fd = lupine_device_open("/dev/nvidia-uvm", O_RDWR | O_CLOEXEC);
+  int rm_fd = lupine_device_open("/dev/nvidiactl", O_RDWR | O_CLOEXEC);
+  require(uvm_fd >= 0 && rm_fd >= 0, "open initialized device descriptors");
   std::array<unsigned char, lupine_uvm::map_size> map{};
   lupine_uvm::put(map.data(), 0, uint64_t{0x100000000});
   lupine_uvm::put(map.data(), 8, uint64_t{8192});
-  lupine_uvm::put(map.data(), lupine_uvm::rm_fd_offset, allocation.rm_fd);
-  lupine_uvm::put(map.data(), lupine_uvm::rm_client_offset,
-                  allocation.h_client);
-  lupine_uvm::put(map.data(), lupine_uvm::rm_memory_offset,
-                  allocation.h_memory);
-  require(lupine_device_ioctl(allocation.uvm_fd, lupine_uvm::map, map.data()) ==
-              0,
+  lupine_uvm::put(map.data(), lupine_uvm::rm_fd_offset, rm_fd);
+  lupine_uvm::put(map.data(), lupine_uvm::rm_client_offset, uint32_t{123});
+  lupine_uvm::put(map.data(), lupine_uvm::rm_memory_offset, uint32_t{456});
+  require(lupine_device_ioctl(uvm_fd, lupine_uvm::map, map.data()) == 0,
           "map RPC");
   require(tracked_address == 0x100000000 &&
               lupine_uvm::get<int32_t>(map.data(), lupine_uvm::rm_fd_offset) ==
-                  allocation.rm_fd,
+                  rm_fd,
           "client descriptor and route preserved");
   driver_status = 42;
-  require(lupine_device_ioctl(allocation.uvm_fd, lupine_uvm::map, map.data()) ==
-                  0 &&
+  require(lupine_device_ioctl(uvm_fd, lupine_uvm::map, map.data()) == 0 &&
               lupine_uvm::get<uint32_t>(map.data(), 9260) == 42,
           "driver status copied back");
   driver_status = 0;
   ioctl_error = EACCES;
-  require(lupine_device_ioctl(allocation.uvm_fd, lupine_uvm::map, map.data()) ==
-                  -1 &&
+  require(lupine_device_ioctl(uvm_fd, lupine_uvm::map, map.data()) == -1 &&
               errno == EACCES,
           "syscall errno copied back");
   ioctl_error = 0;
   int previous_calls = native_calls;
-  require(lupine_device_ioctl(allocation.uvm_fd, 999, nullptr) == -1 &&
-              errno == ENOTTY,
+  require(lupine_device_ioctl(uvm_fd, 999, nullptr) == -1 && errno == ENOTTY,
           "unknown ioctl");
-  require(lupine_device_ioctl(allocation.uvm_fd, lupine_uvm::map,
+  require(lupine_device_ioctl(uvm_fd, lupine_uvm::map,
                               reinterpret_cast<void *>(1)) == -1 &&
               errno == EFAULT,
           "bad caller pointer");
-  lupine_uvm::put(map.data(), lupine_uvm::rm_client_offset, uint32_t{999});
-  require(lupine_device_ioctl(allocation.uvm_fd, lupine_uvm::map, map.data()) ==
-                  -1 &&
+  lupine_uvm::put(map.data(), lupine_uvm::rm_fd_offset, native_rm);
+  require(lupine_device_ioctl(uvm_fd, lupine_uvm::map, map.data()) == -1 &&
               errno == EBADF,
-          "RM metadata bound to token");
+          "ordinary nested descriptor rejected");
+  lupine_uvm::put(map.data(), lupine_uvm::rm_fd_offset, uvm_fd);
+  require(lupine_device_ioctl(uvm_fd, lupine_uvm::map, map.data()) == -1 &&
+              errno == EBADF,
+          "UVM nested descriptor rejected");
   require(native_calls == previous_calls,
           "invalid requests stay out of native driver");
   auto other = lupine_device_proxy_create(99, 1234, false);
   lupine_uvm::put(map.data(), lupine_uvm::rm_fd_offset, other);
-  require(lupine_device_ioctl(allocation.uvm_fd, lupine_uvm::map, map.data()) ==
-                  -1 &&
+  require(lupine_device_ioctl(uvm_fd, lupine_uvm::map, map.data()) == -1 &&
               errno == EBADF,
           "cross-route RM descriptor rejected");
   lupine_device_proxy_close(other);
   std::array<unsigned char, 40> unmap{};
   lupine_uvm::put(unmap.data(), 0, tracked_address);
-  require(lupine_device_ioctl(allocation.uvm_fd, lupine_uvm::unmap,
-                              unmap.data()) == 0 &&
+  require(lupine_device_ioctl(uvm_fd, lupine_uvm::unmap, unmap.data()) == 0 &&
               tracked_address,
           "partial unmap retains routing");
-  require(lupine_device_ioctl(allocation.uvm_fd, lupine_uvm::free,
-                              unmap.data()) == 0 &&
+  require(lupine_device_ioctl(uvm_fd, lupine_uvm::free, unmap.data()) == 0 &&
               !tracked_address,
           "free retires routing");
-  lupine_device_proxy_close(allocation.rm_fd);
-  lupine_device_proxy_close(allocation.uvm_fd);
-  capture_error = EIO;
-  allocation = {sizeof(allocation)};
-  require(lupine_uvm_create_v1(8192, 7, &allocation) ==
-                  CUDA_ERROR_NOT_SUPPORTED &&
-              released_handles == 1,
-          "capture failure cleans native handle");
+  lupine_device_proxy_close(rm_fd);
+  lupine_device_proxy_close(uvm_fd);
   close(native_uvm);
   close(native_rm);
   rpc_close_transport_socket(&connection);
