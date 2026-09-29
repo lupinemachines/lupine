@@ -15,3 +15,6 @@ bool lupine_server_checkpoint_connection_ready(const char *connection_id);
 // CUDA handlers and invokes the optional provider. Returns zero when shutdown
 // can proceed, including when no provider is installed.
 int lupine_server_checkpoint_child_finish();
+
+// Optional provider override; null leaves the native CUDA implementation in use.
+void *lupine_server_checkpoint_cuda_symbol(const char *name);

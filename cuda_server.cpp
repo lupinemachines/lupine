@@ -40,6 +40,7 @@
 #include "cache.h"
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_server.h"
+#include "server_checkpoint.h"
 #include "cuda_server_memcpy.h"
 #include "events.h"
 #include "ipc.h"
@@ -4399,7 +4400,11 @@ int handle_cuMemFree_v2(conn_t *conn) {
     return -1;
   }
   CUresult result = lupine_server_free_device_allocation(
-      pointer, [](CUdeviceptr ptr) { return cuMemFree_v2(ptr); });
+      pointer, [](CUdeviceptr ptr) {
+        auto release = reinterpret_cast<decltype(&cuMemFree_v2)>(
+            lupine_server_checkpoint_cuda_symbol("cuMemFree_v2"));
+        return release != nullptr ? release(ptr) : cuMemFree_v2(ptr);
+      });
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
