@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <future>
 #include <iostream>
 #include <nghttp2/nghttp2.h>
 #include <string>
@@ -1742,8 +1743,17 @@ void test_rpc_repeated_responses_on_lane() {
 
   require(rpc_write_start_request(&pair.client, kOp) == 0,
           "repeated response request start failed");
-  int request_id = rpc_write_end(&pair.client);
+  int request_id = rpc_write_end(&pair.client, true);
   require(request_id > 0, "repeated response request write failed");
+  std::promise<void> paused, release;
+  auto paused_future = paused.get_future();
+  auto release_future = release.get_future();
+  std::thread pauser([&] {
+    require(rpc_pause_client(&pair.client) == 0, "client pause failed");
+    paused.set_value();
+    release_future.wait();
+    rpc_resume_client(&pair.client);
+  });
   for (int expected = 0; expected < kChunkCount; ++expected) {
     require(rpc_read_start(&pair.client, request_id) == 0,
             "repeated response read start failed");
@@ -1753,11 +1763,21 @@ void test_rpc_repeated_responses_on_lane() {
             "repeated response index read failed");
     require(rpc_read(&pair.client, received.data(), received.size()) == 0,
             "repeated response payload read failed");
-    require(rpc_read_end(&pair.client) == request_id,
+    require(rpc_read_end(&pair.client, expected + 1 == kChunkCount) ==
+                request_id,
             "repeated response read end failed");
     require(chunk == expected, "repeated response index mismatch");
     require(received == payload, "repeated response payload mismatch");
+    if (expected + 1 != kChunkCount)
+      require(paused_future.wait_for(std::chrono::milliseconds(20)) ==
+                  std::future_status::timeout,
+              "pause must wait through final response");
   }
+  require(paused_future.wait_for(std::chrono::seconds(2)) ==
+              std::future_status::ready,
+          "pause did not drain after final response");
+  release.set_value();
+  pauser.join();
   server.join();
 }
 

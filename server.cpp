@@ -188,6 +188,10 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
   if (op == LUPINE_RPC_CLIENT_METADATA) {
     return handle_lupine_client_metadata(conn);
   }
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+  if (op == LUPINE_RPC_CHECKPOINT)
+    return handle_lupine_checkpoint(conn);
+#endif
   auto it = handlers.find(op);
   if (it == handlers.end()) {
     LUPINE_LOG_ERROR("No RPC handler for op " << op << "; closing client.");
@@ -421,7 +425,9 @@ int client_handler(lupine_socket_t connfd) {
   LUPINE_LOG_DEBUG("Client connected.");
 
 #ifdef LUPINE_BUILD_CUDA_BACKEND
-  if (!lupine_server_checkpoint_connection_ready(rpc_http2_session_id(&conn))) {
+  lupine_configure_checkpoint_session(&conn);
+  if (!lupine_server_checkpoint_connection_ready(
+          rpc_http2_session_id(&conn), conn.restore_checkpoint.c_str())) {
     LUPINE_LOG_ERROR("Failed to restore connection checkpoint.");
     rpc_conn_destroy(&conn);
     return lupine_server_checkpoint_child_finish();

@@ -46,6 +46,12 @@ struct lupine_client_transport_config {
   intptr_t w_offset = 0;
 };
 
+// Handoff runs on its own thread so callbacks can continue to be serviced.
+LUPINE_TRANSPORT_INTERNAL bool
+lupine_client_transport_handoff(conn_t *conn, void (*run)(conn_t *));
+LUPINE_TRANSPORT_INTERNAL int lupine_client_transport_reconnect(conn_t *conn);
+LUPINE_TRANSPORT_INTERNAL void lupine_client_transport_disconnect(conn_t *conn);
+
 // Each API shim links its own hidden copy of this transport, so one pool per
 // linked image keeps CUDA, NVML, and HIP state isolated without instance
 // plumbing at every call site.

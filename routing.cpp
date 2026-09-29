@@ -745,6 +745,36 @@ extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
   return lupine_route_for_default();
 }
 
+extern "C" bool lupine_range_for_deviceptr(CUdeviceptr ptr, CUdeviceptr *base,
+                                           size_t *size) {
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  const auto &entries = lupine_deviceptr_allocation_cache_entries();
+  auto it = entries.upper_bound(ptr);
+  if (it == entries.begin())
+    return false;
+  --it;
+  if (ptr - it->first >= it->second.size)
+    return false;
+  if (base != nullptr)
+    *base = it->first;
+  if (size != nullptr)
+    *size = it->second.size;
+  return true;
+}
+
+std::vector<lupine_live_allocation>
+lupine_allocations_for_connection(conn_t *conn) {
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  std::vector<lupine_live_allocation> result;
+  int route = lupine_conn_index(conn);
+  for (const auto &entry : lupine_deviceptr_allocation_cache_entries()) {
+    const auto &allocation = entry.second;
+    if (allocation.route_id == route)
+      result.push_back({entry.first, allocation.size, allocation.context});
+  }
+  return result;
+}
+
 extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   auto owner = lupine_owners<CUdeviceptr>().find(ptr);

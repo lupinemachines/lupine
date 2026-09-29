@@ -119,10 +119,28 @@ static void lupine_rpc_connection_closed(conn_t *conn) {
 
 static pthread_once_t lupine_rpc_lifecycle_once = PTHREAD_ONCE_INIT;
 
+static int lupine_reestablish_lane_context(conn_t *conn) {
+  static thread_local std::unordered_map<conn_t *, uint64_t> generations;
+  auto &seen = generations[conn];
+  if (seen == conn->generation)
+    return 0;
+  CUcontext context = lupine_current_context_hint();
+  CUresult result = CUDA_SUCCESS;
+  if (rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
+      rpc_write(conn, &context, sizeof(context)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0 ||
+      result != CUDA_SUCCESS)
+    return -1;
+  seen = conn->generation;
+  return 0;
+}
+
 static void lupine_install_rpc_lifecycle_hooks() {
   const rpc_lifecycle_hooks hooks = {
       lupine_rpc_connection_closed, rpc_destroy_thread_lane,
-      lupine_complete_pending_log_callbacks, lupine_host_range_is_protected};
+      lupine_complete_pending_log_callbacks, lupine_host_range_is_protected,
+      lupine_reestablish_lane_context};
   if (rpc_set_lifecycle_hooks(&hooks) < 0) {
     LUPINE_LOG_ERROR("Failed to install CUDA RPC lifecycle hooks");
   }
@@ -9471,6 +9489,67 @@ __attribute__((destructor)) static void lupine_rpc_destructor() {
 }
 #endif
 
+static void lupine_recover_evicted_server(conn_t *conn) {
+  // Captures can finish while their gate closes. Then stop RPC admission and
+  // wait through the final reply, including multi-chunk transfers.
+  lupine_checkpoint_wait_for_captures();
+  if (rpc_pause_client(conn) != 0) {
+    lupine_checkpoint_resume_captures();
+    return;
+  }
+  const char *session = std::getenv("LUPINE_SESSION");
+  int status = -1;
+  int checkpoint_result = -1;
+  if (session && *session) {
+    std::string key =
+        std::string(session) + "." + std::to_string(conn->generation + 1);
+    uint32_t length = static_cast<uint32_t>(key.size());
+    uint64_t sequence = conn->issued_async_sequence;
+    auto allocations = lupine_allocations_for_connection(conn);
+    uint32_t count = static_cast<uint32_t>(allocations.size());
+    auto write_allocations = [&] {
+      for (const auto &allocation : allocations)
+        if (rpc_write(conn, &allocation.pointer, sizeof(allocation.pointer)) <
+                0 ||
+            rpc_write(conn, &allocation.size, sizeof(allocation.size)) < 0 ||
+            rpc_write(conn, &allocation.context, sizeof(allocation.context)) <
+                0)
+          return -1;
+      return 0;
+    };
+    if (length <= 100 && allocations.size() <= (1u << 16) &&
+        rpc_write_start_request(conn, LUPINE_RPC_CHECKPOINT) >= 0 &&
+        rpc_write(conn, &sequence, sizeof(sequence)) >= 0 &&
+        rpc_write(conn, &length, sizeof(length)) >= 0 &&
+        rpc_write(conn, key.data(), length) >= 0 &&
+        rpc_write(conn, &count, sizeof(count)) >= 0 &&
+        write_allocations() >= 0 && rpc_wait_for_response(conn) >= 0 &&
+        lupine_read_deferred_dtoh_copies(conn) >= 0 &&
+        rpc_read(conn, &checkpoint_result, sizeof(checkpoint_result)) >= 0 &&
+        rpc_read_end(conn) >= 0 && checkpoint_result == 0) {
+      conn->restore_checkpoint = key;
+      status = lupine_client_transport_reconnect(conn);
+      // Handshake admission precedes server-side restore. Require a successful
+      // CUDA response before releasing any application caller.
+      unsigned flags = 0;
+      CUresult ready = CUDA_ERROR_DEVICE_UNAVAILABLE;
+      if (status == 0 && (rpc_write_start_request(conn, RPC_cuInit) < 0 ||
+                          rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+                          rpc_wait_for_response(conn) < 0 ||
+                          rpc_read(conn, &ready, sizeof(ready)) < 0 ||
+                          rpc_read_end(conn) < 0 || ready != CUDA_SUCCESS))
+        status = -1;
+    }
+  }
+  if (status != 0) {
+    LUPINE_LOG_ERROR(
+        "Coordinated GPU handoff failed; refusing an empty or stale session");
+    lupine_client_transport_disconnect(conn);
+  }
+  rpc_resume_client(conn);
+  lupine_checkpoint_resume_captures();
+}
+
 void *rpc_client_dispatch_thread(void *arg) {
   conn_t *conn = (conn_t *)arg;
   int op;
@@ -9478,7 +9557,19 @@ void *rpc_client_dispatch_thread(void *arg) {
   while (true) {
     op = rpc_dispatch(conn, 1);
 
-    if (op == LUPINE_SIDE_EFFECT_HOST_FUNCTION) {
+    if (op == LUPINE_SIDE_EFFECT_PREEMPT) {
+      int request_id = rpc_read_end(conn);
+      // One stable session key owns one GPU-server connection in this version.
+      int accepted =
+          std::getenv("LUPINE_SESSION") && lupine_client_transport_size() == 1
+              ? 0
+              : -1;
+      if (request_id < 0 || rpc_write_start_response(conn, request_id) < 0 ||
+          rpc_write(conn, &accepted, sizeof(accepted)) < 0 ||
+          rpc_write_end(conn) < 0 || accepted != 0 ||
+          !lupine_client_transport_handoff(conn, lupine_recover_evicted_server))
+        break;
+    } else if (op == LUPINE_SIDE_EFFECT_HOST_FUNCTION) {
       int found = 0;
 
       if (rpc_read(conn, &found, sizeof(found)) < 0) {
@@ -10223,6 +10314,8 @@ lupine_manual_function_map() {
       {"cuStreamQuery_ptsz", (void *)cuStreamQuery_ptsz},
       {"cuMemAllocHost", (void *)cuMemAllocHost_v2},
       {"cuMemAllocHost_v2", (void *)cuMemAllocHost_v2},
+      {"cuMemAlloc", (void *)cuMemAlloc_v2},
+      {"cuMemAlloc_v2", (void *)cuMemAlloc_v2},
       {"cuMemFree", (void *)cuMemFree_v2},
       {"cuMemFree_v2", (void *)cuMemFree_v2},
       {"cuMemFreeHost", (void *)cuMemFreeHost},

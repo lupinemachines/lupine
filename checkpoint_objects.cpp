@@ -3,12 +3,16 @@
 #include "lupine_log.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #include <map>
 #include <mutex>
-#include <string_view>
 
 extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *, unsigned, CUdevice);
 
@@ -85,12 +89,12 @@ uintptr_t native(kind type, uintptr_t id) {
              : id;
 }
 
-uintptr_t wire(kind type, uintptr_t handle) {
+uintptr_t wire(kind type, uintptr_t handle, bool required) {
   if (!enabled() || handle <= 2)
     return handle;
   std::lock_guard<std::mutex> lock(mutex);
   uintptr_t id = find(type, handle);
-  if (!id && unsupported_reason.empty())
+  if (!id && required && unsupported_reason.empty())
     unsupported_reason = "untracked CUDA handle";
   return id ? id : handle;
 }
@@ -193,19 +197,32 @@ void erase(kind type, uintptr_t handle) {
     unsupported_reason = "context destroyed before checkpoint";
 }
 
-int save(const char *path) {
-  if (!enabled())
-    return 0;
+std::vector<CUcontext> contexts() {
   std::lock_guard<std::mutex> lock(mutex);
-  for (const auto &item : objects) {
+  std::vector<CUcontext> result;
+  for (const auto &entry : objects)
+    if (entry.second.type == kind::context)
+      result.push_back(reinterpret_cast<CUcontext>(entry.second.handle));
+  return result;
+}
+
+bool supported() {
+  std::lock_guard<std::mutex> lock(mutex);
+  for (const auto &item : objects)
     if (item.second.type == kind::event &&
         !(item.second.flags & CU_EVENT_DISABLE_TIMING))
       unsupported_reason = "timed events require timestamp preservation";
-  }
-  if (!unsupported_reason.empty()) {
+  if (!unsupported_reason.empty())
     LUPINE_LOG_ERROR("Cannot checkpoint CUDA objects: " << unsupported_reason);
+  return unsupported_reason.empty();
+}
+
+int save(const char *path) {
+  if (!enabled())
+    return 0;
+  if (!supported())
     return -1;
-  }
+  std::lock_guard<std::mutex> lock(mutex);
   FILE *file = std::fopen(path, "wb");
   if (!file)
     return -1;
@@ -220,6 +237,10 @@ int save(const char *path) {
          (o.data.empty() ||
           std::fwrite(o.data.data(), o.data.size(), 1, file) == 1);
   }
+  ok = ok && std::fflush(file) == 0;
+#ifndef _WIN32
+  ok = ok && fsync(fileno(file)) == 0;
+#endif
   return std::fclose(file) == 0 && ok ? 0 : -1;
 }
 
@@ -377,6 +398,7 @@ void observe_call(int operation) {
   case RPC_cuCtxGetExecAffinity:
   case RPC_cuCtxGetSharedMemConfig:
   case RPC_cuModuleLoad:
+  case RPC_cuModuleLoadDataEx:
   case RPC_cuModuleLoadData:
   case RPC_cuModuleUnload:
   case RPC_cuModuleGetFunction:
@@ -393,6 +415,23 @@ void observe_call(int operation) {
   case RPC_cuMemcpyHtoDAsync_v2:
   case RPC_cuMemcpyDtoHAsync_v2:
   case RPC_cuMemcpyDtoDAsync_v2:
+  case RPC_cuMemcpy2D_v2:
+  case RPC_cuMemcpy2DUnaligned_v2:
+  case RPC_cuMemcpy3D_v2:
+  case RPC_cuMemcpy2DAsync_v2:
+  case RPC_cuMemcpy3DAsync_v2:
+  case RPC_cuMemsetD8_v2:
+  case RPC_cuMemsetD16_v2:
+  case RPC_cuMemsetD32_v2:
+  case RPC_cuMemsetD8Async:
+  case RPC_cuMemsetD16Async:
+  case RPC_cuMemsetD32Async:
+  case RPC_cuMemsetD2D8_v2:
+  case RPC_cuMemsetD2D16_v2:
+  case RPC_cuMemsetD2D32_v2:
+  case RPC_cuMemsetD2D8Async:
+  case RPC_cuMemsetD2D16Async:
+  case RPC_cuMemsetD2D32Async:
   case RPC_cuMemGetAccess:
   case RPC_cuMemGetAllocationGranularity:
   case RPC_cuMemGetAllocationPropertiesFromHandle:

@@ -611,16 +611,12 @@ CUresult cuKernelGetName(const char **name, CUkernel hfunc);
 CUresult cuMemGetInfo_v2(size_t *free, size_t *total);
 /**
  * @routingkey CURRENT_CONTEXT
+ * @disabled client - record allocation metadata before completing the RPC
  * @recordowner DEVICEPTR dptr
  * @param dptr SEND_RECV
  * @param bytesize SEND_ONLY
  */
-CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
-  CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS && dptr != nullptr)
-    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
-  return return_value;
-}
+CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize);
 /**
  * @routingkey CURRENT_CONTEXT
  * @recordowner DEVICEPTR dptr
@@ -657,7 +653,14 @@ CUresult cuMemFree_v2(CUdeviceptr dptr);
  * @param dptr SEND_ONLY
  */
 CUresult cuMemGetAddressRange_v2(CUdeviceptr *pbase, size_t *psize,
-                                 CUdeviceptr dptr);
+                                 CUdeviceptr dptr) {
+  // Logical bounds survive on the client; a restored VMM mapping can be larger.
+  if (!lupine_route_is_local(route) &&
+      lupine_range_for_deviceptr(dptr, pbase, psize))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @disabled client - manual client substitutes a local faulting address
  * @param pp SEND_RECV

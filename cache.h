@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 
 struct lupine_deviceptr_allocation_record {
   size_t size = 0;
@@ -19,6 +20,8 @@ lupine_deviceptr_allocation_cache_lookup(CUdeviceptr ptr);
 void lupine_deviceptr_allocation_cache_insert(CUdeviceptr base, size_t size,
                                              int route_id, CUcontext context);
 void lupine_deviceptr_allocation_cache_erase(CUdeviceptr base);
+const std::map<CUdeviceptr, lupine_deviceptr_allocation_record> &
+lupine_deviceptr_allocation_cache_entries();
 
 bool lupine_current_context_device_cache_lookup(CUcontext context,
                                                 CUdevice *device);

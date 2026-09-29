@@ -396,6 +396,7 @@ nghttp2_nv h2_nv(const char *name, const char *value) {
 }
 
 constexpr char kLupineCudaVersionHeader[] = "x-lupine-cuda-version";
+constexpr char kLupineCheckpointHeader[] = "x-lupine-checkpoint";
 constexpr char kLupineSessionHeader[] = "x-lupine-session";
 constexpr char kLupineVaBaseHeader[] = "x-lupine-va-base";
 constexpr char kLupineVaSizeHeader[] = "x-lupine-va-size";
@@ -652,6 +653,10 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
           memcmp(name, kLupineSessionHeader, namelen) == 0) {
         transport->session_id.assign(reinterpret_cast<const char *>(value),
                                      valuelen);
+      } else if (namelen == strlen(kLupineCheckpointHeader) &&
+                 memcmp(name, kLupineCheckpointHeader, namelen) == 0) {
+        transport->conn->restore_checkpoint.assign(
+            reinterpret_cast<const char *>(value), valuelen);
       } else if (namelen == strlen(kLupineClientEtagHeader) &&
                  memcmp(name, kLupineClientEtagHeader, namelen) == 0) {
         transport->client_etag.assign(reinterpret_cast<const char *>(value),
@@ -1083,7 +1088,13 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
       headers.push_back(
           h2_nv(kLupineSessionHeader, transport->session_id.c_str()));
     }
-    if (conn->va_size != 0) {
+    if (!conn->restore_checkpoint.empty())
+      headers.push_back(
+          h2_nv(kLupineCheckpointHeader, conn->restore_checkpoint.c_str()));
+    // Coordinated checkpoints currently exclude host/managed mappings. Their
+    // CPU arena is client-owned; reserving it again can collide with a fresh
+    // server's ASLR layout even though no GPU state depends on that mapping.
+    if (conn->va_size != 0 && conn->restore_checkpoint.empty()) {
       transport->local_va_base = h2_hex(conn->va_base);
       transport->local_va_size = h2_hex(conn->va_size);
       headers.push_back(
@@ -1516,7 +1527,7 @@ int rpc_http2_client_await_ready(conn_t *conn) {
                              : "; server expects " + expected_client_etag));
     return LUPINE_RPC_HTTP2_CLIENT_MISMATCH;
   }
-  if (conn->va_size == 0) {
+  if (conn->va_size == 0 || !conn->restore_checkpoint.empty()) {
     return responded && status == 200 ? 0 : -1;
   }
   if (arena_granted) {
