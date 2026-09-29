@@ -43,6 +43,7 @@ extern "C" CUresult CUDAAPI cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
 extern "C" CUresult CUDAAPI cuMemAdvise(CUdeviceptr devPtr, size_t count,
                                         CUmem_advise advice, CUdevice device);
 
+#include "checkpoint_objects.h"
 int handle_cuInit(conn_t *conn) {
   unsigned int Flags;
   int request_id;
@@ -1121,6 +1122,9 @@ int handle_cuModuleUnload(conn_t *conn) {
 
   return_value = cuModuleUnload(hmod);
 
+  if (return_value == CUDA_SUCCESS)
+    lupine_objects::erase(lupine_objects::kind::module,
+                          reinterpret_cast<uintptr_t>(hmod));
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -1176,6 +1180,8 @@ int handle_cuModuleGetFunction(conn_t *conn) {
 
   return_value = cuModuleGetFunction(&hfunc, hmod, name);
 
+  if (return_value == CUDA_SUCCESS)
+    lupine_objects::function(hfunc, hmod, name);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &hfunc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3662,6 +3668,8 @@ int handle_cuStreamCreate(conn_t *conn) {
 
   return_value = cuStreamCreate(&phStream, Flags);
 
+  if (return_value == CUDA_SUCCESS)
+    lupine_objects::stream(phStream, Flags, 0);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3689,6 +3697,8 @@ int handle_cuStreamCreateWithPriority(conn_t *conn) {
 
   return_value = cuStreamCreateWithPriority(&phStream, flags, priority);
 
+  if (return_value == CUDA_SUCCESS)
+    lupine_objects::stream(phStream, flags, priority);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3989,6 +3999,9 @@ int handle_cuStreamDestroy_v2(conn_t *conn) {
 
   return_value = cuStreamDestroy_v2(hStream);
 
+  if (return_value == CUDA_SUCCESS)
+    lupine_objects::erase(lupine_objects::kind::stream,
+                          reinterpret_cast<uintptr_t>(hStream));
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -4090,6 +4103,8 @@ int handle_cuEventCreate(conn_t *conn) {
 
   return_value = cuEventCreate(&phEvent, Flags);
 
+  if (return_value == CUDA_SUCCESS)
+    lupine_objects::event(phEvent, Flags);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &phEvent, sizeof(CUevent)) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||

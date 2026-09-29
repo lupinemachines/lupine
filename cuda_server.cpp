@@ -40,7 +40,6 @@
 #include "cache.h"
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_server.h"
-#include "server_checkpoint.h"
 #include "cuda_server_memcpy.h"
 #include "events.h"
 #include "ipc.h"
@@ -49,6 +48,7 @@
 #include "lupine_log.h"
 #include "monitoring.h"
 #include "rpc.h"
+#include "server_checkpoint.h"
 
 #ifdef _WIN32
 #include <io.h>
@@ -80,6 +80,7 @@ extern "C" CUresult CUDAAPI cuGraphInstantiate_v2(CUgraphExec *phGraphExec,
                                                   CUgraphNode *phErrorNode,
                                                   char *logBuffer,
                                                   size_t bufferSize);
+#include "checkpoint_objects.h"
 
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
@@ -967,6 +968,7 @@ static lupine_module_snapshot lupine_collect_module(CUmodule module) {
       continue;
     }
     auto &record = snapshot.records.emplace_back();
+    lupine_objects::function(function, module, name);
     record.name = name;
     record.name_length = static_cast<uint32_t>(std::strlen(name) + 1);
     record.function = function;
@@ -1031,6 +1033,7 @@ int handle_cuModuleLoad(conn_t *conn) {
 
   result = cuModuleLoadData(&module, image.data());
   if (result == CUDA_SUCCESS) {
+    lupine_objects::module(module, image.data(), image_size, false);
     lupine_note_device_stdout_image(image.data(), image_size);
   }
 
@@ -1076,6 +1079,8 @@ int handle_cuModuleLoadData(conn_t *conn) {
     result = CUDA_ERROR_NOT_SUPPORTED;
   }
   if (result == CUDA_SUCCESS) {
+    lupine_objects::module(module, image.data(), image_size,
+                           kind != LUPINE_MODULE_IMAGE_FATBIN_RAW);
     lupine_note_device_stdout_image(image.data(), image.size());
   }
 
@@ -1786,6 +1791,12 @@ int handle_cuPointerGetAttribute(conn_t *conn) {
     value_size = 0;
   } else {
     result = cuPointerGetAttribute(value, attribute, ptr);
+    if (result == CUDA_SUCCESS && attribute == CU_POINTER_ATTRIBUTE_CONTEXT) {
+      uintptr_t context = 0;
+      std::memcpy(&context, value, sizeof(context));
+      context = lupine_objects::wire(lupine_objects::kind::context, context);
+      std::memcpy(value, &context, sizeof(context));
+    }
   }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1878,6 +1889,16 @@ int handle_cuPointerGetAttributes(conn_t *conn) {
   if (result == CUDA_SUCCESS) {
     result = cuPointerGetAttributes(num_attributes, attributes.data(),
                                     data.data(), ptr);
+  }
+  if (result == CUDA_SUCCESS) {
+    for (unsigned i = 0; i < num_attributes; ++i) {
+      if (attributes[i] != CU_POINTER_ATTRIBUTE_CONTEXT)
+        continue;
+      uintptr_t context = 0;
+      std::memcpy(&context, data[i], sizeof(context));
+      context = lupine_objects::wire(lupine_objects::kind::context, context);
+      std::memcpy(data[i], &context, sizeof(context));
+    }
   }
   if (result != CUDA_SUCCESS) {
     std::fill(value_sizes.begin(), value_sizes.end(), 0);
@@ -3397,6 +3418,9 @@ int handle_cuEventDestroy_v2(conn_t *conn) {
   }
 
   CUresult result = cuEventDestroy_v2(event);
+  if (result == CUDA_SUCCESS)
+    lupine_objects::erase(lupine_objects::kind::event,
+                          reinterpret_cast<uintptr_t>(event));
   if (result == CUDA_SUCCESS) {
     lupine_forget_event_capture_resources(event);
     lupine_forget_event_dtoh_marker(conn, event);
@@ -4399,8 +4423,8 @@ int handle_cuMemFree_v2(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
-  CUresult result = lupine_server_free_device_allocation(
-      pointer, [](CUdeviceptr ptr) {
+  CUresult result =
+      lupine_server_free_device_allocation(pointer, [](CUdeviceptr ptr) {
         auto release = reinterpret_cast<decltype(&cuMemFree_v2)>(
             lupine_server_checkpoint_cuda_symbol("cuMemFree_v2"));
         return release != nullptr ? release(ptr) : cuMemFree_v2(ptr);
@@ -4672,6 +4696,8 @@ int handle_cuCtxCreate_v2(conn_t *conn) {
   CUresult result = cuCtxCreate_v2(&context, flags, device);
   lupine_monitoring_end_context_create(result == CUDA_SUCCESS);
   lupine_server_note_created_context(conn, context, result);
+  if (result == CUDA_SUCCESS)
+    lupine_objects::context(context, device, flags, false);
   lupine_server_end_lifecycle_transaction(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &context, sizeof(context)) < 0 ||
@@ -4708,6 +4734,7 @@ int handle_lupineEventCreateBatch(conn_t *conn) {
         if (result != CUDA_SUCCESS) {
           break;
         }
+        lupine_objects::event(events[count], flags);
       }
     }
     CUcontext popped = nullptr;
@@ -4762,6 +4789,8 @@ int handle_lupineStreamPoolInit(conn_t *conn) {
                                      priority) != CUDA_SUCCESS) {
         break;
       }
+      lupine_objects::stream(streams[created], CU_STREAM_NON_BLOCKING,
+                              priority);
     }
     CUcontext popped = nullptr;
     cuCtxPopCurrent(&popped);
@@ -4794,6 +4823,12 @@ int handle_cuDevicePrimaryCtxRetain(conn_t *conn) {
   CUresult result = cuDevicePrimaryCtxRetain(&context, device);
   lupine_monitoring_end_context_create(result == CUDA_SUCCESS);
   lupine_server_note_primary_context(conn, device, context, result);
+  if (result == CUDA_SUCCESS) {
+    unsigned flags = 0;
+    int active = 0;
+    if (cuDevicePrimaryCtxGetState(device, &flags, &active) == CUDA_SUCCESS)
+      lupine_objects::context(context, device, flags, true);
+  }
   lupine_server_end_lifecycle_transaction(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &context, sizeof(context)) < 0 ||

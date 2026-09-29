@@ -1657,6 +1657,7 @@ def write_cuda_server(
                 f'extern "C" {function.return_type.format()} CUDAAPI '
                 f"{name}({params});\n\n"
             )
+        f.write('\n#include "checkpoint_objects.h"\n')
         for function, _, operations, metadata in server_functions_with_annotations:
             if (
                 metadata.disabled_server

@@ -32,6 +32,7 @@
 #include "rpc_server.h"
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 #include "checkpoint.h"
+#include "checkpoint_objects.h"
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_server.h"
 #include "server_checkpoint.h"
@@ -210,7 +211,9 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
       break;
     }
     lupine_checkpoint::cuda_call_guard guard;
+    lupine_objects::observe_call(op);
     result = handler.handler(conn);
+    lupine_objects::finish_call();
     break;
   }
 #else

@@ -31,6 +31,8 @@
 extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *context,
                                            unsigned int flags, CUdevice device);
 
+#include "checkpoint_objects.h"
+
 class lupine_htod_side_effect_ring;
 
 struct lupine_staging_state {

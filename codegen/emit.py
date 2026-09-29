@@ -429,6 +429,17 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         write_server_buffer_cleanup(f, owned_buffers, "    ")
         f.write("    return 0;\n  }\n\n")
 
+    object_hooks = {
+        "cuModuleGetFunction": "lupine_objects::function(hfunc, hmod, name);",
+        "cuModuleUnload": "lupine_objects::erase(lupine_objects::kind::module, reinterpret_cast<uintptr_t>(hmod));",
+        "cuStreamCreate": "lupine_objects::stream(phStream, Flags, 0);",
+        "cuStreamCreateWithPriority": "lupine_objects::stream(phStream, flags, priority);",
+        "cuStreamDestroy_v2": "lupine_objects::erase(lupine_objects::kind::stream, reinterpret_cast<uintptr_t>(hStream));",
+        "cuEventCreate": "lupine_objects::event(phEvent, Flags);",
+    }
+    if backend.result == "CUresult" and name in object_hooks:
+        f.write("  if (return_value == CUDA_SUCCESS) " + object_hooks[name] + "\n")
+
     if stdout:
         f.write("  lupine_finish_stdout_capture(&capture);\n")
     if deferred:
