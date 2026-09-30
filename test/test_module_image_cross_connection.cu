@@ -1,9 +1,7 @@
 // LUPINE_TEST_CONNECTIONS 2
-// A module or library loaded on the first connection's device is launched on
-// the second connection's device, which replicates it there from the recorded
-// image. Unloading a module and loading a different one, which the server
-// sooner or later hands the same handle, must replicate the new image, not
-// reuse the mirror of the old one. Auto-discovered by run_custom_tests.sh.
+// Module functions belong to their creating context. Cross-connection launches
+// must reject them, while context-independent library kernels remain usable on
+// both devices. Auto-discovered by run_custom_tests.sh.
 #include <cuda.h>
 
 #include <cstdint>
@@ -85,9 +83,21 @@ int main() {
         !check(cuModuleGetFunction(&function, module, "k"),
                "cuModuleGetFunction") ||
         !launch_and_check(function, contexts[0], value, "module") ||
-        !launch_and_check(function, contexts[1], value,
-                          "module on the second connection") ||
-        !check(cuCtxSetCurrent(contexts[0]), "cuCtxSetCurrent") ||
+        !check(cuCtxSetCurrent(contexts[1]), "cuCtxSetCurrent")) {
+      return 1;
+    }
+    CUdeviceptr out = 0;
+    void *args[] = {&out};
+    CUresult result =
+        cuLaunchKernel(function, 1, 1, 1, 1, 1, 1, 0, nullptr, args, nullptr);
+    if (result != CUDA_ERROR_INVALID_HANDLE) {
+      std::fprintf(stderr,
+                   "cross-context module launch returned %d, expected %d\n",
+                   static_cast<int>(result), CUDA_ERROR_INVALID_HANDLE);
+      return 1;
+    }
+    if (!launch_and_check(function, contexts[0], value,
+                          "module after rejection") ||
         !check(cuModuleUnload(module), "cuModuleUnload")) {
       return 1;
     }
