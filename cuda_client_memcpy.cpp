@@ -1662,7 +1662,7 @@ static CUresult lupine_read_dtoh_chunks(conn_t *conn, int request_id,
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     bool final_chunk = result != CUDA_SUCCESS || offset + chunk == bytes;
-    if (rpc_read_end(conn) < 0) {
+    if (rpc_read_end(conn, final_chunk) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     if (result != CUDA_SUCCESS) {
@@ -1735,7 +1735,7 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
       rpc_write(conn, &fetch_stream, sizeof(fetch_stream)) < 0) {
     return false;
   }
-  return lupine_read_dtoh_chunks(conn, rpc_write_end(conn), dst, bytes) ==
+  return lupine_read_dtoh_chunks(conn, rpc_write_end(conn, true), dst, bytes) ==
          CUDA_SUCCESS;
 }
 
@@ -3090,6 +3090,40 @@ lupine_free_device_allocation(CUdeviceptr dptr, lupine_device_free_fn release) {
   return result;
 }
 
+// Publish allocation metadata before the reply releases checkpoint admission.
+extern "C" CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
+  if (!dptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  lupine_route route = lupine_route_for_current_context();
+  if (lupine_route_is_local(route)) {
+    CUresult result = lupine_call_real_cuda_fn("cuMemAlloc_v2", dptr, bytesize);
+    if (result == CUDA_SUCCESS)
+      lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
+    return result;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUdeviceptr pointer = 0;
+  CUresult result;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuMemAlloc_v2) < 0 ||
+      rpc_write(conn, &pointer, sizeof(pointer)) < 0 ||
+      rpc_write(conn, &bytesize, sizeof(bytesize)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, dptr, sizeof(*dptr)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (result == CUDA_SUCCESS)
+    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
+  return rpc_read_end(conn) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE : result;
+}
+
+#ifdef cuMemAlloc
+#undef cuMemAlloc
+#endif
+extern "C" CUresult cuMemAlloc(CUdeviceptr *dptr, size_t bytesize) {
+  return cuMemAlloc_v2(dptr, bytesize);
+}
+
 extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
   return lupine_free_device_allocation(dptr, [](conn_t *conn, CUdeviceptr ptr) {
     if (conn == nullptr) {
@@ -3100,10 +3134,12 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
         rpc_write_start_request(conn, RPC_cuMemFree_v2) < 0 ||
         rpc_write(conn, &ptr, sizeof(ptr)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+        rpc_read(conn, &result, sizeof(result)) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
-    return result;
+    if (result == CUDA_SUCCESS)
+      lupine_forget_deviceptr_owner(ptr);
+    return rpc_read_end(conn) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE : result;
   });
 }
 
@@ -3445,6 +3481,23 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
       if (values[i].size() != value_sizes[i]) {
         return CUDA_ERROR_INVALID_VALUE;
       }
+      CUdeviceptr logical_base = 0;
+      size_t logical_size = 0;
+      if ((attributes[i] == CU_POINTER_ATTRIBUTE_RANGE_START_ADDR ||
+           attributes[i] == CU_POINTER_ATTRIBUTE_RANGE_SIZE) &&
+          lupine_range_for_deviceptr(ptr, &logical_base, &logical_size)) {
+        if (attributes[i] == CU_POINTER_ATTRIBUTE_RANGE_START_ADDR)
+          memcpy(values[i].data(), &logical_base, sizeof(logical_base));
+        else
+          memcpy(values[i].data(), &logical_size, sizeof(logical_size));
+      }
+      // Allocation ownership already survives on the client. The provider's
+      // temporary restore context is not the application's context handle.
+      if (attributes[i] == CU_POINTER_ATTRIBUTE_CONTEXT) {
+        CUcontext owner = lupine_context_for_deviceptr(ptr);
+        if (owner)
+          memcpy(values[i].data(), &owner, sizeof(owner));
+      }
       memcpy(data[i], values[i].data(), values[i].size());
       if ((managed_alias || remote_host_alias) &&
           attributes[i] == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
@@ -3524,7 +3577,8 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
        rpc_write(source_cursor.conn, &bytes, sizeof(bytes)) < 0 ||
        rpc_write(source_cursor.conn, &source_stream, sizeof(source_stream)) <
            0 ||
-       (source_cursor.request_id = rpc_write_end(source_cursor.conn)) < 0)) {
+       (source_cursor.request_id = rpc_write_end(source_cursor.conn, true)) <
+           0)) {
     return -1;
   }
 
@@ -3548,7 +3602,9 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
         rpc_read(source->conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
          rpc_read(source->conn, source->storage.data(), chunk) < 0);
-    if (rpc_read_end(source->conn) < 0 || read_failed) {
+    if (rpc_read_end(source->conn, read_failed || result != CUDA_SUCCESS ||
+                                       source->remaining == chunk) < 0 ||
+        read_failed) {
       source->remaining = 0;
       LUPINE_LOG_ERROR("Cross-route DtoD source transport failed");
       return -1;
@@ -3595,7 +3651,7 @@ static CUresult lupine_bulk_pull(conn_t *conn, lupine_bulk_lanes *lanes,
       rpc_write(conn, &bytes, sizeof(bytes)) < 0 ||
       rpc_write(conn, &stream, sizeof(stream)) < 0 ||
       rpc_write(conn, &readers, sizeof(readers)) < 0 ||
-      (request_id = rpc_write_end(conn)) < 0) {
+      (request_id = rpc_write_end(conn, true)) < 0) {
     pthread_mutex_unlock(&lanes->mutex);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -3685,7 +3741,7 @@ static CUresult lupine_copy_dtoh_pageable(conn_t *conn, void *dstHost,
       rpc_write(conn, &hStream, sizeof(hStream)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return lupine_read_dtoh_chunks(conn, rpc_write_end(conn),
+  return lupine_read_dtoh_chunks(conn, rpc_write_end(conn, true),
                                  static_cast<unsigned char *>(dstHost),
                                  ByteCount);
 }
@@ -4008,7 +4064,7 @@ static CUresult lupine_memcpy_atoh(void *dstHost, CUarray srcArray,
       (hStream != nullptr && rpc_write(conn, hStream, sizeof(*hStream)) < 0)) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return lupine_read_dtoh_chunks(conn, rpc_write_end(conn),
+  return lupine_read_dtoh_chunks(conn, rpc_write_end(conn, true),
                                  static_cast<unsigned char *>(dstHost),
                                  ByteCount);
 }

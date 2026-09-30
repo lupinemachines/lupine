@@ -912,6 +912,23 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
     if(TARGET lupine_driver_server AND LUPINE_BUILD_CUDA)
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            if(TARGET lupine_cuda_client)
+                add_executable(gpu_handoff_client test/test_gpu_handoff.cpp)
+                target_include_directories(gpu_handoff_client PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+                target_link_libraries(gpu_handoff_client PRIVATE CUDA::cuda_driver)
+                find_package(Python3 COMPONENTS Interpreter REQUIRED)
+                add_test(NAME gpu_handoff_test COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/test/test_gpu_handoff.py
+                    $<TARGET_FILE:lupine_driver_server> $<TARGET_FILE:gpu_handoff_client>
+                    $<TARGET_FILE_DIR:lupine_cuda_client>)
+                add_test(NAME gpu_handoff_rejection_test COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/test/test_gpu_handoff.py
+                    $<TARGET_FILE:lupine_driver_server> $<TARGET_FILE:gpu_handoff_client>
+                    $<TARGET_FILE_DIR:lupine_cuda_client>)
+                set_tests_properties(gpu_handoff_test gpu_handoff_rejection_test PROPERTIES
+                    LABELS gpu SKIP_RETURN_CODE 77 TIMEOUT 150 ENVIRONMENT "LUPINE_TEST_EXPLICIT_CONTEXT=1")
+                set_property(TEST gpu_handoff_rejection_test APPEND PROPERTY ENVIRONMENT "LUPINE_TEST_REJECT=1")
+            endif()
             add_executable(checkpoint_objects_test checkpoint_objects.cpp test/test_checkpoint_objects.cpp)
             target_include_directories(checkpoint_objects_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CUDAToolkit_INCLUDE_DIRS})
             target_link_libraries(checkpoint_objects_test PRIVATE CUDA::cuda_driver Threads::Threads)

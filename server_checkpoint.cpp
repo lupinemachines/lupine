@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdlib>
+#include <cstring>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -37,6 +38,11 @@ struct child_checkpoint_state {
   optional_checkpoint_provider provider;
   std::string connection_id;
   std::atomic<bool> checkpoint_requested{false};
+  std::atomic<conn_t *> rpc_connection{nullptr};
+  int (*notice)(conn_t *) = nullptr;
+  int (*save_objects)(const char *) = nullptr;
+  int (*restore_objects)(const char *) = nullptr;
+  bool handoff_attempted = false;
   bool handler_installed = false;
   bool started = false;
 };
@@ -141,6 +147,9 @@ void wait_for_shutdown(child_checkpoint_state &state) {
     }
     if (event == 'T') {
       state.checkpoint_requested.store(true, std::memory_order_release);
+      auto *conn = state.rpc_connection.load(std::memory_order_acquire);
+      if (conn != nullptr && state.notice != nullptr && state.notice(conn) == 0)
+        return;
       (void)shutdown(state.connection, SHUT_RDWR);
       return;
     }
@@ -212,9 +221,11 @@ bool lupine_server_checkpoint_child_start(lupine_socket_t connection) {
 #endif
 }
 
-bool lupine_server_checkpoint_connection_ready(const char *connection_id) {
+bool lupine_server_checkpoint_connection_ready(const char *connection_id,
+                                               const char *required) {
 #ifdef _WIN32
   (void)connection_id;
+  (void)required;
   return true;
 #else
   child_checkpoint_state &state = checkpoint_state();
@@ -229,6 +240,21 @@ bool lupine_server_checkpoint_connection_ready(const char *connection_id) {
   }
   state.connection_id = connection_id;
 
+  if (required && required[0]) {
+    std::string prefix = state.connection_id + ".";
+    if (std::strncmp(required, prefix.c_str(), prefix.size()) != 0 ||
+        !required[prefix.size()] ||
+        std::strspn(required + prefix.size(), "0123456789") !=
+            std::strlen(required + prefix.size()))
+      return false;
+    auto restore = reinterpret_cast<int (*)(const char *)>(
+        dlsym(state.provider.library, "lupinecr_restore_required_v1"));
+    if (!state.provider.api || !restore || !state.restore_objects)
+      return false;
+    if (restore(required) != 0)
+      return false;
+    return state.restore_objects(required) == 0;
+  }
   if (state.provider.api != nullptr &&
       state.provider.api->restore(state.connection_id.c_str()) != 0) {
     LUPINE_LOG_ERROR("LupineCR failed to restore connection "
@@ -268,7 +294,8 @@ int lupine_server_checkpoint_child_finish() {
   bool should_checkpoint =
       sigterm_received != 0 ||
       state.checkpoint_requested.load(std::memory_order_acquire);
-  if (should_checkpoint) {
+  if (should_checkpoint && !state.handoff_attempted &&
+      state.save_objects == nullptr) {
     // This remains unconditional even when no provider is installed.
     lupine_checkpoint_drain_cuda_calls();
     if (state.provider.api != nullptr) {
@@ -299,4 +326,63 @@ void *lupine_server_checkpoint_cuda_symbol(const char *name) {
   const auto &provider = checkpoint_state().provider;
   return provider.cuda_symbol != nullptr ? provider.cuda_symbol(name) : nullptr;
 #endif
+}
+
+void lupine_server_checkpoint_attach(conn_t *conn, int (*notice)(conn_t *),
+                                     int (*save)(const char *),
+                                     int (*restore)(const char *)) {
+#ifndef _WIN32
+  auto &state = checkpoint_state();
+  state.notice = notice;
+  state.save_objects = save;
+  state.restore_objects = restore;
+  state.rpc_connection.store(conn, std::memory_order_release);
+#endif
+}
+
+int lupine_server_checkpoint_commit(const char *id, const uint64_t *pointers,
+                                    const uint64_t *sizes,
+                                    void *const *contexts, size_t count) {
+#ifdef _WIN32
+  return -1;
+#else
+  auto &state = checkpoint_state();
+  state.handoff_attempted = true;
+  if (!id || !state.provider.api || !state.save_objects ||
+      state.connection_id.empty())
+    return -1;
+  std::string prefix = state.connection_id + ".";
+  if (std::strncmp(id, prefix.c_str(), prefix.size()) != 0 ||
+      !id[prefix.size()] ||
+      std::strspn(id + prefix.size(), "0123456789") !=
+          std::strlen(id + prefix.size()))
+    return -1;
+  // Each handoff has a new key. Publish the memory manifest last; a returning
+  // client requires that manifest and the matching catalog, never a fresh
+  // start.
+  using set_allocations_fn =
+      int (*)(const uint64_t *, const uint64_t *, void *const *, size_t);
+  auto set_allocations = reinterpret_cast<set_allocations_fn>(
+      dlsym(state.provider.library, "lupinecr_set_allocations_v1"));
+  if (!set_allocations ||
+      set_allocations(pointers, sizes, contexts, count) != 0)
+    return -1;
+  if (state.save_objects(id) != 0)
+    return -1;
+  return state.provider.api->checkpoint(id);
+#endif
+}
+
+std::string lupine_server_checkpoint_catalog_path(const char *id) {
+#ifndef _WIN32
+  auto &provider = checkpoint_state().provider;
+  if (!provider.api)
+    return {};
+  auto catalog_path = reinterpret_cast<int (*)(const char *, char *, size_t)>(
+      dlsym(provider.library, "lupinecr_catalog_path_v1"));
+  char path[4096];
+  if (catalog_path && catalog_path(id, path, sizeof(path)) == 0)
+    return path;
+#endif
+  return {};
 }

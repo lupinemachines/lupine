@@ -1070,37 +1070,6 @@ CUresult cuMemGetInfo_v2(size_t *free, size_t *total) {
   return return_value;
 }
 
-CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
-  lupine_route route = lupine_route_for_current_context();
-  CUresult return_value;
-  if (lupine_route_is_local(route)) {
-    return_value = lupine_call_real_cuda_fn(
-        LUPINE_REAL_CUDA_SYMBOL("cuMemAlloc_v2"), dptr, bytesize);
-    if (return_value == CUDA_SUCCESS && dptr != nullptr) {
-      lupine_note_deviceptr_owner_route(*dptr, route);
-    }
-    if (return_value == CUDA_SUCCESS && dptr != nullptr)
-      lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
-    return return_value;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemAlloc_v2) < 0 ||
-      rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &bytesize, sizeof(size_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS && dptr != nullptr) {
-    lupine_note_deviceptr_owner_route(*dptr, route);
-  }
-  if (return_value == CUDA_SUCCESS && dptr != nullptr)
-    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
-  return return_value;
-}
-
 CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
                             size_t WidthInBytes, size_t Height,
                             unsigned int ElementSizeBytes) {
@@ -1154,6 +1123,10 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
 CUresult cuMemGetAddressRange_v2(CUdeviceptr *pbase, size_t *psize,
                                  CUdeviceptr dptr) {
   lupine_route route = lupine_route_for_deviceptr(dptr);
+  // Logical bounds survive on the client; a restored VMM mapping can be larger.
+  if (!lupine_route_is_local(route) &&
+      lupine_range_for_deviceptr(dptr, pbase, psize))
+    return CUDA_SUCCESS;
   CUresult return_value;
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn(
@@ -7364,13 +7337,6 @@ extern "C" CUresult cuModuleGetGlobal(CUdeviceptr *dptr, size_t *bytes,
   return cuModuleGetGlobal_v2(dptr, bytes, hmod, name);
 }
 
-#ifdef cuMemAlloc
-#undef cuMemAlloc
-#endif
-extern "C" CUresult cuMemAlloc(CUdeviceptr *dptr, size_t bytesize) {
-  return cuMemAlloc_v2(dptr, bytesize);
-}
-
 #ifdef cuMemAllocPitch
 #undef cuMemAllocPitch
 #endif
@@ -8216,7 +8182,6 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuGraphExecUpdate", (void *)cuGraphExecUpdate},
     {"cuCtxDestroy", (void *)cuCtxDestroy_v2},
     {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},
-    {"cuMemAlloc", (void *)cuMemAlloc_v2},
     {"cuMemAllocPitch", (void *)cuMemAllocPitch_v2},
     {"cuMemcpyDtoD", (void *)cuMemcpyDtoD_v2},
     {"cuMemcpyDtoDAsync", (void *)cuMemcpyDtoDAsync_v2},

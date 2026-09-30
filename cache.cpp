@@ -82,6 +82,11 @@ lane_context_cache_entry *lane_context_cache_entry_for(int route_id) {
 
 } // namespace
 
+const std::map<CUdeviceptr, lupine_deviceptr_allocation_record> &
+lupine_deviceptr_allocation_cache_entries() {
+  return allocation_cache().allocations;
+}
+
 void lupine_deviceptr_allocation_cache_insert(CUdeviceptr base, size_t size,
                                              int route_id, CUcontext context) {
   lupine_deviceptr_allocation_cache_erase(base);

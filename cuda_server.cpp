@@ -11,6 +11,8 @@
 #include <sys/mman.h> // memfd_create
 #include <sys/syscall.h>
 #endif
+#include <fcntl.h>
+#include <filesystem>
 #include <future>
 #include <iostream>
 #include <memory>
@@ -80,6 +82,8 @@ extern "C" CUresult CUDAAPI cuGraphInstantiate_v2(CUgraphExec *phGraphExec,
                                                   CUgraphNode *phErrorNode,
                                                   char *logBuffer,
                                                   size_t bufferSize);
+
+#include "checkpoint.h"
 #include "checkpoint_objects.h"
 
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
@@ -1124,6 +1128,10 @@ int handle_cuModuleLoadDataEx(conn_t *conn) {
   CUresult result = cuModuleLoadDataEx(&module, image.data(), jit.num_options,
                                        jit.options, jit.option_values);
   if (result == CUDA_SUCCESS) {
+    if (jit.num_options == 0)
+      lupine_objects::module(module, image.data(), image_size, false);
+    else
+      lupine_objects::unsupported("module JIT options");
     lupine_note_device_stdout_image(image.data(), image.size());
   }
 
@@ -1794,7 +1802,8 @@ int handle_cuPointerGetAttribute(conn_t *conn) {
     if (result == CUDA_SUCCESS && attribute == CU_POINTER_ATTRIBUTE_CONTEXT) {
       uintptr_t context = 0;
       std::memcpy(&context, value, sizeof(context));
-      context = lupine_objects::wire(lupine_objects::kind::context, context);
+      context =
+          lupine_objects::wire(lupine_objects::kind::context, context, false);
       std::memcpy(value, &context, sizeof(context));
     }
   }
@@ -1896,7 +1905,8 @@ int handle_cuPointerGetAttributes(conn_t *conn) {
         continue;
       uintptr_t context = 0;
       std::memcpy(&context, data[i], sizeof(context));
-      context = lupine_objects::wire(lupine_objects::kind::context, context);
+      context =
+          lupine_objects::wire(lupine_objects::kind::context, context, false);
       std::memcpy(data[i], &context, sizeof(context));
     }
   }
@@ -4930,4 +4940,94 @@ int handle_cuCtxDetach(conn_t *conn) {
   lupine_server_finish_context_detach(conn, context, result);
   lupine_server_end_lifecycle_transaction(conn);
   return lupine_write_lifecycle_response(conn, request_id, result);
+}
+
+void lupine_configure_checkpoint_session(conn_t *conn) {
+#ifndef _WIN32
+  if (!lupine_objects::enabled())
+    return;
+  lupine_server_checkpoint_attach(
+      conn,
+      [](conn_t *connection) {
+        int accepted = -1;
+        if (rpc_write_start_request(connection, LUPINE_SIDE_EFFECT_PREEMPT) <
+                0 ||
+            rpc_wait_for_response(connection) < 0 ||
+            rpc_read(connection, &accepted, sizeof(accepted)) < 0 ||
+            rpc_read_end(connection) < 0)
+          return -1;
+        return accepted;
+      },
+      [](const char *id) {
+        auto path = lupine_server_checkpoint_catalog_path(id);
+        if (path.empty() || std::filesystem::exists(path) ||
+            lupine_objects::save(path.c_str()) != 0)
+          return -1;
+        auto parent = std::filesystem::path(path).parent_path();
+        int fd = open(parent.c_str(), O_RDONLY | O_DIRECTORY);
+        if (fd < 0)
+          return -1;
+        int status = fsync(fd);
+        close(fd);
+        return status;
+      },
+      [](const char *id) {
+        auto path = lupine_server_checkpoint_catalog_path(id);
+        return path.empty() ? -1 : lupine_objects::restore(path.c_str());
+      });
+#endif
+}
+
+int handle_lupine_checkpoint(conn_t *conn) {
+  uint64_t sequence = 0;
+  uint32_t length = 0;
+  if (rpc_read(conn, &sequence, sizeof(sequence)) < 0 ||
+      rpc_read(conn, &length, sizeof(length)) < 0 || !length || length > 100)
+    return -1;
+  std::string id(length, '\0');
+  if (rpc_read(conn, id.data(), length) < 0 ||
+      id.find('\0') != std::string::npos)
+    return -1;
+  uint32_t count = 0;
+  if (rpc_read(conn, &count, sizeof(count)) < 0 || count > (1u << 16))
+    return -1;
+  std::vector<uint64_t> pointers(count), sizes(count);
+  std::vector<void *> contexts(count);
+  for (uint32_t i = 0; i < count; ++i) {
+    CUcontext context = nullptr;
+    if (rpc_read(conn, &pointers[i], sizeof(pointers[i])) < 0 ||
+        rpc_read(conn, &sizes[i], sizeof(sizes[i])) < 0 ||
+        rpc_read(conn, &context, sizeof(context)) < 0 || !context)
+      return -1;
+    contexts[i] = context;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0 || rpc_async_sequence_begin(conn, sequence) < 0)
+    return -1;
+  rpc_async_sequence_end(conn);
+  // This control handler deliberately runs outside the normal dispatch gate.
+  lupine_checkpoint_drain_cuda_calls();
+  int result =
+      lupine_objects::enabled() && lupine_objects::supported() ? 0 : -1;
+  CUcontext previous = nullptr;
+  (void)cuCtxGetCurrent(&previous);
+  for (auto context : lupine_objects::contexts()) {
+    if (result != 0)
+      break;
+    if (cuCtxSetCurrent(context) != CUDA_SUCCESS ||
+        cuCtxSynchronize() != CUDA_SUCCESS)
+      result = -1;
+  }
+  (void)cuCtxSetCurrent(previous);
+  auto pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true);
+  if (result == 0)
+    result = lupine_server_checkpoint_commit(
+        id.c_str(), pointers.data(), sizes.data(), contexts.data(), count);
+  bool failed = rpc_write_start_response(conn, request_id) < 0 ||
+                rpc_copy_alloc(conn, sizeof(uint32_t)) < 0 ||
+                lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
+                rpc_write(conn, &result, sizeof(result)) < 0 ||
+                rpc_write_end(conn) < 0;
+  lupine_cleanup_pending_dtoh_copies(&pending);
+  return failed ? -1 : 0;
 }

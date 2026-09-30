@@ -4,6 +4,7 @@
 #include "lupine_platform.h"
 #include <set>
 #include <stdint.h>
+#include <string>
 #include <vector>
 
 // Chunk size shared by the client and server for transfers split across
@@ -18,6 +19,8 @@ static constexpr int LUPINE_SIDE_EFFECT_HOST_FUNCTION = 1;
 static constexpr int LUPINE_SIDE_EFFECT_STREAM_CALLBACK = 2;
 static constexpr int LUPINE_SIDE_EFFECT_READ_HOST_MEMORY = 3;
 static constexpr int LUPINE_SIDE_EFFECT_LOG_CALLBACK = 4;
+static constexpr int LUPINE_SIDE_EFFECT_PREEMPT = 5;
+static constexpr int LUPINE_RPC_CHECKPOINT = 0x7fffff01;
 
 static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOH = 0;
 static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOD = 1;
@@ -148,6 +151,11 @@ struct conn_t {
   int local_request_parity;
   int logical_index;
   int closed;
+  pthread_cond_t calls_drained;
+  unsigned active_client_calls;
+  bool paused;
+  uint64_t generation;
+  std::string restore_checkpoint;
   void *http2;
   void *tls_session; // SSL* for https:// client connections; otherwise null.
   uintptr_t va_base;
@@ -188,6 +196,7 @@ struct rpc_lifecycle_hooks {
   // Whether an alias-backed response destination needs write protection.
   // Without a backend hook, preserve the protected read-view behavior.
   bool (*host_range_is_protected)(uintptr_t start, size_t size) = nullptr;
+  int (*before_request)(conn_t *conn) = nullptr;
 };
 extern int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks);
 
@@ -210,7 +219,7 @@ static inline int rpc_read_buffer(conn_t *conn, void *data, size_t size) {
   return rpc_read(conn, data, size);
 }
 extern int rpc_drain(conn_t *conn, size_t size);
-extern int rpc_read_end(conn_t *conn);
+extern int rpc_read_end(conn_t *conn, bool final_response = true);
 
 extern int rpc_wait_for_response(conn_t *conn);
 
@@ -246,7 +255,11 @@ extern int rpc_copy_alloc(conn_t *conn, const size_t size);
 extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
 extern int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
                              size_t count);
-extern int rpc_write_end(conn_t *conn);
+extern int rpc_write_end(conn_t *conn, bool expects_response = false);
+// A successful pause holds call admission until resume. Only the pausing
+// thread may issue control RPCs; other callers wait without losing state.
+extern int rpc_pause_client(conn_t *conn);
+extern void rpc_resume_client(conn_t *conn);
 // Wait for all fire-and-forget calls published before an RPC's entry. These
 // waits order native submission, not GPU completion; overlapping calls remain
 // free to execute and complete in either order.

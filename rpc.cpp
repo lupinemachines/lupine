@@ -10,6 +10,7 @@
 #include <new>
 #include <string.h>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 
 #ifndef _WIN32
@@ -254,6 +255,8 @@ void rpc_shutdown_transport_socket(conn_t *conn) {
       __atomic_load_n(&conn->connfd, __ATOMIC_ACQUIRE);
 #endif
   rpc_cancel_async_waits(conn);
+  if (conn->async_sync_initialized)
+    pthread_cond_broadcast(&conn->calls_drained);
   if (conn->http2 != nullptr) {
     rpc_http2_shutdown(conn);
   } else if (socket != LUPINE_INVALID_SOCKET) {
@@ -333,14 +336,79 @@ static int rpc_write_queue_push(conn_t *conn, rpc_write_cursor cursor) {
   return 0;
 }
 
+// Only the control owner and the context-reestablishment hook nest calls.
+// Keep the platform mutex unchanged (Windows uses a nonrecursive SRW lock).
+static thread_local std::unordered_map<conn_t *, unsigned> call_depth;
+static int rpc_call_lock(conn_t *conn, bool try_lock = false) {
+  auto &depth = call_depth[conn];
+  if (depth != 0) {
+    ++depth;
+    return 0;
+  }
+  int status = try_lock ? pthread_mutex_trylock(&conn->call_mutex)
+                        : pthread_mutex_lock(&conn->call_mutex);
+  if (status == 0)
+    depth = 1;
+  return status;
+}
+static void rpc_call_unlock(conn_t *conn) {
+  auto &depth = call_depth[conn];
+  if (--depth == 0)
+    pthread_mutex_unlock(&conn->call_mutex);
+}
+
+static thread_local conn_t *paused_connection = nullptr;
+static thread_local std::unordered_map<conn_t *, int> counted_responses;
+
+static void rpc_client_call_finished(conn_t *conn) {
+  rpc_call_lock(conn);
+  if (conn->active_client_calls)
+    --conn->active_client_calls;
+  pthread_cond_broadcast(&conn->calls_drained);
+  rpc_call_unlock(conn);
+}
+
+int rpc_pause_client(conn_t *conn) {
+  if (!conn || paused_connection)
+    return -1;
+  rpc_call_lock(conn);
+  if (conn->paused || conn->closed) {
+    rpc_call_unlock(conn);
+    return -1;
+  }
+  conn->paused = true;
+  while (conn->active_client_calls && !conn->closed) {
+#ifdef _WIN32
+    pthread_cond_wait(&conn->calls_drained, &conn->call_mutex);
+#else
+    timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    ++deadline.tv_sec;
+    pthread_cond_timedwait(&conn->calls_drained, &conn->call_mutex, &deadline);
+#endif
+  }
+  paused_connection = conn;
+  if (conn->closed) {
+    rpc_resume_client(conn);
+    return -1;
+  }
+  return 0;
+}
+
+void rpc_resume_client(conn_t *conn) {
+  conn->paused = false;
+  paused_connection = nullptr;
+  pthread_cond_broadcast(&conn->calls_drained);
+  rpc_call_unlock(conn);
+}
+
 int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id) {
   *conn = {};
   conn->connfd = connfd;
   conn->request_id = request_id;
   conn->local_request_parity = request_id & 1;
-  if (pthread_mutex_init(&conn->write_mutex, nullptr) != 0) {
+  if (pthread_mutex_init(&conn->write_mutex, nullptr) != 0)
     goto fail;
-  }
   if (pthread_mutex_init(&conn->call_mutex, nullptr) != 0) {
     pthread_mutex_destroy(&conn->write_mutex);
     goto fail;
@@ -351,6 +419,13 @@ int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id) {
     goto fail;
   }
   if (pthread_cond_init(&conn->async_cond, nullptr) != 0) {
+    pthread_mutex_destroy(&conn->async_mutex);
+    pthread_mutex_destroy(&conn->call_mutex);
+    pthread_mutex_destroy(&conn->write_mutex);
+    goto fail;
+  }
+  if (pthread_cond_init(&conn->calls_drained, nullptr) != 0) {
+    pthread_cond_destroy(&conn->async_cond);
     pthread_mutex_destroy(&conn->async_mutex);
     pthread_mutex_destroy(&conn->call_mutex);
     pthread_mutex_destroy(&conn->write_mutex);
@@ -419,6 +494,7 @@ void rpc_conn_destroy(conn_t *conn) {
   std::vector<rpc_host_allocation_write>().swap(conn->host_allocation_writes);
   conn->async_sync_initialized = 0;
   pthread_cond_destroy(&conn->async_cond);
+  pthread_cond_destroy(&conn->calls_drained);
   pthread_mutex_destroy(&conn->async_mutex);
   pthread_mutex_destroy(&conn->write_mutex);
   pthread_mutex_destroy(&conn->call_mutex);
@@ -434,6 +510,7 @@ using rpc_host_range_is_protected_hook = bool (*)(uintptr_t, size_t);
 std::atomic<rpc_connection_closed_hook> connection_closed_hook{nullptr};
 std::atomic<rpc_thread_lane_destroyed_hook> thread_lane_destroyed_hook{nullptr};
 std::atomic<rpc_response_completed_hook> response_completed_hook{nullptr};
+std::atomic<int (*)(conn_t *)> before_request_hook{nullptr};
 std::atomic<rpc_host_range_is_protected_hook> host_range_is_protected_hook{
     nullptr};
 std::atomic_flag lifecycle_hooks_set = ATOMIC_FLAG_INIT;
@@ -453,6 +530,7 @@ int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks) {
                                 std::memory_order_release);
   host_range_is_protected_hook.store(hooks->host_range_is_protected,
                                      std::memory_order_release);
+  before_request_hook.store(hooks->before_request, std::memory_order_release);
   return 0;
 }
 
@@ -560,7 +638,7 @@ void rpc_release_write_builder(conn_t *conn, bool request_nested_in_response) {
 void rpc_release_held_call_lock(conn_t *conn) {
   if (rpc_tls_io.held_call_lock == conn) {
     rpc_tls_io.held_call_lock = nullptr;
-    pthread_mutex_unlock(&conn->call_mutex);
+    rpc_call_unlock(conn);
   }
 }
 
@@ -762,7 +840,7 @@ int rpc_drain(conn_t *conn, size_t size) {
   return 0;
 }
 
-int rpc_read_end(conn_t *conn) {
+int rpc_read_end(conn_t *conn, bool final_response) {
   if (rpc_tls_io.read_conn == conn) {
     int read_id = rpc_tls_io.read.request_id;
     int32_t stream_id = rpc_tls_io.read.stream_id;
@@ -770,6 +848,11 @@ int rpc_read_end(conn_t *conn) {
     rpc_tls_io.read_conn = nullptr;
     rpc_tls_io.read = {};
     rpc_release_held_call_lock(conn);
+    if (completed_response && final_response &&
+        conn->local_request_parity == 0 && counted_responses[conn] == read_id) {
+      counted_responses[conn] = 0;
+      rpc_client_call_finished(conn);
+    }
     if (completed_response) {
       auto hook = response_completed_hook.load(std::memory_order_acquire);
       if (hook != nullptr) {
@@ -842,7 +925,7 @@ int rpc_wait_for_response(conn_t *conn) {
   int op = conn->write_op;
   uint64_t start =
       lupine_rpc_stats_path() != nullptr ? lupine_rpc_stats_now_ns() : 0;
-  int write_id = rpc_write_end(conn);
+  int write_id = rpc_write_end(conn, true);
   if (write_id < 0) {
     return -1;
   }
@@ -866,7 +949,7 @@ int rpc_wait_for_response(conn_t *conn) {
 // only one request can be active at a time, so this function will take the
 // request lock from the connection.
 int rpc_write_start_request(conn_t *conn, const int op) {
-  if (conn == nullptr || conn->closed) {
+  if (conn == nullptr) {
     return -1;
   }
   bool request_nested_in_response = rpc_tls_io.write_conn == conn &&
@@ -877,6 +960,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   }
   // Capture entry BEFORE the builder lock. Calls already waiting for that
   // lock overlap this request and must not inherit its later publication.
+  uint64_t generation = __atomic_load_n(&conn->generation, __ATOMIC_ACQUIRE);
   uint64_t dependency =
       conn->local_request_parity == 0
           ? __atomic_load_n(&conn->published_async_sequence, __ATOMIC_ACQUIRE)
@@ -885,16 +969,34 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   if (request_nested_in_response) {
     // Never wait for a call that may itself be waiting for this response's
     // write lock. A failed side effect is preferable to a lock-order deadlock.
-    call_lock_result = pthread_mutex_trylock(&conn->call_mutex);
+    call_lock_result = rpc_call_lock(conn, true);
   } else {
-    call_lock_result = pthread_mutex_lock(&conn->call_mutex);
+    call_lock_result = rpc_call_lock(conn);
   }
   if (call_lock_result != 0) {
     return -1;
   }
+  while (conn->paused && paused_connection != conn)
+    pthread_cond_wait(&conn->calls_drained, &conn->call_mutex);
   if (conn->closed) {
-    pthread_mutex_unlock(&conn->call_mutex);
+    rpc_call_unlock(conn);
     return -1;
+  }
+  // A caller parked during eviction cannot fence the replacement's new lanes
+  // against work completed on the previous transport.
+  if (generation != conn->generation)
+    dependency = conn->published_async_sequence;
+  static thread_local bool preparing = false;
+  auto prepare = before_request_hook.load(std::memory_order_acquire);
+  if (!preparing && !paused_connection && prepare &&
+      conn->local_request_parity == 0) {
+    preparing = true;
+    int status = prepare(conn);
+    preparing = false;
+    if (status != 0) {
+      rpc_call_unlock(conn);
+      return -1;
+    }
   }
   if (request_nested_in_response) {
     rpc_save_outer_response(conn);
@@ -904,7 +1006,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
                  "conns[index].write_mutex lock"
               << std::endl;
 #endif
-    pthread_mutex_unlock(&conn->call_mutex);
+    rpc_call_unlock(conn);
     return -1;
   } else {
     rpc_tls_io.write_conn = conn;
@@ -912,7 +1014,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
 
   if (rpc_write_queue_reset(conn, 2) < 0) {
     rpc_release_write_builder(conn, request_nested_in_response);
-    pthread_mutex_unlock(&conn->call_mutex);
+    rpc_call_unlock(conn);
     return -1;
   }
   conn->request_id = conn->request_id + 2; // leave the last bit the same
@@ -922,9 +1024,11 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   conn->write_stream_id = rpc_http2_lane_stream(conn, rpc_tls_lane.id);
   if (conn->write_stream_id < 0) {
     rpc_release_write_builder(conn, request_nested_in_response);
-    pthread_mutex_unlock(&conn->call_mutex);
+    rpc_call_unlock(conn);
     return -1;
   }
+  if (conn->local_request_parity == 0)
+    ++conn->active_client_calls;
   if (lupine_rpc_stats_path() != nullptr) {
     lupine_rpc_stats_record(op, 1, 0);
   }
@@ -1064,7 +1168,7 @@ int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
 //
 // the request lock is released after the request is sent and the function
 // returns the request id which can be used to wait for a response.
-int rpc_write_end(conn_t *conn) {
+int rpc_write_end(conn_t *conn, bool expects_response) {
   if (conn == nullptr || rpc_tls_io.write_conn != conn) {
     return -1;
   }
@@ -1073,7 +1177,7 @@ int rpc_write_end(conn_t *conn) {
   if (conn->closed) {
     rpc_release_write_builder(conn, request_nested_in_response);
     if (request) {
-      pthread_mutex_unlock(&conn->call_mutex);
+      rpc_call_unlock(conn);
     }
     return -1;
   }
@@ -1121,6 +1225,12 @@ int rpc_write_end(conn_t *conn) {
     }
   }
   rpc_release_write_builder(conn, request_nested_in_response);
+  if (request && conn->local_request_parity == 0) {
+    if (result == 0 && expects_response)
+      counted_responses[conn] = conn->write_id;
+    else
+      rpc_client_call_finished(conn);
+  }
   if (request) {
     if (result == 0) {
       rpc_tls_io.response_conn = conn;
@@ -1132,7 +1242,7 @@ int rpc_write_end(conn_t *conn) {
     if (result == 0 && conn->local_request_parity == 1) {
       rpc_tls_io.held_call_lock = conn;
     } else {
-      pthread_mutex_unlock(&conn->call_mutex);
+      rpc_call_unlock(conn);
     }
   }
   return result == 0 ? write_id : -1;

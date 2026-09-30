@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <thread>
 #include <vector>
@@ -27,7 +29,9 @@ struct client_transport_state {
   std::array<lupine_bulk_lanes, kTransportCapacity> bulk = {};
   std::array<bool, kTransportCapacity> bulk_dialed = {};
   unsigned int count = 0;
-  bool shutting_down = false;
+  std::atomic<bool> shutting_down{false};
+  std::array<std::thread, kTransportCapacity> handoffs;
+  std::array<std::atomic<bool>, kTransportCapacity> handing_off{};
 };
 
 client_transport_state &transport() {
@@ -440,6 +444,8 @@ void lupine_client_transport_close() {
   pthread_mutex_unlock(&state.mutex);
 
   for (unsigned int i = 0; i < count; ++i) {
+    if (state.handoffs[i].joinable())
+      state.handoffs[i].join();
     conn_t *conn = &state.connections[i];
     if (conn->read_thread != 0) {
       pthread_join(conn->read_thread, nullptr);
@@ -488,4 +494,79 @@ void lupine_client_transport_retire_lane(uint64_t lane_id) {
   for (unsigned int i = 0; i < count; ++i) {
     rpc_write_lane_termination(active[i], lane_id);
   }
+}
+
+bool lupine_client_transport_handoff(conn_t *conn, void (*run)(conn_t *)) {
+  auto &state = transport();
+  if (!conn || !run || conn->logical_index < 0 ||
+      static_cast<unsigned>(conn->logical_index) >= state.count)
+    return false;
+  unsigned index = conn->logical_index;
+  pthread_mutex_lock(&state.mutex);
+  if (state.shutting_down || state.handing_off[index].exchange(true)) {
+    pthread_mutex_unlock(&state.mutex);
+    return false;
+  }
+  if (state.handoffs[index].joinable())
+    state.handoffs[index].join();
+  state.handoffs[index] = std::thread([&state, conn, index, run] {
+    run(conn);
+    state.handing_off[index] = false;
+  });
+  pthread_mutex_unlock(&state.mutex);
+  return true;
+}
+
+// Called only by the handoff owner with admission paused and responses drained.
+// Retain the connection object, locks, VA arena, host aliases and allocation
+// cursor.
+void lupine_client_transport_disconnect(conn_t *conn) {
+  lupine_client_transport_close_connection(conn);
+  if (conn->read_thread != 0) {
+    pthread_join(conn->read_thread, nullptr);
+    conn->read_thread = 0;
+  }
+  rpc_http2_destroy(conn);
+  rpc_close_transport_socket(conn);
+  free_tls(conn);
+}
+
+int lupine_client_transport_reconnect(conn_t *conn) {
+  auto &state = transport();
+  const auto &endpoint = state.endpoints[conn->logical_index];
+  lupine_client_transport_disconnect(conn);
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(10);
+  while (!state.shutting_down && std::chrono::steady_clock::now() < deadline) {
+    conn->connfd =
+        lupine_tcp_connect(endpoint.host.c_str(), endpoint.port.c_str(), 0);
+    if (conn->connfd != LUPINE_INVALID_SOCKET) {
+      conn->closed = 0;
+      conn->request_id = 0;
+      conn->issued_async_sequence = conn->serving_async_sequence = 0;
+      __atomic_store_n(&conn->published_async_sequence, 0, __ATOMIC_RELEASE);
+      conn->async_prefix_stream = -1;
+      conn->async_prefix = 0;
+      conn->completed_async_sequences.clear();
+      conn->async_cancelled = false;
+      conn->first_async_error = 0;
+      if (initialize_tls(conn, endpoint) == 0 &&
+          rpc_http2_client_init(conn) == 0 &&
+          rpc_http2_client_await_ready(conn) == 0) {
+        __atomic_add_fetch(&conn->generation, 1, __ATOMIC_RELEASE);
+        if (state.config.connection_opened)
+          state.config.connection_opened(conn);
+        if (pthread_create(&conn->read_thread, nullptr, dispatch_connection,
+                           conn) == 0) {
+          rpc_http2_client_start_heartbeat(conn);
+          return 0;
+        }
+      }
+      rpc_http2_destroy(conn);
+      rpc_close_transport_socket(conn);
+      free_tls(conn);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+  }
+  conn->closed = 1;
+  return -1;
 }

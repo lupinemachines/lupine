@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #define LUPINE_CUDA_COMPAT_TYPES_ONLY
 #include "cuda_compat.h"
@@ -57,6 +58,17 @@ extern "C" lupine_route lupine_route_for_graph_node(CUgraphNode node);
 extern "C" lupine_route lupine_route_for_graph_exec(CUgraphExec exec);
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr);
 extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr);
+extern "C" bool lupine_range_for_deviceptr(CUdeviceptr ptr, CUdeviceptr *base,
+                                           size_t *size);
+
+// Snapshot existing client metadata only while RPC admission is paused.
+struct lupine_live_allocation {
+  CUdeviceptr pointer;
+  uint64_t size;
+  CUcontext context;
+};
+std::vector<lupine_live_allocation>
+lupine_allocations_for_connection(conn_t *conn);
 
 extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);
 extern "C" conn_t *lupine_rpc_conn_for_current_context();

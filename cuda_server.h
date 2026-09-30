@@ -5,6 +5,9 @@
 
 #include "rpc.h"
 
+void lupine_configure_checkpoint_session(conn_t *conn);
+int handle_lupine_checkpoint(conn_t *conn);
+
 int handle_cuGetErrorName(conn_t *conn);
 int handle_cuGetErrorString(conn_t *conn);
 int handle_cuGetExportTableMetadata(conn_t *conn);
