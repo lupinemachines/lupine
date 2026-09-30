@@ -42,10 +42,8 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
                                                       int request_id,
                                                       CUdeviceptr source,
                                                       size_t bytes);
-CUresult lupine_translate_mapped_host_pointer(lupine_route route,
-                                              CUdeviceptr pointer,
-                                              CUdeviceptr *translated,
-                                              bool *managed);
+bool lupine_prepare_mapped_host_pointer(CUdeviceptr pointer);
+CUresult lupine_prepare_portable_host_allocations(lupine_route route);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
 extern "C" void lupine_invalidate_launched_managed(CUdeviceptr pointer,
                                                    CUstream stream);

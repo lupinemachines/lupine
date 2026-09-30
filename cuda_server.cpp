@@ -4080,6 +4080,9 @@ CUresult lupine_server_map_host_allocation(
 #if !defined(__linux__)
   return CUDA_ERROR_NOT_SUPPORTED;
 #else
+  void *requested = *pointer;
+  *pointer = nullptr;
+  *device_pointer = 0;
   long configured_page_size = sysconf(_SC_PAGESIZE);
   size_t page_size = configured_page_size > 0
                          ? static_cast<size_t>(configured_page_size)
@@ -4088,12 +4091,26 @@ CUresult lupine_server_map_host_allocation(
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
   size_t storage_size = (bytes + page_size - 1) & ~(page_size - 1);
-  void *mapping = lupine_server_mmap(
-      conn->va_size != 0 ? conn : nullptr, nullptr, storage_size, page_size,
-      PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (reinterpret_cast<uintptr_t>(requested) % page_size != 0) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  // Portable replicas use the original device address. A foreign address must
+  // never replace an existing mapping, including another connection's arena.
+  conn_t *arena = requested == nullptr && conn->va_size != 0 ? conn : nullptr;
+  int map_flags = MAP_PRIVATE | MAP_ANONYMOUS;
+  if (requested != nullptr) {
+    map_flags |= MAP_FIXED_NOREPLACE;
+  }
+  void *mapping = lupine_server_mmap(arena, requested, storage_size, page_size,
+                                     PROT_READ | PROT_WRITE, map_flags, -1, 0);
   uintptr_t address = reinterpret_cast<uintptr_t>(mapping);
   if (mapping == MAP_FAILED) {
     return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  // Older kernels may ignore MAP_FIXED_NOREPLACE and choose another address.
+  if (requested != nullptr && mapping != requested) {
+    munmap(mapping, storage_size);
+    return CUDA_ERROR_NOT_SUPPORTED;
   }
   CUresult result = ops.register_host(mapping, storage_size, register_flags);
   bool registered = result == CUDA_SUCCESS;
@@ -4129,7 +4146,7 @@ namespace {
 CUresult lupine_server_host_alloc(conn_t *conn, void **pointer,
                                   CUdeviceptr *device_pointer, size_t bytes,
                                   unsigned int flags) {
-  if (conn->va_size == 0) {
+  if (conn->va_size == 0 && *pointer == nullptr) {
     CUresult result = cuMemHostAlloc(pointer, bytes, flags);
     if (result == CUDA_SUCCESS && (flags & CU_MEMHOSTALLOC_DEVICEMAP) != 0 &&
         cuMemHostGetDevicePointer(device_pointer, *pointer, 0) !=
