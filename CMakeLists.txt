@@ -915,7 +915,10 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
             add_executable(checkpoint_objects_test checkpoint_objects.cpp test/test_checkpoint_objects.cpp)
             target_include_directories(checkpoint_objects_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CUDAToolkit_INCLUDE_DIRS})
             target_link_libraries(checkpoint_objects_test PRIVATE CUDA::cuda_driver Threads::Threads)
-            add_test(NAME checkpoint_objects_test COMMAND checkpoint_objects_test)
+            find_package(Python3 COMPONENTS Interpreter REQUIRED)
+            add_test(NAME checkpoint_objects_test COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/test/run_cuda_test.py
+                $<TARGET_FILE:checkpoint_objects_test>)
             set_tests_properties(checkpoint_objects_test PROPERTIES LABELS gpu SKIP_RETURN_CODE 77 TIMEOUT 30)
         endif()
         add_executable(server_sigterm_test
