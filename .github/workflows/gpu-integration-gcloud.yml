@@ -234,7 +234,7 @@ jobs:
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends ca-certificates curl docker.io iproute2 libnghttp2-14 procps
+          apt-get install -y --no-install-recommends ca-certificates curl docker.io iproute2 libnghttp2-14 procps
           SCRIPT
 
           if [[ -n "$CUDA_COMPAT_DEB_URL" ]]; then
@@ -243,7 +243,7 @@ jobs:
             printf 'printf "%%s  /tmp/cuda-compat.deb\\n" %q | sha256sum --check\n' \
               "$CUDA_COMPAT_DEB_SHA256" >> "$startup_script"
             printf '%s\n' \
-              'apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends /tmp/cuda-compat.deb' \
+              'apt-get install -y --no-install-recommends /tmp/cuda-compat.deb' \
               'rm -f /tmp/cuda-compat.deb' >> "$startup_script"
           fi
 
