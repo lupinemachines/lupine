@@ -732,11 +732,6 @@ static void lupine_drain_fault_handlers() {
   }
 }
 
-static bool lupine_host_flags_request_mapping(unsigned int flags) {
-  return (flags & (CU_MEMHOSTALLOC_DEVICEMAP | CU_MEMHOSTREGISTER_DEVICEMAP)) !=
-         0;
-}
-
 static bool lupine_protect_host_range(void *host, size_t size, int prot) {
   if (host == nullptr || size == 0) {
     return true;
@@ -2885,9 +2880,8 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
       lupine_route_for_default(), p, bytesize, flags, client_to_server_only,
       [](conn_t *conn, void *, size_t bytes, unsigned int flags,
          void **server_host, CUdeviceptr *device_ptr) {
-        if (!lupine_host_flags_request_mapping(flags)) {
-          return CUDA_SUCCESS;
-        }
+        // UVA registrations can be queried for a GPU alias even without
+        // DEVICEMAP. Keep the backing ready; expose it only when requested.
         unsigned int host_flags = CU_MEMHOSTALLOC_DEVICEMAP;
         if ((flags & CU_MEMHOSTREGISTER_PORTABLE) != 0) {
           host_flags |= CU_MEMHOSTALLOC_PORTABLE;

@@ -166,9 +166,8 @@ int main() {
   }
 
   unsigned char *aligned = block + page_size;
-  if (!cu_ok(
-          cuMemHostRegister(aligned, page_size, CU_MEMHOSTREGISTER_DEVICEMAP),
-          "cuMemHostRegister")) {
+  if (!cu_ok(cuMemHostRegister(aligned, page_size, 0),
+             "cuMemHostRegister without DEVICEMAP")) {
     return 1;
   }
   if (!cu_is(
