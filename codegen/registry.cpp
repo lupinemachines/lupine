@@ -105,6 +105,7 @@
   HANDLER(RPC_cuStreamUpdateCaptureDependencies_v2, handle_cuStreamUpdateCaptureDependencies, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_cuStreamGetCaptureInfo_v3, handle_cuStreamGetCaptureInfo, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineManagedHostFlush, handle_lupineManagedHostFlush, rpc_backend::cuda) \
+  HANDLER(LUPINE_RPC_lupineMappedHostRead, handle_lupineMappedHostRead, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineMemcpyDtoHAsyncPinned, handle_lupineMemcpyDtoHAsyncPinned, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineDeviceSnapshot, handle_lupineDeviceSnapshot, rpc_backend::cuda) \
   HANDLER(LUPINE_RPC_lupineBulkChunk, handle_lupineBulkChunk, rpc_backend::cuda) \

@@ -1698,6 +1698,19 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
   if (allocation->host_base == 0 || allocation->device_ptr == 0) {
     return false;
   }
+  // Pinned backing is already CPU accessible on the server. A CUDA copy here
+  // can deadlock when cuMemFree holds a driver lock while waiting for the host
+  // callback that faulted. Read the completed bytes without entering CUDA.
+  if (!allocation->managed) {
+    src = allocation->server_host_ptr + offset;
+    if (rpc_write_start_request(conn, LUPINE_RPC_lupineMappedHostRead) < 0 ||
+        rpc_write(conn, &src, sizeof(src)) < 0 ||
+        rpc_write(conn, &bytes, sizeof(bytes)) < 0) {
+      return false;
+    }
+    return lupine_read_dtoh_chunks(conn, rpc_write_end(conn), dst, bytes) ==
+           CUDA_SUCCESS;
+  }
   // Any thread can fault, so any lane can carry the fetch. A touch inside a
   // host-func callback faults on the RPC dispatch thread, whose lane has never
   // carried a CUDA call and so has no context current on the server to copy

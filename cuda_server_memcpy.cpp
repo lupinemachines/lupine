@@ -2554,6 +2554,31 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
   return 0;
 }
 
+int handle_lupineMappedHostRead(conn_t *conn) {
+  CUdeviceptr source = 0;
+  size_t bytes = 0;
+  if (rpc_read(conn, &source, sizeof(source)) < 0 ||
+      rpc_read(conn, &bytes, sizeof(bytes)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  size_t offset = 0;
+  do {
+    size_t chunk = std::min(
+        bytes - offset, static_cast<size_t>(LUPINE_RPC_TRANSFER_CHUNK_BYTES));
+    if (lupine_write_dtoh_chunk_response(
+            conn, request_id, CUDA_SUCCESS,
+            reinterpret_cast<const void *>(source + offset), chunk) < 0) {
+      return -1;
+    }
+    offset += chunk;
+  } while (offset < bytes);
+  return 0;
+}
+
 int handle_cuMemcpyDtoH_v2(conn_t *conn) {
   CUdeviceptr source = 0;
   size_t bytes = 0;
