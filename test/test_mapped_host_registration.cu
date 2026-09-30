@@ -59,6 +59,15 @@ int main() {
     return 1;
   }
 
+  int can_use_host_pointer = 0;
+  if (!cu_ok(cuDeviceGetAttribute(
+                 &can_use_host_pointer,
+                 CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM,
+                 device),
+             "host pointer capability")) {
+    return 1;
+  }
+
   long page_size_value = sysconf(_SC_PAGESIZE);
   size_t page_size =
       page_size_value > 0 ? static_cast<size_t>(page_size_value) : 4096;
@@ -89,7 +98,10 @@ int main() {
     return 1;
   }
   interior[0] = 41;
-  increment_byte<<<1, 1>>>(reinterpret_cast<unsigned char *>(interior_mapped));
+  increment_byte<<<1, 1>>>(
+      can_use_host_pointer
+          ? interior
+          : reinterpret_cast<unsigned char *>(interior_mapped));
   for (size_t i = 0; i < page_size; ++i) {
     if (i < 64 || i >= 68) {
       block[i] = 0x5A;

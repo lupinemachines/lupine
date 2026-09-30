@@ -1615,6 +1615,7 @@ lupine_translate_private_function_for_rpc(CUfunction function) {
 extern "C" bool
 lupine_device_attribute_is_virtualized(CUdevice_attribute attrib) {
   switch (attrib) {
+  case CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM:
   case CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS:
   case CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES:
   case CU_DEVICE_ATTRIBUTE_CONCURRENT_MANAGED_ACCESS:
