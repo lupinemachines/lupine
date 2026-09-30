@@ -271,16 +271,6 @@ lupine_private_node_map() {
   return mappings;
 }
 
-static std::unordered_map<CUfunction, CUfunction> &lupine_host_function_map() {
-  static std::unordered_map<CUfunction, CUfunction> mappings;
-  return mappings;
-}
-
-static std::vector<CUmodule> &lupine_loaded_modules() {
-  static std::vector<CUmodule> modules;
-  return modules;
-}
-
 struct lupine_device_attribute_key {
   int device = 0;
   int attribute = 0;
@@ -712,11 +702,6 @@ lupine_module_function_names() {
   return *cache;
 }
 
-static std::mutex &lupine_host_function_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
-}
-
 static std::mutex &lupine_library_kernel_mutex() {
   static auto *mutex = new std::mutex();
   return *mutex;
@@ -781,17 +766,6 @@ lupine_graph_kernel_node_params_cache() {
   static auto *cache = new std::unordered_map<
       CUgraphNode, std::shared_ptr<lupine_graph_kernel_node_params_storage>>();
   return *cache;
-}
-
-static void lupine_remember_loaded_module(CUmodule module) {
-  if (module == nullptr) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_host_function_mutex());
-  auto &modules = lupine_loaded_modules();
-  if (std::find(modules.begin(), modules.end(), module) == modules.end()) {
-    modules.push_back(module);
-  }
 }
 
 static void *lupine_local_libcuda_handle() {
@@ -1525,8 +1499,6 @@ static CUresult lupine_load_recorded_module_on_route(CUmodule source_module,
   if (result != CUDA_SUCCESS || loaded == nullptr) {
     return result;
   }
-
-  lupine_remember_loaded_module(loaded);
   lupine_note_module_owner_route(loaded, route);
   {
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
@@ -1831,157 +1803,6 @@ static CUresult lupine_resolve_module_function_for_route(CUfunction function,
   return CUDA_SUCCESS;
 }
 
-static bool lupine_read_file_span(const char *path,
-                                  std::vector<unsigned char> *bytes) {
-  if (path == nullptr || bytes == nullptr) {
-    return false;
-  }
-  std::ifstream file(path, std::ios::binary | std::ios::ate);
-  if (!file) {
-    return false;
-  }
-  std::streamsize size = file.tellg();
-  if (size <= 0) {
-    return false;
-  }
-  file.seekg(0, std::ios::beg);
-  bytes->resize(static_cast<size_t>(size));
-  return file.read(reinterpret_cast<char *>(bytes->data()), size).good();
-}
-
-static bool lupine_lookup_elf_function_symbol(const char *path,
-                                              uintptr_t offset,
-                                              std::string *symbol) {
-  std::vector<unsigned char> bytes;
-  if (symbol == nullptr || !lupine_read_file_span(path, &bytes) ||
-      bytes.size() < sizeof(Elf64_Ehdr)) {
-    return false;
-  }
-
-  const auto *ehdr = reinterpret_cast<const Elf64_Ehdr *>(bytes.data());
-  if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0 ||
-      ehdr->e_ident[EI_CLASS] != ELFCLASS64 ||
-      ehdr->e_shentsize != sizeof(Elf64_Shdr) || ehdr->e_shoff == 0 ||
-      ehdr->e_shnum == 0) {
-    return false;
-  }
-  size_t shoff = static_cast<size_t>(ehdr->e_shoff);
-  size_t shnum = static_cast<size_t>(ehdr->e_shnum);
-  if (shoff > bytes.size() ||
-      shnum > (bytes.size() - shoff) / sizeof(Elf64_Shdr)) {
-    return false;
-  }
-  const auto *sections =
-      reinterpret_cast<const Elf64_Shdr *>(bytes.data() + shoff);
-
-  uintptr_t best_value = 0;
-  const char *best_name = nullptr;
-  for (size_t i = 0; i < shnum; ++i) {
-    if (sections[i].sh_type != SHT_SYMTAB &&
-        sections[i].sh_type != SHT_DYNSYM) {
-      continue;
-    }
-    if (sections[i].sh_link >= shnum) {
-      continue;
-    }
-    const Elf64_Shdr &symtab = sections[i];
-    const Elf64_Shdr &strtab = sections[symtab.sh_link];
-    if (symtab.sh_entsize != sizeof(Elf64_Sym) ||
-        symtab.sh_offset > bytes.size() || strtab.sh_offset > bytes.size() ||
-        symtab.sh_size > bytes.size() - symtab.sh_offset ||
-        strtab.sh_size > bytes.size() - strtab.sh_offset) {
-      continue;
-    }
-    const auto *syms =
-        reinterpret_cast<const Elf64_Sym *>(bytes.data() + symtab.sh_offset);
-    const char *strings =
-        reinterpret_cast<const char *>(bytes.data() + strtab.sh_offset);
-    size_t count = static_cast<size_t>(symtab.sh_size / sizeof(Elf64_Sym));
-    for (size_t j = 0; j < count; ++j) {
-      const Elf64_Sym &sym = syms[j];
-      if (ELF64_ST_TYPE(sym.st_info) != STT_FUNC ||
-          sym.st_name >= strtab.sh_size || sym.st_value == 0 ||
-          offset < sym.st_value ||
-          (sym.st_size != 0 && offset >= sym.st_value + sym.st_size)) {
-        continue;
-      }
-      if (best_name == nullptr || sym.st_value >= best_value) {
-        best_value = sym.st_value;
-        best_name = strings + sym.st_name;
-      }
-    }
-  }
-
-  if (best_name == nullptr || best_name[0] == '\0') {
-    return false;
-  }
-  *symbol = best_name;
-  return true;
-}
-
-static CUfunction lupine_resolve_host_function(CUfunction function) {
-  if (function == nullptr) {
-    return function;
-  }
-
-  {
-    std::lock_guard<std::mutex> lock(lupine_host_function_mutex());
-    auto mapped = lupine_host_function_map().find(function);
-    if (mapped != lupine_host_function_map().end()) {
-      return mapped->second;
-    }
-  }
-
-#if defined(_WIN32)
-  return function;
-#else
-  Dl_info info = {};
-  if (dladdr(reinterpret_cast<void *>(function), &info) == 0) {
-    return function;
-  }
-  std::string symbol_name;
-  const char *kernel_name = info.dli_sname;
-  if (kernel_name == nullptr && info.dli_fname != nullptr &&
-      info.dli_fbase != nullptr) {
-    uintptr_t offset = reinterpret_cast<uintptr_t>(function) -
-                       reinterpret_cast<uintptr_t>(info.dli_fbase);
-    if (lupine_lookup_elf_function_symbol(info.dli_fname, offset,
-                                          &symbol_name)) {
-      kernel_name = symbol_name.c_str();
-    }
-  }
-  if (kernel_name == nullptr) {
-    LUPINE_TRACE_LOG("LUPINE could not resolve host kernel symbol for "
-                     << reinterpret_cast<void *>(function));
-    return function;
-  }
-
-  std::vector<CUmodule> modules;
-  {
-    std::lock_guard<std::mutex> lock(lupine_host_function_mutex());
-    modules = lupine_loaded_modules();
-  }
-  for (CUmodule module : modules) {
-    CUfunction remote = nullptr;
-    CUresult result = cuModuleGetFunction(&remote, module, kernel_name);
-    if (result == CUDA_SUCCESS && remote != nullptr) {
-      std::lock_guard<std::mutex> lock(lupine_host_function_mutex());
-      lupine_host_function_map()[function] = remote;
-      LUPINE_TRACE_LOG("LUPINE mapped host kernel "
-                       << kernel_name
-                       << " host=" << reinterpret_cast<void *>(function)
-                       << " remote=" << remote);
-      return remote;
-    }
-  }
-  LUPINE_TRACE_LOG("LUPINE host kernel " << kernel_name << " was not found in "
-                                         << modules.size()
-                                         << " loaded modules");
-
-  return function;
-#endif
-}
-
 static CUfunction lupine_translate_private_function(CUfunction function) {
   {
     std::lock_guard<std::mutex> lock(lupine_private_node_mutex());
@@ -1990,7 +1811,7 @@ static CUfunction lupine_translate_private_function(CUfunction function) {
       return it->second.server_function;
     }
   }
-  return lupine_resolve_host_function(function);
+  return function;
 }
 
 static CUresult lupine_get_remote_private_module_node(CUcontext context,
@@ -5589,7 +5410,6 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
     CUresult result =
         lupine_call_real_cuda_fn("cuModuleLoadData", module, image);
     if (result == CUDA_SUCCESS) {
-      lupine_remember_loaded_module(*module);
       lupine_note_module_owner_route(*module, route);
       lupine_record_module_image(*module, route, kind, std::move(image_bytes),
                                  image);
@@ -5618,7 +5438,6 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
-    lupine_remember_loaded_module(*module);
     lupine_note_module_owner(*module, conn);
     lupine_record_module_image(*module, lupine_remote_route_for_conn(conn),
                                kind, std::move(image_bytes), image);
@@ -5653,7 +5472,6 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
     CUresult result = lupine_call_real_cuda_fn(
         "cuModuleLoadDataEx", module, image, numOptions, options, optionValues);
     if (result == CUDA_SUCCESS) {
-      lupine_remember_loaded_module(*module);
       lupine_note_module_owner_route(*module, route);
       lupine_record_module_image(*module, route, kind, std::move(image_bytes),
                                  image);
@@ -5680,7 +5498,6 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
-    lupine_remember_loaded_module(*module);
     lupine_note_module_owner(*module, conn);
     lupine_record_module_image(*module, lupine_remote_route_for_conn(conn),
                                kind, std::move(image_bytes), image);
@@ -7102,14 +6919,7 @@ static CUfunction lupine_client_function_for_remote(CUfunction remote) {
   if (remote == nullptr) {
     return nullptr;
   }
-  {
-    std::lock_guard<std::mutex> lock(lupine_host_function_mutex());
-    for (const auto &entry : lupine_host_function_map()) {
-      if (entry.second == remote && entry.first != remote) {
-        return entry.first;
-      }
-    }
-  }
+
   {
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
     for (const auto &entry : lupine_library_kernels()) {
