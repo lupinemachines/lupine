@@ -23,7 +23,10 @@ target_link_libraries(native_driver_server PRIVATE Threads::Threads)
 target_link_options(native_driver_server PRIVATE -static -no-pie)
 add_executable(native_driver_probe probe.cpp)
 target_link_libraries(native_driver_probe PRIVATE ${CMAKE_DL_LIBS})
+add_library(native_driver_boundary SHARED ioctl_boundary.cpp)
+target_link_libraries(native_driver_boundary PRIVATE ${CMAKE_DL_LIBS})
 
-foreach(target native_driver_client native_driver_server native_driver_probe)
+foreach(target native_driver_client native_driver_server native_driver_probe
+               native_driver_boundary)
     target_compile_options(${target} PRIVATE -Wall -Wextra)
 endforeach()

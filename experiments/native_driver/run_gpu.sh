@@ -52,6 +52,6 @@ ssh "${ssh_args[@]}" -o ExitOnForwardFailure=yes -N -L 127.0.0.1:16130:127.0.0.1
 tunnel=$!
 sleep 1
 timeout 300 env LUPINE_NATIVE_METADATA="$work/metadata" \
-  LD_PRELOAD="$work/build/libnative_driver_client.so" \
+  LD_PRELOAD="$work/build/libnative_driver_boundary.so:$work/build/libnative_driver_client.so" \
   "$work/build/native_driver_probe" "$work/libcuda.so.1" "$work/probe.cubin" > "$work/client.log" 2>&1
 cat "$work/client.log"
