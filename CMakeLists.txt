@@ -914,6 +914,7 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             if(TARGET lupine_cuda_client)
                 add_executable(gpu_handoff_client test/test_gpu_handoff.cpp)
+                target_include_directories(gpu_handoff_client PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
                 target_link_libraries(gpu_handoff_client PRIVATE CUDA::cuda_driver)
                 find_package(Python3 COMPONENTS Interpreter REQUIRED)
                 add_test(NAME gpu_handoff_test COMMAND ${Python3_EXECUTABLE}
