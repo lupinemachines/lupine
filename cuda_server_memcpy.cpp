@@ -2554,31 +2554,6 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
   return 0;
 }
 
-int handle_lupineMappedHostRead(conn_t *conn) {
-  CUdeviceptr source = 0;
-  size_t bytes = 0;
-  if (rpc_read(conn, &source, sizeof(source)) < 0 ||
-      rpc_read(conn, &bytes, sizeof(bytes)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  size_t offset = 0;
-  do {
-    size_t chunk = std::min(
-        bytes - offset, static_cast<size_t>(LUPINE_RPC_TRANSFER_CHUNK_BYTES));
-    if (lupine_write_dtoh_chunk_response(
-            conn, request_id, CUDA_SUCCESS,
-            reinterpret_cast<const void *>(source + offset), chunk) < 0) {
-      return -1;
-    }
-    offset += chunk;
-  } while (offset < bytes);
-  return 0;
-}
-
 int handle_cuMemcpyDtoH_v2(conn_t *conn) {
   CUdeviceptr source = 0;
   size_t bytes = 0;
@@ -2613,9 +2588,8 @@ using lupine_native_memcpy3d = CUresult (*)(const CUDA_MEMCPY3D &copy,
 static int lupine_defer_pitched_dtoh(conn_t *conn,
                                      lupine_native_memcpy3d native);
 
-// Every 2D and 3D copy arrives promoted to the 3D descriptor. The client
-// resolves host-to-host locally and picks the direction, so at most one side
-// is host here, staged densely.
+// Every 2D and 3D copy arrives promoted to the 3D descriptor. Host-to-host
+// requests read completed pinned backing; other host sides are staged densely.
 static int lupine_handle_memcpy3d(conn_t *conn, bool async, bool peer,
                                   lupine_native_memcpy3d native) {
   uint8_t direction = LUPINE_COPY_DIRECTION_DTOD;
@@ -2652,6 +2626,24 @@ static int lupine_handle_memcpy3d(conn_t *conn, bool async, bool peer,
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
+  }
+
+  // Read completed CPU backing without entering CUDA, which may be locked by
+  // cuMemFree while it waits for the host callback requesting these bytes.
+  if (direction == LUPINE_COPY_DIRECTION_HTOH) {
+    const auto *source = static_cast<const char *>(copy.srcHost) +
+                         copy.srcZ * copy.srcHeight * copy.srcPitch +
+                         copy.srcY * copy.srcPitch + copy.srcXInBytes;
+    CUresult result = CUDA_SUCCESS;
+    if (rpc_write_start_response(conn, request_id) < 0 ||
+        rpc_write(conn, &result, sizeof(result)) < 0 ||
+        rpc_write_pitched(conn, source, copy.WidthInBytes, copy.Height,
+                          copy.srcPitch, copy.Depth,
+                          copy.srcHeight * copy.srcPitch) < 0 ||
+        rpc_write_end(conn) < 0) {
+      return -1;
+    }
+    return 0;
   }
 
   CUresult result =

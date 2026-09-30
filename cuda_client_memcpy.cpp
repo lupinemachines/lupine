@@ -1702,14 +1702,25 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
   // can deadlock when cuMemFree holds a driver lock while waiting for the host
   // callback that faulted. Read the completed bytes without entering CUDA.
   if (!allocation->managed) {
-    src = allocation->server_host_ptr + offset;
-    if (rpc_write_start_request(conn, LUPINE_RPC_lupineMappedHostRead) < 0 ||
-        rpc_write(conn, &src, sizeof(src)) < 0 ||
-        rpc_write(conn, &bytes, sizeof(bytes)) < 0) {
+    uint8_t direction = LUPINE_COPY_DIRECTION_HTOH;
+    CUDA_MEMCPY3D copy = {};
+    copy.srcMemoryType = copy.dstMemoryType = CU_MEMORYTYPE_HOST;
+    copy.srcHost =
+        reinterpret_cast<const void *>(allocation->server_host_ptr + offset);
+    copy.dstHost = dst;
+    copy.srcPitch = copy.dstPitch = copy.WidthInBytes = bytes;
+    copy.srcHeight = copy.dstHeight = copy.Height = copy.Depth = 1;
+    CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    if (rpc_write_start_request(conn, RPC_cuMemcpy3D_v2) < 0 ||
+        rpc_write(conn, &direction, sizeof(direction)) < 0 ||
+        rpc_write(conn, &copy, sizeof(copy)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &result, sizeof(result)) < 0 ||
+        (result == CUDA_SUCCESS && rpc_read(conn, dst, bytes) < 0) ||
+        rpc_read_end(conn) < 0) {
       return false;
     }
-    return lupine_read_dtoh_chunks(conn, rpc_write_end(conn), dst, bytes) ==
-           CUDA_SUCCESS;
+    return result == CUDA_SUCCESS;
   }
   // Any thread can fault, so any lane can carry the fetch. A touch inside a
   // host-func callback faults on the RPC dispatch thread, whose lane has never
