@@ -5936,20 +5936,17 @@ static CUresult
 lupine_prepare_kernel_params(lupine_route route, void *const *kernel_params,
                              const std::vector<size_t> &sizes,
                              std::vector<CUdeviceptr> *managed) {
-  CUresult result = lupine_prepare_portable_host_allocations(route);
-  if (result != CUDA_SUCCESS) {
-    return result;
-  }
+  bool portable = false;
   for (size_t i = 0; i < sizes.size(); ++i) {
     if (sizes[i] == sizeof(CUdeviceptr)) {
       CUdeviceptr value;
       memcpy(&value, kernel_params[i], sizeof(value));
-      if (lupine_prepare_mapped_host_pointer(value)) {
+      if (lupine_prepare_mapped_host_pointer(value, &portable)) {
         managed->push_back(value);
       }
     }
   }
-  return CUDA_SUCCESS;
+  return lupine_prepare_portable_host_allocations(route, portable);
 }
 
 static std::vector<rpc_write_cursor>

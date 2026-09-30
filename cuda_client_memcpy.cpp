@@ -887,7 +887,7 @@ lupine_find_mapped_host_pointer_locked(CUdeviceptr pointer, size_t *offset) {
   return allocations.end();
 }
 
-bool lupine_prepare_mapped_host_pointer(CUdeviceptr argument) {
+bool lupine_prepare_mapped_host_pointer(CUdeviceptr argument, bool *portable) {
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   size_t offset = 0;
   auto it = lupine_find_mapped_host_pointer_locked(argument, &offset);
@@ -895,10 +895,13 @@ bool lupine_prepare_mapped_host_pointer(CUdeviceptr argument) {
     return false;
   }
   lupine_expose_host_device_pointer(it->first, it->second);
+  *portable |=
+      !it->second.managed && (it->second.flags & CU_MEMHOSTALLOC_PORTABLE) != 0;
   return it->second.managed;
 }
 
-CUresult lupine_prepare_portable_host_allocations(lupine_route route) {
+CUresult lupine_prepare_portable_host_allocations(lupine_route route,
+                                                  bool expose_portable) {
   std::lock_guard<std::mutex> mapping_lock(
       lupine_portable_registration_mutex());
   std::unique_lock<std::mutex> lock(lupine_host_allocation_mutex());
@@ -913,7 +916,11 @@ CUresult lupine_prepare_portable_host_allocations(lupine_route route) {
         __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0) {
       continue;
     }
-    lupine_expose_host_device_pointer(entry.first, allocation);
+    // Host-I/O buffers stay writable until device code can reach them. When
+    // a launch exposes portable memory, include possible nested allocations.
+    if (expose_portable) {
+      lupine_expose_host_device_pointer(entry.first, allocation);
+    }
     if (lupine_host_backing_for_route(allocation, route_id) != 0) {
       continue;
     }
