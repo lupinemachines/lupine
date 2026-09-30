@@ -27,6 +27,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
+      - name: Build native-driver experiment
+        run: |
+          cmake -S experiments/native_driver -B build/native-driver \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/native-driver --parallel 2
+          bash -n experiments/native_driver/run_gpu.sh
+
       - name: Build test environment
         run: |
           docker build \

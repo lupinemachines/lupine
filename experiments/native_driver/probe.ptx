@@ -1,0 +1,11 @@
+.version 7.8
+.target sm_89
+.address_size 64
+.visible .entry write_value(.param .u64 dst) {
+  .reg .b64 %p;
+  .reg .b32 %value;
+  ld.param.u64 %p, [dst];
+  mov.u32 %value, 305419896;
+  st.global.u32 [%p], %value;
+  ret;
+}
