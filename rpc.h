@@ -4,7 +4,6 @@
 #include "lupine_platform.h"
 #include <set>
 #include <stdint.h>
-#include <string>
 #include <vector>
 
 // Chunk size shared by the client and server for transfers split across
@@ -140,7 +139,6 @@ struct conn_t {
   bool async_cancelled;
   int async_sync_initialized;
   int first_async_error;
-  bool client_paused;
   std::vector<rpc_write_cursor> write_queue;
   std::vector<rpc_host_allocation_write> host_allocation_writes;
   int host_allocation_writes_pending;
@@ -213,11 +211,6 @@ static inline int rpc_read_buffer(conn_t *conn, void *data, size_t size) {
 }
 extern int rpc_drain(conn_t *conn, size_t size);
 extern int rpc_read_end(conn_t *conn);
-// Finish current request builders and park new ones. Unread replies remain
-// with the surviving client; checkpoint requests and callbacks stay usable.
-extern int rpc_pause_client(conn_t *conn);
-extern void rpc_resume_client(conn_t *conn);
-constexpr int LUPINE_RPC_PROCESS_CHECKPOINT = 0x4c504d02;
 
 extern int rpc_wait_for_response(conn_t *conn);
 
@@ -310,15 +303,6 @@ extern int rpc_http2_client_retry_handshake(conn_t *conn);
 // LUPINE_RPC_HTTP2_CLIENT_MISMATCH.
 extern int rpc_http2_client_await_ready(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
-// Private HTTP/2 control frames carry only connection lifecycle state. They
-// do not create lanes or change the RPC/HTTP/2 state retained in a CPU image.
-constexpr uint8_t LUPINE_H2_PROCESS_CONTROL = 0xf0;
-extern int rpc_http2_send_process_control(conn_t *conn, char command,
-                                          const std::string &checkpoint);
-extern int rpc_http2_receive_process_control(conn_t *conn, char *command,
-                                             std::string *checkpoint);
-extern int rpc_http2_park_socket(conn_t *conn);
-extern int rpc_http2_resume_socket(conn_t *conn);
 // Stop receiving and wake RPC waiters without closing the socket. Queued
 // output is drained when the transport is destroyed.
 extern void rpc_http2_shutdown(conn_t *conn);
@@ -328,7 +312,6 @@ struct rpc_http2_server_metadata {
   const char *backend_version = nullptr;
   const lupine_client_bundle_registry *client_bundles = nullptr;
   const char *bulk_token = nullptr;
-  void (*process_resumed)() = nullptr;
 };
 // The server routes extra TCP connections that open with the bulk preamble
 // into the session named by the token it handed out in its handshake response.

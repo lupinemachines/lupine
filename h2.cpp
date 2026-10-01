@@ -1,5 +1,6 @@
 #include "client_bundle.h"
 #include "lupine_log.h"
+#include "process_handoff.h"
 #include "rpc.h"
 
 #include <algorithm>
@@ -131,6 +132,7 @@ struct h2_transport {
   bool transport_failed = false;
   bool read_stop = false;
   bool checkpoint_pending = false;
+  std::atomic<bool> requests_paused{false};
   bool socket_parked = false;
   bool writer_paused = false;
   size_t pause_after_bytes = 0;
@@ -512,7 +514,7 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
 int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
                               void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
-  if (frame->hd.type == LUPINE_H2_PROCESS_CONTROL) {
+  if (frame->hd.type == LUPINE_HANDOFF_CONTROL_FRAME) {
     if (transport->control_payload.empty()) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
@@ -1092,7 +1094,7 @@ void h2_queue_process_control_locked(h2_transport *transport, char command,
   const unsigned char header[] = {0,
                                   static_cast<unsigned char>(length >> 8),
                                   static_cast<unsigned char>(length),
-                                  LUPINE_H2_PROCESS_CONTROL,
+                                  LUPINE_HANDOFF_CONTROL_FRAME,
                                   0,
                                   0,
                                   0,
@@ -1254,7 +1256,6 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   }
   if (metadata != nullptr) {
     transport->client_bundles = metadata->client_bundles;
-    transport->process_resumed = metadata->process_resumed;
   }
 
   nghttp2_session_callbacks *callbacks = nullptr;
@@ -1303,7 +1304,7 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
     return -1;
   }
   nghttp2_option_set_user_recv_extension_type(options,
-                                              LUPINE_H2_PROCESS_CONTROL);
+                                              LUPINE_HANDOFF_CONTROL_FRAME);
 
   int session_result =
       server ? nghttp2_session_server_new2(&transport->session, callbacks,
@@ -1802,8 +1803,54 @@ int rpc_http2_server_graceful_shutdown(conn_t *conn) {
   return result == 0 ? 0 : -1;
 }
 
-int rpc_http2_send_process_control(conn_t *conn, char command,
-                                   const std::string &checkpoint) {
+int lupine_handoff_request_begin(conn_t *conn, int op, bool callback) {
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  if (transport == nullptr || transport->server || callback ||
+      op == LUPINE_HANDOFF_DRAIN_REQUEST) {
+    return 0;
+  }
+  while (transport->requests_paused.load(std::memory_order_acquire)) {
+    pthread_mutex_unlock(&conn->call_mutex);
+    pthread_mutex_lock(&conn->async_mutex);
+    while (transport->requests_paused.load(std::memory_order_acquire) &&
+           !conn->async_cancelled) {
+      pthread_cond_wait(&conn->async_cond, &conn->async_mutex);
+    }
+    bool cancelled = conn->async_cancelled;
+    pthread_mutex_unlock(&conn->async_mutex);
+    pthread_mutex_lock(&conn->call_mutex);
+    if (cancelled) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+int lupine_handoff_pause_requests(conn_t *conn) {
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&conn->call_mutex);
+  transport->requests_paused.store(true, std::memory_order_release);
+  pthread_mutex_unlock(&conn->call_mutex);
+  return conn->closed ? -1 : 0;
+}
+
+void lupine_handoff_resume_requests(conn_t *conn) {
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&conn->async_mutex);
+  transport->requests_paused.store(false, std::memory_order_release);
+  pthread_cond_broadcast(&conn->async_cond);
+  pthread_mutex_unlock(&conn->async_mutex);
+}
+
+void lupine_handoff_on_resume(conn_t *conn, void (*callback)()) {
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  transport->process_resumed = callback;
+  pthread_mutex_unlock(&transport->session_mutex);
+}
+
+int lupine_handoff_send_control(conn_t *conn, char command,
+                                const std::string &checkpoint) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   if (transport == nullptr || checkpoint.size() > 511) {
     return -1;
@@ -1837,8 +1884,8 @@ int rpc_http2_send_process_control(conn_t *conn, char command,
   return result;
 }
 
-int rpc_http2_receive_process_control(conn_t *conn, char *command,
-                                      std::string *checkpoint) {
+int lupine_handoff_receive_control(conn_t *conn, char *command,
+                                   std::string *checkpoint) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   pthread_mutex_lock(&transport->session_mutex);
   while (transport->process_controls.empty() && !transport->transport_failed) {
@@ -1856,7 +1903,7 @@ int rpc_http2_receive_process_control(conn_t *conn, char *command,
   return result;
 }
 
-int rpc_http2_park_socket(conn_t *conn) {
+int lupine_handoff_park_socket(conn_t *conn) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   pthread_mutex_lock(&transport->session_mutex);
   while ((!transport->socket_parked || transport->write_busy) &&
@@ -1870,7 +1917,7 @@ int rpc_http2_park_socket(conn_t *conn) {
   return failed ? -1 : 0;
 }
 
-int rpc_http2_resume_socket(conn_t *conn) {
+int lupine_handoff_resume_socket(conn_t *conn) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   pthread_mutex_lock(&transport->session_mutex);
   if (transport->transport_failed) {
@@ -1900,11 +1947,17 @@ void rpc_http2_shutdown(conn_t *conn) {
   transport->response_waiters = -1;
   h2_fail_transport_locked(transport);
   pthread_cond_broadcast(&transport->heartbeat_progress);
+  // While parked, connfd belongs to the pending resume handshake.
+  bool parked = transport->netfd == LUPINE_INVALID_SOCKET;
+  lupine_socket_t socket = parked ? conn->connfd : transport->netfd;
   pthread_mutex_unlock(&transport->session_mutex);
 #ifdef _WIN32
-  (void)shutdown(transport->netfd, SD_RECEIVE);
+  (void)shutdown(socket, SD_RECEIVE);
+  if (parked) {
+    (void)CancelIoEx(reinterpret_cast<HANDLE>(socket), nullptr);
+  }
 #else
-  (void)shutdown(transport->netfd, SHUT_RD);
+  (void)shutdown(socket, SHUT_RD);
 #endif
 }
 

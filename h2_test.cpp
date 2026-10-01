@@ -1,6 +1,7 @@
 #include "client_bundle.h"
 #include "lupine_log.h"
 #include "monitoring.h"
+#include "process_handoff.h"
 #include "rpc.h"
 #include "test_platform.h"
 
@@ -266,14 +267,14 @@ void test_process_control_preserves_queued_output() {
   auto notify = [&](char command) {
     std::vector<unsigned char> frame(9, 0);
     frame[2] = static_cast<unsigned char>(checkpoint.size() + 1);
-    frame[3] = LUPINE_H2_PROCESS_CONTROL;
+    frame[3] = LUPINE_HANDOFF_CONTROL_FRAME;
     frame.push_back(static_cast<unsigned char>(command));
     frame.insert(frame.end(), checkpoint.begin(), checkpoint.end());
     require(raw_write_all(pair.server.connfd, frame.data(), frame.size()),
             "process control write failed");
     char received;
     std::string key;
-    require(rpc_http2_receive_process_control(&pair.client, &received, &key) ==
+    require(lupine_handoff_receive_control(&pair.client, &received, &key) ==
                     0 &&
                 received == command && key == checkpoint,
             "process control did not preserve command and generation");
@@ -283,18 +284,19 @@ void test_process_control_preserves_queued_output() {
   for (outcome action : {cancel, resume, shutdown}) {
     notify('P');
     notify('F');
-    require(rpc_http2_send_process_control(&pair.client, 'A', checkpoint) == 0,
+    require(lupine_handoff_send_control(&pair.client, 'A', checkpoint) == 0,
             "client freeze failed");
     std::array<unsigned char, 9> header;
     do {
       require(raw_read_frame(pair.server.connfd, &header),
               "freeze acknowledgment read failed");
-    } while (header[3] != LUPINE_H2_PROCESS_CONTROL);
+    } while (header[3] != LUPINE_HANDOFF_CONTROL_FRAME);
     require(write_bytes(&pair.client, "queued", 6) == 0,
             "queuing data during freeze failed");
     notify(action == cancel ? 'X' : 'C');
     if (action != cancel) {
-      require(rpc_http2_park_socket(&pair.client) == 0, "socket park failed");
+      require(lupine_handoff_park_socket(&pair.client) == 0,
+              "socket park failed");
       lupine_socket_t replacement[2];
       require(lupine_test_connected_pair(replacement),
               "replacement pair failed");
@@ -316,7 +318,7 @@ void test_process_control_preserves_queued_output() {
                 "shutdown left the resume handshake blocked");
         break;
       }
-      require(rpc_http2_resume_socket(&pair.client) == 0,
+      require(lupine_handoff_resume_socket(&pair.client) == 0,
               "socket resume failed");
     }
     require(raw_read_frame(pair.server.connfd, &header),
@@ -1820,7 +1822,7 @@ void test_rpc_repeated_responses_on_lane() {
           "repeated response request start failed");
   int request_id = rpc_write_end(&pair.client);
   require(request_id > 0, "repeated response request write failed");
-  require(rpc_pause_client(&pair.client) == 0,
+  require(lupine_handoff_pause_requests(&pair.client) == 0,
           "checkpoint waited for replies held by the surviving client");
   auto next_call = std::async(std::launch::async, [&] {
     int result = rpc_write_start_request(&pair.client, kOp);
@@ -1843,7 +1845,7 @@ void test_rpc_repeated_responses_on_lane() {
     require(chunk == expected, "repeated response index mismatch");
     require(received == payload, "repeated response payload mismatch");
   }
-  rpc_resume_client(&pair.client);
+  lupine_handoff_resume_requests(&pair.client);
   require(next_call.wait_for(std::chrono::seconds(1)) ==
                   std::future_status::ready &&
               next_call.get() > 0,

@@ -29,6 +29,7 @@
 #include "ipc.h"
 #include "lupine_log.h"
 #include "monitoring.h"
+#include "process_handoff.h"
 #include "rpc.h"
 #include "rpc_server.h"
 #ifdef LUPINE_BUILD_CUDA_BACKEND
@@ -185,7 +186,7 @@ struct lupine_lane {
 int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
                         int op) {
   LUPINE_TRACE_LOG("LUPINE server handling op " << op);
-  if (op == LUPINE_RPC_PROCESS_CHECKPOINT) {
+  if (op == LUPINE_HANDOFF_DRAIN_REQUEST) {
 #ifdef LUPINE_BUILD_CUDA_BACKEND
     lupine_checkpoint_drain_cuda_calls();
 #endif
@@ -371,11 +372,6 @@ int client_handler(lupine_socket_t connfd) {
 #endif
       lupine_child_bulk_token.empty() ? nullptr
                                       : lupine_child_bulk_token.c_str(),
-#ifdef LUPINE_BUILD_CUDA_BACKEND
-      lupine_checkpoint_resume_cuda_calls,
-#else
-      nullptr,
-#endif
   };
 
   // Identify the protocol before any RPC state exists: HTTP/2 preface means
@@ -426,6 +422,7 @@ int client_handler(lupine_socket_t connfd) {
   }
   lupine_monitoring_register_child();
 #ifdef LUPINE_BUILD_CUDA_BACKEND
+  lupine_handoff_on_resume(&conn, lupine_checkpoint_resume_cuda_calls);
   if (!lupine_server_initialize_connection(&conn)) {
     LUPINE_LOG_ERROR("Error initializing per-connection CUDA state.");
     rpc_conn_destroy(&conn);

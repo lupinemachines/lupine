@@ -1,5 +1,6 @@
 #include "rpc.h"
 #include "lupine_log.h"
+#include "process_handoff.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -256,8 +257,7 @@ void rpc_shutdown_transport_socket(conn_t *conn) {
   rpc_cancel_async_waits(conn);
   if (conn->http2 != nullptr) {
     rpc_http2_shutdown(conn);
-  }
-  if (socket != LUPINE_INVALID_SOCKET) {
+  } else if (socket != LUPINE_INVALID_SOCKET) {
     rpc_shutdown_socket(socket);
   }
 }
@@ -861,22 +861,6 @@ int rpc_wait_for_response(conn_t *conn) {
   return 0;
 }
 
-// The client survives eviction, including unread replies and partial calls.
-// Only request builders must finish before the server's checkpoint barrier.
-int rpc_pause_client(conn_t *conn) {
-  pthread_mutex_lock(&conn->call_mutex);
-  __atomic_store_n(&conn->client_paused, true, __ATOMIC_RELEASE);
-  pthread_mutex_unlock(&conn->call_mutex);
-  return conn->closed ? -1 : 0;
-}
-
-void rpc_resume_client(conn_t *conn) {
-  pthread_mutex_lock(&conn->async_mutex);
-  __atomic_store_n(&conn->client_paused, false, __ATOMIC_RELEASE);
-  pthread_cond_broadcast(&conn->async_cond);
-  pthread_mutex_unlock(&conn->async_mutex);
-}
-
 // rpc_write_start_request starts a new request builder on the given connection
 // index with a specific op code.
 //
@@ -909,27 +893,9 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   if (call_lock_result != 0) {
     return -1;
   }
-  // A callback may issue a nested request while GPU preparation finishes.
   bool callback = request_nested_in_response ||
                   (rpc_tls_io.read_conn == conn && rpc_tls_io.read.op != -1);
-  if (conn->local_request_parity == 0 && !callback &&
-      op != LUPINE_RPC_PROCESS_CHECKPOINT) {
-    while (__atomic_load_n(&conn->client_paused, __ATOMIC_ACQUIRE)) {
-      pthread_mutex_unlock(&conn->call_mutex);
-      pthread_mutex_lock(&conn->async_mutex);
-      while (__atomic_load_n(&conn->client_paused, __ATOMIC_ACQUIRE) &&
-             !conn->async_cancelled) {
-        pthread_cond_wait(&conn->async_cond, &conn->async_mutex);
-      }
-      bool cancelled = conn->async_cancelled;
-      pthread_mutex_unlock(&conn->async_mutex);
-      if (cancelled) {
-        return -1;
-      }
-      pthread_mutex_lock(&conn->call_mutex);
-    }
-  }
-  if (conn->closed) {
+  if (lupine_handoff_request_begin(conn, op, callback) < 0 || conn->closed) {
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
   }
