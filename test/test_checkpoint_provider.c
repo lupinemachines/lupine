@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static void append_event(const char *event, const char *connection_id) {
   const char *path = getenv("LUPINE_CHECKPOINT_TEST_LOG");
@@ -45,4 +46,8 @@ static const lupine_checkpoint_provider_v1 provider = {
 
 const lupine_checkpoint_provider_v1 *lupinecr_get_lupine_provider_v1(void) {
   return &provider;
+}
+
+void *lupinecr_cuda_symbol_v1(const char *name) {
+  return strcmp(name, "test_checkpoint_hook") == 0 ? (void *)&provider : NULL;
 }

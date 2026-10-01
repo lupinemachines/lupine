@@ -49,6 +49,14 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  if (!expect((lupine_server_checkpoint_cuda_symbol("test_checkpoint_hook") !=
+               nullptr) == expect_provider,
+              "optional CUDA adapter was not discovered") ||
+      !expect(lupine_server_checkpoint_cuda_symbol("unknown") == nullptr,
+              "unknown CUDA entry point should use the native driver")) {
+    return 1;
+  }
+
   if (!expect(kill(getpid(), SIGTERM) == 0, "failed to deliver SIGTERM")) {
     return 1;
   }
@@ -60,6 +68,12 @@ int main(int argc, char **argv) {
   }
   if (!expect(lupine_server_checkpoint_child_finish() == 0,
               "checkpoint shutdown failed")) {
+    return 1;
+  }
+
+  if (!expect(lupine_server_checkpoint_cuda_symbol("test_checkpoint_hook") ==
+                  nullptr,
+              "CUDA adapter remained reachable after provider unload")) {
     return 1;
   }
 

@@ -25,6 +25,7 @@ namespace {
 struct optional_checkpoint_provider {
   void *library = nullptr;
   const lupine_checkpoint_provider_v1 *api = nullptr;
+  void *(*cuda_symbol)(const char *) = nullptr;
   bool started = false;
 };
 
@@ -69,6 +70,7 @@ void unload_provider(optional_checkpoint_provider &provider) {
   }
   provider.started = false;
   provider.api = nullptr;
+  provider.cuda_symbol = nullptr;
   if (provider.library != nullptr) {
     dlclose(provider.library);
     provider.library = nullptr;
@@ -120,6 +122,8 @@ optional_checkpoint_provider load_provider() {
     return provider;
   }
   provider.started = true;
+  provider.cuda_symbol = reinterpret_cast<decltype(provider.cuda_symbol)>(
+      dlsym(provider.library, "lupinecr_cuda_symbol_v1"));
 
   LUPINE_LOG_DEBUG("LupineCR checkpoint provider enabled.");
   return provider;
@@ -284,5 +288,15 @@ int lupine_server_checkpoint_child_finish() {
   state.connection_id.clear();
   state.started = false;
   return result;
+#endif
+}
+
+void *lupine_server_checkpoint_cuda_symbol(const char *name) {
+#ifdef _WIN32
+  (void)name;
+  return nullptr;
+#else
+  const auto &provider = checkpoint_state().provider;
+  return provider.cuda_symbol != nullptr ? provider.cuda_symbol(name) : nullptr;
 #endif
 }

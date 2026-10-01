@@ -76,6 +76,10 @@ static void exercise(int kind, bool implicit_mapping) {
   check(cudaMalloc(&device, kBytes));
   cudaStream_t stream = nullptr;
   check(cudaStreamCreate(&stream));
+  check(cudaMemset(device, 0, kBytes));
+  increment<<<kBytes / 256, 256, 0, stream>>>(device);
+  check(cudaGetLastError());
+  check(cudaStreamSynchronize(stream));
   read_pattern(file, host, expected);
 
   std::vector<unsigned char> actual(kBytes);

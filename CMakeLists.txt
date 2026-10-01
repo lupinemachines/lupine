@@ -383,6 +383,8 @@ if(LUPINE_BUILD_CUDA)
         lupine_client_transport lupine_cuda_checkpoint lupine_ipc
         ${CMAKE_DL_LIBS})
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_sources(lupine_cuda_client PRIVATE
+            device_ioctl_client.cpp device_ioctl_proxy.cpp device_ioctl_preload.cpp)
         # shm_open/shm_unlink live in librt before glibc 2.34.
         target_link_libraries(lupine_cuda_client PRIVATE rt)
     endif()
@@ -604,6 +606,10 @@ if(LUPINE_BUILD_SERVER)
             ${CUDAToolkit_INCLUDE_DIRS})
         target_compile_definitions(lupine_cuda_server PRIVATE
             LUPINE_RPC_SERVER)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            target_sources(lupine_cuda_server PRIVATE
+                device_ioctl_server.cpp)
+        endif()
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LUPINE_BUILD_NVML)
             target_compile_definitions(lupine_cuda_server PRIVATE
                 LUPINE_MONITORING_ENABLED)
@@ -840,8 +846,21 @@ endif()
 # mappings with MAP_FIXED_NOREPLACE and back them with memfd_create(), none of
 # which macOS has. Portable tests belong in the block above.
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(device_ioctl_proxy_test device_ioctl_proxy_test.cpp
+        device_ioctl_proxy.cpp device_ioctl_preload.cpp)
+    target_link_libraries(device_ioctl_proxy_test PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    lupine_apply_sanitizer(device_ioctl_proxy_test)
+    add_test(NAME device_ioctl_proxy_test COMMAND device_ioctl_proxy_test)
 
     if(LUPINE_BUILD_CUDA)
+        add_executable(device_ioctl_rpc_test device_ioctl_rpc_test.cpp
+            device_ioctl_client.cpp device_ioctl_proxy.cpp
+            device_ioctl_server.cpp)
+        target_include_directories(device_ioctl_rpc_test PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+        target_link_libraries(device_ioctl_rpc_test PRIVATE lupine_rpc_core)
+        lupine_apply_sanitizer(device_ioctl_rpc_test)
+        add_test(NAME device_ioctl_rpc_test COMMAND device_ioctl_rpc_test)
+        set_tests_properties(device_ioctl_rpc_test PROPERTIES TIMEOUT 15)
         add_executable(events_test
             ${CMAKE_CURRENT_SOURCE_DIR}/events.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/events_test.cpp)

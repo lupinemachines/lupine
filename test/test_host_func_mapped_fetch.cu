@@ -1,22 +1,17 @@
-// Integration test for a mapped-host demand fetch that originates inside a
-// cuLaunchHostFunc callback, i.e. on the client's RPC dispatch thread.
-//
-// A synchronization point invalidates the pinned mapped allocation instead of
-// copying it back, so the first host touch has to fetch the affected chunks.
-// When that touch happens in a host-func callback the fault handler runs on the
-// dispatch thread, whose server lane is not the one the application bound to a
-// context; a fetch that assumes the caller's lane already has a current context
-// comes back CUDA_ERROR_INVALID_CONTEXT and the handler turns a recoverable
-// fault into SIGSEGV.
+// Fetch invalidated pinned bytes inside a host callback while cudaFree waits
+// for that callback. The fetch must not enter CUDA behind the free's lock.
 #include <atomic>
+#include <chrono>
 #include <cuda_runtime.h>
 #include <stdio.h>
+#include <thread>
 
 static const size_t kBytes = 1ull << 20;
 static const unsigned char kDeviceValue = 0x5a;
 
 // 0 = not run, 1 = pass, -1 = mismatch.
 static std::atomic<int> g_result{0};
+static std::atomic<bool> g_started{false};
 static unsigned char *g_host = nullptr;
 
 __global__ void write_bytes(unsigned char *dst, unsigned char value,
@@ -28,6 +23,9 @@ __global__ void write_bytes(unsigned char *dst, unsigned char value,
 }
 
 static void CUDART_CB host_fn(void *) {
+  g_started.store(true, std::memory_order_release);
+  // Let cudaFree enter its implicit synchronization before the first fetch.
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
   int ok = 1;
   for (size_t i = 0; i < kBytes; ++i) {
     if (g_host[i] != kDeviceValue) {
@@ -47,9 +45,11 @@ static int fatal(cudaError_t err, const char *what) {
 }
 
 int main() {
+  void *unrelated = nullptr;
   unsigned char *device = nullptr;
   cudaStream_t stream = nullptr;
-  if (fatal(cudaHostAlloc((void **)&g_host, kBytes, cudaHostAllocMapped),
+  if (fatal(cudaMalloc(&unrelated, 1), "cudaMalloc") ||
+      fatal(cudaHostAlloc((void **)&g_host, kBytes, cudaHostAllocMapped),
             "cudaHostAlloc") ||
       fatal(cudaHostGetDevicePointer((void **)&device, g_host, 0),
             "cudaHostGetDevicePointer") ||
@@ -68,7 +68,15 @@ int main() {
   // The first touch of the invalidated range now happens on the dispatch
   // thread, inside the callback.
   if (fatal(cudaLaunchHostFunc(stream, host_fn, nullptr),
-            "cudaLaunchHostFunc") ||
+            "cudaLaunchHostFunc")) {
+    return 2;
+  }
+  while (!g_started.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  // cuMemFree can hold the CUDA driver's write lock until the callback exits.
+  // Fetching pinned bytes must not require another CUDA call behind that lock.
+  if (fatal(cudaFree(unrelated), "cudaFree during host func") ||
       fatal(cudaStreamSynchronize(stream), "sync after host func")) {
     return 2;
   }
