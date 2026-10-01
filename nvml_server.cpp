@@ -32,7 +32,7 @@ template <typename Fn> Fn nvml_symbol(const char *name) {
   return lupine_nvml_symbol<Fn>(name);
 }
 
-int handle_processes(conn_t *conn, const char *name) {
+int handle_processes(conn_t *conn, const char *name, size_t info_size) {
   nvmlDevice_t device = nullptr;
   unsigned int requested_count = 0;
   int has_infos = 0;
@@ -47,13 +47,12 @@ int handle_processes(conn_t *conn, const char *name) {
   }
 
   unsigned int returned_count = requested_count;
-  std::vector<nvmlProcessInfo_t> infos;
+  std::vector<char> infos;
   if (has_infos && requested_count != 0) {
-    infos.resize(requested_count);
+    infos.resize(requested_count * info_size);
   }
 
-  using Fn =
-      nvmlReturn_t (*)(nvmlDevice_t, unsigned int *, nvmlProcessInfo_t *);
+  using Fn = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *, void *);
   Fn fn = nvml_symbol<Fn>(name);
   nvmlReturn_t result =
       fn == nullptr
@@ -65,7 +64,7 @@ int handle_processes(conn_t *conn, const char *name) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &returned_count, sizeof(returned_count)) < 0 ||
       rpc_write(conn, &copied_count, sizeof(copied_count)) < 0 ||
-      rpc_write(conn, infos.data(), copied_count * sizeof(*infos.data())) < 0 ||
+      rpc_write(conn, infos.data(), copied_count * info_size) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -77,25 +76,46 @@ int handle_processes(conn_t *conn, const char *name) {
 #include "codegen/gen_nvml_server.inc"
 
 int handle_nvmlDeviceGetComputeRunningProcesses(conn_t *conn) {
-  return handle_processes(conn, "nvmlDeviceGetComputeRunningProcesses");
+  return handle_processes(conn, "nvmlDeviceGetComputeRunningProcesses",
+                          sizeof(nvmlProcessInfo_v1_t));
 }
 
 int handle_nvmlDeviceGetComputeRunningProcesses_v2(conn_t *conn) {
-  return handle_processes(conn, "nvmlDeviceGetComputeRunningProcesses_v2");
+  return handle_processes(conn, "nvmlDeviceGetComputeRunningProcesses_v2",
+                          sizeof(nvmlProcessInfo_t));
+}
+
+int handle_nvmlDeviceGetComputeRunningProcesses_v3(conn_t *conn) {
+  return handle_processes(conn, "nvmlDeviceGetComputeRunningProcesses_v3",
+                          sizeof(nvmlProcessInfo_t));
 }
 
 int handle_nvmlDeviceGetGraphicsRunningProcesses(conn_t *conn) {
-  return handle_processes(conn, "nvmlDeviceGetGraphicsRunningProcesses");
+  return handle_processes(conn, "nvmlDeviceGetGraphicsRunningProcesses",
+                          sizeof(nvmlProcessInfo_v1_t));
 }
 
 int handle_nvmlDeviceGetGraphicsRunningProcesses_v2(conn_t *conn) {
-  return handle_processes(conn, "nvmlDeviceGetGraphicsRunningProcesses_v2");
+  return handle_processes(conn, "nvmlDeviceGetGraphicsRunningProcesses_v2",
+                          sizeof(nvmlProcessInfo_t));
+}
+
+int handle_nvmlDeviceGetGraphicsRunningProcesses_v3(conn_t *conn) {
+  return handle_processes(conn, "nvmlDeviceGetGraphicsRunningProcesses_v3",
+                          sizeof(nvmlProcessInfo_t));
 }
 
 int handle_nvmlDeviceGetMPSComputeRunningProcesses(conn_t *conn) {
-  return handle_processes(conn, "nvmlDeviceGetMPSComputeRunningProcesses");
+  return handle_processes(conn, "nvmlDeviceGetMPSComputeRunningProcesses",
+                          sizeof(nvmlProcessInfo_v1_t));
 }
 
 int handle_nvmlDeviceGetMPSComputeRunningProcesses_v2(conn_t *conn) {
-  return handle_processes(conn, "nvmlDeviceGetMPSComputeRunningProcesses_v2");
+  return handle_processes(conn, "nvmlDeviceGetMPSComputeRunningProcesses_v2",
+                          sizeof(nvmlProcessInfo_t));
+}
+
+int handle_nvmlDeviceGetMPSComputeRunningProcesses_v3(conn_t *conn) {
+  return handle_processes(conn, "nvmlDeviceGetMPSComputeRunningProcesses_v3",
+                          sizeof(nvmlProcessInfo_t));
 }
