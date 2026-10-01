@@ -4,7 +4,8 @@
 
 // Initializes SIGTERM coordination and attempts to load the optional LupineCR
 // provider. Must be called in the connection child before its first CUDA call.
-bool lupine_server_checkpoint_child_start(lupine_socket_t connection);
+bool lupine_server_checkpoint_child_start(lupine_socket_t connection,
+                                          bool use_provider = true);
 
 // Supplies the stable identifier discovered during connection bootstrap and
 // asks the optional provider to restore it before the first CUDA RPC. A null or

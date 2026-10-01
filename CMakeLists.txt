@@ -658,21 +658,22 @@ if(LUPINE_BUILD_SERVER)
         target_link_libraries(lupine_hip_server PRIVATE lupine_server_core)
     endif()
 
-    add_executable(lupine_driver_server
+    add_library(lupine_server_runtime OBJECT
         ${CMAKE_CURRENT_SOURCE_DIR}/server.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/registry.cpp)
+    lupine_internal_target(lupine_server_runtime)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LUPINE_BUILD_CUDA AND
        LUPINE_BUILD_NVML)
-        target_sources(lupine_driver_server PRIVATE
+        target_sources(lupine_server_runtime PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/monitor_server.cpp)
-        target_compile_definitions(lupine_driver_server PRIVATE
+        target_compile_definitions(lupine_server_runtime PRIVATE
             LUPINE_MONITORING_ENABLED)
     endif()
-    target_include_directories(lupine_driver_server PRIVATE
+    target_include_directories(lupine_server_runtime PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen
         ${CUDAToolkit_INCLUDE_DIRS})
-    target_link_libraries(lupine_driver_server PRIVATE
+    target_link_libraries(lupine_server_runtime PRIVATE
         lupine_server_core lupine_ipc ${CMAKE_DL_LIBS})
     if(LUPINE_CLIENT_BUNDLE_INPUT)
         if(NOT IS_DIRECTORY "${LUPINE_CLIENT_BUNDLE_INPUT}")
@@ -723,7 +724,7 @@ if(LUPINE_BUILD_SERVER)
                         ${inputs}
                 COMMENT "Embedding ${tag} client bundle"
                 VERBATIM)
-            target_sources(lupine_driver_server PRIVATE ${source})
+            target_sources(lupine_server_runtime PRIVATE ${source})
         endfunction()
 
         lupine_embed_client_bundle(linux-x86_64 "linux/amd64"
@@ -737,36 +738,45 @@ if(LUPINE_BUILD_SERVER)
             nvcuda.dll nvml.dll)
         lupine_embed_client_bundle(win-arm64 "windows/arm64"
             nvcuda.dll nvml.dll)
-        target_compile_definitions(lupine_driver_server PRIVATE
+        target_compile_definitions(lupine_server_runtime PRIVATE
             LUPINE_EMBED_CLIENT_BUNDLES)
         message(STATUS
             "Embedding server client bundles from: ${LUPINE_CLIENT_BUNDLE_INPUT}")
     endif()
     if(LUPINE_BUILD_CUDA)
-        target_compile_definitions(lupine_driver_server PRIVATE
+        target_compile_definitions(lupine_server_runtime PRIVATE
             LUPINE_BUILD_CUDA_BACKEND
             LUPINE_RPC_SERVER
             LUPINE_BACKEND_VERSION="${CUDAToolkit_VERSION}")
-        target_link_libraries(lupine_driver_server PRIVATE lupine_cuda_server)
+        target_link_libraries(lupine_server_runtime PRIVATE lupine_cuda_server)
         if(LUPINE_BUILD_NCCL)
-            target_compile_definitions(lupine_driver_server PRIVATE
+            target_compile_definitions(lupine_server_runtime PRIVATE
                 LUPINE_BUILD_NCCL_BACKEND NCCL_OS_LINUX)
-            target_include_directories(lupine_driver_server PRIVATE
+            target_include_directories(lupine_server_runtime PRIVATE
                 ${LUPINE_NCCL_INCLUDE_DIR})
-            target_link_libraries(lupine_driver_server PRIVATE
+            target_link_libraries(lupine_server_runtime PRIVATE
                 lupine_nccl_server)
         endif()
     endif()
     if(LUPINE_BUILD_NVML)
-        target_compile_definitions(lupine_driver_server PRIVATE
+        target_compile_definitions(lupine_server_runtime PRIVATE
             LUPINE_BUILD_NVML_BACKEND)
-        target_link_libraries(lupine_driver_server PRIVATE lupine_nvml_server)
+        target_link_libraries(lupine_server_runtime PRIVATE lupine_nvml_server)
     endif()
     if(LUPINE_BUILD_HIP)
-        target_compile_definitions(lupine_driver_server PRIVATE
+        target_compile_definitions(lupine_server_runtime PRIVATE
             LUPINE_BUILD_HIP_BACKEND)
-        target_link_libraries(lupine_driver_server PRIVATE lupine_hip_server)
+        target_link_libraries(lupine_server_runtime PRIVATE lupine_hip_server)
     endif()
+    add_executable(lupine_driver_server ${CMAKE_CURRENT_SOURCE_DIR}/server_main.cpp)
+    target_link_libraries(lupine_driver_server PRIVATE lupine_server_runtime)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_library(lupine_server SHARED)
+        target_link_libraries(lupine_server PRIVATE lupine_server_runtime)
+        set_target_properties(lupine_server PROPERTIES OUTPUT_NAME lupine-server)
+        add_dependencies(lupine_driver_server lupine_server)
+    endif()
+
 endif()
 
 # Tests that build wherever the project does. The Linux-only block below leans
@@ -911,6 +921,14 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
                 ${CMAKE_CURRENT_BINARY_DIR}/missing-liblupinecr.so missing)
     set_tests_properties(server_checkpoint_missing_provider_test PROPERTIES
         TIMEOUT ${sckpt_timeout})
+
+    if(TARGET lupine_server)
+        add_test(NAME server_library_test COMMAND python3
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_server_library.py
+            $<TARGET_FILE:lupine_server>)
+        set_tests_properties(server_library_test PROPERTIES
+            TIMEOUT 10 SKIP_RETURN_CODE 77)
+    endif()
 
     if(TARGET lupine_driver_server AND LUPINE_BUILD_CUDA)
         add_executable(server_sigterm_test

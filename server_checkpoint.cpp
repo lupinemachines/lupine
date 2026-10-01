@@ -154,7 +154,8 @@ void wait_for_shutdown(child_checkpoint_state &state) {
 
 } // namespace
 
-bool lupine_server_checkpoint_child_start(lupine_socket_t connection) {
+bool lupine_server_checkpoint_child_start(lupine_socket_t connection,
+                                          bool use_provider) {
 #ifdef _WIN32
   (void)connection;
   return true;
@@ -168,7 +169,7 @@ bool lupine_server_checkpoint_child_start(lupine_socket_t connection) {
   state.connection_id.clear();
   state.checkpoint_requested.store(false, std::memory_order_relaxed);
   sigterm_received = 0;
-  state.provider = load_provider();
+  state.provider = use_provider ? load_provider() : optional_checkpoint_provider{};
 
   if (pipe(state.signal_pipe) != 0) {
     unload_provider(state.provider);

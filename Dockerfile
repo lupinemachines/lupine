@@ -254,6 +254,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* /tmp/*.deb
 
 COPY --from=server-build /opt/lupine/build/lupine_driver_server /opt/lupine/bin/lupine_driver_server
+COPY --from=server-build /opt/lupine/build/liblupine-server.so /opt/lupine/lib/liblupine-server.so
+COPY server_api.h checkpoint_provider.h /opt/lupine/include/
 
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/compat:/usr/local/cuda/lib64:/opt/rocm/lib
 ENV LUPINE_PORT=14833

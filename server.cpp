@@ -32,6 +32,7 @@
 #include "process_handoff.h"
 #include "rpc.h"
 #include "rpc_server.h"
+#include "server_api.h"
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 #include "checkpoint.h"
 #include "codegen/gen_rpc_ids.h"
@@ -468,7 +469,33 @@ int client_handler(lupine_socket_t connfd) {
   return checkpoint_result;
 }
 
-int main() {
+#ifdef __linux__
+int lupine_server_serve_connection_v1(int fd) {
+  int type = 0;
+  socklen_t length = sizeof(type);
+  if (!rpc_server_validate(lupine_rpc_handlers()) || lupine_socket_init() < 0 ||
+      getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &length) != 0 ||
+      type != SOCK_STREAM) {
+    LUPINE_LOG_ERROR("Server connection requires a valid stream socket.");
+    lupine_socket_close(fd);
+    return EXIT_FAILURE;
+  }
+  lupine_socket_apply_transport_options(fd);
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+  // The embedding application owns checkpoint publication and restore.
+  bool started = lupine_server_checkpoint_child_start(fd, false);
+#else
+  bool started = lupine_install_child_signal_handler(fd);
+#endif
+  if (!started) {
+    lupine_socket_close(fd);
+    return EXIT_FAILURE;
+  }
+  return client_handler(fd) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+#endif
+
+int lupine_server_main() {
   if (!rpc_server_validate(lupine_rpc_handlers())) {
     LUPINE_LOG_ERROR("Invalid RPC handler registry.");
     return EXIT_FAILURE;

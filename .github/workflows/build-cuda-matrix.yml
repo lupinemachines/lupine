@@ -154,8 +154,10 @@ jobs:
           trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
 
           docker cp "$container:/opt/lupine/bin/lupine_driver_server" "$out/lupine_driver_server"
+          docker cp "$container:/opt/lupine/lib/liblupine-server.so" "$out/liblupine-server.so"
+          docker cp "$container:/opt/lupine/include/server_api.h" "$out/server_api.h"
           chmod +x "$out/lupine_driver_server"
-          (cd "$out" && sha256sum lupine_driver_server > SHA256SUMS)
+          (cd "$out" && sha256sum lupine_driver_server liblupine-server.so server_api.h > SHA256SUMS)
           (cd "$out" && zip -r "../$(basename "$archive")" .)
 
       - name: Upload client artifacts
