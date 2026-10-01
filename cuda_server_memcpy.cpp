@@ -23,6 +23,7 @@
 #include <new>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "lupine_log.h"
@@ -140,16 +141,17 @@ static CUresult lupine_current_htod_context(conn_t *conn,
 }
 
 struct lupine_graph_host_copy_node {
-  explicit lupine_graph_host_copy_node(lupine_graph_host_copy node_copy)
-      : copy(node_copy) {}
-
   lupine_graph_host_copy copy;
+  // Zero for heap staging. A pinned buffer is freed only while its buffer id
+  // still matches: destroying its context frees it and the address can return.
+  unsigned long long buffer_id = 0;
   lupine_graph_host_copy_node *next = nullptr;
 };
 
 struct lupine_graph_resources {
-  void add_dtoh_copy(lupine_graph_host_copy copy) {
-    auto *node = new lupine_graph_host_copy_node(copy);
+  void add_dtoh_copy(lupine_graph_host_copy copy,
+                     unsigned long long buffer_id) {
+    auto *node = new lupine_graph_host_copy_node{copy, buffer_id};
     node->next = dtoh_copies.load(std::memory_order_relaxed);
     while (!dtoh_copies.compare_exchange_weak(node->next, node,
                                               std::memory_order_release,
@@ -168,11 +170,77 @@ struct lupine_graph_resources {
   }
 
   std::atomic<lupine_graph_host_copy_node *> dtoh_copies{nullptr};
+  // Graphs, execs and launches whose bytes are undelivered. The object itself
+  // outlives them because callbacks and stream maps keep raw pointers.
+  std::atomic<int> owners{0};
 };
 
+static std::mutex &lupine_retired_dtoh_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+static lupine_graph_host_copy_node *&lupine_retired_dtoh_copies() {
+  static lupine_graph_host_copy_node *copies = nullptr;
+  return copies;
+}
+
+static void lupine_retire_graph_staging(lupine_graph_resources *resources) {
+  auto *head = resources->dtoh_copies.exchange(nullptr);
+  if (head == nullptr) {
+    return;
+  }
+  auto *tail = head;
+  while (tail->next != nullptr) {
+    tail = tail->next;
+  }
+  std::lock_guard<std::mutex> lock(lupine_retired_dtoh_mutex());
+  tail->next = lupine_retired_dtoh_copies();
+  lupine_retired_dtoh_copies() = head;
+}
+
+static void lupine_retain_graph_resources(lupine_graph_resources *resources) {
+  if (resources != nullptr) {
+    resources->owners.fetch_add(1);
+  }
+}
+
+// The last owner can be a delivery inside a CUDA callback, where host memory
+// cannot be freed, so release only retires the staging. Graph and exec
+// destruction free it from a handler thread.
+void lupine_release_graph_resources(lupine_graph_resources *resources) {
+  if (resources != nullptr && resources->owners.fetch_sub(1) == 1) {
+    lupine_retire_graph_staging(resources);
+  }
+}
+
+static void lupine_free_retired_graph_staging() {
+  lupine_graph_host_copy_node *node = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(lupine_retired_dtoh_mutex());
+    std::swap(node, lupine_retired_dtoh_copies());
+  }
+  while (node != nullptr) {
+    void *host = node->copy.server_src;
+    if (host != nullptr) {
+      lupine_forget_undelivered_dtoh(host);
+      unsigned long long buffer_id = 0;
+      if (node->buffer_id == 0) {
+        std::free(host);
+      } else if (cuPointerGetAttribute(
+                     &buffer_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
+                     reinterpret_cast<CUdeviceptr>(host)) == CUDA_SUCCESS &&
+                 buffer_id == node->buffer_id) {
+        (void)cuMemFreeHost(host);
+      }
+    }
+    delete std::exchange(node, node->next);
+  }
+}
+
 // Graph host buffers must remain valid for any queued launch or replay.
-// Graph-resource objects intentionally have process lifetime; maps use stable
-// raw pointers while each object retains its owned allocations.
+// Graph-resource objects have process lifetime so maps can use stable raw
+// pointers; only their staging is freed when the last owner goes.
 static libcuckoo::cuckoohash_map<CUgraph, lupine_graph_resources *> &
 lupine_graph_resource_map() {
   static auto *resources =
@@ -228,6 +296,16 @@ static void lupine_erase_capture_resources(Map &map,
   }
 }
 
+template <typename Map, typename Key>
+static lupine_graph_resources *lupine_take_graph_resources(Map &map, Key key) {
+  lupine_graph_resources *resources = nullptr;
+  map.erase_fn(key, [&resources](lupine_graph_resources *stored) {
+    resources = stored;
+    return true;
+  });
+  return resources;
+}
+
 lupine_graph_resources *lupine_get_graph_resources(CUgraph graph) {
   auto *candidate = new lupine_graph_resources();
   auto *resources = candidate;
@@ -238,6 +316,8 @@ lupine_graph_resources *lupine_get_graph_resources(CUgraph graph) {
       candidate);
   if (resources != candidate) {
     delete candidate;
+  } else {
+    lupine_retain_graph_resources(resources);
   }
   return resources;
 }
@@ -300,7 +380,12 @@ void lupine_finish_stream_capture_resources(CUstream stream, CUgraph graph,
   lupine_erase_capture_resources(lupine_stream_capture_resource_map(),
                                  resources);
   if (success) {
+    // Capturing into a graph replaces its resources. The old ones stay owned:
+    // the graph's earlier nodes still copy into their staging.
+    lupine_retain_graph_resources(resources);
     lupine_graph_resource_map().insert_or_assign(graph, resources);
+  } else {
+    lupine_retire_graph_staging(resources);
   }
 }
 
@@ -341,12 +426,28 @@ void lupine_wait_event_capture_resources(CUstream stream, CUevent event) {
 void lupine_clone_graph_resources(CUgraph clone, CUgraph original) {
   lupine_graph_resources *resources = nullptr;
   if (lupine_graph_resource_map().find(original, resources)) {
+    lupine_retain_graph_resources(resources);
     lupine_graph_resource_map().insert_or_assign(clone, resources);
   }
 }
 
 void lupine_erase_graph_resources(CUgraph graph) {
-  lupine_graph_resource_map().erase(graph);
+  lupine_release_graph_resources(
+      lupine_take_graph_resources(lupine_graph_resource_map(), graph));
+  lupine_free_retired_graph_staging();
+}
+
+void lupine_rebind_graph_exec_resources(CUgraphExec exec, CUgraph graph) {
+  lupine_graph_resources *resources = nullptr;
+  (void)lupine_graph_resource_map().find(graph, resources);
+  lupine_retain_graph_resources(resources);
+  auto *previous =
+      lupine_take_graph_resources(lupine_graph_exec_resource_map(), exec);
+  if (resources != nullptr) {
+    lupine_graph_exec_resource_map().insert_or_assign(exec, resources);
+  }
+  lupine_release_graph_resources(previous);
+  lupine_free_retired_graph_staging();
 }
 
 void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
@@ -362,7 +463,7 @@ void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
           conn,
           [&](lupine_pending_dtoh_streams &streams, libcuckoo::UpsertContext) {
             for (const auto &copy : copies) {
-              // Graph resources retain these buffers for subsequent replays.
+              lupine_retain_graph_resources(resources);
               streams[stream].push_back({nullptr, copy.client, copy.server_src,
                                          lupine_dtoh_storage::borrowed, context,
                                          resources});
@@ -384,7 +485,8 @@ lupine_graph_dtoh_copy_snapshot(lupine_graph_resources *resources) {
   return copies;
 }
 
-// Each captured copy owns its staging for as long as its graph resources live.
+// Each captured copy owns its staging until its graph resources lose their
+// last owner.
 // Host allocation is an unsafe call under global or thread-local capture and
 // would invalidate the capture, so it runs in relaxed mode.
 void *lupine_alloc_capture_scratch(size_t bytes) {
@@ -401,7 +503,14 @@ void *lupine_alloc_capture_scratch(size_t bytes) {
 void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
                                  const lupine_host_rows &client,
                                  void *server_src) {
-  resources->add_dtoh_copy({client, server_src});
+  unsigned long long buffer_id = 0;
+  if (server_src != nullptr &&
+      cuPointerGetAttribute(&buffer_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
+                            reinterpret_cast<CUdeviceptr>(server_src)) !=
+          CUDA_SUCCESS) {
+    buffer_id = 0;
+  }
+  resources->add_dtoh_copy({client, server_src}, buffer_id);
 }
 
 // A DtoH the stream has executed whose bytes have not been delivered to the
@@ -1279,6 +1388,7 @@ CUresult lupine_associate_graph_exec_resources(
   }
   CUresult result = lupine_commit_htod_graph_exec(exec, binding);
   if (result == CUDA_SUCCESS) {
+    lupine_retain_graph_resources(resources);
     lupine_graph_exec_resource_map().insert_or_assign(exec, resources);
   }
   return result;
@@ -1366,7 +1476,9 @@ static CUresult lupine_release_htod_graph_exec(CUgraphExec exec) {
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec) {
   CUresult result = lupine_release_htod_graph_exec(exec);
   if (result == CUDA_SUCCESS) {
-    lupine_graph_exec_resource_map().erase(exec);
+    lupine_release_graph_resources(
+        lupine_take_graph_resources(lupine_graph_exec_resource_map(), exec));
+    lupine_free_retired_graph_staging();
   }
   return result;
 }

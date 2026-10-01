@@ -81,6 +81,13 @@ extern "C" CUresult CUDAAPI cuGraphInstantiate_v2(CUgraphExec *phGraphExec,
                                                   char *logBuffer,
                                                   size_t bufferSize);
 
+#ifdef cuGraphExecUpdate
+#undef cuGraphExecUpdate
+#endif
+extern "C" CUresult CUDAAPI cuGraphExecUpdate(
+    CUgraphExec hGraphExec, CUgraph hGraph, CUgraphNode *hErrorNode_out,
+    CUgraphExecUpdateResult *updateResult_out);
+
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
@@ -833,6 +840,7 @@ void lupine_cleanup_pending_dtoh_copies(
     return;
   }
   for (auto &copy : *pending) {
+    lupine_release_graph_resources(copy.graph_resources);
     if (copy.server_src == nullptr) {
       continue;
     }
@@ -3833,6 +3841,72 @@ int handle_cuGraphExecDestroy(conn_t *conn) {
     result = lupine_release_graph_exec_resources(exec);
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+// An updated exec copies into the new graph's staging, so it owns those
+// resources from then on.
+int handle_cuGraphExecUpdate_v2(conn_t *conn) {
+  CUgraphExec exec = nullptr;
+  CUgraph graph = nullptr;
+  CUgraphExecUpdateResultInfo result_info{};
+  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &result_info, sizeof(result_info)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUresult result = cuGraphExecUpdate_v2(exec, graph, &result_info);
+  if (result == CUDA_SUCCESS) {
+    lupine_rebind_graph_exec_resources(exec, graph);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result_info, sizeof(result_info)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cuGraphExecUpdate(conn_t *conn) {
+  CUgraphExec exec = nullptr;
+  CUgraph graph = nullptr;
+  uint8_t error_node_present = 0;
+  CUgraphNode error_node = nullptr;
+  uint8_t update_result_present = 0;
+  CUgraphExecUpdateResult update_result{};
+  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &error_node_present, sizeof(error_node_present)) < 0 ||
+      (error_node_present &&
+       rpc_read(conn, &error_node, sizeof(error_node)) < 0) ||
+      rpc_read(conn, &update_result_present, sizeof(update_result_present)) <
+          0 ||
+      (update_result_present &&
+       rpc_read(conn, &update_result, sizeof(update_result)) < 0)) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUresult result =
+      cuGraphExecUpdate(exec, graph, error_node_present ? &error_node : nullptr,
+                        update_result_present ? &update_result : nullptr);
+  if (result == CUDA_SUCCESS) {
+    lupine_rebind_graph_exec_resources(exec, graph);
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (error_node_present &&
+       rpc_write(conn, &error_node, sizeof(error_node)) < 0) ||
+      (update_result_present &&
+       rpc_write(conn, &update_result, sizeof(update_result)) < 0) ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }

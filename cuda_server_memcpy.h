@@ -115,6 +115,8 @@ void lupine_forget_event_capture_resources(CUevent event);
 void lupine_wait_event_capture_resources(CUstream stream, CUevent event);
 void lupine_clone_graph_resources(CUgraph clone, CUgraph original);
 void lupine_erase_graph_resources(CUgraph graph);
+void lupine_rebind_graph_exec_resources(CUgraphExec exec, CUgraph graph);
+void lupine_release_graph_resources(lupine_graph_resources *resources);
 void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
                               CUresult result);
 std::vector<lupine_graph_host_copy>
