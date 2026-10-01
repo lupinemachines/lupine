@@ -149,7 +149,8 @@ bool resume_handshake(conn_t *conn, const std::string &checkpoint) {
   }
   std::string request = "POST /.well-known/lupine/resume HTTP/1.1\r\n"
                         "Host: lupine\r\nContent-Length: 0\r\n"
-                        "x-lupine-session: " + std::string(session) +
+                        "x-lupine-session: " +
+                        std::string(session) +
                         "\r\nx-lupine-checkpoint: " + checkpoint + "\r\n\r\n";
   size_t offset = 0;
   while (offset < request.size()) {
@@ -187,8 +188,10 @@ bool resume_handshake(conn_t *conn, const std::string &checkpoint) {
       return false;
     }
     response.push_back(byte);
-    if (response.size() >= 4 && response.compare(response.size() - 4, 4, "\r\n\r\n") == 0) {
-      return response.compare(0, 16, "HTTP/1.1 200 OK\r") == 0;
+    if (response.size() >= 4 &&
+        response.compare(response.size() - 4, 4, "\r\n\r\n") == 0) {
+      constexpr char success[] = "HTTP/1.1 200 ";
+      return response.compare(0, sizeof(success) - 1, success) == 0;
     }
   }
   return false;
@@ -196,7 +199,8 @@ bool resume_handshake(conn_t *conn, const std::string &checkpoint) {
 
 bool valid_checkpoint(const std::string &checkpoint) {
   const char *session = getenv("LUPINE_SESSION");
-  if (session == nullptr || strchr(session, '\r') || strchr(session, '\n')) {
+  if (session == nullptr || session[0] == '\0' || strchr(session, '\r') ||
+      strchr(session, '\n')) {
     return false;
   }
   std::string prefix = std::string(session) + ".";
@@ -204,7 +208,8 @@ bool valid_checkpoint(const std::string &checkpoint) {
       checkpoint.size() <= prefix.size() || checkpoint[prefix.size()] == '0') {
     return false;
   }
-  return checkpoint.find_first_not_of("0123456789", prefix.size()) == std::string::npos;
+  return checkpoint.find_first_not_of("0123456789", prefix.size()) ==
+         std::string::npos;
 }
 
 bool reconnect_checkpoint(conn_t *conn, const std::string &checkpoint) {
@@ -219,11 +224,12 @@ bool reconnect_checkpoint(conn_t *conn, const std::string &checkpoint) {
   conn->connfd = LUPINE_INVALID_SOCKET;
 #else
   lupine_socket_close(__atomic_exchange_n(&conn->connfd, LUPINE_INVALID_SOCKET,
-                                         __ATOMIC_ACQ_REL));
+                                          __ATOMIC_ACQ_REL));
 #endif
   while (!conn->closed) {
     conn_t replacement = {};
-    replacement.connfd = lupine_tcp_connect(endpoint.host.c_str(), endpoint.port.c_str(), 0);
+    replacement.connfd =
+        lupine_tcp_connect(endpoint.host.c_str(), endpoint.port.c_str(), 0);
     // Closing the client must also interrupt a pending TLS/resume handshake.
     pthread_mutex_lock(&state.mutex);
     bool closing = state.shutting_down || conn->closed;
@@ -259,6 +265,44 @@ bool reconnect_checkpoint(conn_t *conn, const std::string &checkpoint) {
   return false;
 }
 
+char receive_checkpoint_control(conn_t *conn, const std::string &checkpoint) {
+  char command;
+  std::string received;
+  if (rpc_http2_receive_process_control(conn, &command, &received) < 0 ||
+      received != checkpoint) {
+    return '\0';
+  }
+  return command;
+}
+
+bool checkpoint_handoff(conn_t *conn, const std::string &checkpoint) {
+  if (rpc_pause_client(conn) < 0 ||
+      rpc_write_start_request(conn, LUPINE_RPC_PROCESS_CHECKPOINT) < 0 ||
+      rpc_wait_for_response(conn) < 0) {
+    return false;
+  }
+  int result = -1;
+  if (rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0 ||
+      result != 0 ||
+      rpc_http2_send_process_control(conn, 'D', checkpoint) < 0) {
+    return false;
+  }
+
+  char command = receive_checkpoint_control(conn, checkpoint);
+  if (command == 'X') {
+    return true;
+  }
+  if (command != 'F' ||
+      rpc_http2_send_process_control(conn, 'A', checkpoint) < 0) {
+    return false;
+  }
+  command = receive_checkpoint_control(conn, checkpoint);
+  if (command == 'X') {
+    return true;
+  }
+  return command == 'C' && reconnect_checkpoint(conn, checkpoint);
+}
+
 void checkpoint_connection(conn_t *conn) {
   auto &config = transport().config;
   char command;
@@ -270,23 +314,7 @@ void checkpoint_connection(conn_t *conn) {
     if (config.checkpoint_begin != nullptr) {
       config.checkpoint_begin();
     }
-    int result = -1;
-    bool prepared = rpc_pause_client(conn) == 0 &&
-        rpc_write_start_request(conn, LUPINE_RPC_PROCESS_CHECKPOINT) == 0 &&
-        rpc_wait_for_response(conn) == 0 && rpc_read(conn, &result, sizeof(result)) == 0 &&
-        rpc_read_end(conn) >= 0 && result == 0 &&
-        rpc_http2_send_process_control(conn, 'D', checkpoint) == 0;
-    std::string response_checkpoint;
-    bool notified = prepared &&
-        rpc_http2_receive_process_control(conn, &command, &response_checkpoint) == 0 &&
-        response_checkpoint == checkpoint;
-    if (notified && command == 'F') {
-      notified = rpc_http2_send_process_control(conn, 'A', checkpoint) == 0 &&
-          rpc_http2_receive_process_control(conn, &command, &response_checkpoint) == 0 &&
-          response_checkpoint == checkpoint;
-    }
-    bool resumed = notified &&
-        (command == 'X' || (command == 'C' && reconnect_checkpoint(conn, checkpoint)));
+    bool resumed = checkpoint_handoff(conn, checkpoint);
     if (resumed) {
       rpc_resume_client(conn);
     } else {

@@ -1669,7 +1669,7 @@ static CUresult lupine_read_dtoh_chunks(conn_t *conn, int request_id,
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     bool final_chunk = result != CUDA_SUCCESS || offset + chunk == bytes;
-    if (rpc_read_end(conn, final_chunk) < 0) {
+    if (rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     if (result != CUDA_SUCCESS) {
@@ -1766,7 +1766,7 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
       rpc_write(conn, &fetch_stream, sizeof(fetch_stream)) < 0) {
     return false;
   }
-  return lupine_read_dtoh_chunks(conn, rpc_write_end(conn, true), dst, bytes) ==
+  return lupine_read_dtoh_chunks(conn, rpc_write_end(conn), dst, bytes) ==
          CUDA_SUCCESS;
 }
 
@@ -3566,7 +3566,7 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
        rpc_write(source_cursor.conn, &bytes, sizeof(bytes)) < 0 ||
        rpc_write(source_cursor.conn, &source_stream, sizeof(source_stream)) <
            0 ||
-       (source_cursor.request_id = rpc_write_end(source_cursor.conn, true)) < 0)) {
+       (source_cursor.request_id = rpc_write_end(source_cursor.conn)) < 0)) {
     return -1;
   }
 
@@ -3590,7 +3590,7 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
         rpc_read(source->conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
          rpc_read(source->conn, source->storage.data(), chunk) < 0);
-    if (rpc_read_end(source->conn, read_failed || result != CUDA_SUCCESS || chunk == source->remaining) < 0 || read_failed) {
+    if (rpc_read_end(source->conn) < 0 || read_failed) {
       source->remaining = 0;
       LUPINE_LOG_ERROR("Cross-route DtoD source transport failed");
       return -1;
@@ -3637,7 +3637,7 @@ static CUresult lupine_bulk_pull(conn_t *conn, lupine_bulk_lanes *lanes,
       rpc_write(conn, &bytes, sizeof(bytes)) < 0 ||
       rpc_write(conn, &stream, sizeof(stream)) < 0 ||
       rpc_write(conn, &readers, sizeof(readers)) < 0 ||
-      (request_id = rpc_write_end(conn, true)) < 0) {
+      (request_id = rpc_write_end(conn)) < 0) {
     pthread_mutex_unlock(&lanes->mutex);
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -3727,7 +3727,7 @@ static CUresult lupine_copy_dtoh_pageable(conn_t *conn, void *dstHost,
       rpc_write(conn, &hStream, sizeof(hStream)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return lupine_read_dtoh_chunks(conn, rpc_write_end(conn, true),
+  return lupine_read_dtoh_chunks(conn, rpc_write_end(conn),
                                  static_cast<unsigned char *>(dstHost),
                                  ByteCount);
 }
@@ -4050,7 +4050,7 @@ static CUresult lupine_memcpy_atoh(void *dstHost, CUarray srcArray,
       (hStream != nullptr && rpc_write(conn, hStream, sizeof(*hStream)) < 0)) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return lupine_read_dtoh_chunks(conn, rpc_write_end(conn, true),
+  return lupine_read_dtoh_chunks(conn, rpc_write_end(conn),
                                  static_cast<unsigned char *>(dstHost),
                                  ByteCount);
 }

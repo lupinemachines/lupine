@@ -140,7 +140,6 @@ struct conn_t {
   bool async_cancelled;
   int async_sync_initialized;
   int first_async_error;
-  size_t admitted_client_calls;
   bool client_paused;
   std::vector<rpc_write_cursor> write_queue;
   std::vector<rpc_host_allocation_write> host_allocation_writes;
@@ -213,9 +212,9 @@ static inline int rpc_read_buffer(conn_t *conn, void *data, size_t size) {
   return rpc_read(conn, data, size);
 }
 extern int rpc_drain(conn_t *conn, size_t size);
-extern int rpc_read_end(conn_t *conn, bool final_response = true);
-// Park new client calls after all complete replies have been consumed. The
-// checkpoint barrier and callbacks needed by an admitted call remain usable.
+extern int rpc_read_end(conn_t *conn);
+// Finish current request builders and park new ones. Unread replies remain
+// with the surviving client; checkpoint requests and callbacks stay usable.
 extern int rpc_pause_client(conn_t *conn);
 extern void rpc_resume_client(conn_t *conn);
 constexpr int LUPINE_RPC_PROCESS_CHECKPOINT = 0x4c504d02;
@@ -254,7 +253,7 @@ extern int rpc_copy_alloc(conn_t *conn, const size_t size);
 extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
 extern int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
                              size_t count);
-extern int rpc_write_end(conn_t *conn, bool expects_response = false);
+extern int rpc_write_end(conn_t *conn);
 // Wait for all fire-and-forget calls published before an RPC's entry. These
 // waits order native submission, not GPU completion; overlapping calls remain
 // free to execute and complete in either order.

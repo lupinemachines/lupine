@@ -194,7 +194,8 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
     return request < 0 || rpc_write_start_response(conn, request) < 0 ||
                    rpc_write(conn, &result, sizeof(result)) < 0 ||
                    rpc_write_end(conn) < 0
-               ? -1 : 0;
+               ? -1
+               : 0;
   }
   if (op == LUPINE_RPC_CLIENT_METADATA) {
     return handle_lupine_client_metadata(conn);
@@ -489,21 +490,25 @@ int main() {
     int type = 0;
     socklen_t length = sizeof(type);
     if (end == inherited || *end != '\0' || fd < 0 || fd > INT_MAX ||
-        getsockopt(static_cast<int>(fd), SOL_SOCKET, SO_TYPE, &type, &length) != 0 ||
+        getsockopt(static_cast<int>(fd), SOL_SOCKET, SO_TYPE, &type, &length) !=
+            0 ||
         type != SOCK_STREAM) {
-      LUPINE_LOG_ERROR("LUPINE_CONNECTION_FD must name an inherited stream socket");
+      LUPINE_LOG_ERROR(
+          "LUPINE_CONNECTION_FD must name an inherited stream socket");
       return EXIT_FAILURE;
     }
+    int connfd = static_cast<int>(fd);
+    lupine_socket_apply_transport_options(connfd);
 #ifdef LUPINE_BUILD_CUDA_BACKEND
-    if (!lupine_server_checkpoint_child_start(static_cast<int>(fd))) {
-      return EXIT_FAILURE;
-    }
+    bool started = lupine_server_checkpoint_child_start(connfd);
 #else
-    if (!lupine_install_child_signal_handler(static_cast<int>(fd))) {
+    bool started = lupine_install_child_signal_handler(connfd);
+#endif
+    if (!started) {
+      lupine_socket_close(connfd);
       return EXIT_FAILURE;
     }
-#endif
-    return client_handler(static_cast<int>(fd)) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    return client_handler(connfd) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
   }
 #endif
 

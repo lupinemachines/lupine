@@ -1086,14 +1086,23 @@ ssize_t h2_read_socket(h2_transport *transport, unsigned char *buffer,
 }
 
 void h2_queue_process_control_locked(h2_transport *transport, char command,
-                                     const std::string &checkpoint, bool pause) {
+                                     const std::string &checkpoint,
+                                     bool pause) {
   size_t length = checkpoint.size() + 1;
-  const unsigned char header[] = {
-      0, static_cast<unsigned char>(length >> 8),
-      static_cast<unsigned char>(length), LUPINE_H2_PROCESS_CONTROL, 0,
-      0, 0, 0, 0, static_cast<unsigned char>(command)};
-  transport->outbound.insert(transport->outbound.end(), std::begin(header), std::end(header));
-  transport->outbound.insert(transport->outbound.end(), checkpoint.begin(), checkpoint.end());
+  const unsigned char header[] = {0,
+                                  static_cast<unsigned char>(length >> 8),
+                                  static_cast<unsigned char>(length),
+                                  LUPINE_H2_PROCESS_CONTROL,
+                                  0,
+                                  0,
+                                  0,
+                                  0,
+                                  0,
+                                  static_cast<unsigned char>(command)};
+  transport->outbound.insert(transport->outbound.end(), std::begin(header),
+                             std::end(header));
+  transport->outbound.insert(transport->outbound.end(), checkpoint.begin(),
+                             checkpoint.end());
   if (pause) {
     transport->pause_after_bytes = transport->outbound.size();
   }
@@ -1132,11 +1141,18 @@ void *h2_read_main(void *arg) {
         pthread_mutex_unlock(&transport->session_mutex);
         return nullptr;
       }
-      h2_queue_process_control_locked(transport, 'B', transport->freeze_checkpoint, true);
+      h2_queue_process_control_locked(transport, 'B',
+                                      transport->freeze_checkpoint, true);
       transport->freeze_checkpoint.clear();
     }
-    if (transport->socket_parked) {
-      pthread_cond_broadcast(&transport->session_progress);
+    // Retain the reader along with the HTTP/2 session. No I/O may use the
+    // old socket/TLS object while the checkpoint thread replaces it.
+    pthread_cond_broadcast(&transport->session_progress);
+    while (transport->socket_parked && !transport->read_stop) {
+      pthread_cond_wait(&transport->session_progress,
+                        &transport->session_mutex);
+    }
+    if (transport->read_stop) {
       pthread_mutex_unlock(&transport->session_mutex);
       return nullptr;
     }
@@ -1261,19 +1277,22 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
                                                    h2_on_header_callback);
 
   nghttp2_session_callbacks_set_on_extension_chunk_recv_callback(
-      callbacks, [](nghttp2_session *, const nghttp2_frame_hd *hd,
-                    const uint8_t *data, size_t length, void *user) -> int {
+      callbacks,
+      [](nghttp2_session *, const nghttp2_frame_hd *hd, const uint8_t *data,
+         size_t length, void *user) -> int {
         auto *state = static_cast<h2_transport *>(user);
         if (hd->stream_id != 0 || hd->flags != 0 || hd->length > 512 ||
             state->control_payload.size() + length > hd->length) {
           return NGHTTP2_ERR_CALLBACK_FAILURE;
         }
-        state->control_payload.append(reinterpret_cast<const char *>(data), length);
+        state->control_payload.append(reinterpret_cast<const char *>(data),
+                                      length);
         return 0;
       });
   nghttp2_session_callbacks_set_unpack_extension_callback(
-      callbacks, [](nghttp2_session *, void **payload,
-                    const nghttp2_frame_hd *, void *) -> int {
+      callbacks,
+      [](nghttp2_session *, void **payload, const nghttp2_frame_hd *,
+         void *) -> int {
         *payload = nullptr;
         return 0;
       });
@@ -1283,12 +1302,14 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
     delete transport;
     return -1;
   }
-  nghttp2_option_set_user_recv_extension_type(options, LUPINE_H2_PROCESS_CONTROL);
+  nghttp2_option_set_user_recv_extension_type(options,
+                                              LUPINE_H2_PROCESS_CONTROL);
 
-  int session_result = server ? nghttp2_session_server_new2(&transport->session,
-                                                           callbacks, transport, options)
-                              : nghttp2_session_client_new2(
-                                    &transport->session, callbacks, transport, options);
+  int session_result =
+      server ? nghttp2_session_server_new2(&transport->session, callbacks,
+                                           transport, options)
+             : nghttp2_session_client_new2(&transport->session, callbacks,
+                                           transport, options);
   nghttp2_option_del(options);
   nghttp2_session_callbacks_del(callbacks);
   if (session_result != 0) {
@@ -1500,7 +1521,7 @@ int rpc_http2_end_stream(conn_t *conn, int32_t stream_id) {
   return result == 0 ? 0 : -1;
 }
 
-int rpc_http2_terminate_lane(conn_t *conn, uint64_t lane_id) {
+int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id) {
   if (conn == nullptr || conn->closed || conn->http2 == nullptr) {
     return -1;
   }
@@ -1792,13 +1813,16 @@ int rpc_http2_send_process_control(conn_t *conn, char command,
   if (result == 0 && !transport->transport_failed) {
     // Append after the normal session output. A control frame is outside the
     // stream/HPACK state, so it can also be sent by a restore supervisor.
-    h2_queue_process_control_locked(transport, command, checkpoint, command == 'A');
+    h2_queue_process_control_locked(transport, command, checkpoint,
+                                    command == 'A');
     if (command == 'A') {
       // No more old-socket writes after acknowledging the barrier. Protocol
       // output received meanwhile stays queued for the replacement socket.
       while ((!transport->writer_paused || transport->write_busy ||
-              transport->pause_after_bytes != 0) && !transport->write_failed) {
-        pthread_cond_wait(&transport->outbound_progress, &transport->session_mutex);
+              transport->pause_after_bytes != 0) &&
+             !transport->write_failed) {
+        pthread_cond_wait(&transport->outbound_progress,
+                          &transport->session_mutex);
       }
     } else {
       h2_drain_output_locked(transport);
@@ -1840,34 +1864,28 @@ int rpc_http2_park_socket(conn_t *conn) {
     pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
   }
   bool failed = transport->transport_failed;
-  pthread_mutex_unlock(&transport->session_mutex);
-  if (failed) {
-    return -1;
-  }
-  pthread_join(transport->read_thread, nullptr);
-  transport->read_thread = 0;
-  pthread_mutex_lock(&transport->session_mutex);
   transport->netfd = LUPINE_INVALID_SOCKET;
   transport->tls = nullptr;
   pthread_mutex_unlock(&transport->session_mutex);
-  return 0;
+  return failed ? -1 : 0;
 }
 
 int rpc_http2_resume_socket(conn_t *conn) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   pthread_mutex_lock(&transport->session_mutex);
+  if (transport->transport_failed) {
+    pthread_mutex_unlock(&transport->session_mutex);
+    return -1;
+  }
   transport->netfd = conn->connfd;
   transport->tls = conn->tls_session;
   transport->socket_parked = false;
-  int result = transport->transport_failed ? -1 :
-      pthread_create(&transport->read_thread, nullptr, h2_read_main, transport);
-  if (result == 0) {
-    transport->checkpoint_pending = false;
-    transport->writer_paused = false;
-    pthread_cond_broadcast(&transport->writer_ready);
-  }
+  transport->checkpoint_pending = false;
+  transport->writer_paused = false;
+  pthread_cond_broadcast(&transport->session_progress);
+  pthread_cond_broadcast(&transport->writer_ready);
   pthread_mutex_unlock(&transport->session_mutex);
-  return result == 0 ? 0 : -1;
+  return 0;
 }
 
 void rpc_http2_shutdown(conn_t *conn) {
