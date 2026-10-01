@@ -9,6 +9,9 @@
 #include <climits>
 #include <deque>
 #include <errno.h>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#include <immintrin.h>
+#endif
 #include <lz4frame.h>
 #include <nghttp2/nghttp2.h>
 #ifdef LUPINE_TLS_OPENSSL
@@ -358,13 +361,24 @@ int h2_on_data_chunk_recv_callback(nghttp2_session *, uint8_t,
   std::array<unsigned char, kH2DecodeBufferBytes> output;
   for (;;) {
     size_t input = len - offset;
-    size_t produced = output.size();
-    size_t result = LZ4F_decompress(stream.decoder, output.data(), &produced,
+    bool direct = stream.read_remaining > 0;
+    unsigned char *dst = direct ? stream.read_destination : output.data();
+    size_t dst_capacity = direct ? stream.read_remaining : output.size();
+    size_t produced = dst_capacity;
+    size_t result = LZ4F_decompress(stream.decoder, dst, &produced,
                                     data + offset, &input, nullptr);
     if (LZ4F_isError(result)) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
-    receive_bytes(transport, stream_id, output.data(), produced);
+    if (direct) {
+      stream.read_destination += produced;
+      stream.read_remaining -= produced;
+      if (stream.read_remaining == 0) {
+        pthread_cond_broadcast(&stream.read_ready);
+      }
+    } else {
+      receive_bytes(transport, stream_id, dst, produced);
+    }
     offset += input;
     if (result == 0) {
       if (offset != len) {
@@ -381,7 +395,7 @@ int h2_on_data_chunk_recv_callback(nghttp2_session *, uint8_t,
     }
     // LZ4F can consume the complete encoded block while retaining decoded
     // output internally. Drain it before waiting for the next DATA frame.
-    if (offset == len && produced < output.size()) {
+    if (offset == len && produced < dst_capacity) {
       break;
     }
   }
@@ -921,9 +935,18 @@ void *h2_write_main(void *arg) {
         pthread_mutex_unlock(&transport->session_mutex);
         auto deadline =
             std::chrono::steady_clock::now() + std::chrono::microseconds(5);
+        uint32_t spin = 0;
         while (transport->output_generation.load(std::memory_order_acquire) ==
-                   seen &&
-               std::chrono::steady_clock::now() < deadline) {
+               seen) {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+          _mm_pause();
+#elif defined(__aarch64__) || defined(__arm__)
+          asm volatile("yield" ::: "memory");
+#endif
+          if ((++spin & 31) == 0 &&
+              std::chrono::steady_clock::now() >= deadline) {
+            break;
+          }
         }
         pthread_mutex_lock(&transport->session_mutex);
       }
