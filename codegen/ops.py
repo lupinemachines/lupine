@@ -1149,6 +1149,12 @@ class GraphExecNodeAnnotation:
     node: Parameter
 
 
+@dataclass
+class GraphExecUpdateAnnotation:
+    graph_exec: Parameter
+    graph: Parameter
+
+
 @dataclass(frozen=True)
 class ClientCallTemplate:
     return_type: str
@@ -1176,6 +1182,7 @@ class FunctionAnnotationMetadata:
     parents: list[ParentAnnotation] = None
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
     graph_exec_node: Optional[GraphExecNodeAnnotation] = None
+    graph_exec_update: Optional[GraphExecUpdateAnnotation] = None
     client_call_template: Optional[ClientCallTemplate] = None
     # @clearfields: members holding host addresses, cleared on both sides.
     clear_fields: list[tuple[str, tuple[str, ...]]] = None

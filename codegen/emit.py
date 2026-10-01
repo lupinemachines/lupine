@@ -431,6 +431,11 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
 
     if stdout:
         f.write("  lupine_finish_stdout_capture(&capture);\n")
+    if metadata.graph_exec_update is not None:
+        graph_exec = metadata.graph_exec_update.graph_exec.name
+        graph = metadata.graph_exec_update.graph.name
+        f.write("  if (return_value == CUDA_SUCCESS)\n")
+        f.write(f"    lupine_rebind_graph_exec_resources({graph_exec}, {graph});\n\n")
     if deferred:
         f.write("  if (return_value == CUDA_SUCCESS) {\n")
         f.write(deferred_dtoh_detach(metadata))

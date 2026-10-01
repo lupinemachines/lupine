@@ -6929,6 +6929,37 @@ ERROR_0:
   return -1;
 }
 
+int handle_cuGraphExecUpdate_v2(conn_t *conn) {
+  CUgraphExec hGraphExec;
+  CUgraph hGraph;
+  CUgraphExecUpdateResultInfo resultInfo{};
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
+      rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_read(conn, &resultInfo, sizeof(CUgraphExecUpdateResultInfo)) < 0 ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuGraphExecUpdate_v2(hGraphExec, hGraph, &resultInfo);
+
+  if (return_value == CUDA_SUCCESS)
+    lupine_rebind_graph_exec_resources(hGraphExec, hGraph);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &resultInfo, sizeof(CUgraphExecUpdateResultInfo)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
 int handle_cuGraphKernelNodeCopyAttributes(conn_t *conn) {
   CUgraphNode dst;
   CUgraphNode src;
@@ -9421,6 +9452,52 @@ int handle_cuMemAdvise(conn_t *conn) {
   return_value = cuMemAdvise(devPtr, count, advice, device);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuGraphExecUpdate(conn_t *conn) {
+  CUgraphExec hGraphExec;
+  CUgraph hGraph;
+  uint8_t hErrorNode_out_present = 0;
+  CUgraphNode hErrorNode_out;
+  uint8_t updateResult_out_present = 0;
+  CUgraphExecUpdateResult updateResult_out;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
+      rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_read(conn, &hErrorNode_out_present, sizeof(uint8_t)) < 0 ||
+      (hErrorNode_out_present &&
+       rpc_read(conn, &hErrorNode_out, sizeof(CUgraphNode)) < 0) ||
+      rpc_read(conn, &updateResult_out_present, sizeof(uint8_t)) < 0 ||
+      (updateResult_out_present &&
+       rpc_read(conn, &updateResult_out, sizeof(CUgraphExecUpdateResult)) <
+           0) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuGraphExecUpdate(
+      hGraphExec, hGraph, hErrorNode_out_present ? &hErrorNode_out : nullptr,
+      updateResult_out_present ? &updateResult_out : nullptr);
+
+  if (return_value == CUDA_SUCCESS)
+    lupine_rebind_graph_exec_resources(hGraphExec, hGraph);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (hErrorNode_out_present &&
+       rpc_write(conn, &hErrorNode_out, sizeof(CUgraphNode)) < 0) ||
+      (updateResult_out_present &&
+       rpc_write(conn, &updateResult_out, sizeof(CUgraphExecUpdateResult)) <
+           0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
