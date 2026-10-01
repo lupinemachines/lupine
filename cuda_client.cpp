@@ -71,7 +71,8 @@
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 #include "transport.h"
-#include "xxhash.h"
+// Reuse Zstd's bundled xxHash to preserve existing profile-cache keys.
+#include "third_party/zstd/lib/common/xxhash.h"
 
 #ifdef cuMemPrefetchAsync
 #undef cuMemPrefetchAsync
@@ -3321,11 +3322,13 @@ lupine_stream_pools() {
 // are pushed in reverse so hand-out pops them in that order.
 static void lupine_stream_pool_init(lupine_route route, CUdevice dev,
                                     CUcontext ctx) {
-  std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
-  auto &pools = lupine_stream_pools();
   auto key = std::make_pair(lupine_route_identity(route), ctx);
-  if (pools.find(key) != pools.end()) {
-    return;
+  {
+    std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
+    auto &pools = lupine_stream_pools();
+    if (pools.find(key) != pools.end()) {
+      return;
+    }
   }
   conn_t *conn = lupine_route_remote_conn(route);
   uint32_t created = 0;
@@ -3344,6 +3347,8 @@ static void lupine_stream_pool_init(lupine_route route, CUdevice dev,
       rpc_read_end(conn) < 0) {
     return;
   }
+  std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
+  auto &pools = lupine_stream_pools();
   auto &pool = pools[key];
   pool.dev = dev;
   for (uint32_t i = created; i-- > 0;) {
@@ -3483,41 +3488,53 @@ extern "C" CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags) {
   constexpr unsigned pool_flags =
       CU_EVENT_BLOCKING_SYNC | CU_EVENT_DISABLE_TIMING;
   if (context != nullptr && (Flags & ~pool_flags) == 0) {
-    std::lock_guard<std::mutex> lock(lupine_event_pool_mutex());
-    auto &pool =
-        lupine_event_pools()[{lupine_route_identity(route), context, Flags}];
-    if (pool.events.empty()) {
-      CUevent events[kLupineEventBatchSize];
-      CUdevice device = -1;
-      uint32_t count = 0;
-      CUresult result = CUDA_ERROR_UNKNOWN;
-      if (lupine_prepare_rpc(conn) < 0 ||
-          rpc_write_start_request(conn, LUPINE_RPC_lupineEventCreateBatch) <
-              0 ||
-          rpc_write(conn, &context, sizeof(context)) < 0 ||
-          rpc_write(conn, &Flags, sizeof(Flags)) < 0 ||
-          rpc_wait_for_response(conn) < 0 ||
-          rpc_read(conn, &result, sizeof(result)) < 0 ||
-          rpc_read(conn, &device, sizeof(device)) < 0 ||
-          rpc_read(conn, &count, sizeof(count)) < 0 ||
-          count > kLupineEventBatchSize ||
-          rpc_read(conn, events, count * sizeof(*events)) < 0 ||
-          rpc_read_end(conn) < 0) {
-        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    const auto key =
+        std::make_tuple(lupine_route_identity(route), context, Flags);
+    {
+      std::lock_guard<std::mutex> lock(lupine_event_pool_mutex());
+      auto &pools = lupine_event_pools();
+      auto it = pools.find(key);
+      if (it != pools.end() && !it->second.events.empty()) {
+        *phEvent = it->second.events.back();
+        it->second.events.pop_back();
+        lupine_note_event_owner_route(*phEvent, route);
+        return CUDA_SUCCESS;
       }
-      if (result != CUDA_SUCCESS) {
-        return result;
-      }
-      if (count == 0) {
-        return CUDA_ERROR_DEVICE_UNAVAILABLE;
-      }
+    }
+    CUevent events[kLupineEventBatchSize];
+    CUdevice device = -1;
+    uint32_t count = 0;
+    CUresult result = CUDA_ERROR_UNKNOWN;
+    if (lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_request(conn, LUPINE_RPC_lupineEventCreateBatch) < 0 ||
+        rpc_write(conn, &context, sizeof(context)) < 0 ||
+        rpc_write(conn, &Flags, sizeof(Flags)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &result, sizeof(result)) < 0 ||
+        rpc_read(conn, &device, sizeof(device)) < 0 ||
+        rpc_read(conn, &count, sizeof(count)) < 0 ||
+        count > kLupineEventBatchSize ||
+        rpc_read(conn, events, count * sizeof(*events)) < 0 ||
+        rpc_read_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+    if (count == 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    {
+      std::lock_guard<std::mutex> lock(lupine_event_pool_mutex());
+      auto &pool = lupine_event_pools()[key];
       pool.remote_device = device;
       // Preserve creation order when popping the next handle.
-      pool.events.assign(std::reverse_iterator<CUevent *>(events + count),
+      pool.events.insert(pool.events.end(),
+                         std::reverse_iterator<CUevent *>(events + count),
                          std::reverse_iterator<CUevent *>(events));
+      *phEvent = pool.events.back();
+      pool.events.pop_back();
     }
-    *phEvent = pool.events.back();
-    pool.events.pop_back();
     lupine_note_event_owner_route(*phEvent, route);
     return CUDA_SUCCESS;
   }

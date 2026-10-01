@@ -701,10 +701,12 @@ int rpc_note_host_allocation_write(conn_t *conn, void *data, size_t written) {
     return -1;
   }
   if (written != 0) {
-    long configured_page_size = sysconf(_SC_PAGESIZE);
-    uintptr_t page_size = configured_page_size > 0
-                              ? static_cast<uintptr_t>(configured_page_size)
-                              : static_cast<uintptr_t>(4096);
+    static const uintptr_t page_size = []() {
+      long configured_page_size = sysconf(_SC_PAGESIZE);
+      return configured_page_size > 0
+                 ? static_cast<uintptr_t>(configured_page_size)
+                 : static_cast<uintptr_t>(4096);
+    }();
     uintptr_t page_start = start & ~(page_size - 1);
     uintptr_t page_end = (start + written + page_size - 1) & ~(page_size - 1);
     auto protected_range =

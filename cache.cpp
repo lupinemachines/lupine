@@ -84,13 +84,21 @@ lane_context_cache_entry *lane_context_cache_entry_for(int route_id) {
 
 void lupine_deviceptr_allocation_cache_insert(CUdeviceptr base, size_t size,
                                              int route_id, CUcontext context) {
-  lupine_deviceptr_allocation_cache_erase(base);
   if (base == 0 || size == 0) {
+    lupine_deviceptr_allocation_cache_erase(base);
     return;
   }
   auto &cache = allocation_cache();
   auto &allocations = cache.allocations;
   auto next = allocations.lower_bound(base);
+  if (next != allocations.end() && next->first == base) {
+    auto previous = predecessor(allocations, next);
+    auto after = std::next(next);
+    cache.overlapping_neighbors -= overlaps(allocations, previous, next);
+    cache.overlapping_neighbors -= overlaps(allocations, next, after);
+    cache.overlapping_neighbors += overlaps(allocations, previous, after);
+    next = allocations.erase(next);
+  }
   auto previous = predecessor(allocations, next);
   auto inserted = allocations.emplace_hint(
       next, base, lupine_deviceptr_allocation_record{size, route_id, context});

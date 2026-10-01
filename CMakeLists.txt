@@ -286,17 +286,20 @@ function(lupine_scaled_timeout out base)
     set(${out} ${scaled} PARENT_SCOPE)
 endfunction()
 
-# Vendored LZ4 keeps the neutral core independent of host package versions.
-add_library(lupine_lz4 STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4frame.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4hc.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/xxhash.c)
-set_target_properties(lupine_lz4 PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(lupine_lz4 PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib)
+# Pin the codec implementation on every supported client/server platform.
+file(GLOB LUPINE_ZSTD_SOURCES CONFIGURE_DEPENDS
+    third_party/zstd/lib/common/*.c
+    third_party/zstd/lib/compress/*.c
+    third_party/zstd/lib/decompress/*.c)
+add_library(lupine_zstd STATIC ${LUPINE_ZSTD_SOURCES})
+set_target_properties(lupine_zstd PROPERTIES
+    POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+target_include_directories(lupine_zstd PUBLIC third_party/zstd/lib)
+target_compile_definitions(lupine_zstd PRIVATE
+    ZSTD_DISABLE_ASM ZSTD_LEGACY_SUPPORT=0
+    ZSTDLIB_VISIBLE= ZSTDERRORLIB_VISIBLE=)
 if(NOT MSVC AND NOT CMAKE_BUILD_TYPE)
-    target_compile_options(lupine_lz4 PRIVATE -O2)
+    target_compile_options(lupine_zstd PRIVATE -O2)
 endif()
 
 # Accelerator-neutral wire protocol, HTTP/2, compression, and platform IPC.
@@ -312,7 +315,7 @@ target_include_directories(lupine_rpc_core
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE ${NGHTTP2_INCLUDE_DIR})
 target_link_libraries(lupine_rpc_core PUBLIC
-    Threads::Threads ${NGHTTP2_LIBRARY} lupine_lz4)
+    Threads::Threads ${NGHTTP2_LIBRARY} lupine_zstd)
 if(LUPINE_MANYLINUX)
     add_dependencies(lupine_rpc_core lupine_manylinux_openssl_external)
 endif()

@@ -3,6 +3,8 @@
 #include "monitoring.h"
 #include "rpc.h"
 #include "test_platform.h"
+#include "third_party/zstd/lib/common/xxhash.h"
+#include <zstd.h>
 
 #include <algorithm>
 #include <array>
@@ -188,14 +190,19 @@ bool raw_read_exact(lupine_socket_t socket, unsigned char *data, size_t size) {
 }
 
 bool raw_read_frame(lupine_socket_t socket,
-                    std::array<unsigned char, 9> *header) {
+                    std::array<unsigned char, 9> *header,
+                    std::vector<unsigned char> *body = nullptr) {
   if (!raw_read_exact(socket, header->data(), header->size())) {
     return false;
   }
   size_t size = (static_cast<size_t>((*header)[0]) << 16) |
                 (static_cast<size_t>((*header)[1]) << 8) | (*header)[2];
   std::vector<unsigned char> payload(size);
-  return raw_read_exact(socket, payload.data(), payload.size());
+  bool ok = raw_read_exact(socket, payload.data(), payload.size());
+  if (body) {
+    *body = std::move(payload);
+  }
+  return ok;
 }
 
 ssize_t raw_h2_send_callback(nghttp2_session *, const uint8_t *data,
@@ -211,36 +218,250 @@ nghttp2_nv raw_h2_header(const char *name, const char *value) {
           strlen(value), NGHTTP2_NV_FLAG_NONE};
 }
 
-void test_server_rejects_request_without_lz4_encoding() {
+// Independent peers exercise the encoding contract without using our writer.
+struct raw_h2_peer {
+  lupine_socket_t socket;
+  nghttp2_session *session = nullptr;
+  unsigned headers = 0;
+  const char *response_encoding;
+  std::vector<std::string> encodings;
+
+  raw_h2_peer(lupine_socket_t socket, bool server,
+              const char *encoding = "zstd")
+      : socket(socket), response_encoding(encoding) {
+    nghttp2_session_callbacks *callbacks = nullptr;
+    require(nghttp2_session_callbacks_new(&callbacks) == 0, "raw callbacks");
+    nghttp2_session_callbacks_set_send_callback(
+        callbacks,
+        [](nghttp2_session *, const uint8_t *data, size_t length, int,
+           void *context) -> ssize_t {
+          auto *peer = static_cast<raw_h2_peer *>(context);
+          return raw_write_all(peer->socket, data, length)
+                     ? static_cast<ssize_t>(length)
+                     : NGHTTP2_ERR_CALLBACK_FAILURE;
+        });
+    nghttp2_session_callbacks_set_on_header_callback(
+        callbacks, [](nghttp2_session *, const nghttp2_frame *,
+                      const uint8_t *name, size_t n, const uint8_t *value,
+                      size_t size, uint8_t, void *context) {
+          if (n == 16 && std::memcmp(name, "content-encoding", 16) == 0) {
+            static_cast<raw_h2_peer *>(context)->encodings.emplace_back(
+                reinterpret_cast<const char *>(value), size);
+          }
+          return 0;
+        });
+    nghttp2_session_callbacks_set_on_frame_recv_callback(
+        callbacks, [](nghttp2_session *session, const nghttp2_frame *frame,
+                      void *context) {
+          auto *peer = static_cast<raw_h2_peer *>(context);
+          if (frame->hd.type == NGHTTP2_HEADERS) {
+            ++peer->headers;
+            if (frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
+              std::vector<nghttp2_nv> response = {
+                  raw_h2_header(":status", "200")};
+              if (peer->response_encoding != nullptr) {
+                response.push_back(
+                    raw_h2_header("content-encoding", peer->response_encoding));
+              }
+              require(nghttp2_submit_headers(session, NGHTTP2_FLAG_NONE,
+                                             frame->hd.stream_id, nullptr,
+                                             response.data(), response.size(),
+                                             nullptr) == 0,
+                      "raw response");
+            }
+          }
+          return 0;
+        });
+    int result = server ? nghttp2_session_server_new(&session, callbacks, this)
+                        : nghttp2_session_client_new(&session, callbacks, this);
+    nghttp2_session_callbacks_del(callbacks);
+    require(result == 0, "raw session");
+    require(nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, nullptr, 0) ==
+                0,
+            "raw settings");
+    require(nghttp2_session_send(session) == 0, "raw settings send");
+  }
+  ~raw_h2_peer() { nghttp2_session_del(session); }
+
+  void receive_headers(unsigned count) {
+    while (headers < count) {
+      std::array<unsigned char, 65536> data;
+      ssize_t size = lupine_socket_recv(socket, data.data(), data.size());
+      require(size > 0, "raw receive");
+      require(nghttp2_session_mem_recv(session, data.data(), size) == size,
+              "raw parse");
+      require(nghttp2_session_send(session) == 0, "raw response send");
+    }
+  }
+};
+
+void test_client_rejects_unsupported_response_encoding() {
+  for (const char *encoding :
+       std::array<const char *, 3>{nullptr, "lz4", "lupine-block-v1"}) {
+    h2_pair pair;
+    init_pair_sockets(&pair);
+    require(rpc_http2_client_init(&pair.client) == 0, "client init");
+    raw_h2_peer server(pair.server.connfd, true, encoding);
+    server.receive_headers(1);
+    require(server.encodings == std::vector<std::string>({"zstd"}),
+            "client did not request Zstd");
+    require(rpc_http2_client_await_ready(&pair.client) < 0,
+            "client accepted an unsupported response encoding");
+  }
+}
+
+void check_zstd_body(const std::vector<unsigned char> &encoded,
+                     const std::vector<unsigned char> &expected, bool valid,
+                     size_t fragment_size, bool end_in_trailers = false) {
   h2_pair pair;
   init_pair_sockets(&pair);
+  raw_h2_peer client(pair.client.connfd, false);
+  std::array<nghttp2_nv, 5> headers = {
+      raw_h2_header(":method", "POST"), raw_h2_header(":scheme", "http"),
+      raw_h2_header(":path", "/"), raw_h2_header(":authority", "lupine"),
+      raw_h2_header("content-encoding", "zstd")};
+  int32_t stream =
+      nghttp2_submit_headers(client.session, NGHTTP2_FLAG_NONE, -1, nullptr,
+                             headers.data(), headers.size(), nullptr);
+  require(stream > 0 && nghttp2_session_send(client.session) == 0,
+          "raw request failed");
+  require(rpc_http2_server_init_with_metadata(&pair.server, nullptr) == 0,
+          "server init failed");
+  client.receive_headers(1);
+  require(client.encodings == std::vector<std::string>({"zstd"}),
+          "server did not respond with Zstd");
 
-  nghttp2_session_callbacks *callbacks = nullptr;
-  require(nghttp2_session_callbacks_new(&callbacks) == 0,
-          "raw client callback allocation failed");
-  nghttp2_session_callbacks_set_send_callback(callbacks, raw_h2_send_callback);
-  nghttp2_session *session = nullptr;
-  require(
-      nghttp2_session_client_new(&session, callbacks, &pair.client.connfd) == 0,
-      "raw client session allocation failed");
-  nghttp2_session_callbacks_del(callbacks);
+  size_t offset = 0;
+  do {
+    size_t count = std::min(fragment_size, encoded.size() - offset);
+    std::array<unsigned char, 9> header = {
+        static_cast<unsigned char>(count >> 16),
+        static_cast<unsigned char>(count >> 8),
+        static_cast<unsigned char>(count),
+        NGHTTP2_DATA,
+        static_cast<unsigned char>(offset + count == encoded.size() &&
+                                           !end_in_trailers
+                                       ? NGHTTP2_FLAG_END_STREAM
+                                       : 0),
+        static_cast<unsigned char>(stream >> 24),
+        static_cast<unsigned char>(stream >> 16),
+        static_cast<unsigned char>(stream >> 8),
+        static_cast<unsigned char>(stream)};
+    require(raw_write_all(pair.client.connfd, header.data(), header.size()),
+            "raw DATA header failed");
+    if (count != 0) {
+      require(raw_write_all(pair.client.connfd, encoded.data() + offset, count),
+              "raw DATA body failed");
+    }
+    offset += count;
+  } while (offset < encoded.size());
+  if (end_in_trailers) {
+    auto trailer = raw_h2_header("x-test-trailer", "end");
+    require(nghttp2_submit_headers(client.session, NGHTTP2_FLAG_END_STREAM,
+                                   stream, nullptr, &trailer, 1,
+                                   nullptr) == 0 &&
+                nghttp2_session_send(client.session) == 0,
+            "raw trailers failed");
+  }
 
-  std::array<nghttp2_nv, 4> headers = {
-      raw_h2_header(":method", "POST"),
-      raw_h2_header(":scheme", "http"),
-      raw_h2_header(":path", "/"),
-      raw_h2_header(":authority", "lupine"),
-  };
-  require(nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, nullptr, 0) == 0,
-          "raw client SETTINGS submission failed");
-  require(nghttp2_submit_headers(session, NGHTTP2_FLAG_NONE, -1, nullptr,
-                                 headers.data(), headers.size(), nullptr) > 0,
-          "raw client request submission failed");
-  require(nghttp2_session_send(session) == 0, "raw client request send failed");
+  std::vector<unsigned char> received(expected.size());
+  int result = read_dispatch(&pair.server, received.data(), received.size());
+  if (valid) {
+    require(result == 0 && received == expected, "Zstd payload mismatch");
+  }
+  if (result == 0) {
+    unsigned char extra;
+    result = read_dispatch(&pair.server, &extra, 1);
+  }
+  require(result == (valid ? LUPINE_RPC_HTTP2_STREAM_END : -1),
+          "incorrect Zstd body termination");
+}
 
+// Keep existing library-profile filenames stable when changing xxHash copies.
+void test_profile_hash_compatibility() {
+  require(XXH64("", 0, 0) == UINT64_C(0xef46db3751d8e999),
+          "empty profile hash changed");
+  constexpr char command[] = "python gpt_bench.py";
+  require(XXH64(command, sizeof(command) - 1, 0) ==
+              UINT64_C(0x82cdc9c616a4d10f),
+          "profile command hash changed");
+}
+
+void test_zstd_frame_validation() {
+  std::vector<unsigned char> payload(8192);
+  for (size_t i = 0; i < payload.size(); ++i) {
+    payload[i] = static_cast<unsigned char>(i % 251);
+  }
+  std::vector<unsigned char> encoded(ZSTD_compressBound(payload.size()));
+  size_t size = ZSTD_compress(encoded.data(), encoded.size(), payload.data(),
+                              payload.size(), -1);
+  require(!ZSTD_isError(size), "test compression failed");
+  encoded.resize(size);
+  check_zstd_body(encoded, payload, true, 1);
+  check_zstd_body(encoded, payload, true, encoded.size(), true);
+  auto truncated = encoded;
+  truncated.pop_back();
+  check_zstd_body(truncated, payload, false, truncated.size());
+  check_zstd_body(truncated, payload, false, truncated.size(), true);
+  for (size_t prefix = 0; prefix < 6; ++prefix) {
+    check_zstd_body({encoded.begin(), encoded.begin() + prefix}, payload, false,
+                    65536);
+  }
+  auto corrupt = encoded;
+  corrupt[0] ^= 0x80;
+  check_zstd_body(corrupt, payload, false, corrupt.size());
+  auto trailing = encoded;
+  trailing.push_back(0);
+  check_zstd_body(trailing, payload, false, trailing.size());
+  auto concatenated = encoded;
+  concatenated.insert(concatenated.end(), encoded.begin(), encoded.end());
+  check_zstd_body(concatenated, payload, false, concatenated.size());
+
+  // A streaming frame advertises its window even before enough data arrives
+  // to use it. Reject excessive windows before allocating decoder history.
+  ZSTD_CCtx *encoder = ZSTD_createCCtx();
+  require(encoder != nullptr && !ZSTD_isError(ZSTD_CCtx_setParameter(
+                                    encoder, ZSTD_c_windowLog, 20)),
+          "test encoder setup failed");
+  encoded.resize(ZSTD_compressBound(payload.size()));
+  ZSTD_inBuffer input{payload.data(), payload.size(), 0};
+  ZSTD_outBuffer output{encoded.data(), encoded.size(), 0};
+  require(!ZSTD_isError(ZSTD_compressStream2(encoder, &output, &input,
+                                             ZSTD_e_continue)) &&
+              input.pos == input.size,
+          "test streaming compression failed");
+  require(ZSTD_compressStream2(encoder, &output, &input, ZSTD_e_end) == 0,
+          "test frame finish failed");
+  ZSTD_freeCCtx(encoder);
+  encoded.resize(output.pos);
+  check_zstd_body(encoded, payload, false, encoded.size());
+}
+
+void check_rejected_request_encoding(
+    const std::vector<const char *> &encodings) {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+  raw_h2_peer client(pair.client.connfd, false);
+  std::vector<nghttp2_nv> headers = {
+      raw_h2_header(":method", "POST"), raw_h2_header(":scheme", "http"),
+      raw_h2_header(":path", "/"), raw_h2_header(":authority", "lupine")};
+  for (const char *encoding : encodings) {
+    headers.push_back(raw_h2_header("content-encoding", encoding));
+  }
+  require(nghttp2_submit_headers(client.session, NGHTTP2_FLAG_NONE, -1, nullptr,
+                                 headers.data(), headers.size(), nullptr) > 0 &&
+              nghttp2_session_send(client.session) == 0,
+          "raw request failed");
   require(rpc_http2_server_init_with_metadata(&pair.server, nullptr) > 0,
-          "server accepted a request without content-encoding: lz4");
-  nghttp2_session_del(session);
+          "server accepted an unsupported request encoding");
+}
+
+void test_server_rejects_unsupported_request_encoding() {
+  check_rejected_request_encoding({});
+  check_rejected_request_encoding({"lz4"});
+  check_rejected_request_encoding({"lupine-block-v1"});
+  check_rejected_request_encoding({"zstd", "zstd"});
+  check_rejected_request_encoding({"lz4", "zstd"});
 }
 
 void init_raw_server_peer(h2_pair *pair) {
@@ -329,22 +550,31 @@ void test_data_provider_frame_sizing() {
         write_bytes(&pair.client, payload.data(), payload.size()));
   });
   size_t max_data_frame_size = 0;
-  int data_frame_count = 0;
-  for (int frame_count = 0; frame_count < 8 && data_frame_count < 1;
+  size_t decoded_bytes = 0;
+  ZSTD_DCtx *decoder = ZSTD_createDCtx();
+  require(decoder != nullptr, "test decoder allocation failed");
+  for (int frame_count = 0; frame_count < 8 && decoded_bytes < payload.size();
        ++frame_count) {
     std::array<unsigned char, 9> header = {};
-    require(raw_read_frame(pair.server.connfd, &header),
+    std::vector<unsigned char> encoded;
+    require(raw_read_frame(pair.server.connfd, &header, &encoded),
             "failed to read compressed DATA frame");
     if (header[3] == NGHTTP2_DATA) {
       size_t data_frame_size = (static_cast<size_t>(header[0]) << 16) |
                                (static_cast<size_t>(header[1]) << 8) |
                                header[2];
       max_data_frame_size = std::max(max_data_frame_size, data_frame_size);
-      ++data_frame_count;
+      ZSTD_inBuffer input{encoded.data(), encoded.size(), 0};
+      std::vector<unsigned char> decoded(payload.size());
+      ZSTD_outBuffer output{decoded.data(), decoded.size(), 0};
+      require(!ZSTD_isError(ZSTD_decompressStream(decoder, &output, &input)),
+              "invalid compressed payload");
+      decoded_bytes += output.pos;
     }
   }
   writer.join();
-
+  ZSTD_freeDCtx(decoder);
+  require(decoded_bytes == payload.size(), "first payload was not drained");
   require(write_result.load() == 0, "large-frame write failed");
   require(max_data_frame_size > 16 * 1024,
           "compressed provider fell back to 16 KiB DATA frames");
@@ -1337,9 +1567,52 @@ void test_reset_wakes_flow_controlled_writer() {
   require(!reset_failed, "failed to deliver RST_STREAM");
 }
 
-// The transport LZ4-encodes the complete HTTP/2 body, including small RPC
+// The transport Zstd-encodes the complete HTTP/2 body, including small RPC
 // fields and large transfer data spread across several caller-owned cursors.
-void test_lz4_content_encoding_round_trip() {
+void test_zstd_lane_round_trip() {
+  h2_pair pair;
+  init_pair(&pair);
+  require(rpc_http2_client_await_ready(&pair.client) == 0,
+          "zstd handshake failed");
+  int32_t stream = rpc_http2_lane_stream(&pair.client, 919);
+  require(stream > 0 && rpc_http2_accept_stream(&pair.server) == stream,
+          "zstd lane missing");
+  std::vector<unsigned char> payload(3 * 256 * 1024 + 17);
+  uint32_t seed = 913;
+  for (size_t i = 0; i < payload.size(); ++i) {
+    seed = seed * 1664525u + 1013904223u;
+    payload[i] = i < 256 * 1024 ? 0 : static_cast<unsigned char>(seed >> 24);
+  }
+  std::vector<unsigned char> received(payload.size());
+  std::thread server([&] {
+    require(rpc_http2_read_stream(&pair.server, stream, received.data(),
+                                  received.size()) == 0,
+            "zstd request decode failed");
+    require(received == payload, "zstd request mismatch");
+    unsigned char byte;
+    require(rpc_http2_read_stream(&pair.server, stream, &byte, 1) ==
+                LUPINE_RPC_HTTP2_STREAM_END,
+            "zstd request terminator missing");
+    require(write_stream_bytes(&pair.server, stream, received.data(),
+                               received.size()) == 0,
+            "zstd response write failed");
+    require(rpc_http2_end_stream(&pair.server, stream) == 0,
+            "zstd response end failed");
+  });
+  require(write_stream_bytes(&pair.client, stream, payload.data(),
+                             payload.size()) == 0,
+          "zstd request write failed");
+  require(rpc_http2_end_stream(&pair.client, stream) == 0,
+          "zstd request end failed");
+  std::vector<unsigned char> response(payload.size());
+  require(rpc_http2_read_stream(&pair.client, stream, response.data(),
+                                response.size()) == 0,
+          "zstd response decode failed");
+  server.join();
+  require(response == payload, "zstd response mismatch");
+}
+
+void test_zstd_content_encoding_round_trip() {
   h2_pair pair;
   init_pair(&pair);
   exchange_settings(&pair);
@@ -1363,10 +1636,10 @@ void test_lz4_content_encoding_round_trip() {
     received_prefix = read_string(&pair.server, prefix.size());
     size_t first = LUPINE_RPC_TRANSFER_CHUNK_BYTES;
     require(read_dispatch(&pair.server, received.data(), first) == 0,
-            "LZ4 read part 1 failed");
+            "Zstd read part 1 failed");
     require(read_dispatch(&pair.server, received.data() + first,
                           received.size() - first) == 0,
-            "LZ4 read part 2 failed");
+            "Zstd read part 2 failed");
     received_suffix = read_string(&pair.server, suffix.size());
   });
 
@@ -1374,11 +1647,11 @@ void test_lz4_content_encoding_round_trip() {
       rpc_write_cursor(prefix.data(), prefix.size()),
       rpc_write_cursor(payload.data(), payload.size()),
       rpc_write_cursor(suffix.data(), suffix.size())};
-  require(write_dispatch(&pair.client, cursors) == 0, "LZ4 write failed");
+  require(write_dispatch(&pair.client, cursors) == 0, "Zstd write failed");
   reader.join();
-  require(received_prefix == prefix, "LZ4 prefix mismatch");
-  require(received == payload, "LZ4 payload mismatch");
-  require(received_suffix == suffix, "LZ4 suffix mismatch");
+  require(received_prefix == prefix, "Zstd prefix mismatch");
+  require(received == payload, "Zstd payload mismatch");
+  require(received_suffix == suffix, "Zstd suffix mismatch");
 }
 
 struct refill_chunks {
@@ -2211,7 +2484,10 @@ int main() {
                                      test_response_completed_hook};
   require(rpc_set_lifecycle_hooks(&hooks) == 0,
           "failed to install RPC test lifecycle hooks");
-  RUN_CASE(test_server_rejects_request_without_lz4_encoding());
+  RUN_CASE(test_server_rejects_unsupported_request_encoding());
+  RUN_CASE(test_client_rejects_unsupported_response_encoding());
+  RUN_CASE(test_zstd_frame_validation());
+  RUN_CASE(test_profile_hash_compatibility());
   RUN_CASE(test_async_prefix_allows_overlap_and_joins_holes());
   RUN_CASE(test_async_prefix_same_lane_elision_and_cross_lane_marker());
   RUN_CASE(test_async_prefix_entry_precedes_builder_wait());
@@ -2262,7 +2538,8 @@ int main() {
   RUN_CASE(test_closed_lanes_release_buffers());
 #endif
   RUN_CASE(test_large_payload());
-  RUN_CASE(test_lz4_content_encoding_round_trip());
+  RUN_CASE(test_zstd_content_encoding_round_trip());
+  RUN_CASE(test_zstd_lane_round_trip());
   RUN_CASE(test_refillable_cursor_round_trip());
 #ifndef _WIN32
   RUN_CASE(test_refillable_cursor_across_flow_control_window());

@@ -172,6 +172,11 @@ static std::map<CUdeviceptr, void *> &lupine_host_allocation_bases_locked() {
   return bases;
 }
 
+static std::map<uintptr_t, void *> &lupine_host_allocation_aliases_locked() {
+  static auto &aliases = *new std::map<uintptr_t, void *>();
+  return aliases;
+}
+
 static void
 lupine_index_host_allocation_locked(lupine_host_allocation_map::iterator it,
                                     bool add) {
@@ -183,6 +188,14 @@ lupine_index_host_allocation_locked(lupine_host_allocation_map::iterator it,
       lupine_host_allocation_bases_locked()[base] = it->first;
     } else {
       lupine_host_allocation_bases_locked().erase(base);
+    }
+  }
+  uintptr_t alias = reinterpret_cast<uintptr_t>(it->second.io_alias);
+  if (alias != 0) {
+    if (add) {
+      lupine_host_allocation_aliases_locked()[alias] = it->first;
+    } else {
+      lupine_host_allocation_aliases_locked().erase(alias);
     }
   }
 }
@@ -269,8 +282,11 @@ bool lupine_host_range_is_protected(uintptr_t start, size_t size) {
 }
 
 static size_t lupine_page_size() {
-  long page_size = sysconf(_SC_PAGESIZE);
-  return page_size > 0 ? static_cast<size_t>(page_size) : 4096;
+  static const size_t page_size = []() {
+    long configured = sysconf(_SC_PAGESIZE);
+    return configured > 0 ? static_cast<size_t>(configured) : 4096;
+  }();
+  return page_size;
 }
 
 #ifndef _WIN32
@@ -978,30 +994,30 @@ CUresult lupine_prepare_portable_host_allocations(lupine_route route,
 // pointers.
 static lupine_host_allocation_map::iterator
 lupine_find_io_alias_locked(uintptr_t address, size_t bytes, int route_id) {
+  auto &aliases = lupine_host_allocation_aliases_locked();
+  auto alias_it = aliases.upper_bound(address);
+  if (alias_it == aliases.begin()) {
+    return lupine_mutable_host_allocations_locked().end();
+  }
+  --alias_it;
+  uintptr_t alias = alias_it->first;
   auto &allocations = lupine_mutable_host_allocations_locked();
-  for (auto it = allocations.begin(); it != allocations.end(); ++it) {
-    const auto &allocation = it->second;
-    uintptr_t alias = reinterpret_cast<uintptr_t>(allocation.io_alias);
-    if (alias != 0 && allocation.route_id == route_id && address >= alias &&
-        address - alias <= allocation.size &&
-        bytes <= allocation.size - (address - alias)) {
-      return it;
-    }
+  auto it = allocations.find(alias_it->second);
+  if (it == allocations.end()) {
+    return allocations.end();
+  }
+  const auto &allocation = it->second;
+  if (allocation.route_id == route_id && address >= alias &&
+      address - alias <= allocation.size &&
+      bytes <= allocation.size - (address - alias)) {
+    return it;
   }
   return allocations.end();
 }
 
 static int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
-                                          size_t bytes) {
-  bool pinned_destination = false;
-  {
-    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-    pinned_destination =
-        lupine_find_io_alias_locked(
-            reinterpret_cast<uintptr_t>(destination), bytes,
-            lupine_route_identity(lupine_remote_route_for_conn(conn))) !=
-        lupine_mutable_host_allocations_locked().end();
-  }
+                                          size_t bytes,
+                                          bool pinned_destination) {
   int result = rpc_read(conn, destination, bytes);
   if (result < 0 || !pinned_destination || bytes == 0) {
     return result;
@@ -1023,14 +1039,50 @@ static int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
   return pthread_mutex_unlock(&conn->write_mutex) == 0 ? result : -1;
 }
 
+static int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
+                                          size_t bytes) {
+  bool pinned_destination = false;
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    pinned_destination =
+        lupine_find_io_alias_locked(
+            reinterpret_cast<uintptr_t>(destination), bytes,
+            lupine_route_identity(lupine_remote_route_for_conn(conn))) !=
+        lupine_mutable_host_allocations_locked().end();
+  }
+  return lupine_read_deferred_host_copy(conn, destination, bytes,
+                                        pinned_destination);
+}
+
 int lupine_read_deferred_rows(conn_t *conn) {
   lupine_host_rows rows;
   if (rpc_read(conn, &rows, sizeof(rows)) < 0) {
     return -1;
   }
-  for (size_t index = 0; rows.width != 0 && index < rows.height * rows.depth;
-       ++index) {
-    if (lupine_read_deferred_host_copy(conn, rows.row(index), rows.width) < 0) {
+  if (rows.width == 0 || rows.height == 0 || rows.depth == 0) {
+    return 0;
+  }
+  const bool contiguous =
+      (rows.height == 1 && rows.depth == 1) ||
+      (rows.depth == 1 && rows.pitch == rows.width) ||
+      (rows.pitch == rows.width && rows.slice == rows.height * rows.pitch);
+  if (contiguous) {
+    return lupine_read_deferred_host_copy(conn, rows.dst, rows.bytes()) < 0
+               ? -1
+               : 0;
+  }
+  bool pinned_destination = false;
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    pinned_destination =
+        lupine_find_io_alias_locked(
+            reinterpret_cast<uintptr_t>(rows.dst), rows.width,
+            lupine_route_identity(lupine_remote_route_for_conn(conn))) !=
+        lupine_mutable_host_allocations_locked().end();
+  }
+  for (size_t index = 0; index < rows.height * rows.depth; ++index) {
+    if (lupine_read_deferred_host_copy(conn, rows.row(index), rows.width,
+                                       pinned_destination) < 0) {
       return -1;
     }
   }
@@ -1484,9 +1536,19 @@ static bool lupine_translate_client_host_range_to_server(
 }
 
 static bool lupine_pinned_dtoh_destination(conn_t *conn, void *destination,
-                                           size_t bytes, void **client_alias,
+                                           size_t bytes, bool *page_locked,
+                                           void **client_alias,
                                            void **server_host) {
-  if (bytes == 0) {
+  if (page_locked != nullptr) {
+    *page_locked = false;
+  }
+  if (client_alias != nullptr) {
+    *client_alias = nullptr;
+  }
+  if (server_host != nullptr) {
+    *server_host = nullptr;
+  }
+  if (destination == nullptr) {
     return false;
   }
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
@@ -1496,20 +1558,38 @@ static bool lupine_pinned_dtoh_destination(conn_t *conn, void *destination,
   }
   const auto &allocation = it->second;
   uintptr_t address = reinterpret_cast<uintptr_t>(destination);
+  bool is_page_locked = address >= allocation.user_base &&
+                        address < allocation.user_base + allocation.user_size;
+  if (page_locked != nullptr) {
+    *page_locked = is_page_locked;
+  }
+  if (!is_page_locked || bytes == 0 || conn == nullptr) {
+    return false;
+  }
   if (allocation.managed || allocation.local_cuda ||
       allocation.io_alias == nullptr || allocation.server_host_ptr == 0 ||
       allocation.route_id !=
           lupine_route_identity(lupine_remote_route_for_conn(conn)) ||
       __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0 ||
-      address < allocation.user_base ||
-      address - allocation.user_base > allocation.user_size ||
       bytes > allocation.user_size - (address - allocation.user_base)) {
     return false;
   }
   size_t offset = address - reinterpret_cast<uintptr_t>(it->first);
-  *client_alias = static_cast<unsigned char *>(allocation.io_alias) + offset;
-  *server_host = reinterpret_cast<void *>(allocation.server_host_ptr + offset);
+  if (client_alias != nullptr) {
+    *client_alias = static_cast<unsigned char *>(allocation.io_alias) + offset;
+  }
+  if (server_host != nullptr) {
+    *server_host = reinterpret_cast<void *>(allocation.server_host_ptr + offset);
+  }
   return true;
+}
+
+static bool lupine_pinned_dtoh_destination(conn_t *conn, void *destination,
+                                           size_t bytes, void **client_alias,
+                                           void **server_host) {
+  bool page_locked = false;
+  return lupine_pinned_dtoh_destination(conn, destination, bytes, &page_locked,
+                                        client_alias, server_host);
 }
 
 static bool lupine_host_ptr_is_tracked(CUdeviceptr ptr) {
@@ -1555,10 +1635,7 @@ static bool lupine_is_client_mapped_address(CUdeviceptr ptr) {
   if (ptr == 0) {
     return false;
   }
-  long page_size = sysconf(_SC_PAGESIZE);
-  if (page_size <= 0) {
-    return false;
-  }
+  size_t page_size = lupine_page_size();
   uintptr_t page =
       static_cast<uintptr_t>(ptr) & ~(static_cast<uintptr_t>(page_size) - 1);
 #if defined(__APPLE__)
@@ -2173,11 +2250,6 @@ extern "C" void lupine_invalidate_launched_managed(CUdeviceptr pointer,
 static lupine_host_allocation_map::iterator
 lupine_find_host_allocation_locked(void *p) {
   auto &allocations = lupine_mutable_host_allocations_locked();
-  auto exact = allocations.find(p);
-  if (exact != allocations.end()) {
-    return exact;
-  }
-
   auto upper = allocations.upper_bound(p);
   if (upper == allocations.begin()) {
     return allocations.end();
@@ -4089,6 +4161,23 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
   if (lupine_stream_crosses_route(hStream, route)) {
     return cuMemcpyDtoH_v2(dstHost, srcDevice, ByteCount);
   }
+  if (lupine_route_is_local(route)) {
+    if (ByteCount != 0 && lupine_dtoh_blocks(dstHost, hStream)) {
+      return lupine_call_real_cuda_fn("cuMemcpyDtoH_v2", dstHost, srcDevice,
+                                      ByteCount);
+    }
+    return lupine_call_real_cuda_fn("cuMemcpyDtoHAsync_v2", dstHost, srcDevice,
+                                    ByteCount, hStream);
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  uint64_t async_sequence = 0;
+  void *client_alias = nullptr;
+  void *server_host = nullptr;
+  bool page_locked = false;
+  bool pinned_destination = lupine_pinned_dtoh_destination(
+      conn, dstHost, ByteCount, &page_locked, &client_alias, &server_host);
+
   // "API synchronization behavior" lets the driver make this copy synchronous
   // when the destination is pageable, and every driver does. Callers rely on it
   // instead of synchronizing: cuSPARSE reads its scalar results (nnz counts,
@@ -4097,25 +4186,16 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
   // through the same bounded, chunked path the synchronous copy uses, issued on
   // this stream so they stay ordered behind its prior work. Capture is the
   // exception: there the copy only becomes a graph node and must not block.
-  if (ByteCount != 0 && lupine_dtoh_blocks(dstHost, hStream)) {
-    if (lupine_route_is_local(route)) {
-      return lupine_call_real_cuda_fn("cuMemcpyDtoH_v2", dstHost, srcDevice,
-                                      ByteCount);
+  if (ByteCount != 0 && !page_locked) {
+    CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
+    if (lupine_active_stream_captures.load(std::memory_order_relaxed) == 0 ||
+        cuStreamIsCapturing(hStream, &capture_status) != CUDA_SUCCESS ||
+        capture_status == CU_STREAM_CAPTURE_STATUS_NONE) {
+      return lupine_copy_dtoh_pageable(conn, dstHost, srcDevice, ByteCount,
+                                       hStream);
     }
-    return lupine_copy_dtoh_pageable(lupine_route_remote_conn(route), dstHost,
-                                     srcDevice, ByteCount, hStream);
   }
 
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn("cuMemcpyDtoHAsync_v2", dstHost, srcDevice,
-                                    ByteCount, hStream);
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  uint64_t async_sequence = 0;
-  void *client_alias = nullptr;
-  void *server_host = nullptr;
-  bool pinned_destination = lupine_pinned_dtoh_destination(
-      conn, dstHost, ByteCount, &client_alias, &server_host);
   int copy_opcode = pinned_destination ? LUPINE_RPC_lupineMemcpyDtoHAsyncPinned
                                        : RPC_cuMemcpyDtoHAsync_v2;
   if (lupine_prepare_rpc(conn) < 0 ||
