@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <future>
 #include <iostream>
 #include <nghttp2/nghttp2.h>
 #include <string>
@@ -1742,8 +1743,9 @@ void test_rpc_repeated_responses_on_lane() {
 
   require(rpc_write_start_request(&pair.client, kOp) == 0,
           "repeated response request start failed");
-  int request_id = rpc_write_end(&pair.client);
+  int request_id = rpc_write_end(&pair.client, true);
   require(request_id > 0, "repeated response request write failed");
+  auto paused = std::async(std::launch::async, [&] { return rpc_pause_client(&pair.client); });
   for (int expected = 0; expected < kChunkCount; ++expected) {
     require(rpc_read_start(&pair.client, request_id) == 0,
             "repeated response read start failed");
@@ -1753,11 +1755,26 @@ void test_rpc_repeated_responses_on_lane() {
             "repeated response index read failed");
     require(rpc_read(&pair.client, received.data(), received.size()) == 0,
             "repeated response payload read failed");
-    require(rpc_read_end(&pair.client) == request_id,
+    require(rpc_read_end(&pair.client, expected + 1 == kChunkCount) == request_id,
             "repeated response read end failed");
+    if (expected + 1 != kChunkCount) {
+      require(paused.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout,
+              "checkpoint admitted before the final response chunk");
+    }
     require(chunk == expected, "repeated response index mismatch");
     require(received == payload, "repeated response payload mismatch");
   }
+  require(paused.wait_for(std::chrono::seconds(1)) == std::future_status::ready && paused.get() == 0,
+          "checkpoint did not finish draining the completed response");
+  auto next_call = std::async(std::launch::async, [&] {
+    int result = rpc_write_start_request(&pair.client, kOp);
+    return result == 0 ? rpc_write_end(&pair.client) : -1;
+  });
+  require(next_call.wait_for(std::chrono::milliseconds(20)) == std::future_status::timeout,
+          "new client call entered while checkpointing");
+  rpc_resume_client(&pair.client);
+  require(next_call.wait_for(std::chrono::seconds(1)) == std::future_status::ready && next_call.get() > 0,
+          "client call did not resume after checkpointing");
   server.join();
 }
 

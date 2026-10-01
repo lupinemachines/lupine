@@ -80,6 +80,9 @@ void unload_provider(optional_checkpoint_provider &provider) {
 optional_checkpoint_provider load_provider() {
   optional_checkpoint_provider provider;
   const char *override_path = getenv("LUPINE_CHECKPOINT_LIBRARY");
+  if (override_path != nullptr && strcmp(override_path, "none") == 0) {
+    return provider;
+  }
   const char *candidates[] = {"liblupinecr.so.0", "liblupinecr.so"};
 
   if (override_path != nullptr && override_path[0] != '\0') {

@@ -490,6 +490,7 @@ struct rpc_read_frame {
 struct rpc_response_route {
   int request_id = 0;
   int32_t stream_id = -1;
+  bool counted = false;
 };
 
 struct rpc_nested_write_frame {
@@ -517,6 +518,79 @@ struct rpc_thread_io {
 };
 
 static thread_local rpc_thread_io rpc_tls_io;
+
+static void rpc_client_call_complete(conn_t *conn) {
+  if (conn->local_request_parity != 0) {
+    return;
+  }
+  if (__atomic_sub_fetch(&conn->admitted_client_calls, 1, __ATOMIC_SEQ_CST) == 0 &&
+      __atomic_load_n(&conn->client_paused, __ATOMIC_SEQ_CST)) {
+    pthread_mutex_lock(&conn->async_mutex);
+    pthread_cond_broadcast(&conn->async_cond);
+    pthread_mutex_unlock(&conn->async_mutex);
+  }
+}
+
+static int rpc_client_call_begin(conn_t *conn, int op) {
+  if (conn->local_request_parity != 0) {
+    return 0;
+  }
+  // A host callback may need a nested request to finish an admitted call.
+  bool callback = rpc_tls_io.read_conn == conn && rpc_tls_io.read.op != -1;
+  for (;;) {
+    __atomic_add_fetch(&conn->admitted_client_calls, 1, __ATOMIC_SEQ_CST);
+    if (!__atomic_load_n(&conn->client_paused, __ATOMIC_SEQ_CST) || callback ||
+        op == LUPINE_RPC_PROCESS_CHECKPOINT) {
+      return 0;
+    }
+    rpc_client_call_complete(conn);
+    pthread_mutex_lock(&conn->async_mutex);
+    while (__atomic_load_n(&conn->client_paused, __ATOMIC_SEQ_CST) &&
+           !conn->async_cancelled) {
+      pthread_cond_wait(&conn->async_cond, &conn->async_mutex);
+    }
+    bool cancelled = conn->async_cancelled;
+    pthread_mutex_unlock(&conn->async_mutex);
+    if (cancelled) {
+      return -1;
+    }
+  }
+}
+
+} // namespace
+
+int rpc_pause_client(conn_t *conn) {
+  pthread_mutex_lock(&conn->async_mutex);
+  __atomic_store_n(&conn->client_paused, true, __ATOMIC_SEQ_CST);
+  while (__atomic_load_n(&conn->admitted_client_calls, __ATOMIC_SEQ_CST) != 0 &&
+         !conn->async_cancelled) {
+    pthread_cond_wait(&conn->async_cond, &conn->async_mutex);
+  }
+  int result = conn->async_cancelled ? -1 : 0;
+  pthread_mutex_unlock(&conn->async_mutex);
+  return result;
+}
+
+void rpc_resume_client(conn_t *conn) {
+  pthread_mutex_lock(&conn->async_mutex);
+  __atomic_store_n(&conn->client_paused, false, __ATOMIC_SEQ_CST);
+  pthread_cond_broadcast(&conn->async_cond);
+  pthread_mutex_unlock(&conn->async_mutex);
+}
+
+// Lane retirement changes server thread state, so it belongs to the same
+// admission barrier as application requests.
+extern int rpc_http2_terminate_lane(conn_t *conn, uint64_t lane_id);
+int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id) {
+  if (conn == nullptr || conn->closed || rpc_client_call_begin(conn, 0) < 0) {
+    return -1;
+  }
+  int result = rpc_http2_terminate_lane(conn, lane_id);
+  rpc_client_call_complete(conn);
+  return result;
+}
+
+namespace {
 
 void rpc_save_outer_response(conn_t *conn) {
   rpc_nested_write_frame &frame = rpc_tls_io.nested_write;
@@ -762,7 +836,7 @@ int rpc_drain(conn_t *conn, size_t size) {
   return 0;
 }
 
-int rpc_read_end(conn_t *conn) {
+int rpc_read_end(conn_t *conn, bool final_response) {
   if (rpc_tls_io.read_conn == conn) {
     int read_id = rpc_tls_io.read.request_id;
     int32_t stream_id = rpc_tls_io.read.stream_id;
@@ -774,6 +848,10 @@ int rpc_read_end(conn_t *conn) {
       auto hook = response_completed_hook.load(std::memory_order_acquire);
       if (hook != nullptr) {
         hook(conn, stream_id);
+      }
+      if (final_response && rpc_tls_io.response.counted) {
+        rpc_tls_io.response.counted = false;
+        rpc_client_call_complete(conn);
       }
     }
     return read_id;
@@ -842,7 +920,7 @@ int rpc_wait_for_response(conn_t *conn) {
   int op = conn->write_op;
   uint64_t start =
       lupine_rpc_stats_path() != nullptr ? lupine_rpc_stats_now_ns() : 0;
-  int write_id = rpc_write_end(conn);
+  int write_id = rpc_write_end(conn, true);
   if (write_id < 0) {
     return -1;
   }
@@ -875,6 +953,9 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   if (rpc_tls_io.write_conn != nullptr && !request_nested_in_response) {
     return -1;
   }
+  if (rpc_client_call_begin(conn, op) < 0) {
+    return -1;
+  }
   // Capture entry BEFORE the builder lock. Calls already waiting for that
   // lock overlap this request and must not inherit its later publication.
   uint64_t dependency =
@@ -890,10 +971,12 @@ int rpc_write_start_request(conn_t *conn, const int op) {
     call_lock_result = pthread_mutex_lock(&conn->call_mutex);
   }
   if (call_lock_result != 0) {
+    rpc_client_call_complete(conn);
     return -1;
   }
   if (conn->closed) {
     pthread_mutex_unlock(&conn->call_mutex);
+    rpc_client_call_complete(conn);
     return -1;
   }
   if (request_nested_in_response) {
@@ -905,6 +988,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
               << std::endl;
 #endif
     pthread_mutex_unlock(&conn->call_mutex);
+    rpc_client_call_complete(conn);
     return -1;
   } else {
     rpc_tls_io.write_conn = conn;
@@ -913,6 +997,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   if (rpc_write_queue_reset(conn, 2) < 0) {
     rpc_release_write_builder(conn, request_nested_in_response);
     pthread_mutex_unlock(&conn->call_mutex);
+    rpc_client_call_complete(conn);
     return -1;
   }
   conn->request_id = conn->request_id + 2; // leave the last bit the same
@@ -923,6 +1008,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   if (conn->write_stream_id < 0) {
     rpc_release_write_builder(conn, request_nested_in_response);
     pthread_mutex_unlock(&conn->call_mutex);
+    rpc_client_call_complete(conn);
     return -1;
   }
   if (lupine_rpc_stats_path() != nullptr) {
@@ -1064,7 +1150,7 @@ int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
 //
 // the request lock is released after the request is sent and the function
 // returns the request id which can be used to wait for a response.
-int rpc_write_end(conn_t *conn) {
+int rpc_write_end(conn_t *conn, bool expects_response) {
   if (conn == nullptr || rpc_tls_io.write_conn != conn) {
     return -1;
   }
@@ -1074,6 +1160,7 @@ int rpc_write_end(conn_t *conn) {
     rpc_release_write_builder(conn, request_nested_in_response);
     if (request) {
       pthread_mutex_unlock(&conn->call_mutex);
+      rpc_client_call_complete(conn);
     }
     return -1;
   }
@@ -1124,7 +1211,8 @@ int rpc_write_end(conn_t *conn) {
   if (request) {
     if (result == 0) {
       rpc_tls_io.response_conn = conn;
-      rpc_tls_io.response = {write_id, write_stream_id};
+      rpc_tls_io.response = {write_id, write_stream_id,
+                             client_request && expects_response};
     }
     // Servers originate RPCs only on the dedicated server-to-client stream.
     // Keep that stream's request/response exchange serialized so a caller can
@@ -1133,6 +1221,9 @@ int rpc_write_end(conn_t *conn) {
       rpc_tls_io.held_call_lock = conn;
     } else {
       pthread_mutex_unlock(&conn->call_mutex);
+    }
+    if (!expects_response || result != 0) {
+      rpc_client_call_complete(conn);
     }
   }
   return result == 0 ? write_id : -1;
