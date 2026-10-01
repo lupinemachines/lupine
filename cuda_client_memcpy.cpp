@@ -172,6 +172,11 @@ static std::map<CUdeviceptr, void *> &lupine_host_allocation_bases_locked() {
   return bases;
 }
 
+static std::map<uintptr_t, void *> &lupine_host_allocation_aliases_locked() {
+  static auto &aliases = *new std::map<uintptr_t, void *>();
+  return aliases;
+}
+
 static void
 lupine_index_host_allocation_locked(lupine_host_allocation_map::iterator it,
                                     bool add) {
@@ -183,6 +188,14 @@ lupine_index_host_allocation_locked(lupine_host_allocation_map::iterator it,
       lupine_host_allocation_bases_locked()[base] = it->first;
     } else {
       lupine_host_allocation_bases_locked().erase(base);
+    }
+  }
+  uintptr_t alias = reinterpret_cast<uintptr_t>(it->second.io_alias);
+  if (alias != 0) {
+    if (add) {
+      lupine_host_allocation_aliases_locked()[alias] = it->first;
+    } else {
+      lupine_host_allocation_aliases_locked().erase(alias);
     }
   }
 }
@@ -978,30 +991,30 @@ CUresult lupine_prepare_portable_host_allocations(lupine_route route,
 // pointers.
 static lupine_host_allocation_map::iterator
 lupine_find_io_alias_locked(uintptr_t address, size_t bytes, int route_id) {
+  auto &aliases = lupine_host_allocation_aliases_locked();
+  auto alias_it = aliases.upper_bound(address);
+  if (alias_it == aliases.begin()) {
+    return lupine_mutable_host_allocations_locked().end();
+  }
+  --alias_it;
+  uintptr_t alias = alias_it->first;
   auto &allocations = lupine_mutable_host_allocations_locked();
-  for (auto it = allocations.begin(); it != allocations.end(); ++it) {
-    const auto &allocation = it->second;
-    uintptr_t alias = reinterpret_cast<uintptr_t>(allocation.io_alias);
-    if (alias != 0 && allocation.route_id == route_id && address >= alias &&
-        address - alias <= allocation.size &&
-        bytes <= allocation.size - (address - alias)) {
-      return it;
-    }
+  auto it = allocations.find(alias_it->second);
+  if (it == allocations.end()) {
+    return allocations.end();
+  }
+  const auto &allocation = it->second;
+  if (allocation.route_id == route_id && address >= alias &&
+      address - alias <= allocation.size &&
+      bytes <= allocation.size - (address - alias)) {
+    return it;
   }
   return allocations.end();
 }
 
 static int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
-                                          size_t bytes) {
-  bool pinned_destination = false;
-  {
-    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-    pinned_destination =
-        lupine_find_io_alias_locked(
-            reinterpret_cast<uintptr_t>(destination), bytes,
-            lupine_route_identity(lupine_remote_route_for_conn(conn))) !=
-        lupine_mutable_host_allocations_locked().end();
-  }
+                                          size_t bytes,
+                                          bool pinned_destination) {
   int result = rpc_read(conn, destination, bytes);
   if (result < 0 || !pinned_destination || bytes == 0) {
     return result;
@@ -1023,14 +1036,50 @@ static int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
   return pthread_mutex_unlock(&conn->write_mutex) == 0 ? result : -1;
 }
 
+static int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
+                                          size_t bytes) {
+  bool pinned_destination = false;
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    pinned_destination =
+        lupine_find_io_alias_locked(
+            reinterpret_cast<uintptr_t>(destination), bytes,
+            lupine_route_identity(lupine_remote_route_for_conn(conn))) !=
+        lupine_mutable_host_allocations_locked().end();
+  }
+  return lupine_read_deferred_host_copy(conn, destination, bytes,
+                                        pinned_destination);
+}
+
 int lupine_read_deferred_rows(conn_t *conn) {
   lupine_host_rows rows;
   if (rpc_read(conn, &rows, sizeof(rows)) < 0) {
     return -1;
   }
-  for (size_t index = 0; rows.width != 0 && index < rows.height * rows.depth;
-       ++index) {
-    if (lupine_read_deferred_host_copy(conn, rows.row(index), rows.width) < 0) {
+  if (rows.width == 0 || rows.height == 0 || rows.depth == 0) {
+    return 0;
+  }
+  const bool contiguous =
+      (rows.height == 1 && rows.depth == 1) ||
+      (rows.depth == 1 && rows.pitch == rows.width) ||
+      (rows.pitch == rows.width && rows.slice == rows.height * rows.pitch);
+  if (contiguous) {
+    return lupine_read_deferred_host_copy(conn, rows.dst, rows.bytes()) < 0
+               ? -1
+               : 0;
+  }
+  bool pinned_destination = false;
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    pinned_destination =
+        lupine_find_io_alias_locked(
+            reinterpret_cast<uintptr_t>(rows.dst), rows.width,
+            lupine_route_identity(lupine_remote_route_for_conn(conn))) !=
+        lupine_mutable_host_allocations_locked().end();
+  }
+  for (size_t index = 0; index < rows.height * rows.depth; ++index) {
+    if (lupine_read_deferred_host_copy(conn, rows.row(index), rows.width,
+                                       pinned_destination) < 0) {
       return -1;
     }
   }
