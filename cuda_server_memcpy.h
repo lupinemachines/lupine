@@ -1,6 +1,8 @@
 #ifndef LUPINE_CUDA_SERVER_MEMCPY_H
 #define LUPINE_CUDA_SERVER_MEMCPY_H
 
+#include "device_stdout.h"
+
 #include <cuda.h>
 
 #include <memory>
@@ -19,6 +21,8 @@ struct lupine_host_callback_data {
   void *userData = nullptr;
   lupine_graph_resources *resources = nullptr;
   std::optional<CUstream> stream;
+  // Uncaptured launches run once; a captured one is replayed by its graph.
+  bool one_shot = false;
 };
 
 struct lupine_stream_callback_data {
@@ -53,47 +57,42 @@ lupine_server_free_device_allocation(CUdeviceptr pointer,
                                      CUresult (*native_free)(CUdeviceptr));
 
 struct lupine_graph_host_copy {
-  void *client_dst = nullptr;
+  lupine_host_rows client;
   void *server_src = nullptr;
-  size_t bytes = 0;
 };
 
 enum class lupine_dtoh_storage { borrowed, heap, pinned };
 
 // A device-to-host copy the server holds until a synchronize collects it. The
-// copy handlers here produce these; the stream, event and context synchronize
+// copy handlers and graph launches produce these; stream, event and context
 // handlers in cuda_server.cpp drain them, so the registry is shared rather than
 // duplicated.
 struct lupine_pending_dtoh_item {
   CUevent event = nullptr;
-  void *client_dst = nullptr;
+  lupine_host_rows client;
   void *server_src = nullptr;
-  size_t bytes = 0;
   lupine_dtoh_storage storage = lupine_dtoh_storage::borrowed;
+  CUcontext context = nullptr;
+  // Preserve graph dependencies inherited through cuStreamWaitEvent.
+  lupine_graph_resources *graph_resources = nullptr;
 };
 
 using lupine_pending_dtoh_items = std::vector<lupine_pending_dtoh_item>;
-struct lupine_captured_stdout {
-  int saved_stdout = -1;
-  bool active = false;
-  std::string output;
-};
-
-bool lupine_start_stdout_capture(lupine_captured_stdout *capture);
-void lupine_finish_stdout_capture(lupine_captured_stdout *capture);
-int lupine_write_captured_stdout(conn_t *conn,
-                                 const lupine_captured_stdout &capture);
 void lupine_note_device_stdout_image(const unsigned char *image,
                                      size_t image_size);
-lupine_pending_dtoh_items lupine_detach_pending_dtoh_copies(conn_t *conn,
-                                                            CUstream stream,
-                                                            bool all_streams);
+lupine_pending_dtoh_items
+lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
+                                  bool all_streams,
+                                  CUcontext context = nullptr);
 lupine_pending_dtoh_items lupine_detach_event_dtoh_copies(conn_t *conn,
                                                           CUevent event);
+int lupine_write_dtoh_rows(conn_t *conn, const lupine_host_rows &client,
+                           const void *server_src);
 int lupine_write_pending_dtoh_copies(conn_t *conn,
                                      const lupine_pending_dtoh_items &pending,
                                      bool include_count);
 void lupine_cleanup_pending_dtoh_copies(lupine_pending_dtoh_items *pending);
+CUresult lupine_take_async_error(conn_t *conn, CUresult result);
 void lupine_forget_undelivered_dtoh(const void *server_src);
 void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream);
 void lupine_forget_event_dtoh_marker(conn_t *conn, CUevent event);
@@ -105,6 +104,7 @@ libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies();
 lupine_graph_resources *lupine_get_graph_resources(CUgraph graph);
 lupine_graph_resources *lupine_get_stream_resources(CUstream stream);
+lupine_graph_resources *lupine_find_stream_resources(CUstream stream);
 lupine_graph_resources *lupine_captured_stream_resources(CUstream stream);
 lupine_graph_resources *lupine_begin_stream_capture_resources(CUstream stream);
 void lupine_discard_stream_capture_resources(lupine_graph_resources *resources);
@@ -115,17 +115,12 @@ void lupine_forget_event_capture_resources(CUevent event);
 void lupine_wait_event_capture_resources(CUstream stream, CUevent event);
 void lupine_clone_graph_resources(CUgraph clone, CUgraph original);
 void lupine_erase_graph_resources(CUgraph graph);
-void lupine_note_graph_launch(CUgraphExec exec, CUstream stream,
+void lupine_rebind_graph_exec_resources(CUgraphExec exec, CUgraph graph);
+void lupine_release_graph_resources(lupine_graph_resources *resources);
+void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
                               CUresult result);
-bool lupine_graph_has_capture_scratch(lupine_graph_resources *resources);
-bool lupine_graph_install_capture_scratch(lupine_graph_resources *resources,
-                                          void *scratch, size_t size);
 std::vector<lupine_graph_host_copy>
 lupine_graph_dtoh_copy_snapshot(lupine_graph_resources *resources);
-// Reports the host copies a graph launched on this stream still owes the
-// client, exactly once per launch.
-std::vector<lupine_graph_host_copy>
-lupine_take_stream_dtoh_copies(CUstream stream);
 struct lupine_htod_graph_binding {
   CUgraph original = nullptr;
   CUgraph prepared = nullptr;
@@ -145,11 +140,29 @@ lupine_original_htod_graph_node(const lupine_htod_graph_binding &binding,
 CUgraphNode lupine_htod_graph_exec_node(CUgraphExec exec, CUgraphNode node);
 void lupine_release_htod_graph_binding(lupine_htod_graph_binding *binding);
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec);
-void *lupine_alloc_capture_scratch(lupine_graph_resources *resources,
-                                   size_t bytes);
+void *lupine_alloc_capture_scratch(size_t bytes);
 void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
-                                 void *client_dst, void *server_src,
-                                 size_t bytes);
+                                 const lupine_host_rows &client,
+                                 void *server_src);
+
+// A host side staged on the server is dense: the client sends and receives
+// only the copied rows and keeps its own pitch and offsets.
+inline size_t lupine_pack_host_destination(CUDA_MEMCPY3D &copy) {
+  copy.dstXInBytes = 0;
+  copy.dstY = 0;
+  copy.dstZ = 0;
+  copy.dstPitch = copy.WidthInBytes;
+  copy.dstHeight = copy.Height;
+  return copy.WidthInBytes * copy.Height * copy.Depth;
+}
+inline size_t lupine_pack_host_source(CUDA_MEMCPY3D &copy) {
+  copy.srcXInBytes = 0;
+  copy.srcY = 0;
+  copy.srcZ = 0;
+  copy.srcPitch = copy.WidthInBytes;
+  copy.srcHeight = copy.Height;
+  return copy.WidthInBytes * copy.Height * copy.Depth;
+}
 
 // Frees a pinned staging block once the stream that is still reading from it
 // drains. Only the Windows host-to-device path defers a free this way.

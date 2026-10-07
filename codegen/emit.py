@@ -8,7 +8,7 @@ nothing here asks which one it is writing.
 from dataclasses import dataclass
 import textwrap
 
-from cxxheaderparser.types import Array, Function, FunctionType, Parameter, Pointer
+from cxxheaderparser.types import Function, FunctionType, Parameter, Pointer
 
 from ops import (
     ArrayOperation,
@@ -19,7 +19,6 @@ from ops import (
     NullTerminatedOperation,
     ScalarOperation,
     VersionedStructOperation,
-    format_array,
 )
 
 
@@ -69,16 +68,7 @@ def write_stub(f, backend: Backend, function):
 def format_function_params(function: Function) -> list[str]:
     params = []
     for param in function.parameters:
-        if param.name and "[]" in param.type.format():
-            params.append(
-                "{type} {name}".format(
-                    type=param.type.format().replace("[]", ""),
-                    name=param.name + "[]",
-                )
-            )
-        elif param.name and isinstance(param.type, Array):
-            params.append(format_array(param.type, param.name))
-        elif param.name and isinstance(param.type, Pointer) and isinstance(
+        if param.name and isinstance(param.type, Pointer) and isinstance(
             param.type.ptr_to, FunctionType
         ):
             params.append(param.type.format_decl(param.name))
@@ -119,8 +109,6 @@ def write_client_validation(f, backend: Backend, function, operations):
             checks.append(f"{name} == nullptr")
         elif isinstance(operation, DereferenceOperation):
             checks.append(f"{name} == nullptr")
-        elif isinstance(operation, ArrayOperation) and operation.counted:
-            checks.append(f"({operation.length} != 0 && {name} == nullptr)")
         elif isinstance(operation, ArrayOperation) and not operation.nullable:
             checks.append(
                 f"({operation.transfer_size_expr()} != 0 && {name} == nullptr)"
@@ -168,49 +156,39 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
             (
                 InOutCountOperation,
                 NullableArrayOperation,
+                NullableOperation,
                 ScalarOperation,
                 VersionedStructOperation,
             ),
-        ) or (
-            isinstance(operation, ArrayOperation)
-            and (operation.nullable or operation.counted)
-        ):
+        ) or (isinstance(operation, ArrayOperation) and operation.nullable):
             f.write(operation.client_declaration())
         elif isinstance(operation, NullTerminatedOperation):
             f.write(
                 f"  {operation.length_type} {operation.parameter.name}_len = static_cast<{operation.length_type}>(std::strlen({operation.parameter.name}) + 1);\n"
             )
-        elif isinstance(operation, NullableOperation) and operation.recv:
-            f.write(
-                f"  {operation.ptr.format()} {operation.parameter.name}_null_check = nullptr;\n"
-            )
 
     opening = "  if (conn == nullptr ||\n      " if backend.guard_null_conn else "  if ("
+    start = f"rpc_write_start_request(conn, RPC_{name})"
+    wait, returned = "rpc_wait_for_response(conn) < 0 ||", "return_value"
     if submit:
         # The ticket leads the request; a request that expects its answer
         # carries the all-ones ticket instead of one.
         f.write("  uint64_t async_sequence = ~uint64_t{0};\n")
-        f.write("  if (submit_async) {\n")
-        f.write(
-            f"  {opening}rpc_write_start_async_request(conn, RPC_{name}, &async_sequence) < 0 ||\n"
-            "      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||\n"
+        start = (
+            f"(submit_async ? rpc_write_start_async_request(conn, RPC_{name}, &async_sequence) : {start}) < 0 ||\n"
+            "      rpc_write(conn, &async_sequence, sizeof(async_sequence))"
         )
-        for operation in operations:
-            operation.client_rpc_write(f)
-        f.write("      rpc_write_end(conn) < 0) {\n")
-        f.write("    return rpc_error();\n  }\n")
-        f.write(f"  return {backend.async_success};\n  }}\n")
-    f.write(f"{opening}rpc_write_start_request(conn, RPC_{name}) < 0 ||\n")
-    if submit:
-        f.write("      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||\n")
+        wait = "(submit_async ? rpc_write_end(conn) : rpc_wait_for_response(conn)) < 0 ||\n      (!submit_async && ("
+        returned = f"submit_async ? {backend.async_success} : return_value"
+    f.write(f"{opening}{start} < 0 ||\n")
     for operation in operations:
         operation.client_rpc_write(f)
-    f.write("      rpc_wait_for_response(conn) < 0 ||\n")
+    f.write(f"      {wait}\n")
     for operation in operations:
         operation.client_rpc_read(f)
     if result != "void":
         f.write("      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||\n")
-    f.write("      rpc_read_end(conn) < 0) {\n")
+    f.write(f"      rpc_read_end(conn) < 0{')))' if submit else ')'} {{\n")
     write_cleared_fields(f, metadata, "    ", "->")
     if result == backend.result:
         f.write("    return rpc_error();\n")
@@ -221,7 +199,7 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
     f.write("  }\n")
     write_cleared_fields(f, metadata, "  ", "->")
     if result != "void":
-        f.write("  return return_value;\n")
+        f.write(f"  return {returned};\n")
     f.write("}\n\n")
 
 
@@ -315,6 +293,29 @@ def write_server_buffer_cleanup(f, owned_buffers, indent):
         f.write(f"{indent}free((void *){buffer_name});\n")
 
 
+def deferred_dtoh_detach(metadata) -> str:
+    """Detaches the copies a successful synchronize owes, scoped by its route."""
+    kind = metadata.routing_kind
+    target = metadata.routing_parameter.name if metadata.routing_parameter else None
+    if kind == "CURRENT_CONTEXT":
+        return (
+            "    CUcontext context = nullptr;\n"
+            "    if (cuCtxGetCurrent(&context) == CUDA_SUCCESS)\n"
+            "      pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, context);\n"
+        )
+    if kind == "CONTEXT":
+        return f"    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, {target});\n"
+    if kind == "STREAM":
+        return (
+            "    CUcontext context = nullptr;\n"
+            f"    if (cuStreamGetCtx({target}, &context) == CUDA_SUCCESS)\n"
+            f"      pending = lupine_detach_pending_dtoh_copies(conn, {target}, {target} == nullptr, context);\n"
+        )
+    if kind == "EVENT":
+        return f"    pending = lupine_detach_event_dtoh_copies(conn, {target});\n"
+    raise RuntimeError(f"@synchronize DEFERRED_DTOH has no scope for {kind}")
+
+
 def write_server_handler(f, backend: Backend, function, operations, metadata):
     name = function.name.format()
     result = function.return_type.format()
@@ -340,6 +341,13 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
                 f.write(f"  {argument} = {{}};\n")
     submit = optional_async(backend, metadata)
     always_async = metadata.async_fire_forget and not submit
+    sync = metadata.synchronize
+    deferred = sync is not None and sync.deferred_dtoh
+    stdout = deferred and sync.stdout
+    if deferred:
+        f.write("  lupine_pending_dtoh_items pending;\n")
+    if stdout:
+        f.write("  lupine_captured_stdout capture;\n")
     if metadata.async_fire_forget:
         f.write("  uint64_t async_sequence = 0;\n")
     f.write("  int request_id;\n")
@@ -347,10 +355,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write(f"  {result} return_value;\n")
     if backend.symbol_lookup:
         fn_params = ", ".join(
-            format_array(parameter.type)
-            if isinstance(parameter.type, Array)
-            else parameter.type.format()
-            for parameter in function.parameters
+            parameter.type.format() for parameter in function.parameters
         )
         f.write(f"  using fn_t = {result} (*)({fn_params});\n")
         f.write("  fn_t fn = nullptr;\n")
@@ -385,6 +390,8 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
             "    goto ERROR_0;\n\n"
         )
 
+    if stdout:
+        f.write("  lupine_start_stdout_capture(&capture);\n")
     call_args = []
     for parameter in function.parameters:
         operation = next(
@@ -422,11 +429,30 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         write_server_buffer_cleanup(f, owned_buffers, "    ")
         f.write("    return 0;\n  }\n\n")
 
+    if stdout:
+        f.write("  lupine_finish_stdout_capture(&capture);\n")
+    if metadata.graph_exec_update is not None:
+        graph_exec = metadata.graph_exec_update.graph_exec.name
+        graph = metadata.graph_exec_update.graph.name
+        f.write("  if (return_value == CUDA_SUCCESS)\n")
+        f.write(f"    lupine_rebind_graph_exec_resources({graph_exec}, {graph});\n\n")
+    if deferred:
+        f.write("  if (return_value == CUDA_SUCCESS) {\n")
+        f.write(deferred_dtoh_detach(metadata))
+        f.write("  }\n")
+        f.write("  return_value = lupine_take_async_error(conn, return_value);\n\n")
     if metadata.clear_fields:
         write_cleared_fields(f, metadata, "  ", ".")
         f.write("\n")
     if not always_async:
         f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
+        if deferred:
+            # The copy count, then the stdout length, live in the copy buffer.
+            size = "2 * sizeof(uint64_t)" if stdout else "sizeof(uint32_t)"
+            f.write(f"      rpc_copy_alloc(conn, {size}) < 0 ||\n")
+            f.write("      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||\n")
+        if stdout:
+            f.write("      lupine_write_captured_stdout(conn, capture) < 0 ||\n")
         for operation in operations:
             operation.server_rpc_write(f)
         if result != "void":
@@ -434,9 +460,13 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write("      rpc_write_end(conn) < 0)\n")
         f.write("    goto ERROR_0;\n")
     write_server_buffer_cleanup(f, owned_buffers, "  ")
+    if deferred:
+        f.write("  lupine_cleanup_pending_dtoh_copies(&pending);\n")
     f.write("  return 0;\n")
     f.write("ERROR_0:\n")
     write_server_buffer_cleanup(f, owned_buffers, "  ")
+    if deferred:
+        f.write("  lupine_cleanup_pending_dtoh_copies(&pending);\n")
     f.write("  return -1;\n")
     f.write("}\n\n")
     if metadata.guard is not None:

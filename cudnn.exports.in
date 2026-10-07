@@ -1,8 +1,0 @@
-/* The version node is literally NVIDIA's SONAME: consumers such as PyTorch
-   reference library symbols as name@libcudnn.so.<major>. */
-libcudnn.so.@LUPINE_CUDNN_SOVERSION@ {
-  global:
-    cudnn*;
-  local:
-    *;
-};

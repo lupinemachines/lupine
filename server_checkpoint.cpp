@@ -25,6 +25,7 @@ namespace {
 struct optional_checkpoint_provider {
   void *library = nullptr;
   const lupine_checkpoint_provider_v1 *api = nullptr;
+  void *(*cuda_symbol)(const char *) = nullptr;
   bool started = false;
 };
 
@@ -69,6 +70,7 @@ void unload_provider(optional_checkpoint_provider &provider) {
   }
   provider.started = false;
   provider.api = nullptr;
+  provider.cuda_symbol = nullptr;
   if (provider.library != nullptr) {
     dlclose(provider.library);
     provider.library = nullptr;
@@ -78,6 +80,9 @@ void unload_provider(optional_checkpoint_provider &provider) {
 optional_checkpoint_provider load_provider() {
   optional_checkpoint_provider provider;
   const char *override_path = getenv("LUPINE_CHECKPOINT_LIBRARY");
+  if (override_path != nullptr && strcmp(override_path, "none") == 0) {
+    return provider;
+  }
   const char *candidates[] = {"liblupinecr.so.0", "liblupinecr.so"};
 
   if (override_path != nullptr && override_path[0] != '\0') {
@@ -120,6 +125,8 @@ optional_checkpoint_provider load_provider() {
     return provider;
   }
   provider.started = true;
+  provider.cuda_symbol = reinterpret_cast<decltype(provider.cuda_symbol)>(
+      dlsym(provider.library, "lupinecr_cuda_symbol_v1"));
 
   LUPINE_LOG_DEBUG("LupineCR checkpoint provider enabled.");
   return provider;
@@ -147,7 +154,8 @@ void wait_for_shutdown(child_checkpoint_state &state) {
 
 } // namespace
 
-bool lupine_server_checkpoint_child_start(lupine_socket_t connection) {
+bool lupine_server_checkpoint_child_start(lupine_socket_t connection,
+                                          bool use_provider) {
 #ifdef _WIN32
   (void)connection;
   return true;
@@ -161,7 +169,7 @@ bool lupine_server_checkpoint_child_start(lupine_socket_t connection) {
   state.connection_id.clear();
   state.checkpoint_requested.store(false, std::memory_order_relaxed);
   sigterm_received = 0;
-  state.provider = load_provider();
+  state.provider = use_provider ? load_provider() : optional_checkpoint_provider{};
 
   if (pipe(state.signal_pipe) != 0) {
     unload_provider(state.provider);
@@ -284,5 +292,15 @@ int lupine_server_checkpoint_child_finish() {
   state.connection_id.clear();
   state.started = false;
   return result;
+#endif
+}
+
+void *lupine_server_checkpoint_cuda_symbol(const char *name) {
+#ifdef _WIN32
+  (void)name;
+  return nullptr;
+#else
+  const auto &provider = checkpoint_state().provider;
+  return provider.cuda_symbol != nullptr ? provider.cuda_symbol(name) : nullptr;
 #endif
 }

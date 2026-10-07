@@ -1,9 +1,0 @@
-/* The version node is literally NVIDIA's SONAME: consumers reference library
-   symbols as name@libcupti.so.<major>, and as name@libcupti.so.<major>.<minor>
-   on CUDA 11, whose libcupti carries the minor in its SONAME. */
-libcupti.so.@LUPINE_CUPTI_SOVERSION@ {
-  global:
-    cupti*;
-  local:
-    *;
-};

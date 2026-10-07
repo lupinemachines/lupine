@@ -83,6 +83,9 @@ CORE_SAMPLES=(
   radixSortThrust segmentationTreeThrust template interval
   ptxgen ptxjit matrixMulDynlinkJIT threadMigration
   cuda-c-linking device-side-launch
+  cubDeviceFind cubDeviceSegmentedScan cubDeviceTransform libcuxxMdspan libcuxxRandom
+  helloTile tileBmm tileLayerNorm tileMatmul tileMatmulAutotuner tileRope tileSpMV
+  tileTranspose tileVectorAdd
 )
 
 LIBRARY_SAMPLES=(
@@ -435,6 +438,9 @@ sample_args() {
     simpleTexture3D)
       printf '%s\0' -file=data/ref_texture3D.bin
       ;;
+    tileMatmul|tileMatmulAutotuner)
+      printf '%s\0' --validate --warmup=1 --iters=1
+      ;;
     transpose)
       printf '%s\0' -dimX=512 -dimY=512
       ;;
@@ -651,7 +657,7 @@ trap cleanup_remote_bin EXIT
 
 sample_timeout() {
   case "$1" in
-    simpleStreams|scan|LargeKernelParameter|UnifiedMemoryStreams|UnifiedMemoryPerf|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|batchCUBLAS|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP)
+    simpleStreams|scan|LargeKernelParameter|UnifiedMemoryStreams|UnifiedMemoryPerf|HSOpticalFlow|jacobiCudaGraphs|radixSortThrust|segmentationTreeThrust|batchCUBLAS|cuSolverRf|conjugateGradientPrecond|watershedSegmentationNPP|tileMatmulAutotuner)
       printf '%s\n' "$LONG_SAMPLE_TIMEOUT"
       ;;
     *)
@@ -839,16 +845,19 @@ done
 } | tee "$summary"
 
 # Coverage: how much of the pinned cuda-samples catalog this run exercises.
-if [[ ${#samples[@]} -gt 1 && "$cmake_samples" == "1" && -d "$CUDA_SAMPLES_DIR/Samples" ]]; then
+catalog_dir="$CUDA_SAMPLES_DIR/Samples"
+[[ -d "$catalog_dir" ]] || catalog_dir="$CUDA_SAMPLES_DIR/cpp"
+if [[ ${#samples[@]} -gt 1 && "$cmake_samples" == "1" && -d "$catalog_dir" ]]; then
   declare -A _enabled=()
   for _s in "${samples[@]}"; do _enabled["$_s"]=1; done
 
   graphics=0; ipc=0; mgpu=0; um=0; other=0; covered=0; catalog_total=0
   while IFS= read -r _c; do
     [[ -n "$_c" ]] || continue
-    # 7_libNVVM helper dirs and ptxgen input fixtures; no standalone binary.
+    # 7_libNVVM helper dirs, ptxgen input fixtures and the 9_CUDA_Tile
+    # benchmark header dir; no standalone binary.
     case "$_c" in
-      common|utils|cuda-shared-memory|syscalls) continue ;;
+      common|utils|cuda-shared-memory|syscalls|Benchmark_Common) continue ;;
     esac
     catalog_total=$((catalog_total + 1))
     if [[ -n "${_enabled[$_c]:-}" ]]; then
@@ -864,7 +873,7 @@ if [[ ${#samples[@]} -gt 1 && "$cmake_samples" == "1" && -d "$CUDA_SAMPLES_DIR/S
     else
       other=$((other + 1))
     fi
-  done < <(find "$CUDA_SAMPLES_DIR/Samples" -mindepth 2 -maxdepth 2 -type d -printf '%f\n' 2>/dev/null | sort -u)
+  done < <(find "$catalog_dir" -mindepth 2 -maxdepth 2 -type d -printf '%f\n' 2>/dev/null | sort -u)
 
   _cov_line="CUDA sample coverage: $covered/$catalog_total catalog samples enabled ($CUDA_SAMPLES_REF)"
   _ne_line="Not enabled: $((catalog_total - covered)) (graphics $graphics, ipc $ipc, multi-gpu $mgpu, unified-memory $um, other $other)"

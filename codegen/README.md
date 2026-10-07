@@ -2,8 +2,8 @@ Codegen works via a human-in-the-loop system. It's quite challenging to build a 
 infer what parameters should be sent and received so we instead have a two-step process.
 
 First, `annotationgen.py` reads an SDK header such as `cuda.h` or `nvml.h` and copies its function signatures
-into that target's annotation file (`annotations_cuda.h`, `annotations_cudart.h`, `annotations_cublas.h`,
-`annotations_cublaslt.h`, `annotations_cufft.h`, `annotations_cudnn.h`, `annotations_curand.h`, `annotations_cusparse.h`, `annotations_cusparselt.h`, `annotations_cusolver.h`, `annotations_cusolvermg.h`, `annotations_nvrtc.h`, `annotations_nccl.h`, `annotations_nvjitlink.h`, `annotations_nvjpeg.h`, `annotations_npp<library>.h`, `annotations_nvml.h`, `annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
+into that target's annotation file (`annotations_cuda.h`, `annotations_nccl.h`, `annotations_nvml.h`,
+`annotations_hip.h`; one file per shim library). These files are intended to be modified by humans. In particular, the `@param` annotations
 have significant meanings.
 
 Specifically, the order of `@param` annotations indicates the order in which the parameters are sent or received.
@@ -11,44 +11,28 @@ Specifically, the order of `@param` annotations indicates the order in which the
 available are `NULL_TERMINATED` (to indicate that this is a null-terminated string), or `LENGTH:<param>` and
 `SIZE:<value>` to specify the size (aka width) of the parameter. If `LENGTH:<param>` is specified, `<param>` must
 be placed in front of the parameter referencing it, otherwise the generated code will not compile.
-`LENGTH:<expr>`, where `<expr>` names no single parameter, is an element count the client computes
-from the call's other parameters (a cuBLASXt host matrix's accessed region). It must not contain spaces.
-The count travels ahead of the array as a `uint64_t`, so the server never evaluates the expression.
-`NULLABLE` marks a pointer that may be null. It composes with `LENGTH` on a
+`NULLABLE` marks a pointer that may be null. Alone, it is one optional value
+led on the wire by a presence byte; an out-value also travels in with the
+caller's contents, so a call that fails without writing it leaves the
+caller's variable as it was. It composes with `LENGTH` on a
 `RECV_ONLY` pointer to declare an optional out-array, and on a `SEND_ONLY`
 pointer to declare an optional in-array the caller may leave null
-(`cufftPlanMany`'s `inembed`), which leads with a presence byte on the wire. A pointer count marked
+(`ncclCommInitAll`'s `devlist`), which leads with a presence byte on the wire. A pointer count marked
 `SEND_RECV` supports the `cuGraphGetNodes` query pattern; a by-value count is a
 fixed capacity. Each array leads with its own presence byte on the wire, and
 several arrays may share one count.
 `ON_ERROR` may be added to a `RECV_ONLY NULLABLE LENGTH` buffer when CUDA only
 writes the buffer on failure. The generated response preserves the caller's
 buffer on success.
-`REMOTE` marks an opaque handle the caller keeps in storage of its own rather
-than in the parameter: cuSPARSELt hands the library 512 caller-owned bytes
-where cuBLAS hands back a pointer. The address on the wire is the same as for
-any other opaque handle, read from and written to that storage, so
-`SEND_ONLY REMOTE` sends it and the server passes it to the call, while
-`RECV_ONLY REMOTE` allocates the object on the server and sends its address
-back into the caller's storage. That allocation is lupine's rather than the
-library's, because the caller's storage stays on its own machine and the
-library links its objects to each other by address; the matching Destroy's
-handler frees it, and an object whose Destroy never arrives is freed with the
-rest of the session when the connection's child process exits. The client
-records the owning connection in the creating call's body.
-`SCALAR` marks a pointer that a library's pointer mode places on the host or on
-the device (a cuBLAS `alpha`, `beta`, or dot-product `result`). The mode belongs
-to the call's first parameter, or to the parameter named by `SCALAR:<param>`
-(a cuBLASLt descriptor). The generated client asks
-`scalar_on_host(<owner>, "<name>")`, the name being the scalar's own for modes
-that place alpha and beta differently, and sends the value in host mode or the
-address in device mode, with the width leading on the wire so the server can
-tell which. `SEND_RECV SCALAR` brings a host value back (`cublasSrotg`), and
-`RECV_ONLY SCALAR` only brings it back (a cuRAND host generator's output). A
-`void` scalar carries its width as `SIZE:<expr>`, a C++ expression the client
-evaluates over the call's arguments (`SIZE:data_type_width(resultType)`); a
-typed scalar wider than its pointee spells that out the same way
-(`SIZE:5*sizeof(float)`).
+`SCALAR` marks a pointer that a library's residence argument places on the host
+or on the device (`ncclRedOpCreatePreMulSum`'s `scalar`). The residence belongs to the
+call's first parameter, or to the parameter named by `SCALAR:<param>`. The
+generated client asks `scalar_on_host(<owner>, "<name>")` and sends the value
+in host mode or the address in device mode, with the width leading on the wire
+so the server can tell which. `SEND_RECV SCALAR` brings a host value back, and
+`RECV_ONLY SCALAR` only brings it back. A `void` scalar carries its width as
+`SIZE:<expr>`, a C++ expression the client evaluates over the call's arguments
+(`SIZE:nccl_type_width(datatype)`).
 
 `VERSIONED` marks an optional pointer to a size-led, append-only configuration
 struct (NCCL's `ncclConfig_t`). The caller's `size` bytes travel, then each
@@ -57,11 +41,6 @@ the struct to its own size and points those members at its copies, and nulls
 the client addresses named in `CLEARED:<member>,...`. A member some supported
 headers lack takes `MEMBERGUARD:<member>=<condition>`; its length still travels,
 so client and server built against different headers share one wire format.
-
-A parameter declared as a fixed-size C array (`const Npp32f aTwist[3][4]`)
-needs no size. Marked `DEREF`, its elements travel, both ways when it is
-`SEND_RECV` and not const; unmarked, it is device memory and only its address
-travels.
 
 `@async` on a forwarding backend that sets `async_success` makes the call's
 submission a choice: the generated wrapper asks `submit_async(conn)` and, when
@@ -78,18 +57,14 @@ generated client wrapper before it writes the RPC. Supported kinds are
 `@routingkey CURRENT_CONTEXT` routes through the client's current CUDA context
 owner. `DEVICE` and `CONTEXT` routing is inferred from the first non-pointer
 `CUdevice` or `CUcontext` parameter, so those annotations are only needed when
-the routing key is not the first matching parameter. A by-value
-`cublasHandle_t`, `cublasLtHandle_t`, `cufftHandle`, `curandGenerator_t`, `curandDiscreteDistribution_t`, a cuSPARSE handle, descriptor, plan or info, an `nvrtcProgram`, an `ncclComm_t` or `ncclParamHandle_t`, an `nvJitLinkHandle`, an nvJPEG handle, state, parameter set, buffer, bitstream or decoder, a cuSOLVER or cuSOLVERMg handle, parameter set, info, IRS object, grid or matrix descriptor, or a cuDNN handle, descriptor, parameter pack or plan infers `HANDLE` routing to the
-connection the handle was created on, which the creating call's body records
-with `note_handle_owner`. A `REMOTE` object is a pointer, so its call names it
-with `@routingkey HANDLE <param>` and the client's `connection_for_handle`
-reads the address out of the caller's storage.
+the routing key is not the first matching parameter. A by-value `ncclComm_t`
+or `ncclParamHandle_t` infers `HANDLE` routing to the connection the handle was
+created on, which the creating call's body records with `note_handle_owner`.
 
 Forwarding backends also accept `@routingkey EVENT <param>`. Their client must
 provide `connection_for_event(event)`, which selects the connection without
 changing the event handle sent to the server.
-Likewise, `@routingkey STREAM <param>` uses `connection_for_stream(stream)`,
-which a by-value `NppStreamContext` infers.
+Likewise, `@routingkey STREAM <param>` uses `connection_for_stream(stream)`.
 The backend helper handles default streams; the stream argument is sent
 unchanged.
 
@@ -103,6 +78,15 @@ returned remote handle back to the client's virtual device handle.
 Inverse CUDA device lookups use `@routingkey ALL <output>`. The generated
 client tries each local and remote route, then translates the successful
 route-local device back to its virtual client ordinal before returning it.
+
+`@deeparray <param> <array-member> <count-member>` copies an embedded array
+along with its struct. SEND_RECV returns the struct's scalar fields and preserves
+the caller's input array pointer and contents. RECV_ONLY provides client-owned
+array storage owned by the graph node already identified by routing metadata.
+All graph-node parameter getters share this storage, which remains valid until
+the node's parameters change or the node is destroyed. Graph destruction
+collects node handles only when cached arrays exist, then releases their storage
+after CUDA successfully destroys the graph.
 
 `@disabled client` leaves server/RPC generation enabled while requiring a
 manual client implementation with the original API name. These manual symbols
@@ -135,6 +119,8 @@ routes through the client-side cross-server copy helper.
 `@graphexecnode <graph-exec> <node>` translates an original graph node to the
 private graph clone associated with an executable before the generated server
 handler calls CUDA.
+`@graphexecupdate <graph-exec> <graph>` moves an executable's server-side graph
+resources to the update graph's after CUDA reports success.
 
 Functions that need custom client-side code around the generated call may be
 written as definitions instead of declarations. The body must contain one
@@ -163,9 +149,11 @@ Client-dirty mapped pages are flushed centrally before each CUDA RPC request.
 `@routingfallback <kind> <param>` can be paired with stream routing for APIs
 that route by stream when a stream is supplied and by another object otherwise.
 `@synchronize [DEFERRED_DTOH] [STDOUT]` refreshes mapped host allocations after
-a successful call.
-The optional flags consume response fields emitted by a manual server handler
-before the generated wrapper reads the CUDA result.
+a successful call. `DEFERRED_DTOH` returns the deferred device-to-host copies a
+successful call completes, scoped by the routing key (current context, context,
+stream or event), and `STDOUT` returns the device printf output captured around
+the call. Both sides are generated: the server writes these fields ahead of the
+CUDA result and the client reads them in the same order.
 
 Keep function-specific code in manual files when the behavior cannot be
 described by annotations without embedding C++ for that exact API. Typical
@@ -204,6 +192,4 @@ need an escape hatch.
 
 Some improvements that can be made:
 
-- [ ] Currently, the RPC ID is not deterministic. This is fine for now as we are still in demo-phase but this won't work for backwards compatibility.
 - [ ] We could use C++ annotations to make the processing a little more "C++"-y. Worth investigating for a bit.
-- [ ] Generate `cublas` and other friends.

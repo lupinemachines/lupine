@@ -245,7 +245,7 @@ int handle_hipDeviceGetName(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &len, sizeof(int)) < 0 || len < 0 || false)
     goto ERROR_0;
-  name = (char *)malloc(len * sizeof(char));
+  name = (char *)calloc(len * sizeof(char), 1);
   if ((len * sizeof(char) != 0 && name == nullptr) ||
       rpc_read(conn, &deviceId, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -486,7 +486,7 @@ int handle_hipDeviceGetPCIBusId(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &len, sizeof(int)) < 0 || len < 0 || false)
     goto ERROR_0;
-  pciBusId = (char *)malloc(len * sizeof(char));
+  pciBusId = (char *)calloc(len * sizeof(char), 1);
   if ((len * sizeof(char) != 0 && pciBusId == nullptr) ||
       rpc_read(conn, &device, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -1583,7 +1583,7 @@ int handle_hipExtStreamGetCUMask(conn_t *conn) {
   if (rpc_read(conn, &stream, sizeof(hipStream_t)) < 0 ||
       rpc_read(conn, &cuMaskSize, sizeof(uint32_t)) < 0 || false)
     goto ERROR_0;
-  cuMask = (uint32_t *)malloc(cuMaskSize * sizeof(uint32_t));
+  cuMask = (uint32_t *)calloc(cuMaskSize * sizeof(uint32_t), 1);
   if ((cuMaskSize * sizeof(uint32_t) != 0 && cuMask == nullptr) || false)
     goto ERROR_0;
 
@@ -2504,7 +2504,7 @@ int handle_hipMemRangeGetAttribute(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &data_size, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  data = (void *)malloc(data_size);
+  data = (void *)calloc(data_size, 1);
   if ((data_size != 0 && data == nullptr) ||
       rpc_read(conn, &attribute, sizeof(hipMemRangeAttribute)) < 0 ||
       rpc_read(conn, &dev_ptr, sizeof(const void *)) < 0 ||
@@ -3021,7 +3021,7 @@ int handle_hipMemcpyDtoH(conn_t *conn) {
   if (rpc_read(conn, &src, sizeof(hipDeviceptr_t)) < 0 ||
       rpc_read(conn, &sizeBytes, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  dst = (void *)malloc(sizeBytes);
+  dst = (void *)calloc(sizeBytes, 1);
   if ((sizeBytes != 0 && dst == nullptr) || false)
     goto ERROR_0;
 
@@ -3220,7 +3220,7 @@ int handle_hipMemcpyAtoH(conn_t *conn) {
       rpc_read(conn, &srcOffset, sizeof(size_t)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
-  dst = (void *)malloc(count);
+  dst = (void *)calloc(count, 1);
   if ((count != 0 && dst == nullptr) || false)
     goto ERROR_0;
 
@@ -3405,9 +3405,9 @@ ERROR_0:
 }
 
 int handle_hipModuleGetGlobal(conn_t *conn) {
-  hipDeviceptr_t *dptr_null_check;
+  uint8_t dptr_present = 0;
   hipDeviceptr_t dptr;
-  size_t *bytes_null_check;
+  uint8_t bytes_present = 0;
   size_t bytes;
   hipModule_t hmod;
   const char *name = nullptr;
@@ -3417,8 +3417,10 @@ int handle_hipModuleGetGlobal(conn_t *conn) {
   using fn_t =
       hipError_t (*)(hipDeviceptr_t *, size_t *, hipModule_t, const char *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &dptr_null_check, sizeof(hipDeviceptr_t *)) < 0 ||
-      rpc_read(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
+  if (rpc_read(conn, &dptr_present, sizeof(uint8_t)) < 0 ||
+      (dptr_present && rpc_read(conn, &dptr, sizeof(hipDeviceptr_t)) < 0) ||
+      rpc_read(conn, &bytes_present, sizeof(uint8_t)) < 0 ||
+      (bytes_present && rpc_read(conn, &bytes, sizeof(size_t)) < 0) ||
       rpc_read(conn, &hmod, sizeof(hipModule_t)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
@@ -3434,14 +3436,12 @@ int handle_hipModuleGetGlobal(conn_t *conn) {
   fn = hip_symbol<fn_t>("hipModuleGetGlobal");
   return_value = fn == nullptr
                      ? function_not_found()
-                     : fn(dptr_null_check ? &dptr : nullptr,
-                          bytes_null_check ? &bytes : nullptr, hmod, name);
+                     : fn(dptr_present ? &dptr : nullptr,
+                          bytes_present ? &bytes : nullptr, hmod, name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &dptr_null_check, sizeof(hipDeviceptr_t *)) < 0 ||
-      (dptr_null_check && rpc_write(conn, &dptr, sizeof(hipDeviceptr_t)) < 0) ||
-      rpc_write(conn, &bytes_null_check, sizeof(size_t *)) < 0 ||
-      (bytes_null_check && rpc_write(conn, &bytes, sizeof(size_t)) < 0) ||
+      (dptr_present && rpc_write(conn, &dptr, sizeof(hipDeviceptr_t)) < 0) ||
+      (bytes_present && rpc_write(conn, &bytes, sizeof(size_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -4109,17 +4109,19 @@ ERROR_0:
 }
 
 int handle_hipMemGetAddressRange(conn_t *conn) {
-  hipDeviceptr_t *pbase_null_check;
+  uint8_t pbase_present = 0;
   hipDeviceptr_t pbase;
-  size_t *psize_null_check;
+  uint8_t psize_present = 0;
   size_t psize;
   hipDeviceptr_t dptr;
   int request_id;
   hipError_t return_value;
   using fn_t = hipError_t (*)(hipDeviceptr_t *, size_t *, hipDeviceptr_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &pbase_null_check, sizeof(hipDeviceptr_t *)) < 0 ||
-      rpc_read(conn, &psize_null_check, sizeof(size_t *)) < 0 ||
+  if (rpc_read(conn, &pbase_present, sizeof(uint8_t)) < 0 ||
+      (pbase_present && rpc_read(conn, &pbase, sizeof(hipDeviceptr_t)) < 0) ||
+      rpc_read(conn, &psize_present, sizeof(uint8_t)) < 0 ||
+      (psize_present && rpc_read(conn, &psize, sizeof(size_t)) < 0) ||
       rpc_read(conn, &dptr, sizeof(hipDeviceptr_t)) < 0 || false)
     goto ERROR_0;
 
@@ -4129,15 +4131,12 @@ int handle_hipMemGetAddressRange(conn_t *conn) {
 
   fn = hip_symbol<fn_t>("hipMemGetAddressRange");
   return_value = fn == nullptr ? function_not_found()
-                               : fn(pbase_null_check ? &pbase : nullptr,
-                                    psize_null_check ? &psize : nullptr, dptr);
+                               : fn(pbase_present ? &pbase : nullptr,
+                                    psize_present ? &psize : nullptr, dptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pbase_null_check, sizeof(hipDeviceptr_t *)) < 0 ||
-      (pbase_null_check &&
-       rpc_write(conn, &pbase, sizeof(hipDeviceptr_t)) < 0) ||
-      rpc_write(conn, &psize_null_check, sizeof(size_t *)) < 0 ||
-      (psize_null_check && rpc_write(conn, &psize, sizeof(size_t)) < 0) ||
+      (pbase_present && rpc_write(conn, &pbase, sizeof(hipDeviceptr_t)) < 0) ||
+      (psize_present && rpc_write(conn, &psize, sizeof(size_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -4357,11 +4356,11 @@ ERROR_0:
 }
 
 int handle_hipArrayGetInfo(conn_t *conn) {
-  hipChannelFormatDesc *desc_null_check;
+  uint8_t desc_present = 0;
   hipChannelFormatDesc desc;
-  hipExtent *extent_null_check;
+  uint8_t extent_present = 0;
   hipExtent extent;
-  unsigned int *flags_null_check;
+  uint8_t flags_present = 0;
   unsigned int flags;
   hipArray_t array;
   int request_id;
@@ -4369,9 +4368,13 @@ int handle_hipArrayGetInfo(conn_t *conn) {
   using fn_t = hipError_t (*)(hipChannelFormatDesc *, hipExtent *,
                               unsigned int *, hipArray_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &desc_null_check, sizeof(hipChannelFormatDesc *)) < 0 ||
-      rpc_read(conn, &extent_null_check, sizeof(hipExtent *)) < 0 ||
-      rpc_read(conn, &flags_null_check, sizeof(unsigned int *)) < 0 ||
+  if (rpc_read(conn, &desc_present, sizeof(uint8_t)) < 0 ||
+      (desc_present &&
+       rpc_read(conn, &desc, sizeof(hipChannelFormatDesc)) < 0) ||
+      rpc_read(conn, &extent_present, sizeof(uint8_t)) < 0 ||
+      (extent_present && rpc_read(conn, &extent, sizeof(hipExtent)) < 0) ||
+      rpc_read(conn, &flags_present, sizeof(uint8_t)) < 0 ||
+      (flags_present && rpc_read(conn, &flags, sizeof(unsigned int)) < 0) ||
       rpc_read(conn, &array, sizeof(hipArray_t)) < 0 || false)
     goto ERROR_0;
 
@@ -4381,18 +4384,15 @@ int handle_hipArrayGetInfo(conn_t *conn) {
 
   fn = hip_symbol<fn_t>("hipArrayGetInfo");
   return_value = fn == nullptr ? function_not_found()
-                               : fn(desc_null_check ? &desc : nullptr,
-                                    extent_null_check ? &extent : nullptr,
-                                    flags_null_check ? &flags : nullptr, array);
+                               : fn(desc_present ? &desc : nullptr,
+                                    extent_present ? &extent : nullptr,
+                                    flags_present ? &flags : nullptr, array);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &desc_null_check, sizeof(hipChannelFormatDesc *)) < 0 ||
-      (desc_null_check &&
+      (desc_present &&
        rpc_write(conn, &desc, sizeof(hipChannelFormatDesc)) < 0) ||
-      rpc_write(conn, &extent_null_check, sizeof(hipExtent *)) < 0 ||
-      (extent_null_check && rpc_write(conn, &extent, sizeof(hipExtent)) < 0) ||
-      rpc_write(conn, &flags_null_check, sizeof(unsigned int *)) < 0 ||
-      (flags_null_check && rpc_write(conn, &flags, sizeof(unsigned int)) < 0) ||
+      (extent_present && rpc_write(conn, &extent, sizeof(hipExtent)) < 0) ||
+      (flags_present && rpc_write(conn, &flags, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -4784,13 +4784,14 @@ ERROR_0:
 }
 
 int handle_hipCtxPopCurrent(conn_t *conn) {
-  hipCtx_t *ctx_null_check;
+  uint8_t ctx_present = 0;
   hipCtx_t ctx;
   int request_id;
   hipError_t return_value;
   using fn_t = hipError_t (*)(hipCtx_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &ctx_null_check, sizeof(hipCtx_t *)) < 0 || false)
+  if (rpc_read(conn, &ctx_present, sizeof(uint8_t)) < 0 ||
+      (ctx_present && rpc_read(conn, &ctx, sizeof(hipCtx_t)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -4798,12 +4799,11 @@ int handle_hipCtxPopCurrent(conn_t *conn) {
     goto ERROR_0;
 
   fn = hip_symbol<fn_t>("hipCtxPopCurrent");
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(ctx_null_check ? &ctx : nullptr);
+  return_value =
+      fn == nullptr ? function_not_found() : fn(ctx_present ? &ctx : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &ctx_null_check, sizeof(hipCtx_t *)) < 0 ||
-      (ctx_null_check && rpc_write(conn, &ctx, sizeof(hipCtx_t)) < 0) ||
+      (ctx_present && rpc_write(conn, &ctx, sizeof(hipCtx_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -5288,31 +5288,6 @@ ERROR_0:
   return -1;
 }
 
-int handle_hipModuleUnload(conn_t *conn) {
-  hipModule_t module;
-  int request_id;
-  hipError_t return_value;
-  using fn_t = hipError_t (*)(hipModule_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &module, sizeof(hipModule_t)) < 0 || false)
-    goto ERROR_0;
-
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = hip_symbol<fn_t>("hipModuleUnload");
-  return_value = fn == nullptr ? function_not_found() : fn(module);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  return 0;
-ERROR_0:
-  return -1;
-}
-
 int handle_hipModuleGetFunction(conn_t *conn) {
   hipFunction_t function{};
   function = {};
@@ -5480,7 +5455,7 @@ int handle_hipLibraryEnumerateKernels(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &numKernels, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  kernels = (hipKernel_t *)malloc(numKernels * sizeof(hipKernel_t));
+  kernels = (hipKernel_t *)calloc(numKernels * sizeof(hipKernel_t), 1);
   if ((numKernels * sizeof(hipKernel_t) != 0 && kernels == nullptr) ||
       rpc_read(conn, &library, sizeof(hipLibrary_t)) < 0 || false)
     goto ERROR_0;
@@ -5720,9 +5695,9 @@ int handle_hipCreateTextureObject(conn_t *conn) {
   hipTextureObject_t pTexObject{};
   pTexObject = {};
   hipResourceDesc pResDesc{};
-  hipTextureDesc *pTexDesc_null_check;
+  uint8_t pTexDesc_present = 0;
   hipTextureDesc pTexDesc;
-  struct hipResourceViewDesc *pResViewDesc_null_check;
+  uint8_t pResViewDesc_present = 0;
   struct hipResourceViewDesc pResViewDesc;
   int request_id;
   hipError_t return_value;
@@ -5731,13 +5706,11 @@ int handle_hipCreateTextureObject(conn_t *conn) {
                               const struct hipResourceViewDesc *);
   fn_t fn = nullptr;
   if (rpc_read(conn, &pResDesc, sizeof(const hipResourceDesc)) < 0 ||
-      rpc_read(conn, &pTexDesc_null_check, sizeof(const hipTextureDesc *)) <
-          0 ||
-      (pTexDesc_null_check &&
+      rpc_read(conn, &pTexDesc_present, sizeof(uint8_t)) < 0 ||
+      (pTexDesc_present &&
        rpc_read(conn, &pTexDesc, sizeof(const hipTextureDesc)) < 0) ||
-      rpc_read(conn, &pResViewDesc_null_check,
-               sizeof(const struct hipResourceViewDesc *)) < 0 ||
-      (pResViewDesc_null_check &&
+      rpc_read(conn, &pResViewDesc_present, sizeof(uint8_t)) < 0 ||
+      (pResViewDesc_present &&
        rpc_read(conn, &pResViewDesc, sizeof(const struct hipResourceViewDesc)) <
            0) ||
       false)
@@ -5748,11 +5721,11 @@ int handle_hipCreateTextureObject(conn_t *conn) {
     goto ERROR_0;
 
   fn = hip_symbol<fn_t>("hipCreateTextureObject");
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(&pTexObject, &pResDesc,
-                          pTexDesc_null_check ? &pTexDesc : nullptr,
-                          pResViewDesc_null_check ? &pResViewDesc : nullptr);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(&pTexObject, &pResDesc, pTexDesc_present ? &pTexDesc : nullptr,
+               pResViewDesc_present ? &pResViewDesc : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pTexObject, sizeof(hipTextureObject_t)) < 0 ||
@@ -5908,9 +5881,9 @@ int handle_hipTexObjectCreate(conn_t *conn) {
   hipTextureObject_t pTexObject{};
   pTexObject = {};
   HIP_RESOURCE_DESC pResDesc{};
-  HIP_TEXTURE_DESC *pTexDesc_null_check;
+  uint8_t pTexDesc_present = 0;
   HIP_TEXTURE_DESC pTexDesc;
-  HIP_RESOURCE_VIEW_DESC *pResViewDesc_null_check;
+  uint8_t pResViewDesc_present = 0;
   HIP_RESOURCE_VIEW_DESC pResViewDesc;
   int request_id;
   hipError_t return_value;
@@ -5919,13 +5892,11 @@ int handle_hipTexObjectCreate(conn_t *conn) {
                      const HIP_TEXTURE_DESC *, const HIP_RESOURCE_VIEW_DESC *);
   fn_t fn = nullptr;
   if (rpc_read(conn, &pResDesc, sizeof(const HIP_RESOURCE_DESC)) < 0 ||
-      rpc_read(conn, &pTexDesc_null_check, sizeof(const HIP_TEXTURE_DESC *)) <
-          0 ||
-      (pTexDesc_null_check &&
+      rpc_read(conn, &pTexDesc_present, sizeof(uint8_t)) < 0 ||
+      (pTexDesc_present &&
        rpc_read(conn, &pTexDesc, sizeof(const HIP_TEXTURE_DESC)) < 0) ||
-      rpc_read(conn, &pResViewDesc_null_check,
-               sizeof(const HIP_RESOURCE_VIEW_DESC *)) < 0 ||
-      (pResViewDesc_null_check &&
+      rpc_read(conn, &pResViewDesc_present, sizeof(uint8_t)) < 0 ||
+      (pResViewDesc_present &&
        rpc_read(conn, &pResViewDesc, sizeof(const HIP_RESOURCE_VIEW_DESC)) <
            0) ||
       false)
@@ -5936,11 +5907,11 @@ int handle_hipTexObjectCreate(conn_t *conn) {
     goto ERROR_0;
 
   fn = hip_symbol<fn_t>("hipTexObjectCreate");
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(&pTexObject, &pResDesc,
-                          pTexDesc_null_check ? &pTexDesc : nullptr,
-                          pResViewDesc_null_check ? &pResViewDesc : nullptr);
+  return_value =
+      fn == nullptr
+          ? function_not_found()
+          : fn(&pTexObject, &pResDesc, pTexDesc_present ? &pTexDesc : nullptr,
+               pResViewDesc_present ? &pResViewDesc : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pTexObject, sizeof(hipTextureObject_t)) < 0 ||
@@ -6242,7 +6213,7 @@ int handle_hipStreamGetCaptureInfo(conn_t *conn) {
   hipStream_t stream;
   hipStreamCaptureStatus pCaptureStatus{};
   pCaptureStatus = {};
-  unsigned long long *pId_null_check;
+  uint8_t pId_present = 0;
   unsigned long long pId;
   int request_id;
   hipError_t return_value;
@@ -6250,7 +6221,8 @@ int handle_hipStreamGetCaptureInfo(conn_t *conn) {
                               unsigned long long *);
   fn_t fn = nullptr;
   if (rpc_read(conn, &stream, sizeof(hipStream_t)) < 0 ||
-      rpc_read(conn, &pId_null_check, sizeof(unsigned long long *)) < 0 ||
+      rpc_read(conn, &pId_present, sizeof(uint8_t)) < 0 ||
+      (pId_present && rpc_read(conn, &pId, sizeof(unsigned long long)) < 0) ||
       false)
     goto ERROR_0;
 
@@ -6259,15 +6231,13 @@ int handle_hipStreamGetCaptureInfo(conn_t *conn) {
     goto ERROR_0;
 
   fn = hip_symbol<fn_t>("hipStreamGetCaptureInfo");
-  return_value = fn == nullptr ? function_not_found()
-                               : fn(stream, &pCaptureStatus,
-                                    pId_null_check ? &pId : nullptr);
+  return_value =
+      fn == nullptr ? function_not_found()
+                    : fn(stream, &pCaptureStatus, pId_present ? &pId : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pCaptureStatus, sizeof(hipStreamCaptureStatus)) < 0 ||
-      rpc_write(conn, &pId_null_check, sizeof(unsigned long long *)) < 0 ||
-      (pId_null_check &&
-       rpc_write(conn, &pId, sizeof(unsigned long long)) < 0) ||
+      (pId_present && rpc_write(conn, &pId, sizeof(unsigned long long)) < 0) ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -6562,8 +6532,8 @@ int handle_hipGraphGetEdges(conn_t *conn) {
       rpc_read(conn, &from_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!from_null) {
-    from = (hipGraphNode_t *)malloc(
-        (numEdges_requested != 0 ? numEdges_requested : 1) *
+    from = (hipGraphNode_t *)calloc(
+        (numEdges_requested != 0 ? numEdges_requested : 1),
         sizeof(hipGraphNode_t));
     if (from == nullptr)
       goto ERROR_0;
@@ -6571,8 +6541,8 @@ int handle_hipGraphGetEdges(conn_t *conn) {
   if (rpc_read(conn, &to_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!to_null) {
-    to = (hipGraphNode_t *)malloc(
-        (numEdges_requested != 0 ? numEdges_requested : 1) *
+    to = (hipGraphNode_t *)calloc(
+        (numEdges_requested != 0 ? numEdges_requested : 1),
         sizeof(hipGraphNode_t));
     if (to == nullptr)
       goto ERROR_0;
@@ -6628,8 +6598,8 @@ int handle_hipGraphGetNodes(conn_t *conn) {
       rpc_read(conn, &nodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!nodes_null) {
-    nodes = (hipGraphNode_t *)malloc(
-        (numNodes_requested != 0 ? numNodes_requested : 1) *
+    nodes = (hipGraphNode_t *)calloc(
+        (numNodes_requested != 0 ? numNodes_requested : 1),
         sizeof(hipGraphNode_t));
     if (nodes == nullptr)
       goto ERROR_0;
@@ -6678,8 +6648,8 @@ int handle_hipGraphGetRootNodes(conn_t *conn) {
       rpc_read(conn, &pRootNodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pRootNodes_null) {
-    pRootNodes = (hipGraphNode_t *)malloc(
-        (pNumRootNodes_requested != 0 ? pNumRootNodes_requested : 1) *
+    pRootNodes = (hipGraphNode_t *)calloc(
+        (pNumRootNodes_requested != 0 ? pNumRootNodes_requested : 1),
         sizeof(hipGraphNode_t));
     if (pRootNodes == nullptr)
       goto ERROR_0;
@@ -6728,8 +6698,8 @@ int handle_hipGraphNodeGetDependencies(conn_t *conn) {
       rpc_read(conn, &pDependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependencies_null) {
-    pDependencies = (hipGraphNode_t *)malloc(
-        (pNumDependencies_requested != 0 ? pNumDependencies_requested : 1) *
+    pDependencies = (hipGraphNode_t *)calloc(
+        (pNumDependencies_requested != 0 ? pNumDependencies_requested : 1),
         sizeof(hipGraphNode_t));
     if (pDependencies == nullptr)
       goto ERROR_0;
@@ -6779,8 +6749,8 @@ int handle_hipGraphNodeGetDependentNodes(conn_t *conn) {
       rpc_read(conn, &pDependentNodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependentNodes_null) {
-    pDependentNodes = (hipGraphNode_t *)malloc(
-        (pNumDependentNodes_requested != 0 ? pNumDependentNodes_requested : 1) *
+    pDependentNodes = (hipGraphNode_t *)calloc(
+        (pNumDependentNodes_requested != 0 ? pNumDependentNodes_requested : 1),
         sizeof(hipGraphNode_t));
     if (pDependentNodes == nullptr)
       goto ERROR_0;
@@ -6931,7 +6901,7 @@ int handle_hipGraphInstantiate(conn_t *conn) {
   hipGraphExec_t pGraphExec{};
   pGraphExec = {};
   hipGraph_t graph;
-  hipGraphNode_t *pErrorNode_null_check;
+  uint8_t pErrorNode_present = 0;
   hipGraphNode_t pErrorNode;
   size_t bufferSize;
   char *pLogBuffer = nullptr;
@@ -6942,13 +6912,15 @@ int handle_hipGraphInstantiate(conn_t *conn) {
                               char *, size_t);
   fn_t fn = nullptr;
   if (rpc_read(conn, &graph, sizeof(hipGraph_t)) < 0 ||
-      rpc_read(conn, &pErrorNode_null_check, sizeof(hipGraphNode_t *)) < 0 ||
+      rpc_read(conn, &pErrorNode_present, sizeof(uint8_t)) < 0 ||
+      (pErrorNode_present &&
+       rpc_read(conn, &pErrorNode, sizeof(hipGraphNode_t)) < 0) ||
       rpc_read(conn, &bufferSize, sizeof(size_t)) < 0 ||
       rpc_read(conn, &pLogBuffer_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pLogBuffer_null) {
     pLogBuffer =
-        (char *)malloc((bufferSize != 0 ? bufferSize : 1) * sizeof(char));
+        (char *)calloc((bufferSize != 0 ? bufferSize : 1), sizeof(char));
     if (pLogBuffer == nullptr)
       goto ERROR_0;
   }
@@ -6960,16 +6932,14 @@ int handle_hipGraphInstantiate(conn_t *conn) {
     goto ERROR_0;
 
   fn = hip_symbol<fn_t>("hipGraphInstantiate");
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn(&pGraphExec, graph,
-                          pErrorNode_null_check ? &pErrorNode : nullptr,
-                          pLogBuffer, bufferSize);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(&pGraphExec, graph,
+                                    pErrorNode_present ? &pErrorNode : nullptr,
+                                    pLogBuffer, bufferSize);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &pGraphExec, sizeof(hipGraphExec_t)) < 0 ||
-      rpc_write(conn, &pErrorNode_null_check, sizeof(hipGraphNode_t *)) < 0 ||
-      (pErrorNode_null_check &&
+      (pErrorNode_present &&
        rpc_write(conn, &pErrorNode, sizeof(hipGraphNode_t)) < 0) ||
       (!pLogBuffer_null &&
        rpc_write(conn, pLogBuffer, bufferSize * sizeof(char)) < 0) ||
@@ -7160,7 +7130,7 @@ ERROR_0:
 int handle_hipGraphExecUpdate(conn_t *conn) {
   hipGraphExec_t hGraphExec;
   hipGraph_t hGraph;
-  hipGraphNode_t *hErrorNode_out_null_check;
+  uint8_t hErrorNode_out_present = 0;
   hipGraphNode_t hErrorNode_out;
   hipGraphExecUpdateResult updateResult_out{};
   updateResult_out = {};
@@ -7171,8 +7141,9 @@ int handle_hipGraphExecUpdate(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &hGraphExec, sizeof(hipGraphExec_t)) < 0 ||
       rpc_read(conn, &hGraph, sizeof(hipGraph_t)) < 0 ||
-      rpc_read(conn, &hErrorNode_out_null_check, sizeof(hipGraphNode_t *)) <
-          0 ||
+      rpc_read(conn, &hErrorNode_out_present, sizeof(uint8_t)) < 0 ||
+      (hErrorNode_out_present &&
+       rpc_read(conn, &hErrorNode_out, sizeof(hipGraphNode_t)) < 0) ||
       false)
     goto ERROR_0;
 
@@ -7184,13 +7155,11 @@ int handle_hipGraphExecUpdate(conn_t *conn) {
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(hGraphExec, hGraph,
-                          hErrorNode_out_null_check ? &hErrorNode_out : nullptr,
+                          hErrorNode_out_present ? &hErrorNode_out : nullptr,
                           &updateResult_out);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &hErrorNode_out_null_check, sizeof(hipGraphNode_t *)) <
-          0 ||
-      (hErrorNode_out_null_check &&
+      (hErrorNode_out_present &&
        rpc_write(conn, &hErrorNode_out, sizeof(hipGraphNode_t)) < 0) ||
       rpc_write(conn, &updateResult_out, sizeof(hipGraphExecUpdateResult)) <
           0 ||
@@ -7826,7 +7795,7 @@ int handle_hipGraphMemFreeNodeGetParams(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &node, sizeof(hipGraphNode_t)) < 0 || false)
     goto ERROR_0;
-  dev_ptr = (void *)malloc(8);
+  dev_ptr = (void *)calloc(8, 1);
   if ((8 != 0 && dev_ptr == nullptr) || false)
     goto ERROR_0;
 

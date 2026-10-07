@@ -1,11 +1,14 @@
 #include "transport.h"
+#include "process_handoff.h"
 
 #include "lupine_log.h"
 #include "monitoring.h"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <thread>
 #include <vector>
 
@@ -26,6 +29,7 @@ struct client_transport_state {
   std::array<lupine_client_endpoint, kTransportCapacity> endpoints;
   std::array<lupine_bulk_lanes, kTransportCapacity> bulk = {};
   std::array<bool, kTransportCapacity> bulk_dialed = {};
+  std::array<std::thread, kTransportCapacity> checkpoint_threads;
   unsigned int count = 0;
   bool shutting_down = false;
 };
@@ -137,6 +141,195 @@ void free_tls(conn_t *conn) {
 #else
   (void)conn;
 #endif
+}
+
+bool resume_handshake(conn_t *conn, const std::string &checkpoint) {
+  const char *session = getenv("LUPINE_SESSION");
+  if (session == nullptr) {
+    return false;
+  }
+  std::string request = "POST /.well-known/lupine/resume HTTP/1.1\r\n"
+                        "Host: lupine\r\nContent-Length: 0\r\n"
+                        "x-lupine-session: " +
+                        std::string(session) +
+                        "\r\nx-lupine-checkpoint: " + checkpoint + "\r\n\r\n";
+  size_t offset = 0;
+  while (offset < request.size()) {
+    ssize_t written;
+#ifdef LUPINE_TLS_OPENSSL
+    if (conn->tls_session != nullptr) {
+      written = SSL_write(static_cast<SSL *>(conn->tls_session),
+                          request.data() + offset, request.size() - offset);
+    } else
+#endif
+    {
+      struct iovec data = {request.data() + offset, request.size() - offset};
+      written = lupine_socket_sendv(conn->connfd, &data, 1);
+    }
+    if (written <= 0) {
+      return false;
+    }
+    offset += static_cast<size_t>(written);
+  }
+  // Do not consume any bytes from the retained HTTP/2 session following the
+  // HTTP/1 response. The supervisor sends it only after CPU/GPU restoration.
+  std::string response;
+  while (response.size() < 4096) {
+    char byte;
+    ssize_t received;
+#ifdef LUPINE_TLS_OPENSSL
+    if (conn->tls_session != nullptr) {
+      received = SSL_read(static_cast<SSL *>(conn->tls_session), &byte, 1);
+    } else
+#endif
+    {
+      received = lupine_socket_recv(conn->connfd, &byte, 1);
+    }
+    if (received != 1) {
+      return false;
+    }
+    response.push_back(byte);
+    if (response.size() >= 4 &&
+        response.compare(response.size() - 4, 4, "\r\n\r\n") == 0) {
+      constexpr char success[] = "HTTP/1.1 200 ";
+      return response.compare(0, sizeof(success) - 1, success) == 0;
+    }
+  }
+  return false;
+}
+
+bool valid_checkpoint(const std::string &checkpoint) {
+  const char *session = getenv("LUPINE_SESSION");
+  if (session == nullptr || session[0] == '\0' || strchr(session, '\r') ||
+      strchr(session, '\n')) {
+    return false;
+  }
+  std::string prefix = std::string(session) + ".";
+  if (checkpoint.compare(0, prefix.size(), prefix) != 0 ||
+      checkpoint.size() <= prefix.size() || checkpoint[prefix.size()] == '0') {
+    return false;
+  }
+  return checkpoint.find_first_not_of("0123456789", prefix.size()) ==
+         std::string::npos;
+}
+
+bool reconnect_checkpoint(conn_t *conn, const std::string &checkpoint) {
+  auto &state = transport();
+  const auto &endpoint = state.endpoints[conn->logical_index];
+  if (lupine_handoff_park_socket(conn) < 0) {
+    return false;
+  }
+  free_tls(conn);
+#ifdef _WIN32
+  lupine_socket_close(conn->connfd);
+  conn->connfd = LUPINE_INVALID_SOCKET;
+#else
+  lupine_socket_close(__atomic_exchange_n(&conn->connfd, LUPINE_INVALID_SOCKET,
+                                          __ATOMIC_ACQ_REL));
+#endif
+  while (!conn->closed) {
+    conn_t replacement = {};
+    replacement.connfd =
+        lupine_tcp_connect(endpoint.host.c_str(), endpoint.port.c_str(), 0);
+    // Closing the client must also interrupt a pending TLS/resume handshake.
+    pthread_mutex_lock(&state.mutex);
+    bool closing = state.shutting_down || conn->closed;
+    if (!closing) {
+      conn->connfd = replacement.connfd;
+    }
+    pthread_mutex_unlock(&state.mutex);
+    if (closing) {
+      if (replacement.connfd != LUPINE_INVALID_SOCKET) {
+        lupine_socket_close(replacement.connfd);
+      }
+      return false;
+    }
+    bool ready = replacement.connfd != LUPINE_INVALID_SOCKET &&
+                 initialize_tls(&replacement, endpoint) == 0 &&
+                 resume_handshake(&replacement, checkpoint);
+    pthread_mutex_lock(&state.mutex);
+    if (ready && !state.shutting_down && !conn->closed) {
+      conn->connfd = replacement.connfd;
+      conn->tls_session = replacement.tls_session;
+      int result = lupine_handoff_resume_socket(conn);
+      pthread_mutex_unlock(&state.mutex);
+      return result == 0;
+    }
+    conn->connfd = LUPINE_INVALID_SOCKET;
+    pthread_mutex_unlock(&state.mutex);
+    free_tls(&replacement);
+    if (replacement.connfd != LUPINE_INVALID_SOCKET) {
+      lupine_socket_close(replacement.connfd);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+  }
+  return false;
+}
+
+char receive_checkpoint_control(conn_t *conn, const std::string &checkpoint) {
+  char command;
+  std::string received;
+  if (lupine_handoff_receive_control(conn, &command, &received) < 0 ||
+      received != checkpoint) {
+    return '\0';
+  }
+  return command;
+}
+
+bool checkpoint_handoff(conn_t *conn, const std::string &checkpoint) {
+  if (lupine_handoff_pause_requests(conn) < 0 ||
+      rpc_write_start_request(conn, LUPINE_HANDOFF_DRAIN_REQUEST) < 0 ||
+      rpc_wait_for_response(conn) < 0) {
+    return false;
+  }
+  int result = -1;
+  if (rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0 ||
+      result != 0 || lupine_handoff_send_control(conn, 'D', checkpoint) < 0) {
+    return false;
+  }
+
+  char command = receive_checkpoint_control(conn, checkpoint);
+  if (command == 'X') {
+    return true;
+  }
+  if (command != 'F' ||
+      lupine_handoff_send_control(conn, 'A', checkpoint) < 0) {
+    return false;
+  }
+  command = receive_checkpoint_control(conn, checkpoint);
+  if (command == 'X') {
+    return true;
+  }
+  return command == 'C' && reconnect_checkpoint(conn, checkpoint);
+}
+
+void checkpoint_connection(conn_t *conn) {
+  auto &config = transport().config;
+  char command;
+  std::string checkpoint;
+  while (lupine_handoff_receive_control(conn, &command, &checkpoint) == 0) {
+    if (command != 'P' || !valid_checkpoint(checkpoint)) {
+      break;
+    }
+    if (config.checkpoint_begin != nullptr) {
+      config.checkpoint_begin();
+    }
+    bool resumed = checkpoint_handoff(conn, checkpoint);
+    if (resumed) {
+      lupine_handoff_resume_requests(conn);
+    } else {
+      rpc_shutdown_transport_socket(conn);
+    }
+    if (config.checkpoint_end != nullptr) {
+      config.checkpoint_end();
+    }
+    if (!resumed) {
+      return;
+    }
+  }
+  if (!conn->closed) {
+    rpc_shutdown_transport_socket(conn);
+  }
 }
 
 void reset_connection(conn_t *conn) {
@@ -267,6 +460,7 @@ int connect_endpoint(client_transport_state &state,
     return -1;
   }
   rpc_http2_client_start_heartbeat(conn);
+  state.checkpoint_threads[index] = std::thread(checkpoint_connection, conn);
   return 0;
 }
 
@@ -441,6 +635,9 @@ void lupine_client_transport_close() {
 
   for (unsigned int i = 0; i < count; ++i) {
     conn_t *conn = &state.connections[i];
+    if (state.checkpoint_threads[i].joinable()) {
+      state.checkpoint_threads[i].join();
+    }
     if (conn->read_thread != 0) {
       pthread_join(conn->read_thread, nullptr);
       conn->read_thread = 0;

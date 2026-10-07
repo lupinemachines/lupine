@@ -173,7 +173,6 @@ int handle_hipDevicePrimaryCtxRelease(conn_t *conn);
 int handle_hipDevicePrimaryCtxRetain(conn_t *conn);
 int handle_hipDevicePrimaryCtxReset(conn_t *conn);
 int handle_hipDevicePrimaryCtxSetFlags(conn_t *conn);
-int handle_hipModuleUnload(conn_t *conn);
 int handle_hipModuleGetFunction(conn_t *conn);
 int handle_hipModuleGetFunctionCount(conn_t *conn);
 int handle_hipLibraryUnload(conn_t *conn);

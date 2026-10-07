@@ -12,6 +12,7 @@ import re
 import shutil
 import stat
 import sys
+import sysconfig
 import tempfile
 import urllib.error
 import urllib.request
@@ -24,16 +25,53 @@ _MAX_BUNDLE_BYTES = 128 * 1024 * 1024
 _ETAG = re.compile(r'^"sha256:([0-9a-f]{64})"$')
 
 
+_ARCH = {"amd64": "amd64", "x86_64": "amd64", "arm64": "arm64", "aarch64": "arm64"}
+
+
+def interpreter_machine() -> str:
+    """The architecture of this interpreter, which the bundle has to match.
+
+    Windows on ARM runs x64 programs under the OS's x64 emulation, and
+    ``platform.machine()`` reports the machine's ARM64 for them. An x64
+    Python loads x64 DLLs, so on Windows the interpreter's build platform
+    (``win-amd64`` / ``win-arm64``) decides; elsewhere the two agree.
+    """
+
+    if sys.platform == "win32":
+        return sysconfig.get_platform().removeprefix("win-").lower()
+    return platform.machine().lower()
+
+
+def host_machine() -> str:
+    """The machine's own architecture: ``arm64`` for an emulated x64 Python."""
+
+    if sys.platform == "win32":
+        return (
+            os.environ.get("PROCESSOR_ARCHITEW6432") or platform.machine()
+        ).lower()
+    return platform.machine().lower()
+
+
+def native_arm64_windows() -> bool:
+    """A native arm64 Python on Windows on ARM.
+
+    NVIDIA publishes no CUDA runtime for Windows arm64, so such a process
+    gets the driver and NVML only; a CUDA PyTorch needs an x64 Python, which
+    the OS runs under emulation and which selects the ``windows/amd64``
+    client.
+    """
+
+    return (
+        sys.platform == "win32"
+        and _ARCH.get(interpreter_machine()) == "arm64"
+        and _ARCH.get(host_machine()) == "arm64"
+    )
+
+
 def platform_name() -> str | None:
     """Return the public OS/architecture key for this Python process."""
 
-    machine = platform.machine().lower()
-    arch = {
-        "amd64": "amd64",
-        "x86_64": "amd64",
-        "arm64": "arm64",
-        "aarch64": "arm64",
-    }.get(machine)
+    arch = _ARCH.get(interpreter_machine())
     if arch is None:
         return None
     os_name = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
@@ -111,7 +149,7 @@ def _manifest(directory: Path) -> dict[str, Any]:
 
 
 def _validate_directory(
-    directory: Path, etag: str, platform_key: str, expected_names: tuple[str, ...]
+    directory: Path, etag: str, platform_key: str, required_names: tuple[str, ...]
 ) -> bool:
     try:
         if (directory / ".etag").read_text().strip() != etag:
@@ -125,11 +163,11 @@ def _validate_directory(
         if not isinstance(files, list):
             return False
         by_name = {item["path"]: item for item in files if isinstance(item, dict)}
-        if set(by_name) != set(expected_names):
+        if not set(required_names) <= set(by_name):
             return False
-        for name in expected_names:
+        for name, item in by_name.items():
             contents = (directory / name).read_bytes()
-            if hashlib.sha256(contents).hexdigest() != by_name[name].get("sha256"):
+            if hashlib.sha256(contents).hexdigest() != item.get("sha256"):
                 return False
         return True
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
@@ -137,7 +175,7 @@ def _validate_directory(
 
 
 def _verified_manifest(
-    archive: zipfile.ZipFile, platform_key: str, expected_names: tuple[str, ...]
+    archive: zipfile.ZipFile, platform_key: str, required_names: tuple[str, ...]
 ) -> dict[str, Any]:
     entries = archive.infolist()
     if sum(entry.file_size for entry in entries) > _MAX_BUNDLE_BYTES:
@@ -152,8 +190,6 @@ def _verified_manifest(
         if entry.filename in names:
             raise ValueError(f"duplicate client bundle path: {entry.filename!r}")
         names.add(entry.filename)
-    if names != {"manifest.json", *expected_names}:
-        raise ValueError("client bundle contains an unexpected file set")
 
     manifest = json.loads(archive.read("manifest.json"))
     if not isinstance(manifest, dict) or manifest.get("schema") != 1:
@@ -164,9 +200,15 @@ def _verified_manifest(
     if not isinstance(files, list):
         raise TypeError("client bundle manifest has no file list")
     by_name = {item.get("path"): item for item in files if isinstance(item, dict)}
-    if set(by_name) != set(expected_names):
-        raise ValueError("client bundle manifest has an unexpected file set")
-    for name in expected_names:
+    # The manifest is authoritative for which shims a server ships, so that a
+    # server carrying more of them stays usable by an older client. The archive
+    # may hold nothing the manifest does not account for.
+    if names != {"manifest.json", *by_name}:
+        raise ValueError("client bundle contains an unexpected file set")
+    missing = sorted(set(required_names) - set(by_name))
+    if missing:
+        raise ValueError(f"client bundle is missing required shims: {missing}")
+    for name in by_name:
         contents = archive.read(name)
         if hashlib.sha256(contents).hexdigest() != by_name[name].get("sha256"):
             raise ValueError(f"client bundle file hash does not match: {name}")
@@ -178,20 +220,20 @@ def _install(
     body: bytes,
     etag: str,
     platform_key: str,
-    expected_names: tuple[str, ...],
+    required_names: tuple[str, ...],
 ) -> Path:
     digest = _etag_digest(etag)
     if hashlib.sha256(body).hexdigest() != digest:
         raise ValueError("client bundle bytes do not match the server ETag")
     destination = cache / "clients" / digest
-    if _validate_directory(destination, etag, platform_key, expected_names):
+    if _validate_directory(destination, etag, platform_key, required_names):
         return destination
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".client-", dir=destination.parent))
     try:
         with zipfile.ZipFile(io.BytesIO(body)) as archive:
-            manifest = _verified_manifest(archive, platform_key, expected_names)
+            manifest = _verified_manifest(archive, platform_key, required_names)
             for item in manifest["files"]:
                 name = item["path"]
                 target = temporary / name
@@ -205,7 +247,7 @@ def _install(
         try:
             os.replace(temporary, destination)
         except OSError:
-            if not _validate_directory(destination, etag, platform_key, expected_names):
+            if not _validate_directory(destination, etag, platform_key, required_names):
                 raise
         return destination
     finally:
@@ -215,20 +257,18 @@ def _install(
 def _download(
     server: str,
     platform_key: str,
-    expected_names: tuple[str, ...],
-    *,
-    unconditional: bool = False,
+    required_names: tuple[str, ...],
 ) -> tuple[Path, str]:
     cache = _cache_root()
     selector = _selector_path(cache, server, platform_key)
-    previous = None if unconditional else _read_selector(selector)
+    previous = _read_selector(selector)
     headers = {"Accept": "application/vnd.lupine.client-bundle.v1+zip"}
     session = os.environ.get("LUPINE_SESSION")
     if session:
         headers["x-lupine-session"] = session
     if previous:
         candidate = cache / "clients" / _etag_digest(previous)
-        if _validate_directory(candidate, previous, platform_key, expected_names):
+        if _validate_directory(candidate, previous, platform_key, required_names):
             headers["If-None-Match"] = previous
 
     request = urllib.request.Request(
@@ -238,15 +278,7 @@ def _download(
         response = urllib.request.urlopen(request, timeout=300)
     except urllib.error.HTTPError as exc:
         if exc.code == 304 and previous:
-            candidate = cache / "clients" / _etag_digest(previous)
-            if _validate_directory(candidate, previous, platform_key, expected_names):
-                return candidate, previous
-            return _download(
-                server,
-                platform_key,
-                expected_names,
-                unconditional=True,
-            )
+            return cache / "clients" / _etag_digest(previous), previous
         raise
 
     with response:
@@ -261,22 +293,26 @@ def _download(
     if content_digest and content_digest != expected_digest:
         raise ValueError("client bundle does not match Content-Digest")
 
-    directory = _install(cache, body, etag, platform_key, expected_names)
+    directory = _install(cache, body, etag, platform_key, required_names)
     _write_selector(selector, etag)
     return directory, etag
 
 
 def resolve(
-    servers: tuple[str, ...], expected_names: tuple[str, ...]
-) -> tuple[Path, str, str]:
-    """Resolve every endpoint and require one compatible native object."""
+    servers: tuple[str, ...], required_names: tuple[str, ...]
+) -> tuple[Path, str, str, tuple[str, ...]]:
+    """Resolve every endpoint and require one compatible native bundle.
+
+    Returns the cache directory, its ETag, this platform's key, and every
+    shim the selected bundle carries, in manifest order.
+    """
 
     platform_key = platform_name()
     if platform_key is None:
         raise ValueError(f"unsupported LUPINE client platform: {sys.platform}")
     selected: tuple[Path, str] | None = None
     for server in servers:
-        current = _download(server, platform_key, expected_names)
+        current = _download(server, platform_key, required_names)
         if selected is not None and current[1] != selected[1]:
             raise ValueError(
                 "LUPINE servers selected different client bundles: "
@@ -285,4 +321,5 @@ def resolve(
         selected = current
     if selected is None:
         raise ValueError("no LUPINE server was configured")
-    return selected[0], selected[1], platform_key
+    names = tuple(item["path"] for item in _manifest(selected[0])["files"])
+    return selected[0], selected[1], platform_key, names

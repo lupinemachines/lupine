@@ -9,7 +9,7 @@
 // brackets, a device list, an allocation's owner, or a string the library
 // keeps.
 
-#include <cuda_runtime_api.h>
+#include <cuda.h>
 #include <nccl.h>
 
 #include <cstddef>
@@ -103,12 +103,21 @@ bool submit_async(conn_t *conn) {
 std::mutex handles_mutex;
 std::unordered_map<const void *, conn_t *> handles;
 
-// The runtime's current device, which the runtime shim answers locally.
+// The runtime's current device is the device of the driver context the
+// program's runtime made current on this thread, so its server is the
+// context's. Before any context exists it is device zero, as cudaGetDevice
+// answers, and the driver shim's own default route must not stand in for it;
+// the device table needs the driver initialized, which the library's first
+// call does natively.
 conn_t *device_connection() {
-  int device = 0;
-  if (cudaGetDevice(&device) != cudaSuccess) {
+  CUcontext context = nullptr;
+  if (cuCtxGetCurrent(&context) == CUDA_SUCCESS && context != nullptr) {
+    return lupine_rpc_conn_for_current_context();
+  }
+  if (cuInit(0) != CUDA_SUCCESS) {
     return nullptr;
   }
+  int device = 0;
   return lupine_rpc_conn_for_device(&device);
 }
 

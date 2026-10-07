@@ -1,7 +1,7 @@
 """PyTorch adapter for LUPINE-backed CUDA devices.
 
 ``lupine.connect(...)`` points the process at one or more LUPINE GPU
-servers and preloads the server-selected native shims (driver API, runtime API,
+servers and preloads the server-selected client (the CUDA driver API and
 NVML) so ordinary CUDA consumers — PyTorch included — transparently run on
 the remote GPUs:
 
@@ -16,18 +16,21 @@ the remote GPUs:
         print((x * 2).cpu())
 
 The adapter returns ordinary ``torch.device("cuda:N")`` objects; PyTorch
-keeps its built-in CUDA dispatch path while the LUPINE shims handle the
-driver and runtime calls underneath it. No NVIDIA software is required on
-the client — the wheel supplies the portable runtime stub and the bound
-server supplies its compatible full client.
+keeps its built-in CUDA dispatch path, and its own CUDA runtime and
+libraries run against the LUPINE driver shim underneath it. No NVIDIA driver
+is required on the client: the wheel is pure Python and the bound server
+supplies its compatible client.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+from . import _bundles
 
 DEFAULT_PORT = 14833
 
@@ -94,6 +97,19 @@ def _normalize_hosts(
     return tuple(_normalize_server(item, port) for item in host)
 
 
+def torch_backend_selected() -> bool:
+    """Whether ``connect()`` runs torch through the worker-backed backend.
+
+    macOS has no CUDA torch, so it always does; elsewhere the driver shims
+    are the default and ``LUPINE_TORCH_BACKEND=1`` opts in.
+    """
+
+    value = os.environ.get("LUPINE_TORCH_BACKEND")
+    if value is not None:
+        return value.strip() not in ("", "0", "false", "no")
+    return sys.platform == "darwin"
+
+
 def _servers_from_env() -> tuple[str, ...]:
     value = os.environ.get("LUPINE_SERVER", "")
     return tuple(server.strip() for server in value.split(",") if server.strip())
@@ -109,6 +125,9 @@ class Session:
     """
 
     servers: tuple[str, ...]
+    # "driver" loads the client shims into this process; "torch" runs the
+    # program's torch ops in the worker (see lupine._backend).
+    backend: str = "driver"
     _previous_server: str | None = field(default=None, repr=False)
     _loaded: bool = field(default=False, repr=False)
 
@@ -128,11 +147,29 @@ class Session:
         self._previous_server = os.environ.get("LUPINE_SERVER")
         if not configured:
             os.environ["LUPINE_SERVER"] = ",".join(self.servers)
-        from . import _native
+        if torch_backend_selected():
+            from . import _guest
 
-        _native.load(missing_ok=False)
+            _guest.start(self.servers)
+            self.backend = "torch"
+        else:
+            from . import _native
+
+            _native.load(missing_ok=False)
         self._loaded = True
         return self
+
+    def _device_type(self) -> str:
+        if self.backend == "torch":
+            from . import _backend
+
+            if not _backend.is_dual():
+                return "lupine"
+        return "cuda"
+
+    def _device_count(self) -> int:
+        torch = _torch()
+        return int(getattr(torch, self._device_type()).device_count())
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
         if getattr(self, "_previous_server", None) is None:
@@ -151,23 +188,32 @@ class Session:
                 "Session is not active; use 'with lupine.connect(...) as s:'."
             )
         torch = _torch()
-        count = int(torch.cuda.device_count())
-        return [torch.device("cuda", index) for index in range(count)]
+        kind = self._device_type()
+        return [torch.device(kind, index) for index in range(self._device_count())]
 
     def device(self, index: int = 0) -> Any:
         """Return one GPU from LUPINE's virtual device topology."""
 
         torch = _torch()
-        count = int(torch.cuda.device_count()) if self.servers else 0
+        count = self._device_count() if self.servers else 0
         if index >= count or index < -count:
-            raise LupineError(f"device index {index} out of range ({count} devices)")
-        return torch.device("cuda", range(count)[index])
+            hint = ""
+            if count == 0 and _bundles.native_arm64_windows():
+                hint = (
+                    "; this is a native arm64 Python on Windows on ARM, which has "
+                    "no CUDA runtime: run an x64 Python (under the OS's x64 "
+                    "emulation) with the x64 CUDA torch wheel"
+                )
+            raise LupineError(
+                f"device index {index} out of range ({count} devices){hint}"
+            )
+        return torch.device(self._device_type(), range(count)[index])
 
 
 def _native_loaded() -> bool:
-    from . import _native
+    from . import _backend, _native
 
-    return bool(_native.loaded())
+    return bool(_native.loaded()) or _backend.is_started()
 
 
 def connect(
@@ -202,7 +248,6 @@ def connect(
     # Bind immediately: the caller may import torch right after connect()
     # without using the context manager form.
     session.__enter__()
-    session._previous_server = None  # keep LUPINE_SERVER configured on exit
     return session
 
 
@@ -289,4 +334,5 @@ __all__ = [
     "load_native",
     "login",
     "servers",
+    "torch_backend_selected",
 ]

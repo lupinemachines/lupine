@@ -5,6 +5,7 @@
 #include <cuda.h>
 
 #include "codegen/gen_rpc_ids.h"
+#include "cuda_compat.h"
 #include "cuda_server.h"
 #include "cuda_server_memcpy.h"
 #include "ops/smemcpy_module.h"
@@ -22,6 +23,7 @@
 #include <new>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "lupine_log.h"
@@ -139,25 +141,17 @@ static CUresult lupine_current_htod_context(conn_t *conn,
 }
 
 struct lupine_graph_host_copy_node {
-  explicit lupine_graph_host_copy_node(lupine_graph_host_copy node_copy)
-      : copy(node_copy) {}
-
   lupine_graph_host_copy copy;
+  // Zero for heap staging. A pinned buffer is freed only while its buffer id
+  // still matches: destroying its context frees it and the address can return.
+  unsigned long long buffer_id = 0;
   lupine_graph_host_copy_node *next = nullptr;
 };
 
-struct lupine_graph_capture_scratch {
-  lupine_graph_capture_scratch(void *scratch_ptr, size_t scratch_size)
-      : ptr(scratch_ptr), size(scratch_size) {}
-
-  void *ptr;
-  size_t size;
-  std::atomic<size_t> offset{0};
-};
-
 struct lupine_graph_resources {
-  void add_dtoh_copy(lupine_graph_host_copy copy) {
-    auto *node = new lupine_graph_host_copy_node(copy);
+  void add_dtoh_copy(lupine_graph_host_copy copy,
+                     unsigned long long buffer_id) {
+    auto *node = new lupine_graph_host_copy_node{copy, buffer_id};
     node->next = dtoh_copies.load(std::memory_order_relaxed);
     while (!dtoh_copies.compare_exchange_weak(node->next, node,
                                               std::memory_order_release,
@@ -165,74 +159,88 @@ struct lupine_graph_resources {
     }
   }
 
-  // A launch marks its host copies undelivered; the next stream sync that
-  // reports them clears the mark. Without it every later sync on that stream
-  // would replay the same staging buffers over host memory a plain
-  // cuMemcpyDtoH has since overwritten.
-  std::atomic<bool> dtoh_undelivered{false};
-
   std::vector<lupine_graph_host_copy> dtoh_copy_snapshot() const {
     std::vector<lupine_graph_host_copy> copies;
     for (auto *node = dtoh_copies.load(std::memory_order_acquire);
          node != nullptr; node = node->next) {
       copies.push_back(node->copy);
-      lupine_forget_undelivered_dtoh(node->copy.server_src);
     }
     std::reverse(copies.begin(), copies.end());
     return copies;
   }
 
-  bool has_capture_scratch() const {
-    return capture_scratch.load(std::memory_order_acquire) != nullptr;
-  }
-
-  bool install_capture_scratch(void *scratch, size_t size) {
-    if (scratch == nullptr) {
-      return false;
-    }
-    auto *candidate = new lupine_graph_capture_scratch(scratch, size);
-    lupine_graph_capture_scratch *expected = nullptr;
-    if (!capture_scratch.compare_exchange_strong(expected, candidate,
-                                                 std::memory_order_release,
-                                                 std::memory_order_acquire)) {
-      delete candidate;
-      return false;
-    }
-    return true;
-  }
-
-  void *allocate_capture_scratch(size_t bytes) {
-    if (bytes == 0) {
-      return nullptr;
-    }
-    auto *scratch = capture_scratch.load(std::memory_order_acquire);
-    if (scratch == nullptr) {
-      return nullptr;
-    }
-    size_t current = scratch->offset.load(std::memory_order_relaxed);
-    for (;;) {
-      if (current > scratch->size || current > SIZE_MAX - 255) {
-        return nullptr;
-      }
-      size_t aligned = (current + 255) & ~size_t(255);
-      if (aligned > scratch->size || bytes > scratch->size - aligned) {
-        return nullptr;
-      }
-      if (scratch->offset.compare_exchange_weak(current, aligned + bytes,
-                                                std::memory_order_relaxed,
-                                                std::memory_order_relaxed)) {
-        return static_cast<unsigned char *>(scratch->ptr) + aligned;
-      }
-    }
-  }
-
   std::atomic<lupine_graph_host_copy_node *> dtoh_copies{nullptr};
-  std::atomic<lupine_graph_capture_scratch *> capture_scratch{nullptr};
+  // Graphs, execs and launches whose bytes are undelivered. The object itself
+  // outlives them because callbacks and stream maps keep raw pointers.
+  std::atomic<int> owners{0};
 };
 
+static std::mutex &lupine_retired_dtoh_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+static lupine_graph_host_copy_node *&lupine_retired_dtoh_copies() {
+  static lupine_graph_host_copy_node *copies = nullptr;
+  return copies;
+}
+
+static void lupine_retire_graph_staging(lupine_graph_resources *resources) {
+  auto *head = resources->dtoh_copies.exchange(nullptr);
+  if (head == nullptr) {
+    return;
+  }
+  auto *tail = head;
+  while (tail->next != nullptr) {
+    tail = tail->next;
+  }
+  std::lock_guard<std::mutex> lock(lupine_retired_dtoh_mutex());
+  tail->next = lupine_retired_dtoh_copies();
+  lupine_retired_dtoh_copies() = head;
+}
+
+static void lupine_retain_graph_resources(lupine_graph_resources *resources) {
+  if (resources != nullptr) {
+    resources->owners.fetch_add(1);
+  }
+}
+
+// The last owner can be a delivery inside a CUDA callback, where host memory
+// cannot be freed, so release only retires the staging. Graph and exec
+// destruction free it from a handler thread.
+void lupine_release_graph_resources(lupine_graph_resources *resources) {
+  if (resources != nullptr && resources->owners.fetch_sub(1) == 1) {
+    lupine_retire_graph_staging(resources);
+  }
+}
+
+static void lupine_free_retired_graph_staging() {
+  lupine_graph_host_copy_node *node = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(lupine_retired_dtoh_mutex());
+    std::swap(node, lupine_retired_dtoh_copies());
+  }
+  while (node != nullptr) {
+    void *host = node->copy.server_src;
+    if (host != nullptr) {
+      lupine_forget_undelivered_dtoh(host);
+      unsigned long long buffer_id = 0;
+      if (node->buffer_id == 0) {
+        std::free(host);
+      } else if (cuPointerGetAttribute(
+                     &buffer_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
+                     reinterpret_cast<CUdeviceptr>(host)) == CUDA_SUCCESS &&
+                 buffer_id == node->buffer_id) {
+        (void)cuMemFreeHost(host);
+      }
+    }
+    delete std::exchange(node, node->next);
+  }
+}
+
 // Graph host buffers must remain valid for any queued launch or replay.
-// Graph-resource objects intentionally have process lifetime; maps use stable
-// raw pointers while each object retains its owned allocations.
+// Graph-resource objects have process lifetime so maps can use stable raw
+// pointers; only their staging is freed when the last owner goes.
 static libcuckoo::cuckoohash_map<CUgraph, lupine_graph_resources *> &
 lupine_graph_resource_map() {
   static auto *resources =
@@ -288,6 +296,16 @@ static void lupine_erase_capture_resources(Map &map,
   }
 }
 
+template <typename Map, typename Key>
+static lupine_graph_resources *lupine_take_graph_resources(Map &map, Key key) {
+  lupine_graph_resources *resources = nullptr;
+  map.erase_fn(key, [&resources](lupine_graph_resources *stored) {
+    resources = stored;
+    return true;
+  });
+  return resources;
+}
+
 lupine_graph_resources *lupine_get_graph_resources(CUgraph graph) {
   auto *candidate = new lupine_graph_resources();
   auto *resources = candidate;
@@ -298,6 +316,8 @@ lupine_graph_resources *lupine_get_graph_resources(CUgraph graph) {
       candidate);
   if (resources != candidate) {
     delete candidate;
+  } else {
+    lupine_retain_graph_resources(resources);
   }
   return resources;
 }
@@ -313,6 +333,12 @@ lupine_graph_resources *lupine_get_stream_resources(CUstream stream) {
   if (resources != candidate) {
     delete candidate;
   }
+  return resources;
+}
+
+lupine_graph_resources *lupine_find_stream_resources(CUstream stream) {
+  lupine_graph_resources *resources = nullptr;
+  (void)lupine_stream_capture_resource_map().find(stream, resources);
   return resources;
 }
 
@@ -354,7 +380,12 @@ void lupine_finish_stream_capture_resources(CUstream stream, CUgraph graph,
   lupine_erase_capture_resources(lupine_stream_capture_resource_map(),
                                  resources);
   if (success) {
+    // Capturing into a graph replaces its resources. The old ones stay owned:
+    // the graph's earlier nodes still copy into their staging.
+    lupine_retain_graph_resources(resources);
     lupine_graph_resource_map().insert_or_assign(graph, resources);
+  } else {
+    lupine_retire_graph_staging(resources);
   }
 }
 
@@ -385,7 +416,7 @@ void lupine_forget_event_capture_resources(CUevent event) {
 void lupine_wait_event_capture_resources(CUstream stream, CUevent event) {
   lupine_graph_resources *resources = nullptr;
   if (lupine_event_capture_resource_map().find(event, resources)) {
-    lupine_stream_capture_resource_map().insert(stream, resources);
+    lupine_stream_capture_resource_map().insert_or_assign(stream, resources);
   }
   if (lupine_active_event_capture_resource_map().find(event, resources)) {
     lupine_active_stream_capture_resource_map().insert(stream, resources);
@@ -395,61 +426,91 @@ void lupine_wait_event_capture_resources(CUstream stream, CUevent event) {
 void lupine_clone_graph_resources(CUgraph clone, CUgraph original) {
   lupine_graph_resources *resources = nullptr;
   if (lupine_graph_resource_map().find(original, resources)) {
+    lupine_retain_graph_resources(resources);
     lupine_graph_resource_map().insert_or_assign(clone, resources);
   }
 }
 
 void lupine_erase_graph_resources(CUgraph graph) {
-  lupine_graph_resource_map().erase(graph);
+  lupine_release_graph_resources(
+      lupine_take_graph_resources(lupine_graph_resource_map(), graph));
+  lupine_free_retired_graph_staging();
 }
 
-void lupine_note_graph_launch(CUgraphExec exec, CUstream stream,
+void lupine_rebind_graph_exec_resources(CUgraphExec exec, CUgraph graph) {
+  lupine_graph_resources *resources = nullptr;
+  (void)lupine_graph_resource_map().find(graph, resources);
+  lupine_retain_graph_resources(resources);
+  auto *previous =
+      lupine_take_graph_resources(lupine_graph_exec_resource_map(), exec);
+  if (resources != nullptr) {
+    lupine_graph_exec_resource_map().insert_or_assign(exec, resources);
+  }
+  lupine_release_graph_resources(previous);
+  lupine_free_retired_graph_staging();
+}
+
+void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
                               CUresult result) {
   lupine_graph_resources *resources = nullptr;
   (void)lupine_graph_exec_resource_map().find(exec, resources);
   if (result == CUDA_SUCCESS && resources != nullptr) {
-    resources->dtoh_undelivered.store(true, std::memory_order_release);
+    const auto copies = resources->dtoh_copy_snapshot();
+    if (!copies.empty()) {
+      CUcontext context = nullptr;
+      (void)cuStreamGetCtx(stream, &context);
+      lupine_pending_dtoh_copies().upsert(
+          conn,
+          [&](lupine_pending_dtoh_streams &streams, libcuckoo::UpsertContext) {
+            for (const auto &copy : copies) {
+              lupine_retain_graph_resources(resources);
+              streams[stream].push_back({nullptr, copy.client, copy.server_src,
+                                         lupine_dtoh_storage::borrowed, context,
+                                         resources});
+            }
+          },
+          lupine_pending_dtoh_streams{});
+    }
     lupine_stream_capture_resource_map().insert_or_assign(stream, resources);
   }
 }
 
-bool lupine_graph_has_capture_scratch(lupine_graph_resources *resources) {
-  return resources != nullptr && resources->has_capture_scratch();
-}
-
-bool lupine_graph_install_capture_scratch(lupine_graph_resources *resources,
-                                          void *scratch, size_t size) {
-  return resources != nullptr &&
-         resources->install_capture_scratch(scratch, size);
-}
-
 std::vector<lupine_graph_host_copy>
 lupine_graph_dtoh_copy_snapshot(lupine_graph_resources *resources) {
-  return resources == nullptr ? std::vector<lupine_graph_host_copy>()
-                              : resources->dtoh_copy_snapshot();
-}
-
-std::vector<lupine_graph_host_copy>
-lupine_take_stream_dtoh_copies(CUstream stream) {
-  lupine_graph_resources *resources = nullptr;
-  (void)lupine_stream_capture_resource_map().find(stream, resources);
-  if (resources == nullptr ||
-      !resources->dtoh_undelivered.exchange(false, std::memory_order_acq_rel)) {
-    return {};
+  auto copies = resources == nullptr ? std::vector<lupine_graph_host_copy>()
+                                     : resources->dtoh_copy_snapshot();
+  for (const auto &copy : copies) {
+    lupine_forget_undelivered_dtoh(copy.server_src);
   }
-  return resources->dtoh_copy_snapshot();
+  return copies;
 }
 
-void *lupine_alloc_capture_scratch(lupine_graph_resources *resources,
-                                   size_t bytes) {
-  return resources == nullptr ? nullptr
-                              : resources->allocate_capture_scratch(bytes);
+// Each captured copy owns its staging until its graph resources lose their
+// last owner.
+// Host allocation is an unsafe call under global or thread-local capture and
+// would invalidate the capture, so it runs in relaxed mode.
+void *lupine_alloc_capture_scratch(size_t bytes) {
+  void *host = nullptr;
+  CUstreamCaptureMode mode = CU_STREAM_CAPTURE_MODE_RELAXED;
+  (void)cuThreadExchangeStreamCaptureMode(&mode);
+  if (bytes != 0 && cuMemAllocHost(&host, bytes) != CUDA_SUCCESS) {
+    host = nullptr;
+  }
+  (void)cuThreadExchangeStreamCaptureMode(&mode);
+  return host;
 }
 
 void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
-                                 void *client_dst, void *server_src,
-                                 size_t bytes) {
-  resources->add_dtoh_copy({client_dst, server_src, bytes});
+                                 const lupine_host_rows &client,
+                                 void *server_src) {
+  unsigned long long buffer_id = 0;
+  if (server_src != nullptr &&
+      cuPointerGetAttribute(&buffer_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
+                            reinterpret_cast<CUdeviceptr>(server_src)) !=
+          CUDA_SUCCESS) {
+    buffer_id = 0;
+  }
+  resources->add_dtoh_copy({client, server_src}, buffer_id);
 }
 
 // A DtoH the stream has executed whose bytes have not been delivered to the
@@ -458,9 +519,8 @@ void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
 // forgotten when the bytes are delivered.
 struct lupine_undelivered_dtoh {
   conn_t *conn = nullptr;
-  void *client_dst = nullptr;
+  lupine_host_rows client;
   void *server_src = nullptr;
-  size_t bytes = 0;
   // Graph host-node data lives as long as the graph resources.
   bool persistent = false;
 };
@@ -501,10 +561,10 @@ static void CUDA_CB lupine_dtoh_undelivered_callback(void *opaque) {
 }
 
 static void lupine_note_dtoh_undelivered(conn_t *conn, CUstream stream,
-                                         void *client_dst, void *server_src,
-                                         size_t bytes, bool persistent) {
+                                         const lupine_host_rows &client,
+                                         void *server_src, bool persistent) {
   auto *undelivered = new (std::nothrow)
-      lupine_undelivered_dtoh{conn, client_dst, server_src, bytes, persistent};
+      lupine_undelivered_dtoh{conn, client, server_src, persistent};
   if (undelivered != nullptr &&
       cuLaunchHostFunc(stream, lupine_dtoh_undelivered_callback, undelivered) !=
           CUDA_SUCCESS) {
@@ -608,10 +668,8 @@ lupine_overlay_undelivered_dtoh(conn_t *conn, const lupine_htod_copy &copy,
     if (undelivered.conn != conn) {
       continue;
     }
-    uintptr_t undelivered_begin =
-        reinterpret_cast<uintptr_t>(undelivered.client_dst);
-    uintptr_t undelivered_end = undelivered_begin + undelivered.bytes;
-    bool covers = true;
+    const lupine_host_rows &rows = undelivered.client;
+    size_t covered_bytes = 0;
     size_t offset = fragment.logical_offset;
     size_t remaining = fragment.bytes;
     while (remaining != 0) {
@@ -623,19 +681,22 @@ lupine_overlay_undelivered_dtoh(conn_t *conn, const lupine_htod_copy &copy,
       uintptr_t begin = reinterpret_cast<uintptr_t>(copy.source) +
                         slice * copy.source_slice_stride +
                         row * copy.source_row_stride + x;
-      uintptr_t lo = std::max(begin, undelivered_begin);
-      uintptr_t hi = std::min(begin + chunk, undelivered_end);
-      if (lo < hi) {
-        memcpy(ring + (offset - fragment.logical_offset) + (lo - begin),
-               static_cast<const unsigned char *>(undelivered.server_src) +
-                   (lo - undelivered_begin),
-               hi - lo);
+      for (size_t index = 0; index < rows.height * rows.depth; ++index) {
+        uintptr_t row = reinterpret_cast<uintptr_t>(rows.row(index));
+        uintptr_t lo = std::max(begin, row);
+        uintptr_t hi = std::min(begin + chunk, row + rows.width);
+        if (lo < hi) {
+          memcpy(ring + (offset - fragment.logical_offset) + (lo - begin),
+                 static_cast<const unsigned char *>(undelivered.server_src) +
+                     index * rows.width + (lo - row),
+                 hi - lo);
+          covered_bytes += hi - lo;
+        }
       }
-      covers = covers && lo == begin && hi == begin + chunk;
       offset += chunk;
       remaining -= chunk;
     }
-    covered = covered || covers;
+    covered = covered || covered_bytes == fragment.bytes;
   }
   return covered;
 }
@@ -1327,6 +1388,7 @@ CUresult lupine_associate_graph_exec_resources(
   }
   CUresult result = lupine_commit_htod_graph_exec(exec, binding);
   if (result == CUDA_SUCCESS) {
+    lupine_retain_graph_resources(resources);
     lupine_graph_exec_resource_map().insert_or_assign(exec, resources);
   }
   return result;
@@ -1414,7 +1476,9 @@ static CUresult lupine_release_htod_graph_exec(CUgraphExec exec) {
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec) {
   CUresult result = lupine_release_htod_graph_exec(exec);
   if (result == CUDA_SUCCESS) {
-    lupine_graph_exec_resource_map().erase(exec);
+    lupine_release_graph_resources(
+        lupine_take_graph_resources(lupine_graph_exec_resource_map(), exec));
+    lupine_free_retired_graph_staging();
   }
   return result;
 }
@@ -1787,37 +1851,6 @@ static lupine_htod_copy lupine_make_linear_htod_copy(CUdeviceptr destination,
   copy.smemcpy.rows = 1;
   copy.smemcpy.destination_row_stride = bytes;
   copy.smemcpy.destination_slice_stride = bytes;
-  return copy;
-}
-
-static lupine_htod_copy
-lupine_make_2d_htod_copy(const CUDA_MEMCPY2D &original) {
-  lupine_htod_copy copy = {};
-  copy.bytes = original.WidthInBytes * original.Height;
-  if (copy.bytes == 0) {
-    return copy;
-  }
-  copy.source = static_cast<const unsigned char *>(original.srcHost) +
-                original.srcY * original.srcPitch + original.srcXInBytes;
-  copy.source_row_stride = original.srcPitch;
-  copy.source_slice_stride = original.srcPitch * original.Height;
-  copy.slices = 1;
-  copy.smemcpy.width = original.WidthInBytes;
-  copy.smemcpy.rows = original.Height;
-  if (original.dstMemoryType == CU_MEMORYTYPE_ARRAY) {
-    copy.use_cuda_memcpy = true;
-    copy.destination_array = original.dstArray;
-    copy.destination_x = original.dstXInBytes;
-    copy.destination_y = original.dstY;
-    copy.smemcpy.destination_row_stride = original.WidthInBytes;
-    copy.smemcpy.destination_slice_stride = copy.bytes;
-  } else {
-    copy.smemcpy.destination = original.dstDevice +
-                               original.dstY * original.dstPitch +
-                               original.dstXInBytes;
-    copy.smemcpy.destination_row_stride = original.dstPitch;
-    copy.smemcpy.destination_slice_stride = original.dstPitch * original.Height;
-  }
   return copy;
 }
 
@@ -2380,9 +2413,11 @@ static int lupine_write_dtoh_chunk_response(conn_t *conn, int request_id,
   return 0;
 }
 
-static int lupine_copy_dtoh_serial(conn_t *conn, int request_id,
-                                   CUdeviceptr source, size_t bytes,
-                                   size_t offset, CUstream stream) {
+// Sends [offset, bytes) as LUPINE_RPC_TRANSFER_CHUNK_BYTES chunks staged one at
+// a time, each led by its CUresult; a failed chunk ends the response.
+template <typename CopyChunk>
+static int lupine_write_dtoh_chunks(conn_t *conn, int request_id, size_t bytes,
+                                    size_t offset, CopyChunk copy_chunk) {
   if (offset > bytes) {
     return -1;
   }
@@ -2399,11 +2434,8 @@ static int lupine_copy_dtoh_serial(conn_t *conn, int request_id,
 
   do {
     size_t chunk = std::min(bytes - offset, staging_size);
-    void *destination = chunk == 0 ? nullptr : host.data();
-    // host is pageable, so this returns only once the chunk has landed,
-    // ordered behind whatever was already queued on the caller's stream.
     CUresult result =
-        cuMemcpyDtoHAsync_v2(destination, source + offset, chunk, stream);
+        copy_chunk(chunk == 0 ? nullptr : host.data(), offset, chunk);
     if (lupine_write_dtoh_chunk_response(conn, request_id, result, host.data(),
                                          chunk) < 0) {
       return -1;
@@ -2414,6 +2446,19 @@ static int lupine_copy_dtoh_serial(conn_t *conn, int request_id,
     offset += chunk;
   } while (offset < bytes);
   return 0;
+}
+
+static int lupine_copy_dtoh_serial(conn_t *conn, int request_id,
+                                   CUdeviceptr source, size_t bytes,
+                                   size_t offset, CUstream stream) {
+  return lupine_write_dtoh_chunks(
+      conn, request_id, bytes, offset,
+      [&](void *destination, size_t chunk_offset, size_t chunk) {
+        // host is pageable, so this returns only once the chunk has landed,
+        // ordered behind whatever was already queued on the caller's stream.
+        return cuMemcpyDtoHAsync_v2(destination, source + chunk_offset, chunk,
+                                    stream);
+      });
 }
 
 static constexpr size_t LUPINE_DTOH_PIPELINE_SLOT_BYTES =
@@ -2650,570 +2695,136 @@ int handle_cuMemcpyDtoH_v2(conn_t *conn) {
                                  fallback_offset, stream);
 }
 
-// The client resolves host-to-host locally and picks the direction, so at most
-// one side is host here. That side's staging buffer reproduces the caller's
-// pitch and offsets, so the descriptor reaches the driver exactly as written
-// and only the copied rows travel.
-int handle_cuMemcpy3D_v2(conn_t *conn) {
+using lupine_native_memcpy3d = CUresult (*)(const CUDA_MEMCPY3D &copy,
+                                            CUstream stream);
+static int lupine_defer_pitched_dtoh(conn_t *conn,
+                                     lupine_native_memcpy3d native);
+
+// Every 2D and 3D copy arrives promoted to the 3D descriptor. Host-to-host
+// requests read completed pinned backing; other host sides are staged densely.
+static int lupine_handle_memcpy3d(conn_t *conn, bool async, bool peer,
+                                  lupine_native_memcpy3d native) {
   uint8_t direction = LUPINE_COPY_DIRECTION_DTOD;
-  CUDA_MEMCPY3D copy = {};
   if (rpc_read(conn, &direction, sizeof(direction)) < 0) {
     return -1;
   }
-  switch (direction) {
-  case LUPINE_COPY_DIRECTION_HTOD: {
-    bool is_server_authoritative = false;
-    if (rpc_read(conn, &is_server_authoritative,
-                 sizeof(is_server_authoritative)) < 0 ||
-        rpc_read(conn, &copy, sizeof(copy)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result =
-        is_server_authoritative
-            ? cuMemcpy3D_v2(&copy)
-            : lupine_copy_client_host_to_device(conn, CU_STREAM_LEGACY, true,
-                                                lupine_make_3d_htod_copy(copy));
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
+  if (direction == LUPINE_COPY_DIRECTION_DTOH && async && !peer) {
+    return lupine_defer_pitched_dtoh(conn, native);
   }
-  case LUPINE_COPY_DIRECTION_DTOH: {
-    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
-      return -1;
-    }
-    size_t slice = copy.dstHeight * copy.dstPitch;
-    size_t offset =
-        copy.dstZ * slice + copy.dstY * copy.dstPitch + copy.dstXInBytes;
-    std::vector<unsigned char> host((copy.Depth - 1) * slice +
-                                    (copy.Height - 1) * copy.dstPitch + offset +
-                                    copy.WidthInBytes);
-    copy.dstHost = host.data();
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy3D_v2(&copy);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
-                           copy.Height, copy.dstPitch, copy.Depth,
-                           slice) < 0) ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  default: {
-    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy3D_v2(&copy);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  }
-}
-
-// The client resolves host-to-host locally and picks the direction, so at most
-// one side is host here. That side's staging buffer reproduces the caller's
-// pitch and offsets, so the descriptor reaches the driver exactly as written
-// and only the copied rows travel.
-int handle_cuMemcpy3DAsync_v2(conn_t *conn) {
-  uint8_t direction = LUPINE_COPY_DIRECTION_DTOD;
+  bool is_server_authoritative = false;
   CUDA_MEMCPY3D copy = {};
-  CUstream stream = nullptr;
-  if (rpc_read(conn, &direction, sizeof(direction)) < 0) {
+  CUstream stream = CU_STREAM_LEGACY;
+  std::vector<unsigned char> host;
+  if ((direction == LUPINE_COPY_DIRECTION_HTOD && !peer &&
+       rpc_read(conn, &is_server_authoritative,
+                sizeof(is_server_authoritative)) < 0) ||
+      rpc_read(conn, &copy, sizeof(copy)) < 0) {
     return -1;
   }
-  switch (direction) {
-  case LUPINE_COPY_DIRECTION_HTOD: {
-    bool is_server_authoritative = false;
-    if (rpc_read(conn, &is_server_authoritative,
-                 sizeof(is_server_authoritative)) < 0 ||
-        rpc_read(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_read(conn, &stream, sizeof(stream)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result =
-        is_server_authoritative
-            ? cuMemcpy3DAsync_v2(&copy, stream)
-            : lupine_copy_client_host_to_device(conn, stream, false,
-                                                lupine_make_3d_htod_copy(copy));
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  case LUPINE_COPY_DIRECTION_DTOH: {
-    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
-      return -1;
-    }
-    size_t slice = copy.dstHeight * copy.dstPitch;
-    size_t offset =
-        copy.dstZ * slice + copy.dstY * copy.dstPitch + copy.dstXInBytes;
-    std::vector<unsigned char> host((copy.Depth - 1) * slice +
-                                    (copy.Height - 1) * copy.dstPitch + offset +
-                                    copy.WidthInBytes);
-    copy.dstHost = host.data();
-    if (rpc_read(conn, &stream, sizeof(stream)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy3DAsync_v2(&copy, stream);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
-                           copy.Height, copy.dstPitch, copy.Depth,
-                           slice) < 0) ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  default: {
-    if (rpc_read(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_read(conn, &stream, sizeof(stream)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy3DAsync_v2(&copy, stream);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  }
-}
-
-// The client resolves host-to-host locally and picks the direction, so at most
-// one side is host here. That side's staging buffer reproduces the caller's
-// pitch and offsets, so the descriptor reaches the driver exactly as written
-// and only the copied rows travel.
-int handle_cuMemcpy3DPeer(conn_t *conn) {
-  CUDA_MEMCPY3D_PEER copy = {};
-  if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
-    return -1;
-  }
-  uint8_t direction = copy.srcMemoryType == CU_MEMORYTYPE_HOST
-                          ? LUPINE_COPY_DIRECTION_HTOD
-                          : (copy.dstMemoryType == CU_MEMORYTYPE_HOST
-                                 ? LUPINE_COPY_DIRECTION_DTOH
-                                 : LUPINE_COPY_DIRECTION_DTOD);
-  switch (direction) {
-  case LUPINE_COPY_DIRECTION_HTOD: {
-    size_t slice = copy.srcHeight * copy.srcPitch;
-    size_t offset =
-        copy.srcZ * slice + copy.srcY * copy.srcPitch + copy.srcXInBytes;
-    std::vector<unsigned char> host((copy.Depth - 1) * slice +
-                                    (copy.Height - 1) * copy.srcPitch + offset +
-                                    copy.WidthInBytes);
+  if (direction == LUPINE_COPY_DIRECTION_HTOD && peer) {
+    host.resize(lupine_pack_host_source(copy));
     copy.srcHost = host.data();
-    if (rpc_read_pitched(conn, host.data() + offset, copy.WidthInBytes,
-                         copy.Height, copy.srcPitch, copy.Depth, slice) < 0) {
+    if (rpc_read(conn, host.data(), host.size()) < 0) {
       return -1;
     }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy3DPeer(&copy);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
   }
-  case LUPINE_COPY_DIRECTION_DTOH: {
-    size_t slice = copy.dstHeight * copy.dstPitch;
-    size_t offset =
-        copy.dstZ * slice + copy.dstY * copy.dstPitch + copy.dstXInBytes;
-    std::vector<unsigned char> host((copy.Depth - 1) * slice +
-                                    (copy.Height - 1) * copy.dstPitch + offset +
-                                    copy.WidthInBytes);
+  if (direction == LUPINE_COPY_DIRECTION_DTOH) {
+    host.resize(lupine_pack_host_destination(copy));
     copy.dstHost = host.data();
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy3DPeer(&copy);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
-                           copy.Height, copy.dstPitch, copy.Depth,
-                           slice) < 0) ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
   }
-  default: {
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy3DPeer(&copy);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  }
-}
-
-// The client resolves host-to-host locally and picks the direction, so at most
-// one side is host here. That side's staging buffer reproduces the caller's
-// pitch and offsets, so the descriptor reaches the driver exactly as written
-// and only the copied rows travel.
-int handle_cuMemcpy3DPeerAsync(conn_t *conn) {
-  CUDA_MEMCPY3D_PEER copy = {};
-  CUstream stream = nullptr;
-  if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
+  if (async && rpc_read(conn, &stream, sizeof(stream)) < 0) {
     return -1;
   }
-  uint8_t direction = copy.srcMemoryType == CU_MEMORYTYPE_HOST
-                          ? LUPINE_COPY_DIRECTION_HTOD
-                          : (copy.dstMemoryType == CU_MEMORYTYPE_HOST
-                                 ? LUPINE_COPY_DIRECTION_DTOH
-                                 : LUPINE_COPY_DIRECTION_DTOD);
-  switch (direction) {
-  case LUPINE_COPY_DIRECTION_HTOD: {
-    size_t slice = copy.srcHeight * copy.srcPitch;
-    size_t offset =
-        copy.srcZ * slice + copy.srcY * copy.srcPitch + copy.srcXInBytes;
-    std::vector<unsigned char> host((copy.Depth - 1) * slice +
-                                    (copy.Height - 1) * copy.srcPitch + offset +
-                                    copy.WidthInBytes);
-    copy.srcHost = host.data();
-    if (rpc_read_pitched(conn, host.data() + offset, copy.WidthInBytes,
-                         copy.Height, copy.srcPitch, copy.Depth, slice) < 0 ||
-        rpc_read(conn, &stream, sizeof(stream)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy3DPeerAsync(&copy, stream);
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  // Read completed CPU backing without entering CUDA, which may be locked by
+  // cuMemFree while it waits for the host callback requesting these bytes.
+  if (direction == LUPINE_COPY_DIRECTION_HTOH) {
+    const auto *source = static_cast<const char *>(copy.srcHost) +
+                         copy.srcZ * copy.srcHeight * copy.srcPitch +
+                         copy.srcY * copy.srcPitch + copy.srcXInBytes;
+    CUresult result = CUDA_SUCCESS;
     if (rpc_write_start_response(conn, request_id) < 0 ||
         rpc_write(conn, &result, sizeof(result)) < 0 ||
+        rpc_write_pitched(conn, source, copy.WidthInBytes, copy.Height,
+                          copy.srcPitch, copy.Depth,
+                          copy.srcHeight * copy.srcPitch) < 0 ||
         rpc_write_end(conn) < 0) {
       return -1;
     }
     return 0;
   }
-  case LUPINE_COPY_DIRECTION_DTOH: {
-    size_t slice = copy.dstHeight * copy.dstPitch;
-    size_t offset =
-        copy.dstZ * slice + copy.dstY * copy.dstPitch + copy.dstXInBytes;
-    std::vector<unsigned char> host((copy.Depth - 1) * slice +
-                                    (copy.Height - 1) * copy.dstPitch + offset +
-                                    copy.WidthInBytes);
-    copy.dstHost = host.data();
-    if (rpc_read(conn, &stream, sizeof(stream)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy3DPeerAsync(&copy, stream);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
-                           copy.Height, copy.dstPitch, copy.Depth,
-                           slice) < 0) ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
+
+  CUresult result =
+      direction == LUPINE_COPY_DIRECTION_HTOD && !peer &&
+              !is_server_authoritative
+          ? lupine_copy_client_host_to_device(conn, stream, !async,
+                                              lupine_make_3d_htod_copy(copy))
+          : native(copy, stream);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      (direction == LUPINE_COPY_DIRECTION_DTOH && result == CUDA_SUCCESS &&
+       rpc_write(conn, host.data(), host.size()) < 0) ||
+      rpc_write_end(conn) < 0) {
+    return -1;
   }
-  default: {
-    if (rpc_read(conn, &stream, sizeof(stream)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy3DPeerAsync(&copy, stream);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  }
+  return 0;
 }
 
-// The client resolves host-to-host locally and picks the direction, so at most
-// one side is host here. That side's staging buffer reproduces the caller's
-// pitch and offsets, so the descriptor reaches the driver exactly as written
-// and only the copied rows travel.
 int handle_cuMemcpy2D_v2(conn_t *conn) {
-  uint8_t direction = LUPINE_COPY_DIRECTION_DTOD;
-  CUDA_MEMCPY2D copy = {};
-  if (rpc_read(conn, &direction, sizeof(direction)) < 0) {
-    return -1;
-  }
-  switch (direction) {
-  case LUPINE_COPY_DIRECTION_HTOD: {
-    bool is_server_authoritative = false;
-    if (rpc_read(conn, &is_server_authoritative,
-                 sizeof(is_server_authoritative)) < 0 ||
-        rpc_read(conn, &copy, sizeof(copy)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result =
-        is_server_authoritative
-            ? cuMemcpy2D_v2(&copy)
-            : lupine_copy_client_host_to_device(conn, CU_STREAM_LEGACY, true,
-                                                lupine_make_2d_htod_copy(copy));
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  case LUPINE_COPY_DIRECTION_DTOH: {
-    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
-      return -1;
-    }
-    size_t offset = copy.dstY * copy.dstPitch + copy.dstXInBytes;
-    std::vector<unsigned char> host((copy.Height - 1) * copy.dstPitch + offset +
-                                    copy.WidthInBytes);
-    copy.dstHost = host.data();
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy2D_v2(&copy);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
-                           copy.Height, copy.dstPitch, 1, 0) < 0) ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  default: {
-    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy2D_v2(&copy);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  }
+  return lupine_handle_memcpy3d(conn, false, false,
+                                [](const CUDA_MEMCPY3D &copy, CUstream) {
+                                  CUDA_MEMCPY2D flat = lupine_memcpy2d_of(copy);
+                                  return cuMemcpy2D_v2(&flat);
+                                });
 }
 
-// The client resolves host-to-host locally and picks the direction, so at most
-// one side is host here. That side's staging buffer reproduces the caller's
-// pitch and offsets, so the descriptor reaches the driver exactly as written
-// and only the copied rows travel.
 int handle_cuMemcpy2DUnaligned_v2(conn_t *conn) {
-  uint8_t direction = LUPINE_COPY_DIRECTION_DTOD;
-  CUDA_MEMCPY2D copy = {};
-  if (rpc_read(conn, &direction, sizeof(direction)) < 0) {
-    return -1;
-  }
-  switch (direction) {
-  case LUPINE_COPY_DIRECTION_HTOD: {
-    bool is_server_authoritative = false;
-    if (rpc_read(conn, &is_server_authoritative,
-                 sizeof(is_server_authoritative)) < 0 ||
-        rpc_read(conn, &copy, sizeof(copy)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result =
-        is_server_authoritative
-            ? cuMemcpy2DUnaligned_v2(&copy)
-            : lupine_copy_client_host_to_device(conn, CU_STREAM_LEGACY, true,
-                                                lupine_make_2d_htod_copy(copy));
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  case LUPINE_COPY_DIRECTION_DTOH: {
-    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
-      return -1;
-    }
-    size_t offset = copy.dstY * copy.dstPitch + copy.dstXInBytes;
-    std::vector<unsigned char> host((copy.Height - 1) * copy.dstPitch + offset +
-                                    copy.WidthInBytes);
-    copy.dstHost = host.data();
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy2DUnaligned_v2(&copy);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
-                           copy.Height, copy.dstPitch, 1, 0) < 0) ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  default: {
-    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy2DUnaligned_v2(&copy);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  }
+  return lupine_handle_memcpy3d(conn, false, false,
+                                [](const CUDA_MEMCPY3D &copy, CUstream) {
+                                  CUDA_MEMCPY2D flat = lupine_memcpy2d_of(copy);
+                                  return cuMemcpy2DUnaligned_v2(&flat);
+                                });
 }
 
-// The client resolves host-to-host locally and picks the direction, so at most
-// one side is host here. That side's staging buffer reproduces the caller's
-// pitch and offsets, so the descriptor reaches the driver exactly as written
-// and only the copied rows travel.
 int handle_cuMemcpy2DAsync_v2(conn_t *conn) {
-  uint8_t direction = LUPINE_COPY_DIRECTION_DTOD;
-  CUDA_MEMCPY2D copy = {};
-  CUstream stream = nullptr;
-  if (rpc_read(conn, &direction, sizeof(direction)) < 0) {
-    return -1;
-  }
-  switch (direction) {
-  case LUPINE_COPY_DIRECTION_HTOD: {
-    bool is_server_authoritative = false;
-    if (rpc_read(conn, &is_server_authoritative,
-                 sizeof(is_server_authoritative)) < 0 ||
-        rpc_read(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_read(conn, &stream, sizeof(stream)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result =
-        is_server_authoritative
-            ? cuMemcpy2DAsync_v2(&copy, stream)
-            : lupine_copy_client_host_to_device(conn, stream, false,
-                                                lupine_make_2d_htod_copy(copy));
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  case LUPINE_COPY_DIRECTION_DTOH: {
-    if (rpc_read(conn, &copy, sizeof(copy)) < 0) {
-      return -1;
-    }
-    size_t offset = copy.dstY * copy.dstPitch + copy.dstXInBytes;
-    std::vector<unsigned char> host((copy.Height - 1) * copy.dstPitch + offset +
-                                    copy.WidthInBytes);
-    copy.dstHost = host.data();
-    if (rpc_read(conn, &stream, sizeof(stream)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy2DAsync_v2(&copy, stream);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        (result == CUDA_SUCCESS &&
-         rpc_write_pitched(conn, host.data() + offset, copy.WidthInBytes,
-                           copy.Height, copy.dstPitch, 1, 0) < 0) ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  default: {
-    if (rpc_read(conn, &copy, sizeof(copy)) < 0 ||
-        rpc_read(conn, &stream, sizeof(stream)) < 0) {
-      return -1;
-    }
-    int request_id = rpc_read_end(conn);
-    if (request_id < 0) {
-      return -1;
-    }
-    CUresult result = cuMemcpy2DAsync_v2(&copy, stream);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    return 0;
-  }
-  }
+  return lupine_handle_memcpy3d(conn, true, false,
+                                [](const CUDA_MEMCPY3D &copy, CUstream stream) {
+                                  CUDA_MEMCPY2D flat = lupine_memcpy2d_of(copy);
+                                  return cuMemcpy2DAsync_v2(&flat, stream);
+                                });
+}
+
+int handle_cuMemcpy3D_v2(conn_t *conn) {
+  return lupine_handle_memcpy3d(
+      conn, false, false,
+      [](const CUDA_MEMCPY3D &copy, CUstream) { return cuMemcpy3D_v2(&copy); });
+}
+
+int handle_cuMemcpy3DAsync_v2(conn_t *conn) {
+  return lupine_handle_memcpy3d(conn, true, false,
+                                [](const CUDA_MEMCPY3D &copy, CUstream stream) {
+                                  return cuMemcpy3DAsync_v2(&copy, stream);
+                                });
+}
+
+int handle_cuMemcpy3DPeer(conn_t *conn) {
+  return lupine_handle_memcpy3d(
+      conn, false, true, [](const CUDA_MEMCPY3D &copy, CUstream) {
+        CUDA_MEMCPY3D_PEER peer = lupine_memcpy3d_peer_of(copy);
+        return cuMemcpy3DPeer(&peer);
+      });
+}
+
+int handle_cuMemcpy3DPeerAsync(conn_t *conn) {
+  return lupine_handle_memcpy3d(
+      conn, true, true, [](const CUDA_MEMCPY3D &copy, CUstream stream) {
+        CUDA_MEMCPY3D_PEER peer = lupine_memcpy3d_peer_of(copy);
+        return cuMemcpy3DPeerAsync(&peer, stream);
+      });
 }
 
 int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
@@ -3262,86 +2873,50 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   return 0;
 }
 
-int handle_cuMemcpyAtoH_v2(conn_t *conn) {
+static int lupine_serve_memcpy_atoh(conn_t *conn, bool async) {
   CUarray srcArray = nullptr;
   size_t srcOffset = 0;
   size_t byteCount = 0;
-  int request_id = 0;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-  std::vector<unsigned char> dstHost;
-
+  CUstream stream = nullptr;
   if (rpc_read(conn, &srcArray, sizeof(srcArray)) < 0 ||
       rpc_read(conn, &srcOffset, sizeof(srcOffset)) < 0 ||
-      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0) {
+      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
+      (async && rpc_read(conn, &stream, sizeof(stream)) < 0)) {
     return -1;
   }
-
-  request_id = rpc_read_end(conn);
+  int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
   }
-
-  size_t staging_size =
-      std::min(byteCount, (size_t)LUPINE_RPC_TRANSFER_CHUNK_BYTES);
-  if (staging_size != 0) {
-    try {
-      dstHost.resize(staging_size);
-    } catch (...) {
-      result = CUDA_ERROR_OUT_OF_MEMORY;
-      if (rpc_write_start_response(conn, request_id) < 0 ||
-          rpc_write(conn, &result, sizeof(result)) < 0 ||
-          rpc_write_end(conn) < 0) {
-        return -1;
-      }
-      return 0;
-    }
-  }
-
-  size_t offset = 0;
-  do {
-    size_t chunk = std::min(byteCount - offset, staging_size);
-    void *chunk_dst = chunk == 0 ? nullptr : dstHost.data();
-    result = cuMemcpyAtoH_v2(chunk_dst, srcArray, srcOffset + offset, chunk);
-    if (rpc_write_start_response(conn, request_id) < 0 ||
-        rpc_write(conn, &result, sizeof(result)) < 0 ||
-        (result == CUDA_SUCCESS &&
-         rpc_write(conn, dstHost.data(), chunk) < 0) ||
-        rpc_write_end(conn) < 0) {
-      return -1;
-    }
-    if (result != CUDA_SUCCESS) {
-      return 0;
-    }
-    offset += chunk;
-  } while (offset < byteCount);
-
-  return 0;
+  return lupine_write_dtoh_chunks(
+      conn, request_id, byteCount, 0,
+      [&](void *destination, size_t offset, size_t chunk) {
+        if (!async) {
+          return cuMemcpyAtoH_v2(destination, srcArray, srcOffset + offset,
+                                 chunk);
+        }
+        CUresult result = cuMemcpyAtoHAsync_v2(
+            destination, srcArray, srcOffset + offset, chunk, stream);
+        return result == CUDA_SUCCESS ? cuStreamSynchronize(stream) : result;
+      });
 }
 
-int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
-  uint64_t async_sequence = 0;
-  void *dstHost = nullptr;
-  CUdeviceptr srcDevice = 0;
-  size_t byteCount = 0;
-  CUstream stream = nullptr;
+int handle_cuMemcpyAtoH_v2(conn_t *conn) {
+  return lupine_serve_memcpy_atoh(conn, false);
+}
+
+int handle_cuMemcpyAtoHAsync_v2(conn_t *conn) {
+  return lupine_serve_memcpy_atoh(conn, true);
+}
+
+// Stages a device-to-host copy for delivery at the client's next synchronize,
+// or at every replay while the stream captures. Errors are dropped like a
+// launch's: an execution failure surfaces from the client's next synchronize.
+static void lupine_defer_dtoh(conn_t *conn, CUstream stream,
+                              const lupine_host_rows &client,
+                              CUdeviceptr srcDevice) {
+  size_t byteCount = client.bytes();
   CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
-      rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
-      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0) {
-    return -1;
-  }
-
-  if (rpc_read_end(conn) < 0) {
-    return -1;
-  }
-
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
-    return -1;
-  }
-
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
   if (stream != nullptr) {
     cuStreamIsCapturing(stream, &capture_status);
@@ -3351,15 +2926,14 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   CUresult alloc_result = CUDA_ERROR_INVALID_VALUE;
   if (capture_status != CU_STREAM_CAPTURE_STATUS_NONE) {
     auto *resources = lupine_get_stream_resources(stream);
-    host = lupine_alloc_capture_scratch(resources, byteCount);
+    host = lupine_alloc_capture_scratch(byteCount);
     if (host == nullptr && byteCount != 0) {
       result = CUDA_ERROR_OUT_OF_MEMORY;
     } else {
       result = cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
       if (result == CUDA_SUCCESS) {
-        lupine_graph_note_dtoh_copy(resources, dstHost, host, byteCount);
-        lupine_note_dtoh_undelivered(conn, stream, dstHost, host, byteCount,
-                                     true);
+        lupine_graph_note_dtoh_copy(resources, client, host);
+        lupine_note_dtoh_undelivered(conn, stream, client, host, true);
       }
       host = nullptr;
     }
@@ -3373,10 +2947,11 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
     } else {
       result = cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
       if (result == CUDA_SUCCESS && byteCount != 0) {
-        lupine_pending_dtoh_item copy{nullptr, dstHost, host, byteCount,
+        lupine_pending_dtoh_item copy{nullptr, client, host,
                                       alloc_result == CUDA_SUCCESS
                                           ? lupine_dtoh_storage::pinned
                                           : lupine_dtoh_storage::heap};
+        (void)cuStreamGetCtx(stream, &copy.context);
         lupine_pending_dtoh_copies().upsert(
             conn,
             [stream, &copy](lupine_pending_dtoh_streams &streams,
@@ -3384,20 +2959,71 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
               streams[stream].push_back(copy);
             },
             lupine_pending_dtoh_streams{});
-        lupine_note_dtoh_undelivered(conn, stream, dstHost, host, byteCount,
-                                     false);
+        lupine_note_dtoh_undelivered(conn, stream, client, host, false);
         host = nullptr;
       }
     }
   }
 
-  // A fire-and-forget copy drops an immediate validation error, matching launch
-  // semantics: an execution failure poisons the context and the driver reports
-  // it from the client's next synchronize.
   if (alloc_result == CUDA_SUCCESS && host != nullptr) {
     cuMemFreeHost(host);
   } else if (host != nullptr) {
     free(host);
+  }
+}
+
+int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
+  uint64_t async_sequence = 0;
+  void *dstHost = nullptr;
+  CUdeviceptr srcDevice = 0;
+  size_t byteCount = 0;
+  CUstream stream = nullptr;
+
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
+      rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
+      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0 ||
+      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+    return -1;
+  }
+  lupine_defer_dtoh(conn, stream, {dstHost, byteCount}, srcDevice);
+  rpc_async_sequence_end(conn);
+  return 0;
+}
+
+// A pitched device-to-host copy repacks its rows into dense stream-ordered
+// device scratch and leaves as a deferred linear copy; the client scatters the
+// rows back to its own pitch.
+static int lupine_defer_pitched_dtoh(conn_t *conn,
+                                     lupine_native_memcpy3d native) {
+  uint64_t async_sequence = 0;
+  CUDA_MEMCPY3D copy = {};
+  CUstream stream = nullptr;
+  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &copy, sizeof(copy)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0 ||
+      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+    return -1;
+  }
+  size_t slice = copy.dstHeight * copy.dstPitch;
+  lupine_host_rows client{static_cast<unsigned char *>(copy.dstHost) +
+                              copy.dstZ * slice + copy.dstY * copy.dstPitch +
+                              copy.dstXInBytes,
+                          copy.WidthInBytes,
+                          copy.Height,
+                          copy.dstPitch,
+                          copy.Depth,
+                          slice};
+  lupine_pack_host_destination(copy);
+  copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+  copy.dstHost = nullptr;
+  if (client.bytes() != 0 && cuMemAllocAsync(&copy.dstDevice, client.bytes(),
+                                             stream) == CUDA_SUCCESS) {
+    if (native(copy, stream) == CUDA_SUCCESS) {
+      lupine_defer_dtoh(conn, stream, client, copy.dstDevice);
+    }
+    (void)cuMemFreeAsync(copy.dstDevice, stream);
   }
   rpc_async_sequence_end(conn);
   return 0;
@@ -3438,12 +3064,12 @@ int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
   if (capture_status != CU_STREAM_CAPTURE_STATUS_NONE) {
     // Graph replay owns its staging storage and uses the application pointer.
     auto *resources = lupine_get_stream_resources(stream);
-    void *host = lupine_alloc_capture_scratch(resources, byteCount);
+    void *host = lupine_alloc_capture_scratch(byteCount);
     if (host != nullptr || byteCount == 0) {
       CUresult result =
           cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
       if (result == CUDA_SUCCESS) {
-        lupine_graph_note_dtoh_copy(resources, dstHost, host, byteCount);
+        lupine_graph_note_dtoh_copy(resources, {dstHost, byteCount}, host);
       }
     }
   } else {
@@ -3452,8 +3078,11 @@ int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
     CUresult result =
         cuMemcpyDtoHAsync_v2(server_host, srcDevice, byteCount, stream);
     if (result == CUDA_SUCCESS && byteCount != 0) {
-      lupine_pending_dtoh_item copy{nullptr, client_alias, server_host,
-                                    byteCount, lupine_dtoh_storage::borrowed};
+      lupine_pending_dtoh_item copy{nullptr,
+                                    {client_alias, byteCount},
+                                    server_host,
+                                    lupine_dtoh_storage::borrowed};
+      (void)cuStreamGetCtx(stream, &copy.context);
       lupine_pending_dtoh_copies().upsert(
           conn,
           [stream, &copy](lupine_pending_dtoh_streams &streams,

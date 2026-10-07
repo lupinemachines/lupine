@@ -44,6 +44,8 @@ struct lupine_client_transport_config {
   void (*connection_closed)(conn_t *conn) = nullptr;
   const char *connection_kind = nullptr;
   intptr_t w_offset = 0;
+  void (*checkpoint_begin)() = nullptr;
+  void (*checkpoint_end)() = nullptr;
 };
 
 // Each API shim links its own hidden copy of this transport, so one pool per

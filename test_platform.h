@@ -99,6 +99,22 @@ static inline bool lupine_test_set_nonblocking(lupine_socket_t socket) {
 #endif
 }
 
+static inline bool lupine_test_socket_error_is_reset() {
+#ifdef _WIN32
+  return WSAGetLastError() == WSAECONNRESET;
+#else
+  return errno == ECONNRESET;
+#endif
+}
+
+static inline bool lupine_test_socket_error_is_would_block() {
+#ifdef _WIN32
+  return WSAGetLastError() == WSAEWOULDBLOCK;
+#else
+  return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+}
+
 // shutdown() direction constants and the "do not raise SIGPIPE" send flag are
 // spelled differently, or not at all, on Winsock.
 #ifdef _WIN32

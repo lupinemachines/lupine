@@ -39,6 +39,7 @@ int handle_cuMemcpy2D_v2(conn_t *conn);
 int handle_cuMemcpy2DUnaligned_v2(conn_t *conn);
 int handle_cuMemcpy2DAsync_v2(conn_t *conn);
 int handle_cuMemcpyAtoH_v2(conn_t *conn);
+int handle_cuMemcpyAtoHAsync_v2(conn_t *conn);
 int handle_cuDeviceGetGraphMemAttribute(conn_t *conn);
 int handle_cuDeviceSetGraphMemAttribute(conn_t *conn);
 int handle_cuLibraryGetModule(conn_t *conn);
@@ -64,8 +65,9 @@ int handle_cuStreamAddCallback(conn_t *conn);
 int handle_cuEventRecord(conn_t *conn);
 int handle_cuEventRecordWithFlags(conn_t *conn);
 int handle_cuEventQuery(conn_t *conn);
-int handle_lupineEventQueryBatch(conn_t *conn);
 int handle_lupineStreamPoolInit(conn_t *conn);
+int handle_lupineEventCreateBatch(conn_t *conn);
+int handle_lupineLibraryLoadBatch(conn_t *conn);
 int handle_cuStreamWaitEvent(conn_t *conn);
 int handle_cuStreamBeginCaptureToGraph(conn_t *conn);
 int handle_cuStreamUpdateCaptureDependencies(conn_t *conn);
@@ -88,14 +90,12 @@ int handle_cuMemFreeHost(conn_t *conn);
 int handle_cuMemAllocManaged(conn_t *conn);
 int handle_cuMemFree_v2(conn_t *conn);
 void lupine_server_cleanup_identity_allocations(conn_t *conn);
-int handle_cuCtxSynchronize(conn_t *conn);
-int handle_cuStreamSynchronize(conn_t *conn);
 int handle_cuGraphLaunch(conn_t *conn);
-int handle_cuEventSynchronize(conn_t *conn);
 int handle_cuOccupancyMaxPotentialBlockSize(conn_t *conn);
 int handle_cuOccupancyMaxPotentialBlockSizeWithFlags(conn_t *conn);
 #if CUDA_VERSION >= 12000
 int handle_cuTensorMapEncodeTiled(conn_t *conn);
+int handle_cuTensorMapEncodeIm2col(conn_t *conn);
 #endif
 
 bool lupine_server_initialize_connection(conn_t *conn);

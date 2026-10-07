@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import sys
 import zipfile
@@ -13,13 +14,6 @@ from pathlib import Path
 import tomllib
 
 ROOT = Path(__file__).resolve().parent
-RUNTIME_STUBS = {
-    "lupine/_libs/linux-x86_64/libcudart.so.13",
-    "lupine/_libs/linux-aarch64/libcudart.so.13",
-    "lupine/_libs/macosx-universal2/libcudart.dylib",
-    "lupine/_libs/win-amd64/cudart64_13.dll",
-    "lupine/_libs/win-arm64/cudart64_13.dll",
-}
 
 
 def _project(path: Path) -> dict:
@@ -29,6 +23,37 @@ def _project(path: Path) -> dict:
 
 def _normalized(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
+
+
+# The client a release loads: the driver and NVML per platform, nothing else.
+REQUIRED = {
+    "linux": ("libcuda.so.1", "libnvidia-ml.so.1"),
+    "darwin": ("libcuda.dylib", "libnvidia-ml.dylib"),
+    "win32": ("nvcuda.dll", "nvml.dll"),
+}
+CONDITIONAL = {"libnccl", "libnvshmem_host"}
+
+
+def verify_loader(source: bytes) -> None:
+    """Check that ``lupine/_native.py`` preloads only the driver and NVML."""
+
+    found: dict[str, object] = {}
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in (
+                    "_REQUIRED",
+                    "_CONDITIONAL",
+                ):
+                    found[target.id] = ast.literal_eval(node.value)
+    if found.get("_REQUIRED") != REQUIRED:
+        raise ValueError(
+            f"loader must require the driver and NVML, found {found.get('_REQUIRED')}"
+        )
+    if set(found.get("_CONDITIONAL", {})) != CONDITIONAL:
+        raise ValueError(
+            f"loader may condition only NCCL and nvSHMEM, found {found.get('_CONDITIONAL')}"
+        )
 
 
 def verify_metadata(tag: str | None = None) -> str:
@@ -53,6 +78,7 @@ def verify_metadata(tag: str | None = None) -> str:
     if tag is not None and tag != f"v{version}":
         raise ValueError(f"release tag {tag!r} does not match version {version}")
 
+    verify_loader((ROOT / "lupine" / "_native.py").read_bytes())
     return version
 
 
@@ -72,6 +98,8 @@ def verify_wheels(directory: Path, version: str) -> None:
             if len(metadata_paths) != 1:
                 raise ValueError(f"{wheel} has {len(metadata_paths)} METADATA files")
             metadata = BytesParser().parsebytes(archive.read(metadata_paths[0]))
+            if "lupine/_native.py" in names:
+                verify_loader(archive.read("lupine/_native.py"))
 
         name = _normalized(metadata["Name"])
         if name in found:
@@ -96,11 +124,9 @@ def verify_wheels(directory: Path, version: str) -> None:
             )
         if not any(req.split(";", 1)[0].strip() == requirement for req in requirements):
             raise ValueError(f"{name} wheel must require {requirement}")
-        expected_native = RUNTIME_STUBS if name == "lupine" else set()
-        if native_files != expected_native:
+        if native_files:
             raise ValueError(
-                f"{name} wheel native files differ: "
-                f"found {sorted(native_files)}, expected {sorted(expected_native)}"
+                f"{name} wheel must be pure Python, found {sorted(native_files)}"
             )
 
 

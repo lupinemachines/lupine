@@ -263,7 +263,7 @@ int handle_ncclCommInitAll(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &ndev, sizeof(int)) < 0 || ndev < 0 || false)
     goto ERROR_0;
-  comm = (ncclComm_t *)malloc(ndev * sizeof(ncclComm_t));
+  comm = (ncclComm_t *)calloc(ndev * sizeof(ncclComm_t), 1);
   if ((ndev * sizeof(ncclComm_t) != 0 && comm == nullptr) || ndev < 0 ||
       rpc_read(conn, &devlist_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
@@ -605,7 +605,7 @@ ERROR_0:
 int handle_ncclCommGrow(conn_t *conn) {
   ncclComm_t comm;
   int nRanks;
-  ncclUniqueId *uniqueId_null_check;
+  uint8_t uniqueId_present = 0;
   ncclUniqueId uniqueId;
   int rank;
   ncclComm_t newcomm{};
@@ -623,8 +623,8 @@ int handle_ncclCommGrow(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 ||
       rpc_read(conn, &nRanks, sizeof(int)) < 0 ||
-      rpc_read(conn, &uniqueId_null_check, sizeof(const ncclUniqueId *)) < 0 ||
-      (uniqueId_null_check &&
+      rpc_read(conn, &uniqueId_present, sizeof(uint8_t)) < 0 ||
+      (uniqueId_present &&
        rpc_read(conn, &uniqueId, sizeof(const ncclUniqueId)) < 0) ||
       rpc_read(conn, &rank, sizeof(int)) < 0 ||
       rpc_read(conn, &config_size, sizeof(config_size)) < 0 ||
@@ -651,7 +651,7 @@ int handle_ncclCommGrow(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(comm, nRanks, uniqueId_null_check ? &uniqueId : nullptr, rank,
+          : fn(comm, nRanks, uniqueId_present ? &uniqueId : nullptr, rank,
                &newcomm,
                lupine_versioned_struct<ncclConfig_t>(
                    config_bytes, config_size,

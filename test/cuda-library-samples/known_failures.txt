@@ -1,9 +1,6 @@
 # Units (<sample dir>/<executable>) that run_cuda_library_samples.sh marks
 # SKIP:known. One tracking issue per root cause; drop the lines when it closes.
 
-# #598 nvJPEG multiple decoder instances
-nvJPEG/nvJPEG-Decoder-MultipleInstances/nvJPEGDecMultipleInstances
-
 # Fail natively as well (not lupine): block-scaled FP8 / MXFP8 / NVFP4 and the
 # grouped FP8 GEMMs need Hopper/Blackwell; the rest error out on the RTX 4090 +
 # RTX 2070 SUPER test host. MgPotrf passes there but not on the single-GPU L4.
@@ -20,3 +17,14 @@ cuBLASLt/LtHSHgemmGroupedSimple/sample_cublasLt_LtHSHgemmGroupedSimple
 cuSOLVER/gesv/cusolver_irs_expert
 cuSOLVER/gesv/cusolver_irs_lapack
 cuFFT/3d_mgpu_r2c_c2r/bin/3d_mgpu_r2c_c2r_example
+
+# #832 cuFFTDx fills >=1GiB with one synchronous cudaMemcpy per CUDA block:
+# 2.75M blocking HtoD round trips before the first kernel. Passes natively.
+MathDx/cuFFTDx/08_mixed_precision/mixed_precision_fft_1d
+
+# #836 Run against SAMPLE_TIMEOUT: each times an 8192^3 cuBLASLt DGEMM as its
+# reference, so both are FP64-rate bound. On an RTX 4090 they take 56s and 44s
+# natively, 160s and 91s through the shim at 0.30 ms RTT; the sgemm sibling
+# beside them passes in 24s on the same lane.
+MathDx/cuBLASDx/16_dgemm_emulation/dgemm_emulation
+MathDx/cuBLASDx/20_dgemm_emulation_pipeline/dgemm_emulation_pipeline

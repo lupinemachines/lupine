@@ -1,5 +1,5 @@
-// Async CUDA calls issued by different host threads still have to reach the
-// driver in issue order. A large kernel argument keeps one HTTP/2 lane busy
+// A host release/acquire handoff orders CUDA calls across threads. A large
+// kernel argument keeps one HTTP/2 lane busy
 // long enough for a smaller request on another lane to overtake it unless the
 // server sequences native submission.
 #include <cuda_runtime.h>

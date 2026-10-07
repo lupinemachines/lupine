@@ -20,6 +20,7 @@ __pycache__/
 test/cuda-samples/
 test/cuda-library-samples/*
 !test/cuda-library-samples/known_failures.txt
+!test/cuda-library-samples/patches/
 test/pytorch/results/
 *.log
 *.tsv

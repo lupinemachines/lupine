@@ -2,6 +2,7 @@
 #define RPC_H
 
 #include "lupine_platform.h"
+#include <set>
 #include <stdint.h>
 #include <vector>
 
@@ -17,12 +18,29 @@ static constexpr int LUPINE_SIDE_EFFECT_HOST_FUNCTION = 1;
 static constexpr int LUPINE_SIDE_EFFECT_STREAM_CALLBACK = 2;
 static constexpr int LUPINE_SIDE_EFFECT_READ_HOST_MEMORY = 3;
 static constexpr int LUPINE_SIDE_EFFECT_LOG_CALLBACK = 4;
-static constexpr int LUPINE_SIDE_EFFECT_LIBRARY_LOG = 5;
 
 static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOH = 0;
 static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOD = 1;
 static constexpr uint8_t LUPINE_COPY_DIRECTION_DTOH = 2;
 static constexpr uint8_t LUPINE_COPY_DIRECTION_DTOD = 3;
+
+// Where the dense bytes of a deferred device-to-host copy land in client
+// memory: depth slices of height rows of width bytes. A linear copy is one row.
+// Sent as-is ahead of the bytes.
+struct lupine_host_rows {
+  void *dst = nullptr;
+  size_t width = 0;
+  size_t height = 1;
+  size_t pitch = 0;
+  size_t depth = 1;
+  size_t slice = 0;
+
+  size_t bytes() const { return width * height * depth; }
+  unsigned char *row(size_t index) const {
+    return static_cast<unsigned char *>(dst) + index / height * slice +
+           index % height * pitch;
+  }
+};
 
 // References caller-owned bytes while an RPC is being serialized. Cursors are
 // consumed directly by the HTTP/2 transport.
@@ -48,14 +66,6 @@ struct rpc_write_cursor {
 
   size_t remaining() const { return size; }
   bool pending() const { return size != 0 || refill != nullptr; }
-};
-
-struct rpc_http2_read_stats {
-  uint64_t direct_bytes;
-  uint64_t staged_bytes;
-  uint64_t staged_read_bytes;
-  uint64_t staged_buffers;
-  uint64_t peak_staged_bytes;
 };
 
 // Remote accelerator and pinned-host addresses live in this upper canonical
@@ -115,13 +125,20 @@ struct conn_t {
   int write_id;
   int write_op;
   int32_t write_stream_id;
+  uint64_t write_dependency;
+  int32_t async_prefix_stream;
+  uint64_t async_prefix;
 
   pthread_t read_thread;
   pthread_mutex_t write_mutex, call_mutex, async_mutex;
   pthread_cond_t async_cond;
   uint64_t issued_async_sequence;
   uint64_t serving_async_sequence;
+  uint64_t published_async_sequence;
+  std::set<uint64_t> completed_async_sequences;
+  bool async_cancelled;
   int async_sync_initialized;
+  int first_async_error;
   std::vector<rpc_write_cursor> write_queue;
   std::vector<rpc_host_allocation_write> host_allocation_writes;
   int host_allocation_writes_pending;
@@ -168,6 +185,9 @@ struct rpc_lifecycle_hooks {
   void (*thread_lane_destroyed)(uint64_t lane_id);
   // Runs on the RPC caller after a complete response has been consumed.
   void (*response_completed)(conn_t *conn, int32_t stream_id);
+  // Whether an alias-backed response destination needs write protection.
+  // Without a backend hook, preserve the protected read-view behavior.
+  bool (*host_range_is_protected)(uintptr_t start, size_t size) = nullptr;
 };
 extern int rpc_set_lifecycle_hooks(const rpc_lifecycle_hooks *hooks);
 
@@ -179,6 +199,11 @@ extern void rpc_unbind_http2_stream(conn_t *conn);
 extern int32_t rpc_current_http2_stream(conn_t *conn);
 extern int rpc_read_start(conn_t *conn, int write_id);
 extern int rpc_read(conn_t *conn, void *data, size_t size);
+// A read into a host allocation's client view lands through its writable
+// alias, then is recorded so the view is refreshed before it is next used.
+extern void *rpc_host_allocation_alias(conn_t *conn, void *data, size_t size);
+extern int rpc_note_host_allocation_write(conn_t *conn, void *data,
+                                          size_t written);
 // Reads a field emitted by rpc_write_buffer. Keeping buffered reads distinct
 // makes request and response serializers exact field-for-field inverses.
 static inline int rpc_read_buffer(conn_t *conn, void *data, size_t size) {
@@ -222,8 +247,13 @@ extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
 extern int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
                              size_t count);
 extern int rpc_write_end(conn_t *conn);
-// Server handlers wait only after receiving the complete async request, then
-// hold the turn through the native API submission.
+// Wait for all fire-and-forget calls published before an RPC's entry. These
+// waits order native submission, not GPU completion; overlapping calls remain
+// free to execute and complete in either order.
+extern int rpc_async_sequence_wait(conn_t *conn, uint64_t published);
+extern void rpc_cancel_async_waits(conn_t *conn);
+// Bracket native submission to record completion of the request's sequence.
+// No execution lock is held between begin and end.
 extern int rpc_async_sequence_begin(conn_t *conn, uint64_t sequence);
 extern void rpc_async_sequence_end(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
@@ -252,18 +282,14 @@ constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;
 // The selected native client object no longer matches the server. Retrying an
 // arena slot cannot help; the launcher must fetch the advertised bundle.
 constexpr int LUPINE_RPC_HTTP2_CLIENT_MISMATCH = -4;
-extern int rpc_http2_read(conn_t *conn, void *data, size_t size);
+// 0 once all `size` bytes arrived, else LUPINE_RPC_HTTP2_STREAM_END or -1.
 extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                                  size_t size);
-extern int rpc_http2_write(conn_t *conn,
-                           std::vector<rpc_write_cursor> &cursors);
 extern int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
                                   std::vector<rpc_write_cursor> &cursors);
 extern int32_t rpc_http2_dispatch_stream(conn_t *conn);
 extern int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id);
 extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);
-// Blocks until every queued wire byte has reached the socket.
-extern int rpc_http2_flush(conn_t *conn);
 extern int32_t rpc_http2_accept_stream(conn_t *conn);
 extern int rpc_http2_client_init(conn_t *conn);
 // Sends another arena preflight on the existing HTTP/2 connection and waits
@@ -277,6 +303,9 @@ extern int rpc_http2_client_retry_handshake(conn_t *conn);
 // LUPINE_RPC_HTTP2_CLIENT_MISMATCH.
 extern int rpc_http2_client_await_ready(conn_t *conn);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
+// Stop receiving and wake RPC waiters without closing the socket. Queued
+// output is drained when the transport is destroyed.
+extern void rpc_http2_shutdown(conn_t *conn);
 extern void rpc_http2_destroy(conn_t *conn);
 struct lupine_client_bundle_registry;
 struct rpc_http2_server_metadata {
@@ -304,7 +333,6 @@ extern const char *rpc_http2_peer_bulk_token(conn_t *conn);
 extern bool rpc_http2_peer_va_window(conn_t *conn, lupine_va_window *window);
 // Returns -1 on failure, 0 for an RPC connection, and a positive value when
 // the HTTP layer has already handled the request.
-extern int rpc_http2_server_init(conn_t *conn);
 extern int
 rpc_http2_server_init_with_metadata(conn_t *conn,
                                     const rpc_http2_server_metadata *metadata);
@@ -315,28 +343,11 @@ extern int rpc_http2_server_graceful_shutdown(conn_t *conn);
 // Returns the x-lupine-session request header after the server has consumed
 // the HTTP/2 request headers, or nullptr when no session was supplied.
 extern const char *rpc_http2_session_id(conn_t *conn);
-extern int rpc_http2_get_read_stats(conn_t *conn, rpc_http2_read_stats *stats);
 
 // Keeps the client-to-server TCP path active while a synchronous RPC waits for
 // its response. The heartbeat is transport-only: it emits HTTP/2 PING frames
 // and does not add, combine, or otherwise change application RPCs.
 extern void rpc_http2_response_wait_begin(conn_t *conn);
 extern void rpc_http2_response_wait_end(conn_t *conn);
-
-// Server-side flow control for payloads that outlive the read that received
-// them. Between hold_begin and hold_end the transport stops crediting received
-// DATA bytes back to the peer; hold_end returns the byte count the caller now
-// owns and must hand to rpc_http2_window_release once the buffer those bytes
-// landed in is idle. Credit stays tagged with its stream because HTTP/2 flow
-// control is stream-specific. Held bytes are capped, so a caller that never
-// releases costs window but cannot close it.
-struct rpc_http2_window_credit {
-  int32_t stream_id = -1;
-  uint64_t bytes = 0;
-};
-extern void rpc_http2_window_hold_begin(conn_t *conn);
-extern rpc_http2_window_credit rpc_http2_window_hold_end(conn_t *conn);
-extern void rpc_http2_window_release(conn_t *conn,
-                                     rpc_http2_window_credit credit);
 
 #endif

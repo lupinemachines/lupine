@@ -35,10 +35,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(CTest)
 find_package(Threads REQUIRED)
 
-set(LUPINE_MANYLINUX2014 OFF)
+set(LUPINE_MANYLINUX OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
-   "$ENV{AUDITWHEEL_POLICY}" STREQUAL "manylinux2014")
-    set(LUPINE_MANYLINUX2014 ON)
+   "$ENV{AUDITWHEEL_POLICY}" STREQUAL "manylinux_2_28")
+    set(LUPINE_MANYLINUX ON)
     include(ExternalProject)
     include(FetchContent)
     include(ProcessorCount)
@@ -54,7 +54,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
     endif()
 
     set(LUPINE_OPENSSL_PREFIX
-        "${CMAKE_BINARY_DIR}/manylinux2014/openssl")
+        "${CMAKE_BINARY_DIR}/manylinux/openssl")
     file(MAKE_DIRECTORY "${LUPINE_OPENSSL_PREFIX}/include")
 
     function(lupine_add_manylinux_nghttp2)
@@ -258,8 +258,8 @@ function(lupine_internal_target target)
     )
 endfunction()
 
-function(lupine_manylinux2014_client target)
-    if(LUPINE_MANYLINUX2014)
+function(lupine_manylinux_client target)
+    if(LUPINE_MANYLINUX)
         target_link_options(${target} PRIVATE
             -static-libgcc
             -static-libstdc++
@@ -286,17 +286,20 @@ function(lupine_scaled_timeout out base)
     set(${out} ${scaled} PARENT_SCOPE)
 endfunction()
 
-# Vendored LZ4 keeps the neutral core independent of host package versions.
-add_library(lupine_lz4 STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4frame.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/lz4hc.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib/xxhash.c)
-set_target_properties(lupine_lz4 PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(lupine_lz4 PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lz4/lib)
+# Pin the codec implementation on every supported client/server platform.
+file(GLOB LUPINE_ZSTD_SOURCES CONFIGURE_DEPENDS
+    third_party/zstd/lib/common/*.c
+    third_party/zstd/lib/compress/*.c
+    third_party/zstd/lib/decompress/*.c)
+add_library(lupine_zstd STATIC ${LUPINE_ZSTD_SOURCES})
+set_target_properties(lupine_zstd PROPERTIES
+    POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
+target_include_directories(lupine_zstd PUBLIC third_party/zstd/lib)
+target_compile_definitions(lupine_zstd PRIVATE
+    ZSTD_DISABLE_ASM ZSTD_LEGACY_SUPPORT=0
+    ZSTDLIB_VISIBLE= ZSTDERRORLIB_VISIBLE=)
 if(NOT MSVC AND NOT CMAKE_BUILD_TYPE)
-    target_compile_options(lupine_lz4 PRIVATE -O2)
+    target_compile_options(lupine_zstd PRIVATE -O2)
 endif()
 
 # Accelerator-neutral wire protocol, HTTP/2, compression, and platform IPC.
@@ -304,6 +307,7 @@ add_library(lupine_rpc_core STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/rpc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/h2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/dispatch.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/device_stdout.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/client_bundle.cpp
 )
 lupine_internal_target(lupine_rpc_core)
@@ -311,8 +315,8 @@ target_include_directories(lupine_rpc_core
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE ${NGHTTP2_INCLUDE_DIR})
 target_link_libraries(lupine_rpc_core PUBLIC
-    Threads::Threads ${NGHTTP2_LIBRARY} lupine_lz4)
-if(LUPINE_MANYLINUX2014)
+    Threads::Threads ${NGHTTP2_LIBRARY} lupine_zstd)
+if(LUPINE_MANYLINUX)
     add_dependencies(lupine_rpc_core lupine_manylinux_openssl_external)
 endif()
 if(OpenSSL_FOUND)
@@ -378,9 +382,15 @@ if(LUPINE_BUILD_CUDA)
     target_link_libraries(lupine_cuda_client PRIVATE
         lupine_client_transport lupine_cuda_checkpoint lupine_ipc
         ${CMAKE_DL_LIBS})
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_sources(lupine_cuda_client PRIVATE
+            device_ioctl_client.cpp device_ioctl_proxy.cpp device_ioctl_preload.cpp)
+        # shm_open/shm_unlink live in librt before glibc 2.34.
+        target_link_libraries(lupine_cuda_client PRIVATE rt)
+    endif()
     set_target_properties(lupine_cuda_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_cuda_client)
+    lupine_manylinux_client(lupine_cuda_client)
     if(WIN32)
         target_compile_definitions(lupine_cuda_client PRIVATE
             LUPINE_WINDOWS_POSIX_SHIMS
@@ -405,512 +415,19 @@ if(LUPINE_BUILD_CUDA)
 endif()
 
 if(LUPINE_BUILD_CUDA)
-    if(LUPINE_CUDA_HEADER_VERSION)
-        math(EXPR LUPINE_CUDART_MAJOR "${LUPINE_CUDA_HEADER_VERSION} / 1000")
-    else()
-        set(LUPINE_CUDART_MAJOR ${CUDAToolkit_VERSION_MAJOR})
-    endif()
-    set(LUPINE_CUDART_SOVERSION ${LUPINE_CUDART_MAJOR})
-    set(LUPINE_CUDART_DLL_SUFFIX ${LUPINE_CUDART_MAJOR})
-    if(LUPINE_CUDART_MAJOR EQUAL 11)
-        set(LUPINE_CUDART_SOVERSION 11.0)
-        set(LUPINE_CUDART_DLL_SUFFIX 110)
-    endif()
-    configure_file(cudart.exports.in cudart.exports @ONLY)
-
-    add_library(lupine_cudart_headers INTERFACE)
-    target_include_directories(lupine_cudart_headers INTERFACE
+    # nccl.h and nvshmem_host.h include NVIDIA's cuda_runtime.h.
+    add_library(lupine_cuda_runtime_headers INTERFACE)
+    target_include_directories(lupine_cuda_runtime_headers INTERFACE
         ${CUDAToolkit_INCLUDE_DIRS})
     # Header-only CUDA wheels omit the compiler's host qualifier definitions.
     find_path(LUPINE_CUDA_CRT_INCLUDE_DIR crt/host_defines.h
         HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
     if(NOT LUPINE_CUDA_CRT_INCLUDE_DIR)
-        configure_file(python/cudart/host_defines_stub.h
-            cudart-headers/crt/host_defines.h COPYONLY)
-        target_include_directories(lupine_cudart_headers BEFORE INTERFACE
-            ${CMAKE_CURRENT_BINARY_DIR}/cudart-headers)
+        configure_file(host_defines_stub.h
+            cuda-runtime-headers/crt/host_defines.h COPYONLY)
+        target_include_directories(lupine_cuda_runtime_headers BEFORE INTERFACE
+            ${CMAKE_CURRENT_BINARY_DIR}/cuda-runtime-headers)
     endif()
-
-    add_library(lupine_cudart_client SHARED cudart_client.cpp)
-    target_include_directories(lupine_cudart_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
-    target_link_libraries(lupine_cudart_client PRIVATE
-        lupine_cudart_headers lupine_cuda_client lupine_ipc Threads::Threads)
-    set_target_properties(lupine_cudart_client PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_cudart_client)
-    if(WIN32)
-        target_compile_options(lupine_cudart_client PRIVATE /wd4996)
-        set_target_properties(lupine_cudart_client PROPERTIES
-            OUTPUT_NAME cudart64_${LUPINE_CUDART_DLL_SUFFIX}
-            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    else()
-        target_compile_options(lupine_cudart_client PRIVATE
-            -Wno-deprecated-declarations)
-        set_target_properties(lupine_cudart_client PROPERTIES OUTPUT_NAME cudart)
-        if(APPLE)
-            set_target_properties(lupine_cudart_client PROPERTIES
-                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-        else()
-            target_link_options(lupine_cudart_client PRIVATE
-                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/cudart.exports")
-            set_target_properties(lupine_cudart_client PROPERTIES
-                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-                VERSION ${LUPINE_CUDART_SOVERSION}
-                SOVERSION ${LUPINE_CUDART_SOVERSION})
-        endif()
-    endif()
-    add_custom_target(lupine_cudart DEPENDS lupine_cudart_client)
-endif()
-
-if(LUPINE_BUILD_CUDA)
-    # The cuBLAS shim needs the library's own headers, which the runtime header
-    # wheels the native client builds use do not carry; without them it is left
-    # out of the build.
-    find_path(LUPINE_CUBLAS_INCLUDE_DIR cublas_api.h
-        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
-    if(LUPINE_CUBLAS_INCLUDE_DIR)
-        file(STRINGS ${LUPINE_CUBLAS_INCLUDE_DIR}/cublas_api.h
-             LUPINE_CUBLAS_MAJOR_LINE REGEX "^#define CUBLAS_VER_MAJOR ")
-        string(REGEX REPLACE "^#define CUBLAS_VER_MAJOR ([0-9]+).*" "\\1"
-               LUPINE_CUBLAS_SOVERSION "${LUPINE_CUBLAS_MAJOR_LINE}")
-        file(STRINGS ${LUPINE_CUBLAS_INCLUDE_DIR}/cublas_api.h
-             LUPINE_CUBLAS_MINOR_LINE REGEX "^#define CUBLAS_VER_MINOR ")
-        string(REGEX REPLACE "^#define CUBLAS_VER_MINOR ([0-9]+).*" "\\1"
-               LUPINE_CUBLAS_MINOR "${LUPINE_CUBLAS_MINOR_LINE}")
-        set(LUPINE_BUILD_CUBLAS ON)
-    endif()
-endif()
-
-if(LUPINE_BUILD_CUBLAS)
-    # Named like NVIDIA's (libcublas.so.13, cublas64_13.dll) with the matching
-    # ELF version node, since consumers reference name@libcublas.so.13.
-    # libcublasLt ships with libcublas and follows the same naming. Both run on
-    # the runtime shim's current device, so they link both sibling shims.
-    foreach(shim IN ITEMS cublas cublaslt)
-        set(target lupine_${shim}_client)
-        set(output cublas)
-        if(shim STREQUAL cublaslt)
-            set(output cublasLt)
-        endif()
-        configure_file(${shim}.exports.in ${shim}.exports @ONLY)
-        add_library(${target} SHARED ${shim}_client.cpp)
-        target_include_directories(${target} PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
-        target_link_libraries(${target} PRIVATE
-            lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
-        set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        lupine_manylinux2014_client(${target})
-        if(WIN32)
-            target_compile_options(${target} PRIVATE /wd4996)
-            set_target_properties(${target} PROPERTIES
-                OUTPUT_NAME ${output}64_${LUPINE_CUBLAS_SOVERSION}
-                PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-        else()
-            target_compile_options(${target} PRIVATE -Wno-deprecated-declarations)
-            set_target_properties(${target} PROPERTIES OUTPUT_NAME ${output})
-            if(APPLE)
-                set_target_properties(${target} PROPERTIES
-                    BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-            else()
-                target_link_options(${target} PRIVATE
-                    "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/${shim}.exports")
-                set_target_properties(${target} PROPERTIES
-                    BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-                    VERSION ${LUPINE_CUBLAS_SOVERSION}
-                    SOVERSION ${LUPINE_CUBLAS_SOVERSION})
-            endif()
-        endif()
-        add_custom_target(lupine_${shim} DEPENDS ${target})
-    endforeach()
-endif()
-
-if(LUPINE_BUILD_CUDA)
-    # The cuFFT shim needs the library's own headers, which the runtime header
-    # wheels the native client builds use do not carry; without them it is left
-    # out of the build.
-    find_path(LUPINE_CUFFT_INCLUDE_DIR cufftXt.h
-        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
-    if(LUPINE_CUFFT_INCLUDE_DIR)
-        file(STRINGS ${LUPINE_CUFFT_INCLUDE_DIR}/cufft.h
-             LUPINE_CUFFT_MAJOR_LINE REGEX "^#define CUFFT_VER_MAJOR ")
-        string(REGEX REPLACE "^#define CUFFT_VER_MAJOR ([0-9]+).*" "\\1"
-               LUPINE_CUFFT_SOVERSION "${LUPINE_CUFFT_MAJOR_LINE}")
-        set(LUPINE_BUILD_CUFFT ON)
-    endif()
-endif()
-
-if(LUPINE_BUILD_CUFFT)
-    # Named like NVIDIA's (libcufft.so.12, cufft64_12.dll) with the matching
-    # ELF version node; cuFFT's major is its own, not the toolkit's. It runs on
-    # the runtime shim's current device, so it links both sibling shims.
-    configure_file(cufft.exports.in cufft.exports @ONLY)
-    add_library(lupine_cufft_client SHARED cufft_client.cpp)
-    target_include_directories(lupine_cufft_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
-    target_link_libraries(lupine_cufft_client PRIVATE
-        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
-    set_target_properties(lupine_cufft_client PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_cufft_client)
-    if(WIN32)
-        target_compile_options(lupine_cufft_client PRIVATE /wd4996)
-        set_target_properties(lupine_cufft_client PROPERTIES
-            OUTPUT_NAME cufft64_${LUPINE_CUFFT_SOVERSION}
-            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    else()
-        target_compile_options(lupine_cufft_client PRIVATE
-            -Wno-deprecated-declarations)
-        set_target_properties(lupine_cufft_client PROPERTIES OUTPUT_NAME cufft)
-        if(APPLE)
-            set_target_properties(lupine_cufft_client PROPERTIES
-                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-        else()
-            target_link_options(lupine_cufft_client PRIVATE
-                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/cufft.exports")
-            set_target_properties(lupine_cufft_client PROPERTIES
-                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-                VERSION ${LUPINE_CUFFT_SOVERSION}
-                SOVERSION ${LUPINE_CUFFT_SOVERSION})
-        endif()
-    endif()
-    add_custom_target(lupine_cufft DEPENDS lupine_cufft_client)
-endif()
-
-if(LUPINE_BUILD_CUDA)
-    # cuDNN ships outside the toolkit, from its own packages or wheels. Point
-    # LUPINE_CUDNN_INCLUDE_DIR at a cuDNN 9 include directory when it is not
-    # beside the toolkit's headers; without one the shim is left out.
-    find_path(LUPINE_CUDNN_INCLUDE_DIR cudnn_version.h
-        HINTS ${CUDAToolkit_INCLUDE_DIRS} ENV CUDNN_PATH
-        PATH_SUFFIXES include)
-    if(LUPINE_CUDNN_INCLUDE_DIR)
-        file(STRINGS ${LUPINE_CUDNN_INCLUDE_DIR}/cudnn_version.h
-             LUPINE_CUDNN_MAJOR_LINE REGEX "^#define CUDNN_MAJOR ")
-        string(REGEX REPLACE "^#define CUDNN_MAJOR ([0-9]+).*" "\\1"
-               LUPINE_CUDNN_SOVERSION "${LUPINE_CUDNN_MAJOR_LINE}")
-        if(LUPINE_CUDNN_SOVERSION GREATER_EQUAL 9)
-            set(LUPINE_BUILD_CUDNN ON)
-        endif()
-    endif()
-endif()
-
-if(LUPINE_BUILD_CUDNN)
-    # Named like NVIDIA's (libcudnn.so.9, cudnn64_9.dll) with the matching ELF
-    # version node. Consumers link only libcudnn, which exports the whole API;
-    # the operation sublibraries it loads are the server's concern. It runs on
-    # the runtime shim's current device, so it links both sibling shims.
-    configure_file(cudnn.exports.in cudnn.exports @ONLY)
-    add_library(lupine_cudnn_client SHARED cudnn_client.cpp)
-    target_include_directories(lupine_cudnn_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen
-        ${LUPINE_CUDNN_INCLUDE_DIR})
-    target_link_libraries(lupine_cudnn_client PRIVATE
-        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
-    set_target_properties(lupine_cudnn_client PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_cudnn_client)
-    if(WIN32)
-        target_compile_options(lupine_cudnn_client PRIVATE /wd4996)
-        set_target_properties(lupine_cudnn_client PROPERTIES
-            OUTPUT_NAME cudnn64_${LUPINE_CUDNN_SOVERSION}
-            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    else()
-        target_compile_options(lupine_cudnn_client PRIVATE
-            -Wno-deprecated-declarations)
-        set_target_properties(lupine_cudnn_client PROPERTIES OUTPUT_NAME cudnn)
-        if(APPLE)
-            set_target_properties(lupine_cudnn_client PROPERTIES
-                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-        else()
-            target_link_options(lupine_cudnn_client PRIVATE
-                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/cudnn.exports")
-            set_target_properties(lupine_cudnn_client PROPERTIES
-                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-                VERSION ${LUPINE_CUDNN_SOVERSION}
-                SOVERSION ${LUPINE_CUDNN_SOVERSION})
-        endif()
-    endif()
-    add_custom_target(lupine_cudnn DEPENDS lupine_cudnn_client)
-endif()
-
-if(LUPINE_BUILD_CUDA)
-    # The cuRAND shim needs the library's own header, which the runtime header
-    # wheels the native client builds use do not carry; without it it is left
-    # out of the build.
-    find_path(LUPINE_CURAND_INCLUDE_DIR curand.h
-        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
-    if(LUPINE_CURAND_INCLUDE_DIR)
-        file(STRINGS ${LUPINE_CURAND_INCLUDE_DIR}/curand.h
-             LUPINE_CURAND_MAJOR_LINE REGEX "^#define CURAND_VER_MAJOR ")
-        string(REGEX REPLACE "^#define CURAND_VER_MAJOR ([0-9]+).*" "\\1"
-               LUPINE_CURAND_SOVERSION "${LUPINE_CURAND_MAJOR_LINE}")
-        set(LUPINE_BUILD_CURAND ON)
-    endif()
-endif()
-
-if(LUPINE_BUILD_CURAND)
-    # Named like NVIDIA's (libcurand.so.10, curand64_10.dll) with the matching
-    # ELF version node; cuRAND's major is its own, not the toolkit's. It runs
-    # on the runtime shim's current device, so it links both sibling shims.
-    configure_file(curand.exports.in curand.exports @ONLY)
-    add_library(lupine_curand_client SHARED curand_client.cpp)
-    target_include_directories(lupine_curand_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
-    target_link_libraries(lupine_curand_client PRIVATE
-        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
-    set_target_properties(lupine_curand_client PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_curand_client)
-    if(WIN32)
-        target_compile_options(lupine_curand_client PRIVATE /wd4996)
-        set_target_properties(lupine_curand_client PROPERTIES
-            OUTPUT_NAME curand64_${LUPINE_CURAND_SOVERSION}
-            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    else()
-        target_compile_options(lupine_curand_client PRIVATE
-            -Wno-deprecated-declarations)
-        set_target_properties(lupine_curand_client PROPERTIES OUTPUT_NAME curand)
-        if(APPLE)
-            set_target_properties(lupine_curand_client PROPERTIES
-                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-        else()
-            target_link_options(lupine_curand_client PRIVATE
-                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/curand.exports")
-            set_target_properties(lupine_curand_client PROPERTIES
-                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-                VERSION ${LUPINE_CURAND_SOVERSION}
-                SOVERSION ${LUPINE_CURAND_SOVERSION})
-        endif()
-    endif()
-    add_custom_target(lupine_curand DEPENDS lupine_curand_client)
-endif()
-
-if(LUPINE_BUILD_CUDA)
-    # The cuSPARSE shim needs the library's own header, which the runtime
-    # header wheels the native client builds use do not carry; without it the
-    # shim is left out of the build.
-    find_path(LUPINE_CUSPARSE_INCLUDE_DIR cusparse.h
-        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
-    if(LUPINE_CUSPARSE_INCLUDE_DIR)
-        file(STRINGS ${LUPINE_CUSPARSE_INCLUDE_DIR}/cusparse.h
-             LUPINE_CUSPARSE_MAJOR_LINE REGEX "^#define CUSPARSE_VER_MAJOR ")
-        string(REGEX REPLACE "^#define CUSPARSE_VER_MAJOR ([0-9]+).*" "\\1"
-               LUPINE_CUSPARSE_SOVERSION "${LUPINE_CUSPARSE_MAJOR_LINE}")
-        set(LUPINE_BUILD_CUSPARSE ON)
-    endif()
-endif()
-
-if(LUPINE_BUILD_CUSPARSE)
-    # Named like NVIDIA's (libcusparse.so.12, cusparse64_12.dll) with the
-    # matching ELF version node; cuSPARSE's major is its own, not the
-    # toolkit's. It runs on the runtime shim's current device, so it links both
-    # sibling shims.
-    configure_file(cusparse.exports.in cusparse.exports @ONLY)
-    add_library(lupine_cusparse_client SHARED cusparse_client.cpp)
-    target_include_directories(lupine_cusparse_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
-    target_link_libraries(lupine_cusparse_client PRIVATE
-        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
-    set_target_properties(lupine_cusparse_client PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_cusparse_client)
-    if(WIN32)
-        target_compile_options(lupine_cusparse_client PRIVATE /wd4996)
-        set_target_properties(lupine_cusparse_client PROPERTIES
-            OUTPUT_NAME cusparse64_${LUPINE_CUSPARSE_SOVERSION}
-            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    else()
-        target_compile_options(lupine_cusparse_client PRIVATE
-            -Wno-deprecated-declarations)
-        set_target_properties(lupine_cusparse_client PROPERTIES
-            OUTPUT_NAME cusparse)
-        if(APPLE)
-            set_target_properties(lupine_cusparse_client PROPERTIES
-                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-        else()
-            target_link_options(lupine_cusparse_client PRIVATE
-                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/cusparse.exports")
-            set_target_properties(lupine_cusparse_client PROPERTIES
-                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-                VERSION ${LUPINE_CUSPARSE_SOVERSION}
-                SOVERSION ${LUPINE_CUSPARSE_SOVERSION})
-        endif()
-    endif()
-    add_custom_target(lupine_cusparse DEPENDS lupine_cusparse_client)
-endif()
-
-if(LUPINE_BUILD_CUDA)
-    # cuSPARSELt ships outside the toolkit, from its own package or wheel.
-    # Point LUPINE_CUSPARSELT_INCLUDE_DIR at an include directory holding
-    # cusparseLt.h when it is not beside the toolkit's headers; without one the
-    # shim is left out. 0.6.0 is the oldest release whose objects and matmul
-    # surface the shim covers; the error strings it gained in 0.7.0 and the
-    # algorithm-selection destroy it gained in 0.8.0 are guarded.
-    find_path(LUPINE_CUSPARSELT_INCLUDE_DIR cusparseLt.h
-        HINTS ${CUDAToolkit_INCLUDE_DIRS} ENV CUSPARSELT_HOME
-        PATH_SUFFIXES include)
-    if(LUPINE_CUSPARSELT_INCLUDE_DIR)
-        file(STRINGS ${LUPINE_CUSPARSELT_INCLUDE_DIR}/cusparseLt.h
-             LUPINE_CUSPARSELT_MINOR_LINE REGEX "^#define CUSPARSELT_VER_MINOR ")
-        string(REGEX REPLACE "^#define CUSPARSELT_VER_MINOR ([0-9]+).*" "\\1"
-               LUPINE_CUSPARSELT_MINOR "${LUPINE_CUSPARSELT_MINOR_LINE}")
-        if(LUPINE_CUSPARSELT_MINOR GREATER_EQUAL 6)
-            set(LUPINE_BUILD_CUSPARSELT ON)
-        endif()
-    endif()
-endif()
-
-if(LUPINE_BUILD_CUSPARSELT)
-    # Named like NVIDIA's (libcusparseLt.so.0, whose SONAME major is 0 for
-    # every cuSPARSELt release, and cusparseLt.dll), and its symbols carry no
-    # version node either. It runs on the runtime shim's current device, so it
-    # links both sibling shims.
-    add_library(lupine_cusparselt_client SHARED cusparselt_client.cpp)
-    target_include_directories(lupine_cusparselt_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen
-        ${LUPINE_CUSPARSELT_INCLUDE_DIR})
-    target_link_libraries(lupine_cusparselt_client PRIVATE
-        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
-    set_target_properties(lupine_cusparselt_client PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_cusparselt_client)
-    if(WIN32)
-        target_compile_options(lupine_cusparselt_client PRIVATE /wd4996)
-        set_target_properties(lupine_cusparselt_client PROPERTIES
-            OUTPUT_NAME cusparseLt
-            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    else()
-        target_compile_options(lupine_cusparselt_client PRIVATE
-            -Wno-deprecated-declarations)
-        set_target_properties(lupine_cusparselt_client PROPERTIES
-            OUTPUT_NAME cusparseLt)
-        if(APPLE)
-            set_target_properties(lupine_cusparselt_client PROPERTIES
-                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-        else()
-            target_link_options(lupine_cusparselt_client PRIVATE
-                "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cusparselt.exports")
-            set_target_properties(lupine_cusparselt_client PROPERTIES
-                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-                VERSION 0
-                SOVERSION 0)
-        endif()
-    endif()
-    add_custom_target(lupine_cusparselt DEPENDS lupine_cusparselt_client)
-endif()
-
-if(LUPINE_BUILD_CUDA)
-    # The cuSOLVER shims need the library's own headers, which the runtime
-    # header wheels the native client builds use do not carry; without them
-    # the shims are left out of the build.
-    find_path(LUPINE_CUSOLVER_INCLUDE_DIR cusolverMg.h
-        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
-    if(LUPINE_CUSOLVER_INCLUDE_DIR)
-        file(STRINGS ${LUPINE_CUSOLVER_INCLUDE_DIR}/cusolver_common.h
-             LUPINE_CUSOLVER_MAJOR_LINE REGEX "#[ ]*define CUSOLVER_VER_MAJOR ")
-        string(REGEX REPLACE ".*define CUSOLVER_VER_MAJOR ([0-9]+).*" "\\1"
-               LUPINE_CUSOLVER_SOVERSION "${LUPINE_CUSOLVER_MAJOR_LINE}")
-        set(LUPINE_BUILD_CUSOLVER ON)
-    endif()
-endif()
-
-if(LUPINE_BUILD_CUSOLVER)
-    # Named like NVIDIA's (libcusolver.so.12, cusolver64_12.dll and the Mg
-    # pair) with the matching ELF version nodes; cuSOLVER's major is its own,
-    # not the toolkit's. They run on the runtime shim's current device, so each
-    # links both sibling shims.
-    foreach(shim IN ITEMS cusolver cusolvermg)
-        set(target lupine_${shim}_client)
-        set(output cusolver)
-        if(shim STREQUAL cusolvermg)
-            set(output cusolverMg)
-        endif()
-        configure_file(${shim}.exports.in ${shim}.exports @ONLY)
-        add_library(${target} SHARED ${shim}_client.cpp)
-        target_include_directories(${target} PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
-        target_link_libraries(${target} PRIVATE
-            lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
-        set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        lupine_manylinux2014_client(${target})
-        if(WIN32)
-            target_compile_options(${target} PRIVATE /wd4996)
-            set_target_properties(${target} PROPERTIES
-                OUTPUT_NAME ${output}64_${LUPINE_CUSOLVER_SOVERSION}
-                PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-        else()
-            target_compile_options(${target} PRIVATE -Wno-deprecated-declarations)
-            set_target_properties(${target} PROPERTIES OUTPUT_NAME ${output})
-            if(APPLE)
-                set_target_properties(${target} PROPERTIES
-                    BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-            else()
-                target_link_options(${target} PRIVATE
-                    "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/${shim}.exports")
-                set_target_properties(${target} PROPERTIES
-                    BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-                    VERSION ${LUPINE_CUSOLVER_SOVERSION}
-                    SOVERSION ${LUPINE_CUSOLVER_SOVERSION})
-            endif()
-        endif()
-        add_custom_target(lupine_${shim} DEPENDS ${target})
-    endforeach()
-endif()
-
-if(LUPINE_BUILD_CUDA)
-    # The NVRTC shim needs the library's own header, which the runtime header
-    # wheels the native client builds use do not carry; without it it is left
-    # out of the build.
-    find_path(LUPINE_NVRTC_INCLUDE_DIR nvrtc.h
-        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
-    if(LUPINE_NVRTC_INCLUDE_DIR)
-        # NVRTC 11.x kept the 11.2 soname across every 11 release.
-        set(LUPINE_NVRTC_SOVERSION ${LUPINE_CUDART_MAJOR})
-        math(EXPR LUPINE_NVRTC_DLL_SUFFIX "${LUPINE_CUDART_MAJOR} * 10")
-        if(LUPINE_CUDART_MAJOR EQUAL 11)
-            set(LUPINE_NVRTC_SOVERSION 11.2)
-            set(LUPINE_NVRTC_DLL_SUFFIX 112)
-        endif()
-        set(LUPINE_BUILD_NVRTC ON)
-    endif()
-endif()
-
-if(LUPINE_BUILD_NVRTC)
-    # Named like NVIDIA's (libnvrtc.so.13, nvrtc64_130_0.dll) with the matching
-    # ELF version node. It runs on the runtime shim's current device, so it
-    # links both sibling shims.
-    configure_file(nvrtc.exports.in nvrtc.exports @ONLY)
-    add_library(lupine_nvrtc_client SHARED nvrtc_client.cpp)
-    target_include_directories(lupine_nvrtc_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
-    target_link_libraries(lupine_nvrtc_client PRIVATE
-        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
-    set_target_properties(lupine_nvrtc_client PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_nvrtc_client)
-    if(WIN32)
-        target_compile_options(lupine_nvrtc_client PRIVATE /wd4996)
-        set_target_properties(lupine_nvrtc_client PROPERTIES
-            OUTPUT_NAME nvrtc64_${LUPINE_NVRTC_DLL_SUFFIX}_0
-            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    else()
-        target_compile_options(lupine_nvrtc_client PRIVATE
-            -Wno-deprecated-declarations)
-        set_target_properties(lupine_nvrtc_client PROPERTIES OUTPUT_NAME nvrtc)
-        if(APPLE)
-            set_target_properties(lupine_nvrtc_client PROPERTIES
-                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-        else()
-            target_link_options(lupine_nvrtc_client PRIVATE
-                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/nvrtc.exports")
-            set_target_properties(lupine_nvrtc_client PROPERTIES
-                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-                VERSION ${LUPINE_NVRTC_SOVERSION}
-                SOVERSION ${LUPINE_NVRTC_SOVERSION})
-        endif()
-    endif()
-    add_custom_target(lupine_nvrtc DEPENDS lupine_nvrtc_client)
 endif()
 
 if(LUPINE_BUILD_CUDA AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -938,8 +455,9 @@ endif()
 
 if(LUPINE_BUILD_NCCL)
     # Named like NVIDIA's (libnccl.so.2), whose symbols carry no version node.
-    # It runs on the runtime shim's current device, so it links both sibling
-    # shims. nccl.h declares ncclResetDebugInit only for Linux builds.
+    # It routes by the driver shim's current context, so that is the only
+    # sibling it links: a driver-only client ships it beside the program's own
+    # runtime. nccl.h declares ncclResetDebugInit only for Linux builds.
     configure_file(nccl.exports.in nccl.exports @ONLY)
     add_library(lupine_nccl_client SHARED nccl_client.cpp)
     target_include_directories(lupine_nccl_client PRIVATE
@@ -947,7 +465,7 @@ if(LUPINE_BUILD_NCCL)
         ${LUPINE_NCCL_INCLUDE_DIR})
     target_compile_definitions(lupine_nccl_client PRIVATE NCCL_OS_LINUX)
     target_link_libraries(lupine_nccl_client PRIVATE
-        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
+        lupine_cuda_runtime_headers lupine_cuda_client)
     target_compile_options(lupine_nccl_client PRIVATE
         -Wno-deprecated-declarations)
     target_link_options(lupine_nccl_client PRIVATE
@@ -958,330 +476,11 @@ if(LUPINE_BUILD_NCCL)
         BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
         VERSION ${LUPINE_NCCL_SOVERSION}
         SOVERSION ${LUPINE_NCCL_SOVERSION})
-    lupine_manylinux2014_client(lupine_nccl_client)
+    lupine_manylinux_client(lupine_nccl_client)
     add_custom_target(lupine_nccl DEPENDS lupine_nccl_client)
 endif()
 
-if(LUPINE_BUILD_CUDA)
-    # The nvJitLink shim needs the library's own header, from 12.4 on: earlier
-    # headers define the calls only as inline wrappers, which the shim cannot
-    # replace. The header's release names the release-suffixed symbols the
-    # shim exports, as NVIDIA's library does.
-    find_path(LUPINE_NVJITLINK_INCLUDE_DIR nvJitLink.h
-        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
-    if(LUPINE_NVJITLINK_INCLUDE_DIR)
-        file(READ ${LUPINE_NVJITLINK_INCLUDE_DIR}/nvJitLink.h
-             LUPINE_NVJITLINK_HEADER)
-        string(REGEX MATCH "__nvJitLinkCreate_([0-9]+)_([0-9]+)" _
-               "${LUPINE_NVJITLINK_HEADER}")
-        set(LUPINE_NVJITLINK_MAJOR ${CMAKE_MATCH_1})
-        set(LUPINE_NVJITLINK_MINOR ${CMAKE_MATCH_2})
-        string(FIND "${LUPINE_NVJITLINK_HEADER}" "NVJITLINK_NO_INLINE"
-               LUPINE_NVJITLINK_NO_INLINE)
-        string(FIND "${LUPINE_NVJITLINK_HEADER}" "nvJitLinkGetLinkedLTOIR"
-               LUPINE_NVJITLINK_LTOIR)
-        set(LUPINE_NVJITLINK_HAS_LTOIR 0)
-        if(LUPINE_NVJITLINK_LTOIR GREATER -1)
-            set(LUPINE_NVJITLINK_HAS_LTOIR 1)
-        endif()
-        if(LUPINE_NVJITLINK_MAJOR AND LUPINE_NVJITLINK_NO_INLINE GREATER -1)
-            set(LUPINE_NVJITLINK_SOVERSION ${LUPINE_NVJITLINK_MAJOR})
-            set(LUPINE_NVJITLINK_DEFINITIONS
-                NVJITLINK_NO_INLINE
-                LUPINE_NVJITLINK_MAJOR=${LUPINE_NVJITLINK_MAJOR}
-                LUPINE_NVJITLINK_MINOR=${LUPINE_NVJITLINK_MINOR}
-                LUPINE_NVJITLINK_HAS_LTOIR=${LUPINE_NVJITLINK_HAS_LTOIR})
-            set(LUPINE_BUILD_NVJITLINK ON)
-        endif()
-    endif()
-endif()
-
-if(LUPINE_BUILD_NVJITLINK)
-    # Named like NVIDIA's (libnvJitLink.so.13, nvJitLink_130_0.dll) with the
-    # matching ELF version node. It runs on the runtime shim's current device,
-    # so it links both sibling shims.
-    configure_file(nvjitlink.exports.in nvjitlink.exports @ONLY)
-    add_library(lupine_nvjitlink_client SHARED nvjitlink_client.cpp)
-    target_include_directories(lupine_nvjitlink_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
-    target_compile_definitions(lupine_nvjitlink_client PRIVATE
-        ${LUPINE_NVJITLINK_DEFINITIONS})
-    target_link_libraries(lupine_nvjitlink_client PRIVATE
-        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
-    set_target_properties(lupine_nvjitlink_client PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_nvjitlink_client)
-    if(WIN32)
-        target_compile_options(lupine_nvjitlink_client PRIVATE /wd4996)
-        set_target_properties(lupine_nvjitlink_client PROPERTIES
-            OUTPUT_NAME nvJitLink_${LUPINE_NVJITLINK_MAJOR}0_0
-            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    else()
-        target_compile_options(lupine_nvjitlink_client PRIVATE
-            -Wno-deprecated-declarations)
-        set_target_properties(lupine_nvjitlink_client PROPERTIES
-            OUTPUT_NAME nvJitLink)
-        if(APPLE)
-            set_target_properties(lupine_nvjitlink_client PROPERTIES
-                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-        else()
-            target_link_options(lupine_nvjitlink_client PRIVATE
-                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/nvjitlink.exports")
-            set_target_properties(lupine_nvjitlink_client PROPERTIES
-                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-                VERSION ${LUPINE_NVJITLINK_SOVERSION}
-                SOVERSION ${LUPINE_NVJITLINK_SOVERSION})
-        endif()
-    endif()
-    add_custom_target(lupine_nvjitlink DEPENDS lupine_nvjitlink_client)
-endif()
-
-if(LUPINE_BUILD_CUDA)
-    # The nvJPEG shim needs the library's own header, which the runtime header
-    # wheels the native client builds use do not carry; without it it is left
-    # out of the build.
-    find_path(LUPINE_NVJPEG_INCLUDE_DIR nvjpeg.h
-        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
-    if(LUPINE_NVJPEG_INCLUDE_DIR)
-        file(STRINGS ${LUPINE_NVJPEG_INCLUDE_DIR}/nvjpeg.h
-             LUPINE_NVJPEG_MAJOR_LINE REGEX "#[ ]*define NVJPEG_VER_MAJOR ")
-        string(REGEX REPLACE ".*define NVJPEG_VER_MAJOR ([0-9]+).*" "\\1"
-               LUPINE_NVJPEG_SOVERSION "${LUPINE_NVJPEG_MAJOR_LINE}")
-        set(LUPINE_BUILD_NVJPEG ON)
-    endif()
-endif()
-
-if(LUPINE_BUILD_NVJPEG)
-    # Named like NVIDIA's (libnvjpeg.so.13, nvjpeg64_13.dll) with the matching
-    # ELF version node. It runs on the runtime shim's current device, so it
-    # links both sibling shims.
-    configure_file(nvjpeg.exports.in nvjpeg.exports @ONLY)
-    add_library(lupine_nvjpeg_client SHARED nvjpeg_client.cpp)
-    target_include_directories(lupine_nvjpeg_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
-    target_link_libraries(lupine_nvjpeg_client PRIVATE
-        lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
-    set_target_properties(lupine_nvjpeg_client PROPERTIES
-        POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_nvjpeg_client)
-    if(WIN32)
-        target_compile_options(lupine_nvjpeg_client PRIVATE /wd4996)
-        set_target_properties(lupine_nvjpeg_client PROPERTIES
-            OUTPUT_NAME nvjpeg64_${LUPINE_NVJPEG_SOVERSION}
-            PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    else()
-        target_compile_options(lupine_nvjpeg_client PRIVATE
-            -Wno-deprecated-declarations)
-        set_target_properties(lupine_nvjpeg_client PROPERTIES
-            OUTPUT_NAME nvjpeg)
-        if(APPLE)
-            set_target_properties(lupine_nvjpeg_client PROPERTIES
-                BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-        else()
-            target_link_options(lupine_nvjpeg_client PRIVATE
-                "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/nvjpeg.exports")
-            set_target_properties(lupine_nvjpeg_client PROPERTIES
-                BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-                VERSION ${LUPINE_NVJPEG_SOVERSION}
-                SOVERSION ${LUPINE_NVJPEG_SOVERSION})
-        endif()
-    endif()
-    add_custom_target(lupine_nvjpeg DEPENDS lupine_nvjpeg_client)
-endif()
-
-set(LUPINE_NPP_LIBRARIES
-    nppc nppial nppicc nppidei nppif nppig nppim nppist nppisu nppitc npps)
-
-if(LUPINE_BUILD_CUDA)
-    # The NPP shims need the libraries' own headers, which the runtime header
-    # wheels the native client builds use do not carry; without them the shims
-    # are left out of the build.
-    find_path(LUPINE_NPP_INCLUDE_DIR nppcore.h
-        HINTS ${CUDAToolkit_INCLUDE_DIRS} NO_DEFAULT_PATH)
-    if(LUPINE_NPP_INCLUDE_DIR)
-        file(STRINGS ${LUPINE_NPP_INCLUDE_DIR}/npp.h
-             LUPINE_NPP_MAJOR_LINE REGEX "#[ ]*define NPP_VER_MAJOR ")
-        string(REGEX REPLACE ".*define NPP_VER_MAJOR ([0-9]+).*" "\\1"
-               LUPINE_NPP_SOVERSION "${LUPINE_NPP_MAJOR_LINE}")
-        set(LUPINE_BUILD_NPP ON)
-    endif()
-endif()
-
-if(LUPINE_BUILD_NPP)
-    # Named like NVIDIA's (libnppial.so.13, nppial64_13.dll) with the matching
-    # ELF version nodes; NPP's major is its own, not the toolkit's. They run on
-    # the runtime shim's current device, so each links both sibling shims, and
-    # each image and signal library needs the core one as NVIDIA's do.
-    foreach(LUPINE_NPP_LIBRARY IN LISTS LUPINE_NPP_LIBRARIES)
-        set(target lupine_${LUPINE_NPP_LIBRARY}_client)
-        configure_file(npp.exports.in ${LUPINE_NPP_LIBRARY}.exports @ONLY)
-        if(LUPINE_NPP_LIBRARY STREQUAL nppc)
-            add_library(${target} SHARED nppc_client.cpp)
-        else()
-            add_library(${target} SHARED npp_client.cpp)
-            target_compile_definitions(${target} PRIVATE
-                LUPINE_NPP_CLIENT_INC="codegen/gen_${LUPINE_NPP_LIBRARY}_client.inc")
-            target_link_libraries(${target} PRIVATE lupine_nppc_client)
-            if(NOT WIN32 AND NOT APPLE)
-                # NVIDIA's image and signal libraries need libnppc even
-                # where they call nothing in it.
-                target_link_options(${target} PRIVATE "LINKER:--no-as-needed")
-            endif()
-        endif()
-        target_include_directories(${target} PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen)
-        target_link_libraries(${target} PRIVATE
-            lupine_cudart_headers lupine_cuda_client lupine_cudart_client)
-        set_target_properties(${target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        lupine_manylinux2014_client(${target})
-        if(WIN32)
-            target_compile_options(${target} PRIVATE /wd4996)
-            set_target_properties(${target} PROPERTIES
-                OUTPUT_NAME ${LUPINE_NPP_LIBRARY}64_${LUPINE_NPP_SOVERSION}
-                PREFIX "" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-        else()
-            target_compile_options(${target} PRIVATE -Wno-deprecated-declarations)
-            set_target_properties(${target} PROPERTIES
-                OUTPUT_NAME ${LUPINE_NPP_LIBRARY})
-            if(APPLE)
-                set_target_properties(${target} PROPERTIES
-                    BUILD_RPATH "@loader_path" INSTALL_RPATH "@loader_path")
-            else()
-                target_link_options(${target} PRIVATE
-                    "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/${LUPINE_NPP_LIBRARY}.exports")
-                set_target_properties(${target} PROPERTIES
-                    BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-                    VERSION ${LUPINE_NPP_SOVERSION}
-                    SOVERSION ${LUPINE_NPP_SOVERSION})
-            endif()
-        endif()
-        add_custom_target(lupine_${LUPINE_NPP_LIBRARY} DEPENDS ${target})
-    endforeach()
-endif()
-
 if(LUPINE_BUILD_CUDA AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # cuFile is Linux-only and ships with the toolkit or in its own wheel.
-    # Point LUPINE_CUFILE_INCLUDE_DIR at an include directory holding cufile.h
-    # when it is not beside the toolkit's headers; without one the shim is left
-    # out. cufile.h carries no version macro, so the entry points it declares
-    # decide what the shim defines.
-    find_path(LUPINE_CUFILE_INCLUDE_DIR cufile.h
-        HINTS ${CUDAToolkit_INCLUDE_DIRS} ENV CUFILE_HOME
-        PATH_SUFFIXES include)
-    if(LUPINE_CUFILE_INCLUDE_DIR)
-        file(READ ${LUPINE_CUFILE_INCLUDE_DIR}/cufile.h LUPINE_CUFILE_HEADER)
-        set(LUPINE_CUFILE_DEFINITIONS)
-        set(lupine_cufile_features
-            ASYNC cuFileReadAsync
-            VERSION cuFileGetVersion
-            PARAMETERS cuFileGetParameterSizeT
-            PARAMETER_RANGE cuFileGetParameterMinMaxValue
-            STATS cuFileGetStatsL1
-            SLAB_ARRAYS cuFileSetParameterPosixPoolSlabArray
-            P2P_FLAGS cuFileDriverGetP2PFlags
-            BAR_SIZE cuFileGetBARSizeInKB
-            TOPOLOGY cuFileExportPCIeTopology)
-        while(lupine_cufile_features)
-            list(POP_FRONT lupine_cufile_features
-                 lupine_cufile_feature lupine_cufile_symbol)
-            set(lupine_cufile_present 0)
-            if(LUPINE_CUFILE_HEADER MATCHES "${lupine_cufile_symbol}")
-                set(lupine_cufile_present 1)
-            endif()
-            list(APPEND LUPINE_CUFILE_DEFINITIONS
-                 LUPINE_CUFILE_HAS_${lupine_cufile_feature}=${lupine_cufile_present})
-        endwhile()
-        # cuFileGetVersion has no header constant to report. The oldest release
-        # that declares everything this header does is the answer that never
-        # promises a caller an entry point the shim does not define.
-        set(LUPINE_CUFILE_VERSION 1070)
-        if(LUPINE_CUFILE_HEADER MATCHES "cuFileGetParameterSizeT")
-            set(LUPINE_CUFILE_VERSION 1140)
-        endif()
-        if(LUPINE_CUFILE_HEADER MATCHES "cuFileGetStatsL1")
-            set(LUPINE_CUFILE_VERSION 1180)
-        endif()
-        list(APPEND LUPINE_CUFILE_DEFINITIONS
-             LUPINE_CUFILE_VERSION=${LUPINE_CUFILE_VERSION})
-        set(LUPINE_BUILD_CUFILE ON)
-    endif()
-endif()
-
-if(LUPINE_BUILD_CUFILE)
-    # Named like NVIDIA's (libcufile.so.0, whose SONAME major is 0 for every
-    # cuFile release), and its symbols carry no version node either. The file
-    # is read on this side and the bytes move over the driver shim's
-    # connections, so it links that shim and no server library.
-    add_library(lupine_cufile_client SHARED cufile_client.cpp)
-    target_include_directories(lupine_cufile_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/codegen
-        ${LUPINE_CUFILE_INCLUDE_DIR})
-    target_compile_definitions(lupine_cufile_client PRIVATE
-        ${LUPINE_CUFILE_DEFINITIONS})
-    target_link_libraries(lupine_cufile_client PRIVATE
-        lupine_cudart_headers lupine_cuda_client)
-    target_link_options(lupine_cufile_client PRIVATE
-        "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cufile.exports")
-    set_target_properties(lupine_cufile_client PROPERTIES
-        POSITION_INDEPENDENT_CODE ON
-        OUTPUT_NAME cufile
-        BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-        VERSION 0
-        SOVERSION 0)
-    lupine_manylinux2014_client(lupine_cufile_client)
-    add_custom_target(lupine_cufile DEPENDS lupine_cufile_client)
-endif()
-
-if(LUPINE_BUILD_CUDA AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # CUPTI ships with the toolkit or in its own wheel. Point
-    # LUPINE_CUPTI_INCLUDE_DIR at an include directory holding cupti_result.h
-    # when it is not beside the toolkit's headers; without one the shim is left
-    # out. Some toolkits keep these headers under extras/CUPTI instead.
-    find_path(LUPINE_CUPTI_INCLUDE_DIR cupti_result.h
-        HINTS ${CUDAToolkit_INCLUDE_DIRS}
-              ${CUDAToolkit_LIBRARY_ROOT}/extras/CUPTI ENV CUPTI_HOME
-        PATH_SUFFIXES include)
-    if(LUPINE_CUPTI_INCLUDE_DIR)
-        # An SDK-free build has cuda.h's version and no CUDAToolkit components,
-        # the way the runtime shim's major is taken.
-        if(LUPINE_CUDA_HEADER_VERSION)
-            math(EXPR LUPINE_CUPTI_MAJOR "${LUPINE_CUDA_HEADER_VERSION} / 1000")
-            math(EXPR LUPINE_CUPTI_MINOR
-                 "(${LUPINE_CUDA_HEADER_VERSION} / 10) % 100")
-        else()
-            set(LUPINE_CUPTI_MAJOR ${CUDAToolkit_VERSION_MAJOR})
-            set(LUPINE_CUPTI_MINOR ${CUDAToolkit_VERSION_MINOR})
-        endif()
-        # NVIDIA's SONAME is libcupti.so.<major> from CUDA 12 on, and
-        # libcupti.so.<major>.<minor> before it (libcupti.so.11.8).
-        set(LUPINE_CUPTI_SOVERSION ${LUPINE_CUPTI_MAJOR})
-        if(LUPINE_CUPTI_MAJOR LESS 12)
-            set(LUPINE_CUPTI_SOVERSION
-                ${LUPINE_CUPTI_MAJOR}.${LUPINE_CUPTI_MINOR})
-        endif()
-        set(LUPINE_BUILD_CUPTI ON)
-    endif()
-endif()
-
-if(LUPINE_BUILD_CUPTI)
-    # The shim profiles nothing and forwards nothing, so it links no driver
-    # shim and no server library: what it needs from the toolkit is the result
-    # codes and the API version its headers carry.
-    configure_file(cupti.exports.in cupti.exports @ONLY)
-    add_library(lupine_cupti_client SHARED cupti_client.cpp)
-    target_include_directories(lupine_cupti_client PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CUDAToolkit_INCLUDE_DIRS}
-        ${LUPINE_CUPTI_INCLUDE_DIR})
-    target_link_options(lupine_cupti_client PRIVATE
-        "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/cupti.exports")
-    set_target_properties(lupine_cupti_client PROPERTIES
-        POSITION_INDEPENDENT_CODE ON
-        OUTPUT_NAME cupti
-        BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
-        VERSION ${LUPINE_CUPTI_SOVERSION}
-        SOVERSION ${LUPINE_CUPTI_SOVERSION})
-    lupine_manylinux2014_client(lupine_cupti_client)
-    add_custom_target(lupine_cupti DEPENDS lupine_cupti_client)
     # nvSHMEM is Linux-only and ships outside the toolkit, in its own package
     # or wheel, whose headers keep a directory of their own rather than sit
     # beside the toolkit's. Point LUPINE_NVSHMEM_INCLUDE_DIR or NVSHMEM_HOME at
@@ -1314,7 +513,8 @@ if(LUPINE_BUILD_NVSHMEM)
     add_library(lupine_nvshmem_client SHARED nvshmem_client.cpp)
     target_include_directories(lupine_nvshmem_client PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR} ${LUPINE_NVSHMEM_INCLUDE_DIR})
-    target_link_libraries(lupine_nvshmem_client PRIVATE lupine_cudart_headers)
+    target_link_libraries(lupine_nvshmem_client PRIVATE
+        lupine_cuda_runtime_headers)
     target_link_options(lupine_nvshmem_client PRIVATE
         "LINKER:--version-script=${CMAKE_CURRENT_BINARY_DIR}/nvshmem.exports")
     set_target_properties(lupine_nvshmem_client PROPERTIES
@@ -1323,7 +523,7 @@ if(LUPINE_BUILD_NVSHMEM)
         BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN"
         VERSION ${LUPINE_NVSHMEM_SOVERSION}
         SOVERSION ${LUPINE_NVSHMEM_SOVERSION})
-    lupine_manylinux2014_client(lupine_nvshmem_client)
+    lupine_manylinux_client(lupine_nvshmem_client)
     add_custom_target(lupine_nvshmem DEPENDS lupine_nvshmem_client)
 endif()
 
@@ -1337,7 +537,7 @@ if(LUPINE_BUILD_NVML)
     target_link_libraries(lupine_nvml_client PRIVATE lupine_client_transport)
     set_target_properties(lupine_nvml_client PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
-    lupine_manylinux2014_client(lupine_nvml_client)
+    lupine_manylinux_client(lupine_nvml_client)
     if(WIN32)
         target_compile_definitions(lupine_nvml_client PRIVATE
             LUPINE_WINDOWS_POSIX_SHIMS
@@ -1380,22 +580,17 @@ if(NOT WIN32 AND LUPINE_BUILD_HIP)
         OUTPUT_NAME amdhip64
         VERSION 1
         SOVERSION 1)
+    # Retain Lupine's .so.1 name while satisfying binaries linked against the
+    # installed ROCm SDK (for example, DT_NEEDED libamdhip64.so.7).
+    file(STRINGS "${LUPINE_HIP_INCLUDE_DIR}/hip/hip_version.h"
+         lupine_hip_version_line REGEX "^#define HIP_VERSION_MAJOR +[0-9]+")
+    string(REGEX REPLACE ".*HIP_VERSION_MAJOR +([0-9]+).*" "\\1"
+           lupine_hip_runtime_major "${lupine_hip_version_line}")
+    add_custom_command(TARGET lupine_hip_client POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+                "$<TARGET_FILE_NAME:lupine_hip_client>"
+                "$<TARGET_FILE_DIR:lupine_hip_client>/libamdhip64.so.${lupine_hip_runtime_major}")
     add_custom_target(lupine_hip DEPENDS lupine_hip_client)
-endif()
-
-# Every CUDA runtime and library client shim, so a consumer can load them all
-# in place of NVIDIA's without naming each one. A new shim joins by existing:
-# naming the ones that belong would put the list a thousand lines from where
-# shims are added, and one forgotten there is a shim the aggregate silently
-# omits. The three below are named because they are not library shims -- the
-# driver client, NVML, and HIP.
-get_property(lupine_runtime_client_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
-list(FILTER lupine_runtime_client_targets INCLUDE REGEX "^lupine_[a-z0-9]+_client$")
-list(REMOVE_ITEM lupine_runtime_client_targets
-     lupine_cuda_client lupine_nvml_client lupine_hip_client)
-add_custom_target(lupine_runtime_clients)
-if(lupine_runtime_client_targets)
-    add_dependencies(lupine_runtime_clients ${lupine_runtime_client_targets})
 endif()
 
 if(LUPINE_BUILD_SERVER)
@@ -1411,6 +606,10 @@ if(LUPINE_BUILD_SERVER)
             ${CUDAToolkit_INCLUDE_DIRS})
         target_compile_definitions(lupine_cuda_server PRIVATE
             LUPINE_RPC_SERVER)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            target_sources(lupine_cuda_server PRIVATE
+                device_ioctl_server.cpp)
+        endif()
         if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LUPINE_BUILD_NVML)
             target_compile_definitions(lupine_cuda_server PRIVATE
                 LUPINE_MONITORING_ENABLED)
@@ -1425,97 +624,6 @@ if(LUPINE_BUILD_SERVER)
             lupine_server_core lupine_cuda_checkpoint lupine_ipc
             lupine_cuda_smemcpy_module CUDA::cuda_driver)
 
-        add_library(lupine_cudart_server STATIC cudart_server.cpp)
-        lupine_internal_target(lupine_cudart_server)
-        target_compile_definitions(lupine_cudart_server PRIVATE LUPINE_RPC_SERVER)
-        target_link_libraries(lupine_cudart_server PRIVATE
-            lupine_cudart_headers lupine_server_core ${CMAKE_DL_LIBS})
-
-        if(LUPINE_BUILD_CUBLAS)
-            add_library(lupine_cublas_server STATIC
-                ${CMAKE_CURRENT_SOURCE_DIR}/cublas_server.cpp
-                ${CMAKE_CURRENT_SOURCE_DIR}/cublaslt_server.cpp)
-            lupine_internal_target(lupine_cublas_server)
-            target_include_directories(lupine_cublas_server PRIVATE
-                ${CUDAToolkit_INCLUDE_DIRS})
-            target_link_libraries(lupine_cublas_server PRIVATE
-                lupine_server_core ${CMAKE_DL_LIBS})
-        endif()
-
-        if(LUPINE_BUILD_CUFFT)
-            add_library(lupine_cufft_server STATIC
-                ${CMAKE_CURRENT_SOURCE_DIR}/cufft_server.cpp)
-            lupine_internal_target(lupine_cufft_server)
-            target_include_directories(lupine_cufft_server PRIVATE
-                ${CUDAToolkit_INCLUDE_DIRS})
-            target_link_libraries(lupine_cufft_server PRIVATE
-                lupine_server_core ${CMAKE_DL_LIBS})
-        endif()
-
-        if(LUPINE_BUILD_CUDNN)
-            add_library(lupine_cudnn_server STATIC
-                ${CMAKE_CURRENT_SOURCE_DIR}/cudnn_server.cpp)
-            lupine_internal_target(lupine_cudnn_server)
-            target_include_directories(lupine_cudnn_server PRIVATE
-                ${CUDAToolkit_INCLUDE_DIRS} ${LUPINE_CUDNN_INCLUDE_DIR})
-            target_link_libraries(lupine_cudnn_server PRIVATE
-                lupine_server_core ${CMAKE_DL_LIBS})
-        endif()
-
-        if(LUPINE_BUILD_CURAND)
-            add_library(lupine_curand_server STATIC
-                ${CMAKE_CURRENT_SOURCE_DIR}/curand_server.cpp)
-            lupine_internal_target(lupine_curand_server)
-            target_include_directories(lupine_curand_server PRIVATE
-                ${CUDAToolkit_INCLUDE_DIRS})
-            target_link_libraries(lupine_curand_server PRIVATE
-                lupine_server_core ${CMAKE_DL_LIBS})
-        endif()
-
-        if(LUPINE_BUILD_CUSPARSE)
-            add_library(lupine_cusparse_server STATIC
-                ${CMAKE_CURRENT_SOURCE_DIR}/cusparse_server.cpp)
-            lupine_internal_target(lupine_cusparse_server)
-            # The handlers forward the deprecated legacy calls as well.
-            target_compile_definitions(lupine_cusparse_server PRIVATE
-                DISABLE_CUSPARSE_DEPRECATED)
-            target_include_directories(lupine_cusparse_server PRIVATE
-                ${CUDAToolkit_INCLUDE_DIRS})
-            target_link_libraries(lupine_cusparse_server PRIVATE
-                lupine_server_core ${CMAKE_DL_LIBS})
-        endif()
-
-        if(LUPINE_BUILD_CUSPARSELT)
-            add_library(lupine_cusparselt_server STATIC
-                ${CMAKE_CURRENT_SOURCE_DIR}/cusparselt_server.cpp)
-            lupine_internal_target(lupine_cusparselt_server)
-            target_include_directories(lupine_cusparselt_server PRIVATE
-                ${CUDAToolkit_INCLUDE_DIRS} ${LUPINE_CUSPARSELT_INCLUDE_DIR})
-            target_link_libraries(lupine_cusparselt_server PRIVATE
-                lupine_server_core ${CMAKE_DL_LIBS})
-        endif()
-
-        if(LUPINE_BUILD_CUSOLVER)
-            add_library(lupine_cusolver_server STATIC
-                ${CMAKE_CURRENT_SOURCE_DIR}/cusolver_server.cpp
-                ${CMAKE_CURRENT_SOURCE_DIR}/cusolvermg_server.cpp)
-            lupine_internal_target(lupine_cusolver_server)
-            target_include_directories(lupine_cusolver_server PRIVATE
-                ${CUDAToolkit_INCLUDE_DIRS})
-            target_link_libraries(lupine_cusolver_server PRIVATE
-                lupine_server_core ${CMAKE_DL_LIBS})
-        endif()
-
-        if(LUPINE_BUILD_NVRTC)
-            add_library(lupine_nvrtc_server STATIC
-                ${CMAKE_CURRENT_SOURCE_DIR}/nvrtc_server.cpp)
-            lupine_internal_target(lupine_nvrtc_server)
-            target_include_directories(lupine_nvrtc_server PRIVATE
-                ${CUDAToolkit_INCLUDE_DIRS})
-            target_link_libraries(lupine_nvrtc_server PRIVATE
-                lupine_server_core ${CMAKE_DL_LIBS})
-        endif()
-
         if(LUPINE_BUILD_NCCL)
             add_library(lupine_nccl_server STATIC
                 ${CMAKE_CURRENT_SOURCE_DIR}/nccl_server.cpp)
@@ -1527,55 +635,6 @@ if(LUPINE_BUILD_SERVER)
                 lupine_server_core ${CMAKE_DL_LIBS})
         endif()
 
-        if(LUPINE_BUILD_NVJITLINK)
-            add_library(lupine_nvjitlink_server STATIC
-                ${CMAKE_CURRENT_SOURCE_DIR}/nvjitlink_server.cpp)
-            lupine_internal_target(lupine_nvjitlink_server)
-            target_compile_definitions(lupine_nvjitlink_server PRIVATE
-                ${LUPINE_NVJITLINK_DEFINITIONS})
-            target_include_directories(lupine_nvjitlink_server PRIVATE
-                ${CUDAToolkit_INCLUDE_DIRS})
-            target_link_libraries(lupine_nvjitlink_server PRIVATE
-                lupine_server_core ${CMAKE_DL_LIBS})
-        endif()
-
-        if(LUPINE_BUILD_NVJPEG)
-            add_library(lupine_nvjpeg_server STATIC
-                ${CMAKE_CURRENT_SOURCE_DIR}/nvjpeg_server.cpp)
-            lupine_internal_target(lupine_nvjpeg_server)
-            target_include_directories(lupine_nvjpeg_server PRIVATE
-                ${CUDAToolkit_INCLUDE_DIRS})
-            target_link_libraries(lupine_nvjpeg_server PRIVATE
-                lupine_server_core ${CMAKE_DL_LIBS})
-        endif()
-
-        if(LUPINE_BUILD_NPP)
-            # One translation unit per NPP library, so each compiles on its own.
-            add_library(lupine_npp_server STATIC)
-            lupine_internal_target(lupine_npp_server)
-            foreach(library IN LISTS LUPINE_NPP_LIBRARIES)
-                if(library STREQUAL nppc)
-                    add_library(lupine_${library}_server OBJECT
-                        ${CMAKE_CURRENT_SOURCE_DIR}/nppc_server.cpp)
-                else()
-                    add_library(lupine_${library}_server OBJECT
-                        ${CMAKE_CURRENT_SOURCE_DIR}/npp_server.cpp)
-                    target_compile_definitions(lupine_${library}_server PRIVATE
-                        LUPINE_NPP_SERVER_INC="codegen/gen_${library}_server.inc")
-                endif()
-                lupine_internal_target(lupine_${library}_server)
-                target_compile_definitions(lupine_${library}_server PRIVATE
-                    LUPINE_NPP_LIBRARY="${library}")
-                target_include_directories(lupine_${library}_server PRIVATE
-                    ${CUDAToolkit_INCLUDE_DIRS})
-                target_link_libraries(lupine_${library}_server PRIVATE
-                    lupine_server_core)
-                target_sources(lupine_npp_server PRIVATE
-                    $<TARGET_OBJECTS:lupine_${library}_server>)
-            endforeach()
-            target_link_libraries(lupine_npp_server PRIVATE
-                lupine_server_core ${CMAKE_DL_LIBS})
-        endif()
     endif()
 
     if(LUPINE_BUILD_NVML)
@@ -1599,21 +658,22 @@ if(LUPINE_BUILD_SERVER)
         target_link_libraries(lupine_hip_server PRIVATE lupine_server_core)
     endif()
 
-    add_executable(lupine_driver_server
+    add_library(lupine_server_runtime OBJECT
         ${CMAKE_CURRENT_SOURCE_DIR}/server.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/registry.cpp)
+    lupine_internal_target(lupine_server_runtime)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LUPINE_BUILD_CUDA AND
        LUPINE_BUILD_NVML)
-        target_sources(lupine_driver_server PRIVATE
+        target_sources(lupine_server_runtime PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/monitor_server.cpp)
-        target_compile_definitions(lupine_driver_server PRIVATE
+        target_compile_definitions(lupine_server_runtime PRIVATE
             LUPINE_MONITORING_ENABLED)
     endif()
-    target_include_directories(lupine_driver_server PRIVATE
+    target_include_directories(lupine_server_runtime PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen
         ${CUDAToolkit_INCLUDE_DIRS})
-    target_link_libraries(lupine_driver_server PRIVATE
+    target_link_libraries(lupine_server_runtime PRIVATE
         lupine_server_core lupine_ipc ${CMAKE_DL_LIBS})
     if(LUPINE_CLIENT_BUNDLE_INPUT)
         if(NOT IS_DIRECTORY "${LUPINE_CLIENT_BUNDLE_INPUT}")
@@ -1624,10 +684,27 @@ if(LUPINE_BUILD_SERVER)
         set(LUPINE_CLIENT_BUNDLE_GENERATED_DIR
             ${CMAKE_CURRENT_BINARY_DIR}/client-bundles)
 
+        # A bundle carries the driver, NVML and, where the platform builds
+        # them, the NCCL and nvSHMEM shims, which cannot work through the
+        # driver by itself. The NCCL and nvSHMEM majors move independently of
+        # the toolkit's, so their names come from the directory; only the two
+        # every client must have are required.
         function(lupine_embed_client_bundle tag platforms)
-            set(files ${ARGN})
             set(input_dir
                 ${LUPINE_CLIENT_BUNDLE_INPUT}/lupine-client-${tag})
+            file(GLOB staged RELATIVE ${input_dir}
+                ${input_dir}/libcuda.so.* ${input_dir}/libnvidia-ml.so.*
+                ${input_dir}/libnccl.so.* ${input_dir}/libnvshmem_host.so.*
+                ${input_dir}/libcuda.dylib ${input_dir}/libnvidia-ml.dylib
+                ${input_dir}/nvcuda.dll ${input_dir}/nvml.dll)
+            list(SORT staged)
+            set(files ${staged})
+            foreach(required IN LISTS ARGN)
+                if(NOT required IN_LIST files)
+                    message(FATAL_ERROR
+                        "${tag} client bundle is missing ${required} in ${input_dir}")
+                endif()
+            endforeach()
             set(output_dir ${LUPINE_CLIENT_BUNDLE_GENERATED_DIR}/${tag})
             set(archive ${output_dir}/client.zip)
             set(source ${LUPINE_CLIENT_BUNDLE_GENERATED_DIR}/${tag}.cpp)
@@ -1647,128 +724,79 @@ if(LUPINE_BUILD_SERVER)
                         ${inputs}
                 COMMENT "Embedding ${tag} client bundle"
                 VERBATIM)
-            target_sources(lupine_driver_server PRIVATE ${source})
+            target_sources(lupine_server_runtime PRIVATE ${source})
         endfunction()
 
         lupine_embed_client_bundle(linux-x86_64 "linux/amd64"
-            libcuda.so.1 libcudart.so.13 libnvidia-ml.so.1)
+            libcuda.so.1 libnvidia-ml.so.1)
         lupine_embed_client_bundle(linux-aarch64 "linux/arm64"
-            libcuda.so.1 libcudart.so.13 libnvidia-ml.so.1)
+            libcuda.so.1 libnvidia-ml.so.1)
         lupine_embed_client_bundle(macosx-universal2
             "macos/amd64;macos/arm64"
-            libcuda.dylib libcudart.dylib libnvidia-ml.dylib)
+            libcuda.dylib libnvidia-ml.dylib)
         lupine_embed_client_bundle(win-amd64 "windows/amd64"
-            nvcuda.dll cudart64_13.dll nvml.dll)
+            nvcuda.dll nvml.dll)
         lupine_embed_client_bundle(win-arm64 "windows/arm64"
-            nvcuda.dll cudart64_13.dll nvml.dll)
-        target_compile_definitions(lupine_driver_server PRIVATE
+            nvcuda.dll nvml.dll)
+        target_compile_definitions(lupine_server_runtime PRIVATE
             LUPINE_EMBED_CLIENT_BUNDLES)
         message(STATUS
             "Embedding server client bundles from: ${LUPINE_CLIENT_BUNDLE_INPUT}")
     endif()
     if(LUPINE_BUILD_CUDA)
-        target_compile_definitions(lupine_driver_server PRIVATE
+        target_compile_definitions(lupine_server_runtime PRIVATE
             LUPINE_BUILD_CUDA_BACKEND
-            LUPINE_BUILD_CUDART_BACKEND
             LUPINE_RPC_SERVER
             LUPINE_BACKEND_VERSION="${CUDAToolkit_VERSION}")
-        target_link_libraries(lupine_driver_server PRIVATE
-            lupine_cuda_server lupine_cudart_server lupine_cudart_headers)
-        if(LUPINE_BUILD_CUBLAS)
-            target_compile_definitions(lupine_driver_server PRIVATE
-                LUPINE_BUILD_CUBLAS_BACKEND)
-            target_link_libraries(lupine_driver_server PRIVATE
-                lupine_cublas_server)
-        endif()
-        if(LUPINE_BUILD_CUFFT)
-            target_compile_definitions(lupine_driver_server PRIVATE
-                LUPINE_BUILD_CUFFT_BACKEND)
-            target_link_libraries(lupine_driver_server PRIVATE
-                lupine_cufft_server)
-        endif()
-        if(LUPINE_BUILD_CUDNN)
-            target_compile_definitions(lupine_driver_server PRIVATE
-                LUPINE_BUILD_CUDNN_BACKEND)
-            target_include_directories(lupine_driver_server PRIVATE
-                ${LUPINE_CUDNN_INCLUDE_DIR})
-            target_link_libraries(lupine_driver_server PRIVATE
-                lupine_cudnn_server)
-        endif()
-        if(LUPINE_BUILD_CURAND)
-            target_compile_definitions(lupine_driver_server PRIVATE
-                LUPINE_BUILD_CURAND_BACKEND)
-            target_link_libraries(lupine_driver_server PRIVATE
-                lupine_curand_server)
-        endif()
-        if(LUPINE_BUILD_CUSPARSE)
-            target_compile_definitions(lupine_driver_server PRIVATE
-                LUPINE_BUILD_CUSPARSE_BACKEND)
-            target_link_libraries(lupine_driver_server PRIVATE
-                lupine_cusparse_server)
-        endif()
-        if(LUPINE_BUILD_CUSPARSELT)
-            target_compile_definitions(lupine_driver_server PRIVATE
-                LUPINE_BUILD_CUSPARSELT_BACKEND)
-            target_include_directories(lupine_driver_server PRIVATE
-                ${LUPINE_CUSPARSELT_INCLUDE_DIR})
-            target_link_libraries(lupine_driver_server PRIVATE
-                lupine_cusparselt_server)
-        endif()
-        if(LUPINE_BUILD_CUSOLVER)
-            target_compile_definitions(lupine_driver_server PRIVATE
-                LUPINE_BUILD_CUSOLVER_BACKEND)
-            target_link_libraries(lupine_driver_server PRIVATE
-                lupine_cusolver_server)
-        endif()
-        if(LUPINE_BUILD_NVRTC)
-            target_compile_definitions(lupine_driver_server PRIVATE
-                LUPINE_BUILD_NVRTC_BACKEND)
-            target_link_libraries(lupine_driver_server PRIVATE
-                lupine_nvrtc_server)
-        endif()
+        target_link_libraries(lupine_server_runtime PRIVATE lupine_cuda_server)
         if(LUPINE_BUILD_NCCL)
-            target_compile_definitions(lupine_driver_server PRIVATE
+            target_compile_definitions(lupine_server_runtime PRIVATE
                 LUPINE_BUILD_NCCL_BACKEND NCCL_OS_LINUX)
-            target_include_directories(lupine_driver_server PRIVATE
+            target_include_directories(lupine_server_runtime PRIVATE
                 ${LUPINE_NCCL_INCLUDE_DIR})
-            target_link_libraries(lupine_driver_server PRIVATE
+            target_link_libraries(lupine_server_runtime PRIVATE
                 lupine_nccl_server)
-        endif()
-        if(LUPINE_BUILD_NVJITLINK)
-            target_compile_definitions(lupine_driver_server PRIVATE
-                LUPINE_BUILD_NVJITLINK_BACKEND ${LUPINE_NVJITLINK_DEFINITIONS})
-            target_link_libraries(lupine_driver_server PRIVATE
-                lupine_nvjitlink_server)
-        endif()
-        if(LUPINE_BUILD_NVJPEG)
-            target_compile_definitions(lupine_driver_server PRIVATE
-                LUPINE_BUILD_NVJPEG_BACKEND)
-            target_link_libraries(lupine_driver_server PRIVATE
-                lupine_nvjpeg_server)
-        endif()
-        if(LUPINE_BUILD_NPP)
-            target_compile_definitions(lupine_driver_server PRIVATE
-                LUPINE_BUILD_NPP_BACKEND)
-            target_link_libraries(lupine_driver_server PRIVATE
-                lupine_npp_server)
         endif()
     endif()
     if(LUPINE_BUILD_NVML)
-        target_compile_definitions(lupine_driver_server PRIVATE
+        target_compile_definitions(lupine_server_runtime PRIVATE
             LUPINE_BUILD_NVML_BACKEND)
-        target_link_libraries(lupine_driver_server PRIVATE lupine_nvml_server)
+        target_link_libraries(lupine_server_runtime PRIVATE lupine_nvml_server)
     endif()
     if(LUPINE_BUILD_HIP)
-        target_compile_definitions(lupine_driver_server PRIVATE
+        target_compile_definitions(lupine_server_runtime PRIVATE
             LUPINE_BUILD_HIP_BACKEND)
-        target_link_libraries(lupine_driver_server PRIVATE lupine_hip_server)
+        target_link_libraries(lupine_server_runtime PRIVATE lupine_hip_server)
     endif()
+    add_executable(lupine_driver_server ${CMAKE_CURRENT_SOURCE_DIR}/server_main.cpp)
+    target_link_libraries(lupine_driver_server PRIVATE lupine_server_runtime)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_library(lupine_server SHARED)
+        target_link_libraries(lupine_server PRIVATE lupine_server_runtime)
+        set_target_properties(lupine_server PROPERTIES OUTPUT_NAME lupine-server)
+        add_dependencies(lupine_driver_server lupine_server)
+    endif()
+
 endif()
 
 # Tests that build wherever the project does. The Linux-only block below leans
 # on socketpair(), MAP_FIXED_NOREPLACE and memfd_create(); anything free of
 # those belongs here instead, so it covers every platform the client ships for.
 if(BUILD_TESTING)
+    add_executable(fatbin_filter_test fatbin_filter_test.cpp)
+    lupine_apply_sanitizer(fatbin_filter_test)
+    add_test(NAME fatbin_filter_test COMMAND fatbin_filter_test)
+
+    if(LUPINE_BUILD_CUDA)
+        add_executable(deviceptr_allocations_test
+            ${CMAKE_CURRENT_SOURCE_DIR}/deviceptr_allocations_test.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp)
+        target_include_directories(deviceptr_allocations_test PRIVATE
+            ${CUDAToolkit_INCLUDE_DIRS})
+        lupine_apply_sanitizer(deviceptr_allocations_test)
+        add_test(NAME deviceptr_allocations_test COMMAND deviceptr_allocations_test)
+    endif()
+
     add_executable(transport_test
         ${CMAKE_CURRENT_SOURCE_DIR}/transport_test.cpp)
     target_link_libraries(transport_test PRIVATE lupine_rpc_core)
@@ -1795,12 +823,7 @@ if(BUILD_TESTING)
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     lupine_scaled_timeout(ckpt_timeout 10)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
-endif()
 
-# Unix: h2_test needs no socketpair or mmap any more, but it hangs partway
-# through on Windows (issue #656, in test_rpc_write_queue_grows), so it stays
-# off that platform until the transport difference behind that is understood.
-if(BUILD_TESTING AND NOT WIN32)
     add_executable(h2_test
         ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/monitor_client.cpp)
@@ -1817,7 +840,10 @@ if(BUILD_TESTING AND NOT WIN32)
     add_test(NAME h2_test COMMAND h2_test)
     lupine_scaled_timeout(h2_timeout 60)
     set_tests_properties(h2_test PROPERTIES TIMEOUT ${h2_timeout})
+endif()
 
+# Uses Unix socketpair().
+if(BUILD_TESTING AND NOT WIN32)
     add_executable(dispatch_test ${CMAKE_CURRENT_SOURCE_DIR}/dispatch_test.cpp)
     target_link_libraries(dispatch_test PRIVATE lupine_rpc_core)
     lupine_apply_sanitizer(dispatch_test)
@@ -1830,8 +856,21 @@ endif()
 # mappings with MAP_FIXED_NOREPLACE and back them with memfd_create(), none of
 # which macOS has. Portable tests belong in the block above.
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(device_ioctl_proxy_test device_ioctl_proxy_test.cpp
+        device_ioctl_proxy.cpp device_ioctl_preload.cpp)
+    target_link_libraries(device_ioctl_proxy_test PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
+    lupine_apply_sanitizer(device_ioctl_proxy_test)
+    add_test(NAME device_ioctl_proxy_test COMMAND device_ioctl_proxy_test)
 
     if(LUPINE_BUILD_CUDA)
+        add_executable(device_ioctl_rpc_test device_ioctl_rpc_test.cpp
+            device_ioctl_client.cpp device_ioctl_proxy.cpp
+            device_ioctl_server.cpp)
+        target_include_directories(device_ioctl_rpc_test PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+        target_link_libraries(device_ioctl_rpc_test PRIVATE lupine_rpc_core)
+        lupine_apply_sanitizer(device_ioctl_rpc_test)
+        add_test(NAME device_ioctl_rpc_test COMMAND device_ioctl_rpc_test)
+        set_tests_properties(device_ioctl_rpc_test PROPERTIES TIMEOUT 15)
         add_executable(events_test
             ${CMAKE_CURRENT_SOURCE_DIR}/events.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/events_test.cpp)
@@ -1883,6 +922,14 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set_tests_properties(server_checkpoint_missing_provider_test PROPERTIES
         TIMEOUT ${sckpt_timeout})
 
+    if(TARGET lupine_server)
+        add_test(NAME server_library_test COMMAND python3
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test_server_library.py
+            $<TARGET_FILE:lupine_server>)
+        set_tests_properties(server_library_test PROPERTIES
+            TIMEOUT 10 SKIP_RETURN_CODE 77)
+    endif()
+
     if(TARGET lupine_driver_server AND LUPINE_BUILD_CUDA)
         add_executable(server_sigterm_test
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test_server_sigterm.cpp)
@@ -1901,120 +948,16 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
         endif()
     endif()
 
-    if(TARGET lupine_cublas_client)
-        # cuSOLVER imports this undeclared export from cuBLAS 12.9 on.
-        set(lupine_cublas_undeclared_check "true")
-        if("${LUPINE_CUBLAS_SOVERSION}.${LUPINE_CUBLAS_MINOR}" VERSION_GREATER_EQUAL 12.9)
-            set(lupine_cublas_undeclared_check
-                "nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q ' T cublasSetEnvironmentMode@@libcublas.so.${LUPINE_CUBLAS_SOVERSION}$'")
-        endif()
-        add_test(NAME cublas_exports
-            COMMAND bash -c
-                "${lupine_cublas_undeclared_check} && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSgemm_v2 && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasGemmEx && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasSetMatrix && nm -D \"$<TARGET_FILE:lupine_cublas_client>\" | grep -q cublasXtSgemm && nm -D \"$<TARGET_FILE:lupine_cublaslt_client>\" | grep -q cublasLtMatmul && nm -D \"$<TARGET_FILE:lupine_cublaslt_client>\" | grep -q cublasLtMatmulDescCreate")
-    endif()
-
     if(TARGET lupine_hip_client)
         add_test(NAME hip_exports
             COMMAND bash -c
                 "nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipMalloc$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipMemcpyHtoD$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipStreamCreate$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipGraphLaunch$' && nm -D \"$<TARGET_FILE:lupine_hip_client>\" | grep -q ' T hipChooseDevice$'")
     endif()
 
-    if(TARGET lupine_cufft_client)
-        add_test(NAME cufft_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cufft_client>\" | grep -q cufftPlanMany && nm -D \"$<TARGET_FILE:lupine_cufft_client>\" | grep -q cufftExecC2C && nm -D \"$<TARGET_FILE:lupine_cufft_client>\" | grep -q cufftXtMemcpy")
-    endif()
-
-    if(TARGET lupine_cudnn_client)
-        add_test(NAME cudnn_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cudnn_client>\" | grep -q cudnnConvolutionForward && nm -D \"$<TARGET_FILE:lupine_cudnn_client>\" | grep -q cudnnBackendSetAttribute && nm -D \"$<TARGET_FILE:lupine_cudnn_client>\" | grep -q cudnnMultiHeadAttnForward")
-    endif()
-
-    if(TARGET lupine_curand_client)
-        add_test(NAME curand_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_curand_client>\" | grep -q ' T curandCreateGeneratorHost@@libcurand.so.${LUPINE_CURAND_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_curand_client>\" | grep -q ' T curandGenerateNormal@@libcurand.so.${LUPINE_CURAND_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_curand_client>\" | grep -q ' T curandGetDirectionVectors64@@libcurand.so.${LUPINE_CURAND_SOVERSION}$'")
-    endif()
-
-    if(TARGET lupine_cusparse_client)
-        set(lupine_cusparse_removed_check "true")
-        if(LUPINE_CUSPARSE_SOVERSION LESS 12)
-            set(lupine_cusparse_removed_check
-                "nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseScsrsv2_bufferSize@@libcusparse.so.${LUPINE_CUSPARSE_SOVERSION}$'")
-        endif()
-        add_test(NAME cusparse_exports
-            COMMAND bash -c
-                "${lupine_cusparse_removed_check} && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseSpMV@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseCreateCsr@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseXcsrsort@' && nm -D \"$<TARGET_FILE:lupine_cusparse_client>\" | grep -q ' T cusparseGetErrorString@'")
-    endif()
-
-    if(TARGET lupine_cusparselt_client)
-        add_test(NAME cusparselt_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cusparselt_client>\" | grep -q ' T cusparseLtInit$' && nm -D \"$<TARGET_FILE:lupine_cusparselt_client>\" | grep -q ' T cusparseLtStructuredDescriptorInit$' && nm -D \"$<TARGET_FILE:lupine_cusparselt_client>\" | grep -q ' T cusparseLtSpMMACompress2$' && nm -D \"$<TARGET_FILE:lupine_cusparselt_client>\" | grep -q ' T cusparseLtMatmulSearch$'")
-    endif()
-
-    if(TARGET lupine_cusolver_client)
-        add_test(NAME cusolver_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cusolver_client>\" | grep -q ' T cusolverDnXgetrf@@libcusolver.so.${LUPINE_CUSOLVER_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_cusolver_client>\" | grep -q ' T cusolverSpDcsrqrsvBatched@@libcusolver.so.${LUPINE_CUSOLVER_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_cusolver_client>\" | grep -q ' T cusolverRfRefactor@@libcusolver.so.${LUPINE_CUSOLVER_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_cusolvermg_client>\" | grep -q ' T cusolverMgSyevd@@libcusolverMg.so.${LUPINE_CUSOLVER_SOVERSION}$'")
-    endif()
-
-    if(TARGET lupine_nvrtc_client)
-        add_test(NAME nvrtc_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_nvrtc_client>\" | grep -q ' T nvrtcCompileProgram@@libnvrtc.so.${LUPINE_NVRTC_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvrtc_client>\" | grep -q ' T nvrtcGetLoweredName@@libnvrtc.so.${LUPINE_NVRTC_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvrtc_client>\" | grep -q ' T nvrtcGetPTX@@libnvrtc.so.${LUPINE_NVRTC_SOVERSION}$'")
-    endif()
-
     if(TARGET lupine_nccl_client)
         add_test(NAME nccl_exports
             COMMAND bash -c
                 "nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclAllReduce$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T pncclAllReduce$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclGroupEnd$' && nm -D \"$<TARGET_FILE:lupine_nccl_client>\" | grep -q ' T ncclCommInitRank$'")
-    endif()
-
-    if(TARGET lupine_nvjitlink_client)
-        add_test(NAME nvjitlink_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T nvJitLinkCreate@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T __nvJitLinkCreate_${LUPINE_NVJITLINK_MAJOR}_${LUPINE_NVJITLINK_MINOR}@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T __nvJitLinkGetLinkedPtx_${LUPINE_NVJITLINK_MAJOR}_0@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjitlink_client>\" | grep -q ' T nvJitLinkVersion@@libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}$'")
-    endif()
-
-    if(TARGET lupine_nvjpeg_client)
-        add_test(NAME nvjpeg_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_nvjpeg_client>\" | grep -q ' T nvjpegDecode@@libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjpeg_client>\" | grep -q ' T nvjpegDecodeBatchedEx@@libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION}$' && nm -D \"$<TARGET_FILE:lupine_nvjpeg_client>\" | grep -q ' T nvjpegEncodeRetrieveBitstream@@libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION}$'")
-    endif()
-
-    if(TARGET lupine_nppc_client)
-        # One representative export per library, each on its library's node.
-        set(npp_export_checks
-            "nppc:nppGetStreamContext" "nppial:nppiAdd_8u_C1RSfs_Ctx"
-            "nppicc:nppiRGBToGray_8u_C3C1R_Ctx" "nppidei:nppiCopy_8u_C1R_Ctx"
-            "nppif:nppiFilterBoxBorder_8u_C1R_Ctx" "nppig:nppiResize_8u_C1R_Ctx"
-            "nppim:nppiDilate3x3_8u_C1R_Ctx" "nppist:nppiMean_StdDev_8u_C1R_Ctx"
-            "nppisu:nppiMalloc_8u_C1" "nppitc:nppiThreshold_8u_C1R_Ctx"
-            "npps:nppsSum_32f_Ctx")
-        foreach(check IN LISTS npp_export_checks)
-            string(REPLACE ":" ";" check "${check}")
-            list(GET check 0 library)
-            list(GET check 1 symbol)
-            add_test(NAME ${library}_exports
-                COMMAND bash -c
-                    "nm -D \"$<TARGET_FILE:lupine_${library}_client>\" | grep -q ' T ${symbol}@@lib${library}.so.${LUPINE_NPP_SOVERSION}$'")
-        endforeach()
-    endif()
-
-    if(TARGET lupine_cufile_client)
-        add_test(NAME cufile_exports
-            COMMAND bash -c
-                "nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileHandleRegister$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileRead$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileWrite$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileDriverClose$' && nm -D \"$<TARGET_FILE:lupine_cufile_client>\" | grep -q ' T cuFileDriverClose_v2$'")
-    endif()
-
-    if(TARGET lupine_cupti_client)
-        # The entry points PyTorch's libtorch_cpu.so resolves from libcupti,
-        # each under the SONAME's version node.
-        add_test(NAME cupti_exports
-            COMMAND bash -c
-                "for symbol in cuptiActivityDisable cuptiActivityEnable cuptiActivityEnableCudaEventDeviceTimestamps cuptiActivityEnableDriverApi cuptiActivityEnableRuntimeApi cuptiActivityFlushAll cuptiActivityGetNextRecord cuptiActivityGetNumDroppedRecords cuptiActivityPopExternalCorrelationId cuptiActivityPushExternalCorrelationId cuptiActivityRegisterCallbacks cuptiActivityRegisterTimestampCallback cuptiActivitySetAttribute cuptiEnableCallback cuptiEnableDomain cuptiFinalize cuptiGetCallbackName cuptiGetResultString cuptiGetVersion cuptiSubscribe cuptiUnsubscribe; do nm -D \"$<TARGET_FILE:lupine_cupti_client>\" | grep -q \" T \${symbol}@@libcupti.so.${LUPINE_CUPTI_SOVERSION}$\" || exit 1; done")
     endif()
 
     if(TARGET lupine_nvshmem_client)
@@ -2037,64 +980,9 @@ message(STATUS "Client TLS (OpenSSL): ${OpenSSL_FOUND}")
 if(TARGET lupine_cuda_client)
     message(STATUS "Building CUDA client: lupine_cuda_client (libcuda.so.1)")
 endif()
-if(TARGET lupine_cudart_client)
-    message(STATUS "Building CUDA runtime client: lupine_cudart_client")
-endif()
-if(TARGET lupine_cublas_client)
-    message(STATUS
-        "Building cuBLAS clients: lupine_cublas_client (libcublas.so.${LUPINE_CUBLAS_SOVERSION}), lupine_cublaslt_client (libcublasLt.so.${LUPINE_CUBLAS_SOVERSION})")
-endif()
-if(TARGET lupine_cufft_client)
-    message(STATUS
-        "Building cuFFT client: lupine_cufft_client (libcufft.so.${LUPINE_CUFFT_SOVERSION})")
-endif()
-if(TARGET lupine_cudnn_client)
-    message(STATUS
-        "Building cuDNN client: lupine_cudnn_client (libcudnn.so.${LUPINE_CUDNN_SOVERSION})")
-endif()
-if(TARGET lupine_curand_client)
-    message(STATUS
-        "Building cuRAND client: lupine_curand_client (libcurand.so.${LUPINE_CURAND_SOVERSION})")
-endif()
-if(TARGET lupine_cusparse_client)
-    message(STATUS
-        "Building cuSPARSE client: lupine_cusparse_client (libcusparse.so.${LUPINE_CUSPARSE_SOVERSION})")
-endif()
-if(TARGET lupine_cusparselt_client)
-    message(STATUS
-        "Building cuSPARSELt client: lupine_cusparselt_client (libcusparseLt.so.0)")
-endif()
-if(TARGET lupine_cusolver_client)
-    message(STATUS
-        "Building cuSOLVER clients: lupine_cusolver_client, lupine_cusolvermg_client (libcusolver.so.${LUPINE_CUSOLVER_SOVERSION})")
-endif()
-if(TARGET lupine_nvrtc_client)
-    message(STATUS
-        "Building NVRTC client: lupine_nvrtc_client (libnvrtc.so.${LUPINE_NVRTC_SOVERSION})")
-endif()
 if(TARGET lupine_nccl_client)
     message(STATUS
         "Building NCCL client: lupine_nccl_client (libnccl.so.${LUPINE_NCCL_SOVERSION})")
-endif()
-if(TARGET lupine_nvjitlink_client)
-    message(STATUS
-        "Building nvJitLink client: lupine_nvjitlink_client (libnvJitLink.so.${LUPINE_NVJITLINK_SOVERSION}, release ${LUPINE_NVJITLINK_MAJOR}.${LUPINE_NVJITLINK_MINOR})")
-endif()
-if(TARGET lupine_nvjpeg_client)
-    message(STATUS
-        "Building nvJPEG client: lupine_nvjpeg_client (libnvjpeg.so.${LUPINE_NVJPEG_SOVERSION})")
-endif()
-if(TARGET lupine_nppc_client)
-    message(STATUS
-        "Building NPP clients: lupine_nppc_client and its image and signal libraries (libnppc.so.${LUPINE_NPP_SOVERSION})")
-endif()
-if(TARGET lupine_cufile_client)
-    message(STATUS
-        "Building cuFile client: lupine_cufile_client (libcufile.so.0, reporting version ${LUPINE_CUFILE_VERSION})")
-endif()
-if(TARGET lupine_cupti_client)
-    message(STATUS
-        "Building CUPTI client: lupine_cupti_client (libcupti.so.${LUPINE_CUPTI_SOVERSION})")
 endif()
 if(TARGET lupine_nvshmem_client)
     message(STATUS

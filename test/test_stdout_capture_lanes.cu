@@ -21,7 +21,11 @@ static void check(cudaError_t result, const char *expr, int line) {
 
 #define CHECK(expr) check((expr), #expr, __LINE__)
 
+// The printf makes the image enable device stdout capture on the server.
 __global__ static void delay_kernel(unsigned long long cycles) {
+  if (cycles == 0) {
+    printf("delay_kernel: no delay\n");
+  }
   unsigned long long start = clock64();
   while (clock64() - start < cycles) {
     asm volatile("");

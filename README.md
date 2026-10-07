@@ -73,17 +73,22 @@ the server does no background NVML polling.
 
 Each production server executable embeds the matching Linux, macOS, and
 Windows client objects for amd64 and arm64; there is no client-bundle directory
-to deploy beside it. Python clients fetch the current object from
+to deploy beside it. A bundle carries `libcuda.so.1`
+/ `libcuda.dylib` / `nvcuda.dll`, NVML, and on Linux the NCCL and nvSHMEM
+shims, which cannot work through the driver by itself. Programs run their own
+CUDA runtime and libraries against it, so only driver calls cross the wire.
+Python clients fetch the current object from
 `/.well-known/lupine/client/v1/<os>/<arch>`, verify its strong ETag, content
 digest, manifest, and file hashes, and cache it locally. The selected ETag is
 also asserted when the RPC connection opens, closing the race between
 discovery and a server upgrade. `LUPINE_LIBDIR` remains an explicit local
 override for development.
 
-Linux client objects target the manylinux2014 ABI (glibc 2.17) and statically
+Linux client objects target the manylinux_2_28 ABI (glibc 2.28) and statically
 include their private C++, HTTP/2, and TLS dependencies. They therefore work on
 newer glibc distributions, including Ubuntu 22.04, without requiring host copies
-of libstdc++, nghttp2, or OpenSSL.
+of libstdc++, nghttp2, or OpenSSL. Linux clients require glibc 2.28 or newer;
+CentOS/RHEL 7 and Ubuntu 18.04 are no longer supported.
 
 ## Graceful Server Checkpoints
 
@@ -119,9 +124,12 @@ far sooner than the kernel's default 2-hour keepalive. The next RPC then fails
 fatally. Lupine keeps these connections alive and resilient without retrying
 RPCs (which would break CUDA semantics):
 
-RPC request and response bodies require `content-encoding: lz4`. Compression
-is applied transparently as one LZ4 frame per HTTP/2 body; peers do not
-negotiate or fall back to another encoding.
+RPC request and response bodies require `content-encoding: zstd`. Compression
+is applied transparently at level -1, using one streaming Zstd frame per HTTP/2
+body and a 512 KiB history window. RPC boundaries flush the stream without
+resetting its history. No compression setting is needed. Clients and servers
+must both support Zstd; older LZ4-only peers are rejected rather than falling
+back to another encoding. Upgrade the client and server together.
 
 - **TCP keepalive** is enabled on every connection (client *and* server) with a
   60s idle interval, 15s between probes, and 3 unanswered probes before giving
@@ -233,9 +241,10 @@ docker pull ghcr.io/lupinemachines/lupine-client:cuda-12.4.1-ubuntu22.04
 docker pull ghcr.io/lupinemachines/lupine-server:cuda-12.4.1-ubuntu22.04
 ```
 
-Client images contain the CUDA driver, CUDA runtime, cuBLAS, cuBLASLt, cuFFT, cuDNN, cuRAND, cuSPARSE, cuSPARSELt, cuSOLVER, cuSOLVERMg, NVRTC, NCCL, nvJitLink, nvJPEG, NPP, cuFile, CUPTI, nvSHMEM, NVML, and HIP shims, their runtime dependencies,
-and `nvidia-smi`. They are based on Ubuntu and contain neither the CUDA nor ROCm
-SDK. The `-slim` tags remain available as compatibility aliases with the same
+Client images contain the CUDA driver, NCCL, nvSHMEM, NVML, and HIP shims,
+their runtime dependencies, and `nvidia-smi`. Programs bring their own CUDA
+runtime and libraries. They are based on Ubuntu and contain neither the CUDA
+nor ROCm SDK. The `-slim` tags remain available as compatibility aliases with the same
 SDK-free contents, for example
 `ghcr.io/lupinemachines/lupine-client:cuda-13.3.1-ubuntu24.04-slim`.
 
@@ -324,86 +333,20 @@ cmake -S . -B build
 cmake --build build
 ```
 
-CMake builds the CUDA driver shim at `build/libcuda.so.1`, the CUDA runtime shim
-at `build/libcudart.so.<major>`, the cuBLAS, cuBLASLt, cuFFT, cuRAND,
-cuSPARSE, cuSOLVER, cuSOLVERMg, NVRTC, nvJitLink and nvJPEG shims at
-`build/libcublas.so.<major>`, `build/libcublasLt.so.<major>`,
-`build/libcufft.so.<major>`, `build/libcurand.so.<major>`,
-`build/libcusparse.so.<major>`, `build/libcusolver.so.<major>`,
-`build/libcusolverMg.so.<major>`, `build/libnvrtc.so.<major>`,
-`build/libnvJitLink.so.<major>`, `build/libnvjpeg.so.<major>`, the NPP shims at
-`build/libnppc.so.<major>` and its image and signal libraries
-(`build/libnppial.so.<major>` through `build/libnpps.so.<major>`) (when the
-toolkit's library headers are
-present; nvJitLink needs CUDA 12.4 or newer), the cuDNN shim at `build/libcudnn.so.9` (when cuDNN 9 headers are found beside
-the toolkit's or through `-DLUPINE_CUDNN_INCLUDE_DIR=<dir>`), the NCCL shim at
+CMake builds the CUDA driver shim at `build/libcuda.so.1`, the NCCL shim at
 `build/libnccl.so.2` on Linux (when NCCL 2.14.3 or newer headers are found
-beside the toolkit's or through `-DLUPINE_NCCL_INCLUDE_DIR=<dir>`), the cuFile
-shim at `build/libcufile.so.0` on Linux (when `cufile.h` is found beside the
-toolkit's or through `-DLUPINE_CUFILE_INCLUDE_DIR=<dir>`), the CUPTI shim at
-`build/libcupti.so.<major>` on Linux (`build/libcupti.so.11.8` on CUDA 11, whose
-CUPTI carries the minor in its SONAME; when `cupti_result.h` is found beside the
-toolkit's or through `-DLUPINE_CUPTI_INCLUDE_DIR=<dir>`), the NVML
-toolkit's or through `-DLUPINE_CUFILE_INCLUDE_DIR=<dir>`), the nvSHMEM shim at
-`build/libnvshmem_host.so.3` on Linux (when nvSHMEM 3 headers carrying
+beside the toolkit's or through `-DLUPINE_NCCL_INCLUDE_DIR=<dir>`), the nvSHMEM
+shim at `build/libnvshmem_host.so.3` on Linux (when nvSHMEM 3 headers carrying
 `nvshmem_host.h` are found beside the toolkit's or through
-`-DLUPINE_NVSHMEM_INCLUDE_DIR=<dir>`), the NVML
-toolkit's or through `-DLUPINE_CUFILE_INCLUDE_DIR=<dir>`), the cuSPARSELt shim
-at `build/libcusparseLt.so.0` (when cuSPARSELt 0.6 or newer headers are found
-beside the toolkit's, through `CUSPARSELT_HOME` or through
-`-DLUPINE_CUSPARSELT_INCLUDE_DIR=<dir>`), the NVML
-shim at `build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and
-the server at `build/lupine_driver_server`. The runtime and library shims cover
-their whole APIs: they forward `cuda*`, `cublas*`, `cublasLt*`, `cufft*`,
-`cudnn*`, `curand*`, `cusparse*`, `cusparseLt*`, `cusolver*`, `nvrtc*`,
-`nvJitLink*`, `nccl*`, `nvjpeg*` and `npp*` calls on the driver shim's
-connections, so all of them must come from the same build. NVRTC compiles and nvJitLink links on the server, so their
-output matches the server's toolkit and driver; the files a program includes or
-links from the client's disk are sent along with it. The server loads the
-machine's `libcudnn.so.9`, `libnccl.so.2` and `libcusparseLt.so.0` by name. nvJPEG decodes and encodes
-on the server with the server library's default allocators, so a buffer it
-hands back through a retrieve call is a server address.
+`-DLUPINE_NVSHMEM_INCLUDE_DIR=<dir>`), the NVML shim at
+`build/libnvidia-ml.so.1`, the HIP shim at `build/libamdhip64.so.1`, and the
+server at `build/lupine_driver_server`. A program runs against NVIDIA's own
+CUDA runtime and libraries on the client; the driver shim forwards the `cu*`
+calls they make, and the NCCL shim forwards `nccl*` calls on the driver shim's
+connections, so the two must come from the same build. The server loads the
+machine's `libnccl.so.2` by name.
 
-An NPP call with a stream context runs on the server that owns the context's
-stream, or on the current device's server for the default stream, and its
-images, scratch buffers and results must be device memory on that server. The
-contour calls that fill host lists sized by an earlier call's outputs
-(`nppiCompressedMarkerLabelsUFInfo_32u_C1R_Ctx` and its geometry list and
-interpolation calls) return `NPP_NOT_IMPLEMENTED_ERROR`.
-
-A cuSPARSELt object (handle, matrix descriptor, matmul descriptor, algorithm
-selection, plan) is caller storage the library fills with state it links to its
-other objects by address, so it lives on the server and the caller's storage
-holds its address there. The initializing call allocates it and the matching
-Destroy releases it; storage that was never initialized through the shim names
-no object. Its matrices, compressed buffers, workspaces and pruning validity
-flags are device memory on the server that owns the handle.
-
-cuFile is the exception to that forwarding. GPUDirect Storage moves bytes
-between a storage device and GPU memory without the host, and no DMA spans a
-client and a server, so the shim runs the compatibility path cuFile itself
-falls back to without nvidia-fs, with its halves on the two machines: the
-client reads the file and the driver shim moves the staging buffer. `cuFileRead`
-and `cuFileWrite` keep their contract, the transfer being staged rather than
-direct, while `cuFileDriverGetProperties` reports no GPUDirect capability and
-the nvidia-fs tunables return `CU_FILE_PLATFORM_NOT_SUPPORTED`, so a program
-asking what the platform supports is told. Nothing reaches the server but the
-copies, and it needs no `libcufile` of its own.
-
-CUPTI is the other exception, and a starker one. It profiles the process it is
-loaded into by hooking the driver and runtime calls that process makes, and a
-client makes none: its CUDA calls are RPCs and the work runs on the server. A
-server-side CUPTI would report the server's threads, clock, correlation ids and
-- where a server holds more than one client's connections - the other clients'
-work, so a timeline built from it would be wrong in ways its reader could not
-see. The shim therefore profiles nothing and says so: `cuptiGetVersion`,
-`cuptiGetResultString`, `cuptiGetErrorMessage` and `cuptiGetLastError` answer,
-every other entry point returns `CUPTI_ERROR_NOT_SUPPORTED` and the first
-refusal prints one line to stderr. `torch.profiler` and Nsight Systems' CUPTI
-path report no GPU activity on a lupine client, rather than a fabricated
-timeline; the library loads, which is what PyTorch's `libtorch_cpu.so` needs
-from its `NEEDED` entry.
-nvSHMEM is the other exception, and a starker one: it forwards nothing at all.
+nvSHMEM is the exception: it forwards nothing at all.
 Its PEs hold a partitioned global address space over the GPUs of a job, reading
 and writing each other's symmetric heap from inside kernels, and a client is
 not one of them. The process that owns a GPU here is the server, which serves
@@ -425,10 +368,12 @@ environment. Drive such ranks from a thread each, as separate processes would;
 a group reaching two servers from one thread returns `ncclInvalidUsage`.
 
 Redistributable server builds pass `LUPINE_CLIENT_BUNDLE_INPUT` with staged
-native client directories. CMake deterministically assembles all six platform
-routes and links them into `lupine_driver_server`. The Docker `server` target
-requires that generated registry, so a server image cannot be produced without
-the clients.
+native client directories, one `lupine-client-<tag>` per platform holding the
+driver and NVML shims and, on Linux, the NCCL and nvSHMEM shims. CMake
+deterministically assembles all six platform routes from those files alone and
+links them into `lupine_driver_server`. The Docker `server` target requires
+that generated registry, so a server image cannot be produced without the
+clients.
 
 The Lupine server must be running before initiating client commands.
 
@@ -465,6 +410,11 @@ You can also use the local shell script to run your commands.
 ```
 ./local.sh run
 ```
+
+The opt-in [HIP / ROCm test runners](test/rocm/README.md) build and run upstream
+hip-tests, rocm-examples, and rocBLAS/hipBLAS clients locally or against an SSH
+server. They include native baseline runs and a separate CTest project; AMD
+hardware tests are not enabled in CI.
 
 ## Questions
 

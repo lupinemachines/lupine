@@ -94,6 +94,9 @@ int main() {
 
   CHECK(
       cuLaunchKernel(function, 1, 1, 1, 1, 1, 1, 0, nullptr, nullptr, nullptr));
+  // The driver writes device printf output from its own thread once the kernel
+  // finishes, so it reaches the server's stdout before this synchronize does.
+  usleep(200 * 1000);
   CHECK(cuCtxSynchronize());
   std::fflush(stdout);
 

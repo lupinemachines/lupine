@@ -82,7 +82,7 @@ int handle_nvmlSystemGetDriverVersion(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  version = (char *)malloc(length * sizeof(char));
+  version = (char *)calloc(length * sizeof(char), 1);
   if ((length * sizeof(char) != 0 && version == nullptr) || false)
     goto ERROR_0;
 
@@ -117,7 +117,7 @@ int handle_nvmlSystemGetNVMLVersion(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  version = (char *)malloc(length * sizeof(char));
+  version = (char *)calloc(length * sizeof(char), 1);
   if ((length * sizeof(char) != 0 && version == nullptr) || false)
     goto ERROR_0;
 
@@ -333,7 +333,7 @@ int handle_nvmlDeviceGetName(conn_t *conn) {
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  name = (char *)malloc(length * sizeof(char));
+  name = (char *)calloc(length * sizeof(char), 1);
   if ((length * sizeof(char) != 0 && name == nullptr) || false)
     goto ERROR_0;
 
@@ -370,7 +370,7 @@ int handle_nvmlDeviceGetUUID(conn_t *conn) {
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  uuid = (char *)malloc(length * sizeof(char));
+  uuid = (char *)calloc(length * sizeof(char), 1);
   if ((length * sizeof(char) != 0 && uuid == nullptr) || false)
     goto ERROR_0;
 
@@ -840,7 +840,7 @@ int handle_nvmlDeviceGetVbiosVersion(conn_t *conn) {
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  version = (char *)malloc(length * sizeof(char));
+  version = (char *)calloc(length * sizeof(char), 1);
   if ((length * sizeof(char) != 0 && version == nullptr) || false)
     goto ERROR_0;
 
@@ -878,7 +878,7 @@ int handle_nvmlDeviceGetSerial(conn_t *conn) {
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  serial = (char *)malloc(length * sizeof(char));
+  serial = (char *)calloc(length * sizeof(char), 1);
   if ((length * sizeof(char) != 0 && serial == nullptr) || false)
     goto ERROR_0;
 
@@ -915,7 +915,7 @@ int handle_nvmlDeviceGetBoardPartNumber(conn_t *conn) {
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
-  partNumber = (char *)malloc(length * sizeof(char));
+  partNumber = (char *)calloc(length * sizeof(char), 1);
   if ((length * sizeof(char) != 0 && partNumber == nullptr) || false)
     goto ERROR_0;
 

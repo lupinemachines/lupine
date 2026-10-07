@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lupine"
-version = "2.0.3"
-description = "CUDA on any host: server-selected LUPINE shims plus PyTorch adapter"
+version = "3.0.0"
+description = "CUDA on any host: server-selected LUPINE client plus PyTorch adapter"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -13,10 +13,11 @@ dependencies = []
 
 [project.optional-dependencies]
 torch = ["torch"]
-auto = ["lupine-auto==2.0.3"]
+auto = ["lupine-auto==3.0.0"]
 
 [project.scripts]
 lupine = "lupine.__main__:main"
+lupine-torch-worker = "lupine._worker:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0"]
@@ -26,17 +27,12 @@ lupine-auto = { path = "auto" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["lupine"]
-# The Python workflow stages only CUDA runtime translation stubs. Complete
-# driver/NVML clients are published separately and must never
-# enter the wheel. Keep native staging excluded from package discovery, then
-# allowlist only the runtime filenames.
-exclude = ["lupine/_libs/**"]
-artifacts = [
-  "lupine/_libs/**/libcudart.so.13",
-  "lupine/_libs/**/libcudart.dylib",
-  "lupine/_libs/**/cudart64_13.dll",
-]
+# The wheel is pure Python. The native client — driver and NVML — is
+# published by the bound server and resolved at run time, so a stray local
+# staging directory must never enter a distribution.
+# The torch backend extension (lupine/_backend/_C) is built per torch release
+# from a checkout and never ships in the pure wheel either.
+exclude = ["lupine/_libs/**", "lupine/_backend/_C*", "lupine/_backend/build/**"]
 
 [tool.hatch.build.targets.sdist]
-# Native libraries never enter the sdist; build wheels from a checkout.
-exclude = ["lupine/_libs"]
+exclude = ["lupine/_libs", "lupine/_backend/_C*", "lupine/_backend/build"]

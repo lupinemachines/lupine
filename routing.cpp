@@ -19,13 +19,6 @@ extern int rpc_open();
 extern int rpc_size();
 extern conn_t *rpc_client_get_connection(unsigned int index);
 
-struct lupine_deviceptr_allocation_record {
-  CUdeviceptr base = 0;
-  size_t size = 0;
-  int route_id = -2;
-  CUcontext context = nullptr;
-};
-
 struct lupine_device_entry {
   bool local = false;
   CUdevice local_device = -1;
@@ -58,13 +51,6 @@ template <typename Handle>
 static std::unordered_map<Handle, lupine_owner_record> &lupine_owners() {
   static auto *owners = new std::unordered_map<Handle, lupine_owner_record>();
   return *owners;
-}
-
-static std::unordered_map<CUdeviceptr, lupine_deviceptr_allocation_record> &
-lupine_deviceptr_allocations() {
-  static auto *allocations =
-      new std::unordered_map<CUdeviceptr, lupine_deviceptr_allocation_record>();
-  return *allocations;
 }
 
 static int lupine_conn_index(conn_t *conn) {
@@ -319,6 +305,16 @@ CUresult lupine_virtual_device_count(int *count) {
   return CUDA_SUCCESS;
 }
 
+bool lupine_devices_span_routes() {
+  (void)lupine_ensure_device_table();
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  const auto &devices = lupine_device_table();
+  return std::any_of(devices.begin(), devices.end(), [&](const auto &entry) {
+    return entry.local != devices.front().local ||
+           (!entry.local && entry.conn_index != devices.front().conn_index);
+  });
+}
+
 CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal) {
   if (device == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
@@ -336,8 +332,11 @@ CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal) {
   return CUDA_SUCCESS;
 }
 
-static CUdevice lupine_virtual_device_for_route(lupine_route route,
-                                                CUdevice route_device) {
+CUdevice lupine_virtual_device_for_route(lupine_route route,
+                                         CUdevice route_device) {
+  if (lupine_ensure_device_table() != CUDA_SUCCESS) {
+    return -1;
+  }
   int conn_index = -1;
   if (route.kind == LUPINE_ROUTE_REMOTE) {
     conn_index = lupine_conn_index(route.conn);
@@ -541,12 +540,7 @@ static void lupine_note_deviceptr_allocation_owner_locked(CUdeviceptr ptr,
   auto &owner = lupine_owners<CUdeviceptr>()[ptr];
   owner.route_id = route_id;
   owner.pointer_context = context;
-  if (size == 0) {
-    lupine_deviceptr_allocations().erase(ptr);
-    return;
-  }
-  lupine_deviceptr_allocations()[ptr] =
-      lupine_deviceptr_allocation_record{ptr, size, route_id, context};
+  lupine_deviceptr_allocation_cache_insert(ptr, size, route_id, context);
 }
 
 extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
@@ -647,7 +641,7 @@ extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
 extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   lupine_owners<CUdeviceptr>().erase(ptr);
-  lupine_deviceptr_allocations().erase(ptr);
+  lupine_deviceptr_allocation_cache_erase(ptr);
 }
 
 extern "C" void lupine_forget_context_owner(CUcontext ctx) {
@@ -733,21 +727,6 @@ extern "C" lupine_route lupine_route_for_known_stream(CUstream stream) {
   return lupine_route_for_known_owner(stream);
 }
 
-extern "C" void lupine_note_blas_handle_owner(void *handle, conn_t *conn) {
-  lupine_note_owner(static_cast<lupine_blas_handle>(handle), conn);
-}
-
-extern "C" void lupine_forget_blas_handle_owner(void *handle) {
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_owners<lupine_blas_handle>().erase(
-      static_cast<lupine_blas_handle>(handle));
-}
-
-extern "C" conn_t *lupine_rpc_conn_for_blas_handle(void *handle) {
-  return lupine_route_remote_conn(
-      lupine_route_for_known_owner(static_cast<lupine_blas_handle>(handle)));
-}
-
 extern "C" lupine_route lupine_route_for_event(CUevent event) {
   return lupine_route_for_owner_or_default(event);
 }
@@ -773,16 +752,7 @@ extern "C" bool lupine_deviceptr_is_tracked(CUdeviceptr ptr) {
   if (lupine_owners<CUdeviceptr>().count(ptr) != 0) {
     return true;
   }
-  for (const auto &entry : lupine_deviceptr_allocations()) {
-    const auto &allocation = entry.second;
-    if (allocation.base == 0 || allocation.size == 0 || ptr < allocation.base) {
-      continue;
-    }
-    if (static_cast<uint64_t>(ptr - allocation.base) < allocation.size) {
-      return true;
-    }
-  }
-  return false;
+  return lupine_deviceptr_allocation_cache_lookup(ptr) != nullptr;
 }
 
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
@@ -792,16 +762,8 @@ extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
     if (it != lupine_owners<CUdeviceptr>().end()) {
       return lupine_route_from_identity(it->second.route_id);
     }
-    for (const auto &entry : lupine_deviceptr_allocations()) {
-      const auto &allocation = entry.second;
-      if (allocation.base == 0 || allocation.size == 0 ||
-          ptr < allocation.base) {
-        continue;
-      }
-      uint64_t offset = static_cast<uint64_t>(ptr - allocation.base);
-      if (offset < allocation.size) {
-        return lupine_route_from_identity(allocation.route_id);
-      }
+    if (const auto *allocation = lupine_deviceptr_allocation_cache_lookup(ptr)) {
+      return lupine_route_from_identity(allocation->route_id);
     }
   }
   return lupine_route_for_default();
@@ -814,15 +776,8 @@ extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr) {
       owner->second.pointer_context != nullptr) {
     return owner->second.pointer_context;
   }
-  for (const auto &entry : lupine_deviceptr_allocations()) {
-    const auto &allocation = entry.second;
-    if (allocation.base != 0 && allocation.size != 0 &&
-        ptr >= allocation.base &&
-        static_cast<uint64_t>(ptr - allocation.base) < allocation.size) {
-      return allocation.context;
-    }
-  }
-  return nullptr;
+  const auto *allocation = lupine_deviceptr_allocation_cache_lookup(ptr);
+  return allocation != nullptr ? allocation->context : nullptr;
 }
 
 CUresult lupine_set_current_context_on_route(lupine_route route,
@@ -850,15 +805,17 @@ CUresult lupine_set_current_context_on_route(lupine_route route,
       result = CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
   }
+  // The lane just moved to another context, and with it to that context's
+  // device and to that context's server. Device answers cached against the old
+  // binding are stale even when the set failed and left the lane somewhere
+  // unknown.
+  lupine_note_device_binding_changed();
   lupine_lane_context_cache_update(lupine_route_identity(route), ctx, epoch,
                                    result == CUDA_SUCCESS);
   return result;
 }
 
 extern "C" lupine_route lupine_route_for_current_context() {
-  if (lupine_refresh_runtime_context() != CUDA_SUCCESS) {
-    return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
-  }
   return lupine_route_for_context(lupine_current_context_hint());
 }
 
@@ -883,9 +840,6 @@ static lupine_route lupine_route_for_default_context_hint(CUcontext ctx) {
 }
 
 extern "C" lupine_route lupine_route_for_default() {
-  if (lupine_refresh_runtime_context() != CUDA_SUCCESS) {
-    return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
-  }
   CUcontext current_hint = lupine_current_context_hint();
   if (current_hint != nullptr) {
     lupine_route route = lupine_route_for_default_context_hint(current_hint);

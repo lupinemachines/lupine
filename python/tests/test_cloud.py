@@ -1,11 +1,14 @@
+import http.client
 import json
 import os
 import threading
+import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import lupine
 import pytest
+from lupine import _cloud
 
 
 @contextmanager
@@ -111,6 +114,33 @@ def test_cloud_session_authenticates_binds_heartbeats_and_releases(
     assert all(request[4] == "lupine-python/2.0.3" for request in state["requests"])
     create_body = json.loads(state["requests"][0][3])
     assert create_body == {"gpu_type": "RTX_4090", "gpu_count": 1}
+
+
+def test_heartbeat_survives_non_lupine_exceptions(monkeypatch):
+    monkeypatch.setattr(_cloud, "_HEARTBEAT_INTERVAL", 0.01)
+    calls = []
+
+    def fake_request(method, url, token, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise http.client.RemoteDisconnected("Remote end closed connection")
+        return {}
+
+    monkeypatch.setattr(_cloud, "_request", fake_request)
+
+    session = _cloud.CloudSession()
+    session.lease_id = "lease"
+    session.token = "tok"
+    session._start_heartbeat()
+    try:
+        for _ in range(200):
+            if len(calls) >= 2:
+                break
+            time.sleep(0.01)
+        assert len(calls) >= 2
+    finally:
+        session._heartbeat_stop.set()
+        session._heartbeat_thread.join(timeout=2)
 
 
 def test_cloud_session_requires_login(monkeypatch, tmp_path):

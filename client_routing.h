@@ -9,6 +9,9 @@
 #undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
 #include "rpc.h"
+#ifdef __linux__
+#include "device_ioctl_guard.h"
+#endif
 
 static constexpr int LUPINE_ROUTE_REMOTE = 0;
 static constexpr int LUPINE_ROUTE_LOCAL = 1;
@@ -28,10 +31,12 @@ lupine_route lupine_route_from_identity(int route_id);
 conn_t *lupine_thread_conn_by_index(unsigned int index);
 CUresult lupine_virtual_device_count(int *count);
 CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal);
+// Only then can a module or library handle be used on a route other than the
+// one that loaded it.
+bool lupine_devices_span_routes();
 CUresult lupine_set_current_context_on_route(lupine_route route, CUcontext ctx);
 bool lupine_local_cuda_available();
-CUcontext lupine_current_context_hint();
-CUresult lupine_refresh_runtime_context();
+extern "C" CUcontext lupine_current_context_hint();
 CUcontext lupine_default_context_hint_value();
 CUcontext lupine_global_default_context_hint_value();
 void lupine_accept_current_context_hint(CUcontext ctx);
@@ -80,6 +85,37 @@ extern "C" bool lupine_translate_device_for_conn(conn_t *conn,
                                                  CUdevice *device);
 extern "C" CUdevice lupine_local_device_for_remote(conn_t *conn,
                                                    CUdevice remote_device);
+CUdevice lupine_virtual_device_for_route(lupine_route route,
+                                         CUdevice route_device);
+
+// Only DEVICE locations contain virtual CUDA ordinals. Host/NUMA identifiers
+// belong to the selected server and must pass through unchanged.
+static inline CUresult
+lupine_translate_mem_location(lupine_route route, CUmemLocation &location) {
+  if (location.type != CU_MEM_LOCATION_TYPE_DEVICE) {
+    return CUDA_SUCCESS;
+  }
+  CUdevice device = location.id;
+  lupine_route device_route = lupine_route_for_device(&device);
+  if (device_route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
+    return CUDA_ERROR_INVALID_DEVICE;
+  }
+  if (device_route.kind == LUPINE_ROUTE_INVALID) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (!lupine_routes_share_server(route, device_route)) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  location.id = device;
+  return CUDA_SUCCESS;
+}
+
+static inline void
+lupine_restore_mem_location(lupine_route route, CUmemLocation &location) {
+  if (location.type == CU_MEM_LOCATION_TYPE_DEVICE) {
+    location.id = lupine_virtual_device_for_route(route, location.id);
+  }
+}
 
 using lupine_device_lookup_callback = CUresult (*)(void *context,
                                                    lupine_route route,
@@ -99,11 +135,6 @@ static CUresult lupine_lookup_device_on_all_routes(CUdevice *device,
 }
 
 extern "C" void *lupine_real_cuda_symbol(const char *name);
-
-// A key of its own, so the shared cuBLAS/cuBLASLt handle does not land in a
-// map keyed by some other library's pointers.
-struct lupine_blas_handle_st;
-using lupine_blas_handle = lupine_blas_handle_st *;
 
 extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn);
 extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn);
@@ -151,14 +182,32 @@ extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
                                                        size_t size,
                                                        lupine_route route);
 
+// Resolves a driver entry point once per call site; name must be a literal.
+#define LUPINE_REAL_CUDA_SYMBOL(name)                                          \
+  ([] {                                                                        \
+    static void *const real = lupine_real_cuda_symbol(name);                   \
+    return real;                                                               \
+  }())
+
+template <typename Fn = void,
+          CUresult MissingSymbol = CUDA_ERROR_DEVICE_UNAVAILABLE,
+          typename... Args>
+static CUresult lupine_call_real_cuda_fn(void *symbol, Args &&...args) {
+  using inferred_fn = CUresult(CUDAAPI *)(std::decay_t<Args>...);
+  using real_fn = std::conditional_t<std::is_void_v<Fn>, inferred_fn, Fn>;
+  auto real = reinterpret_cast<real_fn>(symbol);
+#ifdef __linux__
+  lupine_native_cuda_call_guard native_call;
+#endif
+  return real == nullptr ? MissingSymbol : real(std::forward<Args>(args)...);
+}
+
 template <typename Fn = void,
           CUresult MissingSymbol = CUDA_ERROR_DEVICE_UNAVAILABLE,
           typename... Args>
 static CUresult lupine_call_real_cuda_fn(const char *name, Args &&...args) {
-  using inferred_fn = CUresult(CUDAAPI *)(std::decay_t<Args>...);
-  using real_fn = std::conditional_t<std::is_void_v<Fn>, inferred_fn, Fn>;
-  auto real = reinterpret_cast<real_fn>(lupine_real_cuda_symbol(name));
-  return real == nullptr ? MissingSymbol : real(std::forward<Args>(args)...);
+  return lupine_call_real_cuda_fn<Fn, MissingSymbol>(
+      lupine_real_cuda_symbol(name), std::forward<Args>(args)...);
 }
 
 template <CUresult MissingSymbol, typename... Args>

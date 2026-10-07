@@ -1,8 +1,6 @@
-#ifdef LUPINE_BUILD_CUBLAS_BACKEND
-void lupine_cublas_cleanup_logs(struct conn_t *conn);
-#endif
 #include <atomic>
 #include <cerrno>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -31,8 +29,10 @@ void lupine_cublas_cleanup_logs(struct conn_t *conn);
 #include "ipc.h"
 #include "lupine_log.h"
 #include "monitoring.h"
+#include "process_handoff.h"
 #include "rpc.h"
 #include "rpc_server.h"
+#include "server_api.h"
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 #include "checkpoint.h"
 #include "codegen/gen_rpc_ids.h"
@@ -187,6 +187,18 @@ struct lupine_lane {
 int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
                         int op) {
   LUPINE_TRACE_LOG("LUPINE server handling op " << op);
+  if (op == LUPINE_HANDOFF_DRAIN_REQUEST) {
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+    lupine_checkpoint_drain_cuda_calls();
+#endif
+    int request = rpc_read_end(conn);
+    int result = 0;
+    return request < 0 || rpc_write_start_response(conn, request) < 0 ||
+                   rpc_write(conn, &result, sizeof(result)) < 0 ||
+                   rpc_write_end(conn) < 0
+               ? -1
+               : 0;
+  }
   if (op == LUPINE_RPC_CLIENT_METADATA) {
     return handle_lupine_client_metadata(conn);
   }
@@ -219,142 +231,10 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
 #else
     break;
 #endif
-  case rpc_backend::cudart:
-#ifdef LUPINE_BUILD_CUDART_BACKEND
-  {
-    backend_name = "CUDART";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::cublas:
-#ifdef LUPINE_BUILD_CUBLAS_BACKEND
-  {
-    backend_name = "cuBLAS";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::cufft:
-#ifdef LUPINE_BUILD_CUFFT_BACKEND
-  {
-    backend_name = "cuFFT";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::cudnn:
-#ifdef LUPINE_BUILD_CUDNN_BACKEND
-  {
-    backend_name = "cuDNN";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::curand:
-#ifdef LUPINE_BUILD_CURAND_BACKEND
-  {
-    backend_name = "cuRAND";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::cusparse:
-#ifdef LUPINE_BUILD_CUSPARSE_BACKEND
-  {
-    backend_name = "cuSPARSE";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::cusparselt:
-#ifdef LUPINE_BUILD_CUSPARSELT_BACKEND
-  {
-    backend_name = "cuSPARSELt";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::cusolver:
-#ifdef LUPINE_BUILD_CUSOLVER_BACKEND
-  {
-    backend_name = "cuSOLVER";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::nvrtc:
-#ifdef LUPINE_BUILD_NVRTC_BACKEND
-  {
-    backend_name = "NVRTC";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
   case rpc_backend::nccl:
 #ifdef LUPINE_BUILD_NCCL_BACKEND
   {
     backend_name = "NCCL";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::nvjitlink:
-#ifdef LUPINE_BUILD_NVJITLINK_BACKEND
-  {
-    backend_name = "nvJitLink";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::nvjpeg:
-#ifdef LUPINE_BUILD_NVJPEG_BACKEND
-  {
-    backend_name = "nvJPEG";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::npp:
-#ifdef LUPINE_BUILD_NPP_BACKEND
-  {
-    backend_name = "NPP";
     lupine_checkpoint::cuda_call_guard guard;
     result = handler.handler(conn);
     break;
@@ -422,7 +302,8 @@ static void lupine_serve_lanes(conn_t &conn,
             break;
           }
           if (rpc_server_dispatch(handlers, &conn, op) < 0) {
-            (void)rpc_read_end(&conn);
+            // A failed async handler cannot satisfy another lane's prefix.
+            rpc_shutdown_transport_socket(&conn);
             break;
           }
         }
@@ -542,6 +423,7 @@ int client_handler(lupine_socket_t connfd) {
   }
   lupine_monitoring_register_child();
 #ifdef LUPINE_BUILD_CUDA_BACKEND
+  lupine_handoff_on_resume(&conn, lupine_checkpoint_resume_cuda_calls);
   if (!lupine_server_initialize_connection(&conn)) {
     LUPINE_LOG_ERROR("Error initializing per-connection CUDA state.");
     rpc_conn_destroy(&conn);
@@ -580,9 +462,6 @@ int client_handler(lupine_socket_t connfd) {
 #ifdef LUPINE_BUILD_CUDA_BACKEND
   // Finish checkpointing before releasing per-connection CUDA resources.
   checkpoint_result = lupine_server_checkpoint_child_finish();
-#ifdef LUPINE_BUILD_CUBLAS_BACKEND
-  lupine_cublas_cleanup_logs(&conn);
-#endif
   lupine_server_cleanup_connection(&conn);
   lupine_server_cleanup_identity_allocations(&conn);
 #endif
@@ -590,7 +469,33 @@ int client_handler(lupine_socket_t connfd) {
   return checkpoint_result;
 }
 
-int main() {
+#ifdef __linux__
+int lupine_server_serve_connection_v1(int fd) {
+  int type = 0;
+  socklen_t length = sizeof(type);
+  if (!rpc_server_validate(lupine_rpc_handlers()) || lupine_socket_init() < 0 ||
+      getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &length) != 0 ||
+      type != SOCK_STREAM) {
+    LUPINE_LOG_ERROR("Server connection requires a valid stream socket.");
+    lupine_socket_close(fd);
+    return EXIT_FAILURE;
+  }
+  lupine_socket_apply_transport_options(fd);
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+  // The embedding application owns checkpoint publication and restore.
+  bool started = lupine_server_checkpoint_child_start(fd, false);
+#else
+  bool started = lupine_install_child_signal_handler(fd);
+#endif
+  if (!started) {
+    lupine_socket_close(fd);
+    return EXIT_FAILURE;
+  }
+  return client_handler(fd) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+#endif
+
+int lupine_server_main() {
   if (!rpc_server_validate(lupine_rpc_handlers())) {
     LUPINE_LOG_ERROR("Invalid RPC handler registry.");
     return EXIT_FAILURE;
@@ -601,6 +506,35 @@ int main() {
     LUPINE_LOG_ERROR("Socket initialization failed.");
     exit(EXIT_FAILURE);
   }
+
+#ifndef _WIN32
+  if (const char *inherited = getenv("LUPINE_CONNECTION_FD")) {
+    char *end = nullptr;
+    long fd = strtol(inherited, &end, 10);
+    int type = 0;
+    socklen_t length = sizeof(type);
+    if (end == inherited || *end != '\0' || fd < 0 || fd > INT_MAX ||
+        getsockopt(static_cast<int>(fd), SOL_SOCKET, SO_TYPE, &type, &length) !=
+            0 ||
+        type != SOCK_STREAM) {
+      LUPINE_LOG_ERROR(
+          "LUPINE_CONNECTION_FD must name an inherited stream socket");
+      return EXIT_FAILURE;
+    }
+    int connfd = static_cast<int>(fd);
+    lupine_socket_apply_transport_options(connfd);
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+    bool started = lupine_server_checkpoint_child_start(connfd);
+#else
+    bool started = lupine_install_child_signal_handler(connfd);
+#endif
+    if (!started) {
+      lupine_socket_close(connfd);
+      return EXIT_FAILURE;
+    }
+    return client_handler(connfd) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+  }
+#endif
 
   lupine_socket_t sockfd = socket(AF_INET, SOCK_STREAM, 0);
   if (sockfd == LUPINE_INVALID_SOCKET) {

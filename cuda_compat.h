@@ -2,6 +2,7 @@
 #define LUPINE_CUDA_COMPAT_H
 
 #include <cuda.h>
+#include <string.h>
 
 #ifndef LUPINE_CUDA_COMPAT_TYPES_ONLY
 #ifdef _WIN32
@@ -15,11 +16,89 @@
 #else
 #include <dlfcn.h>
 #endif
+
+// Resolves in the real driver the server links, whatever headers built it.
+static inline void *lupine_driver_symbol(const char *name) {
+#ifdef _WIN32
+  static HMODULE lib = LoadLibraryA("nvcuda.dll");
+  return lib != nullptr ? reinterpret_cast<void *>(GetProcAddress(lib, name))
+                        : nullptr;
+#else
+  return dlsym(RTLD_DEFAULT, name);
+#endif
+}
+
+#define LUPINE_FORWARD_DRIVER(name, ...)                                       \
+  static auto fn =                                                             \
+      reinterpret_cast<decltype(&name)>(lupine_driver_symbol(#name));          \
+  return fn != nullptr ? fn(__VA_ARGS__) : CUDA_ERROR_NOT_SUPPORTED
 #endif
 
 // Attribute-snapshot wire entry carrying the function's device (the server's
 // current device at snapshot time); sits below every real CUfunction_attribute.
 #define LUPINE_FUNC_ATTRIBUTE_DEVICE (-1)
+
+// 2D and peer copies travel as the 3D descriptor: a 2D copy is one slice, and
+// a peer copy's contexts sit in the reserved slots it shares a layout with.
+static inline CUDA_MEMCPY3D lupine_memcpy3d_of(const CUDA_MEMCPY2D &flat) {
+  CUDA_MEMCPY3D copy = {};
+  copy.srcXInBytes = flat.srcXInBytes;
+  copy.srcY = flat.srcY;
+  copy.srcMemoryType = flat.srcMemoryType;
+  copy.srcHost = flat.srcHost;
+  copy.srcDevice = flat.srcDevice;
+  copy.srcArray = flat.srcArray;
+  copy.srcPitch = flat.srcPitch;
+  copy.srcHeight = flat.Height;
+  copy.dstXInBytes = flat.dstXInBytes;
+  copy.dstY = flat.dstY;
+  copy.dstMemoryType = flat.dstMemoryType;
+  copy.dstHost = flat.dstHost;
+  copy.dstDevice = flat.dstDevice;
+  copy.dstArray = flat.dstArray;
+  copy.dstPitch = flat.dstPitch;
+  copy.dstHeight = flat.Height;
+  copy.WidthInBytes = flat.WidthInBytes;
+  copy.Height = flat.Height;
+  copy.Depth = 1;
+  return copy;
+}
+
+static inline CUDA_MEMCPY2D lupine_memcpy2d_of(const CUDA_MEMCPY3D &copy) {
+  CUDA_MEMCPY2D flat = {};
+  flat.srcXInBytes = copy.srcXInBytes;
+  flat.srcY = copy.srcY;
+  flat.srcMemoryType = copy.srcMemoryType;
+  flat.srcHost = copy.srcHost;
+  flat.srcDevice = copy.srcDevice;
+  flat.srcArray = copy.srcArray;
+  flat.srcPitch = copy.srcPitch;
+  flat.dstXInBytes = copy.dstXInBytes;
+  flat.dstY = copy.dstY;
+  flat.dstMemoryType = copy.dstMemoryType;
+  flat.dstHost = copy.dstHost;
+  flat.dstDevice = copy.dstDevice;
+  flat.dstArray = copy.dstArray;
+  flat.dstPitch = copy.dstPitch;
+  flat.WidthInBytes = copy.WidthInBytes;
+  flat.Height = copy.Height;
+  return flat;
+}
+
+static_assert(sizeof(CUDA_MEMCPY3D) == sizeof(CUDA_MEMCPY3D_PEER),
+              "peer copies travel as CUDA_MEMCPY3D");
+static inline CUDA_MEMCPY3D lupine_memcpy3d_of(const CUDA_MEMCPY3D_PEER &peer) {
+  CUDA_MEMCPY3D copy;
+  memcpy(&copy, &peer, sizeof(copy));
+  return copy;
+}
+
+static inline CUDA_MEMCPY3D_PEER
+lupine_memcpy3d_peer_of(const CUDA_MEMCPY3D &copy) {
+  CUDA_MEMCPY3D_PEER peer;
+  memcpy(&peer, &copy, sizeof(peer));
+  return peer;
+}
 
 #if CUDA_VERSION < 12000
 typedef struct CUlibrary_st *CUlibrary;
@@ -67,106 +146,100 @@ CUresult cuLibraryGetModule(CUmodule *, CUlibrary);
 #endif
 
 #ifndef LUPINE_CUDA_COMPAT_TYPES_ONLY
-static inline CUresult cuCtxGetId(CUcontext, unsigned long long *) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+// A runtime newer than these headers registers every kernel through the
+// library API, so the server forwards it rather than failing it.
+static inline CUresult cuCtxGetId(CUcontext ctx, unsigned long long *id) {
+  LUPINE_FORWARD_DRIVER(cuCtxGetId, ctx, id);
 }
 
-static inline CUresult cuStreamGetId(CUstream, unsigned long long *) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult cuStreamGetId(CUstream stream, unsigned long long *id) {
+  LUPINE_FORWARD_DRIVER(cuStreamGetId, stream, id);
 }
 
-static inline CUresult cuLibraryLoadFromFile(CUlibrary *, const char *,
-                                             CUjit_option *, void **,
-                                             unsigned int, CUlibraryOption *,
-                                             void **, unsigned int) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult cuLibraryLoadFromFile(
+    CUlibrary *library, const char *fileName, CUjit_option *jitOptions,
+    void **jitOptionsValues, unsigned int numJitOptions,
+    CUlibraryOption *libraryOptions, void **libraryOptionValues,
+    unsigned int numLibraryOptions) {
+  LUPINE_FORWARD_DRIVER(cuLibraryLoadFromFile, library, fileName, jitOptions,
+                        jitOptionsValues, numJitOptions, libraryOptions,
+                        libraryOptionValues, numLibraryOptions);
 }
 
-static inline CUresult cuLibraryLoadData(CUlibrary *, const void *,
-                                         CUjit_option *, void **, unsigned int,
-                                         CUlibraryOption *, void **,
-                                         unsigned int) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult
+cuLibraryLoadData(CUlibrary *library, const void *code,
+                  CUjit_option *jitOptions, void **jitOptionsValues,
+                  unsigned int numJitOptions, CUlibraryOption *libraryOptions,
+                  void **libraryOptionValues, unsigned int numLibraryOptions) {
+  LUPINE_FORWARD_DRIVER(cuLibraryLoadData, library, code, jitOptions,
+                        jitOptionsValues, numJitOptions, libraryOptions,
+                        libraryOptionValues, numLibraryOptions);
 }
 
-static inline CUresult cuLibraryUnload(CUlibrary) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult cuLibraryUnload(CUlibrary library) {
+  LUPINE_FORWARD_DRIVER(cuLibraryUnload, library);
 }
 
-static inline CUresult cuLibraryGetKernel(CUkernel *, CUlibrary, const char *) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult cuLibraryGetKernel(CUkernel *kernel, CUlibrary library,
+                                          const char *name) {
+  LUPINE_FORWARD_DRIVER(cuLibraryGetKernel, kernel, library, name);
 }
 
-static inline CUresult cuLibraryGetModule(CUmodule *, CUlibrary) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult cuLibraryGetModule(CUmodule *module, CUlibrary library) {
+  LUPINE_FORWARD_DRIVER(cuLibraryGetModule, module, library);
 }
 
-static inline CUresult cuKernelGetFunction(CUfunction *, CUkernel) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult cuKernelGetFunction(CUfunction *function,
+                                           CUkernel kernel) {
+  LUPINE_FORWARD_DRIVER(cuKernelGetFunction, function, kernel);
 }
 
-static inline CUresult cuLibraryGetGlobal(CUdeviceptr *, size_t *, CUlibrary,
-                                          const char *) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes,
+                                          CUlibrary library, const char *name) {
+  LUPINE_FORWARD_DRIVER(cuLibraryGetGlobal, dptr, bytes, library, name);
 }
 
-static inline CUresult cuLibraryGetManaged(CUdeviceptr *, size_t *, CUlibrary,
-                                           const char *) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
+                                           CUlibrary library,
+                                           const char *name) {
+  LUPINE_FORWARD_DRIVER(cuLibraryGetManaged, dptr, bytes, library, name);
 }
 
-static inline CUresult cuLibraryGetUnifiedFunction(void **, CUlibrary,
-                                                   const char *) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult cuLibraryGetUnifiedFunction(void **fptr,
+                                                   CUlibrary library,
+                                                   const char *symbol) {
+  LUPINE_FORWARD_DRIVER(cuLibraryGetUnifiedFunction, fptr, library, symbol);
 }
 
-static inline CUresult cuKernelGetAttribute(int *, CUfunction_attribute,
-                                            CUkernel, CUdevice) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult cuKernelGetAttribute(int *pi,
+                                            CUfunction_attribute attrib,
+                                            CUkernel kernel, CUdevice dev) {
+  LUPINE_FORWARD_DRIVER(cuKernelGetAttribute, pi, attrib, kernel, dev);
 }
 
-static inline CUresult cuKernelSetAttribute(CUfunction_attribute, int, CUkernel,
-                                            CUdevice) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult cuKernelSetAttribute(CUfunction_attribute attrib,
+                                            int val, CUkernel kernel,
+                                            CUdevice dev) {
+  LUPINE_FORWARD_DRIVER(cuKernelSetAttribute, attrib, val, kernel, dev);
 }
 
-static inline CUresult cuKernelSetCacheConfig(CUkernel, CUfunc_cache,
-                                              CUdevice) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult
+cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config, CUdevice dev) {
+  LUPINE_FORWARD_DRIVER(cuKernelSetCacheConfig, kernel, config, dev);
 }
 
 static inline CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
                                             size_t *paramOffset,
                                             size_t *paramSize) {
-  using cuKernelGetParamInfo_t =
-      CUresult(CUDAAPI *)(CUkernel, size_t, size_t *, size_t *);
-#ifdef _WIN32
-  static HMODULE lib = LoadLibraryA("nvcuda.dll");
-  static auto fn = reinterpret_cast<cuKernelGetParamInfo_t>(
-      lib != nullptr ? GetProcAddress(lib, "cuKernelGetParamInfo") : nullptr);
-#else
-  static auto fn = reinterpret_cast<cuKernelGetParamInfo_t>(
-      dlsym(RTLD_DEFAULT, "cuKernelGetParamInfo"));
-#endif
-  return fn != nullptr ? fn(kernel, paramIndex, paramOffset, paramSize)
-                       : CUDA_ERROR_NOT_SUPPORTED;
+  LUPINE_FORWARD_DRIVER(cuKernelGetParamInfo, kernel, paramIndex, paramOffset,
+                        paramSize);
 }
 
 static inline CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
                                           size_t *paramOffset,
                                           size_t *paramSize) {
-  using cuFuncGetParamInfo_t =
-      CUresult(CUDAAPI *)(CUfunction, size_t, size_t *, size_t *);
-#ifdef _WIN32
-  static HMODULE lib = LoadLibraryA("nvcuda.dll");
-  static auto fn = reinterpret_cast<cuFuncGetParamInfo_t>(
-      lib != nullptr ? GetProcAddress(lib, "cuFuncGetParamInfo") : nullptr);
-#else
-  static auto fn = reinterpret_cast<cuFuncGetParamInfo_t>(
-      dlsym(RTLD_DEFAULT, "cuFuncGetParamInfo"));
-#endif
-  return fn != nullptr ? fn(func, paramIndex, paramOffset, paramSize)
-                       : CUDA_ERROR_NOT_SUPPORTED;
+  LUPINE_FORWARD_DRIVER(cuFuncGetParamInfo, func, paramIndex, paramOffset,
+                        paramSize);
 }
 
 static inline CUresult
@@ -224,8 +297,41 @@ CUresult cuKernelGetLibrary(CUlibrary *, CUkernel);
 #endif
 #endif
 #ifndef LUPINE_CUDA_COMPAT_TYPES_ONLY
-static inline CUresult cuKernelGetLibrary(CUlibrary *, CUkernel) {
-  return CUDA_ERROR_NOT_SUPPORTED;
+static inline CUresult cuKernelGetLibrary(CUlibrary *library, CUkernel kernel) {
+  LUPINE_FORWARD_DRIVER(cuKernelGetLibrary, library, kernel);
+}
+#endif
+#endif
+
+// Applications can bundle a runtime newer than the headers lupine was built
+// with, and that runtime stops launching kernels if these lookups fail. The
+// server's driver has them regardless, so an older build still forwards them.
+#if CUDA_VERSION < 12080
+#ifdef LUPINE_CUDA_COMPAT_TYPES_ONLY
+#ifdef __cplusplus
+extern "C" {
+#endif
+#if CUDA_VERSION < 12030
+CUresult cuKernelGetName(const char **, CUkernel);
+CUresult cuFuncGetName(const char **, CUfunction);
+#endif
+CUresult cuStreamGetDevice(CUstream, CUdevice *);
+#ifdef __cplusplus
+}
+#endif
+#else
+#if CUDA_VERSION < 12030
+static inline CUresult cuKernelGetName(const char **name, CUkernel hfunc) {
+  LUPINE_FORWARD_DRIVER(cuKernelGetName, name, hfunc);
+}
+
+static inline CUresult cuFuncGetName(const char **name, CUfunction hfunc) {
+  LUPINE_FORWARD_DRIVER(cuFuncGetName, name, hfunc);
+}
+#endif
+
+static inline CUresult cuStreamGetDevice(CUstream hStream, CUdevice *device) {
+  LUPINE_FORWARD_DRIVER(cuStreamGetDevice, hStream, device);
 }
 #endif
 #endif

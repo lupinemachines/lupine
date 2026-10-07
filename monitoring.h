@@ -48,17 +48,11 @@ inline void lupine_monitoring_register_child() {}
 inline void lupine_monitoring_unregister_pid(int64_t) {}
 inline int handle_lupine_client_metadata(conn_t *conn) {
   lupine_client_metadata_header header = {};
-  if (rpc_read(conn, &header, sizeof(header)) != sizeof(header) ||
+  if (rpc_read(conn, &header, sizeof(header)) != 0 ||
       rpc_drain(conn, header.payload_size) < 0) {
     return -1;
   }
-  int status = 0;
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0 || rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &status, sizeof(status)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return rpc_read_end(conn) < 0 ? -1 : 0;
 }
 inline void lupine_monitoring_begin_context_create(int) {}
 inline void lupine_monitoring_end_context_create(bool) {}

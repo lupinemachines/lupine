@@ -1,12 +1,16 @@
+#include "device_stdout.h"
+#include "fatbin_filter.h"
 #include "lupine_platform.h"
-#include "cublas_log_callbacks.h"
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
 #include <cuda.h>
 #include <cuda_occupancy.h>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -20,12 +24,16 @@
 #include <thread>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #ifndef _WIN32
 #include <arpa/inet.h>
 #include <dlfcn.h>
+#if defined(__linux__)
+#include <link.h>
+#endif
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
@@ -56,12 +64,15 @@
 #include "cuda_profiler_compat.h"
 #include "events.h"
 #include "ipc.h"
+#include "log_callbacks.h"
 #include "lupine_attr_sizes.h"
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 #include "transport.h"
+// Reuse Zstd's bundled xxHash to preserve existing profile-cache keys.
+#include "third_party/zstd/lib/common/xxhash.h"
 
 #ifdef cuMemPrefetchAsync
 #undef cuMemPrefetchAsync
@@ -75,6 +86,8 @@
 
 void *rpc_client_dispatch_thread(void *arg);
 
+extern "C" void lupine_invalidate_function_caches();
+
 static void lupine_cuda_transport_connection_changed(conn_t *) {
   lupine_invalidate_current_context_cache();
 }
@@ -87,6 +100,8 @@ static const lupine_client_transport_config &lupine_cuda_transport_config() {
     config.connection_closed = lupine_cuda_transport_connection_changed;
     config.connection_kind = "cuda";
     config.w_offset = LUPINE_HOST_ALLOCATION_W_OFFSET;
+    config.checkpoint_begin = lupine_checkpoint_wait_for_captures;
+    config.checkpoint_end = lupine_checkpoint_resume_captures;
     return config;
   }();
   return config;
@@ -108,9 +123,9 @@ static void lupine_rpc_connection_closed(conn_t *conn) {
 static pthread_once_t lupine_rpc_lifecycle_once = PTHREAD_ONCE_INIT;
 
 static void lupine_install_rpc_lifecycle_hooks() {
-  const rpc_lifecycle_hooks hooks = {lupine_rpc_connection_closed,
-                                     rpc_destroy_thread_lane,
-                                     lupine_complete_pending_log_callbacks};
+  const rpc_lifecycle_hooks hooks = {
+      lupine_rpc_connection_closed, rpc_destroy_thread_lane,
+      lupine_complete_pending_log_callbacks, lupine_host_range_is_protected};
   if (rpc_set_lifecycle_hooks(&hooks) < 0) {
     LUPINE_LOG_ERROR("Failed to install CUDA RPC lifecycle hooks");
   }
@@ -122,25 +137,11 @@ static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V1 = 1;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
 static constexpr uint32_t LUPINE_PRIVATE_EXPORT_MAX_SLOTS = 256;
-struct lupine_private_node_mapping {
-  CUfunction server_function = nullptr;
-  uint64_t server_owner = 0;
-  CUmodule module = nullptr;
-  std::unordered_map<int, CUfunction> functions_by_route;
-};
-
 struct lupine_library_image_record {
   uint32_t kind = 0;
   const void *code = nullptr;
   std::vector<unsigned char> image;
   std::unordered_map<int, CUlibrary> libraries_by_route;
-};
-
-struct lupine_module_image_record {
-  uint32_t kind = 0;
-  const void *image_ptr = nullptr;
-  std::vector<unsigned char> image;
-  std::unordered_map<int, CUmodule> modules_by_route;
 };
 
 struct lupine_library_kernel_record {
@@ -151,14 +152,14 @@ struct lupine_library_kernel_record {
 
 struct lupine_module_function_record {
   CUmodule module = nullptr;
-  std::string name;
-  std::unordered_map<int, CUfunction> functions_by_route;
 };
 
-static CUresult lupine_read_func_param_sizes(CUfunction function,
-                                             std::vector<size_t> *sizes);
-static CUresult lupine_read_kernel_param_sizes(CUkernel kernel,
-                                               std::vector<size_t> *sizes);
+static CUresult
+lupine_read_func_param_sizes(CUfunction function, std::vector<size_t> *sizes,
+                             std::vector<size_t> *offsets = nullptr);
+static CUresult
+lupine_read_kernel_param_sizes(CUkernel kernel, std::vector<size_t> *sizes,
+                               std::vector<size_t> *offsets = nullptr);
 static CUresult lupine_warm_func_param_info(CUfunction function);
 static CUresult lupine_warm_kernel_param_info(CUkernel kernel);
 
@@ -202,16 +203,12 @@ static const char *lupine_dlsym_glibc_version() {
 }
 
 static void *lupine_real_dlsym(void *handle, const char *name) {
-  static lupine_dlsym_fn real_dlsym = nullptr;
-  static bool initialized = false;
-  if (!initialized) {
-    initialized = true;
+  static const lupine_dlsym_fn real_dlsym = [] {
     const char *version = lupine_dlsym_glibc_version();
-    if (version != nullptr) {
-      real_dlsym = reinterpret_cast<lupine_dlsym_fn>(
-          dlvsym(RTLD_NEXT, "dlsym", version));
-    }
-  }
+    return version == nullptr ? nullptr
+                              : reinterpret_cast<lupine_dlsym_fn>(
+                                    dlvsym(RTLD_NEXT, "dlsym", version));
+  }();
   return real_dlsym != nullptr ? real_dlsym(handle, name) : nullptr;
 }
 #else
@@ -255,20 +252,9 @@ static lupine_private_jit_cache &lupine_private_jit_cache_objects() {
   return *objects;
 }
 
-static std::unordered_map<CUfunction, lupine_private_node_mapping> &
-lupine_private_node_map() {
-  static std::unordered_map<CUfunction, lupine_private_node_mapping> mappings;
-  return mappings;
-}
-
-static std::unordered_map<CUfunction, CUfunction> &lupine_host_function_map() {
+static std::unordered_map<CUfunction, CUfunction> &lupine_private_node_map() {
   static std::unordered_map<CUfunction, CUfunction> mappings;
   return mappings;
-}
-
-static std::vector<CUmodule> &lupine_loaded_modules() {
-  static std::vector<CUmodule> modules;
-  return modules;
 }
 
 struct lupine_device_attribute_key {
@@ -434,13 +420,6 @@ struct lupine_param_layout_key_hash {
   }
 };
 
-static std::unordered_map<CUmodule, lupine_module_image_record> &
-lupine_module_images() {
-  static auto *images =
-      new std::unordered_map<CUmodule, lupine_module_image_record>();
-  return *images;
-}
-
 static std::unordered_map<CUlibrary, lupine_library_image_record> &
 lupine_library_images() {
   static auto *images =
@@ -503,6 +482,15 @@ static libcuckoo::cuckoohash_map<conn_t *, bool> &
 lupine_device_snapshot_attempts() {
   static auto *attempts = new libcuckoo::cuckoohash_map<conn_t *, bool>();
   return *attempts;
+}
+
+// Unlike the virtual device table, this includes devices hidden by the client's
+// CUDA_VISIBLE_DEVICES: a CUlibrary is available to all contexts on its server.
+static libcuckoo::cuckoohash_map<conn_t *, std::vector<unsigned>> &
+lupine_server_compute_capabilities() {
+  static auto *cache =
+      new libcuckoo::cuckoohash_map<conn_t *, std::vector<unsigned>>();
+  return *cache;
 }
 
 // PyTorch's pin-memory path polls cuDevicePrimaryCtxGetState continuously
@@ -634,14 +622,6 @@ lupine_param_layout_count_cache() {
   return *cache;
 }
 
-// CUDA's packed kernel parameter area is smaller than 64 KiB. One metadata
-// record per byte plus the terminal record bounds a non-preflighted write.
-static constexpr size_t lupine_param_info_copy_capacity() {
-  constexpr size_t record_size =
-      2 * sizeof(size_t) + sizeof(CUresult) + alignof(size_t) - 1;
-  return (64 * 1024 + 1) * record_size;
-}
-
 // Filled from library-load responses; serves cuLibraryGetKernel without a
 // round trip.
 struct lupine_library_kernel_name_key {
@@ -669,9 +649,36 @@ lupine_library_kernel_names() {
   return *cache;
 }
 
-static std::mutex &lupine_host_function_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
+// Filled from module-load responses; serves cuModuleGetFunction without a
+// round trip. A loaded module's function set is fixed until it unloads.
+// Unloading a module erases its entries and its functions' cached layouts and
+// attributes (lupine_release_module_retained_strings); destroying the context
+// that holds it drops the whole cache. Those are the only ways the server frees
+// a module handle, so a recycled one never resolves against the functions of
+// the module that held it before.
+struct lupine_module_function_name_key {
+  CUmodule module = nullptr;
+  std::string name;
+
+  bool operator==(const lupine_module_function_name_key &other) const {
+    return module == other.module && name == other.name;
+  }
+};
+
+struct lupine_module_function_name_key_hash {
+  size_t operator()(const lupine_module_function_name_key &key) const {
+    return reinterpret_cast<uintptr_t>(key.module) ^
+           std::hash<std::string>()(key.name);
+  }
+};
+
+static libcuckoo::cuckoohash_map<lupine_module_function_name_key, CUfunction,
+                                 lupine_module_function_name_key_hash> &
+lupine_module_function_names() {
+  static auto *cache =
+      new libcuckoo::cuckoohash_map<lupine_module_function_name_key, CUfunction,
+                                    lupine_module_function_name_key_hash>();
+  return *cache;
 }
 
 static std::mutex &lupine_library_kernel_mutex() {
@@ -740,25 +747,13 @@ lupine_graph_kernel_node_params_cache() {
   return *cache;
 }
 
-static void lupine_remember_loaded_module(CUmodule module) {
-  if (module == nullptr) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_host_function_mutex());
-  auto &modules = lupine_loaded_modules();
-  if (std::find(modules.begin(), modules.end(), module) == modules.end()) {
-    modules.push_back(module);
-  }
-}
-
-extern "C" void lupine_remember_loaded_module_for_rpc(CUmodule module) {
-  lupine_remember_loaded_module(module);
-}
-
 static void *lupine_local_libcuda_handle() {
   static std::once_flag once;
   static void *handle = nullptr;
   std::call_once(once, []() {
+#ifdef __linux__
+    lupine_native_cuda_call_guard native_call;
+#endif
     const char *override_path = getenv("LUPINE_REAL_LIBCUDA");
 #if defined(_WIN32)
     if (override_path != nullptr && override_path[0] != '\0') {
@@ -815,11 +810,9 @@ extern "C" void *lupine_real_cuda_symbol(const char *name) {
 // Client-answered entry points must fail with NOT_INITIALIZED until cuInit;
 // forwarded ones get the server's own state.
 static std::atomic<bool> lupine_cuda_initialized{false};
-CUresult lupine_refresh_runtime_context();
 
 static bool lupine_cuda_is_initialized() {
-  return lupine_refresh_runtime_context() == CUDA_SUCCESS &&
-         lupine_cuda_initialized.load(std::memory_order_acquire);
+  return lupine_cuda_initialized.load(std::memory_order_acquire);
 }
 
 static libcuckoo::cuckoohash_map<conn_t *, bool> &lupine_initialized_conns() {
@@ -1088,40 +1081,18 @@ extern "C" CUresult cuCtxDisablePeerAccess(CUcontext peerContext) {
   return result;
 }
 
-extern "C" void lupine_record_library_image(CUlibrary library,
-                                            lupine_route route, uint32_t kind,
-                                            const unsigned char *image,
-                                            size_t image_size,
-                                            const void *code) {
+static void lupine_record_library_image(CUlibrary library, lupine_route route,
+                                        uint32_t kind,
+                                        std::vector<unsigned char> &&image,
+                                        const void *code) {
   int route_id = lupine_route_identity(route);
-  if (library == nullptr || image == nullptr || image_size == 0 ||
-      route_id == -2) {
+  if (library == nullptr || image.empty() || route_id == -2 ||
+      !lupine_devices_span_routes()) {
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-  auto &record = lupine_library_images()[library];
-  record.kind = kind;
-  record.code = code;
-  record.image.assign(image, image + image_size);
-  record.libraries_by_route[route_id] = library;
-}
-
-extern "C" void lupine_record_module_image(CUmodule module, lupine_route route,
-                                           uint32_t kind,
-                                           const unsigned char *image,
-                                           size_t image_size,
-                                           const void *image_ptr) {
-  int route_id = lupine_route_identity(route);
-  if (module == nullptr || image == nullptr || image_size == 0 ||
-      route_id == -2) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-  auto &record = lupine_module_images()[module];
-  record.kind = kind;
-  record.image_ptr = image_ptr;
-  record.image.assign(image, image + image_size);
-  record.modules_by_route[route_id] = module;
+  lupine_library_images()[library] = {
+      kind, code, std::move(image), {{route_id, library}}};
 }
 
 static void lupine_cache_library_kernel(CUkernel kernel, CUlibrary library,
@@ -1237,8 +1208,6 @@ extern "C" CUresult lupine_record_module_function(CUfunction function,
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
     auto &record = lupine_module_functions()[function];
     record.module = module;
-    record.name = name;
-    record.functions_by_route[route_id] = function;
   }
   return CUDA_SUCCESS;
 }
@@ -1285,6 +1254,55 @@ static void lupine_prefetch_function_param_layout(CUfunction function,
   }
 }
 
+// Reads the function snapshot a module-load response carries into the caches
+// cuModuleGetFunction, cuFuncGetParamInfo and cuFuncGetAttribute read, so none
+// of the three costs a round trip. A response that carries no functions (a
+// failed load, or a server whose driver cannot enumerate a module) leaves the
+// caches alone and every lookup falls back to its own request.
+static int lupine_read_module_functions(conn_t *conn, CUmodule module,
+                                        lupine_route route) {
+  uint32_t count = 0;
+  if (rpc_read(conn, &count, sizeof(count)) < 0 || count > 1024 * 1024) {
+    return -1;
+  }
+  for (uint32_t i = 0; i < count; ++i) {
+    uint32_t name_length = 0;
+    if (rpc_read(conn, &name_length, sizeof(name_length)) < 0 ||
+        name_length == 0 || name_length > 64 * 1024) {
+      return -1;
+    }
+    std::string name(name_length, '\0');
+    CUfunction function = nullptr;
+    uint32_t param_count = 0;
+    if (rpc_read(conn, name.data(), name_length) < 0 || name.back() != '\0' ||
+        rpc_read(conn, &function, sizeof(function)) < 0 ||
+        rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
+        param_count > 64 * 1024) {
+      return -1;
+    }
+    name.resize(name_length - 1);
+    uintptr_t handle = reinterpret_cast<uintptr_t>(function);
+    for (uint32_t index = 0; index < param_count; ++index) {
+      lupine_param_info_value param = {};
+      if (rpc_read(conn, &param.offset, sizeof(param.offset)) < 0 ||
+          rpc_read(conn, &param.size, sizeof(param.size)) < 0) {
+        return -1;
+      }
+      lupine_param_info_cache().insert_or_assign(
+          lupine_param_info_key{handle, index, false}, param);
+    }
+    if (lupine_read_function_attributes(conn, route, function) < 0) {
+      return -1;
+    }
+    lupine_param_layout_count_cache().insert_or_assign(
+        lupine_param_layout_key{handle, false}, param_count);
+    lupine_note_function_owner_route(function, route);
+    lupine_module_function_names().insert_or_assign(
+        lupine_module_function_name_key{module, std::move(name)}, function);
+  }
+  return 0;
+}
+
 static void lupine_prefill_function_attribute_snapshot(CUfunction function,
                                                        lupine_route route,
                                                        conn_t *conn) {
@@ -1320,6 +1338,18 @@ extern "C" CUresult cuModuleGetFunction(CUfunction *function, CUmodule module,
     return result;
   }
 
+  // Param-layout and attribute warming already happened at snapshot time. A
+  // name the snapshot does not hold still asks the server rather than
+  // answering CUDA_ERROR_NOT_FOUND from an enumeration this side cannot prove
+  // complete.
+  CUfunction cached = nullptr;
+  if (lupine_module_function_names().find(
+          lupine_module_function_name_key{module, std::string(name)}, cached)) {
+    *function = cached;
+    (void)lupine_record_module_function(cached, module, name, route);
+    return CUDA_SUCCESS;
+  }
+
   conn_t *conn = lupine_route_remote_conn(route);
   size_t name_len = std::strlen(name) + 1;
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -1345,106 +1375,6 @@ static int lupine_read_library(conn_t *conn, CUlibrary library);
 static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
                                                       lupine_route route,
                                                       CUlibrary *library);
-
-static CUresult lupine_load_recorded_module_on_route(CUmodule source_module,
-                                                     lupine_route route,
-                                                     CUmodule *module) {
-  if (module == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  *module = nullptr;
-  int route_id = lupine_route_identity(route);
-  if (source_module == nullptr || route_id == -2) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-
-  lupine_module_image_record record;
-  CUlibrary parent_library = nullptr;
-  {
-    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-    auto it = lupine_module_images().find(source_module);
-    if (it == lupine_module_images().end()) {
-      if (lupine_route_identity(lupine_route_for_module(source_module)) ==
-          route_id) {
-        *module = source_module;
-        return CUDA_SUCCESS;
-      }
-      auto library = lupine_library_modules().find(source_module);
-      if (library == lupine_library_modules().end()) {
-        // No recorded image or parent library means the module cannot be
-        // reconstructed on another route (cuModuleLoad, for one, records
-        // neither).
-        return CUDA_ERROR_NOT_FOUND;
-      }
-      parent_library = library->second;
-    } else {
-      auto cached = it->second.modules_by_route.find(route_id);
-      if (cached != it->second.modules_by_route.end()) {
-        *module = cached->second;
-        return CUDA_SUCCESS;
-      }
-      record = it->second;
-    }
-  }
-
-  if (parent_library != nullptr) {
-    CUlibrary library = nullptr;
-    CUresult result =
-        lupine_load_recorded_library_on_route(parent_library, route, &library);
-    if (result != CUDA_SUCCESS || library == nullptr) {
-      return result;
-    }
-
-    CUmodule loaded = nullptr;
-    result = cuLibraryGetModule(&loaded, library);
-    if (result != CUDA_SUCCESS || loaded == nullptr) {
-      return result;
-    }
-    *module = loaded;
-    return CUDA_SUCCESS;
-  }
-
-  CUmodule loaded = nullptr;
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (lupine_route_is_local(route)) {
-    if (record.image_ptr == nullptr) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    result =
-        lupine_call_real_cuda_fn("cuModuleLoadData", &loaded, record.image_ptr);
-  } else {
-    conn_t *conn = lupine_route_remote_conn(route);
-    size_t image_size = record.image.size();
-    if (lupine_prepare_rpc(conn) < 0 ||
-        rpc_write_start_request(conn, RPC_cuModuleLoadData) < 0 ||
-        rpc_write(conn, &record.kind, sizeof(record.kind)) < 0 ||
-        rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-        rpc_write(conn, record.image.data(), image_size) < 0 ||
-        rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, &loaded, sizeof(loaded)) < 0 ||
-        rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  }
-
-  if (result != CUDA_SUCCESS || loaded == nullptr) {
-    return result;
-  }
-
-  lupine_remember_loaded_module(loaded);
-  lupine_note_module_owner_route(loaded, route);
-  {
-    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-    lupine_module_images()[source_module].modules_by_route[route_id] = loaded;
-    auto &loaded_record = lupine_module_images()[loaded];
-    loaded_record.kind = record.kind;
-    loaded_record.image_ptr = record.image_ptr;
-    loaded_record.image = std::move(record.image);
-    loaded_record.modules_by_route[route_id] = loaded;
-  }
-  *module = loaded;
-  return CUDA_SUCCESS;
-}
 
 extern "C" CUresult cuModuleLoad(CUmodule *module, const char *fname) {
   if (module == nullptr || fname == nullptr) {
@@ -1492,6 +1422,7 @@ extern "C" CUresult cuModuleLoad(CUmodule *module, const char *fname) {
                 rpc_wait_for_response(conn) < 0 ||
                 rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
                 rpc_read(conn, &result, sizeof(result)) < 0 ||
+                lupine_read_module_functions(conn, *module, route) < 0 ||
                 rpc_read_end(conn) < 0;
   munmap(mapping, mapped_size);
   if (failed) {
@@ -1520,8 +1451,7 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
     auto it = lupine_library_images().find(source_library);
     if (it == lupine_library_images().end()) {
-      // See lupine_load_recorded_module_on_route: without a recorded image the
-      // library only exists on the route that loaded it.
+      // Without a recorded image, the library only exists on its loading route.
       if (lupine_route_identity(lupine_route_for_library(source_library)) ==
           route_id) {
         *library = source_library;
@@ -1664,325 +1594,21 @@ static CUresult lupine_resolve_library_kernel_for_route(CUfunction function,
   return CUDA_SUCCESS;
 }
 
-static CUresult lupine_resolve_module_function_for_route(CUfunction function,
-                                                         lupine_route route,
-                                                         CUfunction *resolved) {
-  if (resolved == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  *resolved = function;
-  int route_id = lupine_route_identity(route);
-  if (function == nullptr || route_id == -2) {
-    return CUDA_SUCCESS;
-  }
-
-  lupine_module_function_record record;
-  {
-    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-    auto it = lupine_module_functions().find(function);
-    if (it == lupine_module_functions().end()) {
-      return CUDA_SUCCESS;
-    }
-    auto cached = it->second.functions_by_route.find(route_id);
-    if (cached != it->second.functions_by_route.end()) {
-      *resolved = cached->second;
-      return CUDA_SUCCESS;
-    }
-    record = it->second;
-  }
-
-  CUmodule module = nullptr;
-  CUresult result =
-      lupine_load_recorded_module_on_route(record.module, route, &module);
-  if (result != CUDA_SUCCESS) {
-    return result;
-  }
-
-  CUfunction route_function = nullptr;
-  if (lupine_route_is_local(route)) {
-    result = lupine_call_real_cuda_fn("cuModuleGetFunction", &route_function,
-                                      module, record.name.c_str());
-  } else {
-    conn_t *conn = lupine_route_remote_conn(route);
-    std::size_t name_len = record.name.size() + 1;
-    if (lupine_prepare_rpc(conn) < 0 ||
-        rpc_write_start_request(conn, RPC_cuModuleGetFunction) < 0 ||
-        rpc_write(conn, &module, sizeof(module)) < 0 ||
-        rpc_write(conn, &name_len, sizeof(name_len)) < 0 ||
-        rpc_write(conn, record.name.c_str(), name_len) < 0 ||
-        rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, &route_function, sizeof(route_function)) < 0 ||
-        rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  }
-  if (result != CUDA_SUCCESS || route_function == nullptr) {
-    return result;
-  }
-
-  {
-    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-    lupine_module_functions()[function].functions_by_route[route_id] =
-        route_function;
-    auto &new_record = lupine_module_functions()[route_function];
-    new_record.module = module;
-    new_record.name = record.name;
-    new_record.functions_by_route[route_id] = route_function;
-  }
-  lupine_note_function_owner_route(route_function, route);
-  lupine_prefetch_function_param_layout(route_function, route);
-  *resolved = route_function;
-  return CUDA_SUCCESS;
-}
-
-static bool lupine_function_name_is(CUfunction function, const char *name) {
-  if (function == nullptr || name == nullptr) {
-    return false;
-  }
-  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-  auto module_it = lupine_module_functions().find(function);
-  if (module_it != lupine_module_functions().end() &&
-      module_it->second.name == name) {
-    return true;
-  }
-  auto library_it =
-      lupine_library_kernels().find(reinterpret_cast<CUkernel>(function));
-  return library_it != lupine_library_kernels().end() &&
-         library_it->second.name == name;
-}
-
-static bool lupine_managed_kernel_requires_launch_sync(CUfunction function) {
-  return lupine_function_name_is(function, "atomicKernel") ||
-         lupine_function_name_is(function, "_Z12atomicKernelPi");
-}
-
-static bool lupine_read_file_span(const char *path,
-                                  std::vector<unsigned char> *bytes) {
-  if (path == nullptr || bytes == nullptr) {
-    return false;
-  }
-  std::ifstream file(path, std::ios::binary | std::ios::ate);
-  if (!file) {
-    return false;
-  }
-  std::streamsize size = file.tellg();
-  if (size <= 0) {
-    return false;
-  }
-  file.seekg(0, std::ios::beg);
-  bytes->resize(static_cast<size_t>(size));
-  return file.read(reinterpret_cast<char *>(bytes->data()), size).good();
-}
-
-static bool lupine_lookup_elf_function_symbol(const char *path,
-                                              uintptr_t offset,
-                                              std::string *symbol) {
-  std::vector<unsigned char> bytes;
-  if (symbol == nullptr || !lupine_read_file_span(path, &bytes) ||
-      bytes.size() < sizeof(Elf64_Ehdr)) {
-    return false;
-  }
-
-  const auto *ehdr = reinterpret_cast<const Elf64_Ehdr *>(bytes.data());
-  if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0 ||
-      ehdr->e_ident[EI_CLASS] != ELFCLASS64 ||
-      ehdr->e_shentsize != sizeof(Elf64_Shdr) || ehdr->e_shoff == 0 ||
-      ehdr->e_shnum == 0) {
-    return false;
-  }
-  size_t shoff = static_cast<size_t>(ehdr->e_shoff);
-  size_t shnum = static_cast<size_t>(ehdr->e_shnum);
-  if (shoff > bytes.size() ||
-      shnum > (bytes.size() - shoff) / sizeof(Elf64_Shdr)) {
-    return false;
-  }
-  const auto *sections =
-      reinterpret_cast<const Elf64_Shdr *>(bytes.data() + shoff);
-
-  uintptr_t best_value = 0;
-  const char *best_name = nullptr;
-  for (size_t i = 0; i < shnum; ++i) {
-    if (sections[i].sh_type != SHT_SYMTAB &&
-        sections[i].sh_type != SHT_DYNSYM) {
-      continue;
-    }
-    if (sections[i].sh_link >= shnum) {
-      continue;
-    }
-    const Elf64_Shdr &symtab = sections[i];
-    const Elf64_Shdr &strtab = sections[symtab.sh_link];
-    if (symtab.sh_entsize != sizeof(Elf64_Sym) ||
-        symtab.sh_offset > bytes.size() || strtab.sh_offset > bytes.size() ||
-        symtab.sh_size > bytes.size() - symtab.sh_offset ||
-        strtab.sh_size > bytes.size() - strtab.sh_offset) {
-      continue;
-    }
-    const auto *syms =
-        reinterpret_cast<const Elf64_Sym *>(bytes.data() + symtab.sh_offset);
-    const char *strings =
-        reinterpret_cast<const char *>(bytes.data() + strtab.sh_offset);
-    size_t count = static_cast<size_t>(symtab.sh_size / sizeof(Elf64_Sym));
-    for (size_t j = 0; j < count; ++j) {
-      const Elf64_Sym &sym = syms[j];
-      if (ELF64_ST_TYPE(sym.st_info) != STT_FUNC ||
-          sym.st_name >= strtab.sh_size || sym.st_value == 0 ||
-          offset < sym.st_value ||
-          (sym.st_size != 0 && offset >= sym.st_value + sym.st_size)) {
-        continue;
-      }
-      if (best_name == nullptr || sym.st_value >= best_value) {
-        best_value = sym.st_value;
-        best_name = strings + sym.st_name;
-      }
-    }
-  }
-
-  if (best_name == nullptr || best_name[0] == '\0') {
-    return false;
-  }
-  *symbol = best_name;
-  return true;
-}
-
-static CUfunction lupine_resolve_host_function(CUfunction function) {
-  if (function == nullptr) {
-    return function;
-  }
-
-  {
-    std::lock_guard<std::mutex> lock(lupine_host_function_mutex());
-    auto mapped = lupine_host_function_map().find(function);
-    if (mapped != lupine_host_function_map().end()) {
-      return mapped->second;
-    }
-  }
-
-#if defined(_WIN32)
-  return function;
-#else
-  Dl_info info = {};
-  if (dladdr(reinterpret_cast<void *>(function), &info) == 0) {
-    return function;
-  }
-  std::string symbol_name;
-  const char *kernel_name = info.dli_sname;
-  if (kernel_name == nullptr && info.dli_fname != nullptr &&
-      info.dli_fbase != nullptr) {
-    uintptr_t offset = reinterpret_cast<uintptr_t>(function) -
-                       reinterpret_cast<uintptr_t>(info.dli_fbase);
-    if (lupine_lookup_elf_function_symbol(info.dli_fname, offset,
-                                          &symbol_name)) {
-      kernel_name = symbol_name.c_str();
-    }
-  }
-  if (kernel_name == nullptr) {
-    LUPINE_TRACE_LOG("LUPINE could not resolve host kernel symbol for "
-                     << reinterpret_cast<void *>(function));
-    return function;
-  }
-
-  std::vector<CUmodule> modules;
-  {
-    std::lock_guard<std::mutex> lock(lupine_host_function_mutex());
-    modules = lupine_loaded_modules();
-  }
-  for (CUmodule module : modules) {
-    CUfunction remote = nullptr;
-    CUresult result = cuModuleGetFunction(&remote, module, kernel_name);
-    if (result == CUDA_SUCCESS && remote != nullptr) {
-      std::lock_guard<std::mutex> lock(lupine_host_function_mutex());
-      lupine_host_function_map()[function] = remote;
-      LUPINE_TRACE_LOG("LUPINE mapped host kernel "
-                       << kernel_name
-                       << " host=" << reinterpret_cast<void *>(function)
-                       << " remote=" << remote);
-      return remote;
-    }
-  }
-  LUPINE_TRACE_LOG("LUPINE host kernel " << kernel_name << " was not found in "
-                                         << modules.size()
-                                         << " loaded modules");
-
-  return function;
-#endif
-}
-
 static CUfunction lupine_translate_private_function(CUfunction function) {
   {
     std::lock_guard<std::mutex> lock(lupine_private_node_mutex());
     auto it = lupine_private_node_map().find(function);
     if (it != lupine_private_node_map().end()) {
-      return it->second.server_function;
+      return it->second;
     }
   }
-  return lupine_resolve_host_function(function);
+  return function;
 }
 
 static CUresult lupine_get_remote_private_module_node(CUcontext context,
                                                       CUmodule module,
                                                       CUfunction *server_node,
                                                       uint64_t *server_owner);
-
-static CUresult lupine_resolve_private_function_for_route(
-    CUfunction function, lupine_route route, CUfunction *resolved) {
-  if (resolved == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  *resolved = function;
-  int route_id = lupine_route_identity(route);
-  if (function == nullptr || route_id == -2) {
-    return CUDA_SUCCESS;
-  }
-
-  lupine_private_node_mapping mapping;
-  {
-    std::lock_guard<std::mutex> lock(lupine_private_node_mutex());
-    auto it = lupine_private_node_map().find(function);
-    if (it == lupine_private_node_map().end()) {
-      return CUDA_SUCCESS;
-    }
-    auto cached = it->second.functions_by_route.find(route_id);
-    if (cached != it->second.functions_by_route.end()) {
-      *resolved = cached->second;
-      return CUDA_SUCCESS;
-    }
-    mapping = it->second;
-  }
-
-  if (mapping.module == nullptr) {
-    // Nothing to replicate from; leave the handle alone and let the server the
-    // launch lands on decide whether it is valid, exactly as for a function
-    // this client never mapped at all.
-    return CUDA_SUCCESS;
-  }
-  CUmodule module = nullptr;
-  CUresult result =
-      lupine_load_recorded_module_on_route(mapping.module, route, &module);
-  if (result != CUDA_SUCCESS || module == nullptr) {
-    return result;
-  }
-
-  CUfunction server_node = nullptr;
-  uint64_t server_owner = 0;
-  result = lupine_get_remote_private_module_node(nullptr, module, &server_node,
-                                                 &server_owner);
-  if (result != CUDA_SUCCESS || server_node == nullptr) {
-    return result == CUDA_SUCCESS ? CUDA_ERROR_NOT_FOUND : result;
-  }
-
-  {
-    std::lock_guard<std::mutex> lock(lupine_private_node_mutex());
-    auto &record = lupine_private_node_map()[function];
-    record.module = mapping.module;
-    record.functions_by_route[route_id] = server_node;
-    if (record.server_function == nullptr) {
-      record.server_function = server_node;
-      record.server_owner = server_owner;
-    }
-  }
-  *resolved = server_node;
-  return CUDA_SUCCESS;
-}
 
 extern "C" CUfunction
 lupine_translate_private_function_for_rpc(CUfunction function) {
@@ -1993,6 +1619,7 @@ extern "C" bool
 lupine_device_attribute_is_virtualized(conn_t *conn,
                                        CUdevice_attribute attrib) {
   switch (attrib) {
+  case CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM:
   case CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS:
   case CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES:
   case CU_DEVICE_ATTRIBUTE_DIRECT_MANAGED_MEM_ACCESS_FROM_HOST:
@@ -2030,6 +1657,7 @@ static void lupine_prefill_device_snapshot(conn_t *conn) {
     return;
   }
   std::vector<int32_t> pairs;
+  std::vector<unsigned> capabilities;
   for (uint32_t ordinal = 0; ordinal < device_count; ++ordinal) {
     lupine_device_snapshot_info info;
     uint32_t pair_count = 0;
@@ -2044,6 +1672,19 @@ static void lupine_prefill_device_snapshot(conn_t *conn) {
         rpc_read(conn, pairs.data(), pairs.size() * sizeof(int32_t)) < 0) {
       return;
     }
+    int major = 0;
+    int minor = -1;
+    for (uint32_t pair = 0; pair < pair_count; ++pair) {
+      if (pairs[pair * 2] == CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR) {
+        major = pairs[pair * 2 + 1];
+      } else if (pairs[pair * 2] ==
+                 CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR) {
+        minor = pairs[pair * 2 + 1];
+      }
+    }
+    capabilities.push_back(major > 0 && major <= 999 && minor >= 0 && minor <= 9
+                               ? static_cast<unsigned>(major * 10 + minor)
+                               : 0);
     CUdevice local_dev =
         lupine_local_device_for_remote(conn, static_cast<CUdevice>(ordinal));
     if (local_dev < 0) {
@@ -2064,7 +1705,9 @@ static void lupine_prefill_device_snapshot(conn_t *conn) {
     lupine_device_snapshot_cache().insert_or_assign(static_cast<int>(local_dev),
                                                     info);
   }
-  rpc_read_end(conn);
+  if (rpc_read_end(conn) >= 0) {
+    lupine_server_compute_capabilities().insert_or_assign(conn, capabilities);
+  }
 }
 
 extern "C" CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib,
@@ -2230,6 +1873,9 @@ static void lupine_stream_pool_init(lupine_route route, CUdevice dev,
                                     CUcontext ctx);
 static void lupine_stream_pool_discard(int route_id, CUdevice dev,
                                        CUcontext ctx);
+static void lupine_event_pool_discard(int route_id, CUdevice remote_device,
+                                      CUcontext ctx);
+static void lupine_forget_context_local_storage(CUcontext ctx);
 
 // One forwarded retain keeps a device's primary context alive for every
 // retain this client holds, so later retains are counted here and only the
@@ -2339,18 +1985,22 @@ extern "C" CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
   std::lock_guard<std::mutex> lock(lupine_primary_ctx_retain_mutex());
   auto &retains = lupine_primary_ctx_retains();
   auto retained = retains.find(static_cast<int>(dev));
+  CUcontext context = nullptr;
   if (retained != retains.end()) {
     if (--retained->second.count > 0) {
       return CUDA_SUCCESS;
     }
     bool forwarded = retained->second.forwarded;
+    context = retained->second.context;
     retains.erase(retained);
     if (!forwarded) {
       return CUDA_SUCCESS;
     }
   }
   lupine_invalidate_primary_ctx_state(dev);
+  lupine_forget_context_local_storage(context);
   lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
+  lupine_event_pool_discard(lupine_route_identity(route), remote_dev, nullptr);
   return lupine_remote_primary_ctx_release(lupine_route_remote_conn(route),
                                            remote_dev);
 }
@@ -2428,7 +2078,11 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
     return CUDA_ERROR_INVALID_DEVICE;
   }
   lupine_invalidate_primary_ctx_state(dev);
+  // A reset unloads the primary context's modules; see
+  // lupine_forget_destroyed_context.
+  lupine_invalidate_function_caches();
   lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
+  lupine_event_pool_discard(lupine_route_identity(route), remote_dev, nullptr);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value =
@@ -2454,6 +2108,7 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
     auto retained = retains.find(static_cast<int>(dev));
     if (retained != retains.end() && retained->second.forwarded) {
       retained->second.forwarded = false;
+      lupine_forget_context_local_storage(retained->second.context);
       (void)lupine_remote_primary_ctx_release(conn, remote_dev);
     }
   }
@@ -2695,24 +2350,9 @@ extern "C" CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
   return return_value;
 }
 
-extern "C" void lupine_invalidate_kernel_attribute_cache() {
-  lupine_kernel_attribute_cache().clear();
-}
-
-extern "C" void lupine_kernel_attribute_cache_erase(int route_id,
-                                                    CUkernel kernel, int attrib,
-                                                    int dev) {
-  lupine_kernel_attribute_cache().erase(
-      lupine_kernel_attribute_key{route_id, kernel, attrib, dev});
-}
-
-extern "C" void lupine_invalidate_function_attribute_cache() {
-  lupine_function_attribute_cache().clear();
-}
-
 // A function is one kernel instantiated in one context, so a set on it moves
-// exactly one kernel-attribute entry; without that pairing the whole cache is
-// the only safe target.
+// exactly one kernel-attribute entry, and a function of a plain module moves
+// none; without either pairing the whole cache is the only safe target.
 extern "C" void lupine_kernel_attribute_cache_erase_for_function(
     int route_id, CUfunction function, int attrib) {
   CUkernel kernel = nullptr;
@@ -2722,6 +2362,12 @@ extern "C" void lupine_kernel_attribute_cache_erase_for_function(
     auto it = lupine_function_kernels().find(function);
     if (it != lupine_function_kernels().end()) {
       kernel = it->second;
+    } else {
+      auto record = lupine_module_functions().find(function);
+      if (record != lupine_module_functions().end() &&
+          lupine_library_modules().count(record->second.module) == 0) {
+        return;
+      }
     }
   }
   if (kernel == nullptr ||
@@ -2743,6 +2389,14 @@ extern "C" void lupine_function_attribute_cache_erase(int route_id,
       lupine_function_attribute_key{route_id, function, attrib});
 }
 
+template <typename Cache, typename Match>
+static void lupine_cache_erase_if(Cache &cache, Match match) {
+  auto table = cache.lock_table();
+  for (auto it = table.begin(); it != table.end();) {
+    it = match(it->first, it->second) ? table.erase(it) : std::next(it);
+  }
+}
+
 // Drops the occupancy answers that depend on one kernel, whichever handle the
 // caller queried it through. Occupancy of every other kernel stays valid.
 extern "C" void lupine_occupancy_cache_erase_function(int route_id,
@@ -2761,13 +2415,11 @@ extern "C" void lupine_occupancy_cache_erase_function(int route_id,
       }
     }
   }
-  auto table = lupine_occupancy_cache().lock_table();
-  for (auto it = table.begin(); it != table.end();) {
-    bool match = it->first.route_id == route_id &&
-                 std::find(handles.begin(), handles.end(),
-                           it->first.function) != handles.end();
-    it = match ? table.erase(it) : std::next(it);
-  }
+  lupine_cache_erase_if(lupine_occupancy_cache(), [&](const auto &key,
+                                                      const auto &) {
+    return key.route_id == route_id && std::find(handles.begin(), handles.end(),
+                                                 key.function) != handles.end();
+  });
 }
 
 // The set is fire-and-forget, so the caller was already told it succeeded;
@@ -3006,12 +2658,7 @@ static CUresult lupine_get_remote_private_module_node(CUcontext context,
   int route_id = lupine_route_identity(route);
   if (module != nullptr && route_id != -2 &&
       lupine_route_identity(lupine_route_for_module(module)) != route_id) {
-    CUmodule route_module = nullptr;
-    if (lupine_load_recorded_module_on_route(module, route, &route_module) ==
-            CUDA_SUCCESS &&
-        route_module != nullptr) {
-      module = route_module;
-    }
+    return CUDA_ERROR_INVALID_HANDLE;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult result = CUDA_ERROR_UNKNOWN;
@@ -3234,23 +2881,8 @@ lupine_private_export_slot_called(int slot, const char *table_name,
     *reinterpret_cast<uint64_t *>(client_node + 0x480) = 0;
     {
       std::lock_guard<std::mutex> lock(lupine_private_node_mutex());
-      int route_id =
-          lupine_route_identity(lupine_route_for_function(server_node));
-      if (route_id == -2) {
-        lupine_route node_route =
-            arg0 != 0
-                ? lupine_route_for_context(reinterpret_cast<CUcontext>(arg0))
-                : lupine_route_for_module(reinterpret_cast<CUmodule>(arg1));
-        route_id = lupine_route_identity(node_route);
-      }
-      auto &mapping =
-          lupine_private_node_map()[reinterpret_cast<CUfunction>(client_node)];
-      mapping.server_function = server_node;
-      mapping.server_owner = server_owner;
-      mapping.module = reinterpret_cast<CUmodule>(arg1);
-      if (route_id != -2) {
-        mapping.functions_by_route[route_id] = server_node;
-      }
+      lupine_private_node_map()[reinterpret_cast<CUfunction>(client_node)] =
+          server_node;
     }
     LUPINE_TRACE_LOG("LUPINE private 6e16[7] mapped client_node="
                      << static_cast<void *>(client_node)
@@ -3694,11 +3326,13 @@ lupine_stream_pools() {
 // are pushed in reverse so hand-out pops them in that order.
 static void lupine_stream_pool_init(lupine_route route, CUdevice dev,
                                     CUcontext ctx) {
-  std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
-  auto &pools = lupine_stream_pools();
   auto key = std::make_pair(lupine_route_identity(route), ctx);
-  if (pools.find(key) != pools.end()) {
-    return;
+  {
+    std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
+    auto &pools = lupine_stream_pools();
+    if (pools.find(key) != pools.end()) {
+      return;
+    }
   }
   conn_t *conn = lupine_route_remote_conn(route);
   uint32_t created = 0;
@@ -3717,6 +3351,8 @@ static void lupine_stream_pool_init(lupine_route route, CUdevice dev,
       rpc_read_end(conn) < 0) {
     return;
   }
+  std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
+  auto &pools = lupine_stream_pools();
   auto &pool = pools[key];
   pool.dev = dev;
   for (uint32_t i = created; i-- > 0;) {
@@ -3803,6 +3439,128 @@ extern "C" CUresult cuStreamCreateWithPriority(CUstream *phStream,
 }
 
 CUresult cuStreamDestroy_v2(CUstream hStream);
+// Allocate ordinary events on first use, in bounded batches per route, context
+// and flags. IPC events retain the driver's one-at-a-time path. Handed-out
+// events are never recycled: destroy still reaches CUDA, so an old handle can
+// never refer to a cached replacement event. Unclaimed events die with context.
+static constexpr uint32_t kLupineEventBatchSize = 32;
+
+struct lupine_event_pool {
+  CUdevice remote_device = -1;
+  std::vector<CUevent> events;
+};
+
+static std::mutex &lupine_event_pool_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+static std::map<std::tuple<int, CUcontext, unsigned>, lupine_event_pool> &
+lupine_event_pools() {
+  static auto *pools =
+      new std::map<std::tuple<int, CUcontext, unsigned>, lupine_event_pool>();
+  return *pools;
+}
+
+static void lupine_event_pool_discard(int route_id, CUdevice remote_device,
+                                      CUcontext ctx) {
+  std::lock_guard<std::mutex> lock(lupine_event_pool_mutex());
+  auto &pools = lupine_event_pools();
+  for (auto it = pools.begin(); it != pools.end();) {
+    const bool matches =
+        std::get<0>(it->first) == route_id &&
+        (ctx != nullptr ? std::get<1>(it->first) == ctx
+                        : it->second.remote_device == remote_device);
+    it = matches ? pools.erase(it) : std::next(it);
+  }
+}
+
+extern "C" CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags) {
+  lupine_route route = lupine_route_for_current_context();
+  if (lupine_route_is_local(route)) {
+    CUresult result = lupine_call_real_cuda_fn("cuEventCreate", phEvent, Flags);
+    if (result == CUDA_SUCCESS && phEvent != nullptr) {
+      lupine_note_event_owner_route(*phEvent, route);
+    }
+    return result;
+  }
+  if (phEvent == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUcontext context = lupine_current_context_hint();
+  constexpr unsigned pool_flags =
+      CU_EVENT_BLOCKING_SYNC | CU_EVENT_DISABLE_TIMING;
+  if (context != nullptr && (Flags & ~pool_flags) == 0) {
+    const auto key =
+        std::make_tuple(lupine_route_identity(route), context, Flags);
+    {
+      std::lock_guard<std::mutex> lock(lupine_event_pool_mutex());
+      auto &pools = lupine_event_pools();
+      auto it = pools.find(key);
+      if (it != pools.end() && !it->second.events.empty()) {
+        *phEvent = it->second.events.back();
+        it->second.events.pop_back();
+        lupine_note_event_owner_route(*phEvent, route);
+        return CUDA_SUCCESS;
+      }
+    }
+    CUevent events[kLupineEventBatchSize];
+    CUdevice device = -1;
+    uint32_t count = 0;
+    CUresult result = CUDA_ERROR_UNKNOWN;
+    if (lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_request(conn, LUPINE_RPC_lupineEventCreateBatch) < 0 ||
+        rpc_write(conn, &context, sizeof(context)) < 0 ||
+        rpc_write(conn, &Flags, sizeof(Flags)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &result, sizeof(result)) < 0 ||
+        rpc_read(conn, &device, sizeof(device)) < 0 ||
+        rpc_read(conn, &count, sizeof(count)) < 0 ||
+        count > kLupineEventBatchSize ||
+        rpc_read(conn, events, count * sizeof(*events)) < 0 ||
+        rpc_read_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
+    if (count == 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    {
+      std::lock_guard<std::mutex> lock(lupine_event_pool_mutex());
+      auto &pool = lupine_event_pools()[key];
+      pool.remote_device = device;
+      // Preserve creation order when popping the next handle.
+      pool.events.insert(pool.events.end(),
+                         std::reverse_iterator<CUevent *>(events + count),
+                         std::reverse_iterator<CUevent *>(events));
+      *phEvent = pool.events.back();
+      pool.events.pop_back();
+    }
+    lupine_note_event_owner_route(*phEvent, route);
+    return CUDA_SUCCESS;
+  }
+
+  // Preserve the ordinary RPC for IPC, unknown flags and an unknown current
+  // context, including its unchanged output value on a driver error.
+  CUresult result;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuEventCreate) < 0 ||
+      rpc_write(conn, phEvent, sizeof(*phEvent)) < 0 ||
+      rpc_write(conn, &Flags, sizeof(Flags)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, phEvent, sizeof(*phEvent)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (result == CUDA_SUCCESS) {
+    lupine_note_event_owner_route(*phEvent, route);
+  }
+  return result;
+}
+
 extern "C" CUresult cuEventDestroy_v2(CUevent hEvent) {
   std::unique_lock<std::shared_mutex> event_lifecycle_lock(
       lupine_event_lifecycle_mutex());
@@ -3906,51 +3664,10 @@ static thread_local CUcontext lupine_current_context = nullptr;
 static thread_local CUcontext lupine_default_context_hint = nullptr;
 static std::atomic<CUcontext> lupine_global_default_context_hint{nullptr};
 static thread_local auto *lupine_context_stack = new std::vector<CUcontext>();
-static thread_local conn_t *lupine_pending_runtime_context = nullptr;
 
-extern "C" void lupine_invalidate_runtime_context(conn_t *conn) {
-  lupine_pending_runtime_context = conn;
+extern "C" CUcontext lupine_current_context_hint() {
+  return lupine_current_context;
 }
-
-// Runtime calls may initialize or change the server lane's driver context.
-// Query it only when a subsequent driver call needs the client-side cache.
-// This observes CUDA state; it never calls cuInit or creates a context.
-CUresult lupine_refresh_runtime_context() {
-  conn_t *conn = lupine_pending_runtime_context;
-  if (conn == nullptr) {
-    return CUDA_SUCCESS;
-  }
-  lupine_pending_runtime_context = nullptr;
-  CUcontext context = nullptr;
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxGetCurrent) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &context, sizeof(context)) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (result == CUDA_SUCCESS) {
-    lupine_cuda_initialized.store(true, std::memory_order_release);
-    lupine_current_context = context;
-    if (context != nullptr) {
-      lupine_note_context_owner(context, conn);
-      lupine_default_context_hint = context;
-      lupine_global_default_context_hint.store(context,
-                                               std::memory_order_relaxed);
-    }
-    lupine_lane_context_cache_store(
-        lupine_route_identity(lupine_remote_route_for_conn(conn)), context);
-  }
-  // Registration alone need not initialize CUDA. There is no context to
-  // cache yet, but pre-init calls such as cuDriverGetVersion must still route.
-  if (result == CUDA_ERROR_NOT_INITIALIZED) {
-    return CUDA_SUCCESS;
-  }
-  return result;
-}
-
-CUcontext lupine_current_context_hint() { return lupine_current_context; }
 
 CUcontext lupine_default_context_hint_value() {
   return lupine_default_context_hint;
@@ -3964,7 +3681,17 @@ extern "C" void lupine_forget_destroyed_context(CUcontext ctx) {
   if (ctx == nullptr) {
     return;
   }
+  // Destroying a context unloads the modules it holds, so every module and
+  // function handle cached against it is free for the server to hand out
+  // again. This is the other end of the module-unload invalidation. The
+  // context handle itself can come back on any lane, so the device answers
+  // cached against it go too.
+  lupine_invalidate_function_caches();
+  lupine_invalidate_current_context_cache();
+  lupine_event_pool_discard(
+      lupine_route_identity(lupine_route_for_context(ctx)), -1, ctx);
   lupine_forget_context_owner(ctx);
+  lupine_forget_context_local_storage(ctx);
   lupine_stream_pool_discard(-1, -1, ctx);
   if (lupine_current_context == ctx) {
     lupine_current_context = nullptr;
@@ -4140,6 +3867,7 @@ static CUresult lupine_set_remote_current_context(CUcontext ctx) {
 }
 
 extern "C" void lupine_note_ctx_create(CUcontext ctx, conn_t *conn) {
+  lupine_note_device_binding_changed();
   lupine_note_context_owner(ctx, conn);
   lupine_lane_context_cache_store(
       lupine_route_identity(lupine_remote_route_for_conn(conn)), ctx);
@@ -4153,6 +3881,7 @@ extern "C" void lupine_note_ctx_create(CUcontext ctx, conn_t *conn) {
 
 extern "C" void lupine_note_ctx_create_route(CUcontext ctx,
                                              lupine_route route) {
+  lupine_note_device_binding_changed();
   lupine_note_context_owner_route(ctx, route);
   lupine_lane_context_cache_store(lupine_route_identity(route), ctx);
   lupine_context_stack->push_back(lupine_current_context);
@@ -4322,6 +4051,45 @@ extern "C" CUresult cuCtxGetDevice_v2(CUdevice *device, CUcontext ctx) {
   return return_value;
 }
 #endif
+
+extern "C" CUresult cuStreamGetDevice(CUstream hStream, CUdevice *device) {
+  if (device == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  if (!lupine_cuda_is_initialized()) {
+    return CUDA_ERROR_NOT_INITIALIZED;
+  }
+  lupine_route route = lupine_route_for_stream(hStream);
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn("cuStreamGetDevice", hStream, device);
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUdevice remote_device = 0;
+  CUresult return_value;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuStreamGetDevice) < 0 ||
+      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &remote_device, sizeof(remote_device)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    // The ordinal the stream's own server answers with is that server's; the
+    // caller only ever sees the virtual ordinal it was handed.
+    *device = lupine_local_device_for_remote(conn, remote_device);
+  }
+  return return_value;
+}
+
+#ifdef cuStreamGetDevice_ptsz
+#undef cuStreamGetDevice_ptsz
+#endif
+extern "C" CUresult cuStreamGetDevice_ptsz(CUstream hStream, CUdevice *device) {
+  return cuStreamGetDevice(hStream, device);
+}
 
 extern "C" CUresult cuMemPoolGetAttribute(CUmemoryPool pool,
                                           CUmemPool_attribute attr,
@@ -4919,22 +4687,7 @@ extern "C" CUresult cuLinkAddFile(CUlinkState state, CUjitInputType type,
 }
 
 extern "C" int lupine_forward_remote_stdout(conn_t *conn) {
-  uint64_t output_size = 0;
-  if (rpc_read_buffer(conn, &output_size, sizeof(output_size)) < 0) {
-    return -1;
-  }
-  if (output_size == 0) {
-    return 0;
-  }
-  std::string output;
-  output.resize(static_cast<size_t>(output_size));
-  if (rpc_read(conn, output.data(), output.size()) < 0) {
-    return -1;
-  }
-  fflush(stdout);
-  std::cout.flush();
-  return fwrite(output.data(), 1, output.size(), stdout) == output.size() ? 0
-                                                                          : -1;
+  return lupine_read_captured_stdout(conn);
 }
 
 extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
@@ -4943,16 +4696,7 @@ extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
     return -1;
   }
   for (uint32_t i = 0; i < copy_count; ++i) {
-    void *dst = nullptr;
-    size_t bytes = 0;
-    if (rpc_read(conn, &dst, sizeof(dst)) < 0 ||
-        rpc_read(conn, &bytes, sizeof(bytes)) < 0) {
-      return -1;
-    }
-    if (bytes == 0) {
-      continue;
-    }
-    if (lupine_read_deferred_host_copy(conn, dst, bytes) < 0) {
+    if (lupine_read_deferred_rows(conn) < 0) {
       return -1;
     }
   }
@@ -4973,17 +4717,17 @@ extern "C" CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
                                     Flags);
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuStreamWaitEvent) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuStreamWaitEvent,
+                                    &async_sequence) < 0 ||
+      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
-      rpc_write(conn, &Flags, sizeof(Flags)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+      rpc_write(conn, &Flags, sizeof(Flags)) < 0 || rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return result;
+  return CUDA_SUCCESS;
 }
 
 #ifdef cuStreamWaitEvent_ptsz
@@ -5000,7 +4744,6 @@ extern "C" CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuEventRecord", hEvent, hStream);
   }
-  lupine_event_invalidate_completion(hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -5012,6 +4755,8 @@ extern "C" CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  // Invalidate after enqueue so an overlapping query cannot retain old state.
+  lupine_event_invalidate_completion(hEvent);
   return CUDA_SUCCESS;
 }
 
@@ -5030,7 +4775,6 @@ extern "C" CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
     return lupine_call_real_cuda_fn("cuEventRecordWithFlags", hEvent, hStream,
                                     flags);
   }
-  lupine_event_invalidate_completion(hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -5042,6 +4786,7 @@ extern "C" CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
       rpc_write(conn, &flags, sizeof(flags)) < 0 || rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  lupine_event_invalidate_completion(hEvent);
   return CUDA_SUCCESS;
 }
 
@@ -5052,31 +4797,6 @@ extern "C" CUresult cuEventRecordWithFlags_ptsz(CUevent hEvent,
                                                 CUstream hStream,
                                                 unsigned int flags) {
   return cuEventRecordWithFlags(hEvent, hStream, flags);
-}
-
-// Best-effort cache warming for events other than the one the caller queried.
-// This is intentionally a separate RPC: failures must not affect the result
-// already produced by RPC_cuEventQuery.
-static void lupine_prefetch_event_queries(CUevent exclude, conn_t *conn) {
-  CUevent events[kLupineEventQueryBatch];
-  uint64_t records[kLupineEventQueryBatch];
-  uint32_t count =
-      lupine_event_collect_query_batch(exclude, conn, events, records);
-  if (count == 0) {
-    return;
-  }
-
-  CUresult results[kLupineEventQueryBatch];
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, LUPINE_RPC_lupineEventQueryBatch) < 0 ||
-      rpc_write(conn, &count, sizeof(count)) < 0 ||
-      rpc_write(conn, events, count * sizeof(*events)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, results, count * sizeof(*results)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return;
-  }
-  lupine_event_cache_completions(events, records, results, count);
 }
 
 extern "C" CUresult cuEventQuery(CUevent hEvent) {
@@ -5092,26 +4812,29 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
   }
   std::shared_lock<std::shared_mutex> event_lifecycle_lock(
       lupine_event_lifecycle_mutex());
-  uint64_t record = 0;
-  if (!lupine_event_query_needed(hEvent, &record)) {
+  CUevent events[kLupineEventQueryBatch + 1] = {hEvent};
+  uint64_t records[kLupineEventQueryBatch + 1];
+  CUresult results[kLupineEventQueryBatch + 1];
+  if (!lupine_event_query_needed(hEvent, &records[0])) {
     return lupine_sync_mapped_device_to_host();
   }
-  CUresult result = CUDA_ERROR_UNKNOWN;
+  // Other pending events on this server ride along to warm the cache.
+  uint32_t count =
+      lupine_event_collect_query_batch(hEvent, conn, events + 1, records + 1);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuEventQuery) < 0 ||
       rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_write(conn, events + 1, count * sizeof(*events)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       lupine_read_deferred_dtoh_copies(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+      rpc_read(conn, results, (count + 1) * sizeof(*results)) < 0 ||
+      rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  lupine_event_cache_completions(&hEvent, &record, &result, 1);
-
-  if (result == CUDA_SUCCESS) {
-    result = lupine_sync_mapped_device_to_host();
-  }
-  lupine_prefetch_event_queries(hEvent, conn);
-  return result;
+  lupine_event_cache_completions(events, records, results, count + 1);
+  return results[0] == CUDA_SUCCESS ? lupine_sync_mapped_device_to_host()
+                                    : results[0];
 }
 
 extern "C" CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags,
@@ -5323,6 +5046,83 @@ static bool lupine_pack_module_image(const void *image, uint32_t *kind,
   return true;
 }
 
+// Whether any member entry of a packed fat binary could serve a device of this
+// compute capability, so a load that cannot be served never reaches the wire:
+// cuSPARSELt 0.6 offers 2494 fat binaries at init, of which 2220 and 149 MB
+// carry nothing an Ada part can run.
+//
+// The test is deliberately wider than the driver's own selection, because
+// skipping a load the driver would have taken is a correctness bug while
+// forwarding one it would have refused only costs a round trip:
+//   - a cubin is binary compatible forward within a major revision and only
+//     within it, so its arch must share the device's major and must not exceed
+//     the device's minor. The driver is stricter: it also refuses the
+//     Tegra-only capabilities (8.7, 8.8) on a desktop part, and honours the
+//     arch-conditional ('a') and family ('f') flags that pin an image to one
+//     capability or family.
+//   - PTX is JIT compiled for the device, which works for any target at or
+//     below the device's capability, across major revisions too.
+// Anything the walk cannot account for exactly — a container or entry version
+// this does not know, an entry kind that is neither cubin nor PTX, sizes that
+// do not add up to the packed image — forwards.
+static bool lupine_fatbin_may_serve_device(const unsigned char *image,
+                                           size_t size, unsigned device_cc) {
+  const auto *header = reinterpret_cast<const lupine_fatbin_header *>(image);
+  if (size < sizeof(lupine_fatbin_header) ||
+      header->magic != LUPINE_FATBIN_MAGIC ||
+      header->version != LUPINE_FATBIN_VERSION ||
+      header->header_size < sizeof(lupine_fatbin_header) ||
+      static_cast<uint64_t>(header->header_size) + header->files_size != size ||
+      header->files_size == 0) {
+    return true;
+  }
+  for (size_t offset = header->header_size; offset < size;) {
+    size_t left = size - offset;
+    if (left < sizeof(lupine_fatbin_entry)) {
+      return true;
+    }
+    const auto *entry =
+        reinterpret_cast<const lupine_fatbin_entry *>(image + offset);
+    if (entry->version != LUPINE_FATBIN_ENTRY_VERSION ||
+        entry->header_size < sizeof(lupine_fatbin_entry) ||
+        entry->header_size > left ||
+        entry->payload_size > left - entry->header_size || entry->arch == 0) {
+      return true;
+    }
+    if (entry->kind == LUPINE_FATBIN_ENTRY_CUBIN) {
+      if (entry->arch / 10 == device_cc / 10 && entry->arch <= device_cc) {
+        return true;
+      }
+    } else if (entry->kind == LUPINE_FATBIN_ENTRY_PTX) {
+      if (entry->arch <= device_cc) {
+        return true;
+      }
+    } else {
+      return true;
+    }
+    offset += entry->header_size + entry->payload_size;
+  }
+  return false;
+}
+
+// The bound device's compute capability, both lookups served from the caches
+// the device snapshot prefills, so the fat binary test above costs no round
+// trip of its own.
+static bool lupine_current_device_compute_capability(unsigned *cc) {
+  CUdevice device = 0;
+  int major = 0;
+  int minor = 0;
+  if (cuCtxGetDevice(&device) != CUDA_SUCCESS ||
+      cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
+                           device) != CUDA_SUCCESS ||
+      cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
+                           device) != CUDA_SUCCESS) {
+    return false;
+  }
+  *cc = static_cast<unsigned>(major) * 10 + static_cast<unsigned>(minor);
+  return true;
+}
+
 extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
   if (module == nullptr || image == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
@@ -5339,12 +5139,15 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
     CUresult result =
         lupine_call_real_cuda_fn("cuModuleLoadData", module, image);
     if (result == CUDA_SUCCESS) {
-      lupine_remember_loaded_module(*module);
       lupine_note_module_owner_route(*module, route);
-      lupine_record_module_image(*module, route, kind, image_bytes.data(),
-                                 image_bytes.size(), image);
     }
     return result;
+  }
+  unsigned device_cc = 0;
+  if (lupine_current_device_compute_capability(&device_cc) &&
+      !lupine_fatbin_may_serve_device(image_bytes.data(), image_bytes.size(),
+                                      device_cc)) {
+    return CUDA_ERROR_NO_BINARY_FOR_GPU;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
@@ -5357,17 +5160,22 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      lupine_read_module_functions(conn, *module, route) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
-    lupine_remember_loaded_module(*module);
     lupine_note_module_owner(*module, conn);
-    lupine_record_module_image(*module, lupine_remote_route_for_conn(conn),
-                               kind, image_bytes.data(), image_bytes.size(),
-                               image);
   }
   return return_value;
+}
+
+// A fat binary container is one of the image shapes cuModuleLoadData already
+// packs, and the kind tag the request carries picks the driver entry point the
+// server loads it with.
+extern "C" CUresult cuModuleLoadFatBinary(CUmodule *module,
+                                          const void *fatCubin) {
+  return cuModuleLoadData(module, fatCubin);
 }
 
 extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
@@ -5389,10 +5197,7 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
     CUresult result = lupine_call_real_cuda_fn(
         "cuModuleLoadDataEx", module, image, numOptions, options, optionValues);
     if (result == CUDA_SUCCESS) {
-      lupine_remember_loaded_module(*module);
       lupine_note_module_owner_route(*module, route);
-      lupine_record_module_image(*module, route, kind, image_bytes.data(),
-                                 image_bytes.size(), image);
     }
     return result;
   }
@@ -5411,15 +5216,12 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
       lupine_read_jit_outputs(conn, numOptions, options, optionValues) < 0 ||
       rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      lupine_read_module_functions(conn, *module, route) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
-    lupine_remember_loaded_module(*module);
     lupine_note_module_owner(*module, conn);
-    lupine_record_module_image(*module, lupine_remote_route_for_conn(conn),
-                               kind, image_bytes.data(), image_bytes.size(),
-                               image);
   }
   return return_value;
 }
@@ -5481,6 +5283,12 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
         lupine_read_kernel_attributes(conn, route, kernel, device) < 0) {
       return -1;
     }
+    if (function != nullptr && device >= 0) {
+      lupine_function_attribute_cache().insert_or_assign(
+          lupine_function_attribute_key{lupine_route_identity(route), function,
+                                        LUPINE_FUNC_ATTRIBUTE_DEVICE},
+          device);
+    }
     lupine_param_layout_count_cache().insert_or_assign(
         lupine_param_layout_key{reinterpret_cast<uintptr_t>(kernel), true},
         param_count);
@@ -5504,6 +5312,411 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
     }
   }
   return 0;
+}
+
+// A profiled library image: the GNU build-id of the mapped object it is
+// embedded in, its file offset there, and the library options. `record` is the
+// profile form: kind, packed size, id length, id, offset, then the options with
+// an absent value array encoded as each option's complement, which is also how
+// they go on the wire. Claims compare the whole record, so a pointer-valued
+// option that differs between runs misses. An image outside any mapped object
+// has an empty id and is never profiled.
+struct lupine_library_reference {
+  std::string id;
+  uint64_t offset = 0;
+  uint64_t size = 0;
+  uint32_t kind = 0;
+  std::string record;
+};
+
+static void lupine_library_reference_record(lupine_library_reference *ref,
+                                            CUlibraryOption *libraryOptions,
+                                            void **libraryOptionValues,
+                                            unsigned int numLibraryOptions) {
+  std::string &out = ref->record;
+  auto append = [&](const void *data, size_t size) {
+    if (size != 0) {
+      out.append(static_cast<const char *>(data), size);
+    }
+  };
+  auto id_size = static_cast<uint8_t>(ref->id.size());
+  out.clear();
+  append(&ref->kind, sizeof(ref->kind));
+  append(&ref->size, sizeof(ref->size));
+  append(&id_size, sizeof(id_size));
+  append(ref->id.data(), id_size);
+  append(&ref->offset, sizeof(ref->offset));
+  append(&numLibraryOptions, sizeof(numLibraryOptions));
+  append(libraryOptions, numLibraryOptions * sizeof(*libraryOptions));
+  for (unsigned int i = 0; i < numLibraryOptions; ++i) {
+    uintptr_t value = libraryOptionValues != nullptr
+                          ? reinterpret_cast<uintptr_t>(libraryOptionValues[i])
+                          : ~static_cast<uintptr_t>(libraryOptions[i]);
+    append(&value, sizeof(value));
+  }
+}
+
+// A profiled record goes on the wire only after its shape checks out: a
+// truncated option tail would desynchronize the lane.
+static bool lupine_library_reference_decode(const std::string &record,
+                                            lupine_library_reference *ref) {
+  if (record.size() < 21) {
+    return false;
+  }
+  auto id_size = static_cast<uint8_t>(record[12]);
+  std::memcpy(&ref->kind, record.data(), sizeof(ref->kind));
+  std::memcpy(&ref->size, record.data() + 4, sizeof(ref->size));
+  size_t at = 21u + id_size;
+  unsigned int count = 0;
+  if (record.size() < at + sizeof(count)) {
+    return false;
+  }
+  std::memcpy(&count, record.data() + at, sizeof(count));
+  at += sizeof(count) + static_cast<size_t>(count) * 12u;
+  if (id_size == 0 || ref->size < sizeof(lupine_fatbin_header) ||
+      at != record.size()) {
+    return false;
+  }
+  ref->id.assign(record, 13, id_size);
+  std::memcpy(&ref->offset, record.data() + 13 + id_size, sizeof(ref->offset));
+  ref->record = record;
+  return true;
+}
+
+// Locating a fatbin among the objects mapped into this process, in either
+// direction: from its address to the containing object's build-id and file
+// offset, or from a profiled build-id and offset back to its bytes.
+#if defined(__linux__)
+struct lupine_fatbin_locator {
+  lupine_library_reference *ref;
+  const unsigned char *data;
+};
+
+// The NT_GNU_BUILD_ID note of the object's PT_NOTE segments; note headers are
+// padded to the segment's alignment, 4 or 8.
+static std::string lupine_object_build_id(const dl_phdr_info *info) {
+  for (int i = 0; i < info->dlpi_phnum; ++i) {
+    const ElfW(Phdr) &ph = info->dlpi_phdr[i];
+    const auto *notes =
+        reinterpret_cast<const unsigned char *>(info->dlpi_addr + ph.p_vaddr);
+    const size_t pad = ph.p_align == 8 ? 8 : 4;
+    for (size_t at = 0;
+         ph.p_type == PT_NOTE && at + sizeof(ElfW(Nhdr)) <= ph.p_filesz;) {
+      const auto *note = reinterpret_cast<const ElfW(Nhdr) *>(notes + at);
+      size_t name = at + sizeof(*note);
+      size_t desc = name + ((note->n_namesz + pad - 1) & ~(pad - 1));
+      if (desc + note->n_descsz > ph.p_filesz) {
+        break;
+      }
+      if (note->n_type == NT_GNU_BUILD_ID && note->n_namesz == 4 &&
+          std::memcmp(notes + name, "GNU", 4) == 0) {
+        return std::string(reinterpret_cast<const char *>(notes + desc),
+                           note->n_descsz);
+      }
+      at = desc + ((note->n_descsz + pad - 1) & ~(pad - 1));
+    }
+  }
+  return {};
+}
+
+static int lupine_locate_fatbin_in_object(dl_phdr_info *info, size_t,
+                                          void *arg) {
+  auto *locator = static_cast<lupine_fatbin_locator *>(arg);
+  lupine_library_reference &ref = *locator->ref;
+  for (int i = 0; i < info->dlpi_phnum; ++i) {
+    const ElfW(Phdr) &ph = info->dlpi_phdr[i];
+    uintptr_t start = info->dlpi_addr + ph.p_vaddr;
+    // Unsigned: an address or offset before the segment wraps past p_filesz.
+    uint64_t at = ref.id.empty()
+                      ? reinterpret_cast<uintptr_t>(locator->data) - start
+                      : ref.offset - ph.p_offset;
+    if (ph.p_type != PT_LOAD || at >= ph.p_filesz ||
+        ref.size > ph.p_filesz - at) {
+      continue;
+    }
+    if (ref.id.empty()) {
+      ref.id = lupine_object_build_id(info);
+      ref.offset = ph.p_offset + at;
+      return 1;
+    }
+    if (lupine_object_build_id(info) != ref.id) {
+      return 0;
+    }
+    locator->data = reinterpret_cast<const unsigned char *>(start + at);
+    return 1;
+  }
+  return 0;
+}
+
+static bool lupine_locate_fatbin(const void *data,
+                                 lupine_library_reference *ref) {
+  lupine_fatbin_locator locator{ref, static_cast<const unsigned char *>(data)};
+  ref->id.clear();
+  return dl_iterate_phdr(lupine_locate_fatbin_in_object, &locator) != 0 &&
+         !ref->id.empty();
+}
+
+static const unsigned char *
+lupine_mapped_fatbin(lupine_library_reference *ref) {
+  lupine_fatbin_locator locator{ref, nullptr};
+  if (dl_iterate_phdr(lupine_locate_fatbin_in_object, &locator) == 0) {
+    return nullptr;
+  }
+  const auto *header =
+      reinterpret_cast<const lupine_fatbin_header *>(locator.data);
+  return header->magic == LUPINE_FATBIN_MAGIC &&
+                 header->header_size + header->files_size == ref->size
+             ? locator.data
+             : nullptr;
+}
+#else
+static bool lupine_locate_fatbin(const void *, lupine_library_reference *) {
+  return false;
+}
+
+static const unsigned char *lupine_mapped_fatbin(lupine_library_reference *) {
+  return nullptr;
+}
+#endif
+
+// Both the length and filtered bytes belong to the RPC's caller, not to the
+// serializer. rpc_write borrows their storage through response completion.
+struct lupine_library_wire_image {
+  const unsigned char *original;
+  uint64_t size;
+  std::vector<unsigned char> filtered;
+};
+
+static lupine_library_wire_image
+lupine_prepare_library_image(conn_t *conn, const lupine_library_reference &ref,
+                             const unsigned char *image, bool filter = true) {
+  lupine_library_wire_image wire{image, ref.size, {}};
+  std::vector<unsigned> devices;
+  if (filter && lupine_server_compute_capabilities().find(conn, devices)) {
+    wire.filtered = lupine_filter_fatbin(image, ref.size, devices);
+    if (!wire.filtered.empty()) {
+      wire.size = wire.filtered.size();
+    }
+  }
+  return wire;
+}
+
+static int lupine_write_library_image(conn_t *conn,
+                                      const lupine_library_reference &ref,
+                                      const lupine_library_wire_image &image) {
+  const auto *bytes =
+      image.filtered.empty() ? image.original : image.filtered.data();
+  return rpc_write(conn, &ref.kind, sizeof(ref.kind)) < 0 ||
+                 rpc_write(conn, &image.size, sizeof(image.size)) < 0 ||
+                 rpc_write(conn, bytes, image.size) < 0
+             ? -1
+             : 0;
+}
+
+static int lupine_write_library_options(conn_t *conn,
+                                        const lupine_library_reference &ref) {
+  size_t at = 21 + ref.id.size();
+  return rpc_write(conn, ref.record.data() + at, ref.record.size() - at);
+}
+
+static int lupine_read_library_load_response(
+    conn_t *conn, unsigned int numJitOptions, const CUjit_option *jitOptions,
+    void **jitOptionsValues, CUlibrary *library, CUresult *result) {
+  if (rpc_read(conn, library, sizeof(*library)) < 0 ||
+      lupine_read_jit_outputs(conn, numJitOptions, jitOptions,
+                              jitOptionsValues) < 0 ||
+      rpc_read(conn, result, sizeof(*result)) < 0 ||
+      (*result == CUDA_SUCCESS && lupine_read_library(conn, *library) < 0)) {
+    return -1;
+  }
+  return 0;
+}
+
+// One batch per process, for the route of the first remote load: the images
+// the previous run of this command line loaded, re-read from this process's
+// own mapping of their objects and requested in one round trip. Entries are
+// handed out once, so every handle cudart receives is distinct and
+// cuLibraryUnload keeps its native meaning.
+struct lupine_library_batch_entry {
+  lupine_library_reference ref;
+  const unsigned char *image = nullptr;
+  CUlibrary library = nullptr;
+  CUresult result = CUDA_ERROR_UNKNOWN;
+};
+
+struct lupine_library_batch_state {
+  std::mutex mutex;
+  std::condition_variable finished_cv;
+  bool started = false;
+  bool finished = true;
+  int route_id = -2;
+  std::vector<lupine_library_batch_entry> entries;
+  std::filesystem::path profile;
+  std::string lines;
+};
+
+static lupine_library_batch_state &lupine_library_batch() {
+  static auto *state = new lupine_library_batch_state();
+  return *state;
+}
+
+// Profiles are keyed by LUPINE_LIBRARY_PROFILE or the full command line, so
+// `python train.py` and `python eval.py` keep separate load orders.
+static std::filesystem::path lupine_library_profile_path() {
+  const char *name = std::getenv("LUPINE_LIBRARY_PROFILE");
+  const char *xdg = std::getenv("XDG_CACHE_HOME");
+  const char *home = std::getenv("HOME");
+  std::string key = name != nullptr ? name : "";
+  if (name == nullptr) {
+    std::ifstream cmdline("/proc/self/cmdline", std::ios::binary);
+    std::string argv((std::istreambuf_iterator<char>(cmdline)),
+                     std::istreambuf_iterator<char>());
+    char hex[17];
+    std::snprintf(
+        hex, sizeof(hex), "%016llx",
+        static_cast<unsigned long long>(XXH64(argv.data(), argv.size(), 0)));
+    key = argv.empty() ? "" : hex;
+  }
+  std::filesystem::path dir = xdg != nullptr && *xdg != '\0'
+                                  ? std::filesystem::path(xdg)
+                              : home != nullptr && *home != '\0'
+                                  ? std::filesystem::path(home) / ".cache"
+                                  : std::filesystem::path();
+  return dir.empty() || key.empty() ? std::filesystem::path()
+                                    : dir / "lupine" / "profiles" / key;
+}
+
+// Through a temp file, so a concurrent reader never sees a partial profile.
+static void lupine_write_file_atomically(const std::filesystem::path &path,
+                                         const std::string &data) {
+  std::error_code ec;
+  std::filesystem::create_directories(path.parent_path(), ec);
+  std::filesystem::path temp = path;
+  temp += "." +
+          std::to_string(
+              std::chrono::steady_clock::now().time_since_epoch().count()) +
+          ".tmp";
+  std::ofstream out(temp, std::ios::binary);
+  out.write(data.data(), static_cast<std::streamsize>(data.size()));
+  out.close();
+  if (out) {
+    std::filesystem::rename(temp, path, ec);
+  }
+  std::filesystem::remove(temp, ec);
+}
+
+// Runs on its own lane with the app's context current: the server loads under
+// it, and lupine_read_library keys its caches by the reading thread's context.
+static void lupine_library_batch_main(conn_t *conn, CUcontext context) {
+  auto &state = lupine_library_batch();
+  lupine_current_context = context;
+  std::vector<lupine_library_batch_entry *> sent;
+  for (auto &entry : state.entries) {
+    if ((entry.image = lupine_mapped_fatbin(&entry.ref)) != nullptr) {
+      sent.push_back(&entry);
+    }
+  }
+  // Finish selection before opening the request. The vector and its byte
+  // buffers stay alive until every batch response has been consumed.
+  std::vector<lupine_library_wire_image> images;
+  images.reserve(sent.size());
+  for (auto *entry : sent) {
+    images.push_back(
+        lupine_prepare_library_image(conn, entry->ref, entry->image));
+  }
+  auto count = static_cast<uint32_t>(sent.size());
+  bool ok =
+      count != 0 && lupine_prepare_rpc(conn) >= 0 &&
+      rpc_write_start_request(conn, LUPINE_RPC_lupineLibraryLoadBatch) >= 0 &&
+      rpc_write(conn, &context, sizeof(context)) >= 0 &&
+      rpc_write(conn, &count, sizeof(count)) >= 0;
+  for (size_t i = 0; i < sent.size(); ++i) {
+    ok = ok && lupine_write_library_image(conn, sent[i]->ref, images[i]) >= 0 &&
+         lupine_write_library_options(conn, sent[i]->ref) >= 0;
+  }
+  ok = ok && rpc_wait_for_response(conn) >= 0;
+  uint32_t loaded = 0;
+  for (auto *entry : sent) {
+    if (!ok || lupine_read_library_load_response(conn, 0, nullptr, nullptr,
+                                                 &entry->library,
+                                                 &entry->result) < 0) {
+      ok = false;
+      entry->result = CUDA_ERROR_UNKNOWN;
+    }
+    loaded += entry->result == CUDA_SUCCESS;
+  }
+  ok = ok && rpc_read_end(conn) >= 0;
+  LUPINE_TRACE_LOG("LUPINE library batch: "
+                   << state.entries.size() << " profiled, " << count
+                   << " sent, " << loaded << " loaded, ok=" << ok);
+  std::lock_guard<std::mutex> lock(state.mutex);
+  state.finished = true;
+  state.finished_cv.notify_all();
+}
+
+static void lupine_library_batch_start(lupine_route route) {
+  auto &state = lupine_library_batch();
+  std::lock_guard<std::mutex> lock(state.mutex);
+  if (state.started) {
+    return;
+  }
+  state.started = true;
+  state.route_id = lupine_route_identity(route);
+  state.profile = lupine_library_profile_path();
+  std::ifstream in(state.profile, std::ios::binary);
+  std::string data((std::istreambuf_iterator<char>(in)),
+                   std::istreambuf_iterator<char>());
+  for (size_t at = 0; at + 4 <= data.size() && state.entries.size() < 4096;) {
+    uint32_t size = 0;
+    std::memcpy(&size, &data[at], sizeof(size));
+    at += sizeof(size);
+    lupine_library_batch_entry entry;
+    if (size > data.size() - at ||
+        !lupine_library_reference_decode(data.substr(at, size), &entry.ref)) {
+      break;
+    }
+    at += size;
+    state.entries.push_back(std::move(entry));
+  }
+  if (!state.entries.empty()) {
+    state.finished = false;
+    std::thread(lupine_library_batch_main, lupine_route_remote_conn(route),
+                lupine_current_context)
+        .detach();
+  }
+}
+
+static bool lupine_library_batch_claim(lupine_route route,
+                                       const lupine_library_reference &ref,
+                                       CUlibrary *library) {
+  auto &state = lupine_library_batch();
+  std::unique_lock<std::mutex> lock(state.mutex);
+  if (lupine_route_identity(route) != state.route_id) {
+    return false;
+  }
+  state.finished_cv.wait(lock, [&] { return state.finished; });
+  auto it = std::find_if(
+      state.entries.begin(), state.entries.end(),
+      [&](const auto &entry) { return entry.ref.record == ref.record; });
+  if (it == state.entries.end() || it->result != CUDA_SUCCESS) {
+    return false;
+  }
+  *library = it->library;
+  state.entries.erase(it);
+  return true;
+}
+
+static void lupine_library_profile_record(lupine_route route,
+                                          const lupine_library_reference &ref) {
+  auto &state = lupine_library_batch();
+  std::lock_guard<std::mutex> lock(state.mutex);
+  if (state.profile.empty() || lupine_route_identity(route) != state.route_id) {
+    return;
+  }
+  auto size = static_cast<uint32_t>(ref.record.size());
+  state.lines.append(reinterpret_cast<const char *>(&size), sizeof(size));
+  state.lines += ref.record;
+  lupine_write_file_atomically(state.profile, state.lines);
 }
 
 extern "C" CUresult
@@ -5537,70 +5750,104 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
         numJitOptions, libraryOptions, libraryOptionValues, numLibraryOptions);
     if (result == CUDA_SUCCESS) {
       lupine_note_library_owner_route(*library, route);
-      lupine_record_library_image(*library, route, kind, image_bytes.data(),
-                                  image_bytes.size(), code);
+      lupine_record_library_image(*library, route, kind, std::move(image_bytes),
+                                  code);
     }
     return result;
   }
 
+  // Loads carrying JIT options are never profiled: their log buffers and
+  // wall-time outputs belong to the call that passes them.
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  size_t image_size = image_bytes.size();
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
-      rpc_copy_alloc(conn, libraryOptionValues == nullptr
-                               ? numLibraryOptions * sizeof(uintptr_t)
-                               : 0) < 0 ||
-      rpc_write(conn, &kind, sizeof(kind)) < 0 ||
-      rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
-      rpc_write(conn, &numJitOptions, sizeof(numJitOptions)) < 0 ||
-      rpc_write(conn, jitOptions, numJitOptions * sizeof(*jitOptions)) < 0 ||
-      rpc_write(conn, jitOptionsValues,
-                numJitOptions * sizeof(*jitOptionsValues)) < 0 ||
-      rpc_write(conn, &numLibraryOptions, sizeof(numLibraryOptions)) < 0 ||
-      rpc_write(conn, libraryOptions,
-                numLibraryOptions * sizeof(*libraryOptions)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (libraryOptionValues != nullptr) {
-    if (rpc_write(conn, libraryOptionValues,
-                  numLibraryOptions * sizeof(*libraryOptionValues)) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  } else {
-    auto *wire_values = static_cast<uintptr_t *>(rpc_write_buffer(
-        conn, numLibraryOptions * sizeof(uintptr_t), alignof(uintptr_t)));
-    for (unsigned int i = 0; i < numLibraryOptions; ++i) {
-      wire_values[i] = ~static_cast<uintptr_t>(libraryOptions[i]);
-    }
-  }
-  if (rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, library, sizeof(CUlibrary)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (lupine_read_jit_outputs(conn, numJitOptions, jitOptions,
-                              jitOptionsValues) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      (return_value == CUDA_SUCCESS &&
-       lupine_read_library(conn, *library) < 0) ||
-      rpc_read_end(conn) < 0) {
+  lupine_library_reference ref;
+  ref.kind = kind;
+  ref.size = image_bytes.size();
+  const void *fatbin =
+      kind == LUPINE_MODULE_IMAGE_FATBIN_RAW
+          ? code
+          : reinterpret_cast<const lupine_fatbin_wrapper *>(code)->data;
+  bool profiled =
+      numJitOptions == 0 && ref.size >= sizeof(lupine_fatbin_header) &&
+      reinterpret_cast<const lupine_fatbin_header *>(fatbin)->magic ==
+          LUPINE_FATBIN_MAGIC &&
+      lupine_locate_fatbin(fatbin, &ref);
+  lupine_library_reference_record(&ref, libraryOptions, libraryOptionValues,
+                                  numLibraryOptions);
+  lupine_library_batch_start(route);
+  CUresult return_value = CUDA_SUCCESS;
+  const bool claimed =
+      profiled && lupine_library_batch_claim(route, ref, library);
+  // JIT options can request a target other than a server device, so preserve
+  // those images verbatim. Profiles and cross-route replays retain originals.
+  auto wire = lupine_prepare_library_image(conn, ref, image_bytes.data(),
+                                           !claimed && numJitOptions == 0);
+  if (!claimed &&
+      (lupine_prepare_rpc(conn) < 0 ||
+       rpc_write_start_request(conn, RPC_cuLibraryLoadData) < 0 ||
+       lupine_write_library_image(conn, ref, wire) < 0 ||
+       rpc_write(conn, &numJitOptions, sizeof(numJitOptions)) < 0 ||
+       rpc_write(conn, jitOptions, numJitOptions * sizeof(*jitOptions)) < 0 ||
+       rpc_write(conn, jitOptionsValues,
+                 numJitOptions * sizeof(*jitOptionsValues)) < 0 ||
+       lupine_write_library_options(conn, ref) < 0 ||
+       rpc_wait_for_response(conn) < 0 ||
+       lupine_read_library_load_response(conn, numJitOptions, jitOptions,
+                                         jitOptionsValues, library,
+                                         &return_value) < 0 ||
+       rpc_read_end(conn) < 0)) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
     lupine_note_library_owner(*library, conn);
     lupine_record_library_image(*library, lupine_remote_route_for_conn(conn),
-                                kind, image_bytes.data(), image_bytes.size(),
-                                code);
+                                kind, std::move(image_bytes), code);
+    if (profiled) {
+      lupine_library_profile_record(route, ref);
+    }
   }
   return return_value;
 }
 
+// The file is read on the client and loaded as an image, like cuModuleLoad.
+extern "C" CUresult cuLibraryLoadFromFile(
+    CUlibrary *library, const char *fileName, CUjit_option *jitOptions,
+    void **jitOptionsValues, unsigned int numJitOptions,
+    CUlibraryOption *libraryOptions, void **libraryOptionValues,
+    unsigned int numLibraryOptions) {
+  if (library == nullptr || fileName == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  std::ifstream file(fileName, std::ios::binary);
+  if (!file) {
+    return CUDA_ERROR_FILE_NOT_FOUND;
+  }
+  // The string's terminator ends a PTX image.
+  std::string code((std::istreambuf_iterator<char>(file)),
+                   std::istreambuf_iterator<char>());
+  if (code.empty()) {
+    return CUDA_ERROR_INVALID_IMAGE;
+  }
+  CUresult result = cuLibraryLoadData(
+      library, code.data(), jitOptions, jitOptionsValues, numJitOptions,
+      libraryOptions, libraryOptionValues, numLibraryOptions);
+  if (result == CUDA_SUCCESS) {
+    // code dies with this call; route replays load the recorded image.
+    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+    auto it = lupine_library_images().find(*library);
+    if (it != lupine_library_images().end()) {
+      it->second.code = it->second.image.data();
+    }
+  }
+  return result;
+}
+
 static CUresult lupine_read_func_param_sizes(CUfunction function,
-                                             std::vector<size_t> *sizes) {
+                                             std::vector<size_t> *sizes,
+                                             std::vector<size_t> *offsets) {
   sizes->clear();
+  if (offsets != nullptr) {
+    offsets->clear();
+  }
   for (uint32_t i = 0;; ++i) {
     size_t offset;
     size_t size;
@@ -5615,12 +5862,19 @@ static CUresult lupine_read_func_param_sizes(CUfunction function,
       return result;
     }
     sizes->push_back(size);
+    if (offsets != nullptr) {
+      offsets->push_back(offset);
+    }
   }
 }
 
 static CUresult lupine_read_kernel_param_sizes(CUkernel kernel,
-                                               std::vector<size_t> *sizes) {
+                                               std::vector<size_t> *sizes,
+                                               std::vector<size_t> *offsets) {
   sizes->clear();
+  if (offsets != nullptr) {
+    offsets->clear();
+  }
   for (uint32_t i = 0;; ++i) {
     size_t offset;
     size_t size;
@@ -5635,7 +5889,86 @@ static CUresult lupine_read_kernel_param_sizes(CUkernel kernel,
       return result;
     }
     sizes->push_back(size);
+    if (offsets != nullptr) {
+      offsets->push_back(offset);
+    }
   }
+}
+
+template <typename Params>
+static CUresult lupine_kernel_node_param_sizes(const Params &params,
+                                               std::vector<size_t> *sizes) {
+  if (params.extra != nullptr) {
+    return CUDA_ERROR_NOT_SUPPORTED;
+  }
+  if (params.func != nullptr) {
+    return lupine_read_func_param_sizes(params.func, sizes, nullptr);
+  }
+#if CUDA_VERSION >= 12000
+  if (params.kern != nullptr) {
+    return lupine_read_kernel_param_sizes(params.kern, sizes, nullptr);
+  }
+#endif
+  return CUDA_ERROR_INVALID_HANDLE;
+}
+
+// Wire: each parameter is a (size, CUDA_SUCCESS) record followed by its bytes;
+// a (0, CUDA_ERROR_INVALID_VALUE) record ends the list.
+static int lupine_write_kernel_node_params(conn_t *conn, void *const *params,
+                                           const std::vector<size_t> &sizes) {
+  static const CUresult param_result = CUDA_SUCCESS;
+  static const size_t end_size = 0;
+  static const CUresult end_result = CUDA_ERROR_INVALID_VALUE;
+  for (size_t i = 0; i < sizes.size(); ++i) {
+    if (rpc_write(conn, &sizes[i], sizeof(sizes[i])) < 0 ||
+        rpc_write(conn, &param_result, sizeof(param_result)) < 0 ||
+        rpc_write(conn, params[i], sizes[i]) < 0) {
+      return -1;
+    }
+  }
+  return rpc_write(conn, &end_size, sizeof(end_size)) < 0 ||
+                 rpc_write(conn, &end_result, sizeof(end_result)) < 0
+             ? -1
+             : 0;
+}
+
+// The parameter-buffer launch form packs the arguments into one blob, but the
+// wire and pointer translation take them one by one, so point each argument at
+// its offset in the caller's blob.
+static void **
+lupine_params_from_param_buffer(void **extra,
+                                const std::vector<size_t> &offsets,
+                                std::vector<void *> *params) {
+  char *buffer = nullptr;
+  for (size_t i = 0; extra[i] != CU_LAUNCH_PARAM_END; i += 2) {
+    if (extra[i] == CU_LAUNCH_PARAM_BUFFER_POINTER) {
+      buffer = static_cast<char *>(extra[i + 1]);
+    }
+  }
+  if (buffer == nullptr) {
+    return nullptr;
+  }
+  for (size_t offset : offsets) {
+    params->push_back(buffer + offset);
+  }
+  return params->data();
+}
+
+static CUresult
+lupine_prepare_kernel_params(lupine_route route, void *const *kernel_params,
+                             const std::vector<size_t> &sizes,
+                             std::vector<CUdeviceptr> *managed) {
+  bool portable = false;
+  for (size_t i = 0; i < sizes.size(); ++i) {
+    if (sizes[i] == sizeof(CUdeviceptr)) {
+      CUdeviceptr value;
+      memcpy(&value, kernel_params[i], sizeof(value));
+      if (lupine_prepare_mapped_host_pointer(value, &portable)) {
+        managed->push_back(value);
+      }
+    }
+  }
+  return lupine_prepare_portable_host_allocations(route, portable);
 }
 
 static std::vector<rpc_write_cursor>
@@ -5684,6 +6017,7 @@ static CUresult lupine_warm_kernel_param_info(CUkernel kernel) {
 }
 
 extern "C" void lupine_invalidate_function_caches() {
+  lupine_module_function_names().clear();
   lupine_param_info_cache().clear();
   lupine_param_layout_count_cache().clear();
   lupine_kernel_function_cache().clear();
@@ -5700,17 +6034,13 @@ static CUresult lupine_resolve_launch_function_for_route(
   if (result != CUDA_SUCCESS) {
     return result;
   }
-  result = lupine_resolve_module_function_for_route(*route_function, route,
-                                                    route_function);
-  if (result != CUDA_SUCCESS) {
-    return result;
+  *route_function = lupine_translate_private_function(*route_function);
+  if (!lupine_routes_share_server(lupine_route_for_function(*route_function),
+                                  route)) {
+    return CUDA_ERROR_INVALID_HANDLE;
   }
-  result = lupine_resolve_private_function_for_route(*route_function, route,
-                                                     route_function);
-  if (result == CUDA_SUCCESS) {
-    *launch_function = *route_function;
-  }
-  return result;
+  *launch_function = *route_function;
+  return CUDA_SUCCESS;
 }
 
 extern "C" CUresult
@@ -5719,9 +6049,6 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
                unsigned int blockDimY, unsigned int blockDimZ,
                unsigned int sharedMemBytes, CUstream hStream,
                void **kernelParams, void **extra) {
-  if (extra != nullptr) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
   CUfunction requested_function = f;
   bool kernel_handle = lupine_is_library_kernel(requested_function);
   lupine_route launch_route = hStream != nullptr
@@ -5742,18 +6069,21 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
                    << " grid=(" << gridDimX << "," << gridDimY << ","
                    << gridDimZ << ") block=(" << blockDimX << "," << blockDimY
                    << "," << blockDimZ << ")");
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn(
-        "cuLaunchKernel", f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
-        blockDimZ, sharedMemBytes, hStream, kernelParams, extra);
-  }
-
   std::vector<size_t> param_sizes;
-  status = kernel_handle ? lupine_read_kernel_param_sizes(
-                               reinterpret_cast<CUkernel>(f), &param_sizes)
-                         : lupine_read_func_param_sizes(f, &param_sizes);
+  std::vector<size_t> param_offsets;
+  std::vector<size_t> *offsets = extra != nullptr ? &param_offsets : nullptr;
+  status = kernel_handle
+               ? lupine_read_kernel_param_sizes(reinterpret_cast<CUkernel>(f),
+                                                &param_sizes, offsets)
+               : lupine_read_func_param_sizes(f, &param_sizes, offsets);
   if (status != CUDA_SUCCESS) {
     return status;
+  }
+
+  std::vector<void *> buffer_params;
+  if (extra != nullptr) {
+    kernelParams =
+        lupine_params_from_param_buffer(extra, param_offsets, &buffer_params);
   }
 
   for (size_t i = 0; i < param_sizes.size(); ++i) {
@@ -5766,14 +6096,19 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   }
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
-  lupine_mark_mapped_host_kernel_params(kernelParams, param_sizes.data(),
-                                        param_count);
+  std::vector<CUdeviceptr> managed;
+  status =
+      lupine_prepare_kernel_params(route, kernelParams, param_sizes, &managed);
+  if (status != CUDA_SUCCESS) {
+    return status;
+  }
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn(
+        "cuLaunchKernel", f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
+        blockDimZ, sharedMemBytes, hStream, kernelParams, nullptr);
+  }
   std::vector<rpc_write_cursor> rpc_params =
       lupine_kernel_param_cursors(kernelParams, param_sizes);
-  bool sync_after_launch =
-      (lupine_managed_kernel_requires_launch_sync(requested_function) ||
-       lupine_managed_kernel_requires_launch_sync(route_function) ||
-       lupine_managed_kernel_requires_launch_sync(f));
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -5798,8 +6133,8 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (sync_after_launch) {
-    return cuStreamSynchronize(hStream);
+  for (CUdeviceptr pointer : managed) {
+    lupine_invalidate_launched_managed(pointer, hStream);
   }
   return CUDA_SUCCESS;
 }
@@ -5812,9 +6147,6 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
 #if CUDA_VERSION < 11080
   return CUDA_ERROR_NOT_SUPPORTED;
 #else
-  if (extra != nullptr) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
   CUfunction requested_function = f;
   bool kernel_handle = lupine_is_library_kernel(requested_function);
   lupine_route launch_route = config->hStream != nullptr
@@ -5828,17 +6160,21 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   }
 
   lupine_route route = lupine_route_for_function(f);
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn<CUDA_ERROR_NOT_SUPPORTED>(
-        "cuLaunchKernelEx", config, f, kernelParams, extra);
-  }
-
   std::vector<size_t> param_sizes;
-  status = kernel_handle ? lupine_read_kernel_param_sizes(
-                               reinterpret_cast<CUkernel>(f), &param_sizes)
-                         : lupine_read_func_param_sizes(f, &param_sizes);
+  std::vector<size_t> param_offsets;
+  std::vector<size_t> *offsets = extra != nullptr ? &param_offsets : nullptr;
+  status = kernel_handle
+               ? lupine_read_kernel_param_sizes(reinterpret_cast<CUkernel>(f),
+                                                &param_sizes, offsets)
+               : lupine_read_func_param_sizes(f, &param_sizes, offsets);
   if (status != CUDA_SUCCESS) {
     return status;
+  }
+
+  std::vector<void *> buffer_params;
+  if (extra != nullptr) {
+    kernelParams =
+        lupine_params_from_param_buffer(extra, param_offsets, &buffer_params);
   }
 
   for (size_t i = 0; i < param_sizes.size(); ++i) {
@@ -5851,14 +6187,18 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   }
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
-  lupine_mark_mapped_host_kernel_params(kernelParams, param_sizes.data(),
-                                        param_count);
+  std::vector<CUdeviceptr> managed;
+  status =
+      lupine_prepare_kernel_params(route, kernelParams, param_sizes, &managed);
+  if (status != CUDA_SUCCESS) {
+    return status;
+  }
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn<CUDA_ERROR_NOT_SUPPORTED>(
+        "cuLaunchKernelEx", config, f, kernelParams, nullptr);
+  }
   std::vector<rpc_write_cursor> rpc_params =
       lupine_kernel_param_cursors(kernelParams, param_sizes);
-  bool sync_after_launch =
-      (lupine_managed_kernel_requires_launch_sync(requested_function) ||
-       lupine_managed_kernel_requires_launch_sync(route_function) ||
-       lupine_managed_kernel_requires_launch_sync(f));
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -5874,27 +6214,12 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
       rpc_write(conn, &param_count, sizeof(param_count)) < 0 ||
       rpc_write(conn, param_sizes.data(),
                 param_sizes.size() * sizeof(*param_sizes.data())) < 0 ||
-      rpc_write_cursors(conn, rpc_params.data(), rpc_params.size()) < 0) {
+      rpc_write_cursors(conn, rpc_params.data(), rpc_params.size()) < 0 ||
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (config->numAttrs == 0) {
-    if (rpc_write_end(conn) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  } else {
-    CUresult return_value;
-    if (rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-        rpc_read_end(conn) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    if (return_value != CUDA_SUCCESS) {
-      return return_value;
-    }
-  }
-
-  if (sync_after_launch) {
-    return cuStreamSynchronize(config->hStream);
+  for (CUdeviceptr pointer : managed) {
+    lupine_invalidate_launched_managed(pointer, config->hStream);
   }
   return CUDA_SUCCESS;
 #endif
@@ -5910,12 +6235,6 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
   f = lupine_translate_private_function(f);
 
   lupine_route route = lupine_route_for_function(f);
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn(
-        "cuLaunchCooperativeKernel", f, gridDimX, gridDimY, gridDimZ, blockDimX,
-        blockDimY, blockDimZ, sharedMemBytes, hStream, kernelParams);
-  }
-
   std::vector<size_t> param_sizes;
   CUresult status = kernel_handle
                         ? lupine_read_kernel_param_sizes(
@@ -5932,13 +6251,21 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
   }
 
   uint32_t param_count = static_cast<uint32_t>(param_sizes.size());
-  lupine_mark_mapped_host_kernel_params(kernelParams, param_sizes.data(),
-                                        param_count);
+  std::vector<CUdeviceptr> managed;
+  status =
+      lupine_prepare_kernel_params(route, kernelParams, param_sizes, &managed);
+  if (status != CUDA_SUCCESS) {
+    return status;
+  }
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn(
+        "cuLaunchCooperativeKernel", f, gridDimX, gridDimY, gridDimZ, blockDimX,
+        blockDimY, blockDimZ, sharedMemBytes, hStream, kernelParams);
+  }
   std::vector<rpc_write_cursor> rpc_params =
       lupine_kernel_param_cursors(kernelParams, param_sizes);
 
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -5959,12 +6286,13 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
       rpc_write(conn, param_sizes.data(),
                 param_sizes.size() * sizeof(*param_sizes.data())) < 0 ||
       rpc_write_cursors(conn, rpc_params.data(), rpc_params.size()) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  for (CUdeviceptr pointer : managed) {
+    lupine_invalidate_launched_managed(pointer, hStream);
+  }
+  return CUDA_SUCCESS;
 }
 
 #ifdef cuLaunchCooperativeKernel_ptsz
@@ -6094,13 +6422,12 @@ lupine_validate_graph_dependencies(const CUgraphNode *dependencies,
   return CUDA_SUCCESS;
 }
 
-// Backing store for codegen DeepStructOperation RECV params (e.g. the
-// *GetParams node-params queries). CUDA returns arrays owned by the node; we
-// mirror that by keeping the deserialized copies alive, keyed by the caller's
-// out-pointer, until the next deep query into the same struct. Generic across
-// all deep structs so codegen needs no per-type globals.
+// Returned graph parameter arrays belong to their node, independent of the
+// caller's output struct. Repeated queries reuse storage until parameters
+// change.
 static std::mutex g_deep_cache_mutex;
-static std::map<const void *, std::vector<void *>> g_deep_cache;
+static std::map<CUgraphNode, std::vector<std::vector<unsigned char>>>
+    g_deep_cache;
 // Release paths acquire the handle-association mutex and this mutex together;
 // no path acquires them separately in the opposite order.
 static std::mutex g_retained_string_mutex;
@@ -6144,6 +6471,14 @@ extern "C" const char *lupine_retain_returned_string(const void *handle,
 }
 
 extern "C" void lupine_release_module_retained_strings(CUmodule module) {
+  std::unordered_set<CUfunction> unloaded;
+  lupine_cache_erase_if(lupine_module_function_names(),
+                        [&](const auto &key, CUfunction function) {
+                          if (key.module == module) {
+                            unloaded.insert(function);
+                          }
+                          return key.module == module;
+                        });
   std::scoped_lock lock(lupine_library_kernel_mutex(), g_retained_string_mutex);
   lupine_release_retained_strings_locked(
       reinterpret_cast<const void *>(module));
@@ -6153,15 +6488,34 @@ extern "C" void lupine_release_module_retained_strings(CUmodule module) {
       ++function;
       continue;
     }
+    unloaded.insert(function->first);
     lupine_release_retained_strings_locked(
         reinterpret_cast<const void *>(function->first));
     function = functions.erase(function);
   }
   lupine_library_modules().erase(module);
+  auto is_unloaded = [&](CUfunction function) {
+    return unloaded.count(function) != 0;
+  };
+  lupine_cache_erase_if(lupine_param_info_cache(), [&](const auto &key,
+                                                       const auto &) {
+    return !key.kernel && is_unloaded(reinterpret_cast<CUfunction>(key.handle));
+  });
+  lupine_cache_erase_if(lupine_param_layout_count_cache(), [&](const auto &key,
+                                                               const auto &) {
+    return !key.kernel && is_unloaded(reinterpret_cast<CUfunction>(key.handle));
+  });
+  lupine_cache_erase_if(
+      lupine_function_attribute_cache(),
+      [&](const auto &key, const auto &) { return is_unloaded(key.function); });
+  lupine_cache_erase_if(
+      lupine_occupancy_cache(),
+      [&](const auto &key, const auto &) { return is_unloaded(key.function); });
 }
 
 extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
   std::scoped_lock lock(lupine_library_kernel_mutex(), g_retained_string_mutex);
+  lupine_library_images().erase(library);
   lupine_release_retained_strings_locked(
       reinterpret_cast<const void *>(library));
   auto &kernels = lupine_library_kernels();
@@ -6208,25 +6562,39 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
   }
 }
 
-extern "C" void lupine_deep_cache_reset(const void *key) {
+extern "C" void *lupine_deep_node_cache_get(CUgraphNode node, size_t slot,
+                                           size_t bytes) {
   std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
-  auto it = g_deep_cache.find(key);
-  if (it != g_deep_cache.end()) {
-    for (void *ptr : it->second) {
-      free(ptr);
-    }
-    it->second.clear();
-  }
+  auto &arrays = g_deep_cache[node];
+  if (arrays.size() <= slot)
+    arrays.resize(slot + 1);
+  // Repeated queries must reuse storage, including queries into different
+  // output structs. Resizing is safe when a setter changed the parameters.
+  arrays[slot].resize(bytes);
+  return arrays[slot].data();
 }
 
-extern "C" void *lupine_deep_cache_add(const void *key, size_t bytes) {
-  void *ptr = bytes != 0 ? malloc(bytes) : nullptr;
-  if (bytes != 0 && ptr == nullptr) {
-    return nullptr;
-  }
+extern "C" void lupine_deep_node_cache_reset(CUgraphNode node) {
   std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
-  g_deep_cache[key].push_back(ptr);
-  return ptr;
+  g_deep_cache.erase(node);
+}
+
+std::vector<CUgraphNode> lupine_deep_cache_graph_nodes(CUgraph graph) {
+  {
+    std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
+    if (g_deep_cache.empty())
+      return {};
+  }
+  // Enumerate before destruction: this also covers allocation nodes created
+  // by stream capture, for which the client never observed an AddNode call.
+  size_t count = 0;
+  if (cuGraphGetNodes(graph, nullptr, &count) != CUDA_SUCCESS)
+    return {};
+  std::vector<CUgraphNode> nodes(count);
+  if (count != 0 && cuGraphGetNodes(graph, nodes.data(), &count) != CUDA_SUCCESS)
+    return {};
+  nodes.resize(count);
+  return nodes;
 }
 
 static CUresult lupine_queue_graph_dependencies(conn_t *conn,
@@ -6246,31 +6614,11 @@ static CUresult lupine_queue_graph_dependencies(conn_t *conn,
   return CUDA_SUCCESS;
 }
 
-static size_t lupine_memcpy3d_host_span_bytes(const CUDA_MEMCPY3D &params,
-                                              bool source) {
-  size_t width = params.WidthInBytes;
-  size_t height = params.Height == 0 ? 1 : params.Height;
-  size_t depth = params.Depth == 0 ? 1 : params.Depth;
-  size_t pitch = source ? params.srcPitch : params.dstPitch;
-  if (pitch == 0) {
-    pitch = width;
-  }
-  size_t rows = height * depth;
-  return pitch * rows;
-}
-
 static CUfunction lupine_client_function_for_remote(CUfunction remote) {
   if (remote == nullptr) {
     return nullptr;
   }
-  {
-    std::lock_guard<std::mutex> lock(lupine_host_function_mutex());
-    for (const auto &entry : lupine_host_function_map()) {
-      if (entry.second == remote && entry.first != remote) {
-        return entry.first;
-      }
-    }
-  }
+
   {
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
     for (const auto &entry : lupine_library_kernels()) {
@@ -6284,16 +6632,6 @@ static CUfunction lupine_client_function_for_remote(CUfunction remote) {
         }
       }
     }
-    for (const auto &entry : lupine_module_functions()) {
-      if (entry.first == remote) {
-        continue;
-      }
-      for (const auto &route_entry : entry.second.functions_by_route) {
-        if (route_entry.second == remote) {
-          return entry.first;
-        }
-      }
-    }
   }
   {
     std::lock_guard<std::mutex> lock(lupine_private_node_mutex());
@@ -6301,13 +6639,8 @@ static CUfunction lupine_client_function_for_remote(CUfunction remote) {
       if (entry.first == remote) {
         continue;
       }
-      if (entry.second.server_function == remote) {
+      if (entry.second == remote) {
         return entry.first;
-      }
-      for (const auto &route_entry : entry.second.functions_by_route) {
-        if (route_entry.second == remote) {
-          return entry.first;
-        }
       }
     }
   }
@@ -6339,7 +6672,7 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
     return CUDA_ERROR_INVALID_VALUE;
   }
 
-  lupine_route route = lupine_route_for_default();
+  lupine_route route = lupine_route_for_graph_node(hNode);
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuGraphKernelNodeGetParams_v2", hNode,
                                     nodeParams);
@@ -6418,45 +6751,26 @@ cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
     return CUDA_ERROR_INVALID_VALUE;
   }
 
-  lupine_route route = lupine_route_for_default();
+  lupine_route route = lupine_route_for_graph_node(hNode);
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuGraphKernelNodeSetParams_v2", hNode,
                                     nodeParams);
   }
 
+  std::vector<size_t> param_sizes;
+  CUresult return_value =
+      lupine_kernel_node_param_sizes(*nodeParams, &param_sizes);
+  if (return_value != CUDA_SUCCESS) {
+    return return_value;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphKernelNodeSetParams_v2) < 0 ||
-      rpc_copy_alloc(conn, lupine_param_info_copy_capacity()) < 0 ||
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
-      rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  for (size_t i = 0;; ++i) {
-    size_t offset;
-    auto *size = static_cast<size_t *>(
-        rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-    auto *param_result = static_cast<CUresult *>(
-        rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
-    *param_result = nodeParams->extra == nullptr ? CUDA_ERROR_INVALID_HANDLE
-                                                 : CUDA_ERROR_NOT_SUPPORTED;
-    if (nodeParams->extra == nullptr && nodeParams->func != nullptr) {
-      *param_result = cuFuncGetParamInfo(nodeParams->func, i, &offset, size);
-    }
-#if CUDA_VERSION >= 12000
-    else if (nodeParams->extra == nullptr && nodeParams->kern != nullptr) {
-      *param_result = cuKernelGetParamInfo(nodeParams->kern, i, &offset, size);
-    }
-#endif
-    if (*param_result != CUDA_SUCCESS) {
-      break;
-    }
-    if (rpc_write(conn, nodeParams->kernelParams[i], *size) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  }
-  if (rpc_wait_for_response(conn) < 0 ||
+      rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
+      lupine_write_kernel_node_params(conn, nodeParams->kernelParams,
+                                      param_sizes) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6507,41 +6821,22 @@ cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
     return local_result;
   }
 
+  std::vector<size_t> param_sizes;
+  CUresult return_value =
+      lupine_kernel_node_param_sizes(*nodeParams, &param_sizes);
+  if (return_value != CUDA_SUCCESS) {
+    return return_value;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphAddKernelNode_v2) < 0 ||
-      rpc_copy_alloc(conn, lupine_param_info_copy_capacity()) < 0 ||
       rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
       lupine_queue_graph_dependencies(conn, dependencies, &numDependencies) !=
           CUDA_SUCCESS ||
-      rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  for (size_t i = 0;; ++i) {
-    size_t offset;
-    auto *size = static_cast<size_t *>(
-        rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-    auto *param_result = static_cast<CUresult *>(
-        rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
-    *param_result = nodeParams->extra == nullptr ? CUDA_ERROR_INVALID_HANDLE
-                                                 : CUDA_ERROR_NOT_SUPPORTED;
-    if (nodeParams->extra == nullptr && nodeParams->func != nullptr) {
-      *param_result = cuFuncGetParamInfo(nodeParams->func, i, &offset, size);
-    }
-#if CUDA_VERSION >= 12000
-    else if (nodeParams->extra == nullptr && nodeParams->kern != nullptr) {
-      *param_result = cuKernelGetParamInfo(nodeParams->kern, i, &offset, size);
-    }
-#endif
-    if (*param_result != CUDA_SUCCESS) {
-      break;
-    }
-    if (rpc_write(conn, nodeParams->kernelParams[i], *size) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  }
-  if (rpc_wait_for_response(conn) < 0 ||
+      rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
+      lupine_write_kernel_node_params(conn, nodeParams->kernelParams,
+                                      param_sizes) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(*phGraphNode)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -6577,9 +6872,15 @@ cuGraphAddMemcpyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
     return status;
   }
 
+  // A host source travels as its copied rows alone.
   size_t host_src_bytes = 0;
+  size_t src_slice = copyParams->srcHeight * copyParams->srcPitch;
+  const char *src_rows =
+      (const char *)copyParams->srcHost + copyParams->srcZ * src_slice +
+      copyParams->srcY * copyParams->srcPitch + copyParams->srcXInBytes;
   if (copyParams->srcMemoryType == CU_MEMORYTYPE_HOST) {
-    host_src_bytes = lupine_memcpy3d_host_span_bytes(*copyParams, true);
+    host_src_bytes =
+        copyParams->WidthInBytes * copyParams->Height * copyParams->Depth;
     if (host_src_bytes != 0 && copyParams->srcHost == nullptr) {
       return CUDA_ERROR_INVALID_VALUE;
     }
@@ -6607,7 +6908,10 @@ cuGraphAddMemcpyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       rpc_write(conn, copyParams, sizeof(*copyParams)) < 0 ||
       rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
       rpc_write(conn, &host_src_bytes, sizeof(host_src_bytes)) < 0 ||
-      rpc_write(conn, copyParams->srcHost, host_src_bytes) < 0 ||
+      (host_src_bytes != 0 &&
+       rpc_write_pitched(conn, src_rows, copyParams->WidthInBytes,
+                         copyParams->Height, copyParams->srcPitch,
+                         copyParams->Depth, src_slice) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(*phGraphNode)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -6633,41 +6937,22 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
                                     hGraphExec, hNode, nodeParams);
   }
 
+  std::vector<size_t> param_sizes;
+  CUresult return_value =
+      lupine_kernel_node_param_sizes(*nodeParams, &param_sizes);
+  if (return_value != CUDA_SUCCESS) {
+    return return_value;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphExecKernelNodeSetParams_v2) <
           0 ||
-      rpc_copy_alloc(conn, lupine_param_info_copy_capacity()) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
-      rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  for (size_t i = 0;; ++i) {
-    size_t offset;
-    auto *size = static_cast<size_t *>(
-        rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-    auto *param_result = static_cast<CUresult *>(
-        rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
-    *param_result = nodeParams->extra == nullptr ? CUDA_ERROR_INVALID_HANDLE
-                                                 : CUDA_ERROR_NOT_SUPPORTED;
-    if (nodeParams->extra == nullptr && nodeParams->func != nullptr) {
-      *param_result = cuFuncGetParamInfo(nodeParams->func, i, &offset, size);
-    }
-#if CUDA_VERSION >= 12000
-    else if (nodeParams->extra == nullptr && nodeParams->kern != nullptr) {
-      *param_result = cuKernelGetParamInfo(nodeParams->kern, i, &offset, size);
-    }
-#endif
-    if (*param_result != CUDA_SUCCESS) {
-      break;
-    }
-    if (rpc_write(conn, nodeParams->kernelParams[i], *size) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  }
-  if (rpc_wait_for_response(conn) < 0 ||
+      rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
+      lupine_write_kernel_node_params(conn, nodeParams->kernelParams,
+                                      param_sizes) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6884,55 +7169,26 @@ extern "C" CUresult cuGraphAddNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
     return CUDA_ERROR_NOT_SUPPORTED;
   }
 
+  bool kernel = nodeParams->type == CU_GRAPH_NODE_TYPE_KERNEL;
+  std::vector<size_t> param_sizes;
+  CUresult return_value =
+      kernel ? lupine_kernel_node_param_sizes(nodeParams->kernel, &param_sizes)
+             : CUDA_SUCCESS;
+  if (return_value != CUDA_SUCCESS) {
+    return return_value;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  unsigned int child_count = nodeParams->type == CU_GRAPH_NODE_TYPE_CONDITIONAL
-                                 ? nodeParams->conditional.size
-                                 : 0;
+  unsigned int child_count = kernel ? 0 : nodeParams->conditional.size;
   std::vector<CUgraph> child_graphs(child_count);
-  size_t copy_size = nodeParams->type == CU_GRAPH_NODE_TYPE_KERNEL
-                         ? lupine_param_info_copy_capacity()
-                         : 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphAddNode_v2) < 0 ||
-      rpc_copy_alloc(conn, copy_size) < 0 ||
       rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
       lupine_queue_graph_dependencies(conn, dependencies, &numDependencies) !=
           CUDA_SUCCESS ||
-      rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (nodeParams->type == CU_GRAPH_NODE_TYPE_KERNEL) {
-    for (size_t i = 0;; ++i) {
-      size_t offset;
-      auto *size = static_cast<size_t *>(
-          rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
-      auto *param_result = static_cast<CUresult *>(
-          rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
-      *param_result = nodeParams->kernel.extra == nullptr
-                          ? CUDA_ERROR_INVALID_HANDLE
-                          : CUDA_ERROR_NOT_SUPPORTED;
-      if (nodeParams->kernel.extra == nullptr &&
-          nodeParams->kernel.func != nullptr) {
-        *param_result =
-            cuFuncGetParamInfo(nodeParams->kernel.func, i, &offset, size);
-      }
-#if CUDA_VERSION >= 12000
-      else if (nodeParams->kernel.extra == nullptr &&
-               nodeParams->kernel.kern != nullptr) {
-        *param_result =
-            cuKernelGetParamInfo(nodeParams->kernel.kern, i, &offset, size);
-      }
-#endif
-      if (*param_result != CUDA_SUCCESS) {
-        break;
-      }
-      if (rpc_write(conn, nodeParams->kernel.kernelParams[i], *size) < 0) {
-        return CUDA_ERROR_DEVICE_UNAVAILABLE;
-      }
-    }
-  }
-  if (rpc_wait_for_response(conn) < 0 ||
+      rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
+      (kernel && lupine_write_kernel_node_params(
+                     conn, nodeParams->kernel.kernelParams, param_sizes) < 0) ||
+      rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraphNode, sizeof(*phGraphNode)) < 0 ||
       (child_count != 0 && rpc_read(conn, child_graphs.data(),
                                     child_count * sizeof(CUgraph)) < 0) ||
@@ -7886,6 +8142,22 @@ lupine_context_storage() {
   return *storage;
 }
 
+// A destroyed context takes its context-local storage with it, and the server
+// is free to hand the same handle back for the next context. NVIDIA's libcudart
+// keeps its per-device runtime state here and re-initializes the device when
+// the lookup misses, so an entry that outlives its context is the difference
+// between a reset device coming back and staying broken.
+static void lupine_forget_context_local_storage(CUcontext ctx) {
+  if (ctx == nullptr) {
+    return;
+  }
+  auto &storage = lupine_context_storage();
+  auto locked = storage.lock_table();
+  for (auto entry = locked.begin(); entry != locked.end();) {
+    entry = entry->first.first == ctx ? locked.erase(entry) : std::next(entry);
+  }
+}
+
 static CUresult lupine_normalize_context(CUcontext *ctx) {
   if (ctx == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
@@ -8520,7 +8792,6 @@ static void *lupine_make_missing_stub(const char *symbol) {
 
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuModuleLoadData)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuModuleLoadFatBinary)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryLoadData)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryGetKernelCount)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryEnumerateKernels)
@@ -8626,7 +8897,6 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
   { #name, (void *)&lupine_unsupported_##name }
       LUPINE_STUB_ENTRY(cuCtxCreate),
       LUPINE_STUB_ENTRY(cuModuleLoadData),
-      LUPINE_STUB_ENTRY(cuModuleLoadFatBinary),
       LUPINE_STUB_ENTRY(cuLibraryLoadData),
       LUPINE_STUB_ENTRY(cuLibraryGetKernelCount),
       LUPINE_STUB_ENTRY(cuLibraryEnumerateKernels),
@@ -8711,16 +8981,7 @@ void *rpc_client_dispatch_thread(void *arg) {
       }
 
       for (int i = 0; i < found; ++i) {
-        void *dst = nullptr;
-        size_t count = 0;
-
-        if (rpc_read(conn, &dst, sizeof(void *)) < 0 ||
-            rpc_read(conn, &count, sizeof(size_t)) < 0) {
-          LUPINE_LOG_ERROR("Failed to read transfer parameters.");
-          goto close_connection;
-        }
-
-        if (rpc_read(conn, dst, count) < 0) {
+        if (lupine_read_deferred_rows(conn) < 0) {
           LUPINE_LOG_ERROR("Failed to read device data from server.");
           goto close_connection;
         }
@@ -8744,7 +9005,16 @@ void *rpc_client_dispatch_thread(void *arg) {
         goto close_connection;
       }
 
+      lupine_in_host_callback = true;
       callback(user_data);
+      lupine_in_host_callback = false;
+
+      // Acknowledging the callback lets queued device work resume. Publish its
+      // mapped-memory writes first, even when no application CUDA call follows.
+      if (lupine_prepare_rpc(conn) < 0) {
+        LUPINE_LOG_ERROR("Failed to flush host writes from host callback.");
+        goto close_connection;
+      }
 
       void *res = nullptr;
       if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8773,7 +9043,14 @@ void *rpc_client_dispatch_thread(void *arg) {
       }
 
       if (callback != nullptr) {
+        lupine_in_host_callback = true;
         callback(stream, status, user_data);
+        lupine_in_host_callback = false;
+      }
+
+      if (lupine_prepare_rpc(conn) < 0) {
+        LUPINE_LOG_ERROR("Failed to flush host writes from stream callback.");
+        break;
       }
 
       void *res = nullptr;
@@ -8849,57 +9126,6 @@ void *rpc_client_dispatch_thread(void *arg) {
       LUPINE_LOG_ERROR("Received unsupported log callback request.");
       break;
 #endif
-    } else if (op == LUPINE_SIDE_EFFECT_LIBRARY_LOG) {
-      library_log_target target;
-      int level = 0;
-      int32_t origin_stream = -1;
-      uint8_t before_callbacks = 0;
-      uint32_t function_length = 0, length = 0;
-      if (rpc_read(conn, &target.callback, sizeof(target.callback)) < 0 ||
-          rpc_read(conn, &target.user_data, sizeof(target.user_data)) < 0 ||
-          rpc_read(conn, &origin_stream, sizeof(origin_stream)) < 0 ||
-          rpc_read(conn, &before_callbacks, sizeof(before_callbacks)) < 0 ||
-          rpc_read(conn, &level, sizeof(level)) < 0 ||
-          rpc_read(conn, &function_length, sizeof(function_length)) < 0 ||
-          rpc_read(conn, &length, sizeof(length)) < 0 ||
-          function_length > LUPINE_MAX_LIBRARY_LOG_BYTES ||
-          length > LUPINE_MAX_LIBRARY_LOG_BYTES) {
-        break;
-      }
-      std::string function, message;
-      try {
-        function.resize(function_length);
-        message.resize(length);
-      } catch (...) {
-        break;
-      }
-      if (rpc_read(conn, function.data(), function_length) < 0 ||
-          rpc_read(conn, message.data(), length) < 0) {
-        break;
-      }
-      int32_t callback_stream = rpc_current_http2_stream(conn);
-      int request_id = rpc_read_end(conn);
-      if (request_id < 0 || target.callback == nullptr) {
-        break;
-      }
-      auto invoke = [target, level, function = std::move(function),
-                     message = std::move(message)] {
-        target.callback(target.user_data, level, function.c_str(),
-                        message.c_str(), message.size());
-      };
-      if (origin_stream < 0 || origin_stream == callback_stream) {
-        invoke();
-      } else if (!lupine_pending_logs().enqueue(conn, origin_stream,
-                                                std::move(invoke),
-                                                before_callbacks != 0)) {
-        break;
-      }
-      void *response = nullptr;
-      if (rpc_write_start_response(conn, request_id) < 0 ||
-          rpc_write(conn, &response, sizeof(response)) < 0 ||
-          rpc_write_end(conn) < 0) {
-        break;
-      }
     } else if (op == LUPINE_SIDE_EFFECT_READ_HOST_MEMORY) {
       struct host_read {
         const unsigned char *source = nullptr;
@@ -9043,6 +9269,62 @@ extern "C" CUresult cuTensorMapEncodeTiled(
       rpc_write(conn, globalDim, rank_bytes_u64) < 0 ||
       (stride_bytes != 0 && rpc_write(conn, globalStrides, stride_bytes) < 0) ||
       rpc_write(conn, boxDim, rank_bytes_u32) < 0 ||
+      rpc_write(conn, elementStrides, rank_bytes_u32) < 0 ||
+      rpc_write(conn, &interleave, sizeof(interleave)) < 0 ||
+      rpc_write(conn, &swizzle, sizeof(swizzle)) < 0 ||
+      rpc_write(conn, &l2Promotion, sizeof(l2Promotion)) < 0 ||
+      rpc_write(conn, &oobFill, sizeof(oobFill)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, tensorMap, sizeof(*tensorMap)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return result;
+}
+
+extern "C" CUresult cuTensorMapEncodeIm2col(
+    CUtensorMap *tensorMap, CUtensorMapDataType tensorDataType,
+    cuuint32_t tensorRank, void *globalAddress, const cuuint64_t *globalDim,
+    const cuuint64_t *globalStrides, const int *pixelBoxLowerCorner,
+    const int *pixelBoxUpperCorner, cuuint32_t channelsPerPixel,
+    cuuint32_t pixelsPerColumn, const cuuint32_t *elementStrides,
+    CUtensorMapInterleave interleave, CUtensorMapSwizzle swizzle,
+    CUtensorMapL2promotion l2Promotion, CUtensorMapFloatOOBfill oobFill) {
+  if (tensorMap == nullptr || tensorRank < 3 || tensorRank > 5 ||
+      globalAddress == nullptr || globalDim == nullptr ||
+      globalStrides == nullptr || pixelBoxLowerCorner == nullptr ||
+      pixelBoxUpperCorner == nullptr || elementStrides == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  CUdeviceptr address_rpc = reinterpret_cast<CUdeviceptr>(globalAddress);
+  lupine_route route = lupine_route_for_deviceptr(address_rpc);
+  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn(
+        "cuTensorMapEncodeIm2col", tensorMap, tensorDataType, tensorRank,
+        globalAddress, globalDim, globalStrides, pixelBoxLowerCorner,
+        pixelBoxUpperCorner, channelsPerPixel, pixelsPerColumn, elementStrides,
+        interleave, swizzle, l2Promotion, oobFill);
+  }
+
+  conn_t *conn = lupine_route_remote_conn(route);
+  const size_t rank_bytes_u64 = tensorRank * sizeof(cuuint64_t);
+  const size_t stride_bytes = (tensorRank - 1) * sizeof(cuuint64_t);
+  const size_t corner_bytes = (tensorRank - 2) * sizeof(int);
+  const size_t rank_bytes_u32 = tensorRank * sizeof(cuuint32_t);
+
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuTensorMapEncodeIm2col) < 0 ||
+      rpc_write(conn, &tensorDataType, sizeof(tensorDataType)) < 0 ||
+      rpc_write(conn, &tensorRank, sizeof(tensorRank)) < 0 ||
+      rpc_write(conn, &globalAddress, sizeof(globalAddress)) < 0 ||
+      rpc_write(conn, globalDim, rank_bytes_u64) < 0 ||
+      rpc_write(conn, globalStrides, stride_bytes) < 0 ||
+      rpc_write(conn, pixelBoxLowerCorner, corner_bytes) < 0 ||
+      rpc_write(conn, pixelBoxUpperCorner, corner_bytes) < 0 ||
+      rpc_write(conn, &channelsPerPixel, sizeof(channelsPerPixel)) < 0 ||
+      rpc_write(conn, &pixelsPerColumn, sizeof(pixelsPerColumn)) < 0 ||
       rpc_write(conn, elementStrides, rank_bytes_u32) < 0 ||
       rpc_write(conn, &interleave, sizeof(interleave)) < 0 ||
       rpc_write(conn, &swizzle, sizeof(swizzle)) < 0 ||
@@ -9500,8 +9782,10 @@ lupine_manual_function_map() {
       {"cuGetExportTable", (void *)cuGetExportTable},
       {"cuModuleLoad", (void *)cuModuleLoad},
       {"cuModuleLoadData", (void *)cuModuleLoadData},
+      {"cuModuleLoadFatBinary", (void *)cuModuleLoadFatBinary},
       {"cuModuleLoadDataEx", (void *)cuModuleLoadDataEx},
       {"cuLibraryLoadData", (void *)cuLibraryLoadData},
+      {"cuLibraryLoadFromFile", (void *)cuLibraryLoadFromFile},
       {"cuLinkCreate", (void *)cuLinkCreate_v2},
       {"cuLinkAddData", (void *)cuLinkAddData_v2},
       {"cuLinkAddFile", (void *)cuLinkAddFile_v2},
@@ -9515,6 +9799,7 @@ lupine_manual_function_map() {
       {"cuMemcpyHtoDAsync_v2", (void *)cuMemcpyHtoDAsync_v2},
       {"cuMemcpyDtoHAsync", (void *)cuMemcpyDtoHAsync_v2},
       {"cuMemcpyDtoHAsync_v2", (void *)cuMemcpyDtoHAsync_v2},
+      {"cuMemcpyAtoHAsync", (void *)cuMemcpyAtoHAsync_v2},
       {"cuStreamWaitValue32", (void *)cuStreamWaitValue32_v2},
       {"cuStreamWaitValue64", (void *)cuStreamWaitValue64_v2},
       {"cuStreamWaitEvent", (void *)cuStreamWaitEvent},
@@ -9532,6 +9817,7 @@ lupine_manual_function_map() {
       {"cuCtxSynchronize", (void *)cuCtxSynchronize},
       {"cuStreamSynchronize", (void *)cuStreamSynchronize},
       {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize_ptsz},
+      {"cuStreamGetDevice_ptsz", (void *)cuStreamGetDevice_ptsz},
       {"cuEventQuery", (void *)cuEventQuery},
       {"cuEventSynchronize", (void *)cuEventSynchronize},
       {"cuGetErrorName", (void *)cuGetErrorName},

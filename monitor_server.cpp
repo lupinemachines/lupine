@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <new>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -26,6 +27,7 @@
 #include <pthread.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "lupine_log.h"
@@ -323,13 +325,20 @@ bool host_pid_owned_by_other_slot(int32_t host_pid, int slot_index) {
 
 struct host_pid_probe {
   int slot_index = -1;
-  nvml_session session;
+  std::optional<nvml_session> session;
   nvmlDevice_t device = nullptr;
   std::set<unsigned int> before_pids;
   bool lock_held = false;
 };
 
 thread_local std::unique_ptr<host_pid_probe> active_host_pid_probe;
+
+// PROC_PID_INIT_INO: the kernel's fixed inode for the initial PID namespace,
+// where getpid() is already the PID that NVML reports.
+bool in_initial_pid_namespace() {
+  struct stat ns = {};
+  return stat("/proc/self/ns/pid", &ns) == 0 && ns.st_ino == 0xEFFFFFFCU;
+}
 
 void note_discovery_failure() {
   if (registry != nullptr && lock_shared_mutex(&registry->registry_mutex)) {
@@ -338,13 +347,29 @@ void note_discovery_failure() {
   }
 }
 
+// NVML lists a process on a device for as long as it holds a context there, so
+// a retain or a create can only add our PID to that list while we hold none
+// yet, so there is nothing to probe once a primary context is active.
+bool primary_context_active(int cuda_device) {
+  unsigned int flags = 0;
+  int active = 0;
+  return cuDevicePrimaryCtxGetState(cuda_device, &flags, &active) ==
+             CUDA_SUCCESS &&
+         active != 0;
+}
+
 void begin_context_probe(int cuda_device) {
   if (registry == nullptr || child_slot < 0 || slot_has_host_pid(child_slot) ||
-      active_host_pid_probe != nullptr) {
+      active_host_pid_probe != nullptr || primary_context_active(cuda_device)) {
     return;
   }
   std::unique_ptr<host_pid_probe> probe(new (std::nothrow) host_pid_probe());
-  if (probe == nullptr || !probe->session.active()) {
+  if (probe == nullptr) {
+    note_discovery_failure();
+    return;
+  }
+  probe->session.emplace();
+  if (!probe->session->active()) {
     note_discovery_failure();
     return;
   }
@@ -665,6 +690,9 @@ void lupine_monitoring_register_child() {
     }
     memset(slot, 0, sizeof(*slot));
     slot->server_pid = static_cast<int32_t>(getpid());
+    if (in_initial_pid_namespace()) {
+      slot->host_pid = slot->server_pid;
+    }
     slot->state = kSlotActive;
     child_slot = static_cast<int>(index);
     pthread_mutex_unlock(&registry->registry_mutex);
@@ -693,42 +721,29 @@ void lupine_monitoring_unregister_pid(int64_t server_pid) {
 
 int handle_lupine_client_metadata(conn_t *conn) {
   lupine_client_metadata_header header = {};
-  if (conn == nullptr ||
-      rpc_read(conn, &header, sizeof(header)) != sizeof(header)) {
+  if (conn == nullptr || rpc_read(conn, &header, sizeof(header)) != 0) {
     return -1;
   }
-  int status = 0;
   lupine_client_metadata metadata = {};
   if (header.payload_size > LUPINE_CLIENT_METADATA_MAX_PAYLOAD) {
-    status = 2;
     if (rpc_drain(conn, header.payload_size) < 0) {
       return -1;
     }
   } else {
     std::array<unsigned char, LUPINE_CLIENT_METADATA_MAX_PAYLOAD> payload = {};
     if (header.payload_size != 0 &&
-        rpc_read(conn, payload.data(), header.payload_size) !=
-            static_cast<int>(header.payload_size)) {
+        rpc_read(conn, payload.data(), header.payload_size) != 0) {
       return -1;
     }
-    if (header.version != LUPINE_CLIENT_METADATA_VERSION ||
-        header.payload_size < sizeof(metadata)) {
-      status = 1;
-    } else {
+    if (header.version == LUPINE_CLIENT_METADATA_VERSION &&
+        header.payload_size >= sizeof(metadata)) {
       memcpy(&metadata, payload.data(), sizeof(metadata));
       terminate_strings(&metadata);
       std::string address = peer_address(conn->connfd);
-      if (!store_metadata(child_slot, metadata, address.c_str())) {
-        status = 3;
-      }
+      store_metadata(child_slot, metadata, address.c_str());
     }
   }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0 || rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &status, sizeof(status)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return rpc_read_end(conn) < 0 ? -1 : 0;
 }
 
 void lupine_monitoring_begin_context_create(int cuda_device) {
