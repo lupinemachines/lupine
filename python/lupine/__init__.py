@@ -51,13 +51,6 @@ def _torch() -> Any:
     return torch
 
 
-def _torch_has_cuda() -> bool:
-    try:
-        return _torch().version.cuda is not None
-    except LupineError:
-        return False
-
-
 def _normalize_server(host: str, port: int | None = None) -> str:
     from urllib.parse import urlsplit, urlunsplit
 
@@ -172,7 +165,7 @@ class Session:
         return int(getattr(torch, self._device_type()).device_count())
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        if getattr(self, "_previous_server", None) is None:
+        if self._previous_server is None:
             os.environ.pop("LUPINE_SERVER", None)
         else:
             os.environ["LUPINE_SERVER"] = self._previous_server
@@ -240,11 +233,7 @@ def connect(
         if not host:
             raise LupineError("pass host=... or set LUPINE_SERVER")
 
-    servers = _normalize_hosts(host, port)
-    if not servers:
-        return Session(servers=servers)
-
-    session = Session(servers=servers)
+    session = Session(servers=_normalize_hosts(host, port))
     # Bind immediately: the caller may import torch right after connect()
     # without using the context manager form.
     session.__enter__()
