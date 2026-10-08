@@ -2630,12 +2630,6 @@ extern "C" CUresult cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
                                    flags, true);
 }
 
-static bool lupine_is_private_function(CUfunction function) {
-  std::lock_guard<std::mutex> lock(lupine_private_node_mutex());
-  return lupine_private_node_map().find(function) !=
-         lupine_private_node_map().end();
-}
-
 static bool lupine_is_library_kernel(CUfunction function) {
   std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
   return lupine_library_kernels().find(reinterpret_cast<CUkernel>(function)) !=
@@ -2915,17 +2909,6 @@ static bool lupine_remote_private_exports_enabled() {
   return enabled;
 }
 
-static std::atomic<bool> &lupine_private_export_tables_active_flag() {
-  static std::atomic<bool> active{false};
-  return active;
-}
-
-static bool lupine_private_export_remap_active() {
-  return lupine_stub_private_exports_enabled() ||
-         lupine_private_export_tables_active_flag().load(
-             std::memory_order_relaxed);
-}
-
 #if defined(__aarch64__)
 // Materializes a 64-bit constant into Xd with a fixed four-word
 // movz/movk/movk/movk sequence. The length is deliberately constant (never
@@ -3080,8 +3063,6 @@ static const void *lupine_make_private_export_table(
     lupine_private_export_hashes()[table_name] = code_hashes;
   }
   auto inserted = tables.emplace(table_name, std::move(table));
-  lupine_private_export_tables_active_flag().store(true,
-                                                   std::memory_order_relaxed);
   return inserted.first->second.data();
 }
 
