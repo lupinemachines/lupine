@@ -72,14 +72,10 @@ def libdir() -> Path | None:
     override = os.environ.get("LUPINE_LIBDIR")
     if override:
         return Path(override)
-    servers = tuple(
-        value.strip()
-        for value in os.environ.get("LUPINE_SERVER", "").split(",")
-        if value.strip()
-    )
-    if servers:
-        from . import LupineError
+    from . import LupineError, _servers_from_env
 
+    servers = _servers_from_env()
+    if servers:
         required = _REQUIRED.get(sys.platform)
         if required is None:
             raise LupineError(f"Unsupported LUPINE client platform: {sys.platform}")
