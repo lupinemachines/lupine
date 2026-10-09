@@ -137,6 +137,14 @@ struct h2_transport {
   bool checkpoint_pending = false;
   std::atomic<bool> requests_paused{false};
   bool socket_parked = false;
+  // OpenSSL does not allow concurrent calls on one SSL object, and the reader
+  // and writer threads share the connection's. Every SSL call holds tls_mutex;
+  // see h2_own_tls_socket.
+  pthread_mutex_t tls_mutex = PTHREAD_MUTEX_INITIALIZER;
+  // Set by rpc_http2_shutdown. A reader waiting for TLS input checks it
+  // between polls, since shutting down the receive side does not wake a
+  // Winsock poll.
+  std::atomic<bool> tls_read_stop{false};
   bool writer_paused = false;
   size_t pause_after_bytes = 0;
   std::string freeze_checkpoint;
@@ -240,6 +248,46 @@ void h2_queue_output(h2_transport *transport, const struct iovec *iov,
   pthread_cond_broadcast(&transport->writer_ready);
 }
 
+#ifdef LUPINE_TLS_OPENSSL
+// Waits up to 100 ms for the socket to become readable or writable. Returns
+// false only when polling fails; the caller retries its SSL call either way.
+bool h2_wait_socket(lupine_socket_t socket, bool writable) {
+#ifdef _WIN32
+  WSAPOLLFD descriptor = {};
+  descriptor.fd = socket;
+  descriptor.events = writable ? POLLWRNORM : POLLRDNORM;
+  return WSAPoll(&descriptor, 1, 100) >= 0;
+#else
+  pollfd descriptor = {};
+  descriptor.fd = socket;
+  descriptor.events = writable ? POLLOUT : POLLIN;
+  return poll(&descriptor, 1, 100) >= 0 || errno == EINTR;
+#endif
+}
+
+// While the transport owns a TLS socket, the socket is non-blocking: the
+// reader and writer take tls_mutex only for each SSL call and wait for the
+// socket in h2_wait_socket with it released, so neither blocks the other.
+// Released sockets go back to blocking for the resume handshake.
+void h2_own_tls_socket(h2_transport *transport, bool owned) {
+  if (transport->tls == nullptr || transport->netfd == LUPINE_INVALID_SOCKET) {
+    return;
+  }
+#ifdef _WIN32
+  u_long enabled = owned ? 1 : 0;
+  (void)ioctlsocket(transport->netfd, FIONBIO, &enabled);
+#else
+  int flags = fcntl(transport->netfd, F_GETFL, 0);
+  if (flags >= 0) {
+    (void)fcntl(transport->netfd, F_SETFL,
+                owned ? flags | O_NONBLOCK : flags & ~O_NONBLOCK);
+  }
+#endif
+}
+#else
+void h2_own_tls_socket(h2_transport *, bool) {}
+#endif
+
 int h2_write_socket(h2_transport *transport, const unsigned char *data,
                     size_t size) {
   while (size > 0) {
@@ -249,9 +297,17 @@ int h2_write_socket(h2_transport *transport, const unsigned char *data,
       SSL *ssl = static_cast<SSL *>(transport->tls);
       int want = static_cast<int>(std::min(size, static_cast<size_t>(INT_MAX)));
       int r;
-      while ((r = SSL_write(ssl, data, want)) <= 0) {
-        int err = SSL_get_error(ssl, r);
-        if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+      for (;;) {
+        pthread_mutex_lock(&transport->tls_mutex);
+        r = SSL_write(ssl, data, want);
+        int err = r > 0 ? SSL_ERROR_NONE : SSL_get_error(ssl, r);
+        pthread_mutex_unlock(&transport->tls_mutex);
+        if (r > 0) {
+          break;
+        }
+        // A retried SSL_write must pass the same buffer and length.
+        if ((err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) ||
+            !h2_wait_socket(transport->netfd, err == SSL_ERROR_WANT_WRITE)) {
           return -1;
         }
       }
@@ -1094,15 +1150,18 @@ ssize_t h2_read_socket(h2_transport *transport, unsigned char *buffer,
   if (transport->tls != nullptr) {
     SSL *ssl = static_cast<SSL *>(transport->tls);
     for (;;) {
+      pthread_mutex_lock(&transport->tls_mutex);
       int r = SSL_read(ssl, buffer, static_cast<int>(size));
+      int err = r > 0 ? SSL_ERROR_NONE : SSL_get_error(ssl, r);
+      pthread_mutex_unlock(&transport->tls_mutex);
       if (r > 0) {
         return r;
       }
-      int err = SSL_get_error(ssl, r);
-      if (err == SSL_ERROR_WANT_READ || err == SSL_ERROR_WANT_WRITE) {
-        continue;
+      if ((err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) ||
+          !h2_wait_socket(transport->netfd, err == SSL_ERROR_WANT_WRITE) ||
+          transport->tls_read_stop.load(std::memory_order_acquire)) {
+        return -1;
       }
-      return -1;
     }
   }
 #endif
@@ -1368,8 +1427,10 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   }
 
   conn->http2 = transport;
+  h2_own_tls_socket(transport, true);
   if (pthread_create(&transport->write_thread, nullptr, h2_write_main,
                      transport) != 0) {
+    h2_own_tls_socket(transport, false);
     conn->http2 = nullptr;
     nghttp2_session_del(transport->session);
     delete transport;
@@ -1382,6 +1443,7 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
                                          h2_read_main, transport) != 0) {
     conn->http2 = nullptr;
     h2_stop_write_thread(transport);
+    h2_own_tls_socket(transport, false);
     nghttp2_session_del(transport->session);
     delete transport;
     return -1;
@@ -1937,6 +1999,7 @@ int lupine_handoff_park_socket(conn_t *conn) {
     pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
   }
   bool failed = transport->transport_failed;
+  h2_own_tls_socket(transport, false);
   transport->netfd = LUPINE_INVALID_SOCKET;
   transport->tls = nullptr;
   pthread_mutex_unlock(&transport->session_mutex);
@@ -1952,6 +2015,7 @@ int lupine_handoff_resume_socket(conn_t *conn) {
   }
   transport->netfd = conn->connfd;
   transport->tls = conn->tls_session;
+  h2_own_tls_socket(transport, true);
   transport->socket_parked = false;
   transport->checkpoint_pending = false;
   transport->writer_paused = false;
@@ -1966,6 +2030,7 @@ void rpc_http2_shutdown(conn_t *conn) {
     return;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
+  transport->tls_read_stop.store(true, std::memory_order_release);
   pthread_mutex_lock(&transport->session_mutex);
   transport->read_stop = true;
   transport->writer_paused = false;
@@ -2012,6 +2077,7 @@ void rpc_http2_destroy(conn_t *conn) {
     pthread_join(transport->read_thread, nullptr);
     transport->read_thread = 0;
   }
+  h2_own_tls_socket(transport, false);
   if (transport->session != nullptr) {
     nghttp2_session_del(transport->session);
     transport->session = nullptr;
@@ -2025,5 +2091,6 @@ void rpc_http2_destroy(conn_t *conn) {
   pthread_cond_destroy(&transport->heartbeat_progress);
   pthread_cond_destroy(&transport->session_progress);
   pthread_mutex_destroy(&transport->session_mutex);
+  pthread_mutex_destroy(&transport->tls_mutex);
   delete transport;
 }

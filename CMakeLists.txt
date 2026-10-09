@@ -320,7 +320,7 @@ if(LUPINE_MANYLINUX)
     add_dependencies(lupine_rpc_core lupine_manylinux_openssl_external)
 endif()
 if(OpenSSL_FOUND)
-    target_compile_definitions(lupine_rpc_core PRIVATE LUPINE_TLS_OPENSSL)
+    target_compile_definitions(lupine_rpc_core PUBLIC LUPINE_TLS_OPENSSL)
     target_link_libraries(lupine_rpc_core PUBLIC OpenSSL::SSL OpenSSL::Crypto)
 endif()
 if(WIN32)
@@ -334,12 +334,6 @@ lupine_internal_target(lupine_client_transport)
 target_include_directories(lupine_client_transport PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lupine_client_transport PUBLIC lupine_rpc_core)
-if(OpenSSL_FOUND)
-    target_compile_definitions(lupine_client_transport PRIVATE
-        LUPINE_TLS_OPENSSL)
-    target_link_libraries(lupine_client_transport PUBLIC
-        OpenSSL::SSL OpenSSL::Crypto)
-endif()
 
 add_library(lupine_ipc STATIC ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp)
 lupine_internal_target(lupine_ipc)

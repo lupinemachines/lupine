@@ -17,6 +17,7 @@
 #include <cstring>
 #include <future>
 #include <iostream>
+#include <memory>
 #include <nghttp2/nghttp2.h>
 #include <string>
 #include <thread>
@@ -26,6 +27,12 @@
 
 #ifdef __GLIBC__
 #include <malloc.h>
+#endif
+#ifdef LUPINE_TLS_OPENSSL
+#include <openssl/ec.h>
+#include <openssl/evp.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
 #endif
 #ifndef _WIN32
 #include <fcntl.h>
@@ -223,6 +230,7 @@ nghttp2_nv raw_h2_header(const char *name, const char *value) {
 // Independent peers exercise the encoding contract without using our writer.
 struct raw_h2_peer {
   lupine_socket_t socket;
+  void *tls; // SSL* when the peer speaks TLS; otherwise null.
   nghttp2_session *session = nullptr;
   unsigned headers = 0;
   const char *response_encoding;
@@ -230,8 +238,8 @@ struct raw_h2_peer {
   std::vector<std::string> schemes;
 
   raw_h2_peer(lupine_socket_t socket, bool server,
-              const char *encoding = "zstd")
-      : socket(socket), response_encoding(encoding) {
+              const char *encoding = "zstd", void *tls = nullptr)
+      : socket(socket), tls(tls), response_encoding(encoding) {
     nghttp2_session_callbacks *callbacks = nullptr;
     require(nghttp2_session_callbacks_new(&callbacks) == 0, "raw callbacks");
     nghttp2_session_callbacks_set_send_callback(
@@ -239,9 +247,8 @@ struct raw_h2_peer {
         [](nghttp2_session *, const uint8_t *data, size_t length, int,
            void *context) -> ssize_t {
           auto *peer = static_cast<raw_h2_peer *>(context);
-          return raw_write_all(peer->socket, data, length)
-                     ? static_cast<ssize_t>(length)
-                     : NGHTTP2_ERR_CALLBACK_FAILURE;
+          return peer->write_all(data, length) ? static_cast<ssize_t>(length)
+                                               : NGHTTP2_ERR_CALLBACK_FAILURE;
         });
     nghttp2_session_callbacks_set_on_header_callback(
         callbacks, [](nghttp2_session *, const nghttp2_frame *,
@@ -290,10 +297,29 @@ struct raw_h2_peer {
   }
   ~raw_h2_peer() { nghttp2_session_del(session); }
 
+  bool write_all(const uint8_t *data, size_t length) {
+#ifdef LUPINE_TLS_OPENSSL
+    if (tls != nullptr) {
+      return SSL_write(static_cast<SSL *>(tls), data,
+                       static_cast<int>(length)) == static_cast<int>(length);
+    }
+#endif
+    return raw_write_all(socket, data, length);
+  }
+
+  ssize_t receive(unsigned char *data, size_t size) {
+#ifdef LUPINE_TLS_OPENSSL
+    if (tls != nullptr) {
+      return SSL_read(static_cast<SSL *>(tls), data, static_cast<int>(size));
+    }
+#endif
+    return lupine_socket_recv(socket, data, size);
+  }
+
   void receive_headers(unsigned count) {
     while (headers < count) {
       std::array<unsigned char, 65536> data;
-      ssize_t size = lupine_socket_recv(socket, data.data(), data.size());
+      ssize_t size = receive(data.data(), data.size());
       require(size > 0, "raw receive");
       require(nghttp2_session_mem_recv(session, data.data(), size) == size,
               "raw parse");
@@ -317,16 +343,92 @@ void test_client_rejects_unsupported_response_encoding() {
   }
 }
 
-// The handshake and lane-open requests carry the connection's scheme.
-void test_client_sends_http_scheme_without_tls() {
+#ifdef LUPINE_TLS_OPENSSL
+struct ssl_ctx_deleter {
+  void operator()(SSL_CTX *context) const { SSL_CTX_free(context); }
+};
+struct ssl_deleter {
+  void operator()(SSL *session) const { SSL_free(session); }
+};
+
+// A server context with a throwaway self-signed P-256 certificate.
+std::unique_ptr<SSL_CTX, ssl_ctx_deleter> test_tls_server_context() {
+  EVP_PKEY *key = nullptr;
+  EVP_PKEY_CTX *keygen = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, nullptr);
+  require(keygen != nullptr && EVP_PKEY_keygen_init(keygen) == 1 &&
+              EVP_PKEY_CTX_set_ec_paramgen_curve_nid(
+                  keygen, NID_X9_62_prime256v1) == 1 &&
+              EVP_PKEY_keygen(keygen, &key) == 1,
+          "TLS test key generation");
+  EVP_PKEY_CTX_free(keygen);
+  X509 *cert = X509_new();
+  require(cert != nullptr, "TLS test certificate allocation");
+  ASN1_INTEGER_set(X509_get_serialNumber(cert), 1);
+  X509_gmtime_adj(X509_getm_notBefore(cert), 0);
+  X509_gmtime_adj(X509_getm_notAfter(cert), 3600);
+  X509_NAME *name = X509_get_subject_name(cert);
+  X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                             reinterpret_cast<const unsigned char *>("lupine"),
+                             -1, -1, 0);
+  X509_set_issuer_name(cert, name);
+  X509_set_pubkey(cert, key);
+  require(X509_sign(cert, key, EVP_sha256()) > 0, "TLS test certificate");
+  std::unique_ptr<SSL_CTX, ssl_ctx_deleter> context(
+      SSL_CTX_new(TLS_server_method()));
+  require(context != nullptr &&
+              SSL_CTX_use_certificate(context.get(), cert) == 1 &&
+              SSL_CTX_use_PrivateKey(context.get(), key) == 1,
+          "TLS server context");
+  X509_free(cert);
+  EVP_PKEY_free(key);
+  return context;
+}
+#endif
+
+// The handshake and lane-open requests carry the connection's scheme. Over
+// TLS this also runs the client's reader and writer threads on one SSL object.
+void test_client_request_scheme(bool tls) {
+#ifdef LUPINE_TLS_OPENSSL
+  // Declared before the pair so the sessions outlive its transport threads.
+  std::unique_ptr<SSL_CTX, ssl_ctx_deleter> server_context;
+  std::unique_ptr<SSL_CTX, ssl_ctx_deleter> client_context;
+  std::unique_ptr<SSL, ssl_deleter> server_tls;
+  std::unique_ptr<SSL, ssl_deleter> client_tls;
+#endif
   h2_pair pair;
   init_pair_sockets(&pair);
-  raw_h2_peer server(pair.server.connfd, true);
+  void *server_session = nullptr;
+#ifdef LUPINE_TLS_OPENSSL
+  if (tls) {
+    // The client skips certificate verification: only the headers matter.
+    server_context = test_tls_server_context();
+    client_context.reset(SSL_CTX_new(TLS_client_method()));
+    require(client_context != nullptr, "TLS client context");
+    server_tls.reset(SSL_new(server_context.get()));
+    client_tls.reset(SSL_new(client_context.get()));
+    require(server_tls != nullptr && client_tls != nullptr &&
+                SSL_set_fd(server_tls.get(),
+                           static_cast<int>(pair.server.connfd)) == 1 &&
+                SSL_set_fd(client_tls.get(),
+                           static_cast<int>(pair.client.connfd)) == 1,
+            "TLS sessions");
+    std::future<int> accepted = std::async(
+        std::launch::async, [&] { return SSL_accept(server_tls.get()); });
+    require(SSL_connect(client_tls.get()) == 1 && accepted.get() == 1,
+            "TLS handshake");
+    pair.client.tls_session = client_tls.get();
+    server_session = server_tls.get();
+  }
+#else
+  require(!tls, "TLS case run without OpenSSL");
+#endif
+  raw_h2_peer server(pair.server.connfd, true, "zstd", server_session);
   require(rpc_http2_client_init(&pair.client) == 0, "client init");
   server.receive_headers(1);
   require(rpc_http2_lane_stream(&pair.client, 1) > 0, "lane open");
   server.receive_headers(2);
-  require(server.schemes == std::vector<std::string>({"http", "http"}),
+  const char *expected = tls ? "https" : "http";
+  require(server.schemes == std::vector<std::string>({expected, expected}),
           "request :scheme does not match the connection");
 }
 
@@ -2596,7 +2698,10 @@ int main() {
           "failed to install RPC test lifecycle hooks");
   RUN_CASE(test_server_rejects_unsupported_request_encoding());
   RUN_CASE(test_client_rejects_unsupported_response_encoding());
-  RUN_CASE(test_client_sends_http_scheme_without_tls());
+  RUN_CASE(test_client_request_scheme(false));
+#ifdef LUPINE_TLS_OPENSSL
+  RUN_CASE(test_client_request_scheme(true));
+#endif
   RUN_CASE(test_zstd_frame_validation());
   RUN_CASE(test_profile_hash_compatibility());
   RUN_CASE(test_async_prefix_allows_overlap_and_joins_holes());
