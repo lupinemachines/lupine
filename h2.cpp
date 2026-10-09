@@ -415,6 +415,13 @@ nghttp2_nv h2_nv(const char *name, const char *value) {
           NGHTTP2_NV_FLAG_NO_COPY_NAME | NGHTTP2_NV_FLAG_NO_COPY_VALUE};
 }
 
+// RFC 9113 8.3.1: :scheme names the scheme of the target URI, so an
+// https:// LUPINE_SERVER entry sends "https". TLS-terminating proxies in front
+// of the server can reject or misroute a plaintext scheme on a TLS connection.
+const char *h2_request_scheme(const conn_t *conn) {
+  return conn->tls_session != nullptr ? "https" : "http";
+}
+
 constexpr char kLupineCudaVersionHeader[] = "x-lupine-cuda-version";
 constexpr char kLupineSessionHeader[] = "x-lupine-session";
 constexpr char kLupineVaBaseHeader[] = "x-lupine-va-base";
@@ -1196,7 +1203,7 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
 
   std::vector<nghttp2_nv> headers = {
       h2_nv(":method", probe ? "HEAD" : "POST"),
-      h2_nv(":scheme", "http"),
+      h2_nv(":scheme", h2_request_scheme(conn)),
       h2_nv(":path", "/"),
       h2_nv(":authority", "lupine"),
   };
@@ -1496,7 +1503,7 @@ int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id) {
 
   std::array<nghttp2_nv, 5> headers = {
       h2_nv(":method", "POST"),
-      h2_nv(":scheme", "http"),
+      h2_nv(":scheme", h2_request_scheme(conn)),
       h2_nv(":path", "/"),
       h2_nv(":authority", "lupine"),
       h2_nv(kContentEncodingHeader, kZstdEncoding),
