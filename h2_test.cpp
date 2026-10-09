@@ -227,6 +227,7 @@ struct raw_h2_peer {
   unsigned headers = 0;
   const char *response_encoding;
   std::vector<std::string> encodings;
+  std::vector<std::string> schemes;
 
   raw_h2_peer(lupine_socket_t socket, bool server,
               const char *encoding = "zstd")
@@ -246,9 +247,13 @@ struct raw_h2_peer {
         callbacks, [](nghttp2_session *, const nghttp2_frame *,
                       const uint8_t *name, size_t n, const uint8_t *value,
                       size_t size, uint8_t, void *context) {
+          auto *peer = static_cast<raw_h2_peer *>(context);
           if (n == 16 && std::memcmp(name, "content-encoding", 16) == 0) {
-            static_cast<raw_h2_peer *>(context)->encodings.emplace_back(
-                reinterpret_cast<const char *>(value), size);
+            peer->encodings.emplace_back(reinterpret_cast<const char *>(value),
+                                         size);
+          } else if (n == 7 && std::memcmp(name, ":scheme", 7) == 0) {
+            peer->schemes.emplace_back(reinterpret_cast<const char *>(value),
+                                       size);
           }
           return 0;
         });
@@ -310,6 +315,19 @@ void test_client_rejects_unsupported_response_encoding() {
     require(rpc_http2_client_await_ready(&pair.client) < 0,
             "client accepted an unsupported response encoding");
   }
+}
+
+// The handshake and lane-open requests carry the connection's scheme.
+void test_client_sends_http_scheme_without_tls() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+  raw_h2_peer server(pair.server.connfd, true);
+  require(rpc_http2_client_init(&pair.client) == 0, "client init");
+  server.receive_headers(1);
+  require(rpc_http2_lane_stream(&pair.client, 1) > 0, "lane open");
+  server.receive_headers(2);
+  require(server.schemes == std::vector<std::string>({"http", "http"}),
+          "request :scheme does not match the connection");
 }
 
 void check_zstd_body(const std::vector<unsigned char> &encoded,
@@ -2578,6 +2596,7 @@ int main() {
           "failed to install RPC test lifecycle hooks");
   RUN_CASE(test_server_rejects_unsupported_request_encoding());
   RUN_CASE(test_client_rejects_unsupported_response_encoding());
+  RUN_CASE(test_client_sends_http_scheme_without_tls());
   RUN_CASE(test_zstd_frame_validation());
   RUN_CASE(test_profile_hash_compatibility());
   RUN_CASE(test_async_prefix_allows_overlap_and_joins_holes());
