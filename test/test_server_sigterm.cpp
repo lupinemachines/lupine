@@ -124,6 +124,15 @@ int main(int argc, char **argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
   bool child_started = false;
+  // The server forks a connection child once the first bytes show the socket
+  // is not a bulk connection (#765), so send what a client sends first.
+  static constexpr char kPreface[] = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+  if (connection >= 0 &&
+      send(connection, kPreface, sizeof(kPreface) - 1, MSG_NOSIGNAL) !=
+          static_cast<ssize_t>(sizeof(kPreface) - 1)) {
+    close(connection);
+    connection = -1;
+  }
   if (connection >= 0) {
     for (int attempt = 0; attempt < 100; ++attempt) {
       if (connection_child_started(server)) {
