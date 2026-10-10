@@ -27,7 +27,7 @@ from typing import Any
 
 import torch
 
-from . import _extension, forward, is_dual, is_started
+from . import _extension, _started, forward, is_dual, is_started
 
 _DEVICE_NAME = "lupine"
 
@@ -55,10 +55,14 @@ def _index(device: Any) -> int:
 
 
 def _eval(code: str) -> Any:
+    if getattr(_started.get("backend"), "native", False):
+        raise NotImplementedError("the native backend has no torch worker or CUDA graph support")
     return forward.current().eval_(code)
 
 
 def _exec(code: str) -> None:
+    if getattr(_started.get("backend"), "native", False):
+        raise NotImplementedError("the native backend has no torch worker or CUDA graph support")
     forward.current().exec_(code)
 
 
@@ -87,6 +91,9 @@ def _to_worker(value: Any) -> Any:
 
 def _forwarded(name: str) -> Any:
     def call(*args: Any, **kwargs: Any) -> Any:
+        backend = _started.get("backend")
+        if getattr(backend, "native", False):
+            return backend.cuda_call(name, *args, **kwargs)
         payload = ([_to_worker(a) for a in args], {k: _to_worker(v) for k, v in kwargs.items()})
         encoded = base64.b64encode(pickle.dumps(payload)).decode()
         return _eval(f"_cuda({name!r}, {encoded!r}, {_C().current_device()})")
@@ -173,6 +180,10 @@ def get_amp_supported_dtype() -> list[torch.dtype]:
 
 
 def synchronize(device: Any = None) -> None:
+    backend = _started.get("backend")
+    if getattr(backend, "native", False):
+        backend.synchronize()
+        return
     forward.current().synchronize()
 
 
