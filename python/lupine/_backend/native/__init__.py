@@ -27,6 +27,8 @@ class Backend:
         self.runtime = Runtime()
         self.allocations = {}
         self.libraries = []
+        self.seed = 0
+        self.counter = 0
 
     def dtype(self, tensor):
         if tensor.dtype == self.torch.float32:
@@ -302,7 +304,7 @@ class Backend:
                 bd,
                 I(len(shape)),
                 Q(result.numel()),
-                I(("add", "sub", "mul", "div").index(name)),
+                I(("add", "sub", "mul", "div", "pow").index(name)),
                 I(scalar),
                 F(value),
                 F(alpha),
@@ -400,6 +402,175 @@ class Backend:
                 Q(math.prod(tensor.shape[i] for i in dimensions)),
                 I(mean),
             )
+        return self.copy_(out, result) if out is not None else result
+
+    def manual_seed(self, seed):
+        if not -(2**63) <= seed < 2**64:
+            raise ValueError("seed is outside the uint64/int64 range")
+        with self.runtime.active():
+            self.seed = seed % (2**64)
+            self.counter = 0
+
+    def random_(self, tensor, first=0.0, second=1.0, *, normal=False, generator=None):
+        self.floats(tensor)
+        if generator is not None:
+            raise NotImplementedError("explicit generators are not supported yet")
+        if (normal and second < 0) or (not normal and first > second):
+            raise ValueError("invalid random distribution parameters")
+        if any(
+            size > 1 and stride == 0
+            for size, stride in zip(tensor.shape, tensor.stride())
+        ):
+            raise ValueError("cannot write random values to overlapping elements")
+        with self.runtime.active(), self.runtime.uploaded(
+            self.descriptor(tensor)
+        ) as desc:
+            self.runtime.kernel(
+                "random_tensor",
+                tensor.numel(),
+                self.pointer(tensor),
+                desc,
+                I(tensor.ndim),
+                Q(tensor.numel()),
+                ct.c_uint64(self.seed),
+                ct.c_uint64(self.counter),
+                I(normal),
+                F(first),
+                F(second),
+            )
+            self.counter = (self.counter + 2 * tensor.numel()) % (2**64)
+        return tensor
+
+    def activation_backward(self, grad, value, op, threshold=0):
+        self.floats(grad, value)
+        if grad.shape != value.shape:
+            raise ValueError("activation backward requires matching shapes")
+        result = self.empty(value.shape)
+        with self.runtime.active(), self.runtime.uploaded(
+            self.descriptor(grad)
+        ) as gd, self.runtime.uploaded(self.descriptor(value)) as vd:
+            self.runtime.kernel(
+                "activation_backward",
+                result.numel(),
+                self.pointer(result),
+                self.pointer(grad),
+                self.pointer(value),
+                gd,
+                vd,
+                I(value.ndim),
+                Q(result.numel()),
+                I(op),
+                F(threshold),
+            )
+        return result
+
+    def softmax(self, tensor, dim, half_to_float=False, *, logarithmic=False):
+        self.floats(tensor)
+        if half_to_float:
+            raise NotImplementedError("half softmax is not supported yet")
+        if dim < -tensor.ndim or dim >= tensor.ndim:
+            raise IndexError("softmax dimension out of range")
+        dim %= tensor.ndim
+        result = self.empty(tensor.shape)
+        width = tensor.shape[dim]
+        stride = math.prod(tensor.shape[dim + 1 :])
+        with self.runtime.active(), self.runtime.uploaded(
+            self.descriptor(tensor)
+        ) as desc:
+            self.runtime.kernel(
+                "softmax_tensor",
+                result.numel(),
+                self.pointer(result),
+                self.pointer(tensor),
+                desc,
+                I(tensor.ndim),
+                Q(tensor.numel()),
+                Q(width),
+                Q(stride),
+                I(logarithmic),
+            )
+        return result
+
+    def softmax_backward(self, grad, value, dim, input_dtype, *, logarithmic=False):
+        self.floats(grad, value)
+        if input_dtype != self.torch.float32 or grad.shape != value.shape:
+            raise NotImplementedError(
+                "softmax backward requires matching float32 tensors"
+            )
+        if dim < -value.ndim or dim >= value.ndim:
+            raise IndexError("softmax dimension out of range")
+        dim %= value.ndim
+        result = self.empty(value.shape)
+        with self.runtime.active(), self.runtime.uploaded(
+            self.descriptor(grad)
+        ) as gd, self.runtime.uploaded(self.descriptor(value)) as vd:
+            self.runtime.kernel(
+                "softmax_backward",
+                result.numel(),
+                self.pointer(result),
+                self.pointer(grad),
+                self.pointer(value),
+                gd,
+                vd,
+                I(value.ndim),
+                Q(result.numel()),
+                Q(value.shape[dim]),
+                Q(math.prod(value.shape[dim + 1 :])),
+                I(logarithmic),
+            )
+        return result
+
+    def bmm(self, a, b, *, out=None):
+        self.floats(a, b)
+        if (
+            a.ndim != 3
+            or b.ndim != 3
+            or a.shape[0] != b.shape[0]
+            or a.shape[2] != b.shape[1]
+        ):
+            raise ValueError("bmm requires compatible batches of matrices")
+        result = self.empty((a.shape[0], a.shape[1], b.shape[2]))
+        for index in range(a.shape[0]):
+            self.copy_(result[index], self.mm(a[index], b[index]))
+        return self.copy_(out, result) if out is not None else result
+
+    def addmm(self, bias, a, b, *, beta=1, alpha=1, out=None):
+        result = self.mm(a, b)
+        if alpha != 1:
+            result = self.binary("mul", result, alpha)
+        if beta != 0:
+            addend = bias if beta == 1 else self.binary("mul", bias, beta)
+            result = self.binary("add", result, addend)
+        return self.copy_(out, result) if out is not None else result
+
+    def cat(self, tensors, dim=0, *, out=None):
+        if not tensors:
+            raise ValueError("cat needs at least one tensor")
+        ndim = tensors[0].ndim
+        if dim < -ndim or dim >= ndim:
+            raise IndexError("cat dimension out of range")
+        dim %= ndim
+        shape = list(tensors[0].shape)
+        shape[dim] = 0
+        for tensor in tensors:
+            if (
+                tensor.dtype != tensors[0].dtype
+                or tensor.ndim != ndim
+                or any(
+                    tensor.shape[i] != tensors[0].shape[i]
+                    for i in range(ndim)
+                    if i != dim
+                )
+            ):
+                raise NotImplementedError(
+                    "cat currently needs matching ranks, dtypes and non-cat sizes"
+                )
+            shape[dim] += tensor.shape[dim]
+        result = self.empty(shape, tensors[0].dtype)
+        offset = 0
+        for tensor in tensors:
+            self.copy_(result.narrow(dim, offset, tensor.shape[dim]), tensor)
+            offset += tensor.shape[dim]
         return self.copy_(out, result) if out is not None else result
 
     def fallback(self, op, *args, **kwargs):
@@ -523,8 +694,59 @@ class Backend:
 
             for suffix in ("Tensor", "Scalar"):
                 aten.impl(name + "_." + suffix, inplace)
-        aten.impl("neg", lambda t: self.unary(t, 0))
-        aten.impl("relu", lambda t: self.unary(t, 1))
+        for number, name in enumerate(
+            (
+                "neg",
+                "relu",
+                "exp",
+                "log",
+                "sqrt",
+                "rsqrt",
+                "sin",
+                "cos",
+                "tanh",
+                "sigmoid",
+                "abs",
+                "reciprocal",
+            )
+        ):
+            aten.impl(name, lambda t, _op=number: self.unary(t, _op))
+        aten.impl(
+            "threshold_backward",
+            lambda grad, value, threshold: self.activation_backward(
+                grad, value, 0, threshold
+            ),
+        )
+        aten.impl(
+            "sigmoid_backward",
+            lambda grad, value: self.activation_backward(grad, value, 1),
+        )
+        aten.impl(
+            "tanh_backward",
+            lambda grad, value: self.activation_backward(grad, value, 2),
+        )
+        aten.impl("uniform_", self.random_)
+        aten.impl(
+            "normal_",
+            lambda t, mean=0, std=1, **kw: self.random_(
+                t, mean, std, normal=True, **kw
+            ),
+        )
+        aten.impl("_softmax", self.softmax)
+        aten.impl("_log_softmax", lambda *args: self.softmax(*args, logarithmic=True))
+        aten.impl("_softmax_backward_data", self.softmax_backward)
+        aten.impl(
+            "_log_softmax_backward_data",
+            lambda *args: self.softmax_backward(*args, logarithmic=True),
+        )
+        aten.impl("pow.Tensor_Scalar", lambda a, b: self.binary("pow", a, b))
+        aten.impl("pow.Tensor_Tensor", lambda a, b: self.binary("pow", a, b))
+        aten.impl("addmm", self.addmm)
+        aten.impl("addmm.out", self.addmm)
+        aten.impl("bmm", self.bmm)
+        aten.impl("bmm.out", self.bmm)
+        aten.impl("cat", self.cat)
+        aten.impl("cat.out", self.cat)
         aten.impl("mm", self.mm)
         aten.impl("mm.out", self.mm)
         aten.impl("sum", self.reduce)
@@ -544,19 +766,18 @@ def start():
     from ... import LupineError
 
     if _started:
-        if not getattr(_started.get("backend"), "native", False):
-            raise LupineError("the worker backend is already active")
+        if _started["backend"].runtime.closed:
+            raise LupineError("the native backend is closed; start a new process")
         return info()
-    C = _extension()  # CUDA hooks must precede importing native torch.
+    C = _extension()
     import torch
 
     backend = Backend(C)
     try:
         backend.install()
-        C.register(1, False, backend.release, backend.synchronize)
+        C.register(1, backend.release, backend.synchronize)
         _started.update(
             address="native",
-            dual=False,
             info=dict(device_count=1, torch=torch.__version__, native=True),
             backend=backend,
         )

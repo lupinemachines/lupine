@@ -1,7 +1,7 @@
 """Where the ``_C`` extension is and how it gets built.
 
 The extension is the device registration only, a few hundred lines against
-libtorch (``csrc``); every operator and the wire are Python. It still has to
+libtorch (``csrc``); operator bindings are Python and kernels are GPU PTX. It still has to
 be compiled per torch release (major.minor) on each platform because libtorch
 has no stable ABI for what it does: torch's stable ABI (``torch/csrc/stable``,
 the ``aoti_torch_*`` shim) cannot register an allocator, a device guard,
@@ -14,8 +14,7 @@ Two ways to get it, tried in this order:
    --inplace`` from a checkout, or the wheel ``setup.py bdist_wheel`` makes).
 2. A JIT build, cached under ``~/.cache/lupine/torch-backend/<torch
    version>-<platform>/``, made on first use with
-   ``torch.utils.cpp_extension.load`` in a subprocess (the host process must
-   not import torch before the extension is loaded, see ``__init__``). It
+   ``torch.utils.cpp_extension.load`` in a subprocess. It
    needs a C++ compiler: the Xcode Command Line Tools on macOS
    (``xcode-select --install``), gcc or clang on Linux, plus ``ninja``
    (``pip install ninja``).
@@ -156,12 +155,7 @@ def _build_here(target: Path, verbose: bool) -> None:
 
 
 def _preload_torch_libraries() -> None:
-    """Load libtorch for the extension without importing torch.
-
-    On a torch with no CUDA build the extension has to supply the CUDA hooks
-    before torch's own import first asks for them (they are created once, on
-    first use), so the extension is loaded before ``import torch``.
-    """
+    """Load the host libtorch libraries for the registration extension."""
 
     import ctypes
 

@@ -17,7 +17,6 @@ auto = ["lupine-auto==3.0.0"]
 
 [project.scripts]
 lupine = "lupine.__main__:main"
-lupine-torch-worker = "lupine._worker:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0"]

@@ -67,7 +67,8 @@ extern "C" __global__ void binary_tensor(float *out, const float *a,
   out[i] = op == 0   ? x + alpha * y
            : op == 1 ? x - alpha * y
            : op == 2 ? x * y
-                     : x / y;
+           : op == 3 ? x / y
+                     : powf(x, y);
 }
 extern "C" __global__ void unary_tensor(float *out, const float *in,
                                         const int64_t *desc, int dims,
@@ -76,7 +77,44 @@ extern "C" __global__ void unary_tensor(float *out, const float *in,
   if (i >= n)
     return;
   float x = in[offset(i, desc, dims)];
-  out[i] = op == 0 ? -x : (x > 0.f ? x : 0.f);
+  switch (op) {
+  case 0:
+    out[i] = -x;
+    break;
+  case 1:
+    out[i] = x > 0.f ? x : 0.f;
+    break;
+  case 2:
+    out[i] = expf(x);
+    break;
+  case 3:
+    out[i] = logf(x);
+    break;
+  case 4:
+    out[i] = sqrtf(x);
+    break;
+  case 5:
+    out[i] = rsqrtf(x);
+    break;
+  case 6:
+    out[i] = sinf(x);
+    break;
+  case 7:
+    out[i] = cosf(x);
+    break;
+  case 8:
+    out[i] = tanhf(x);
+    break;
+  case 9:
+    out[i] = 1.f / (1.f + expf(-x));
+    break;
+  case 10:
+    out[i] = fabsf(x);
+    break;
+  case 11:
+    out[i] = 1.f / x;
+    break;
+  }
 }
 extern "C" __global__ void matmul_tensor(float *out, const float *a,
                                          const float *b, int64_t m, int64_t n,
@@ -104,4 +142,73 @@ extern "C" __global__ void sum_tensor(float *out, const float *in,
   for (int64_t j = 0; j < rn; ++j)
     value += in[base + offset(j, inner, idims)];
   out[i] = mean ? value / (float)rn : value;
+}
+
+// Counter-based deterministic RNG. No host tensor values are generated.
+__device__ uint64_t mix(uint64_t x) {
+  x += 0x9e3779b97f4a7c15ULL;
+  x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+  x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+  return x ^ (x >> 31);
+}
+extern "C" __global__ void random_tensor(float *out, const int64_t *desc,
+                                         int dims, int64_t n, uint64_t seed,
+                                         uint64_t counter, int normal,
+                                         float first, float second) {
+  int64_t i = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n)
+    return;
+  float u = ((mix(seed ^ (counter + 2 * i)) >> 40) + 0.5f) * 0x1p-24f;
+  float value;
+  if (normal) {
+    float v = ((mix(seed ^ (counter + 2 * i + 1)) >> 40) + 0.5f) * 0x1p-24f;
+    value =
+        first + second * sqrtf(-2.f * logf(u)) * cosf(6.283185307179586f * v);
+  } else
+    value = first + (second - first) * u;
+  out[offset(i, desc, dims)] = value;
+}
+extern "C" __global__ void
+activation_backward(float *out, const float *grad, const float *value,
+                    const int64_t *gd, const int64_t *vd, int dims, int64_t n,
+                    int op, float threshold) {
+  int64_t i = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n)
+    return;
+  float g = grad[offset(i, gd, dims)], x = value[offset(i, vd, dims)];
+  out[i] = op == 0   ? (x > threshold ? g : 0.f)
+           : op == 1 ? g * x * (1.f - x)
+                     : g * (1.f - x * x);
+}
+extern "C" __global__ void
+softmax_tensor(float *out, const float *in, const int64_t *desc, int dims,
+               int64_t n, int64_t width, int64_t axis_stride, int logarithmic) {
+  int64_t i = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n)
+    return;
+  int64_t base = i - (i / axis_stride % width) * axis_stride;
+  float maximum = -__int_as_float(0x7f800000), total = 0.f;
+  for (int64_t j = 0; j < width; ++j)
+    maximum = fmaxf(maximum, in[offset(base + j * axis_stride, desc, dims)]);
+  for (int64_t j = 0; j < width; ++j)
+    total += expf(in[offset(base + j * axis_stride, desc, dims)] - maximum);
+  float x = in[offset(i, desc, dims)] - maximum;
+  out[i] = logarithmic ? x - logf(total) : expf(x) / total;
+}
+extern "C" __global__ void
+softmax_backward(float *out, const float *grad, const float *value,
+                 const int64_t *gd, const int64_t *vd, int dims, int64_t n,
+                 int64_t width, int64_t axis_stride, int logarithmic) {
+  int64_t i = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n)
+    return;
+  int64_t base = i - (i / axis_stride % width) * axis_stride;
+  float total = 0.f;
+  for (int64_t j = 0; j < width; ++j) {
+    int64_t k = base + j * axis_stride;
+    float g = grad[offset(k, gd, dims)], v = value[offset(k, vd, dims)];
+    total += logarithmic ? g : g * v;
+  }
+  float g = grad[offset(i, gd, dims)], v = value[offset(i, vd, dims)];
+  out[i] = logarithmic ? g - expf(v) * total : v * (g - total);
 }

@@ -69,10 +69,9 @@ PyObject *raise(const std::exception &e) {
 
 PyObject *py_register(PyObject *, PyObject *args) {
   int device_count = 0;
-  int dual = 0;
   PyObject *release = nullptr;
   PyObject *sync = nullptr;
-  if (!PyArg_ParseTuple(args, "ipOO", &device_count, &dual, &release, &sync)) {
+  if (!PyArg_ParseTuple(args, "iOO", &device_count, &release, &sync)) {
     return nullptr;
   }
   if (!PyCallable_Check(release) || !PyCallable_Check(sync)) {
@@ -88,7 +87,7 @@ PyObject *py_register(PyObject *, PyObject *args) {
   Py_XDECREF(previous_release);
   Py_XDECREF(previous_sync);
   try {
-    lupine_torch::register_backend(device_count, dual != 0, &release_to_python,
+    lupine_torch::register_backend(device_count, &release_to_python,
                                    &sync_to_python);
   } catch (const std::exception &e) {
     return raise(e);
@@ -138,7 +137,7 @@ PyObject *py_exchange_device(PyObject *, PyObject *args) {
 
 PyMethodDef methods[] = {
     {"register", py_register, METH_VARARGS,
-     "register(device_count, dual, release, sync): give torch the device"},
+     "register(device_count, release, sync): give torch the device"},
     {"unregister", py_unregister, METH_NOARGS, "drop the Python callbacks"},
     {"device_count", py_device_count, METH_NOARGS, nullptr},
     {"current_device", py_current_device, METH_NOARGS, nullptr},
@@ -158,7 +157,4 @@ PyModuleDef module = {PyModuleDef_HEAD_INIT,
 
 } // namespace
 
-PyMODINIT_FUNC PyInit__C() {
-  lupine_torch::register_cuda_hooks();
-  return PyModule_Create(&module);
-}
+PyMODINIT_FUNC PyInit__C() { return PyModule_Create(&module); }

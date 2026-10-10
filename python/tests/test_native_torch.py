@@ -20,7 +20,6 @@ def backend():
     import lupine
     from lupine import _backend
 
-    assert os.environ.get("LUPINE_TORCH_BACKEND") == "native"
     session = lupine.connect()
     import torch
 
@@ -97,8 +96,8 @@ def test_reductions_over_strided_views(backend):
 def test_unsupported_operator_is_explicit(backend):
     torch, native = backend
     x = torch.ones(4, device="lupine")
-    with pytest.raises(NotImplementedError, match="not implemented.*sin"):
-        torch.sin(x)
+    with pytest.raises(NotImplementedError, match="not implemented.*sort"):
+        torch.sort(x)
 
 
 def test_storage_lifetime_tracks_views(backend):
@@ -138,3 +137,83 @@ def test_empty_and_nonfinite_fill(backend):
     assert empty.sum().item() == 0
     with pytest.raises(ValueError, match="inconsistent"):
         torch.arange(1, 4, -1, device="lupine")
+
+
+def test_unary_functions_and_activation_gradients(backend):
+    torch, native = backend
+    cpu = torch.linspace(0.1, 0.9, 12).reshape(3, 4)
+    gpu = cpu.to("lupine")
+    for op in (torch.exp, torch.log, torch.sqrt, torch.sin, torch.cos, torch.abs):
+        torch.testing.assert_close(op(gpu).cpu(), op(cpu), rtol=2e-5, atol=2e-6)
+    for op in (torch.relu, torch.sigmoid, torch.tanh):
+        reference = (cpu - 0.4).detach().requires_grad_()
+        value = reference.detach().to("lupine").requires_grad_()
+        op(value).sum().backward()
+        op(reference).sum().backward()
+        torch.testing.assert_close(
+            value.grad.cpu(), reference.grad, rtol=2e-5, atol=2e-6
+        )
+
+
+def test_seeded_random_values_are_generated_on_gpu(backend):
+    torch, native = backend
+    torch.manual_seed(42)
+    first = torch.rand(1024, device="lupine")
+    second = torch.rand(1024, device="lupine")
+    torch.manual_seed(42)
+    repeat = torch.rand(1024, device="lupine")
+    torch.testing.assert_close(first.cpu(), repeat.cpu())
+    assert not torch.equal(first.cpu(), second.cpu())
+    values = first.cpu()
+    assert (values >= 0).all() and (values < 1).all()
+    assert abs(values.mean().item() - 0.5) < 0.05
+    normal = torch.randn(2048, device="lupine").cpu()
+    assert abs(normal.mean().item()) < 0.1
+    assert abs(normal.std().item() - 1) < 0.1
+
+
+@pytest.mark.parametrize("logarithmic", [False, True])
+def test_softmax_forward_and_backward(backend, logarithmic):
+    torch, native = backend
+    cpu = (
+        torch.arange(24, dtype=torch.float32)
+        .reshape(2, 3, 4)
+        .transpose(0, 1)
+        .requires_grad_()
+    )
+    value = cpu.detach().to("lupine").requires_grad_()
+    op = torch.log_softmax if logarithmic else torch.softmax
+    output = op(value, dim=1)
+    expected = op(cpu, dim=1)
+    (output * output).sum().backward()
+    (expected * expected).sum().backward()
+    torch.testing.assert_close(output.cpu(), expected.detach(), rtol=2e-5, atol=2e-6)
+    torch.testing.assert_close(value.grad.cpu(), cpu.grad, rtol=2e-5, atol=2e-6)
+
+
+def test_linear_training_step_and_batched_matmul(backend):
+    torch, native = backend
+    torch.manual_seed(123)
+    host = torch.nn.Linear(4, 2)
+    model = torch.nn.Linear(4, 2).to("lupine")
+    model.load_state_dict(host.state_dict())
+    x = torch.arange(12, dtype=torch.float32).reshape(3, 4) / 12
+    expected = host(x)
+    actual = model(x.to("lupine"))
+    (actual**2).mean().backward()
+    (expected**2).mean().backward()
+    torch.testing.assert_close(actual.cpu(), expected.detach())
+    torch.testing.assert_close(model.weight.grad.cpu(), host.weight.grad)
+    torch.testing.assert_close(model.bias.grad.cpu(), host.bias.grad)
+    with torch.no_grad():
+        model.weight.add_(model.weight.grad, alpha=-0.01)
+        host.weight.add_(host.weight.grad, alpha=-0.01)
+    torch.testing.assert_close(model.weight.cpu(), host.weight.detach())
+    a = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4)
+    b = torch.arange(16, dtype=torch.float32).reshape(2, 4, 2)
+    torch.testing.assert_close(
+        torch.bmm(a.to("lupine"), b.to("lupine")).cpu(), torch.bmm(a, b)
+    )
+    torch.testing.assert_close(
+        torch.cat([a.to("lupine"), a.to("lupine")], 1).cpu(), torch.cat([a, a], 1)
+    )
