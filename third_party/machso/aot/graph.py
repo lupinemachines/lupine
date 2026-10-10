@@ -36,8 +36,9 @@ def exported(symbol):
 
 
 class Graph:
-    def __init__(self, source, library_paths=(), additional_roots=(), native_providers=()):
+    def __init__(self, source, library_paths=(), additional_roots=(), native_providers=(), dependency_provider=None):
         self.paths = [Path(p).resolve() for p in library_paths]
+        self.dependency_provider = dependency_provider
         self.nodes = []
         self.by_path = {}
         self.edges = []
@@ -147,6 +148,12 @@ class Graph:
                 return candidate.resolve()
             mismatches.append(str(candidate))
         suffix = f'; wrong ISA candidates: {mismatches}' if mismatches else ''
+        if self.dependency_provider:
+            candidate = self.dependency_provider.find(name, node.elf.machine)
+            elf = ELF.from_file(candidate, allow_tls=True, machines=(183, 62))
+            if elf.machine != node.elf.machine:
+                raise ValueError(f'{name}: dependency provider returned the wrong ISA')
+            return candidate.resolve()
         raise ValueError(f'{node.name}: missing {name}; supply --library-path{suffix}')
 
     def scope(self, node):
@@ -173,6 +180,10 @@ class Graph:
                         continue
                 elif definition['version_hidden']:
                     continue
+                if candidate.native:
+                    reason = candidate.native.get('signature_report', {}).get('unsupported', {}).get(symbol['name'])
+                    if reason:
+                        raise ValueError(f"{candidate.name}:{symbol['name']}: {reason}")
                 return candidate, index
         return None
 
@@ -206,6 +217,7 @@ class Graph:
                            'needed': n.elf.needed, 'tls_bytes': n.elf.tls[6] if n.elf.tls else 0,
                            'intrinsic': n.intrinsic} for n in self.nodes],
                 'native_providers': [n.native for n in self.nodes if n.native],
+                'system_packages': self.dependency_provider.report() if self.dependency_provider else [],
                 'edges': [{'owner': n.name, 'needed': name, 'provider': dep.name} for n, name, dep in self.edges],
                 'bindings': bindings,
                 'missing_required': [{'owner': n.name, 'name': s['name'], 'version': s['version']} for n, s in self.missing],

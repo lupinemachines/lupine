@@ -25,6 +25,12 @@ def main():
         "--runtime", type=Path, help="use an existing ARM64 Linux runtime binary"
     )
     parser.add_argument("--version", default=CUDA_RUNTIME_VERSION)
+    parser.add_argument("--native-provider", type=Path, action="append", default=[])
+    parser.add_argument("--ubuntu-cache", type=Path)
+    parser.add_argument(
+        "--ubuntu-keyring", type=Path,
+        default=Path("/usr/share/keyrings/ubuntu-archive-keyring.gpg"),
+    )
     parser.add_argument(
         "--package",
         action="append",
@@ -37,6 +43,10 @@ def main():
         help="replay a generated packages.lock with hash verification",
     )
     args = parser.parse_args()
+    provider = None
+    if args.ubuntu_cache:
+        from aot.ubuntu import UbuntuDependencies
+        provider = UbuntuDependencies(args.ubuntu_cache, args.ubuntu_keyring)
     with tempfile.TemporaryDirectory() as temporary:
         directory = Path(temporary)
         inputs = directory / "libraries"
@@ -63,6 +73,8 @@ def main():
             [inputs, *args.library_path],
             experimental=True,
             additional_roots=extra,
+            native_providers=args.native_provider,
+            dependency_provider=provider,
         )
         report["runtime_source"] = (
             {"path": str(args.runtime)}

@@ -68,8 +68,8 @@ DYNAMIC_LINKER_APIS = {'dlopen', 'dlmopen', 'dlsym', 'dlvsym', 'dlclose', 'dlerr
 
 
 class Bundle:
-    def __init__(self, source, library_paths=(), additional_roots=(), native_providers=()):
-        self.graph = Graph(source, library_paths, additional_roots, native_providers)
+    def __init__(self, source, library_paths=(), additional_roots=(), native_providers=(), dependency_provider=None):
+        self.graph = Graph(source, library_paths, additional_roots, native_providers, dependency_provider)
         if self.graph.root.elf.machine != 183:
             raise ValueError('native bundle backend requires ARM64 ELF; x86-64 needs a different code-generation backend')
         if self.graph.missing:

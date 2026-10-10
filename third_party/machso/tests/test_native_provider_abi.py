@@ -33,6 +33,7 @@ def prepare_fixture(directory):
                               for kind, value in zip(arguments, values))
         calls.append(f'double check_{name}(void) {{return native_{name}({constants});}}')
     (directory/'provider.c').write_text('\n'.join(provider)+'\n')
+    (directory/'provider.h').write_text('\n'.join(declarations)+'\n')
     (directory/'root.c').write_text('#include <stdint.h>\n'+'\n'.join(declarations+calls)+'\n')
     compiler = ['aarch64-linux-gnu-gcc', '-shared', '-fPIC', '-nostdlib', '-O2']
     subprocess.run([*compiler, str(directory/'provider.c'), '-Wl,-soname,provider.so',
@@ -70,4 +71,16 @@ class NativeProviderABITests(unittest.TestCase):
             declaration['signatures']['native_integers']['arguments'] = ['struct']
             interface.write_text(json.dumps(declaration))
             with self.assertRaisesRegex(ValueError, 'fixed scalar'):
+                Graph(directory/'root.so', native_providers=[interface])
+
+    def test_known_unsupported_header_type_cannot_link_directly(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            prepare_fixture(directory)
+            interface = directory/'provider.json'
+            declaration = json.loads(interface.read_text())
+            declaration['signatures'].pop('native_integers')
+            declaration['signature_report'] = {'unsupported': {'native_integers': 'aggregate arguments unsupported'}}
+            interface.write_text(json.dumps(declaration))
+            with self.assertRaisesRegex(ValueError, 'aggregate arguments unsupported'):
                 Graph(directory/'root.so', native_providers=[interface])

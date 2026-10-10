@@ -8,8 +8,8 @@ from aot.bundle import Bundle
 from aot.graph import Graph
 
 
-def prepare_bundle(source, directory, library_paths=(), experimental=False, additional_roots=(), native_providers=()):
-    bundle = Bundle(source, library_paths, additional_roots, native_providers)
+def prepare_bundle(source, directory, library_paths=(), experimental=False, additional_roots=(), native_providers=(), dependency_provider=None):
+    bundle = Bundle(source, library_paths, additional_roots, native_providers, dependency_provider)
     directory = Path(directory)
     report = bundle.emit(directory)
     report['build_status'] = 'prepared'
@@ -43,19 +43,26 @@ def main():
     parser.add_argument('-L', '--library-path', type=Path, action='append', default=[])
     parser.add_argument('--plan-only', action='store_true')
     parser.add_argument('--experimental', action='store_true')
+    parser.add_argument('--ubuntu-cache', type=Path, help='acquire missing ARM64 libraries from signed Ubuntu Noble metadata')
+    parser.add_argument('--ubuntu-keyring', type=Path, default=Path('/usr/share/keyrings/ubuntu-archive-keyring.gpg'))
     parser.add_argument('--native-provider', type=Path, action='append', default=[],
                         help='native provider interface manifest; repeatable')
     parser.add_argument('--include', type=Path, action='append', default=[],
                         help='additional ELF root, including a late-bound helper; repeatable')
     args = parser.parse_args()
     try:
+        provider = None
+        if args.ubuntu_cache:
+            from aot.ubuntu import UbuntuDependencies
+            provider = UbuntuDependencies(args.ubuntu_cache, args.ubuntu_keyring)
         if args.plan_only:
-            report = Graph(args.input, args.library_path, args.include, args.native_provider).report()
+            report = Graph(args.input, args.library_path, args.include, args.native_provider, provider).report()
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(report, indent=2)+'\n')
             print(f'Planned {len(report["nodes"])} dependencies; {len(report["missing_required"])} unresolved required imports.')
         else:
-            prepare_bundle(args.input, args.output, args.library_path, args.experimental, args.include, args.native_provider)
+            prepare_bundle(args.input, args.output, args.library_path, args.experimental,
+                           args.include, args.native_provider, provider)
     except (ValueError, OSError) as error:
         parser.exit(1, f'compile_bundle: {error}\n')
 

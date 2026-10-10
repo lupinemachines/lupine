@@ -26,6 +26,10 @@ the prepared directory using your own CI or file transport; machso does not mana
 SSH connections. Each stage saves a JSON report. Use `--plan-only` to inspect the
 dependency graph without generating code. Add `--include helper.so` for libraries
 loaded dynamically; all roots share one dependency closure and Linux runtime.
+On Linux, add `--ubuntu-cache /path/to/cache` to acquire missing ARM64 libraries
+from Ubuntu Noble's signed package indexes, without a filename-to-package table.
+This optional provider requires `gpgv`, `dpkg-deb`, and Ubuntu's archive keyring
+(`--ubuntu-keyring` overrides its path); reports record package versions and hashes.
 
 To satisfy an ELF dependency with an existing native dylib, generate its interface
 on macOS and pass that file to the portable compiler:
@@ -46,6 +50,19 @@ for example `{"foo":{"arguments":["ptr","i32"],"result":"i32"}}`.
 Supported types are `i8/u8/i16/u16/i32/u32/i64/u64/ptr/f32/f64`, plus `void` results.
 Variadic and aggregate signatures are unsupported; functions without signatures
 link directly.
+
+With API headers available, generate signatures automatically from the inspected
+exports using the optional `headers` extra (requires Clang):
+
+```sh
+uv run --extra headers python inspect_headers.py provider.json typed-provider.json \
+  --header /path/to/provider.h -I /path/to/includes
+```
+
+Pass `typed-provider.json` to `--native-provider`. It records undeclared exports
+and unsupported signatures; using a known unsupported signature fails preparation.
+On macOS, use `--sysroot` with ARM64 Linux headers when an API includes Linux
+system headers. Parsing always targets the Linux caller's type layout.
 
 This is a prototype with partial Linux ABI support. The glibc platform profile
 targets ARM64 glibc 2.39; unsupported syscalls return `ENOSYS`, and some loader

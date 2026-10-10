@@ -8,5 +8,8 @@ dependencies = [
     "capstone==5.0.7",
 ]
 
+[project.optional-dependencies]
+headers = ["libclang==18.1.1"]
+
 [tool.uv]
 package = false
