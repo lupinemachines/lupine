@@ -30,7 +30,11 @@ def link_bundle(directory, output):
         run(['clang', '-arch', 'arm64', '-fvisibility=hidden', '-O2', '-Wall', '-Wextra', '-Werror',
              '-c', 'native.c', '-o', 'native.o'], directory)
         for module in build['modules']:
-            run(['clang', '-arch', 'arm64', '-c', 'image.S', '-o', 'image.o'], directory/module)
+            # Retain optional Linux CPU dispatch variants. The platform profile
+            # advertises baseline ARM64 capabilities; it must not select SVE/SME
+            # code on Apple CPUs. These flags only assemble original snippets.
+            run(['clang', '-arch', 'arm64', '-march=armv9.4-a+sve+sve2+sme+sme2',
+                 '-c', 'image.S', '-o', 'image.o'], directory/module)
             objects.append(module+'/image.o')
         run(['clang', '-dynamiclib', *objects, '-Wl,'+','.join(build['linker_flags']),
              '-Wl,-exported_symbols_list,exports.txt', '-install_name', '@rpath/'+output.name,

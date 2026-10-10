@@ -24,7 +24,8 @@ uv run python sign_bundle.py build/library.dylib
 Compilation, native linking, and signing are separate file-based stages. Transfer
 the prepared directory using your own CI or file transport; machso does not manage
 SSH connections. Each stage saves a JSON report. Use `--plan-only` to inspect the
-dependency graph without generating code.
+dependency graph without generating code. Add `--include helper.so` for libraries
+loaded dynamically; all roots share one dependency closure and Linux runtime.
 
 This is a prototype with partial Linux ABI support. The glibc platform profile
 targets ARM64 glibc 2.39; unsupported syscalls return `ENOSYS`, and some loader

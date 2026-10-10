@@ -5,6 +5,7 @@ is imported. The normal unit suite skips it and needs no GPU/compiler.
 """
 
 import os
+import math
 import sys
 
 import pytest
@@ -27,6 +28,9 @@ def backend():
     assert session.device() == torch.device("lupine:0")
     native = _backend._started["backend"]
     assert native.native and _backend._started["address"] == "native"
+    if os.environ.get("LUPINE_TEST_NATIVE_LIBRARIES") == "1":
+        assert native.runtime.compiler == "nvrtc"
+        assert native.runtime.blas is not None
     yield torch, native
     torch.lupine.synchronize()
 
@@ -217,3 +221,101 @@ def test_linear_training_step_and_batched_matmul(backend):
     torch.testing.assert_close(
         torch.cat([a.to("lupine"), a.to("lupine")], 1).cpu(), torch.cat([a, a], 1)
     )
+
+
+@pytest.mark.parametrize("shape", [(2, 3, 4), (3, 4)])
+def test_layer_norm_forward_and_backward(backend, shape):
+    torch, native = backend
+    cpu = (
+        torch.arange(math.prod(shape), dtype=torch.float32)
+        .reshape(shape)
+        .requires_grad_()
+    )
+    x = cpu.detach().to("lupine").requires_grad_()
+    weight_cpu = torch.linspace(0.5, 1.0, 12).reshape(3, 4).requires_grad_()
+    bias_cpu = torch.linspace(-0.2, 0.2, 12).reshape(3, 4).requires_grad_()
+    weight = weight_cpu.detach().to("lupine").requires_grad_()
+    bias = bias_cpu.detach().to("lupine").requires_grad_()
+    expected = torch.nn.functional.layer_norm(cpu, (3, 4), weight_cpu, bias_cpu)
+    output = torch.nn.functional.layer_norm(x, (3, 4), weight, bias)
+    (output**2).sum().backward()
+    (expected**2).sum().backward()
+    torch.testing.assert_close(output.cpu(), expected.detach(), rtol=2e-5, atol=2e-5)
+    torch.testing.assert_close(x.grad.cpu(), cpu.grad, rtol=2e-4, atol=2e-5)
+    torch.testing.assert_close(weight.grad.cpu(), weight_cpu.grad, rtol=2e-4, atol=2e-5)
+    torch.testing.assert_close(bias.grad.cpu(), bias_cpu.grad, rtol=2e-4, atol=2e-5)
+
+
+@pytest.mark.parametrize(
+    "groups,stride,dilation", [(1, (1, 1), (1, 1)), (2, (2, 1), (1, 2))]
+)
+def test_convolution_forward_and_backward(backend, groups, stride, dilation):
+    torch, native = backend
+    x_cpu = (
+        torch.arange(2 * 4 * 5 * 6, dtype=torch.float32)
+        .reshape(2, 4, 5, 6)
+        .transpose(2, 3)
+        / 100
+    ).requires_grad_()
+    w_cpu = (
+        torch.arange(6 * (4 // groups) * 2 * 3, dtype=torch.float32).reshape(
+            6, 4 // groups, 2, 3
+        )
+        / 100
+    ).requires_grad_()
+    b_cpu = torch.linspace(-0.1, 0.1, 6).requires_grad_()
+    x = x_cpu.detach().to("lupine").requires_grad_()
+    w = w_cpu.detach().to("lupine").requires_grad_()
+    b = b_cpu.detach().to("lupine").requires_grad_()
+    expected = torch.nn.functional.conv2d(
+        x_cpu, w_cpu, b_cpu, stride, (1, 2), dilation, groups
+    )
+    output = torch.nn.functional.conv2d(x, w, b, stride, (1, 2), dilation, groups)
+    (output**2).mean().backward()
+    (expected**2).mean().backward()
+    for actual, reference in (
+        (output, expected),
+        (x.grad, x_cpu.grad),
+        (w.grad, w_cpu.grad),
+        (b.grad, b_cpu.grad),
+    ):
+        torch.testing.assert_close(
+            actual.cpu(), reference.detach(), rtol=2e-4, atol=2e-5
+        )
+
+
+def test_matmul_transposed_views_and_empty_inner_dimension(backend):
+    torch, native = backend
+    a = torch.arange(12, dtype=torch.float32).reshape(4, 3).T
+    b = torch.arange(8, dtype=torch.float32).reshape(2, 4).T
+    torch.testing.assert_close((a.to("lupine") @ b.to("lupine")).cpu(), a @ b)
+    empty = torch.empty((3, 0), device="lupine") @ torch.empty((0, 2), device="lupine")
+    torch.testing.assert_close(empty.cpu(), torch.zeros((3, 2)))
+
+
+def test_math_attention_and_fully_masked_rows(backend):
+    torch, native = backend
+    q_cpu = (
+        torch.arange(24, dtype=torch.float32).reshape(1, 2, 3, 4) / 24
+    ).requires_grad_()
+    k_cpu = (q_cpu.detach().flip(-1) / 2).requires_grad_()
+    v_cpu = (q_cpu.detach() + 0.5).requires_grad_()
+    q, k, v = (t.detach().to("lupine").requires_grad_() for t in (q_cpu, k_cpu, v_cpu))
+    mask = torch.tensor([[0.0, -float("inf"), 0.0], [-float("inf")] * 3, [0.0] * 3])
+    expected = torch.nn.functional.scaled_dot_product_attention(
+        q_cpu, k_cpu, v_cpu, mask
+    )
+    output = torch.nn.functional.scaled_dot_product_attention(
+        q, k, v, mask.to("lupine")
+    )
+    (output**2).sum().backward()
+    (expected**2).sum().backward()
+    for actual, reference in (
+        (output, expected),
+        (q.grad, q_cpu.grad),
+        (k.grad, k_cpu.grad),
+        (v.grad, v_cpu.grad),
+    ):
+        torch.testing.assert_close(
+            actual.cpu(), reference.detach(), rtol=2e-4, atol=2e-5
+        )

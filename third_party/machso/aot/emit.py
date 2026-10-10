@@ -26,35 +26,56 @@ def scan(elf):
     cs = Cs(CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN)
     cs.detail = True
     cs.skipdata = True
-    instructions = []
-    for address, data in executable_sections(elf):
-        instructions.extend(cs.disasm(data, address))
+    lite = Cs(CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN)
+    lite.skipdata = True
+    sections = executable_sections(elf)
+    # Decode in fixed instruction-aligned chunks: Capstone allocates its
+    # complete native instruction array before yielding Python objects. Use
+    # detailed operands only for the platform registers that need lowering.
+    platform_register = re.compile(r"\b[wx](?:8|18)\b")
+    def instructions():
+        for address, data in sections:
+            for offset in range(0, len(data), 0x4000):
+                chunk = data[offset:offset+0x4000]
+                for pc, size, mnemonic, operands in lite.disasm_lite(chunk, address+offset):
+                    detail = None
+                    if platform_register.search(operands):
+                        detail = next(cs.disasm(data[pc-address:pc-address+size], pc), None)
+                    yield pc, mnemonic, operands, detail
     targets = set()
-    for ins in instructions:
-        if ins.mnemonic.startswith('b') or ins.mnemonic in ('cbz', 'cbnz', 'tbz', 'tbnz'):
-            if ins.id and ins.operands and ins.operands[-1].type == ARM64_OP_IMM:
-                targets.add(ins.operands[-1].imm)
+    for address, data in sections:
+        for offset, (word,) in enumerate(struct.iter_unpack('<I', data[:len(data)//4*4])):
+            if word & 0x7c000000 == 0x14000000:  # B / BL
+                immediate, bits = word & 0x3ffffff, 26
+            elif word & 0xff000010 == 0x54000000 or word & 0x7e000000 == 0x34000000:
+                immediate, bits = word >> 5 & 0x7ffff, 19  # B.cond / CBZ / CBNZ
+            elif word & 0x7e000000 == 0x36000000:
+                immediate, bits = word >> 5 & 0x3fff, 14  # TBZ / TBNZ
+            else:
+                continue
+            displacement = (immediate ^ (1 << (bits-1))) - (1 << (bits-1))
+            targets.add(address+offset*4+displacement*4)
     sites, x18 = [], []
     number = None
-    for ins in instructions:
-        if ins.address in targets:
+    for address, mnemonic, operands, ins in instructions():
+        if address in targets:
             number = None
-        if ins.mnemonic == 'mrs' and 'tpidr_el0' in ins.op_str:
-            register = ins.op_str.split(',')[0]
-            sites.append({'address': ins.address, 'kind': 'tls', 'register': int(register[1:])})
-        elif ins.mnemonic == 'svc':
-            sites.append({'address': ins.address, 'kind': 'syscall', 'number': number})
-        if ins.id:
-            _, writes = ins.regs_access()
+        if mnemonic == 'mrs' and 'tpidr_el0' in operands:
+            register = operands.split(',')[0]
+            sites.append({'address': address, 'kind': 'tls', 'register': int(register[1:])})
+        elif mnemonic == 'svc':
+            sites.append({'address': address, 'kind': 'syscall', 'number': number})
+        if ins is not None and ins.id:
+            reads, writes = ins.regs_access()
             if any(ins.reg_name(r) in ('x8', 'w8') for r in writes):
-                number = ins.operands[1].imm if ins.mnemonic == 'mov' and ins.operands[1].type == ARM64_OP_IMM else None
-            if any(ins.reg_name(r) in ('x18', 'w18') for bank in ins.regs_access() for r in bank):
+                number = ins.operands[1].imm if mnemonic == 'mov' and ins.operands[1].type == ARM64_OP_IMM else None
+            if any(ins.reg_name(r) in ('x18', 'w18') for bank in (reads, writes) for r in bank):
                 writes_names = [ins.reg_name(r) for r in writes]
-                record = {'address': ins.address, 'kind': 'x18', 'instruction': ins.mnemonic+' '+ins.op_str,
+                record = {'address': address, 'kind': 'x18', 'instruction': mnemonic+' '+operands,
                           'writes': writes_names}
                 x18.append(record)
                 sites.append(record)
-        if ins.mnemonic.startswith('b') or ins.mnemonic in ('ret', 'cbz', 'cbnz', 'tbz', 'tbnz'):
+        if mnemonic.startswith('b') or mnemonic in ('ret', 'cbz', 'cbnz', 'tbz', 'tbnz'):
             number = None
     return sites, x18
 
@@ -114,9 +135,9 @@ def lower_x18(site):
                   f'Laot_take_{address:x}:', *restore_frame(), f'b Lelf_{destination:x}']
         return lines, {destination}
     targets = set()
-    if mnemonic == 'adrp':
+    if mnemonic in ('adr', 'adrp'):
         destination = int(rewritten.rsplit('#', 1)[1], 16)
-        rewritten = rewritten.rsplit('#', 1)[0]+f'Lelf_{destination:x}@PAGE'
+        rewritten = rewritten.rsplit('#', 1)[0]+f'Lelf_{destination:x}'+('@PAGE' if mnemonic=='adrp' else '')
         targets.add(destination)
     lines.append(rewritten)
     for name in site['writes']:
@@ -134,7 +155,7 @@ def lower_x18(site):
 def emit(source, directory, plan=None):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    elf = ELF(Path(source).read_bytes(), allow_tls=True)
+    elf = ELF.from_file(source, allow_tls=True)
     if not elf.loads or elf.loads[0][3] != 0:
         raise ValueError('AOT currently requires the first LOAD at virtual address zero')
     if plan is None and (len(elf.loads) != 2 or [p[1] for p in elf.loads] != [5, 6]):
@@ -143,7 +164,7 @@ def emit(source, directory, plan=None):
     segment_names = plan.segments if plan else ['__ELFTEXT', '__ELFDATA']
     core = plan.core if plan else True
     tls_offset = plan.tls_offset if plan else 16
-    sites, x18 = scan(elf)
+    sites, x18 = (plan.sites, plan.x18_sites) if plan else scan(elf)
     resolver = Resolver(elf)
     ifuncs = {s['value']: resolver.resolve(s['value']) for s in elf.symbols if s['info'] & 15 == 10}
     for _, kind, _, addend in elf.relocs:
@@ -225,14 +246,21 @@ def emit(source, directory, plan=None):
     initializers = ([elf.tag(12)] if elf.tag(12) else [])+array_values(elf.tag(25), elf.tag(27))
     finalizers = list(reversed(array_values(elf.tag(26), elf.tag(28))))+([elf.tag(13)] if elf.tag(13) else [])
     labels.update(initializers+finalizers)
-    output = []
+    # Segment order must follow the planned VM order. Declare the prefix
+    # trampoline section before the original LOAD sections, even though its
+    # instructions are emitted later.
+    output = [f'.section {plan.thunk_segment},__text,regular,pure_instructions'] if plan else []
     filenames = []
     for load_index, (p, segment_name) in enumerate(zip(elf.loads, segment_names)):
         filename = ['rx.bin', 'rw.bin'][load_index] if plan is None else f'load{load_index}.bin'
         filenames.append(filename)
         floor = p[3] & -0x4000
-        data = b'\0'*(p[3]-floor)+elf.data[p[2]:p[2]+p[5]]+b'\0'*(p[6]-p[5])
-        (directory/filename).write_bytes(data)
+        with (directory/filename).open('wb') as binary:
+            binary.write(b'\0'*(p[3]-floor))
+            for offset in range(0, p[5], 0x100000):
+                binary.write(elf.data[p[2]+offset:p[2]+min(offset+0x100000,p[5])])
+            # BSS remains zero-filled while its portable input is sparse.
+            binary.truncate(p[3]-floor+p[6])
         output += [f'.section {segment_name},__image'+(',regular,pure_instructions' if p[1] & 1 else ''), '.p2align 14']
         start, end = floor, p[3]+p[6]
         events = sorted({start, end} | {v for v in labels if start <= v <= end} | {v for v in replacements if start <= v < end})
@@ -241,7 +269,9 @@ def emit(source, directory, plan=None):
             if event < cursor: continue
             if event > cursor:
                 output.append(f'.incbin "{filename}", {cursor-floor}, {event-cursor}')
-            output.append(f'Lelf_{event:x}:')
+            # Non-temporary private symbols avoid Mach-O's signed 24-bit
+            # section-relative addends when labels are deep in large images.
+            output += [f'.globl Lelf_{event:x}', f'.private_extern Lelf_{event:x}', f'Lelf_{event:x}:']
             cursor = event
             if event in replacements:
                 size, replacement = replacements[event]
@@ -265,13 +295,14 @@ def emit(source, directory, plan=None):
         address = exports[name]['value']
         output += [f'.globl _aot_linux_{name}', f'.private_extern _aot_linux_{name}',
                    f'.set _aot_linux_{name}, Lelf_{address:x}']
-    output += ['.text', '.p2align 2']
+    output += ([f'.section {plan.thunk_segment},__text,regular,pure_instructions'] if plan else ['.text'])+['.p2align 2']
     if any(kind == 1031 for _, kind, _, _ in elf.relocs):
         output += ['Laot_tlsdesc:', 'ldr x0, [x0, #8]', 'ret']
     numbers = set()
     for site in sites:
         address = site['address']
-        output += [f'Laot_{address:x}:', *save_frame()]
+        output += [f'.globl Laot_{address:x}', f'.private_extern Laot_{address:x}',
+                   f'Laot_{address:x}:', *save_frame()]
         if site['kind'] == 'tls':
             output += ['bl _aot_thread_pointer', f'str x0, [sp, #{site["register"]*8}]']
         elif site['kind'] == 'syscall':
@@ -322,12 +353,23 @@ def emit(source, directory, plan=None):
         for i, address in enumerate(finalizers):
             name = f'_aot_{plan.identifier}_fini_{i}'
             output += [f'.globl {name}', f'.private_extern {name}', f'.set {name}, Lelf_{address:x}']
-    (directory/'image.S').write_text('\n'.join(output)+'\n')
+    image = '\n'.join(output)+'\n'
+    prefix = f'_aot_{plan.identifier}_elf_' if plan else '_aot_elf_'
+    image = image.replace('Lelf_', prefix)
+    if plan:
+        image = image.replace('Laot_', f'_aot_{plan.identifier}_tramp_')
+        # Native helper calls can be arbitrarily far from these per-image
+        # trampolines. x16 is safe here because save_frame preserves it.
+        image = re.sub(r'^bl (_aot_[A-Za-z0-9_]+)$',
+                       r'adrp x16, \1@PAGE\nadd x16, x16, \1@PAGEOFF\nblr x16', image, flags=re.M)
+    (directory/'image.S').write_text(image)
     manifest = {'input': str(Path(source).resolve()), 'exports': len(exports), 'ifuncs': {hex(k): hex(v) for k, v in ifuncs.items()},
                 'syscall_sites': [s for s in sites if s['kind'] == 'syscall'], 'tls_sites': sum(s['kind'] == 'tls' for s in sites),
                 'x18_sites': x18, 'x18_lowered': True, 'imports': imports, 'numbers': sorted(numbers), 'initializers': initializers,
                 'segments': {name: base+(p[3] & -0x4000) for name, p in zip(segment_names, elf.loads)},
                 'binary_files': filenames, 'finalizers': finalizers,
                 'complete': False}
+    if plan:
+        manifest['segments'][plan.thunk_segment] = plan.thunk_address
     (directory/'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
     return manifest

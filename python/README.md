@@ -9,7 +9,7 @@ brings its own. NCCL and nvSHMEM cannot work through the driver alone, so
 their shims are loaded when the bundle names them and no native copy (an
 `nvidia-nccl-*` wheel or a system library) is installed.
 
-ARM64 macOS client bundles additionally carry NVIDIA's CUDA 13.3 runtime,
+ARM64 macOS client bundles additionally carry NVIDIA's CUDA 13.3 runtime, NVRTC, and cuBLAS,
 converted from its Linux binary by the vendored
 [machso](https://github.com/kevmo314/machso) compiler. The runtime runs locally
 and makes driver calls through Lupine. It loads with local visibility so its
@@ -73,9 +73,13 @@ assert runtime.cudaGetDeviceCount(ctypes.byref(count)) == 0
 print(count.value)
 ```
 
-The native-client workflow prepares the pinned ARM64 Linux runtime and its
+The native-client workflow prepares the pinned ARM64 Linux runtime, NVRTC, cuBLAS, and their
 dependency closure on Ubuntu, then links and signs it in separate macOS steps.
-`third_party/machso/UPSTREAM` records the vendored revision. The pure Python
+`third_party/machso/UPSTREAM` records the vendored revision. The preparation
+script also accepts repeatable `--package name==version` arguments. It
+extracts every ELF library from those wheels as an additional root, discovers
+their dependency closure from ELF metadata, and builds one shared libc/TLS
+image. Late-loaded helper SONAMEs resolve to this image automatically. The pure Python
 wheel still gets its native objects from the selected server. This runtime
 does not supply PyTorch's compiled CUDA operators. Native macOS PyTorch can
 use the custom Lupine backend below.
@@ -112,9 +116,11 @@ with lupine.connect(host="gpu-host:14833") as session:
 The backend reuses the device guards, hooks, allocator handles, and metadata
 kernels introduced in commit `f64a5b8bd`. Each handle now owns a real CUDA
 allocation. The converted runtime handles memory and copies; GPU PTX kernels
-handle tensor arithmetic through `libcuda.dylib`. It needs neither a Linux
-libtorch nor converted cuBLAS/cuDNN for these operators. The host extension
-is compiled against the installed native torch; it requires a C++ compiler
+handle tensor arithmetic through `libcuda.dylib`. Converted NVRTC compiles the
+shipped CUDA source locally on the Mac; older runtime bundles use the included
+PTX. Matrix multiplication uses converted cuBLAS when the bundle provides it,
+with a basic GPU kernel for older bundles. It does not require Linux libtorch.
+The host extension is compiled against the installed native torch; it requires a C++ compiler
 (Xcode Command Line Tools) and `ninja`.
 
 The initial scope is one GPU, at most eight dimensions, float32 arithmetic,
@@ -122,10 +128,14 @@ int64 transfers/fill/arange, broadcasting, views, in-place arithmetic, matrix
 multiplication, sum/mean, and backward passes composed from those operators.
 It also supports seeded GPU uniform/normal RNG, common unary functions,
 ReLU/sigmoid/tanh and their gradients, softmax/log-softmax and their gradients,
-batched matrix multiplication, concatenation, and linear layer training.
+batched matrix multiplication, concatenation, layer normalization with
+gradients, grouped 2D convolution and its gradients, math attention with
+float masks (including fully masked rows) and no dropout, and linear layer training.
 Unsupported operators raise `NotImplementedError`. Mixed precision,
-convolutions, fused attention, CUDA graphs, and `torch.compile` are not supported.
-Kernels run synchronously and matrix multiplication uses a simple kernel;
+transposed/1D/3D convolution, fused attention, CUDA graphs, and `torch.compile`
+are not supported.
+Kernels run synchronously; convolution currently uses basic GPU kernels, and
+older bundles without cuBLAS also use a basic matrix multiplication kernel;
 this is a correctness prototype rather than a performance implementation.
 
 PTX is checked in alongside `lupine/_backend/native/kernels.cu`, targeting

@@ -2954,7 +2954,7 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
 #elif defined(__x86_64__)
   constexpr size_t stub_size = 52;
   unsigned char *code = static_cast<unsigned char *>(
-      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE,
            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
   if (code == MAP_FAILED) {
     return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
@@ -2990,6 +2990,14 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
       0xc3                    // ret
   };
   memcpy(code + offset, epilogue, sizeof(epilogue));
+  // Publish immutable executable code only after construction. macOS rejects
+  // anonymous mappings that request write and execute permissions together.
+  if (mprotect(code, stub_size, PROT_READ | PROT_EXEC) != 0) {
+    LUPINE_LOG_ERROR(
+        "Failed to protect private export trampoline: " << strerror(errno));
+    munmap(code, stub_size);
+    return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
+  }
   return code;
 #elif defined(__aarch64__)
   // AAPCS64 mirror of the x86-64 thunk above: the six incoming integer/pointer
@@ -3003,7 +3011,7 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
   constexpr size_t stub_words = 17;
   constexpr size_t stub_size = stub_words * sizeof(uint32_t);
   unsigned char *code = static_cast<unsigned char *>(
-      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE,
            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
   if (code == MAP_FAILED) {
     return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
@@ -3043,6 +3051,14 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
   // fetcher.
   __builtin___clear_cache(reinterpret_cast<char *>(code),
                           reinterpret_cast<char *>(code + stub_size));
+  // Publish immutable executable code only after construction. macOS rejects
+  // anonymous mappings that request write and execute permissions together.
+  if (mprotect(code, stub_size, PROT_READ | PROT_EXEC) != 0) {
+    LUPINE_LOG_ERROR(
+        "Failed to protect private export trampoline: " << strerror(errno));
+    munmap(code, stub_size);
+    return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
+  }
   return code;
 #else
   (void)slot;

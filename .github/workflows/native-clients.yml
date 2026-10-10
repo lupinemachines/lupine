@@ -33,6 +33,8 @@ jobs:
         run: >
           uv run --project third_party/machso --with pip python cmake/prepare_macos_runtime.py
           --output build/macos-runtime -L /usr/aarch64-linux-gnu/lib
+          --package nvidia-cuda-nvrtc==13.3.33
+          --package nvidia-cublas==13.3.0.5
       - uses: actions/upload-artifact@v7
         with:
           name: lupine-macos-runtime-input

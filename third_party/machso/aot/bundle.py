@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from machso import align
 from aot.graph import Graph, exported
-from aot.emit import emit, ELF_BASE
+from aot.emit import emit, scan, save_frame, restore_frame, lower_x18, ELF_BASE
 from aot.lower import emit_native
 
 
@@ -25,14 +25,19 @@ class Plan:
     tls_symbols: dict = field(default_factory=dict)
     tls_modules: dict = field(default_factory=dict)
     overrides: dict = field(default_factory=dict)
+    sites: list = field(default_factory=list)
+    x18_sites: list = field(default_factory=list)
+    thunk_segment: str = ''
+    thunk_address: int = 0
 
 
-DYNAMIC_LINKER_APIS = {'dlopen', 'dlmopen', 'dlsym', 'dlvsym', 'dlclose', 'dlerror'}
+DYNAMIC_LINKER_APIS = {'dlopen', 'dlmopen', 'dlsym', 'dlvsym', 'dlclose', 'dlerror',
+                       '__cxa_thread_atexit_impl', '__call_tls_dtors'}
 
 
 class Bundle:
-    def __init__(self, source, library_paths=()):
-        self.graph = Graph(source, library_paths)
+    def __init__(self, source, library_paths=(), additional_roots=()):
+        self.graph = Graph(source, library_paths, additional_roots)
         if self.graph.root.elf.machine != 183:
             raise ValueError('native bundle backend requires ARM64 ELF; x86-64 needs a different code-generation backend')
         if self.graph.missing:
@@ -45,18 +50,29 @@ class Bundle:
         self.core = cores[0] if cores else None
         self.link_order = ([self.core] if self.core else [])+[n for n in self.nodes if n is not self.core]
         self.plans = {}
-        native_bytes = 0x200000+2*sum(p[5] for n in self.nodes for p in n.elf.loads if p[1] & 1)
-        base = max(ELF_BASE, align(native_bytes, 0x400000))
+        base = ELF_BASE
         for node in self.link_order:
             names = [f'__{node.identifier.upper()}L{i}' for i in range(len(node.elf.loads))]
-            plan = Plan(node.identifier, base, names, core=node is self.core)
+            sites, x18 = scan(node.elf)
+            # Reserve a nearby executable region before each ELF image. Large
+            # read-only GPU blobs can make a LOAD hundreds of MB wide even
+            # though CPU code and its branch sites fit within ARM64 B26 reach.
+            words = 16+sum(len(save_frame())+(
+                len(lower_x18(site)[0])+4 if site['kind']=='x18' else len(restore_frame())+8)
+                for site in sites)
+            thunk_bytes = align(words*4, 0x4000)
+            if sites and max(s['address'] for s in sites)+thunk_bytes >= 1 << 27:
+                raise ValueError(f'{node.name}: patch sites exceed the ARM64 trampoline branch range')
+            plan = Plan(node.identifier, base+thunk_bytes, names, core=node is self.core,
+                        sites=sites, x18_sites=x18, thunk_segment=f'__{node.identifier.upper()}T',
+                        thunk_address=base)
             for index, symbol in enumerate(node.elf.symbols):
                 if exported(symbol):
                     plan.definitions[index] = node.symbol_name(index)
                     if plan.core and symbol['name'] in DYNAMIC_LINKER_APIS:
                         plan.overrides[symbol['value']] = '_aot_linux_'+symbol['name']
             self.plans[node.index] = plan
-            base += align(max(p[3]+p[6] for p in node.elf.loads), 0x10000)+0x10000
+            base = plan.base+align(max(p[3]+p[6] for p in node.elf.loads), 0x10000)+0x10000
         # Public native names use the group's ELF search order. Versioned imports
         # retain separate internal symbols and bind to their exact definitions.
         self.public = {}
@@ -131,7 +147,14 @@ class Bundle:
                                     'switch (index[0]) {\n'+''.join(
                                         f'    case {self.plans[n.index].module_id}: return (unsigned char *)aot_thread_pointer()+{self.plans[n.index].tls_offset}+index[1];\n'
                                         for n in self.link_order if n.elf.tls)+'    default: __builtin_trap();\n    }')
+            # Late-bound modules can be included as roots even when they have
+            # no DT_NEEDED edge. Their SONAMEs resolve to this same native image
+            # and share one libc/TLS/dependency closure, with no hand-made map.
+            sonames = sorted({n.elf.soname or n.name for n in self.nodes})
+            native += '\n#define AOT_MODULE_SONAMES '+','.join(
+                json.dumps(name) for name in sonames)+'\n'
             native += '\n'+Path(__file__).with_name('native_dl.c').read_text()
+            native += '\n'+Path(__file__).with_name('native_tls_dtors.c').read_text()
         else:
             if numbers:
                 raise ValueError('syscall lowering currently needs the libc platform profile')
@@ -147,12 +170,14 @@ class Bundle:
             if node is not self.core:
                 for i in range(len(component['initializers'])):
                     name = f'aot_{node.identifier}_init_{i}'
-                    declarations.append(f'extern void {name}(int,char **,char **);')
-                    calls.append(f'    {name}(argc,argv,env);')
+                    declarations.append(f'extern void {name}(int,char **,char **);\n'
+                                        f'static void (*volatile {name}_pointer)(int,char **,char **)={name};')
+                    calls.append(f'    {name}_pointer(argc,argv,env);')
             for i in range(len(component['finalizers'])):
                 name = f'aot_{node.identifier}_fini_{i}'
-                declarations.append(f'extern void {name}(void);')
-                finalizers.append(name+'();')
+                declarations.append(f'extern void {name}(void);\n'
+                                    f'static void (*volatile {name}_pointer)(void)={name};')
+                finalizers.append(name+'_pointer();')
         if self.core:
             native = native.replace('aot_original_init_2(argc, argv, env);', 'aot_original_init_2(argc, argv, env);\n'+'\n'.join(calls))
         else:
@@ -160,7 +185,7 @@ class Bundle:
         # Declarations must precede the constructor calls.
         native = '\n'.join(declarations)+'\n'+native
         if finalizers:
-            native += '\n__attribute__((destructor)) static void aot_finalize(void) {'+' '.join(reversed(finalizers))+'}\n'
+            native += '\n__attribute__((destructor)) static void aot_finalize(void) {'+('aot_linux___call_tls_dtors(); ' if self.core else '')+' '.join(reversed(finalizers))+'}\n'
         (directory/'native.c').write_text(native)
         (directory/'exports.txt').write_text(''.join('_g_'+name+'\n' for name in sorted(self.public)))
         (directory/'manifest.json').write_text(json.dumps(report, indent=2)+'\n')

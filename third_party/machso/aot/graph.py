@@ -32,13 +32,20 @@ def exported(symbol):
 
 
 class Graph:
-    def __init__(self, source, library_paths=()):
+    def __init__(self, source, library_paths=(), additional_roots=()):
         self.paths = [Path(p).resolve() for p in library_paths]
         self.nodes = []
         self.by_path = {}
         self.edges = []
         self.root = self.load(Path(source).resolve())
-        queue = deque([self.root])
+        self.roots = [self.root]
+        for source in additional_roots:
+            node = self.load(Path(source).resolve())
+            if node.elf.machine != self.root.elf.machine:
+                raise ValueError(f'ISA mismatch in additional root {node.name}')
+            if node not in self.roots:
+                self.roots.append(node)
+        queue = deque(self.roots)
         while queue:
             node = queue.popleft()
             for name in node.elf.needed:
@@ -71,7 +78,7 @@ class Graph:
     def load(self, path):
         path = path.resolve()
         if path not in self.by_path:
-            elf = ELF(path.read_bytes(), allow_tls=True, machines=(183, 62))
+            elf = ELF.from_file(path, allow_tls=True, machines=(183, 62))
             node = Node(path, elf, len(self.nodes))
             self.nodes.append(node)
             self.by_path[path] = node
@@ -98,7 +105,7 @@ class Graph:
             candidate = directory/name
             if not candidate.is_file():
                 continue
-            elf = ELF(candidate.read_bytes(), allow_tls=True, machines=(183, 62))
+            elf = ELF.from_file(candidate, allow_tls=True, machines=(183, 62))
             if elf.machine == node.elf.machine:
                 return candidate.resolve()
             mismatches.append(str(candidate))
@@ -140,7 +147,8 @@ class Graph:
                 visit(dependency)
             if not node.intrinsic:
                 result.append(node)
-        visit(self.root)
+        for root in self.roots:
+            visit(root)
         return result
 
     def report(self):
@@ -152,7 +160,8 @@ class Graph:
                              'provider': provider[0].name if provider else None,
                              'weak': symbol['info'] >> 4 == 2,
                              'intrinsic': provider[0].intrinsic if provider else False})
-        return {'root': self.root.name, 'architecture': self.root.elf.architecture,
+        return {'root': self.root.name, 'roots': [n.name for n in self.roots],
+                'architecture': self.root.elf.architecture,
                 'nodes': [{'id': n.identifier, 'name': n.name, 'input': str(n.path),
                            'sha256': hashlib.sha256(n.elf.data).hexdigest(),
                            'needed': n.elf.needed, 'tls_bytes': n.elf.tls[6] if n.elf.tls else 0,

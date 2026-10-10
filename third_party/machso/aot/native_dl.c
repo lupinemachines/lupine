@@ -3,6 +3,10 @@
 #include <mach-o/dyld.h>
 #include <stdint.h>
 #include <string.h>
+#ifndef AOT_MODULE_SONAMES
+#define AOT_MODULE_SONAMES NULL
+#endif
+static const char *const aot_module_sonames[] = {AOT_MODULE_SONAMES};
 extern int *g___errno_location(void);
 static int aot_dlopen_flags(int flags) {
     const int supported=1|2|4|8|0x100|0x1000;
@@ -16,6 +20,14 @@ static int aot_dlopen_flags(int flags) {
 void *aot_linux_dlopen(const char *path,int flags) {
     int native=aot_dlopen_flags(flags);
     if (native<0) {*g___errno_location()=22;return NULL;}
+    const char *base=path ? strrchr(path,'/') : NULL;
+    base=base ? base+1 : path;
+    if (base) for (size_t i=0;i<sizeof(aot_module_sonames)/sizeof(aot_module_sonames[0]);i++) {
+        if (aot_module_sonames[i] && !strcmp(base,aot_module_sonames[i])) {
+            Dl_info self;
+            if (dladdr((void *)&aot_linux_dlopen,&self)) return dlopen(self.dli_fname,native);
+        }
+    }
     void *handle=dlopen(path,native);
     if (handle || !path || strchr(path,'/')) return handle;
     /* An explicitly preloaded native provider may have a Darwin filename

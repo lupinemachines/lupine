@@ -60,6 +60,33 @@ class GraphTests(unittest.TestCase):
             report=Graph(source).report()
             self.assertEqual(report['missing_required'][0]['name'],'unavailable')
 
+    def test_late_bound_roots_share_one_dependency_closure(self):
+        from aot.bundle import Bundle
+        with tempfile.TemporaryDirectory() as temporary:
+            directory=Path(temporary)
+            self.compile(directory,'shared','int value(void){return 3;}', ['-Wl,-soname,shared.so'])
+            root=self.compile(directory,'root','extern int value(void); int first(void){return value();}',
+                              ['-L'+str(directory),'-l:shared.so'])
+            helper=self.compile(directory,'late','extern int value(void); int second(void){return value();}',
+                                ['-L'+str(directory),'-l:shared.so'])
+            bundle=Bundle(root,[directory],[helper,helper])
+            report=bundle.graph.report()
+            self.assertEqual(report['roots'],['root.so','late.so'])
+            self.assertEqual(len(report['nodes']),3)
+            self.assertFalse(report['missing_required'])
+            self.assertIn('second',bundle.public)
+            self.assertEqual(set(report['initialization_order']),{'root.so','late.so','shared.so'})
+
+    def test_extra_root_resolves_import_without_needed_edge(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory=Path(temporary)
+            root=self.compile(directory,'root','extern int later(void); int f(void){return later();}')
+            helper=self.compile(directory,'helper','int later(void){return 9;}')
+            self.assertTrue(Graph(root).missing)
+            graph=Graph(root,[directory],[helper])
+            self.assertFalse(graph.missing)
+            self.assertEqual(len(graph.initialization_order()),2)
+
     def test_segment_layout_and_tls_modules_are_planned(self):
         if not importlib.util.find_spec('capstone'): self.skipTest('needs capstone')
         from aot.bundle import Bundle

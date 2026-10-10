@@ -207,9 +207,10 @@ class Backend:
         integer = int(value) if dtype == 1 else 0
         if dtype == 1 and not -(2**63) <= integer < 2**63:
             raise OverflowError("fill value does not fit int64")
-        with self.runtime.active(), self.runtime.uploaded(
-            self.descriptor(tensor)
-        ) as desc:
+        with (
+            self.runtime.active(),
+            self.runtime.uploaded(self.descriptor(tensor)) as desc,
+        ):
             self.runtime.kernel(
                 "fill_tensor",
                 tensor.numel(),
@@ -318,9 +319,10 @@ class Backend:
     def unary(self, tensor, op):
         self.floats(tensor)
         result = self.empty(tensor.shape)
-        with self.runtime.active(), self.runtime.uploaded(
-            self.descriptor(tensor)
-        ) as desc:
+        with (
+            self.runtime.active(),
+            self.runtime.uploaded(self.descriptor(tensor)) as desc,
+        ):
             self.runtime.kernel(
                 "unary_tensor",
                 result.numel(),
@@ -341,17 +343,31 @@ class Backend:
         n = b.shape[1]
         result = self.empty((m, n))
         with self.runtime.active():
-            self.runtime.kernel(
-                "matmul_tensor",
-                m * n,
-                self.pointer(result),
-                self.pointer(a),
-                self.pointer(b),
-                Q(m),
-                Q(n),
-                Q(k),
-                *(Q(x) for x in (*a.stride(), *b.stride())),
-            )
+            if m and n:
+                if not k:
+                    self.fill(result, 0)
+                elif self.runtime.blas is not None:
+                    left, right = a.contiguous(), b.contiguous()
+                    self.runtime.matmul(
+                        self.pointer(result),
+                        self.pointer(left),
+                        self.pointer(right),
+                        m,
+                        n,
+                        k,
+                    )
+                else:
+                    self.runtime.kernel(
+                        "matmul_tensor",
+                        m * n,
+                        self.pointer(result),
+                        self.pointer(a),
+                        self.pointer(b),
+                        Q(m),
+                        Q(n),
+                        Q(k),
+                        *(Q(x) for x in (*a.stride(), *b.stride())),
+                    )
         return self.copy_(out, result) if out is not None else result
 
     def reduce(
@@ -386,9 +402,11 @@ class Backend:
                 + [0] * (8 - len(axes))
             )
 
-        with self.runtime.active(), self.runtime.uploaded(
-            descriptor(outer)
-        ) as od, self.runtime.uploaded(descriptor(dimensions)) as id:
+        with (
+            self.runtime.active(),
+            self.runtime.uploaded(descriptor(outer)) as od,
+            self.runtime.uploaded(descriptor(dimensions)) as id,
+        ):
             self.runtime.kernel(
                 "sum_tensor",
                 result.numel(),
@@ -422,9 +440,10 @@ class Backend:
             for size, stride in zip(tensor.shape, tensor.stride())
         ):
             raise ValueError("cannot write random values to overlapping elements")
-        with self.runtime.active(), self.runtime.uploaded(
-            self.descriptor(tensor)
-        ) as desc:
+        with (
+            self.runtime.active(),
+            self.runtime.uploaded(self.descriptor(tensor)) as desc,
+        ):
             self.runtime.kernel(
                 "random_tensor",
                 tensor.numel(),
@@ -446,9 +465,11 @@ class Backend:
         if grad.shape != value.shape:
             raise ValueError("activation backward requires matching shapes")
         result = self.empty(value.shape)
-        with self.runtime.active(), self.runtime.uploaded(
-            self.descriptor(grad)
-        ) as gd, self.runtime.uploaded(self.descriptor(value)) as vd:
+        with (
+            self.runtime.active(),
+            self.runtime.uploaded(self.descriptor(grad)) as gd,
+            self.runtime.uploaded(self.descriptor(value)) as vd,
+        ):
             self.runtime.kernel(
                 "activation_backward",
                 result.numel(),
@@ -464,7 +485,9 @@ class Backend:
             )
         return result
 
-    def softmax(self, tensor, dim, half_to_float=False, *, logarithmic=False):
+    def softmax(
+        self, tensor, dim, half_to_float=False, *, logarithmic=False, safe=False
+    ):
         self.floats(tensor)
         if half_to_float:
             raise NotImplementedError("half softmax is not supported yet")
@@ -474,9 +497,10 @@ class Backend:
         result = self.empty(tensor.shape)
         width = tensor.shape[dim]
         stride = math.prod(tensor.shape[dim + 1 :])
-        with self.runtime.active(), self.runtime.uploaded(
-            self.descriptor(tensor)
-        ) as desc:
+        with (
+            self.runtime.active(),
+            self.runtime.uploaded(self.descriptor(tensor)) as desc,
+        ):
             self.runtime.kernel(
                 "softmax_tensor",
                 result.numel(),
@@ -487,9 +511,14 @@ class Backend:
                 Q(tensor.numel()),
                 Q(width),
                 Q(stride),
-                I(logarithmic),
+                I(2 if safe else logarithmic),
             )
         return result
+
+    def safe_softmax(self, tensor, dim, dtype=None):
+        if dtype not in (None, self.torch.float32):
+            raise NotImplementedError("safe softmax currently requires float32")
+        return self.softmax(tensor, dim, safe=True)
 
     def softmax_backward(self, grad, value, dim, input_dtype, *, logarithmic=False):
         self.floats(grad, value)
@@ -501,9 +530,11 @@ class Backend:
             raise IndexError("softmax dimension out of range")
         dim %= value.ndim
         result = self.empty(value.shape)
-        with self.runtime.active(), self.runtime.uploaded(
-            self.descriptor(grad)
-        ) as gd, self.runtime.uploaded(self.descriptor(value)) as vd:
+        with (
+            self.runtime.active(),
+            self.runtime.uploaded(self.descriptor(grad)) as gd,
+            self.runtime.uploaded(self.descriptor(value)) as vd,
+        ):
             self.runtime.kernel(
                 "softmax_backward",
                 result.numel(),
@@ -572,6 +603,185 @@ class Backend:
             self.copy_(result.narrow(dim, offset, tensor.shape[dim]), tensor)
             offset += tensor.shape[dim]
         return self.copy_(out, result) if out is not None else result
+
+    def convolution_parameters(
+        self,
+        input,
+        weight,
+        stride,
+        padding,
+        dilation,
+        transposed,
+        output_padding,
+        groups,
+    ):
+        self.floats(input, weight)
+        if transposed or any(output_padding) or input.ndim != 4 or weight.ndim != 4:
+            raise NotImplementedError(
+                "native convolution supports non-transposed 2D tensors"
+            )
+        if not (len(stride) == len(padding) == len(dilation) == 2):
+            raise ValueError("2D convolution requires two spatial parameters")
+        batch, ci, h, w = input.shape
+        co, wc, kh, kw = weight.shape
+        if groups <= 0 or ci % groups or co % groups or wc != ci // groups:
+            raise ValueError("convolution channels do not match groups")
+        if min(ci, co, kh, kw, *stride, *dilation) <= 0 or min(padding) < 0:
+            raise ValueError("invalid convolution dimensions")
+        oh, ow = (
+            (size + 2 * pad - dil * (kernel - 1) - 1) // step + 1
+            for size, pad, dil, kernel, step in zip(
+                (h, w), padding, dilation, (kh, kw), stride
+            )
+        )
+        if min(oh, ow) <= 0:
+            raise ValueError("convolution kernel exceeds padded input")
+        parameters = tuple(
+            I(x)
+            for x in (
+                ci,
+                h,
+                w,
+                co,
+                kh,
+                kw,
+                oh,
+                ow,
+                *stride,
+                *padding,
+                *dilation,
+                groups,
+            )
+        )
+        return (batch, co, oh, ow), parameters
+
+    def convolution(
+        self,
+        input,
+        weight,
+        bias,
+        stride,
+        padding,
+        dilation,
+        transposed,
+        output_padding,
+        groups,
+    ):
+        shape, parameters = self.convolution_parameters(
+            input, weight, stride, padding, dilation, transposed, output_padding, groups
+        )
+        if bias is not None:
+            self.floats(bias)
+            if tuple(bias.shape) != (shape[1],):
+                raise ValueError("convolution bias must match output channels")
+        result = self.empty(shape)
+        with self.runtime.active():
+            x, w = input.contiguous(), weight.contiguous()
+            b = None if bias is None else bias.contiguous()
+            self.runtime.kernel(
+                "convolution2d",
+                result.numel(),
+                self.pointer(result),
+                self.pointer(x),
+                self.pointer(w),
+                P() if b is None else self.pointer(b),
+                Q(result.numel()),
+                *parameters,
+            )
+        return result
+
+    def convolution_backward(
+        self,
+        grad,
+        input,
+        weight,
+        bias_sizes,
+        stride,
+        padding,
+        dilation,
+        transposed,
+        output_padding,
+        groups,
+        output_mask,
+    ):
+        shape, parameters = self.convolution_parameters(
+            input, weight, stride, padding, dilation, transposed, output_padding, groups
+        )
+        self.floats(grad)
+        if tuple(grad.shape) != shape:
+            raise ValueError("convolution gradient shape does not match output")
+        dx = self.empty(input.shape) if output_mask[0] else None
+        dw = self.empty(weight.shape) if output_mask[1] else None
+        with self.runtime.active():
+            x, w, g = input.contiguous(), weight.contiguous(), grad.contiguous()
+            if dx is not None:
+                self.runtime.kernel(
+                    "convolution2d_input_backward",
+                    dx.numel(),
+                    self.pointer(dx),
+                    self.pointer(g),
+                    self.pointer(w),
+                    Q(dx.numel()),
+                    *parameters,
+                )
+            if dw is not None:
+                self.runtime.kernel(
+                    "convolution2d_weight_backward",
+                    dw.numel(),
+                    self.pointer(dw),
+                    self.pointer(x),
+                    self.pointer(g),
+                    Q(dw.numel()),
+                    I(input.shape[0]),
+                    *parameters,
+                )
+            db = self.reduce(grad, (0, 2, 3)) if output_mask[2] else None
+        return dx, dw, db
+
+    def layer_norm(self, tensor, normalized_shape, weight=None, bias=None, eps=1e-5):
+        self.floats(tensor)
+        shape = tuple(normalized_shape)
+        if not shape or tuple(tensor.shape[-len(shape) :]) != shape:
+            raise ValueError("normalized shape must match trailing input dimensions")
+        dims = tuple(range(tensor.ndim - len(shape), tensor.ndim))
+        mean = self.reduce(tensor, dims, True, mean=True)
+        centered = self.binary("sub", tensor, mean)
+        variance = self.reduce(
+            self.binary("mul", centered, centered), dims, True, mean=True
+        )
+        rstd = self.unary(self.binary("add", variance, eps), 5)
+        result = self.binary("mul", centered, rstd)
+        if weight is not None:
+            result = self.binary("mul", result, weight)
+        if bias is not None:
+            result = self.binary("add", result, bias)
+        return result, mean, rstd
+
+    def layer_norm_backward(
+        self, grad, tensor, normalized_shape, mean, rstd, weight, bias, output_mask
+    ):
+        shape = tuple(normalized_shape)
+        dims = tuple(range(tensor.ndim - len(shape), tensor.ndim))
+        outer = tuple(range(tensor.ndim - len(shape)))
+        normalized = self.binary("mul", self.binary("sub", tensor, mean), rstd)
+        weighted = grad if weight is None else self.binary("mul", grad, weight)
+        dx = dw = db = None
+        if output_mask[0]:
+            mean_grad = self.reduce(weighted, dims, True, mean=True)
+            projection = self.reduce(
+                self.binary("mul", weighted, normalized), dims, True, mean=True
+            )
+            correction = self.binary(
+                "add", mean_grad, self.binary("mul", normalized, projection)
+            )
+            dx = self.binary("mul", self.binary("sub", weighted, correction), rstd)
+        if output_mask[1] and weight is not None:
+            dw = self.binary("mul", grad, normalized)
+            if outer:
+                dw = self.reduce(dw, outer)
+        if output_mask[2] and bias is not None:
+            db = self.reduce(grad, outer) if outer else grad
+        return dx, dw, db
 
     def fallback(self, op, *args, **kwargs):
         raise NotImplementedError(
@@ -657,6 +867,13 @@ class Backend:
             for pointer, size in self.allocations.values():
                 self.runtime.check(self.runtime.free(pointer), "cudaFree(storage)")
             self.allocations.clear()
+            if self.runtime.blas is not None:
+                status = self.runtime.blas_destroy(self.runtime.blas)
+                if status:
+                    raise RuntimeError(
+                        f"cublasDestroy_v2 failed with cuBLAS status {status}"
+                    )
+                self.runtime.blas = None
             self.runtime.check(
                 self.runtime.unload(self.runtime.module), "cuModuleUnload"
             )
@@ -733,6 +950,7 @@ class Backend:
             ),
         )
         aten.impl("_softmax", self.softmax)
+        aten.impl("_safe_softmax", self.safe_softmax)
         aten.impl("_log_softmax", lambda *args: self.softmax(*args, logarithmic=True))
         aten.impl("_softmax_backward_data", self.softmax_backward)
         aten.impl(
@@ -741,6 +959,11 @@ class Backend:
         )
         aten.impl("pow.Tensor_Scalar", lambda a, b: self.binary("pow", a, b))
         aten.impl("pow.Tensor_Tensor", lambda a, b: self.binary("pow", a, b))
+        aten.impl("convolution", self.convolution)
+        aten.impl("convolution_backward", self.convolution_backward)
+        aten.impl("native_layer_norm", self.layer_norm)
+        aten.impl("native_layer_norm_backward", self.layer_norm_backward)
+        aten.impl("_fused_sdp_choice", lambda *args, **kwargs: 0)
         aten.impl("addmm", self.addmm)
         aten.impl("addmm.out", self.addmm)
         aten.impl("bmm", self.bmm)

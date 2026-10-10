@@ -70,14 +70,136 @@ class Runtime:
         self.check(get_context(ct.byref(self.context)), "cuCtxGetCurrent")
         self.module = P()
         load = self.bind(self.driver, "cuModuleLoadData", ct.POINTER(P), P)
-        ptx = ct.create_string_buffer(
-            Path(__file__).with_name("kernels.ptx").read_bytes()
+        self.compiler = (
+            "nvrtc" if hasattr(self.runtime, "nvrtcCreateProgram") else "ptx"
         )
+        code = (
+            self.compile_kernels()
+            if self.compiler == "nvrtc"
+            else Path(__file__).with_name("kernels.ptx").read_bytes()
+        )
+        ptx = ct.create_string_buffer(code)
         self.check(load(ct.byref(self.module), ptx), "cuModuleLoadData")
         self.get_function = self.bind(
             self.driver, "cuModuleGetFunction", ct.POINTER(P), P, ct.c_char_p
         )
         self.unload = self.bind(self.driver, "cuModuleUnload", P)
+        self.blas = None
+        if hasattr(self.runtime, "cublasCreate_v2"):
+            self.blas = P()
+            create = self.bind(self.runtime, "cublasCreate_v2", ct.POINTER(P))
+            self.blas_destroy = self.bind(self.runtime, "cublasDestroy_v2", P)
+            self.blas_gemm = self.bind(
+                self.runtime,
+                "cublasSgemm_v2",
+                P,
+                I,
+                I,
+                I,
+                I,
+                I,
+                P,
+                P,
+                I,
+                P,
+                I,
+                P,
+                P,
+                I,
+            )
+            status = create(ct.byref(self.blas))
+            if status:
+                self.unload(self.module)
+                raise RuntimeError(
+                    f"cublasCreate_v2 failed with cuBLAS status {status}"
+                )
+
+    def matmul(self, output, a, b, m, n, k):
+        """Row-major C=A@B via column-major C^T=B^T@A^T."""
+        alpha, beta = F(1), F(0)
+        status = self.blas_gemm(
+            self.blas,
+            0,
+            0,
+            n,
+            m,
+            k,
+            ct.byref(alpha),
+            b,
+            n,
+            a,
+            k,
+            ct.byref(beta),
+            output,
+            n,
+        )
+        if status:
+            raise RuntimeError(f"cublasSgemm_v2 failed with cuBLAS status {status}")
+        self.check(self.sync(), "cudaDeviceSynchronize(cuBLAS)")
+        self.launches += 1
+
+    def compile_kernels(self):
+        """Compile the shipped CUDA source locally with the converted NVRTC."""
+        create = self.bind(
+            self.runtime,
+            "nvrtcCreateProgram",
+            ct.POINTER(P),
+            ct.c_char_p,
+            ct.c_char_p,
+            I,
+            ct.POINTER(ct.c_char_p),
+            ct.POINTER(ct.c_char_p),
+        )
+        compile_ = self.bind(
+            self.runtime, "nvrtcCompileProgram", P, I, ct.POINTER(ct.c_char_p)
+        )
+        destroy = self.bind(self.runtime, "nvrtcDestroyProgram", ct.POINTER(P))
+        program = P()
+        # NVRTC provides CUDA/math builtins, but has no host SDK on macOS.
+        # Supply the two fixed-width integer definitions used by our kernels.
+        headers = (ct.c_char_p * 1)(
+            b"typedef signed long long int64_t; typedef unsigned long long uint64_t;"
+        )
+        names = (ct.c_char_p * 1)(b"stdint.h")
+        status = create(
+            ct.byref(program),
+            Path(__file__).with_name("kernels.cu").read_bytes(),
+            b"kernels.cu",
+            1,
+            headers,
+            names,
+        )
+        if status:
+            raise RuntimeError(f"nvrtcCreateProgram failed with NVRTC status {status}")
+        try:
+            options = (ct.c_char_p * 3)(
+                b"--gpu-architecture=compute_75", b"--std=c++17", b"--fmad=false"
+            )
+            status = compile_(program, len(options), options)
+
+            def output(size_name, data_name):
+                size = S()
+                get_size = self.bind(self.runtime, size_name, P, ct.POINTER(S))
+                get_data = self.bind(self.runtime, data_name, P, P)
+                result = get_size(program, ct.byref(size))
+                if result:
+                    raise RuntimeError(f"{size_name} failed with NVRTC status {result}")
+                data = ct.create_string_buffer(size.value)
+                result = get_data(program, data)
+                if result:
+                    raise RuntimeError(f"{data_name} failed with NVRTC status {result}")
+                return data.value
+
+            if status:
+                log = output("nvrtcGetProgramLogSize", "nvrtcGetProgramLog").decode(
+                    errors="replace"
+                )
+                raise RuntimeError(
+                    f"NVRTC kernel compilation failed ({status}):\n{log}"
+                )
+            return output("nvrtcGetPTXSize", "nvrtcGetPTX")
+        finally:
+            destroy(ct.byref(program))
 
     @staticmethod
     def bind(library, name, *types):

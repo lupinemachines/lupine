@@ -3,6 +3,7 @@
 import argparse
 import json
 import struct
+import mmap
 from pathlib import Path
 
 
@@ -25,6 +26,18 @@ def uleb(n):
 
 
 class ELF:
+    @classmethod
+    def from_file(cls, path, **options):
+        # CUDA libraries contain large GPU blobs. Keep their input file-backed
+        # instead of retaining an anonymous byte copy for every dependency.
+        with Path(path).open('rb') as source:
+            data = mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ)
+        try:
+            return cls(data, **options)
+        except BaseException:
+            data.close()
+            raise
+
     def __init__(self, data, allow_tls=False, machines=(183,)):
         self.data = data
         if data[:7] != b'\x7fELF\x02\x01\x01':
