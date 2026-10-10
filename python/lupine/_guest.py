@@ -1,4 +1,7 @@
-"""Provisioning of the torch worker for the torch backend.
+"""Select the native torch backend or provision a torch worker.
+
+``LUPINE_TORCH_BACKEND=native`` uses the local dylibs and GPU kernels without
+starting a worker. The remainder of this module provisions the worker path.
 
 The worker is a CUDA torch of the host's major.minor release: a subprocess of
 another interpreter that has one (``LUPINE_WORKER_PYTHON``), or one started by hand
@@ -118,6 +121,12 @@ def start(servers: tuple[str, ...]) -> Worker:
     """Start (or attach to) the worker and load the torch backend on it."""
 
     from . import _backend
+
+    if os.environ.get("LUPINE_TORCH_BACKEND") == "native":
+        from ._backend import native
+
+        native.start()
+        return Worker(address="native")
 
     if _backend.is_started():
         return Worker(address=_backend._started["address"])
