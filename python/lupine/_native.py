@@ -5,7 +5,8 @@ The loader downloads the exact bundle selected by ``LUPINE_SERVER`` before
 CUDA consumers are imported. The wheel itself is pure Python: every native
 object comes from a bound server or an explicit ``LUPINE_LIBDIR``.
 
-``load()`` preloads the driver and NVML shims:
+``load()`` preloads the driver and NVML shims, plus the converted CUDA runtime
+when an ARM64 macOS bundle provides it:
 
 ============= ================== ====================
 Platform      driver shim        NVML shim
@@ -53,6 +54,10 @@ _REQUIRED = {
 }
 
 _DRIVER = {"linux": "libcuda.so.1", "darwin": "libcuda.dylib", "win32": "nvcuda.dll"}
+
+# macOS ARM64 bundles can also supply a converted NVIDIA runtime. Its embedded
+# libc must stay local; only the native driver/NVML shims have global visibility.
+_RUNTIMES = {"darwin": ("libcudart.dylib",)}
 
 # Shims loaded only when the bundle carries them and no native library
 # answers to the same soname: soname stem -> (``nvidia.*`` wheel package,
@@ -117,8 +122,8 @@ def _shim_names(directory: Path) -> tuple[str, ...]:
 
     A resolved bundle names its files in its manifest; ``LUPINE_LIBDIR``
     points at a plain directory instead, so its contents stand in. Either
-    way only the driver, NVML, and a conditional shim with no native
-    counterpart are selected.
+    way the driver, NVML, a conditional shim with no native counterpart, and
+    the optional macOS CUDA runtime are selected.
     """
 
     if _names:
@@ -138,6 +143,7 @@ def _shim_names(directory: Path) -> tuple[str, ...]:
         native = _CONDITIONAL.get(_soname_stem(name))
         if native is not None and not _native_available(*native):
             selected.append(name)
+    selected.extend(name for name in _RUNTIMES.get(sys.platform, ()) if name in names)
     return tuple(selected)
 
 
@@ -190,9 +196,14 @@ def load(*, missing_ok: bool = True) -> dict[str, str]:
             if missing_ok:
                 continue
             raise LupineError(f"Selected LUPINE library missing: {path}")
-        # RTLD_GLOBAL so dlopen("libcuda.so.1") from the program's CUDA
-        # runtime resolves to the shim.
-        ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
+        # Native providers are global; the converted runtime's embedded Linux
+        # libc remains local so it cannot replace the host's native libc APIs.
+        mode = (
+            ctypes.RTLD_LOCAL
+            if name in _RUNTIMES.get(sys.platform, ())
+            else ctypes.RTLD_GLOBAL
+        )
+        ctypes.CDLL(str(path), mode=mode)
         _loaded[name] = str(path)
     return dict(_loaded)
 

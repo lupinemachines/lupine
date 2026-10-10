@@ -16,6 +16,22 @@ def test_torch_backend_selected_follows_env_then_platform(monkeypatch):
     assert lupine.torch_backend_selected() == (sys.platform == "darwin")
 
 
+def test_native_backend_does_not_provision_a_worker(monkeypatch):
+    from lupine._backend import native
+
+    calls = []
+    monkeypatch.setenv("LUPINE_TORCH_BACKEND", "native")
+    monkeypatch.setattr(native, "start", lambda: calls.append("native"))
+
+    def unexpected_spawn(*args, **kwargs):
+        pytest.fail("the native backend must not spawn a torch worker")
+
+    monkeypatch.setattr(lupine._guest, "_spawn", unexpected_spawn)
+    worker = lupine._guest.start(("gpu:14833",))
+    assert calls == ["native"]
+    assert worker.address == "native" and worker.process is None
+
+
 def test_subprocess_worker_needs_an_interpreter(monkeypatch):
     monkeypatch.delenv("LUPINE_WORKER_PYTHON", raising=False)
     with pytest.raises(lupine.LupineError):

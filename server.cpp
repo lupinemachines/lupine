@@ -51,6 +51,10 @@ extern const lupine_client_bundle_payload
     lupine_embedded_client_bundle_linux_aarch64;
 extern const lupine_client_bundle_payload
     lupine_embedded_client_bundle_macosx_universal2;
+#ifdef LUPINE_EMBED_MACOS_ARM64_RUNTIME
+extern const lupine_client_bundle_payload
+    lupine_embedded_client_bundle_macosx_arm64;
+#endif
 extern const lupine_client_bundle_payload
     lupine_embedded_client_bundle_win_amd64;
 extern const lupine_client_bundle_payload
@@ -61,7 +65,11 @@ const lupine_client_bundle_entry kClientBundles[] = {
     {"linux/amd64", &lupine_embedded_client_bundle_linux_x86_64},
     {"linux/arm64", &lupine_embedded_client_bundle_linux_aarch64},
     {"macos/amd64", &lupine_embedded_client_bundle_macosx_universal2},
+#ifdef LUPINE_EMBED_MACOS_ARM64_RUNTIME
+    {"macos/arm64", &lupine_embedded_client_bundle_macosx_arm64},
+#else
     {"macos/arm64", &lupine_embedded_client_bundle_macosx_universal2},
+#endif
     {"windows/amd64", &lupine_embedded_client_bundle_win_amd64},
     {"windows/arm64", &lupine_embedded_client_bundle_win_arm64},
 };

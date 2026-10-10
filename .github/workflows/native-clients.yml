@@ -16,8 +16,33 @@ permissions:
   contents: read
 
 jobs:
+  macos-runtime-input:
+    name: Prepare ARM64 CUDA runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+      - uses: astral-sh/setup-uv@v5
+      - name: Install ARM64 glibc input
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libc6-arm64-cross
+      - name: Compile runtime into portable native inputs
+        run: >
+          uv run --project third_party/machso --with pip python cmake/prepare_macos_runtime.py
+          --output build/macos-runtime -L /usr/aarch64-linux-gnu/lib
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lupine-macos-runtime-input
+          path: build/macos-runtime
+          if-no-files-found: error
+          retention-days: 3
+
   client:
     name: Client / ${{ matrix.tag }}
+    needs: macos-runtime-input
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -110,6 +135,28 @@ jobs:
             -DCMAKE_PREFIX_PATH="$PWD/cuda-sdk/nvidia/cu13"
           cmake --build build --parallel --target lupine_cuda_client lupine_nvml
 
+      - uses: astral-sh/setup-uv@v5
+        if: matrix.tag == 'macosx-arm64'
+
+      - name: Download compiled runtime inputs
+        if: matrix.tag == 'macosx-arm64'
+        uses: actions/download-artifact@v8
+        with:
+          name: lupine-macos-runtime-input
+          path: build/macos-runtime
+
+      - name: Link converted CUDA runtime
+        if: matrix.tag == 'macosx-arm64'
+        run: >
+          uv run --project third_party/machso python third_party/machso/link_bundle.py
+          build/macos-runtime build/libcudart.dylib
+
+      - name: Sign converted CUDA runtime
+        if: matrix.tag == 'macosx-arm64'
+        run: >
+          uv run --project third_party/machso python third_party/machso/sign_bundle.py
+          build/libcudart.dylib
+
       - name: Build client (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -138,6 +185,9 @@ jobs:
               ;;
             macosx-*)
               cp build/libcuda.dylib build/libnvidia-ml.dylib client/
+              if [ "${{ matrix.tag }}" = macosx-arm64 ]; then
+                cp build/libcudart.dylib client/
+              fi
               ;;
             *)
               # Each shim carries its real counterpart's SONAME, and the NCCL
@@ -176,10 +226,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p client
-          # Both slices build the same shim set; fuse whatever they carry so a
-          # newly added shim needs no change here.
+          # The converted runtime has only an ARM64 backend. Fuse the shims
+          # that have both slices; the ARM64 bundle retains its own runtime.
           for path in thin/lupine-client-macosx-arm64/*.dylib; do
             lib="$(basename "$path")"
+            test -f "thin/lupine-client-macosx-x86_64/$lib" || continue
             lipo -create "$path" "thin/lupine-client-macosx-x86_64/$lib" \
                     -output "client/$lib"
           done

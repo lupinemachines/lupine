@@ -9,6 +9,13 @@ brings its own. NCCL and nvSHMEM cannot work through the driver alone, so
 their shims are loaded when the bundle names them and no native copy (an
 `nvidia-nccl-*` wheel or a system library) is installed.
 
+ARM64 macOS client bundles additionally carry NVIDIA's CUDA 13.3 runtime,
+converted from its Linux binary by the vendored
+[machso](https://github.com/kevmo314/machso) compiler. The runtime runs locally
+and makes driver calls through Lupine. It loads with local visibility so its
+embedded Linux libc cannot replace Python's native libc. Intel macOS bundles
+continue to provide the native driver and NVML only.
+
 The wheel itself is pure Python: a small PyTorch adapter and the loader that
 resolves that client. No NVIDIA driver, CUDA toolkit, or container runtime is
 needed on the client.
@@ -44,11 +51,99 @@ native HTTP/2 connection, so:
 - **CPU-only PyTorch builds** cannot gain a CUDA backend by linking (the
   backend is compiled out); use the driver shim directly via ctypes, or run
   such workloads in a container against the same server.
-- **macOS** has no CUDA torch, so `lupine.connect()` there loads the torch
-  backend instead (see below): the program's own torch gets a device whose
-  operators execute in a same-version CUDA torch running elsewhere.
+- **macOS** defaults to the worker torch backend: the program's own torch
+  gets a device whose operators execute in a same-version CUDA torch running
+  elsewhere. `LUPINE_TORCH_BACKEND=native` instead selects the experimental
+  dylib-backed Lupine device described below.
 - **Native arm64 Python on Windows** gets the driver and NVML; run an x64
   Python for a CUDA PyTorch (see below).
+
+## ARM64 macOS CUDA runtime
+
+With a server whose ARM64 macOS bundle includes the converted runtime, Python
+can call the runtime directly. Set `LUPINE_SERVER` before starting Python:
+
+```python
+import ctypes
+import lupine
+
+libraries = lupine.load_native(missing_ok=False)
+runtime = ctypes.CDLL(libraries["libcudart.dylib"], mode=ctypes.RTLD_LOCAL)
+runtime.cudaGetDeviceCount.argtypes = [ctypes.POINTER(ctypes.c_int)]
+runtime.cudaGetDeviceCount.restype = ctypes.c_int
+count = ctypes.c_int()
+assert runtime.cudaGetDeviceCount(ctypes.byref(count)) == 0
+print(count.value)
+```
+
+The native-client workflow prepares the pinned ARM64 Linux runtime and its
+dependency closure on Ubuntu, then links and signs it in separate macOS steps.
+`third_party/machso/UPSTREAM` records the vendored revision. The pure Python
+wheel still gets its native objects from the selected server. This runtime
+does not supply PyTorch's compiled CUDA operators. Native macOS PyTorch can
+instead use the custom Lupine backend below; the worker backend remains
+available for broader operator coverage.
+
+The GPU integration checks in `tests/test_macos_runtime.py` cover discovery,
+allocation, copies, memset, and coexistence with native CPU PyTorch. Run them
+on ARM64 macOS with `LUPINE_SERVER` configured and
+`LUPINE_TEST_MACOS_RUNTIME=1`; an optional `LUPINE_LIBDIR` selects a local
+client bundle. These checks do not validate PyTorch CUDA operators or kernel
+launches.
+
+## Native Lupine PyTorch backend (experimental)
+
+Set `LUPINE_TORCH_BACKEND=native` on ARM64 macOS to run supported PyTorch
+operators through the dylibs, without a torch worker or container. Use
+`session.device()` or `device="lupine"`. This backend uses PyTorch's
+PrivateUse1 registration, leaving its built-in CUDA and MPS device names
+intact. Call `lupine.connect()` before importing torch.
+
+```python
+import os
+os.environ["LUPINE_TORCH_BACKEND"] = "native"
+import lupine
+
+with lupine.connect(host="gpu-host:14833") as session:
+    import torch
+    a = torch.arange(12, device=session.device(), dtype=torch.float32).reshape(3, 4)
+    a.requires_grad_()
+    b = torch.ones((4, 2), device=session.device())
+    loss = ((a @ b) * 2).sum()
+    loss.backward()
+    print(a.grad.cpu())
+    print(torch.lupine.get_device_name())
+```
+
+The backend reuses the device guards, hooks, allocator handles, and metadata
+kernels introduced in commit `f64a5b8bd`. Each handle now owns a real CUDA
+allocation. The converted runtime handles memory and copies; GPU PTX kernels
+handle tensor arithmetic through `libcuda.dylib`. It needs neither a Linux
+libtorch nor converted cuBLAS/cuDNN for these operators. The host extension
+is compiled against the installed native torch; it requires a C++ compiler
+(Xcode Command Line Tools) and `ninja`, as the worker backend does.
+
+The initial scope is one GPU, at most eight dimensions, float32 arithmetic,
+int64 transfers/fill/arange, broadcasting, views, in-place arithmetic, matrix
+multiplication, sum/mean, and backward passes composed from those operators.
+Unsupported operators raise `NotImplementedError`. RNG, mixed precision,
+convolutions, attention, CUDA graphs, and `torch.compile` are not supported.
+Kernels run synchronously and matrix multiplication uses a simple kernel;
+this is a correctness prototype rather than a performance implementation.
+
+PTX is checked in alongside `lupine/_backend/native/kernels.cu`, targeting
+compute capability 7.5 or newer. Regenerate it on a CUDA 13.3 Linux build host:
+
+```sh
+nvcc --ptx --gpu-architecture=compute_75 --fmad=false \
+  -o lupine/_backend/native/kernels.ptx lupine/_backend/native/kernels.cu
+```
+
+Run `tests/test_native_torch.py` separately on the Mac with
+`LUPINE_TEST_NATIVE_TORCH=1`, `LUPINE_TORCH_BACKEND=native`, and the server
+and bundle configured. It checks GPU arithmetic, strided views, exact int64
+copies, reductions, matrix multiplication and its gradients against CPU
+PyTorch results, and explicit rejection of unsupported operators.
 
 ## Windows on ARM
 

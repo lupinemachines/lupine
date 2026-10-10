@@ -35,8 +35,8 @@ inline bool lupine_log_enabled(lupine_log_level level) {
 }
 
 inline std::ofstream &lupine_trace_file() {
-  static std::ofstream file;
-  return file;
+  static auto *file = new std::ofstream();
+  return *file;
 }
 
 inline std::ostream *lupine_trace_stream() {
@@ -67,8 +67,9 @@ inline std::ostream *lupine_trace_stream() {
 }
 
 inline std::mutex &lupine_trace_mutex() {
-  static std::mutex mutex;
-  return mutex;
+  // CUDA runtimes can log driver teardown after C++ static finalizers run.
+  static auto *mutex = new std::mutex();
+  return *mutex;
 }
 
 // Stream-style logging helpers, e.g.:
