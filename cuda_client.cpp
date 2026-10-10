@@ -427,6 +427,18 @@ lupine_library_images() {
   return *images;
 }
 
+struct lupine_library_enumeration {
+  CUresult result = CUDA_ERROR_NOT_SUPPORTED;
+  std::vector<CUkernel> kernels;
+};
+
+static std::unordered_map<CUlibrary, lupine_library_enumeration> &
+lupine_library_enumerations() {
+  static auto *libraries =
+      new std::unordered_map<CUlibrary, lupine_library_enumeration>();
+  return *libraries;
+}
+
 static std::unordered_map<CUkernel, lupine_library_kernel_record> &
 lupine_library_kernels() {
   static auto *kernels =
@@ -5217,9 +5229,16 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
       rpc_read(conn, &count, sizeof(count)) < 0 || count > 1024 * 1024) {
     return -1;
   }
+  lupine_library_enumeration enumeration{result, {}};
   if (result != CUDA_SUCCESS) {
-    return count == 0 ? 0 : -1;
+    if (count != 0) {
+      return -1;
+    }
+    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+    lupine_library_enumerations()[library] = std::move(enumeration);
+    return 0;
   }
+  enumeration.kernels.reserve(count);
   lupine_route route = lupine_remote_route_for_conn(conn);
   CUcontext context = nullptr;
   (void)cuCtxGetCurrent(&context);
@@ -5240,6 +5259,7 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
         param_count > 64 * 1024) {
       return -1;
     }
+    enumeration.kernels.push_back(kernel);
     name.resize(name_length - 1);
     for (uint32_t index = 0; index < param_count; ++index) {
       lupine_param_info_value param = {};
@@ -5290,6 +5310,8 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
       lupine_record_library_function(function, kernel);
     }
   }
+  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+  lupine_library_enumerations()[library] = std::move(enumeration);
   return 0;
 }
 
@@ -5818,6 +5840,50 @@ extern "C" CUresult cuLibraryLoadFromFile(
     }
   }
   return result;
+}
+
+extern "C" CUresult cuLibraryGetKernelCount(unsigned int *count,
+                                            CUlibrary library) {
+  if (count == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  lupine_route route = lupine_route_for_library(library);
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn("cuLibraryGetKernelCount", count, library);
+  }
+  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+  auto it = lupine_library_enumerations().find(library);
+  if (it == lupine_library_enumerations().end()) {
+    return CUDA_ERROR_INVALID_HANDLE;
+  }
+  if (it->second.result == CUDA_SUCCESS) {
+    *count = static_cast<unsigned int>(it->second.kernels.size());
+  }
+  return it->second.result;
+}
+
+extern "C" CUresult cuLibraryEnumerateKernels(CUkernel *kernels,
+                                              unsigned int numKernels,
+                                              CUlibrary library) {
+  if (kernels == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  lupine_route route = lupine_route_for_library(library);
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn("cuLibraryEnumerateKernels", kernels,
+                                    numKernels, library);
+  }
+  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+  auto it = lupine_library_enumerations().find(library);
+  if (it == lupine_library_enumerations().end()) {
+    return CUDA_ERROR_INVALID_HANDLE;
+  }
+  if (it->second.result == CUDA_SUCCESS) {
+    std::copy_n(it->second.kernels.begin(),
+                std::min<size_t>(numKernels, it->second.kernels.size()),
+                kernels);
+  }
+  return it->second.result;
 }
 
 static CUresult lupine_read_func_param_sizes(CUfunction function,
@@ -6495,6 +6561,7 @@ extern "C" void lupine_release_module_retained_strings(CUmodule module) {
 extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
   std::scoped_lock lock(lupine_library_kernel_mutex(), g_retained_string_mutex);
   lupine_library_images().erase(library);
+  lupine_library_enumerations().erase(library);
   lupine_release_retained_strings_locked(
       reinterpret_cast<const void *>(library));
   auto &kernels = lupine_library_kernels();
@@ -6542,7 +6609,7 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
 }
 
 extern "C" void *lupine_deep_node_cache_get(CUgraphNode node, size_t slot,
-                                           size_t bytes) {
+                                            size_t bytes) {
   std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
   auto &arrays = g_deep_cache[node];
   if (arrays.size() <= slot)
@@ -6570,7 +6637,8 @@ std::vector<CUgraphNode> lupine_deep_cache_graph_nodes(CUgraph graph) {
   if (cuGraphGetNodes(graph, nullptr, &count) != CUDA_SUCCESS)
     return {};
   std::vector<CUgraphNode> nodes(count);
-  if (count != 0 && cuGraphGetNodes(graph, nodes.data(), &count) != CUDA_SUCCESS)
+  if (count != 0 &&
+      cuGraphGetNodes(graph, nodes.data(), &count) != CUDA_SUCCESS)
     return {};
   nodes.resize(count);
   return nodes;
@@ -8772,8 +8840,6 @@ static void *lupine_make_missing_stub(const char *symbol) {
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuModuleLoadData)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryLoadData)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryGetKernelCount)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryEnumerateKernels)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLinkCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLinkAddData)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLinkAddFile)
@@ -8877,8 +8943,6 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
       LUPINE_STUB_ENTRY(cuCtxCreate),
       LUPINE_STUB_ENTRY(cuModuleLoadData),
       LUPINE_STUB_ENTRY(cuLibraryLoadData),
-      LUPINE_STUB_ENTRY(cuLibraryGetKernelCount),
-      LUPINE_STUB_ENTRY(cuLibraryEnumerateKernels),
       LUPINE_STUB_ENTRY(cuLinkCreate),
       LUPINE_STUB_ENTRY(cuLinkAddData),
       LUPINE_STUB_ENTRY(cuLinkAddFile),
@@ -9765,6 +9829,8 @@ lupine_manual_function_map() {
       {"cuModuleLoadDataEx", (void *)cuModuleLoadDataEx},
       {"cuLibraryLoadData", (void *)cuLibraryLoadData},
       {"cuLibraryLoadFromFile", (void *)cuLibraryLoadFromFile},
+      {"cuLibraryGetKernelCount", (void *)cuLibraryGetKernelCount},
+      {"cuLibraryEnumerateKernels", (void *)cuLibraryEnumerateKernels},
       {"cuLinkCreate", (void *)cuLinkCreate_v2},
       {"cuLinkAddData", (void *)cuLinkAddData_v2},
       {"cuLinkAddFile", (void *)cuLinkAddFile_v2},
