@@ -93,6 +93,13 @@ on ARM64 macOS with `LUPINE_SERVER` configured and
 client bundle. These checks do not validate PyTorch CUDA operators or kernel
 launches.
 
+Additional CUDA packages can be prepared with the same pipeline. For example,
+`--package nvidia-cufft==12.3.0.29 --package nvidia-curand==10.4.3.29
+--package nvidia-nvjitlink==13.3.33` includes the FFT/RNG libraries and pins
+cuFFT's declared linker dependency. `tests/test_macos_cuda_libraries.py` checks
+GPU FFT/RNG results and clean process teardown when run on ARM64 macOS with
+`LUPINE_TEST_MACOS_CUDA_LIBRARIES=1` and a matching `LUPINE_LIBDIR`.
+
 ## Native Lupine PyTorch backend (experimental)
 
 `lupine.connect()` on ARM64 macOS starts the native PyTorch backend and

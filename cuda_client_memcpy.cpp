@@ -146,14 +146,16 @@ struct lupine_mapped_host_snapshot {
 using lupine_host_allocation_map =
     std::map<void *, lupine_host_allocation, std::less<void *>>;
 
+// The registry below has process lifetime; its locks must remain usable when
+// CUDA library finalizers query or release allocations during dylib teardown.
 static std::mutex &lupine_host_allocation_mutex() {
-  static std::mutex mutex;
-  return mutex;
+  static auto *mutex = new std::mutex();
+  return *mutex;
 }
 
 static std::mutex &lupine_portable_registration_mutex() {
-  static std::mutex mutex;
-  return mutex;
+  static auto *mutex = new std::mutex();
+  return *mutex;
 }
 
 // CUDA libraries can issue teardown requests after function-local statics have
