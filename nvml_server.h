@@ -7,6 +7,7 @@
 
 int handle_nvmlDeviceGetComputeRunningProcesses(conn_t *conn);
 int handle_nvmlDeviceGetComputeRunningProcesses_v2(conn_t *conn);
+int handle_nvmlDeviceGetProcessUtilization(conn_t *conn);
 int handle_nvmlDeviceGetGraphicsRunningProcesses(conn_t *conn);
 int handle_nvmlDeviceGetGraphicsRunningProcesses_v2(conn_t *conn);
 int handle_nvmlDeviceGetMPSComputeRunningProcesses(conn_t *conn);

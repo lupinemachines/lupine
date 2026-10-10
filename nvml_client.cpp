@@ -710,6 +710,53 @@ extern "C" nvmlReturn_t nvmlDeviceGetComputeRunningProcesses_v2(
                         infoCount, infos);
 }
 
+extern "C" nvmlReturn_t nvmlDeviceGetProcessUtilization(
+    nvmlDevice_t device, nvmlProcessUtilizationSample_t *utilization,
+    unsigned int *processSamplesCount, unsigned long long lastSeenTimeStamp) {
+  if (!nvml_initialized()) {
+    return NVML_ERROR_UNINITIALIZED;
+  }
+  if (device == nullptr || processSamplesCount == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  if (conn == nullptr) {
+    return rpc_error();
+  }
+  const unsigned int capacity = *processSamplesCount;
+  const int has_samples = utilization != nullptr;
+  unsigned int returned_count = capacity;
+  unsigned int copied_count = 0;
+  nvmlReturn_t result = NVML_ERROR_UNKNOWN;
+  if (rpc_write_start_request(conn, RPC_nvmlDeviceGetProcessUtilization) < 0 ||
+      rpc_write(conn, &device, sizeof(device)) < 0 ||
+      rpc_write(conn, &capacity, sizeof(capacity)) < 0 ||
+      rpc_write(conn, &has_samples, sizeof(has_samples)) < 0 ||
+      rpc_write(conn, &lastSeenTimeStamp, sizeof(lastSeenTimeStamp)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 ||
+      rpc_read(conn, &returned_count, sizeof(returned_count)) < 0 ||
+      rpc_read(conn, &copied_count, sizeof(copied_count)) < 0) {
+    return rpc_error();
+  }
+  // Never let an inconsistent response overwrite the caller's buffer. Close
+  // the transport rather than leaving unread bytes in a reusable RPC lane.
+  if (copied_count > capacity || (copied_count != 0 && !has_samples) ||
+      (result != NVML_SUCCESS && copied_count != 0) ||
+      (result == NVML_SUCCESS && copied_count != returned_count)) {
+    rpc_close_transport_socket(conn);
+    return NVML_ERROR_UNKNOWN;
+  }
+  if ((copied_count != 0 &&
+       rpc_read(conn, utilization,
+                size_t{copied_count} * sizeof(*utilization)) < 0) ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  *processSamplesCount = returned_count;
+  return result;
+}
+
 extern "C" nvmlReturn_t nvmlDeviceGetGraphicsRunningProcesses(
     nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_t *infos) {
   return call_processes(RPC_nvmlDeviceGetGraphicsRunningProcesses, device,
