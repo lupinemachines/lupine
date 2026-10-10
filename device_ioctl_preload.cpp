@@ -144,7 +144,9 @@ extern "C" int lupine_fcntl64_entry(int fd, int command, uintptr_t argument) {
 }
 extern "C" void *mmap(void *address, size_t size, int protection, int flags,
                       int fd, off_t offset) noexcept {
-  if (lupine_device_proxy_get(fd)) {
+  // Allocators call anonymous mmap while holding their own locks. Looking up
+  // a proxy can initialize the registry and reenter that allocator.
+  if (!(flags & MAP_ANONYMOUS) && lupine_device_proxy_get(fd)) {
     errno = ENODEV;
     return MAP_FAILED;
   }

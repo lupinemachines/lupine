@@ -7,10 +7,31 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <mutex>
+#include <new>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+// Simulate cicc's allocator: anonymous mmap runs while its allocation lock is
+// held. A proxy-registry allocation from the mmap hook would deadlock here.
+static std::mutex allocation_mutex;
+static bool allocator_uses_mmap;
+void *operator new(size_t size) {
+  std::lock_guard<std::mutex> lock(allocation_mutex);
+  if (allocator_uses_mmap) {
+    void *mapping = mmap(nullptr, 4096, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (mapping == MAP_FAILED || munmap(mapping, 4096) != 0)
+      std::abort();
+  }
+  if (void *result = std::malloc(size))
+    return result;
+  throw std::bad_alloc();
+}
+void operator delete(void *pointer) noexcept { std::free(pointer); }
+void operator delete(void *pointer, size_t) noexcept { std::free(pointer); }
 
 static int releases;
 static int opens;
@@ -34,6 +55,12 @@ int lupine_device_ioctl(int, uint32_t command, void *) {
   return -1;
 }
 int main() {
+  alarm(10);
+  allocator_uses_mmap = true;
+  void *startup_mapping = mmap(nullptr, 4096, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  require(startup_mapping != MAP_FAILED && munmap(startup_mapping, 4096) == 0,
+          "allocator mmap before proxy registry initialization");
   setenv("LUPINE_SERVER", "test", 1);
   {
     lupine_native_cuda_call_guard native_call;
