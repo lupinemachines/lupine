@@ -27,6 +27,26 @@ SSH connections. Each stage saves a JSON report. Use `--plan-only` to inspect th
 dependency graph without generating code. Add `--include helper.so` for libraries
 loaded dynamically; all roots share one dependency closure and Linux runtime.
 
+To satisfy an ELF dependency with an existing native dylib, generate its interface
+on macOS and pass that file to the portable compiler:
+
+```sh
+uv run python inspect_native.py libprovider.dylib provider.json --soname libprovider.so.1
+uv run python compile_bundle.py library.so build/prepared -L /path/to/linux/libraries \
+  --native-provider provider.json --experimental
+uv run python link_bundle.py build/prepared build/library.dylib \
+  --native-library libprovider.dylib
+```
+
+The linker checks the native install name and required exports before building.
+Native providers must implement the caller's ABI. Supply `inspect_native.py
+--signatures signatures.json` to generate Linux-to-Darwin argument bridges for
+fixed scalar functions. The file maps exported names to `arguments` and `result`,
+for example `{"foo":{"arguments":["ptr","i32"],"result":"i32"}}`.
+Supported types are `i8/u8/i16/u16/i32/u32/i64/u64/ptr/f32/f64`, plus `void` results.
+Variadic and aggregate signatures are unsupported; functions without signatures
+link directly.
+
 This is a prototype with partial Linux ABI support. The glibc platform profile
 targets ARM64 glibc 2.39; unsupported syscalls return `ENOSYS`, and some loader
 operations remain trap stubs. Successful conversion does not establish that every

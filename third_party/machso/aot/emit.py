@@ -283,7 +283,8 @@ def emit(source, directory, plan=None):
     # Segment order must follow the planned VM order. Declare the prefix
     # trampoline section before the original LOAD sections, even though its
     # instructions are emitted later.
-    output = [f'.section {plan.thunk_segment},__text,regular,pure_instructions'] if plan else []
+    output = [f'.section {plan.thunk_segment},__text,regular,pure_instructions',
+              '.p2align 2', '.long 0xd503201f'] if plan else []
     filenames = []
     for load_index, (p, segment_name) in enumerate(zip(elf.loads, segment_names)):
         filename = ['rx.bin', 'rw.bin'][load_index] if plan is None else f'load{load_index}.bin'
@@ -346,6 +347,8 @@ def emit(source, directory, plan=None):
     numbers = set()
     for site in sites:
         address = site['address']
+        if plan and plan.site_thunks:
+            output += [f'.section {plan.site_thunks[address]},__text,regular,pure_instructions', '.p2align 2']
         output += [f'.globl Laot_{address:x}', f'.private_extern Laot_{address:x}',
                    f'Laot_{address:x}:', *save_frame()]
         if site['kind'] == 'tls':
@@ -415,6 +418,7 @@ def emit(source, directory, plan=None):
                 'binary_files': filenames, 'finalizers': finalizers,
                 'complete': False}
     if plan:
-        manifest['segments'][plan.thunk_segment] = plan.thunk_address
+        manifest['segments'].update({thunk['segment']: thunk['address'] for thunk in plan.thunks}
+                                    if plan.thunks else {plan.thunk_segment: plan.thunk_address})
     (directory/'manifest.json').write_text(json.dumps(manifest, indent=2)+'\n')
     return manifest

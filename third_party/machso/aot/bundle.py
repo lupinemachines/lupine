@@ -29,6 +29,38 @@ class Plan:
     x18_sites: list = field(default_factory=list)
     thunk_segment: str = ''
     thunk_address: int = 0
+    thunks: list = field(default_factory=list)
+    site_thunks: dict = field(default_factory=dict)
+
+
+def trampoline_layout(start, extent, sites, identifier):
+    """Reserve nearby prefix/suffix islands without moving original ELF LOADs."""
+    def allocation(group):
+        words = 16+sum(len(save_frame())+(
+            len(lower_x18(site)[0])+4 if site['kind']=='x18' else len(restore_frame())+8)
+            for site in group)
+        return align(words*4, 0x4000)
+
+    extent = align(extent, 0x4000)
+    prefix = allocation(sites)
+    groups = [sites]
+    if sites and max(s['address'] for s in sites)+prefix >= 1 << 27:
+        midpoint = extent//2
+        groups = [[s for s in sites if s['address'] <= midpoint],
+                  [s for s in sites if s['address'] > midpoint]]
+        prefix = allocation(groups[0])
+    image_base = start+prefix
+    thunks = []
+    for index, group in enumerate(groups):
+        address = start if index == 0 else image_base+extent
+        size = prefix if index == 0 else allocation(group)
+        for site in group:
+            origin = image_base+site['address']
+            if address-origin < -(1 << 27)+4 or address+size-origin >= 1 << 27:
+                raise ValueError('patch sites exceed the ARM64 trampoline branch range')
+        thunks.append({'segment': f'__{identifier.upper()}T'+(str(index) if index else ''),
+                       'address': address, 'size': size, 'sites': group})
+    return image_base, thunks, max(image_base+extent, thunks[-1]['address']+thunks[-1]['size'])
 
 
 DYNAMIC_LINKER_APIS = {'dlopen', 'dlmopen', 'dlsym', 'dlvsym', 'dlclose', 'dlerror',
@@ -36,8 +68,8 @@ DYNAMIC_LINKER_APIS = {'dlopen', 'dlmopen', 'dlsym', 'dlvsym', 'dlclose', 'dlerr
 
 
 class Bundle:
-    def __init__(self, source, library_paths=(), additional_roots=()):
-        self.graph = Graph(source, library_paths, additional_roots)
+    def __init__(self, source, library_paths=(), additional_roots=(), native_providers=()):
+        self.graph = Graph(source, library_paths, additional_roots, native_providers)
         if self.graph.root.elf.machine != 183:
             raise ValueError('native bundle backend requires ARM64 ELF; x86-64 needs a different code-generation backend')
         if self.graph.missing:
@@ -50,6 +82,7 @@ class Bundle:
         self.core = cores[0] if cores else None
         self.link_order = ([self.core] if self.core else [])+[n for n in self.nodes if n is not self.core]
         self.plans = {}
+        self.native_bridges = {}
         base = ELF_BASE
         for node in self.link_order:
             names = [f'__{node.identifier.upper()}L{i}' for i in range(len(node.elf.loads))]
@@ -57,22 +90,22 @@ class Bundle:
             # Reserve a nearby executable region before each ELF image. Large
             # read-only GPU blobs can make a LOAD hundreds of MB wide even
             # though CPU code and its branch sites fit within ARM64 B26 reach.
-            words = 16+sum(len(save_frame())+(
-                len(lower_x18(site)[0])+4 if site['kind']=='x18' else len(restore_frame())+8)
-                for site in sites)
-            thunk_bytes = align(words*4, 0x4000)
-            if sites and max(s['address'] for s in sites)+thunk_bytes >= 1 << 27:
-                raise ValueError(f'{node.name}: patch sites exceed the ARM64 trampoline branch range')
-            plan = Plan(node.identifier, base+thunk_bytes, names, core=node is self.core,
+            extent = max(p[3]+p[6] for p in node.elf.loads)
+            try:
+                image_base, thunks, end = trampoline_layout(base, extent, sites, node.identifier)
+            except ValueError as error:
+                raise ValueError(f'{node.name}: {error}') from error
+            plan = Plan(node.identifier, image_base, names, core=node is self.core,
                         sites=sites, x18_sites=x18, thunk_segment=f'__{node.identifier.upper()}T',
-                        thunk_address=base)
+                        thunk_address=base, thunks=thunks,
+                        site_thunks={site['address']: thunk['segment'] for thunk in thunks for site in thunk['sites']})
             for index, symbol in enumerate(node.elf.symbols):
                 if exported(symbol):
                     plan.definitions[index] = node.symbol_name(index)
                     if plan.core and symbol['name'] in DYNAMIC_LINKER_APIS:
                         plan.overrides[symbol['value']] = '_aot_linux_'+symbol['name']
             self.plans[node.index] = plan
-            base = plan.base+align(max(p[3]+p[6] for p in node.elf.loads), 0x10000)+0x10000
+            base = align(end, 0x10000)+0x10000
         # Public native names use the group's ELF search order. Versioned imports
         # retain separate internal symbols and bind to their exact definitions.
         self.public = {}
@@ -108,7 +141,14 @@ class Bundle:
                     provider = self.graph.bindings.get((node.index, index))
                     if provider:
                         owner, definition_index = provider
-                        if owner.intrinsic:
+                        if owner.native:
+                            plan.imports[index] = '_'+symbol['name']
+                            signature = owner.native.get('signatures', {}).get(symbol['name'])
+                            if signature:
+                                label = f'_aot_native_{owner.identifier}_s{definition_index}'
+                                plan.imports[index] = label
+                                self.native_bridges[label] = (symbol['name'], signature)
+                        elif owner.intrinsic:
                             plan.imports[index] = '_aot_import_'+symbol['name']
                         else:
                             plan.imports[index] = owner.symbol_name(definition_index)
@@ -136,7 +176,7 @@ class Bundle:
                        'complete': False})
         if self.core:
             from aot.tunables import extract
-            loader = next((node for node in self.graph.nodes if node.intrinsic and
+            loader = next((node for node in self.graph.nodes if node.intrinsic and not node.native and
                            any(s['name']=='__tunable_get_val' and s['shndx'] for s in node.elf.symbols)), None)
             if loader is None:
                 raise ValueError('glibc bootstrap requires its matching loader binary for tunable defaults')
@@ -187,6 +227,12 @@ class Bundle:
         if finalizers:
             native += '\n__attribute__((destructor)) static void aot_finalize(void) {'+('aot_linux___call_tls_dtors(); ' if self.core else '')+' '.join(reversed(finalizers))+'}\n'
         (directory/'native.c').write_text(native)
+        if self.native_bridges:
+            from aot.native_abi import emit_bridge
+            (directory/'native_abi.S').write_text(''.join(
+                emit_bridge(label, '_'+name, signature)
+                for label, (name, signature) in self.native_bridges.items()))
+        report['native_abi_bridges'] = sorted(name for name, _ in self.native_bridges.values())
         (directory/'exports.txt').write_text(''.join('_g_'+name+'\n' for name in sorted(self.public)))
         (directory/'manifest.json').write_text(json.dumps(report, indent=2)+'\n')
         return report

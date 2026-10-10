@@ -2,8 +2,11 @@
 from collections import deque
 from dataclasses import dataclass, field
 import hashlib
+import json
 from pathlib import Path
+from types import SimpleNamespace
 from machso import ELF
+from aot.native_abi import validate_signatures
 
 
 @dataclass
@@ -13,6 +16,7 @@ class Node:
     index: int
     dependencies: list = field(default_factory=list)
     intrinsic: bool = False
+    native: dict | None = None
 
     @property
     def name(self):
@@ -32,11 +36,30 @@ def exported(symbol):
 
 
 class Graph:
-    def __init__(self, source, library_paths=(), additional_roots=()):
+    def __init__(self, source, library_paths=(), additional_roots=(), native_providers=()):
         self.paths = [Path(p).resolve() for p in library_paths]
         self.nodes = []
         self.by_path = {}
         self.edges = []
+        self.native_paths = {}
+        self.native_declarations = {}
+        for path in native_providers:
+            path = Path(path).resolve()
+            declaration = json.loads(path.read_text())
+            if declaration.get('schema') != 1 or declaration.get('architecture') != 'arm64':
+                raise ValueError('native provider requires schema 1 and ARM64 architecture')
+            name = declaration.get('soname')
+            if not isinstance(name, str) or not name or '/' in name or name in self.native_paths:
+                raise ValueError(f'invalid or duplicate native provider SONAME: {name}')
+            install_name = declaration.get('native_install_name')
+            names = declaration.get('exports')
+            if (not isinstance(install_name, str) or not install_name or
+                    not isinstance(names, list) or not names or
+                    any(not isinstance(symbol, str) or not symbol for symbol in names)):
+                raise ValueError(f'{name}: native install name and exports are required')
+            self.native_paths[name] = path
+            validate_signatures(declaration)
+            self.native_declarations[path] = declaration
         self.root = self.load(Path(source).resolve())
         self.roots = [self.root]
         for source in additional_roots:
@@ -61,7 +84,7 @@ class Graph:
         # Linux loader functionality is compiled into platform bootstrap code.
         # Its entire ELF image must not be initialized as another process loader.
         for node in self.nodes:
-            node.intrinsic = node.name.startswith('ld-linux-')
+            node.intrinsic = bool(node.native) or node.name.startswith('ld-linux-')
         self.bindings = {}
         self.missing = []
         for node in self.nodes:
@@ -78,6 +101,18 @@ class Graph:
     def load(self, path):
         path = path.resolve()
         if path not in self.by_path:
+            if path in self.native_declarations:
+                declaration = self.native_declarations[path]
+                symbols = [{'name': name, 'info': 0x12, 'shndx': 1, 'other': 0,
+                            'version': None, 'version_hidden': False, 'value': 0}
+                           for name in declaration['exports']]
+                elf = SimpleNamespace(soname=declaration['soname'], symbols=symbols,
+                                      needed=[], tls=None, machine=183, architecture='aarch64',
+                                      data=path.read_bytes())
+                node = Node(path, elf, len(self.nodes), intrinsic=True, native=declaration)
+                self.nodes.append(node)
+                self.by_path[path] = node
+                return node
             elf = ELF.from_file(path, allow_tls=True, machines=(183, 62))
             node = Node(path, elf, len(self.nodes))
             self.nodes.append(node)
@@ -85,6 +120,8 @@ class Graph:
         return self.by_path[path]
 
     def find(self, node, name):
+        if name in self.native_paths:
+            return self.native_paths[name]
         if '/' in name:
             candidate = Path(name)
             if not candidate.is_absolute():
@@ -122,7 +159,9 @@ class Graph:
             seen.add(candidate.index)
             result.append(candidate)
             queue.extend(candidate.dependencies)
-        return result
+        # Converted C++/libc definitions must retain their own ABI domain.
+        # Native providers satisfy imports after regular ELF definitions.
+        return [n for n in result if not n.native]+[n for n in result if n.native]
 
     def resolve(self, node, symbol):
         for candidate in self.scope(node):
@@ -166,6 +205,7 @@ class Graph:
                            'sha256': hashlib.sha256(n.elf.data).hexdigest(),
                            'needed': n.elf.needed, 'tls_bytes': n.elf.tls[6] if n.elf.tls else 0,
                            'intrinsic': n.intrinsic} for n in self.nodes],
+                'native_providers': [n.native for n in self.nodes if n.native],
                 'edges': [{'owner': n.name, 'needed': name, 'provider': dep.name} for n, name, dep in self.edges],
                 'bindings': bindings,
                 'missing_required': [{'owner': n.name, 'name': s['name'], 'version': s['version']} for n, s in self.missing],

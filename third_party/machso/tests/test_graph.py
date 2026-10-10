@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -59,6 +60,54 @@ class GraphTests(unittest.TestCase):
             source=self.compile(directory,'missing','extern int unavailable(void); int f(void){return unavailable();}')
             report=Graph(source).report()
             self.assertEqual(report['missing_required'][0]['name'],'unavailable')
+
+    def native_fixture(self, directory, exports=('some_value',)):
+        provider=self.compile(directory,'provider','int some_value(void){return 41;}',
+                              ['-Wl,-soname,provider.so'])
+        root=self.compile(directory,'root','extern int some_value(void); int answer(void){return some_value()+1;}',
+                          ['-L'+str(directory),'-l:provider.so'])
+        interface=directory/'provider.json'
+        interface.write_text(json.dumps({'schema':1,'architecture':'arm64','soname':'provider.so',
+                                        'native_install_name':'@rpath/libsample.dylib','exports':list(exports)}))
+        return root,provider,interface
+
+    def test_native_provider_replaces_needed_elf_without_emitting_it(self):
+        from compile_bundle import prepare_bundle
+        with tempfile.TemporaryDirectory() as temporary:
+            directory=Path(temporary)
+            root,provider,interface=self.native_fixture(directory)
+            provider.unlink()
+            output=directory/'prepared'
+            report=prepare_bundle(root,output,native_providers=[interface])
+            self.assertEqual(report['native_build']['modules'],['n0'])
+            self.assertEqual(report['initialization_order'],['root.so'])
+            self.assertEqual(report['bindings'][0]['provider'],'provider.so')
+            self.assertFalse(report['missing_required'])
+            self.assertIn('_some_value',(output/'n0/image.S').read_text())
+            self.assertFalse((output/'n1').exists())
+
+    def test_native_provider_missing_export_is_unresolved(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory=Path(temporary)
+            root,_,interface=self.native_fixture(directory,['different'])
+            report=Graph(root,native_providers=[interface]).report()
+            self.assertEqual(report['missing_required'][0]['name'],'some_value')
+
+    def test_converted_definitions_take_precedence_over_native_exports(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory=Path(temporary)
+            root,_,interface=self.native_fixture(directory)
+            extra=self.compile(directory,'extra','int some_value(void){return 7;}')
+            graph=Graph(root,additional_roots=[extra],native_providers=[interface])
+            imported=next(i for i,s in enumerate(graph.root.elf.symbols) if s['name']=='some_value')
+            self.assertEqual(graph.bindings[(graph.root.index,imported)][0].path,extra.resolve())
+
+    def test_duplicate_native_provider_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory=Path(temporary)
+            root,_,interface=self.native_fixture(directory)
+            with self.assertRaisesRegex(ValueError,'duplicate native provider'):
+                Graph(root,native_providers=[interface,interface])
 
     def test_late_bound_roots_share_one_dependency_closure(self):
         from aot.bundle import Bundle

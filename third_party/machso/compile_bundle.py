@@ -8,8 +8,8 @@ from aot.bundle import Bundle
 from aot.graph import Graph
 
 
-def prepare_bundle(source, directory, library_paths=(), experimental=False, additional_roots=()):
-    bundle = Bundle(source, library_paths, additional_roots)
+def prepare_bundle(source, directory, library_paths=(), experimental=False, additional_roots=(), native_providers=()):
+    bundle = Bundle(source, library_paths, additional_roots, native_providers)
     directory = Path(directory)
     report = bundle.emit(directory)
     report['build_status'] = 'prepared'
@@ -18,8 +18,9 @@ def prepare_bundle(source, directory, library_paths=(), experimental=False, addi
     flags = []
     for node in bundle.nodes:
         plan = bundle.plans[node.index]
-        flags += ['-segaddr', plan.thunk_segment, hex(plan.thunk_address),
-                  '-segprot', plan.thunk_segment, 'rx', 'rx']
+        for thunk in plan.thunks:
+            flags += ['-segaddr', thunk['segment'], hex(thunk['address']),
+                      '-segprot', thunk['segment'], 'rx', 'rx']
         for name, load in zip(plan.segments, node.elf.loads):
             address = plan.base+(load[3] & -0x4000)
             protection = ''.join(letter for flag, letter in [(4,'r'),(2,'w'),(1,'x')] if load[1] & flag)
@@ -28,6 +29,7 @@ def prepare_bundle(source, directory, library_paths=(), experimental=False, addi
         'schema': 1,
         'modules': [node.identifier for node in bundle.link_order],
         'linker_flags': flags,
+        'abi_bridge': 'native_abi.S' if report['native_abi_bridges'] else None,
     }
     (directory/'manifest.json').write_text(json.dumps(report, indent=2)+'\n')
     print(f'Prepared {len(bundle.nodes)} ELF libraries in {directory}; required unresolved imports: 0.')
@@ -41,17 +43,19 @@ def main():
     parser.add_argument('-L', '--library-path', type=Path, action='append', default=[])
     parser.add_argument('--plan-only', action='store_true')
     parser.add_argument('--experimental', action='store_true')
+    parser.add_argument('--native-provider', type=Path, action='append', default=[],
+                        help='native provider interface manifest; repeatable')
     parser.add_argument('--include', type=Path, action='append', default=[],
                         help='additional ELF root, including a late-bound helper; repeatable')
     args = parser.parse_args()
     try:
         if args.plan_only:
-            report = Graph(args.input, args.library_path, args.include).report()
+            report = Graph(args.input, args.library_path, args.include, args.native_provider).report()
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(report, indent=2)+'\n')
             print(f'Planned {len(report["nodes"])} dependencies; {len(report["missing_required"])} unresolved required imports.')
         else:
-            prepare_bundle(args.input, args.output, args.library_path, args.experimental, args.include)
+            prepare_bundle(args.input, args.output, args.library_path, args.experimental, args.include, args.native_provider)
     except (ValueError, OSError) as error:
         parser.exit(1, f'compile_bundle: {error}\n')
 

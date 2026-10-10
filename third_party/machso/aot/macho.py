@@ -103,6 +103,20 @@ def file_hash(path):
     return digest.hexdigest()
 
 
+def native_interface(path, soname):
+    with Path(path).open('rb') as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
+        if (len(data) < 32 or struct.unpack_from('<II', data) != (0xfeedfacf, 0x100000c)
+                or struct.unpack_from('<I', data, 12)[0] != 6):
+            raise ValueError('native provider must be a thin ARM64 Mach-O dylib')
+        command = next(o for kind, o, _ in load_commands(data) if kind == 13)
+        start = command+struct.unpack_from('<I', data, command+8)[0]
+        install_name = data[start:data.find(b'\0', start)].decode()
+        names = exports(data)[3]
+    return {'schema': 1, 'soname': soname, 'architecture': 'arm64',
+            'native_install_name': install_name,
+            'exports': sorted(name[1:] for name in names if name.startswith('_'))}
+
+
 def finish(path, expected_layout):
     # Inspect only mapped metadata; GPU blobs need neither copying nor editing.
     with Path(path).open('r+b') as output:
