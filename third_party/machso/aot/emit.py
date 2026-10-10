@@ -60,7 +60,8 @@ def scan(elf):
     for address, mnemonic, operands, ins in instructions():
         if address in targets:
             number = None
-        if mnemonic == 'mrs' and 'tpidr_el0' in operands:
+        is_tls = mnemonic == 'mrs' and 'tpidr_el0' in operands
+        if is_tls:
             register = operands.split(',')[0]
             sites.append({'address': address, 'kind': 'tls', 'register': int(register[1:])})
         elif mnemonic == 'svc':
@@ -74,7 +75,8 @@ def scan(elf):
                 record = {'address': address, 'kind': 'x18', 'instruction': mnemonic+' '+operands,
                           'writes': writes_names}
                 x18.append(record)
-                sites.append(record)
+                if not is_tls:
+                    sites.append(record)
         if mnemonic.startswith('b') or mnemonic in ('ret', 'cbz', 'cbnz', 'tbz', 'tbnz'):
             number = None
     return sites, x18
@@ -96,6 +98,17 @@ def restore_frame():
               'msr fpsr, x16', 'ldr x16, [sp, #248]', 'msr nzcv, x16']
     for i in range(0, 30, 2): lines.append(f'ldp x{i}, x{i+1}, [sp, #{i*8}]')
     lines += ['ldr x30, [sp, #240]', 'add sp, sp, #800']
+    return lines
+
+
+def lower_tls(register):
+    lines = ['bl _aot_thread_pointer']
+    if register == 18:
+        # Host x18 is reserved on macOS. Store the Linux TLS pointer in the
+        # guest x18 slot instead of replacing the saved host register.
+        lines += ['sub x16, x0, #0x1000', 'str x0, [x16]']
+    else:
+        lines.append(f'str x0, [sp, #{register*8}]')
     return lines
 
 
@@ -336,7 +349,7 @@ def emit(source, directory, plan=None):
         output += [f'.globl Laot_{address:x}', f'.private_extern Laot_{address:x}',
                    f'Laot_{address:x}:', *save_frame()]
         if site['kind'] == 'tls':
-            output += ['bl _aot_thread_pointer', f'str x0, [sp, #{site["register"]*8}]']
+            output += lower_tls(site['register'])
         elif site['kind'] == 'syscall':
             number = site['number']
             if number is None:

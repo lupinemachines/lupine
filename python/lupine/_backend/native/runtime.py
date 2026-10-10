@@ -17,6 +17,55 @@ S = ct.c_size_t
 F = ct.c_float
 
 
+class LinuxInt64(ct.c_int64):
+    @classmethod
+    def from_param(cls, value):
+        return ct.c_int64.from_param(getattr(value, "value", value))
+
+
+class LinuxUInt64(ct.c_uint64):
+    @classmethod
+    def from_param(cls, value):
+        return ct.c_uint64.from_param(getattr(value, "value", value))
+
+
+def linux_argtypes(types):
+    """Give spilled Linux integer arguments eight-byte AAPCS64 stack slots.
+
+    Apple ARM64 packs narrow stack arguments. Register arguments and the
+    separate floating-point register bank retain their declared types.
+    """
+    general, floating = 0, 0
+    result = []
+    signed = (ct.c_byte, ct.c_short, ct.c_int, ct.c_long, ct.c_longlong)
+    unsigned = (
+        ct.c_ubyte,
+        ct.c_ushort,
+        ct.c_uint,
+        ct.c_ulong,
+        ct.c_ulonglong,
+        ct.c_bool,
+    )
+    for argument in types:
+        if argument in (ct.c_float, ct.c_double):
+            if floating >= 8 and argument == ct.c_float:
+                raise NotImplementedError(
+                    "Linux float stack arguments need a typed ABI trampoline"
+                )
+            floating += 1
+        else:
+            if general >= 8 and ct.sizeof(argument) < 8:
+                if argument in signed:
+                    argument = LinuxInt64
+                elif argument in unsigned:
+                    argument = LinuxUInt64
+                else:
+                    raise NotImplementedError("unsupported Linux stack argument type")
+            general += 1
+        result.append(argument)
+    return tuple(result)
+
+
 class Runtime:
     def __init__(self):
         loaded = _native.load(missing_ok=False)
@@ -201,10 +250,9 @@ class Runtime:
         finally:
             destroy(ct.byref(program))
 
-    @staticmethod
-    def bind(library, name, *types):
+    def bind(self, library, name, *types):
         function = getattr(library, name)
-        function.argtypes = types
+        function.argtypes = linux_argtypes(types) if library is self.runtime else types
         function.restype = I
         return function
 

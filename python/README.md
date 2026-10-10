@@ -100,6 +100,13 @@ cuFFT's declared linker dependency. `tests/test_macos_cuda_libraries.py` checks
 GPU FFT/RNG results and clean process teardown when run on ARM64 macOS with
 `LUPINE_TEST_MACOS_CUDA_LIBRARIES=1` and a matching `LUPINE_LIBDIR`.
 
+The same preparation command accepts `--package nvidia-cusolver==12.3.4.7
+--package nvidia-cusparse==12.8.6.72`. Include exact cuBLAS and nvJitLink pins
+to control the resolved dependency versions. With this bundle,
+`LUPINE_TEST_MACOS_CUDA_LINALG=1` enables
+`tests/test_macos_cuda_linalg.py`, which checks Cholesky factorization,
+sparse matrix-vector multiplication, and clean process teardown.
+
 ## Native Lupine PyTorch backend (experimental)
 
 `lupine.connect()` on ARM64 macOS starts the native PyTorch backend and

@@ -3,7 +3,7 @@ import struct
 import unittest
 from unittest.mock import patch
 
-from aot.emit import Cs, scan
+from aot.emit import Cs, scan, lower_tls
 
 
 class ScanTests(unittest.TestCase):
@@ -38,6 +38,17 @@ class ScanTests(unittest.TestCase):
 
     def test_branch_into_chunk_resets_register_state(self):
         self.assertIsNone(self.scan(True)['number'])
+
+    def test_tls_read_into_x18_has_one_patch_and_preserves_host_register(self):
+        code = struct.pack('<II', 0xd53bd052, 0xaa1203e0)  # mrs x18, tpidr_el0; mov x0,x18
+        with patch('aot.emit.executable_sections', return_value=[(0, code)]):
+            sites, x18 = scan(None)
+        self.assertEqual([s['address'] for s in sites], [0, 4])
+        self.assertEqual(sites[0], {'address': 0, 'kind': 'tls', 'register': 18})
+        self.assertEqual([s['address'] for s in x18], [0, 4])
+        self.assertEqual(lower_tls(18),
+                         ['bl _aot_thread_pointer', 'sub x16, x0, #0x1000', 'str x0, [x16]'])
+        self.assertEqual(lower_tls(0), ['bl _aot_thread_pointer', 'str x0, [sp, #0]'])
 
 
 if __name__ == '__main__':

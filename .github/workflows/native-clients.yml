@@ -28,7 +28,10 @@ jobs:
       - name: Install ARM64 Linux ABI inputs
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y libc6-arm64-cross libgcc-s1-arm64-cross libstdc++6-arm64-cross
+          sudo apt-get install -y gcc-aarch64-linux-gnu libc6-arm64-cross libgcc-s1-arm64-cross libstdc++6-arm64-cross
+      - name: Test vendored compiler
+        working-directory: third_party/machso
+        run: uv run python -m unittest discover -s tests -q
       - name: Compile runtime into portable native inputs
         run: >
           uv run --project third_party/machso --with pip python cmake/prepare_macos_runtime.py
