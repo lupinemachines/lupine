@@ -690,6 +690,7 @@ if(LUPINE_BUILD_SERVER)
                 ${input_dir}/libcuda.so.* ${input_dir}/libnvidia-ml.so.*
                 ${input_dir}/libnccl.so.* ${input_dir}/libnvshmem_host.so.*
                 ${input_dir}/libcuda.dylib ${input_dir}/libnvidia-ml.dylib
+                ${input_dir}/libcudart.dylib
                 ${input_dir}/nvcuda.dll ${input_dir}/nvml.dll)
             list(SORT staged)
             set(files ${staged})
@@ -725,9 +726,17 @@ if(LUPINE_BUILD_SERVER)
             libcuda.so.1 libnvidia-ml.so.1)
         lupine_embed_client_bundle(linux-aarch64 "linux/arm64"
             libcuda.so.1 libnvidia-ml.so.1)
-        lupine_embed_client_bundle(macosx-universal2
-            "macos/amd64;macos/arm64"
-            libcuda.dylib libnvidia-ml.dylib)
+        if(EXISTS ${LUPINE_CLIENT_BUNDLE_INPUT}/lupine-client-macosx-arm64/libcudart.dylib)
+            lupine_embed_client_bundle(macosx-universal2 "macos/amd64"
+                libcuda.dylib libnvidia-ml.dylib)
+            lupine_embed_client_bundle(macosx-arm64 "macos/arm64"
+                libcuda.dylib libnvidia-ml.dylib libcudart.dylib)
+            target_compile_definitions(lupine_server_runtime PRIVATE
+                LUPINE_EMBED_MACOS_ARM64_RUNTIME)
+        else()
+            lupine_embed_client_bundle(macosx-universal2 "macos/amd64;macos/arm64"
+                libcuda.dylib libnvidia-ml.dylib)
+        endif()
         lupine_embed_client_bundle(win-amd64 "windows/amd64"
             nvcuda.dll nvml.dll)
         lupine_embed_client_bundle(win-arm64 "windows/arm64"

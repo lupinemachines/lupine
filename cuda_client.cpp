@@ -8515,7 +8515,28 @@ extern "C" CUresult lupine_integrity_check(unsigned int version,
   uint32_t process_id = static_cast<uint32_t>(getpid());
   uint32_t thread_id =
       static_cast<uint32_t>(reinterpret_cast<uintptr_t>(pthread_self()));
+#ifdef __APPLE__
+  // A translated Linux runtime can carry its own pthread descriptor. The
+  // integrity exchange must use the caller's thread identity on both sides.
+  Dl_info caller_info = {};
+  if (dladdr(__builtin_return_address(0), &caller_info) != 0 &&
+      caller_info.dli_fname != nullptr) {
+    void *caller = dlopen(caller_info.dli_fname, RTLD_LAZY | RTLD_NOLOAD);
+    if (caller != nullptr) {
+      using caller_pthread_self_t = uintptr_t (*)();
+      auto caller_pthread_self = reinterpret_cast<caller_pthread_self_t>(
+          lupine_real_dlsym(caller, "pthread_self"));
+      if (caller_pthread_self != nullptr) {
+        thread_id = static_cast<uint32_t>(caller_pthread_self());
+      }
+      dlclose(caller);
+    }
+  }
 #endif
+#endif
+  LUPINE_TRACE_LOG("LUPINE integrity version="
+                   << version << " seconds=" << unix_seconds
+                   << " pid=" << process_id << " thread=" << thread_id);
   lupine_integrity_pass3_input input = {
       static_cast<uint32_t>(driver_version),
       version,

@@ -9,6 +9,13 @@ brings its own. NCCL and nvSHMEM cannot work through the driver alone, so
 their shims are loaded when the bundle names them and no native copy (an
 `nvidia-nccl-*` wheel or a system library) is installed.
 
+ARM64 macOS client bundles additionally carry NVIDIA's CUDA 13.3 runtime,
+converted from its Linux binary by the vendored
+[machso](https://github.com/kevmo314/machso) compiler. The runtime runs locally
+and makes driver calls through Lupine. It loads with local visibility so its
+embedded Linux libc cannot replace Python's native libc. Intel macOS bundles
+continue to provide the native driver and NVML only.
+
 The wheel itself is pure Python: a small PyTorch adapter and the loader that
 resolves that client. No NVIDIA driver, CUDA toolkit, or container runtime is
 needed on the client.
@@ -49,6 +56,41 @@ native HTTP/2 connection, so:
   operators execute in a same-version CUDA torch running elsewhere.
 - **Native arm64 Python on Windows** gets the driver and NVML; run an x64
   Python for a CUDA PyTorch (see below).
+
+## ARM64 macOS CUDA runtime
+
+With a server whose ARM64 macOS bundle includes the converted runtime, Python
+can call the runtime directly. Set `LUPINE_SERVER` before starting Python:
+
+```python
+import ctypes
+import lupine
+
+libraries = lupine.load_native(missing_ok=False)
+runtime = ctypes.CDLL(libraries["libcudart.dylib"], mode=ctypes.RTLD_LOCAL)
+runtime.cudaGetDeviceCount.argtypes = [ctypes.POINTER(ctypes.c_int)]
+runtime.cudaGetDeviceCount.restype = ctypes.c_int
+count = ctypes.c_int()
+assert runtime.cudaGetDeviceCount(ctypes.byref(count)) == 0
+print(count.value)
+```
+
+The native-client workflow prepares the pinned ARM64 Linux runtime and its
+dependency closure on Ubuntu, then links and signs it in separate macOS steps.
+`third_party/machso/UPSTREAM` records the vendored revision. The pure Python
+wheel still gets its native objects from the selected server. This runtime
+does not enable CUDA in a CPU-only PyTorch build; that continues to use the
+torch backend described below. Converting `libcudart` does not supply
+PyTorch's compiled CUDA operators or its cuBLAS/cuDNN dependencies. The
+worker cannot be removed until a CUDA-enabled PyTorch build and its full
+dependency closure run on macOS and pass tensor and autograd tests.
+
+The GPU integration checks in `tests/test_macos_runtime.py` cover discovery,
+allocation, copies, memset, and coexistence with native CPU PyTorch. Run them
+on ARM64 macOS with `LUPINE_SERVER` configured and
+`LUPINE_TEST_MACOS_RUNTIME=1`; an optional `LUPINE_LIBDIR` selects a local
+client bundle. These checks do not validate PyTorch CUDA operators or kernel
+launches.
 
 ## Windows on ARM
 
