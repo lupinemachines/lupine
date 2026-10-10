@@ -963,6 +963,32 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
 
     if(TARGET lupine_nvml_client)
+        add_test(NAME nvml_process_utilization_export
+            COMMAND bash -c
+                "nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q ' T nvmlDeviceGetProcessUtilization$'")
+        # A separate NVML-only configuration can exercise the full transport
+        # on CPU builders without a CUDA driver or physical GPU.
+        if(TARGET lupine_driver_server AND NOT LUPINE_BUILD_CUDA)
+            foreach(variant IN ITEMS full missing)
+                add_library(mock_nvml_${variant} SHARED
+                    test/mock_nvml_process_utilization.cpp)
+                target_include_directories(mock_nvml_${variant} PRIVATE
+                    ${CUDAToolkit_INCLUDE_DIRS})
+                set_target_properties(mock_nvml_${variant} PROPERTIES
+                    OUTPUT_NAME nvidia-ml SOVERSION 1
+                    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/mock-nvml-${variant}")
+            endforeach()
+            target_compile_definitions(mock_nvml_missing PRIVATE
+                MOCK_NVML_OMIT_UTILIZATION)
+            add_test(NAME nvml_process_utilization_rpc
+                COMMAND python3
+                    ${CMAKE_CURRENT_SOURCE_DIR}/test/test_nvml_process_utilization.py
+                    $<TARGET_FILE:lupine_driver_server>
+                    $<TARGET_FILE:lupine_nvml_client>
+                    $<TARGET_FILE_DIR:mock_nvml_full>
+                    $<TARGET_FILE_DIR:mock_nvml_missing>)
+            set_tests_properties(nvml_process_utilization_rpc PROPERTIES TIMEOUT 50)
+        endif()
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
                 "nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetMemoryErrorCounter && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetCudaComputeCapability")

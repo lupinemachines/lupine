@@ -1271,6 +1271,8 @@ nvmlReturn_t nvmlDeviceGetGridLicensableFeatures_v4(
     nvmlDevice_t device, nvmlGridLicensableFeatures_t *pGridLicensableFeatures);
 /**
  * @param device SEND_ONLY
+ * @disabled - manual bounded variable-length response; preserve buffers on
+ * errors
  * @param processSamplesCount SEND_RECV
  * @param utilization RECV_ONLY LENGTH:processSamplesCount
  * @param lastSeenTimeStamp SEND_ONLY

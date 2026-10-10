@@ -195,6 +195,7 @@ NVML_RPC_FUNCTIONS = [
     "nvmlDeviceGetPcieReplayCounter",
     "nvmlDeviceGetComputeRunningProcesses",
     "nvmlDeviceGetComputeRunningProcesses_v2",
+    "nvmlDeviceGetProcessUtilization",
     "nvmlDeviceGetGraphicsRunningProcesses",
     "nvmlDeviceGetGraphicsRunningProcesses_v2",
     "nvmlDeviceGetMPSComputeRunningProcesses",

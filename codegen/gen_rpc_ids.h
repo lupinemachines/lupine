@@ -453,6 +453,7 @@
 #define RPC_nvmlDeviceGetPcieReplayCounter 348659925
 #define RPC_nvmlDeviceGetComputeRunningProcesses 1734808954
 #define RPC_nvmlDeviceGetComputeRunningProcesses_v2 337035361
+#define RPC_nvmlDeviceGetProcessUtilization 986214394
 #define RPC_nvmlDeviceGetGraphicsRunningProcesses 1362373604
 #define RPC_nvmlDeviceGetGraphicsRunningProcesses_v2 1346129566
 #define RPC_nvmlDeviceGetMPSComputeRunningProcesses 770735307
