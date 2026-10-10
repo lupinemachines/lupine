@@ -25,17 +25,19 @@ def _normalized(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-# The client a release loads: the driver and NVML per platform, nothing else.
+# Required native providers stay stable; ARM64 macOS can additionally carry
+# a converted CUDA runtime without making it mandatory on other platforms.
 REQUIRED = {
     "linux": ("libcuda.so.1", "libnvidia-ml.so.1"),
     "darwin": ("libcuda.dylib", "libnvidia-ml.dylib"),
     "win32": ("nvcuda.dll", "nvml.dll"),
 }
 CONDITIONAL = {"libnccl", "libnvshmem_host"}
+RUNTIMES = {"darwin": ("libcudart.dylib",)}
 
 
 def verify_loader(source: bytes) -> None:
-    """Check that ``lupine/_native.py`` preloads only the driver and NVML."""
+    """Check the required providers and supported optional runtime set."""
 
     found: dict[str, object] = {}
     for node in ast.parse(source).body:
@@ -44,6 +46,7 @@ def verify_loader(source: bytes) -> None:
                 if isinstance(target, ast.Name) and target.id in (
                     "_REQUIRED",
                     "_CONDITIONAL",
+                    "_RUNTIMES",
                 ):
                     found[target.id] = ast.literal_eval(node.value)
     if found.get("_REQUIRED") != REQUIRED:
@@ -54,6 +57,8 @@ def verify_loader(source: bytes) -> None:
         raise ValueError(
             f"loader may condition only NCCL and nvSHMEM, found {found.get('_CONDITIONAL')}"
         )
+    if found.get("_RUNTIMES") != RUNTIMES:
+        raise ValueError(f"unexpected optional runtime set: {found.get('_RUNTIMES')}")
 
 
 def verify_metadata(tag: str | None = None) -> str:

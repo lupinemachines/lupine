@@ -220,6 +220,26 @@ def test_libdir_directory_is_filtered_like_a_bundle(monkeypatch, tmp_path):
     assert tuple(loaded) == _native._REQUIRED[sys.platform]
 
 
+@pytest.mark.parametrize('manifest', [False, True])
+def test_macos_runtime_loads_locally_after_native_driver(monkeypatch, tmp_path, manifest):
+    libdir = tmp_path/'client'
+    monkeypatch.setattr(_native.sys, 'platform', 'darwin')
+    names = _stage(libdir, ('libcudart.dylib', 'unrelated.dylib'))
+    loaded = []
+    monkeypatch.setattr(_native, '_loaded', {})
+    monkeypatch.setattr(_native, '_names', names if manifest else ())
+    monkeypatch.setenv('LUPINE_LIBDIR', str(libdir))
+    monkeypatch.setattr(_native.ctypes, 'CDLL',
+                        lambda path, mode: loaded.append((Path(path).name, mode)))
+    result = _native.load(missing_ok=False)
+    assert loaded == [
+        ('libcuda.dylib', _native.ctypes.RTLD_GLOBAL),
+        ('libnvidia-ml.dylib', _native.ctypes.RTLD_GLOBAL),
+        ('libcudart.dylib', _native.ctypes.RTLD_LOCAL),
+    ]
+    assert set(result) == {name for name, mode in loaded}
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="NCCL and nvSHMEM are Linux only")
 def test_nccl_shim_loads_only_when_named_and_absent_natively(monkeypatch, tmp_path):
     libdir = tmp_path / "client"
