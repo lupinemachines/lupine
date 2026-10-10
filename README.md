@@ -431,3 +431,25 @@ This project is inspired by some existing proprietary solutions:
 - https://www.thundercompute.com/
 - https://www.juicelabs.co/
 - https://en.wikipedia.org/wiki/RCUDA
+
+### Optional workload attribution
+
+Set `LUPINE_WORKLOAD_ID` in a client process to attach an opaque workload
+identifier to monitoring samples, for example `job-123:worker-0`. Lupine does
+not interpret this value; orchestration systems can use it to group processes
+and resolve their own container or job identities. It is attribution metadata,
+not an authentication credential.
+
+The identifier must be valid UTF-8 and at most 256 bytes. Empty means unset;
+invalid values are ignored without truncation or disrupting GPU calls.
+Clients read it when establishing each connection, including reconnects.
+The existing metadata version is unchanged: workload identity is an optional
+trailing extension. Older servers ignore it; newer servers treat metadata from
+older clients as having an empty workload identity.
+
+`lupine_server_connection_info`, `lupine_client_device_memory_used_bytes` and
+`lupine_client_device_utilization_percent` include a `workload_id` label (empty
+when unset). Existing `client_id` generation and process-level aggregation are
+unchanged. Conflicting workload identities on connections from the same client
+process suppress workload attribution for that process. Disconnecting removes
+the identity with its connection registry entry.

@@ -1,5 +1,7 @@
 #include "monitoring.h"
 
+#include <cstddef>
+#include <cstdlib>
 #include <cstring>
 
 #ifdef _WIN32
@@ -106,10 +108,25 @@ int lupine_report_client_metadata(conn_t *conn, const char *connection_kind) {
   fill_process_name(metadata.client_process_name);
   fill_hostname(metadata.client_hostname, sizeof(metadata.client_hostname));
 
+  lupine_client_metadata_extended extended = {};
+  extended.client = metadata;
+  const char *id = getenv("LUPINE_WORKLOAD_ID");
+  size_t size = id == nullptr ? 0 : strnlen(id, LUPINE_WORKLOAD_ID_MAX_BYTES + 1);
+  if (lupine_valid_workload_id(id, size)) {
+    extended.workload_id_size = static_cast<uint32_t>(size);
+    if (size)
+      memcpy(extended.workload_id, id, size);
+  } else {
+    LUPINE_LOG_ERROR("Ignoring invalid LUPINE_WORKLOAD_ID (UTF-8, max 256 bytes)");
+  }
+  header.payload_size = static_cast<uint32_t>(
+      offsetof(lupine_client_metadata_extended, workload_id) + extended.workload_id_size);
+  const void *payload = &extended;
+
   // Fire-and-forget: the server sends no response.
   if (rpc_write_start_request(conn, LUPINE_RPC_CLIENT_METADATA) < 0 ||
       rpc_write(conn, &header, sizeof(header)) < 0 ||
-      rpc_write(conn, &metadata, sizeof(metadata)) < 0 ||
+      rpc_write(conn, payload, header.payload_size) < 0 ||
       rpc_write_end(conn) < 0) {
     LUPINE_LOG_ERROR("Failed to send client metadata");
     return -1;
