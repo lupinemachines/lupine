@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Sign a linked dylib and update its report with the signed artifact's hash."""
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import subprocess
+from aot.macho import file_hash
 
 
 def sign_bundle(output, identity='-'):
@@ -17,7 +17,7 @@ def sign_bundle(output, identity='-'):
     subprocess.run(['codesign', '--verify', '--strict', str(output)], check=True)
     report['build_status'] = 'signed'
     report['signed'] = True
-    report['output_sha256'] = hashlib.sha256(output.read_bytes()).hexdigest()
+    report['output_sha256'] = file_hash(output)
     report_path.write_text(json.dumps(report, indent=2)+'\n')
     print(f'Signed and verified {output}')
     return report

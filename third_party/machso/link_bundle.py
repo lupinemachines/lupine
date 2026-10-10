@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Assemble and link a prepared machso directory using the local macOS toolchain."""
 import argparse
-import hashlib
 import json
 from pathlib import Path
 import subprocess
 
-from aot.macho import finish
+from aot.macho import finish, file_hash
 
 
 def run(command, directory):
@@ -41,7 +40,7 @@ def link_bundle(directory, output):
              '-o', str(output)], directory)
         report['native_exports'] = finish(output, report['segments'])
         report['native_dependencies'] = run(['otool', '-L', str(output)], directory)
-        report['output_sha256'] = hashlib.sha256(output.read_bytes()).hexdigest()
+        report['output_sha256'] = file_hash(output)
         report['build_status'] = 'linked'
         report['signed'] = False
     except subprocess.CalledProcessError as error:

@@ -1,5 +1,7 @@
 """Inspect native layout and restore public names after linking private ELF names."""
 import struct
+import mmap
+import hashlib
 from pathlib import Path
 from machso import uleb, align
 
@@ -93,45 +95,65 @@ def make_trie(entries):
         offsets = new
 
 
+def file_hash(path):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as source:
+        for chunk in iter(lambda: source.read(1024*1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def finish(path, expected_layout):
-    data = bytearray(Path(path).read_bytes())
-    for name, expected in expected_layout.items():
-        cmd = next(o for cmd, o, _ in load_commands(data)
-                   if cmd == 0x19 and data[o+8:o+24].rstrip(b'\0').decode() == name)
-        actual = struct.unpack_from('<Q', data, cmd+24)[0]
-        if actual != expected:
-            raise ValueError(f'{name}: linker changed address {actual:#x}, expected {expected:#x}')
-    command, start, size, entries = exports(data)
-    renamed = {(name[2:] if name.startswith('_g_') else name): terminal for name, terminal in entries.items()}
-    if len(renamed) != len(entries):
-        raise ValueError('public export name collision')
-    trie = make_trie(renamed)
-    signature = next((o for cmd, o, _ in load_commands(data) if cmd == 0x1d), None)
-    if signature is not None:
-        # Produce an unsigned final binary; signing is performed after all edits.
-        signature_start = struct.unpack_from('<I', data, signature+8)[0]
-        del data[signature_start:]
-    start = align(len(data), 8)
-    data.extend(b'\0'*(start-len(data)))
-    data.extend(trie)
-    struct.pack_into('<II', data, command+8, start, len(trie))
-    # Leave string bytes intact: imports may share suffixes with exported names.
-    symcmd = next(o for cmd, o, _ in load_commands(data) if cmd == 2)
-    symoff, count, stroff, _ = struct.unpack_from('<IIII', data, symcmd+8)
-    for i in range(count):
-        offset = symoff+i*16
-        string_index, kind = struct.unpack_from('<IB', data, offset)
-        if kind & 0x0e and data[stroff+string_index:stroff+string_index+3] == b'_g_':
-            struct.pack_into('<I', data, offset, string_index+2)
-    for cmd, offset, _ in load_commands(data):
-        if cmd == 0x19 and data[offset+8:offset+24].rstrip(b'\0') == b'__LINKEDIT':
-            fileoff = struct.unpack_from('<Q', data, offset+40)[0]
-            struct.pack_into('<Q', data, offset+32, align(len(data)-fileoff))
-            struct.pack_into('<Q', data, offset+48, len(data)-fileoff)
-    commands = [bytes(data[offset:offset+size]) for cmd, offset, size in load_commands(data) if cmd != 0x1d]
-    old_size = struct.unpack_from('<I', data, 20)[0]
-    command_bytes = b''.join(commands)
-    data[32:32+old_size] = command_bytes+b'\0'*(old_size-len(command_bytes))
-    struct.pack_into('<II', data, 16, len(commands), len(command_bytes))
-    Path(path).write_bytes(data)
+    # Inspect only mapped metadata; GPU blobs need neither copying nor editing.
+    with Path(path).open('r+b') as output:
+        with mmap.mmap(output.fileno(), 0, access=mmap.ACCESS_READ) as data:
+            commands = list(load_commands(data))
+            for name, expected in expected_layout.items():
+                cmd = next(o for kind, o, _ in commands
+                           if kind == 0x19 and data[o+8:o+24].rstrip(b'\0').decode() == name)
+                actual = struct.unpack_from('<Q', data, cmd+24)[0]
+                if actual != expected:
+                    raise ValueError(f'{name}: linker changed address {actual:#x}, expected {expected:#x}')
+            command, _, _, entries = exports(data)
+            renamed = {(name[2:] if name.startswith('_g_') else name): terminal
+                       for name, terminal in entries.items()}
+            if len(renamed) != len(entries):
+                raise ValueError('public export name collision')
+            trie = make_trie(renamed)
+            signature = next((o for kind, o, _ in commands if kind == 0x1d), None)
+            # Remove the linker's signature before appending the final export trie.
+            end = struct.unpack_from('<I', data, signature+8)[0] if signature is not None else len(data)
+            start = align(end, 8)
+            final_size = start+len(trie)
+            old_size = struct.unpack_from('<I', data, 20)[0]
+            header = bytearray(data[:32+old_size])
+            struct.pack_into('<II', header, command+8, start, len(trie))
+            symcmd = next(o for kind, o, _ in commands if kind == 2)
+            symoff, count, stroff, _ = struct.unpack_from('<IIII', data, symcmd+8)
+            patches = []
+            for i in range(count):
+                offset = symoff+i*16
+                string_index, kind = struct.unpack_from('<IB', data, offset)
+                # Imports may share a string suffix with exported names.
+                if kind & 0x0e and data[stroff+string_index:stroff+string_index+3] == b'_g_':
+                    patches.append((offset, struct.pack('<I', string_index+2)))
+            for kind, offset, _ in commands:
+                if kind == 0x19 and data[offset+8:offset+24].rstrip(b'\0') == b'__LINKEDIT':
+                    fileoff = struct.unpack_from('<Q', data, offset+40)[0]
+                    struct.pack_into('<Q', header, offset+32, align(final_size-fileoff))
+                    struct.pack_into('<Q', header, offset+48, final_size-fileoff)
+            kept = [bytes(header[offset:offset+size]) for kind, offset, size in commands if kind != 0x1d]
+            command_bytes = b''.join(kept)
+            header[32:] = command_bytes+b'\0'*(old_size-len(command_bytes))
+            struct.pack_into('<II', header, 16, len(kept), len(command_bytes))
+        # All checks finish before any bytes are changed. Retain the bulk payload.
+        output.truncate(end)
+        output.seek(end)
+        output.write(b'\0'*(start-end))
+        output.write(trie)
+        for offset, replacement in patches:
+            output.seek(offset)
+            output.write(replacement)
+        output.seek(0)
+        output.write(header)
     return len(renamed)
