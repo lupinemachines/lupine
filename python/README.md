@@ -73,8 +73,9 @@ assert runtime.cudaGetDeviceCount(ctypes.byref(count)) == 0
 print(count.value)
 ```
 
-The native-client workflow prepares the pinned ARM64 Linux runtime, NVRTC, cuBLAS, and their
-dependency closure on Ubuntu, then links and signs it in separate macOS steps.
+The native-client workflow prepares pinned ARM64 Linux CUDART, NVRTC, cuBLAS,
+cuFFT, cuRAND, cuSOLVER, cuSPARSE, and nvJitLink inputs and their dependency
+closure on Ubuntu, then links and signs them in separate macOS steps.
 `third_party/machso/UPSTREAM` records the vendored revision. The preparation
 script also accepts repeatable `--package name==version` arguments. It
 resolves their wheel dependencies, records exact versions and wheel hashes in

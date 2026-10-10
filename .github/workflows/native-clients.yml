@@ -19,7 +19,7 @@ jobs:
   macos-runtime-input:
     name: Prepare ARM64 CUDA runtime
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -38,6 +38,11 @@ jobs:
           --output build/macos-runtime -L /usr/aarch64-linux-gnu/lib
           --package nvidia-cuda-nvrtc==13.3.33
           --package nvidia-cublas==13.3.0.5
+          --package nvidia-cufft==12.3.0.29
+          --package nvidia-curand==10.4.3.29
+          --package nvidia-cusolver==12.3.4.7
+          --package nvidia-cusparse==12.8.6.72
+          --package nvidia-nvjitlink==13.3.33
       - name: Prepare native ABI regression fixture
         run: |
           aarch64-linux-gnu-gcc -shared -fPIC -O2 python/tests/fixtures/native_abi.c \
