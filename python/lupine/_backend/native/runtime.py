@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes as ct
 from contextlib import contextmanager
 from pathlib import Path
+import struct
 import threading
 
 from ... import _native
@@ -29,8 +30,24 @@ class LinuxUInt64(ct.c_uint64):
         return ct.c_uint64.from_param(getattr(value, "value", value))
 
 
+class LinuxFloatSlot(ct.c_double):
+    @classmethod
+    def from_param(cls, value):
+        # Keep the float in the FP argument bank, but reserve an eight-byte
+        # spill slot. A double carries the float's bits, not its numeric value.
+        value = ct.c_float(getattr(value, "value", value)).value
+        bits = struct.pack("<f", value) + b"\0" * 4
+        return ct.c_double.from_param(struct.unpack("<d", bits)[0])
+
+
+class LinuxBoolSlot(ct.c_uint64):
+    @classmethod
+    def from_param(cls, value):
+        return ct.c_uint64.from_param(bool(getattr(value, "value", value)))
+
+
 def linux_argtypes(types):
-    """Give spilled Linux integer arguments eight-byte AAPCS64 stack slots.
+    """Give spilled Linux scalar arguments eight-byte AAPCS64 stack slots.
 
     Apple ARM64 packs narrow stack arguments. Register arguments and the
     separate floating-point register bank retain their declared types.
@@ -49,13 +66,13 @@ def linux_argtypes(types):
     for argument in types:
         if argument in (ct.c_float, ct.c_double):
             if floating >= 8 and argument == ct.c_float:
-                raise NotImplementedError(
-                    "Linux float stack arguments need a typed ABI trampoline"
-                )
+                argument = LinuxFloatSlot
             floating += 1
         else:
             if general >= 8 and ct.sizeof(argument) < 8:
-                if argument in signed:
+                if argument is ct.c_bool:
+                    argument = LinuxBoolSlot
+                elif argument in signed:
                     argument = LinuxInt64
                 elif argument in unsigned:
                     argument = LinuxUInt64

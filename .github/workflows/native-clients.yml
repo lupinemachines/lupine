@@ -38,6 +38,13 @@ jobs:
           --output build/macos-runtime -L /usr/aarch64-linux-gnu/lib
           --package nvidia-cuda-nvrtc==13.3.33
           --package nvidia-cublas==13.3.0.5
+      - name: Prepare native ABI regression fixture
+        run: |
+          aarch64-linux-gnu-gcc -shared -fPIC -O2 python/tests/fixtures/native_abi.c \
+            -Wl,--no-as-needed -lc -o build/native-abi.so
+          uv run --project third_party/machso python third_party/machso/compile_bundle.py \
+            build/native-abi.so build/macos-runtime/abi-fixture \
+            -L /usr/aarch64-linux-gnu/lib --experimental
       - uses: actions/upload-artifact@v7
         with:
           name: lupine-macos-runtime-input
@@ -161,6 +168,19 @@ jobs:
         run: >
           uv run --project third_party/machso python third_party/machso/sign_bundle.py
           build/libcudart.dylib
+
+      - name: Verify converted Linux ABI on native macOS
+        if: matrix.tag == 'macosx-arm64'
+        run: |
+          uv run --project third_party/machso python third_party/machso/link_bundle.py \
+            build/macos-runtime/abi-fixture build/native-abi.dylib
+          uv run --project third_party/machso python third_party/machso/sign_bundle.py \
+            build/native-abi.dylib
+          clang -dynamiclib -arch arm64 python/tests/fixtures/native_abi.c -o build/host-abi.dylib
+          LUPINE_AUTO=0 PYTHONPATH="$PWD/python" \
+            LUPINE_TEST_NATIVE_ABI_DYLIB="$PWD/build/native-abi.dylib" \
+            LUPINE_TEST_NATIVE_ABI_HOST_DYLIB="$PWD/build/host-abi.dylib" \
+            uv run --project third_party/machso --with pytest python -m pytest -q python/tests/test_native_abi.py
 
       - name: Build client (Windows)
         if: runner.os == 'Windows'
