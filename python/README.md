@@ -77,7 +77,9 @@ The native-client workflow prepares the pinned ARM64 Linux runtime, NVRTC, cuBLA
 dependency closure on Ubuntu, then links and signs it in separate macOS steps.
 `third_party/machso/UPSTREAM` records the vendored revision. The preparation
 script also accepts repeatable `--package name==version` arguments. It
-extracts every ELF library from those wheels as an additional root, discovers
+resolves their wheel dependencies, records exact versions and wheel hashes in
+`packages.lock`, and extracts every ELF library as an additional root. Use
+`--requirements packages.lock` to replay those inputs with hash verification. It discovers
 their dependency closure from ELF metadata, and builds one shared libc/TLS
 image. Late-loaded helper SONAMEs resolve to this image automatically. The pure Python
 wheel still gets its native objects from the selected server. This runtime

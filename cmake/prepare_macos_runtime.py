@@ -2,76 +2,17 @@
 """Prepare an ARM64 CUDA library closure using vendored machso."""
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
-import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "third_party/machso"))
 from compile_bundle import prepare_bundle
+from cuda_wheels import download_libraries
 
 CUDA_RUNTIME_VERSION = "13.3.29"
-PLATFORMS = (
-    "manylinux2014_aarch64",
-    "manylinux_2_17_aarch64",
-    "manylinux_2_27_aarch64",
-    "manylinux_2_28_aarch64",
-)
-
-
-def download_libraries(directory, package, destination):
-    if "==" not in package:
-        raise ValueError("CUDA input packages must use an exact == version pin")
-    directory.mkdir(parents=True)
-    command = [
-        sys.executable,
-        "-m",
-        "pip",
-        "download",
-        "--dest",
-        str(directory),
-        "--only-binary=:all:",
-        "--no-deps",
-        "--implementation",
-        "py",
-        "--python-version",
-        "3",
-        "--abi",
-        "none",
-    ]
-    for platform in PLATFORMS:
-        command += ["--platform", platform]
-    subprocess.run([*command, package], check=True)
-    wheels = list(directory.glob("*.whl"))
-    if len(wheels) != 1:
-        raise ValueError("expected exactly one wheel per package")
-    libraries = []
-    with zipfile.ZipFile(wheels[0]) as archive:
-        for name in archive.namelist():
-            if "/lib/" not in name or name.endswith("/"):
-                continue
-            with archive.open(name) as member:
-                if member.read(4) != b"\x7fELF":
-                    continue
-            # Dynamic helpers belong in the same closure as their consumer,
-            # even when they have no DT_NEEDED edge (e.g. compiler builtins).
-            data = archive.read(name)
-            output = destination / Path(name).name
-            if output.exists() and output.read_bytes() != data:
-                raise ValueError(f"conflicting library inputs: {output.name}")
-            output.write_bytes(data)
-            libraries.append(output)
-    if not libraries:
-        raise ValueError(f"{package} contains no ELF libraries")
-    return libraries, {
-        "package": package,
-        "wheel": wheels[0].name,
-        "sha256": hashlib.sha256(wheels[0].read_bytes()).hexdigest(),
-    }
 
 
 def main():
@@ -88,31 +29,33 @@ def main():
         "--package",
         action="append",
         default=[],
-        help="also convert every ELF library in this pinned NVIDIA wheel; repeatable",
+        help="convert this pinned NVIDIA wheel and its dependencies; repeatable",
+    )
+    parser.add_argument(
+        "--requirements",
+        type=Path,
+        help="replay a generated packages.lock with hash verification",
     )
     args = parser.parse_args()
     with tempfile.TemporaryDirectory() as temporary:
         directory = Path(temporary)
         inputs = directory / "libraries"
         inputs.mkdir()
-        libraries, packages = [], []
-        if args.runtime:
-            source = args.runtime
-        else:
-            found, provenance = download_libraries(
-                directory / "runtime", "nvidia-cuda-runtime==" + args.version, inputs
+        requested = list(args.package)
+        if not args.runtime:
+            requested.append("nvidia-cuda-runtime==" + args.version)
+        libraries, packages = (
+            download_libraries(
+                directory / "wheels", requested, inputs, args.requirements
             )
-            source = next((p for p in found if p.name == "libcudart.so.13"), None)
-            if source is None:
-                raise ValueError("runtime wheel must contain libcudart.so.13")
-            libraries.extend(found)
-            packages.append(provenance)
-        for index, package in enumerate(args.package):
-            found, provenance = download_libraries(
-                directory / f"package-{index}", package, inputs
-            )
-            libraries.extend(found)
-            packages.append(provenance)
+            if requested or args.requirements
+            else ([], [])
+        )
+        source = args.runtime or next(
+            (p for p in libraries if p.name == "libcudart.so.13"), None
+        )
+        if source is None:
+            raise ValueError("runtime wheel must contain libcudart.so.13")
         extra = sorted({p for p in libraries if p.resolve() != source.resolve()})
         report = prepare_bundle(
             source,
@@ -127,6 +70,12 @@ def main():
             else {"package": "nvidia-cuda-runtime", "version": args.version}
         )
         report["input_packages"] = packages
+        (args.output / "packages.lock").write_text(
+            "".join(
+                f"{package['package']} --hash=sha256:{package['sha256']}\n"
+                for package in packages
+            )
+        )
         (args.output / "manifest.json").write_text(json.dumps(report, indent=2) + "\n")
 
 
