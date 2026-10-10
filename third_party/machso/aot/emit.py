@@ -238,7 +238,10 @@ def emit(source, directory, plan=None):
                 binding = plan.imports.get(index) if plan else '_aot_import_'+symbol['name']
                 if binding is None and symbol['info'] >> 4 != 2:
                     raise ValueError(f'unresolved required import {symbol["name"]}')
-                replacement = f'.quad {binding or 0}'
+                # RELA addends also apply to external symbols. In particular,
+                # C++ RTTI stores vtable address points after the two header
+                # entries; dropping +16 makes virtual calls use the wrong slot.
+                replacement = f'.quad {binding or 0}{addend:+d}' if addend else f'.quad {binding or 0}'
         elif kind == 1028:
             replacement = f'.quad {plan.tls_modules.get(index, plan.module_id) if plan else 1}'
         elif kind == 1029:
@@ -388,6 +391,8 @@ def emit(source, directory, plan=None):
         output += ['.section __DATA,__thread_vars,thread_local_variables', '.p2align 3',
                    '.globl _aot_tls_descriptor', '.private_extern _aot_tls_descriptor', '_aot_tls_descriptor:',
                    '.quad __tlv_bootstrap', '.quad 0', '.quad _aot_tls_image']
+    if any(s['info'] & 15 == 6 for _, s in public_exports):
+        output += ['.section __DATA,__thread_vars,thread_local_variables', '.p2align 3']
     for name, s in public_exports:
         if s['info'] & 15 == 6:
             output += [f'.globl _g_{name}', f'_g_{name}:', '.quad __tlv_bootstrap', '.quad 0', f'.quad Laot_tls_{name}']

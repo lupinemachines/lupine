@@ -3,10 +3,12 @@
 #include <mach-o/dyld.h>
 #include <stdint.h>
 #include <string.h>
+#if !defined(AOT_MODULE_LOOKUP)
 #ifndef AOT_MODULE_SONAMES
 #define AOT_MODULE_SONAMES NULL
 #endif
 static const char *const aot_module_sonames[] = {AOT_MODULE_SONAMES};
+#endif
 extern int *g___errno_location(void);
 static int aot_dlopen_flags(int flags) {
     const int supported=1|2|4|8|0x100|0x1000;
@@ -22,12 +24,19 @@ void *aot_linux_dlopen(const char *path,int flags) {
     if (native<0) {*g___errno_location()=22;return NULL;}
     const char *base=path ? strrchr(path,'/') : NULL;
     base=base ? base+1 : path;
+#ifdef AOT_MODULE_LOOKUP
+    if (base) {
+        void *module=aot_module_open(base,native);
+        if (module) return module;
+    }
+#else
     if (base) for (size_t i=0;i<sizeof(aot_module_sonames)/sizeof(aot_module_sonames[0]);i++) {
         if (aot_module_sonames[i] && !strcmp(base,aot_module_sonames[i])) {
             Dl_info self;
             if (dladdr((void *)&aot_linux_dlopen,&self)) return dlopen(self.dli_fname,native);
         }
     }
+#endif
     void *handle=dlopen(path,native);
     if (handle || !path || strchr(path,'/')) return handle;
     /* An explicitly preloaded native provider may have a Darwin filename
@@ -52,13 +61,36 @@ void *aot_linux_dlmopen(long namespace,const char *path,int flags) {
     return aot_linux_dlopen(path,flags);
 }
 void *aot_linux_dlsym(void *handle,const char *name) {
+#ifdef AOT_MODULE_LOOKUP
+    struct aot_module *module=aot_module_handle(handle);
+    if (module) return aot_module_symbol(module,name,NULL);
+#endif
     if (!handle) handle=RTLD_DEFAULT;
     else if (handle==(void *)-1) handle=RTLD_NEXT;
     return dlsym(handle,name);
 }
 void *aot_linux_dlvsym(void *handle,const char *name,const char *version) {
+#ifdef AOT_MODULE_LOOKUP
+    struct aot_module *module=aot_module_handle(handle);
+    if (module) return aot_module_symbol(module,name,version);
+#endif
     (void)version;
     return aot_linux_dlsym(handle,name);
 }
-int aot_linux_dlclose(void *handle) {return dlclose(handle);}
-char *aot_linux_dlerror(void) {return dlerror();}
+int aot_linux_dlclose(void *handle) {
+#ifdef AOT_MODULE_LOOKUP
+    struct aot_module *module=aot_module_handle(handle);
+    if (module) handle=__atomic_load_n(&module->native,__ATOMIC_ACQUIRE);
+#endif
+    return dlclose(handle);
+}
+char *aot_linux_dlerror(void) {
+#ifdef AOT_MODULE_LOOKUP
+    if (aot_module_error) {
+        const char *error=aot_module_error;
+        aot_module_error=NULL;
+        return (char *)error;
+    }
+#endif
+    return dlerror();
+}

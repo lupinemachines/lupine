@@ -190,9 +190,8 @@ class Bundle:
             # Late-bound modules can be included as roots even when they have
             # no DT_NEEDED edge. Their SONAMEs resolve to this same native image
             # and share one libc/TLS/dependency closure, with no hand-made map.
-            sonames = sorted({n.elf.soname or n.name for n in self.nodes})
-            native += '\n#define AOT_MODULE_SONAMES '+','.join(
-                json.dumps(name) for name in sonames)+'\n'
+            from aot.modules import emit_modules
+            native += '\n'+emit_modules(self.nodes, self.plans)
             native += '\n'+Path(__file__).with_name('native_dl.c').read_text()
             native += '\n'+Path(__file__).with_name('native_tls_dtors.c').read_text()
         else:
