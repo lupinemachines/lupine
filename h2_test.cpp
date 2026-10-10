@@ -1011,7 +1011,12 @@ void test_client_await_ready_reports_bulk_token(bool advertise) {
           "bulk token was reported incorrectly");
 }
 
-void test_client_metadata_report() {
+void test_client_metadata_report(bool old_receiver = false,
+                                 const std::string &identity = "") {
+  if (identity.empty())
+    unsetenv("LUPINE_WORKLOAD_ID");
+  else
+    setenv("LUPINE_WORKLOAD_ID", identity.c_str(), 1);
   h2_pair pair;
   init_pair_sockets(&pair);
 
@@ -1049,11 +1054,24 @@ void test_client_metadata_report() {
   lupine_client_metadata received = {};
   require(rpc_read(&pair.server, &header, sizeof(header)) == 0,
           "metadata header read failed");
-  require(header.version == LUPINE_CLIENT_METADATA_VERSION &&
-              header.payload_size == sizeof(received),
-          "metadata header was invalid");
-  require(rpc_read(&pair.server, &received, sizeof(received)) == 0,
+  require(header.version == LUPINE_CLIENT_METADATA_VERSION,
+          "metadata version was invalid");
+  unsigned char payload[LUPINE_CLIENT_METADATA_MAX_PAYLOAD] = {};
+  require(header.payload_size <= sizeof(payload), "metadata payload too large");
+  require(rpc_read(&pair.server, payload, header.payload_size) == 0,
           "metadata payload read failed");
+  char workload[LUPINE_WORKLOAD_ID_MAX_BYTES + 1] = {};
+  if (old_receiver) {
+    // Original receiver reads the entire payload, copies only the known prefix.
+    memcpy(&received, payload, sizeof(received));
+  } else {
+    require(lupine_decode_client_metadata(header, payload, &received, workload),
+            "metadata decode failed");
+  }
+  const std::string expected =
+      !old_receiver && lupine_valid_workload_id(identity.data(), identity.size())
+          ? identity : "";
+  require(workload == expected, "workload identity was invalid");
   require(received.client_pid != 0 &&
               std::string(received.connection_kind) == "test",
           "metadata payload was invalid");
@@ -2737,6 +2755,13 @@ int main() {
   RUN_CASE(test_client_await_ready_reports_bulk_token(true));
   RUN_CASE(test_client_await_ready_reports_bulk_token(false));
   RUN_CASE(test_client_metadata_report());
+  RUN_CASE(test_client_metadata_report(true, "job:old-server"));
+  RUN_CASE(test_client_metadata_report(false));
+  RUN_CASE(test_client_metadata_report(false, "job:worker-1"));
+  RUN_CASE(test_client_metadata_report(false, std::string(256, 'x')));
+  RUN_CASE(test_client_metadata_report(false, std::string(257, 'x')));
+  RUN_CASE(test_client_metadata_report(false, std::string("\xc0\xaf")));
+  unsetenv("LUPINE_WORKLOAD_ID");
   RUN_CASE(test_client_await_ready_reports_va_window());
   RUN_CASE(test_va_window_and_aliases_are_disjoint());
   RUN_CASE(test_va_claim_bumps_within_arena());
