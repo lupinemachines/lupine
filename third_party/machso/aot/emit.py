@@ -152,6 +152,27 @@ def lower_x18(site):
     return lines, targets
 
 
+def literal_bytes(data):
+    """Encode unchanged little-endian bytes without allocating include buffers."""
+    count = len(data)//8*8
+    words = struct.unpack('<'+'Q'*(count//8), data[:count])
+    lines = ['.quad '+','.join(hex(word) for word in words[i:i+8])
+             for i in range(0, len(words), 8)]
+    if count < len(data):
+        lines.append('.byte '+','.join(str(byte) for byte in data[count:]))
+    return lines
+
+
+def load_bytes(elf, load, address, size):
+    """Read a LOAD span, including its leading page padding and zero-filled BSS."""
+    data = bytearray(size)
+    begin, end = max(address, load[3]), min(address+size, load[3]+load[5])
+    if begin < end:
+        offset = load[2]+begin-load[3]
+        data[begin-address:end-address] = elf.data[offset:offset+end-begin]
+    return data
+
+
 def emit(source, directory, plan=None):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -268,10 +289,21 @@ def emit(source, directory, plan=None):
         for event in events:
             if event < cursor: continue
             if event > cursor:
-                output.append(f'.incbin "{filename}", {cursor-floor}, {event-cursor}')
-            # Non-temporary private symbols avoid Mach-O's signed 24-bit
-            # section-relative addends when labels are deep in large images.
-            output += [f'.globl Lelf_{event:x}', f'.private_extern Lelf_{event:x}', f'Lelf_{event:x}:']
+                size = event-cursor
+                # LLVM 21 retains a whole input buffer for every .incbin.
+                # Tiny spans in dense relocation tables otherwise keep hundreds
+                # of thousands of mappings of the same large GPU blob alive.
+                if size <= 256:
+                    output.extend(literal_bytes(load_bytes(elf, p, cursor, size)))
+                else:
+                    output.append(f'.incbin "{filename}", {cursor-floor}, {size}')
+            # Relocation destinations are boundaries, not necessarily symbol
+            # targets. Emitting a private symbol at every boundary makes the
+            # native linker create hundreds of thousands of unused atoms.
+            # Referenced targets still need explicit symbols for Mach-O's
+            # signed 24-bit section-relative relocation addends.
+            if event in labels:
+                output += [f'.globl Lelf_{event:x}', f'.private_extern Lelf_{event:x}', f'Lelf_{event:x}:']
             cursor = event
             if event in replacements:
                 size, replacement = replacements[event]
