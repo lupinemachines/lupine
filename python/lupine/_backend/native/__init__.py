@@ -346,7 +346,7 @@ class Backend:
             if m and n:
                 if not k:
                     self.fill(result, 0)
-                elif self.runtime.blas is not None:
+                else:
                     left, right = a.contiguous(), b.contiguous()
                     self.runtime.matmul(
                         self.pointer(result),
@@ -355,18 +355,6 @@ class Backend:
                         m,
                         n,
                         k,
-                    )
-                else:
-                    self.runtime.kernel(
-                        "matmul_tensor",
-                        m * n,
-                        self.pointer(result),
-                        self.pointer(a),
-                        self.pointer(b),
-                        Q(m),
-                        Q(n),
-                        Q(k),
-                        *(Q(x) for x in (*a.stride(), *b.stride())),
                     )
         return self.copy_(out, result) if out is not None else result
 
@@ -494,26 +482,34 @@ class Backend:
         if dim < -tensor.ndim or dim >= tensor.ndim:
             raise IndexError("softmax dimension out of range")
         dim %= tensor.ndim
-        result = self.empty(tensor.shape)
-        width = tensor.shape[dim]
-        stride = math.prod(tensor.shape[dim + 1 :])
-        with (
-            self.runtime.active(),
-            self.runtime.uploaded(self.descriptor(tensor)) as desc,
-        ):
-            self.runtime.kernel(
-                "softmax_tensor",
-                result.numel(),
-                self.pointer(result),
-                self.pointer(tensor),
-                desc,
-                I(tensor.ndim),
-                Q(tensor.numel()),
-                Q(width),
-                Q(stride),
-                I(2 if safe else logarithmic),
+        if not tensor.numel():
+            return self.empty(tensor.shape)
+        with self.runtime.active():
+            if safe:
+                result = self.empty(tensor.shape)
+                with self.runtime.uploaded(self.descriptor(tensor)) as desc:
+                    self.runtime.kernel(
+                        "safe_softmax_tensor",
+                        result.numel(),
+                        self.pointer(result),
+                        self.pointer(tensor),
+                        desc,
+                        I(tensor.ndim),
+                        Q(tensor.numel()),
+                        Q(tensor.shape[dim]),
+                        Q(math.prod(tensor.shape[dim + 1 :])),
+                    )
+                return result
+            packed = tensor.movedim(dim, -1).contiguous()
+            rows = self.empty(packed.shape)
+            shape = (packed.numel() // packed.shape[-1], packed.shape[-1], 1, 1)
+            self.runtime.cudnn.softmax(
+                shape,
+                self.pointer(packed),
+                self.pointer(rows),
+                logarithmic=logarithmic,
             )
-        return result
+            return rows.movedim(-1, dim).contiguous()
 
     def safe_softmax(self, tensor, dim, dtype=None):
         if dtype not in (None, self.torch.float32):
@@ -529,27 +525,21 @@ class Backend:
         if dim < -value.ndim or dim >= value.ndim:
             raise IndexError("softmax dimension out of range")
         dim %= value.ndim
-        result = self.empty(value.shape)
-        with (
-            self.runtime.active(),
-            self.runtime.uploaded(self.descriptor(grad)) as gd,
-            self.runtime.uploaded(self.descriptor(value)) as vd,
-        ):
-            self.runtime.kernel(
-                "softmax_backward",
-                result.numel(),
-                self.pointer(result),
-                self.pointer(grad),
-                self.pointer(value),
-                gd,
-                vd,
-                I(value.ndim),
-                Q(result.numel()),
-                Q(value.shape[dim]),
-                Q(math.prod(value.shape[dim + 1 :])),
-                I(logarithmic),
+        if not value.numel():
+            return self.empty(value.shape)
+        with self.runtime.active():
+            packed = value.movedim(dim, -1).contiguous()
+            gradient = grad.movedim(dim, -1).contiguous()
+            rows = self.empty(packed.shape)
+            shape = (packed.numel() // packed.shape[-1], packed.shape[-1], 1, 1)
+            self.runtime.cudnn.softmax(
+                shape,
+                self.pointer(packed),
+                self.pointer(rows),
+                logarithmic=logarithmic,
+                grad=self.pointer(gradient),
             )
-        return result
+            return rows.movedim(-1, dim).contiguous()
 
     def bmm(self, a, b, *, out=None):
         self.floats(a, b)
@@ -604,7 +594,7 @@ class Backend:
             offset += tensor.shape[dim]
         return self.copy_(out, result) if out is not None else result
 
-    def convolution_parameters(
+    def convolution_shape(
         self,
         input,
         weight,
@@ -636,24 +626,7 @@ class Backend:
         )
         if min(oh, ow) <= 0:
             raise ValueError("convolution kernel exceeds padded input")
-        parameters = tuple(
-            I(x)
-            for x in (
-                ci,
-                h,
-                w,
-                co,
-                kh,
-                kw,
-                oh,
-                ow,
-                *stride,
-                *padding,
-                *dilation,
-                groups,
-            )
-        )
-        return (batch, co, oh, ow), parameters
+        return (batch, co, oh, ow)
 
     def convolution(
         self,
@@ -667,7 +640,7 @@ class Backend:
         output_padding,
         groups,
     ):
-        shape, parameters = self.convolution_parameters(
+        shape = self.convolution_shape(
             input, weight, stride, padding, dilation, transposed, output_padding, groups
         )
         if bias is not None:
@@ -675,19 +648,23 @@ class Backend:
             if tuple(bias.shape) != (shape[1],):
                 raise ValueError("convolution bias must match output channels")
         result = self.empty(shape)
-        with self.runtime.active():
-            x, w = input.contiguous(), weight.contiguous()
-            b = None if bias is None else bias.contiguous()
-            self.runtime.kernel(
-                "convolution2d",
-                result.numel(),
-                self.pointer(result),
-                self.pointer(x),
-                self.pointer(w),
-                P() if b is None else self.pointer(b),
-                Q(result.numel()),
-                *parameters,
-            )
+        if result.numel():
+            with self.runtime.active():
+                x, w = input.contiguous(), weight.contiguous()
+                b = None if bias is None else bias.contiguous()
+                self.runtime.cudnn.convolution(
+                    tuple(x.shape),
+                    tuple(w.shape),
+                    shape,
+                    stride=stride,
+                    padding=padding,
+                    dilation=dilation,
+                    groups=groups,
+                    input=self.pointer(x),
+                    weight=self.pointer(w),
+                    output=self.pointer(result),
+                    bias=None if b is None else self.pointer(b),
+                )
         return result
 
     def convolution_backward(
@@ -704,7 +681,7 @@ class Backend:
         groups,
         output_mask,
     ):
-        shape, parameters = self.convolution_parameters(
+        shape = self.convolution_shape(
             input, weight, stride, padding, dilation, transposed, output_padding, groups
         )
         self.floats(grad)
@@ -712,30 +689,29 @@ class Backend:
             raise ValueError("convolution gradient shape does not match output")
         dx = self.empty(input.shape) if output_mask[0] else None
         dw = self.empty(weight.shape) if output_mask[1] else None
-        with self.runtime.active():
-            x, w, g = input.contiguous(), weight.contiguous(), grad.contiguous()
-            if dx is not None:
-                self.runtime.kernel(
-                    "convolution2d_input_backward",
-                    dx.numel(),
-                    self.pointer(dx),
-                    self.pointer(g),
-                    self.pointer(w),
-                    Q(dx.numel()),
-                    *parameters,
+        db = self.empty((weight.shape[0],)) if output_mask[2] else None
+        if not grad.numel():
+            for tensor in (dx, dw, db):
+                if tensor is not None:
+                    self.fill(tensor, 0)
+        elif any(output_mask):
+            with self.runtime.active():
+                x, w, g = input.contiguous(), weight.contiguous(), grad.contiguous()
+                self.runtime.cudnn.convolution(
+                    tuple(x.shape),
+                    tuple(w.shape),
+                    shape,
+                    stride=stride,
+                    padding=padding,
+                    dilation=dilation,
+                    groups=groups,
+                    input=self.pointer(x),
+                    weight=self.pointer(w),
+                    grad=self.pointer(g),
+                    dx=None if dx is None else self.pointer(dx),
+                    dw=None if dw is None else self.pointer(dw),
+                    db=None if db is None else self.pointer(db),
                 )
-            if dw is not None:
-                self.runtime.kernel(
-                    "convolution2d_weight_backward",
-                    dw.numel(),
-                    self.pointer(dw),
-                    self.pointer(x),
-                    self.pointer(g),
-                    Q(dw.numel()),
-                    I(input.shape[0]),
-                    *parameters,
-                )
-            db = self.reduce(grad, (0, 2, 3)) if output_mask[2] else None
         return dx, dw, db
 
     def layer_norm(self, tensor, normalized_shape, weight=None, bias=None, eps=1e-5):
@@ -867,6 +843,9 @@ class Backend:
             for pointer, size in self.allocations.values():
                 self.runtime.check(self.runtime.free(pointer), "cudaFree(storage)")
             self.allocations.clear()
+            if self.runtime._cudnn is not None:
+                self.runtime._cudnn.close()
+                self.runtime._cudnn = None
             if self.runtime.blas is not None:
                 status = self.runtime.blas_destroy(self.runtime.blas)
                 if status:

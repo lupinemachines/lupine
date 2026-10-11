@@ -74,7 +74,7 @@ print(count.value)
 ```
 
 The native-client workflow prepares pinned ARM64 Linux CUDART, NVRTC, cuBLAS,
-cuFFT, cuRAND, cuSOLVER, cuSPARSE, and nvJitLink inputs and their dependency
+cuDNN, cuFFT, cuRAND, cuSOLVER, cuSPARSE, and nvJitLink inputs and their dependency
 closure on Ubuntu, then links and signs them in separate macOS steps.
 `third_party/machso/UPSTREAM` records the vendored revision. The preparation
 script also accepts repeatable `--package name==version` arguments. It
@@ -135,8 +135,8 @@ kernels introduced in commit `f64a5b8bd`. Each handle now owns a real CUDA
 allocation. The converted runtime handles memory and copies; GPU PTX kernels
 handle tensor arithmetic through `libcuda.dylib`. Converted NVRTC compiles the
 shipped CUDA source locally on the Mac; older runtime bundles use the included
-PTX. Matrix multiplication uses converted cuBLAS when the bundle provides it,
-with a basic GPU kernel for older bundles. It does not require Linux libtorch.
+PTX. Matrix multiplication uses converted cuBLAS; convolution uses converted
+cuDNN. It does not require Linux libtorch.
 The host extension is compiled against the installed native torch; it requires a C++ compiler
 (Xcode Command Line Tools) and `ninja`.
 
@@ -151,9 +151,11 @@ float masks (including fully masked rows) and no dropout, and linear layer train
 Unsupported operators raise `NotImplementedError`. Mixed precision,
 transposed/1D/3D convolution, fused attention, CUDA graphs, and `torch.compile`
 are not supported.
-Kernels run synchronously; convolution currently uses basic GPU kernels, and
-older bundles without cuBLAS also use a basic matrix multiplication kernel;
-this is a correctness prototype rather than a performance implementation.
+Kernels run synchronously. Matrix multiplication requires converted cuBLAS.
+2D convolution and its input, weight, and bias gradients use converted cuDNN,
+including grouped and dilated convolutions. Softmax/log-softmax and their
+gradients also use cuDNN. Basic tensor operations and the safe softmax used for
+fully masked attention rows still use the backend's CUDA kernels.
 
 PTX is checked in alongside `lupine/_backend/native/kernels.cu`, targeting
 compute capability 7.5 or newer. Regenerate it on a CUDA 13.3 Linux build host:

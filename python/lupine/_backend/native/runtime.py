@@ -100,6 +100,7 @@ class Runtime:
         self.launches = 0
         self.functions = {}
         self.closed = False
+        self._cudnn = None
         self.get_count = self.bind(self.runtime, "cudaGetDeviceCount", ct.POINTER(I))
         self.allocate = self.bind(self.runtime, "cudaMalloc", ct.POINTER(P), S)
         self.free = self.bind(self.runtime, "cudaFree", P)
@@ -186,6 +187,8 @@ class Runtime:
 
     def matmul(self, output, a, b, m, n, k):
         """Row-major C=A@B via column-major C^T=B^T@A^T."""
+        if self.blas is None:
+            raise NotImplementedError("native matmul requires a bundle with cuBLAS")
         alpha, beta = F(1), F(0)
         status = self.blas_gemm(
             self.blas,
@@ -207,6 +210,18 @@ class Runtime:
             raise RuntimeError(f"cublasSgemm_v2 failed with cuBLAS status {status}")
         self.check(self.sync(), "cudaDeviceSynchronize(cuBLAS)")
         self.launches += 1
+
+    @property
+    def cudnn(self):
+        if self._cudnn is None:
+            if not hasattr(self.runtime, "cudnnCreate"):
+                raise NotImplementedError(
+                    "native tensor operations require a bundle with cuDNN"
+                )
+            from .cudnn import Cudnn
+
+            self._cudnn = Cudnn(self)
+        return self._cudnn
 
     def compile_kernels(self):
         """Compile the shipped CUDA source locally with the converted NVRTC."""
@@ -299,17 +314,22 @@ class Runtime:
         return result.value
 
     @contextmanager
+    def allocated(self, size):
+        pointer = P(self.malloc(size))
+        try:
+            yield pointer
+        finally:
+            self.check(self.free(pointer), "cudaFree(temporary)")
+
+    @contextmanager
     def uploaded(self, values):
         data = (Q * len(values))(*values)
-        pointer = self.malloc(ct.sizeof(data))
-        try:
+        with self.allocated(ct.sizeof(data)) as pointer:
             self.check(
                 self.copy(pointer, data, ct.sizeof(data), 1),
                 "cudaMemcpy(HtoD metadata)",
             )
-            yield P(pointer)
-        finally:
-            self.check(self.free(pointer), "cudaFree(metadata)")
+            yield pointer
 
     def kernel(self, name, count, *args):
         if count == 0:

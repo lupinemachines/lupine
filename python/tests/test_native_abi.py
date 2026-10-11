@@ -73,6 +73,29 @@ def test_native_driver_functions_keep_their_original_abi():
     assert runtime.bind(runtime.runtime, "function", *types).argtypes == types
 
 
+def test_temporary_allocation_is_freed_when_body_fails():
+    runtime = Runtime.__new__(Runtime)
+    runtime.malloc = lambda size: 4096
+    released = []
+    runtime.free = lambda pointer: released.append(pointer.value) or 0
+    with pytest.raises(ValueError, match="operation failed"):
+        with runtime.allocated(128) as pointer:
+            assert pointer.value == 4096
+            raise ValueError("operation failed")
+    assert released == [4096]
+
+
+def test_failed_temporary_allocation_does_not_free_a_pointer():
+    runtime = Runtime.__new__(Runtime)
+    runtime.allocate = lambda pointer, size: 2
+    released = []
+    runtime.free = lambda pointer: released.append(pointer.value) or 0
+    with pytest.raises(RuntimeError, match="cudaMalloc.*status 2"):
+        with runtime.allocated(128):
+            pytest.fail("failed allocation must not enter the body")
+    assert released == []
+
+
 @pytest.fixture
 def converted_fixture():
     path = os.environ.get("LUPINE_TEST_NATIVE_ABI_DYLIB")

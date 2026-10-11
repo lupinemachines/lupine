@@ -33,6 +33,8 @@ def backend():
         assert native.runtime.blas is not None
     yield torch, native
     torch.lupine.synchronize()
+    _backend.close()
+    assert native.runtime.closed and native.runtime._cudnn is None
 
 
 def test_arange_and_scalar_arithmetic(backend):
@@ -177,7 +179,8 @@ def test_seeded_random_values_are_generated_on_gpu(backend):
 
 
 @pytest.mark.parametrize("logarithmic", [False, True])
-def test_softmax_forward_and_backward(backend, logarithmic):
+@pytest.mark.parametrize("dim", [-1, 0, 1])
+def test_softmax_forward_and_backward(backend, logarithmic, dim):
     torch, native = backend
     cpu = (
         torch.arange(24, dtype=torch.float32)
@@ -187,12 +190,15 @@ def test_softmax_forward_and_backward(backend, logarithmic):
     )
     value = cpu.detach().to("lupine").requires_grad_()
     op = torch.log_softmax if logarithmic else torch.softmax
-    output = op(value, dim=1)
-    expected = op(cpu, dim=1)
+    output = op(value, dim=dim)
+    expected = op(cpu, dim=dim)
     (output * output).sum().backward()
     (expected * expected).sum().backward()
     torch.testing.assert_close(output.cpu(), expected.detach(), rtol=2e-5, atol=2e-6)
     torch.testing.assert_close(value.grad.cpu(), cpu.grad, rtol=2e-5, atol=2e-6)
+    assert {"cudnnSoftmaxForward", "cudnnSoftmaxBackward"}.issubset(
+        native.runtime._cudnn.functions
+    )
 
 
 def test_linear_training_step_and_batched_matmul(backend):
@@ -282,6 +288,44 @@ def test_convolution_forward_and_backward(backend, groups, stride, dilation):
         torch.testing.assert_close(
             actual.cpu(), reference.detach(), rtol=2e-4, atol=2e-5
         )
+    assert native.runtime._cudnn is not None
+    assert {
+        "cudnnConvolutionForward",
+        "cudnnConvolutionBackwardData",
+        "cudnnConvolutionBackwardFilter",
+        "cudnnConvolutionBackwardBias",
+    }.issubset(native.runtime._cudnn.functions)
+
+
+@pytest.mark.parametrize("gradient", ["input", "weight", "bias"])
+def test_convolution_selective_gradients(backend, gradient):
+    torch, native = backend
+    x_cpu = torch.linspace(-1, 1, 32).reshape(1, 2, 4, 4)
+    w_cpu = torch.linspace(-0.5, 0.5, 24).reshape(3, 2, 2, 2)
+    b_cpu = torch.linspace(-0.1, 0.1, 3) if gradient == "bias" else None
+    x, w = x_cpu.to("lupine"), w_cpu.to("lupine")
+    b = None if b_cpu is None else b_cpu.to("lupine")
+    cpu = {"input": x_cpu, "weight": w_cpu, "bias": b_cpu}[gradient].requires_grad_()
+    gpu = {"input": x, "weight": w, "bias": b}[gradient].requires_grad_()
+    expected = torch.nn.functional.conv2d(x_cpu, w_cpu, b_cpu)
+    actual = torch.nn.functional.conv2d(x, w, b)
+    expected.square().mean().backward()
+    actual.square().mean().backward()
+    torch.testing.assert_close(actual.cpu(), expected.detach(), rtol=2e-4, atol=2e-5)
+    torch.testing.assert_close(gpu.grad.cpu(), cpu.grad, rtol=2e-4, atol=2e-5)
+
+
+def test_convolution_empty_batch_gradients(backend):
+    torch, native = backend
+    x = torch.empty((0, 2, 4, 4), device="lupine", requires_grad=True)
+    w = torch.ones((3, 2, 2, 2), device="lupine", requires_grad=True)
+    b = torch.ones(3, device="lupine", requires_grad=True)
+    out = torch.nn.functional.conv2d(x, w, b)
+    assert tuple(out.shape) == (0, 3, 3, 3)
+    out.sum().backward()
+    assert tuple(x.grad.shape) == tuple(x.shape)
+    torch.testing.assert_close(w.grad.cpu(), torch.zeros_like(w.cpu()))
+    torch.testing.assert_close(b.grad.cpu(), torch.zeros(3))
 
 
 def test_matmul_transposed_views_and_empty_inner_dimension(backend):
