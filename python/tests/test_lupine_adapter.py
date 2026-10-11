@@ -224,7 +224,7 @@ def test_libdir_directory_is_filtered_like_a_bundle(monkeypatch, tmp_path):
 def test_macos_runtime_loads_locally_after_native_driver(monkeypatch, tmp_path, manifest):
     libdir = tmp_path/'client'
     monkeypatch.setattr(_native.sys, 'platform', 'darwin')
-    names = _stage(libdir, ('libcudart.dylib', 'unrelated.dylib'))
+    names = _stage(libdir, ('libcudart.dylib', 'liblupine_aten.dylib', 'unrelated.dylib'))
     loaded = []
     monkeypatch.setattr(_native, '_loaded', {})
     monkeypatch.setattr(_native, '_names', names if manifest else ())
@@ -236,6 +236,7 @@ def test_macos_runtime_loads_locally_after_native_driver(monkeypatch, tmp_path, 
         ('libcuda.dylib', _native.ctypes.RTLD_GLOBAL),
         ('libnvidia-ml.dylib', _native.ctypes.RTLD_GLOBAL),
         ('libcudart.dylib', _native.ctypes.RTLD_LOCAL),
+        ('liblupine_aten.dylib', _native.ctypes.RTLD_LOCAL),
     ]
     assert set(result) == {name for name, mode in loaded}
 

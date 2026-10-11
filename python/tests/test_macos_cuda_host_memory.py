@@ -49,7 +49,6 @@ def run_probe():
         finally:
             if runtime.blas is not None:
                 runtime.blas_destroy(runtime.blas)
-            runtime.unload(runtime.module)
 
 
 def test_mapped_host_memory_and_teardown():

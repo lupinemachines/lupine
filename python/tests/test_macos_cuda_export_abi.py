@@ -24,7 +24,6 @@ def run_probe():
     entry = runtime.bind(runtime.runtime, "cudaGetDriverEntryPointByVersion", ct.c_char_p,
                          ct.POINTER(P), ct.c_uint, ct.c_ulonglong, ct.POINTER(I))
     with runtime.active(), ExitStack() as resources:
-        resources.callback(runtime.unload, runtime.module)
         assert runtime.blas is not None
         resources.callback(runtime.blas_destroy, runtime.blas)
 

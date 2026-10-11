@@ -109,7 +109,6 @@ def run_probe():
             destroy_rng(generator)
             if r.blas is not None:
                 r.blas_destroy(r.blas)
-            r.unload(r.module)
 
 
 def test_fft_rng_and_process_teardown():

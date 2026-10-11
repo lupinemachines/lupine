@@ -71,6 +71,7 @@ def main():
     )
     parser.add_argument("--version", default=CUDA_RUNTIME_VERSION)
     parser.add_argument("--native-provider", type=Path, action="append", default=[])
+    parser.add_argument("--torch-operators", action="store_true", help="prepare packaged PyTorch CUDA operators against the SDK")
     parser.add_argument("--native-exports", action="store_true", help="derive native export ABIs from SDK headers")
     parser.add_argument("--api-include", type=Path, action="append", default=[])
     parser.add_argument("--ubuntu-cache", type=Path)
@@ -126,6 +127,15 @@ def main():
             dependency_provider=provider,
             export_interface=interface,
         )
+        if args.torch_operators:
+            if interface is None:
+                raise ValueError("PyTorch operators require --native-exports")
+            from prepare_macos_operators import prepare_operators
+            operators = prepare_operators(
+                args.output / "torch-operators", report, interface, directory,
+                [headers, *args.api_include], paths, args.native_provider, provider,
+            )
+            report["torch_operators"] = operators["torch_input"]
         if args.runtime:
             report["runtime_source"] = {"path": str(args.runtime)}
         else:

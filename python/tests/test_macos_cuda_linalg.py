@@ -38,7 +38,6 @@ def run_probe():
     spmv = bind("cusparseSpMV", P, I, P, P, P, P, P, I, I, P)
 
     with r.active(), ExitStack() as resources:
-        resources.callback(r.unload, r.module)
         if r.blas is not None:
             resources.callback(r.blas_destroy, r.blas)
 

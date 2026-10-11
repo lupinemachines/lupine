@@ -57,7 +57,7 @@ _DRIVER = {"linux": "libcuda.so.1", "darwin": "libcuda.dylib", "win32": "nvcuda.
 
 # macOS ARM64 bundles can also supply a converted NVIDIA runtime. Its embedded
 # libc must stay local; only the native driver/NVML shims have global visibility.
-_RUNTIMES = {"darwin": ("libcudart.dylib",)}
+_RUNTIMES = {"darwin": ("libcudart.dylib", "liblupine_aten.dylib")}
 
 # Shims loaded only when the bundle carries them and no native library
 # answers to the same soname: soname stem -> (``nvidia.*`` wheel package,

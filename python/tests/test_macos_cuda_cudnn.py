@@ -47,7 +47,6 @@ def run_probe():
             raise RuntimeError(f"{operation}: cuDNN {status}: {error(status).decode()}")
 
     with runtime.active(), ExitStack() as cleanup:
-        cleanup.callback(runtime.unload, runtime.module)
         if runtime.blas is not None:
             cleanup.callback(runtime.blas_destroy, runtime.blas)
         handle = P()

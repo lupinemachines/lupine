@@ -34,6 +34,19 @@ class TrampolineLayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'branch range'):
             trampoline_layout(0x400000, 0x21000000, sites, 'n0')
 
+    def test_dense_cluster_is_split_using_island_sizes(self):
+        sites = [{'address': 121*1024**2+4*i, 'kind': 'tls', 'register': 0}
+                 for i in range(40000)]
+        base, thunks, _ = trampoline_layout(0x400000, 240*1024**2, sites, 'n0')
+        self.assertEqual(len(thunks),2)
+        self.assertTrue(all(thunk['sites'] for thunk in thunks))
+        self.assertEqual(sum(len(thunk['sites']) for thunk in thunks),len(sites))
+        for thunk in thunks:
+            for site in thunk['sites']:
+                origin=base+site['address']
+                self.assertGreaterEqual(thunk['address']-origin,-(1<<27)+4)
+                self.assertLess(thunk['address']+thunk['size']-origin,1<<27)
+
     @unittest.skipUnless(shutil.which('aarch64-linux-gnu-gcc'), 'needs ARM64 cross compiler')
     def test_distant_code_sections_emit_both_trampoline_segments(self):
         with tempfile.TemporaryDirectory() as temporary:

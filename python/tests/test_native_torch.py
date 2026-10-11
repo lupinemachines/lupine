@@ -29,12 +29,13 @@ def backend():
     native = _backend._started["backend"]
     assert native.native and _backend._started["address"] == "native"
     if os.environ.get("LUPINE_TEST_NATIVE_LIBRARIES") == "1":
-        assert native.runtime.compiler == "nvrtc"
+        assert native.runtime.operators.library.lupine_aten_run is not None
         assert native.runtime.blas is not None
     yield torch, native
     torch.lupine.synchronize()
     _backend.close()
     assert native.runtime.closed and native.runtime._cudnn is None
+    assert native.runtime._operators is None
 
 
 def test_arange_and_scalar_arithmetic(backend):

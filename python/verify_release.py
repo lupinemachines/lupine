@@ -33,7 +33,7 @@ REQUIRED = {
     "win32": ("nvcuda.dll", "nvml.dll"),
 }
 CONDITIONAL = {"libnccl", "libnvshmem_host"}
-RUNTIMES = {"darwin": ("libcudart.dylib",)}
+RUNTIMES = {"darwin": ("libcudart.dylib", "liblupine_aten.dylib")}
 
 
 def verify_loader(source: bytes) -> None:

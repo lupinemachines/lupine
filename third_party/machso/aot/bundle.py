@@ -35,25 +35,37 @@ class Plan:
 
 def trampoline_layout(start, extent, sites, identifier):
     """Reserve nearby prefix/suffix islands without moving original ELF LOADs."""
-    def allocation(group):
-        words = 16+sum(len(save_frame())+(
+    sites = sorted(sites, key=lambda site: site['address'])
+    sizes = [0]
+    for site in sites:
+        words = len(save_frame())+(
             len(lower_x18(site)[0])+4 if site['kind']=='x18' else len(restore_frame())+8)
-            for site in group)
-        return align(words*4, 0x4000)
+        sizes.append(sizes[-1]+words*4)
+
+    def allocation(begin, end):
+        return align(64+sizes[end]-sizes[begin], 0x4000)
 
     extent = align(extent, 0x4000)
-    prefix = allocation(sites)
+    prefix = allocation(0, len(sites))
     groups = [sites]
     if sites and max(s['address'] for s in sites)+prefix >= 1 << 27:
-        midpoint = extent//2
-        groups = [[s for s in sites if s['address'] <= midpoint],
-                  [s for s in sites if s['address'] > midpoint]]
-        prefix = allocation(groups[0])
+        # Choose the largest reachable prefix, accounting for the island's
+        # own instructions. Splitting at the image midpoint fails when a
+        # dense cluster makes either island much larger than the other.
+        low, high = 0, len(sites)
+        while low < high:
+            middle = (low+high+1)//2
+            if allocation(0, middle)+sites[middle-1]['address'] <= (1 << 27)-4:
+                low = middle
+            else:
+                high = middle-1
+        groups = [sites[:low], sites[low:]]
+        prefix = allocation(0, low)
     image_base = start+prefix
     thunks = []
     for index, group in enumerate(groups):
         address = start if index == 0 else image_base+extent
-        size = prefix if index == 0 else allocation(group)
+        size = prefix if index == 0 else allocation(len(groups[0]), len(sites))
         for site in group:
             origin = image_base+site['address']
             if address-origin < -(1 << 27)+4 or address+size-origin >= 1 << 27:

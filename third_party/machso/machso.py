@@ -263,7 +263,7 @@ def convert(src, dst, dependency_names=(), providers=None):
         rebases.append(addr-data_vm)
     rebase = b'\x11'+b''.join(b'\x21'+uleb(o)+b'\x51' for o in rebases)+b'\0'
     bind = b''.join(b'\x20'+uleb(ordinal)+b'\x40'+name.encode()+b'\0\x51\x71'+uleb(o)+b'\x90' for o, ordinal, name in binds)+b'\0'
-    exports = [s for s in elf.symbols if s['shndx'] and s['shndx'] < 0xff00 and s['info'] >> 4 in (1, 2) and s['other'] & 3 in (0, 3)]
+    exports = [s for s in elf.symbols if s['shndx'] and s['shndx'] < 0xff00 and s['info'] >> 4 in (1, 2, 10) and s['other'] & 3 in (0, 3)]
     if any(s['info'] & 15 not in (1, 2) for s in exports):
         raise ValueError('unsupported exports (TLS/IFUNC)')
     trie = export_trie(exports)
@@ -358,7 +358,7 @@ class DependencyGraph:
                 for ordinal, dependency in enumerate(dependencies, 3):
                     for symbol in self.nodes[dependency][0].symbols:
                         if (symbol['shndx'] and symbol['shndx'] < 0xff00
-                                and symbol['info'] >> 4 in (1, 2)
+                                and symbol['info'] >> 4 in (1, 2, 10)
                                 and symbol['other'] & 3 in (0, 3)):
                             providers.setdefault(symbol['name'], ordinal)
                 destination = self.outputs[path]

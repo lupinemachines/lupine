@@ -1,4 +1,4 @@
-"""Experimental PyTorch kernels backed by the native Mac CUDA dylibs.
+"""Experimental PyTorch operators backed by the native Mac CUDA dylibs.
 
 Reuses the historical backend's device registration and metadata-only
 storages. Each storage handle owns a real CUDA allocation here; every
@@ -12,7 +12,8 @@ import atexit
 from contextlib import ExitStack
 import math
 
-from .runtime import Runtime, ct, I, Q, P, F
+from .runtime import Runtime, ct, I, P
+from .aten import Parameters
 
 
 class Backend:
@@ -79,27 +80,6 @@ class Backend:
         return P(
             self.allocations[handle][0]
             + tensor.storage_offset() * tensor.element_size()
-        )
-
-    def descriptor(self, tensor, shape=None):
-        shape = tuple(tensor.shape if shape is None else shape)
-        if len(shape) > 8:
-            raise NotImplementedError("Lupine native supports at most eight dimensions")
-        if len(tensor.shape) > len(shape):
-            raise ValueError("cannot broadcast to fewer dimensions")
-        pad = len(shape) - tensor.ndim
-        sizes = (1,) * pad + tuple(tensor.shape)
-        strides = (0,) * pad + tuple(tensor.stride())
-        if any(size != target and size != 1 for size, target in zip(sizes, shape)):
-            raise ValueError("tensor sizes do not broadcast")
-        strides = tuple(
-            0 if size == 1 else stride for size, stride in zip(sizes, strides)
-        )
-        return (
-            list(shape)
-            + [1] * (8 - len(shape))
-            + list(strides)
-            + [0] * (8 - len(shape))
         )
 
     def empty(self, shape, dtype=None, device=None):
@@ -174,23 +154,8 @@ class Backend:
             else:
                 source_pointer = self.pointer(source)
             destination_pointer = self.pointer(destination)
-            od = stack.enter_context(
-                self.runtime.uploaded(self.descriptor(destination))
-            )
-            id = stack.enter_context(
-                self.runtime.uploaded(self.descriptor(source, destination.shape))
-            )
-            self.runtime.kernel(
-                "copy_tensor",
-                destination.numel(),
-                destination_pointer,
-                source_pointer,
-                od,
-                id,
-                I(destination.ndim),
-                Q(destination.numel()),
-                I(self.dtype(destination)),
-                I(self.dtype(source)),
+            self.runtime.operators.call(
+                self, 0, destination, source, source_pointer=source_pointer
             )
             return destination
 
@@ -207,20 +172,12 @@ class Backend:
         integer = int(value) if dtype == 1 else 0
         if dtype == 1 and not -(2**63) <= integer < 2**63:
             raise OverflowError("fill value does not fit int64")
-        with (
-            self.runtime.active(),
-            self.runtime.uploaded(self.descriptor(tensor)) as desc,
-        ):
-            self.runtime.kernel(
-                "fill_tensor",
-                tensor.numel(),
-                self.pointer(tensor),
-                desc,
-                I(tensor.ndim),
-                Q(tensor.numel()),
-                I(dtype),
-                F(value),
-                Q(integer),
+        with self.runtime.active():
+            self.runtime.operators.call(
+                self,
+                1,
+                tensor,
+                parameters=Parameters(integer=integer, first=float(value)),
             )
         return tensor
 
@@ -259,16 +216,16 @@ class Backend:
             )
             result = self.empty((n,), dtype, device)
         with self.runtime.active():
-            self.runtime.kernel(
-                "arange_tensor",
-                n,
-                self.pointer(result),
-                Q(n),
-                I(self.dtype(result)),
-                F(start),
-                F(step),
-                Q(int(start)),
-                Q(int(step)),
+            self.runtime.operators.call(
+                self,
+                2,
+                result,
+                parameters=Parameters(
+                    integer=int(start),
+                    step=int(step),
+                    first=float(start),
+                    second=float(step),
+                ),
             )
         return result
 
@@ -286,29 +243,18 @@ class Backend:
             shape = torch.broadcast_shapes(a.shape, b.shape)
             value = 0
         result = self.empty(shape)
-        with self.runtime.active(), ExitStack() as stack:
-            ad = stack.enter_context(self.runtime.uploaded(self.descriptor(a, shape)))
-            bd = (
-                ad
-                if scalar
-                else stack.enter_context(
-                    self.runtime.uploaded(self.descriptor(b, shape))
-                )
-            )
-            self.runtime.kernel(
-                "binary_tensor",
-                result.numel(),
-                self.pointer(result),
-                self.pointer(a),
-                P() if scalar else self.pointer(b),
-                ad,
-                bd,
-                I(len(shape)),
-                Q(result.numel()),
-                I(("add", "sub", "mul", "div", "pow").index(name)),
-                I(scalar),
-                F(value),
-                F(alpha),
+        with self.runtime.active():
+            self.runtime.operators.call(
+                self,
+                3,
+                result,
+                a,
+                None if scalar else b,
+                parameters=Parameters(
+                    variant=("add", "sub", "mul", "div", "pow").index(name),
+                    first=float(value),
+                    alpha=alpha,
+                ),
             )
         if out is not None:
             if tuple(out.shape) != tuple(shape):
@@ -319,19 +265,9 @@ class Backend:
     def unary(self, tensor, op):
         self.floats(tensor)
         result = self.empty(tensor.shape)
-        with (
-            self.runtime.active(),
-            self.runtime.uploaded(self.descriptor(tensor)) as desc,
-        ):
-            self.runtime.kernel(
-                "unary_tensor",
-                result.numel(),
-                self.pointer(result),
-                self.pointer(tensor),
-                desc,
-                I(tensor.ndim),
-                Q(tensor.numel()),
-                I(op),
+        with self.runtime.active():
+            self.runtime.operators.call(
+                self, 4, result, tensor, parameters=Parameters(variant=op)
             )
         return result
 
@@ -382,31 +318,17 @@ class Backend:
         )
         result = self.empty(shape)
 
-        def descriptor(axes):
-            return (
-                [tensor.shape[i] for i in axes]
-                + [1] * (8 - len(axes))
-                + [tensor.stride()[i] for i in axes]
-                + [0] * (8 - len(axes))
-            )
-
-        with (
-            self.runtime.active(),
-            self.runtime.uploaded(descriptor(outer)) as od,
-            self.runtime.uploaded(descriptor(dimensions)) as id,
-        ):
-            self.runtime.kernel(
-                "sum_tensor",
-                result.numel(),
-                self.pointer(result),
-                self.pointer(tensor),
-                od,
-                id,
-                I(len(outer)),
-                I(len(dimensions)),
-                Q(result.numel()),
-                Q(math.prod(tensor.shape[i] for i in dimensions)),
-                I(mean),
+        with self.runtime.active():
+            self.runtime.operators.call(
+                self,
+                5,
+                result,
+                tensor,
+                parameters=Parameters(
+                    variant=mean,
+                    axis_count=len(dimensions),
+                    axes=(ct.c_int64 * 8)(*dimensions),
+                ),
             )
         return self.copy_(out, result) if out is not None else result
 
@@ -428,24 +350,16 @@ class Backend:
             for size, stride in zip(tensor.shape, tensor.stride())
         ):
             raise ValueError("cannot write random values to overlapping elements")
-        with (
-            self.runtime.active(),
-            self.runtime.uploaded(self.descriptor(tensor)) as desc,
-        ):
-            self.runtime.kernel(
-                "random_tensor",
-                tensor.numel(),
-                self.pointer(tensor),
-                desc,
-                I(tensor.ndim),
-                Q(tensor.numel()),
-                ct.c_uint64(self.seed),
-                ct.c_uint64(self.counter),
-                I(normal),
-                F(first),
-                F(second),
+        with self.runtime.active():
+            parameters = Parameters(
+                variant=normal,
+                seed=self.seed,
+                offset=self.counter,
+                first=first,
+                second=second,
             )
-            self.counter = (self.counter + 2 * tensor.numel()) % (2**64)
+            self.runtime.operators.call(self, 6, tensor, parameters=parameters)
+            self.counter = parameters.offset
         return tensor
 
     def activation_backward(self, grad, value, op, threshold=0):
@@ -453,23 +367,14 @@ class Backend:
         if grad.shape != value.shape:
             raise ValueError("activation backward requires matching shapes")
         result = self.empty(value.shape)
-        with (
-            self.runtime.active(),
-            self.runtime.uploaded(self.descriptor(grad)) as gd,
-            self.runtime.uploaded(self.descriptor(value)) as vd,
-        ):
-            self.runtime.kernel(
-                "activation_backward",
-                result.numel(),
-                self.pointer(result),
-                self.pointer(grad),
-                self.pointer(value),
-                gd,
-                vd,
-                I(value.ndim),
-                Q(result.numel()),
-                I(op),
-                F(threshold),
+        with self.runtime.active():
+            self.runtime.operators.call(
+                self,
+                7,
+                result,
+                grad,
+                value,
+                parameters=Parameters(variant=op, first=threshold),
             )
         return result
 
@@ -487,18 +392,9 @@ class Backend:
         with self.runtime.active():
             if safe:
                 result = self.empty(tensor.shape)
-                with self.runtime.uploaded(self.descriptor(tensor)) as desc:
-                    self.runtime.kernel(
-                        "safe_softmax_tensor",
-                        result.numel(),
-                        self.pointer(result),
-                        self.pointer(tensor),
-                        desc,
-                        I(tensor.ndim),
-                        Q(tensor.numel()),
-                        Q(tensor.shape[dim]),
-                        Q(math.prod(tensor.shape[dim + 1 :])),
-                    )
+                self.runtime.operators.call(
+                    self, 8, result, tensor, parameters=Parameters(integer=dim)
+                )
                 return result
             packed = tensor.movedim(dim, -1).contiguous()
             rows = self.empty(packed.shape)
@@ -853,9 +749,9 @@ class Backend:
                         f"cublasDestroy_v2 failed with cuBLAS status {status}"
                     )
                 self.runtime.blas = None
-            self.runtime.check(
-                self.runtime.unload(self.runtime.module), "cuModuleUnload"
-            )
+            if self.runtime._operators is not None:
+                self.runtime._operators.close()
+                self.runtime._operators = None
             self.runtime.closed = True
 
     def install(self):

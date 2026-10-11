@@ -190,8 +190,8 @@ def emit(source, directory, plan=None):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     elf = ELF.from_file(source, allow_tls=True)
-    if not elf.loads or elf.loads[0][3] != 0:
-        raise ValueError('AOT currently requires the first LOAD at virtual address zero')
+    if not elf.loads or (plan is None and elf.loads[0][3] != 0):
+        raise ValueError('standalone AOT requires the first LOAD at virtual address zero')
     if plan is None and (len(elf.loads) != 2 or [p[1] for p in elf.loads] != [5, 6]):
         raise ValueError('standalone glibc profile requires RX at zero followed by RW')
     base = plan.base if plan else ELF_BASE
@@ -206,7 +206,7 @@ def emit(source, directory, plan=None):
     exports = {}
     versions = struct.unpack('<'+'H'*len(elf.symbols), elf.read(elf.tag(0x6ffffff0), 2*len(elf.symbols))) if elf.tag(0x6ffffff0) else [0]*len(elf.symbols)
     for s, version in zip(elf.symbols, versions):
-        if s['shndx'] and s['info'] >> 4 in (1, 2) and s['other'] & 3 in (0, 3):
+        if s['shndx'] and s['info'] >> 4 in (1, 2, 10) and s['other'] & 3 in (0, 3):
             if s['name'] not in exports or not version & 0x8000:
                 exports[s['name']] = s
     labels = {p[3] for p in elf.loads}
@@ -278,7 +278,17 @@ def emit(source, directory, plan=None):
                 tls_pointers.append((target-tls[3], addend))
                 labels.add(addend)
     def array_values(address, size):
-        relocated = {target: addend for target, kind, _, addend in elf.relocs if kind == 1027}
+        relocated = {}
+        for target, kind, index, addend in elf.relocs:
+            if not address <= target < address+size:
+                continue
+            if kind == 1027:
+                relocated[target] = addend
+            elif kind == 257:
+                symbol = elf.symbols[index]
+                if not symbol['shndx']:
+                    raise ValueError(f'initializer/finalizer imports are unsupported: {symbol["name"]}')
+                relocated[target] = symbol['value']+addend
         return [relocated.get(address+i, struct.unpack('<Q', elf.read(address+i, 8))[0]) for i in range(0, size, 8)]
     initializers = ([elf.tag(12)] if elf.tag(12) else [])+array_values(elf.tag(25), elf.tag(27))
     finalizers = list(reversed(array_values(elf.tag(26), elf.tag(28))))+([elf.tag(13)] if elf.tag(13) else [])

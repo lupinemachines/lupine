@@ -132,11 +132,11 @@ with lupine.connect(host="gpu-host:14833") as session:
 
 The backend reuses the device guards, hooks, allocator handles, and metadata
 kernels introduced in commit `f64a5b8bd`. Each handle now owns a real CUDA
-allocation. The converted runtime handles memory and copies; GPU PTX kernels
-handle tensor arithmetic through `libcuda.dylib`. Converted NVRTC compiles the
-shipped CUDA source locally on the Mac; older runtime bundles use the included
-PTX. Matrix multiplication uses converted cuBLAS; convolution uses converted
-cuDNN. It does not require Linux libtorch.
+allocation. Converted CUDART handles memory and transfers; cuBLAS and cuDNN
+handle matrix multiplication, convolution, and ordinary softmax. Other GPU
+operations use PyTorch's packaged CUDA operators through a host-only C API.
+The bundle includes `liblupine_aten.dylib`, converted from a hash-verified
+ARM64 Linux PyTorch CUDA wheel. The backend ships no CUDA kernel source or PTX.
 The host extension is compiled against the installed native torch; it requires a C++ compiler
 (Xcode Command Line Tools) and `ninja`.
 
@@ -154,16 +154,10 @@ are not supported.
 Kernels run synchronously. Matrix multiplication requires converted cuBLAS.
 2D convolution and its input, weight, and bias gradients use converted cuDNN,
 including grouped and dilated convolutions. Softmax/log-softmax and their
-gradients also use cuDNN. Basic tensor operations and the safe softmax used for
-fully masked attention rows still use the backend's CUDA kernels.
-
-PTX is checked in alongside `lupine/_backend/native/kernels.cu`, targeting
-compute capability 7.5 or newer. Regenerate it on a CUDA 13.3 Linux build host:
-
-```sh
-nvcc --ptx --gpu-architecture=compute_75 --fmad=false \
-  -o lupine/_backend/native/kernels.ptx lupine/_backend/native/kernels.cu
-```
+gradients also use cuDNN. Copies, integer fill/arange, elementwise math,
+reductions, RNG, activation gradients, and fully masked softmax use packaged
+PyTorch CUDA operators. The build prepares this library separately and links it
+against the converted SDK so NVIDIA library blobs are shared.
 
 Run `tests/test_native_torch.py` separately on the Mac with
 `LUPINE_TEST_NATIVE_TORCH=1` and the server and bundle configured. It checks GPU arithmetic, strided views, exact int64

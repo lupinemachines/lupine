@@ -65,7 +65,7 @@ jobs:
       - name: Install ARM64 Linux ABI inputs
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y clang gpgv ubuntu-keyring gcc-aarch64-linux-gnu libc6-arm64-cross libgcc-s1-arm64-cross libstdc++6-arm64-cross
+          sudo apt-get install -y clang gpgv ubuntu-keyring gcc-aarch64-linux-gnu libc6-arm64-cross libgcc-s1-arm64-cross libstdc++6-arm64-cross g++-aarch64-linux-gnu
       - name: Test vendored compiler
         working-directory: third_party/machso
         run: uv run --extra headers python -m unittest discover -s tests -q
@@ -86,7 +86,7 @@ jobs:
         run: >
           uv run --project third_party/machso --extra headers --with pip python cmake/prepare_macos_runtime.py
           --output build/macos-runtime -L /usr/aarch64-linux-gnu/lib
-          --native-exports --api-include cuda-sdk/nvidia/cu13/include
+          --native-exports --torch-operators --api-include cuda-sdk/nvidia/cu13/include
           --ubuntu-cache build/macos-system-cache
           --native-provider build/native-cuda-typed-interface.json
           --package nvidia-cuda-nvrtc==13.3.33
@@ -270,6 +270,19 @@ jobs:
           uv run --project third_party/machso python third_party/machso/sign_bundle.py
           build/libcudart.dylib
 
+      - name: Link packaged CUDA operators
+        if: matrix.tag == 'macosx-arm64'
+        run: >
+          uv run --project third_party/machso python third_party/machso/link_bundle.py
+          build/macos-runtime/torch-operators build/liblupine_aten.dylib
+          --native-library build/libcuda.dylib --native-library build/libcudart.dylib
+
+      - name: Sign packaged CUDA operators
+        if: matrix.tag == 'macosx-arm64'
+        run: >
+          uv run --project third_party/machso python third_party/machso/sign_bundle.py
+          build/liblupine_aten.dylib
+
       - name: Verify converted Linux ABI on native macOS
         if: matrix.tag == 'macosx-arm64'
         run: |
@@ -378,7 +391,7 @@ jobs:
             macosx-*)
               cp build/libcuda.dylib build/libnvidia-ml.dylib client/
               if [ "${{ matrix.tag }}" = macosx-arm64 ]; then
-                cp build/libcudart.dylib client/
+                cp build/libcudart.dylib build/liblupine_aten.dylib client/
               fi
               ;;
             *)

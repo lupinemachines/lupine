@@ -11,6 +11,8 @@ import zipfile
 PLATFORMS = (
     "manylinux2014_aarch64",
     "manylinux_2_17_aarch64",
+    "manylinux_2_18_aarch64",
+    "manylinux_2_25_aarch64",
     "manylinux_2_27_aarch64",
     "manylinux_2_28_aarch64",
 )

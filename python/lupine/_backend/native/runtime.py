@@ -1,10 +1,9 @@
-"""Local dylib calls and GPU kernels; no torch worker or operator RPC."""
+"""Local dylib calls; no torch worker or operator RPC."""
 
 from __future__ import annotations
 
 import ctypes as ct
 from contextlib import contextmanager
-from pathlib import Path
 import struct
 import threading
 
@@ -98,9 +97,9 @@ class Runtime:
         self.driver = ct.CDLL(loaded["libcuda.dylib"])
         self.lock = threading.RLock()
         self.launches = 0
-        self.functions = {}
         self.closed = False
         self._cudnn = None
+        self._operators = None
         self.get_count = self.bind(self.runtime, "cudaGetDeviceCount", ct.POINTER(I))
         self.allocate = self.bind(self.runtime, "cudaMalloc", ct.POINTER(P), S)
         self.free = self.bind(self.runtime, "cudaFree", P)
@@ -139,22 +138,6 @@ class Runtime:
         self.context = P()
         get_context = self.bind(self.driver, "cuCtxGetCurrent", ct.POINTER(P))
         self.check(get_context(ct.byref(self.context)), "cuCtxGetCurrent")
-        self.module = P()
-        load = self.bind(self.driver, "cuModuleLoadData", ct.POINTER(P), P)
-        self.compiler = (
-            "nvrtc" if hasattr(self.runtime, "nvrtcCreateProgram") else "ptx"
-        )
-        code = (
-            self.compile_kernels()
-            if self.compiler == "nvrtc"
-            else Path(__file__).with_name("kernels.ptx").read_bytes()
-        )
-        ptx = ct.create_string_buffer(code)
-        self.check(load(ct.byref(self.module), ptx), "cuModuleLoadData")
-        self.get_function = self.bind(
-            self.driver, "cuModuleGetFunction", ct.POINTER(P), P, ct.c_char_p
-        )
-        self.unload = self.bind(self.driver, "cuModuleUnload", P)
         self.blas = None
         if hasattr(self.runtime, "cublasCreate_v2"):
             self.blas = P()
@@ -180,7 +163,6 @@ class Runtime:
             )
             status = create(ct.byref(self.blas))
             if status:
-                self.unload(self.module)
                 raise RuntimeError(
                     f"cublasCreate_v2 failed with cuBLAS status {status}"
                 )
@@ -223,68 +205,19 @@ class Runtime:
             self._cudnn = Cudnn(self)
         return self._cudnn
 
-    def compile_kernels(self):
-        """Compile the shipped CUDA source locally with the converted NVRTC."""
-        create = self.bind(
-            self.runtime,
-            "nvrtcCreateProgram",
-            ct.POINTER(P),
-            ct.c_char_p,
-            ct.c_char_p,
-            I,
-            ct.POINTER(ct.c_char_p),
-            ct.POINTER(ct.c_char_p),
-        )
-        compile_ = self.bind(
-            self.runtime, "nvrtcCompileProgram", P, I, ct.POINTER(ct.c_char_p)
-        )
-        destroy = self.bind(self.runtime, "nvrtcDestroyProgram", ct.POINTER(P))
-        program = P()
-        # NVRTC provides CUDA/math builtins, but has no host SDK on macOS.
-        # Supply the two fixed-width integer definitions used by our kernels.
-        headers = (ct.c_char_p * 1)(
-            b"typedef signed long long int64_t; typedef unsigned long long uint64_t;"
-        )
-        names = (ct.c_char_p * 1)(b"stdint.h")
-        status = create(
-            ct.byref(program),
-            Path(__file__).with_name("kernels.cu").read_bytes(),
-            b"kernels.cu",
-            1,
-            headers,
-            names,
-        )
-        if status:
-            raise RuntimeError(f"nvrtcCreateProgram failed with NVRTC status {status}")
-        try:
-            options = (ct.c_char_p * 3)(
-                b"--gpu-architecture=compute_75", b"--std=c++17", b"--fmad=false"
-            )
-            status = compile_(program, len(options), options)
-
-            def output(size_name, data_name):
-                size = S()
-                get_size = self.bind(self.runtime, size_name, P, ct.POINTER(S))
-                get_data = self.bind(self.runtime, data_name, P, P)
-                result = get_size(program, ct.byref(size))
-                if result:
-                    raise RuntimeError(f"{size_name} failed with NVRTC status {result}")
-                data = ct.create_string_buffer(size.value)
-                result = get_data(program, data)
-                if result:
-                    raise RuntimeError(f"{data_name} failed with NVRTC status {result}")
-                return data.value
-
-            if status:
-                log = output("nvrtcGetProgramLogSize", "nvrtcGetProgramLog").decode(
-                    errors="replace"
+    @property
+    def operators(self):
+        if self._operators is None:
+            loaded = _native.load(missing_ok=False)
+            path = loaded.get("liblupine_aten.dylib")
+            if path is None:
+                raise NotImplementedError(
+                    "native tensor operations require packaged CUDA operators"
                 )
-                raise RuntimeError(
-                    f"NVRTC kernel compilation failed ({status}):\n{log}"
-                )
-            return output("nvrtcGetPTXSize", "nvrtcGetPTX")
-        finally:
-            destroy(ct.byref(program))
+            from .aten import Operators
+
+            self._operators = Operators(self, path)
+        return self._operators
 
     def bind(self, library, name, *types):
         function = getattr(library, name)
@@ -320,48 +253,6 @@ class Runtime:
             yield pointer
         finally:
             self.check(self.free(pointer), "cudaFree(temporary)")
-
-    @contextmanager
-    def uploaded(self, values):
-        data = (Q * len(values))(*values)
-        with self.allocated(ct.sizeof(data)) as pointer:
-            self.check(
-                self.copy(pointer, data, ct.sizeof(data), 1),
-                "cudaMemcpy(HtoD metadata)",
-            )
-            yield pointer
-
-    def kernel(self, name, count, *args):
-        if count == 0:
-            return
-        if name not in self.functions:
-            function = P()
-            self.check(
-                self.get_function(ct.byref(function), self.module, name.encode()),
-                "cuModuleGetFunction",
-            )
-            self.functions[name] = function
-        parameters = (P * len(args))(*(ct.addressof(arg) for arg in args))
-        self.check(
-            self.launch(
-                self.functions[name],
-                (count + 127) // 128,
-                1,
-                1,
-                128,
-                1,
-                1,
-                0,
-                None,
-                parameters,
-                None,
-            ),
-            "cuLaunchKernel",
-        )
-        self.launches += 1
-        # Synchronous initial backend: descriptors and storage can be freed
-        # immediately, and host guard events really are complete on return.
-        self.check(self.sync(), "cudaDeviceSynchronize")
 
     def synchronize(self):
         with self.active():
