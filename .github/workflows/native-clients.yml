@@ -16,8 +16,45 @@ permissions:
   contents: read
 
 jobs:
+  macos-driver:
+    name: Bootstrap ARM64 macOS driver interface
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+      - uses: astral-sh/setup-uv@v5
+      - name: Install build dependencies
+        run: brew install libnghttp2 ninja
+      - name: Stage CUDA headers
+        run: python3 cmake/fetch_cuda_headers.py cuda-sdk
+      - name: Build native driver
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLUPINE_BUILD_SERVER=OFF \
+            -DLUPINE_BUILD_HIP=OFF \
+            -DCMAKE_PREFIX_PATH="$PWD/cuda-sdk/nvidia/cu13"
+          cmake --build build --parallel --target lupine_cuda_client lupine_nvml
+      - name: Inspect actual native driver exports
+        run: >
+          uv run --project third_party/machso python third_party/machso/inspect_native.py
+          build/libcuda.dylib build/native-cuda-interface.json --soname libcuda.so.1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lupine-macos-driver-bootstrap
+          path: |
+            build/libcuda.dylib
+            build/libnvidia-ml.dylib
+            build/native-cuda-interface.json
+            cuda-sdk/nvidia/cu13/include
+          if-no-files-found: error
+          retention-days: 3
+
   macos-runtime-input:
     name: Prepare ARM64 CUDA runtime
+    needs: macos-driver
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -32,13 +69,24 @@ jobs:
       - name: Test vendored compiler
         working-directory: third_party/machso
         run: uv run --extra headers python -m unittest discover -s tests -q
+      - uses: actions/download-artifact@v8
+        with:
+          name: lupine-macos-driver-bootstrap
+      - name: Derive Linux ABI signatures from CUDA headers
+        run: >
+          uv run --project third_party/machso --extra headers python third_party/machso/inspect_headers.py
+          build/native-cuda-interface.json build/native-cuda-typed-interface.json
+          --header cuda-sdk/nvidia/cu13/include/cuda.h
+          -I cuda-sdk/nvidia/cu13/include --sysroot /usr/aarch64-linux-gnu
       - name: Compile runtime into portable native inputs
         run: >
           uv run --project third_party/machso --with pip python cmake/prepare_macos_runtime.py
           --output build/macos-runtime -L /usr/aarch64-linux-gnu/lib
           --ubuntu-cache build/macos-system-cache
+          --native-provider build/native-cuda-typed-interface.json
           --package nvidia-cuda-nvrtc==13.3.33
           --package nvidia-cublas==13.3.0.5
+          --package nvidia-cudnn-cu13==9.27.0.42
           --package nvidia-cufft==12.3.0.29
           --package nvidia-curand==10.4.3.29
           --package nvidia-cusolver==12.3.4.7
@@ -87,12 +135,18 @@ jobs:
         with:
           ref: ${{ inputs.checkout_ref || github.sha }}
 
+      - name: Download bootstrapped ARM64 macOS driver
+        if: matrix.tag == 'macosx-arm64'
+        uses: actions/download-artifact@v8
+        with:
+          name: lupine-macos-driver-bootstrap
+
       - name: Install build dependencies (macOS)
         if: runner.os == 'macOS'
         run: brew install libnghttp2 ninja
 
       - name: Stage CUDA headers (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.tag != 'macosx-arm64'
         run: python3 cmake/fetch_cuda_headers.py cuda-sdk
 
       - name: Install build dependencies (Windows)
@@ -143,7 +197,7 @@ jobs:
             '
 
       - name: Build client (macOS)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.tag != 'macosx-arm64'
         run: |
           set -euo pipefail
           cmake -S . -B build -G Ninja \
