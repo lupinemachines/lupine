@@ -14,7 +14,7 @@ from machso import ELF
 from aot.graph import exported
 
 TORCH_VERSION = "2.14.1+cu130"
-TORCH_URL = "https://download-r2.pytorch.org/whl/cu130/torch-2.14.1%2Bcu130-cp312-cp312-manylinux_2_28_aarch64.whl"
+TORCH_URL = "https://download.pytorch.org/whl/cu130/torch-2.14.1%2Bcu130-cp312-cp312-manylinux_2_28_aarch64.whl"
 TORCH_SHA256 = "6afc5e5944fb0bd927e08d32a11f71d19154001f1c81fa00a6ed81a217451795"
 PACKAGES = (
     "nvidia-cusparselt-cu13==0.8.1",
