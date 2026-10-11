@@ -114,6 +114,8 @@ def native_interface(path, soname):
         names = exports(data)[3]
     return {'schema': 1, 'soname': soname, 'architecture': 'arm64',
             'native_install_name': install_name,
+            'tls_exports': sorted(name[1:] for name, terminal in names.items()
+                                  if name.startswith('_') and read_uleb(terminal, 0)[0] & 3 == 1),
             'exports': sorted(name[1:] for name in names if name.startswith('_'))}
 
 

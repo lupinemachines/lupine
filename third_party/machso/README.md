@@ -43,6 +43,7 @@ uv run python link_bundle.py build/prepared build/library.dylib \
 ```
 
 The linker checks the native install name and required exports before building.
+Late symbol lookup includes native dependencies and uses their declared ABI bridges.
 Native providers must implement the caller's ABI. Supply `inspect_native.py
 --signatures signatures.json` to generate Linux-to-Darwin argument bridges for
 fixed scalar functions. The file maps exported names to `arguments` and `result`,

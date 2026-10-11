@@ -36,6 +36,7 @@ def link_bundle(directory, output, native_libraries=()):
         library, interface = item
         required = {binding['name'] for binding in report['bindings']
                     if binding['provider'] == provider['soname']}
+        required.update(report.get('native_dynamic_exports', {}).get(provider['soname'], []))
         missing = required-set(interface['exports'])
         if missing:
             raise ValueError(f'{library}: missing native exports: {sorted(missing)}')

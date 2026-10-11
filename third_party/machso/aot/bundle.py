@@ -158,6 +158,17 @@ class Bundle:
                             plan.tls_modules[index] = provider_plan.module_id
                     elif symbol['info'] >> 4 == 2:
                         plan.imports[index] = None
+        # Loader lookups can request functions absent from the ELF import table.
+        # Prepare the declared ABI bridges before those pointers escape to Linux.
+        if self.core:
+            for owner in self.graph.nodes:
+                if not owner.native:
+                    continue
+                signatures = owner.native.get('signatures', {})
+                for index, symbol in enumerate(owner.elf.symbols):
+                    if symbol['name'] in signatures:
+                        label = f'_aot_native_{owner.identifier}_s{index}'
+                        self.native_bridges[label] = (symbol['name'], signatures[symbol['name']])
 
     def emit(self, directory):
         directory = Path(directory)
@@ -191,7 +202,12 @@ class Bundle:
             # no DT_NEEDED edge. Their SONAMEs resolve to this same native image
             # and share one libc/TLS/dependency closure, with no hand-made map.
             from aot.modules import emit_modules
-            native += '\n'+emit_modules(self.nodes, self.plans)
+            providers = [node for node in self.graph.nodes if node.native]
+            native += '\n'+emit_modules(self.nodes, self.plans, providers)
+            report['native_dynamic_exports'] = {
+                node.name: [symbol['name'] for symbol in node.elf.symbols
+                            if symbol['name'] not in node.native.get('signature_report', {}).get('unsupported', {})]
+                for node in providers}
             native += '\n'+Path(__file__).with_name('native_dl.c').read_text()
             native += '\n'+Path(__file__).with_name('native_tls_dtors.c').read_text()
         else:

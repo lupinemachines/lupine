@@ -99,6 +99,17 @@ jobs:
           uv run --project third_party/machso python third_party/machso/compile_bundle.py \
             build/native-abi.so build/macos-runtime/abi-fixture \
             -L /usr/aarch64-linux-gnu/lib --experimental
+      - name: Prepare native loader regression fixture
+        run: |
+          uv run --project third_party/machso python - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path[:0] = ['third_party/machso/tests', 'third_party/machso']
+          from test_native_module_lookup import prepare_fixture
+          directory = Path('build/macos-runtime/loader-fixture').resolve()
+          directory.mkdir(parents=True)
+          prepare_fixture(directory)
+          PY
       - uses: actions/upload-artifact@v7
         with:
           name: lupine-macos-runtime-input
@@ -242,6 +253,20 @@ jobs:
             LUPINE_TEST_NATIVE_ABI_DYLIB="$PWD/build/native-abi.dylib" \
             LUPINE_TEST_NATIVE_ABI_HOST_DYLIB="$PWD/build/host-abi.dylib" \
             uv run --project third_party/machso --with pytest python -m pytest -q python/tests/test_native_abi.py
+
+      - name: Verify native dependency lookup on macOS
+        if: matrix.tag == 'macosx-arm64'
+        run: |
+          clang -dynamiclib -arch arm64 build/macos-runtime/loader-fixture/provider.c \
+            -install_name @rpath/libscalar-provider.dylib -o build/libscalar-provider.dylib
+          uv run --project third_party/machso python third_party/machso/link_bundle.py \
+            build/macos-runtime/loader-fixture/prepared build/native-loader.dylib \
+            --native-library build/libscalar-provider.dylib
+          uv run --project third_party/machso python third_party/machso/sign_bundle.py \
+            build/native-loader.dylib
+          LUPINE_AUTO=0 PYTHONPATH="$PWD/python" \
+            LUPINE_TEST_NATIVE_LOOKUP_DYLIB="$PWD/build/native-loader.dylib" \
+            uv run --project third_party/machso --with pytest python -m pytest -q python/tests/test_native_loader.py
 
       - name: Build client (Windows)
         if: runner.os == 'Windows'

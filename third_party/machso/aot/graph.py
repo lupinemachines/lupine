@@ -59,7 +59,13 @@ class Graph:
                     any(not isinstance(symbol, str) or not symbol for symbol in names)):
                 raise ValueError(f'{name}: native install name and exports are required')
             self.native_paths[name] = path
+            tls_exports = declaration.get('tls_exports', [])
+            if (not isinstance(tls_exports, list) or
+                    any(not isinstance(symbol, str) or symbol not in names for symbol in tls_exports)):
+                raise ValueError(f'{name}: native TLS exports must be declared exported names')
             validate_signatures(declaration)
+            if set(tls_exports) & declaration.get('signatures', {}).keys():
+                raise ValueError(f'{name}: native TLS exports cannot have function signatures')
             self.native_declarations[path] = declaration
         self.root = self.load(Path(source).resolve())
         self.roots = [self.root]
@@ -181,6 +187,8 @@ class Graph:
                 elif definition['version_hidden']:
                     continue
                 if candidate.native:
+                    if symbol['name'] in candidate.native.get('tls_exports', []):
+                        raise ValueError(f"{candidate.name}:{symbol['name']}: static native TLS imports are unsupported; use dlsym")
                     reason = candidate.native.get('signature_report', {}).get('unsupported', {}).get(symbol['name'])
                     if reason:
                         raise ValueError(f"{candidate.name}:{symbol['name']}: {reason}")
