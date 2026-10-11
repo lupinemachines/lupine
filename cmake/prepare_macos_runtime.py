@@ -100,7 +100,7 @@ def main():
         inputs.mkdir()
         headers = directory / "headers"
         requested = list(args.package)
-        if not args.runtime:
+        if not args.runtime and not args.requirements:
             requested.append("nvidia-cuda-runtime==" + args.version)
         libraries, packages = (
             download_libraries(
@@ -126,11 +126,12 @@ def main():
             dependency_provider=provider,
             export_interface=interface,
         )
-        report["runtime_source"] = (
-            {"path": str(args.runtime)}
-            if args.runtime
-            else {"package": "nvidia-cuda-runtime", "version": args.version}
-        )
+        if args.runtime:
+            report["runtime_source"] = {"path": str(args.runtime)}
+        else:
+            package = next(p["package"] for p in packages if source.name in p["libraries"])
+            name, version = package.split("==", 1)
+            report["runtime_source"] = {"package": name, "version": version}
         report["input_packages"] = packages
         (args.output / "packages.lock").write_text(
             "".join(
