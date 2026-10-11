@@ -777,6 +777,11 @@ endif()
 # on socketpair(), MAP_FIXED_NOREPLACE and memfd_create(); anything free of
 # those belongs here instead, so it covers every platform the client ships for.
 if(BUILD_TESTING)
+    add_executable(internal_cuda_query_test internal_cuda_query_test.cpp)
+    target_link_libraries(internal_cuda_query_test PRIVATE Threads::Threads)
+    lupine_apply_sanitizer(internal_cuda_query_test)
+    add_test(NAME internal_cuda_query_test COMMAND internal_cuda_query_test)
+
     add_executable(fatbin_filter_test fatbin_filter_test.cpp)
     lupine_apply_sanitizer(fatbin_filter_test)
     add_test(NAME fatbin_filter_test COMMAND fatbin_filter_test)
