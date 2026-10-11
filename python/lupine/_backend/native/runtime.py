@@ -91,6 +91,10 @@ class Runtime:
                 "native torch requires an ARM64 macOS bundle with libcudart.dylib"
             )
         self.runtime = ct.CDLL(loaded["libcudart.dylib"], mode=ct.RTLD_LOCAL)
+        self.export_abi = getattr(self.runtime, "machso_native_export_abi", None)
+        if self.export_abi is not None:
+            self.export_abi.argtypes = [ct.c_char_p]
+            self.export_abi.restype = I
         self.driver = ct.CDLL(loaded["libcuda.dylib"])
         self.lock = threading.RLock()
         self.launches = 0
@@ -269,7 +273,10 @@ class Runtime:
 
     def bind(self, library, name, *types):
         function = getattr(library, name)
-        function.argtypes = linux_argtypes(types) if library is self.runtime else types
+        native = library is not self.runtime or (
+            self.export_abi is not None and self.export_abi(name.encode())
+        )
+        function.argtypes = types if native else linux_argtypes(types)
         function.restype = I
         return function
 

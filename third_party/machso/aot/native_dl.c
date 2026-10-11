@@ -64,10 +64,26 @@ void *aot_linux_dlsym(void *handle,const char *name) {
 #ifdef AOT_MODULE_LOOKUP
     struct aot_module *module=aot_module_handle(handle);
     if (module) return aot_module_symbol(module,name,NULL);
+#ifdef AOT_EXPORT_ABI
+    if (!handle) {
+        /* Native exports may be adapters, and other native images can expose
+         * the same names. Keep this bundle's ELF ABI domain first. */
+        for (size_t i=0;i<sizeof(aot_modules)/sizeof(aot_modules[0]);i++) {
+            if (aot_modules[i].path) continue;
+            void *address=aot_module_symbol(&aot_modules[i],name,NULL);
+            if (address) return address;
+        }
+        aot_module_error=NULL;
+    }
+#endif
 #endif
     if (!handle) handle=RTLD_DEFAULT;
     else if (handle==(void *)-1) handle=RTLD_NEXT;
-    return dlsym(handle,name);
+    void *address=dlsym(handle,name);
+#ifdef AOT_EXPORT_ABI
+    address=aot_import_function_pointer(address);
+#endif
+    return address;
 }
 void *aot_linux_dlvsym(void *handle,const char *name,const char *version) {
 #ifdef AOT_MODULE_LOOKUP

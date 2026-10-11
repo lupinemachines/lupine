@@ -176,6 +176,16 @@ class Graph:
         # Native providers satisfy imports after regular ELF definitions.
         return [n for n in result if not n.native]+[n for n in result if n.native]
 
+    def public_definitions(self):
+        result = {}
+        for node in self.scope(self.root):
+            if node.intrinsic:
+                continue
+            for index, symbol in enumerate(node.elf.symbols):
+                if exported(symbol) and not symbol['version_hidden']:
+                    result.setdefault(symbol['name'], (node, index))
+        return result
+
     def resolve(self, node, symbol):
         for candidate in self.scope(node):
             for index, definition in enumerate(candidate.elf.symbols):

@@ -29,7 +29,9 @@ def validate_signatures(provider):
     return signatures
 
 
-def emit_bridge(label, target, signature, pointer_resolver=None):
+def emit_bridge(label, target, signature, pointer_resolver=None, caller_abi='linux', indirect=False, private=True):
+    if caller_abi not in ('linux', 'darwin'):
+        raise ValueError('unsupported bridge caller ABI')
     gp = fp = linux = darwin = 0
     copies, extensions = [], []
     output = signature.get('function_pointer_output')
@@ -51,13 +53,16 @@ def emit_bridge(label, target, signature, pointer_resolver=None):
             continue
         darwin = (darwin+size-1)&-size
         if output and index == output['argument']:
-            output_location = f'    ldr x19, [x16, #{linux}]'
-        copies.append((linux, darwin, size))
+            offset = linux if caller_abi == 'linux' else darwin
+            output_location = f'    ldr x19, [x16, #{offset}]'
+        copies.append((linux, darwin, size) if caller_abi == 'linux' else (darwin, linux, size))
         linux += 8
         darwin += size
-    saved = (darwin+15)&-16
+    stack = darwin if caller_abi == 'linux' else linux
+    saved = (stack+15)&-16
     frame = saved+(32 if output else 16)
-    lines = ['.text', '.p2align 2', f'.globl {label}', f'.private_extern {label}', f'{label}:',
+    lines = ['.text', '.p2align 2', f'.globl {label}',
+             *([f'.private_extern {label}'] if private else []), f'{label}:',
              f'    sub sp, sp, #{frame}', f'    str x29, [sp, #{saved}]',
              f'    str x30, [sp, #{saved+8}]',
              f'    add x29, sp, #{saved}', f'    add x16, sp, #{frame}', *extensions]
@@ -70,7 +75,12 @@ def emit_bridge(label, target, signature, pointer_resolver=None):
                                  4: ('ldr', 'str', 'w17'), 8: ('ldr', 'str', 'x17')}[size]
         lines += [f'    {load} {register}, [x16, #{source}]',
                   f'    {store} {register}, [sp, #{destination}]']
-    lines += [f'    bl {target}']
+    if indirect:
+        # ELF images can sit beyond ADRP/BL reach of the native prefix.
+        lines += [f'    adrp x16, {target}@GOTPAGE', f'    ldr x16, [x16, {target}@GOTPAGEOFF]',
+                  '    blr x16']
+    else:
+        lines += [f'    bl {target}']
     if output:
         # Only successful queries own the output slot. Preserve native error
         # statuses and leave their output untouched, even if it is uninitialized.
@@ -117,3 +127,44 @@ def emit_pointer_resolver(provider):
             '    for (unsigned i=0;i<sizeof(entries)/sizeof(entries[0]);i++)\n'
             '        if (address==entries[i].native) return (void *)entries[i].callable;\n'
             '    return address;\n}\n')
+
+
+def emit_export_pointer_resolver(exports, native_bridges, unsupported=()):
+    """Return native-callable entries for pointers escaping the Linux ABI domain."""
+    declarations, rows = [], []
+    pairs = [(node.symbol_name(index), None) for node, index in unsupported]
+    pairs += [(node.symbol_name(index), '_g_'+name)
+             for name, (node, index, _) in exports.items()]
+    pairs += [(label, '_'+name) for label, (name, _) in native_bridges.items()]
+    for index, (source, target) in enumerate(pairs):
+        for side, symbol in (('source', source), ('target', target)):
+            if symbol is not None:
+                declarations.append(f'extern const unsigned char aot_export_{side}_{index}[] __asm__({json.dumps(symbol)});')
+        address = f'aot_export_target_{index}' if target is not None else '0'
+        rows.append(f'{{aot_export_source_{index},{address}}}')
+    return ('\n'.join(declarations)+'\n'
+            'static const struct {const void *source,*target;} aot_export_entries[]={'+','.join(rows)+'};\n'
+            '__attribute__((visibility("hidden"))) void *aot_export_function_pointer(void *address) {\n'
+            '    for (unsigned i=0;i<sizeof(aot_export_entries)/sizeof(aot_export_entries[0]);i++)\n'
+            '        if (address==aot_export_entries[i].source) return (void *)aot_export_entries[i].target;\n'
+            '    return address;\n}\n'
+            '__attribute__((visibility("hidden"))) void *aot_import_function_pointer(void *address) {\n'
+            '    for (unsigned i=0;i<sizeof(aot_export_entries)/sizeof(aot_export_entries[0]);i++)\n'
+            '        if (aot_export_entries[i].target && address==aot_export_entries[i].target)\n'
+            '            return (void *)aot_export_entries[i].source;\n'
+            '    return address;\n}\n')
+
+
+def emit_export_metadata(names):
+    names = sorted(set(names))
+    return ('#include <string.h>\n'
+            'int g_machso_native_export_abi(const char *name) {\n'
+            '    static const char *const names[]={'+','.join(json.dumps(name) for name in names)+'};\n'
+            '    if (!name) return 0;\n'
+            '    unsigned low=0,high=sizeof(names)/sizeof(names[0]);\n'
+            '    while (low<high) {\n'
+            '        unsigned middle=low+(high-low)/2;\n'
+            '        int order=strcmp(names[middle],name);\n'
+            '        if (!order) return 1;\n'
+            '        if (order<0) low=middle+1; else high=middle;\n'
+            '    }\n    return 0;\n}\n')

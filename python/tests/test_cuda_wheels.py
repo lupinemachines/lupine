@@ -93,3 +93,35 @@ def test_lock_replay_requires_hash_verification(tmp_path, monkeypatch):
     wheels.download_libraries(tmp_path / "wheels", [], destination, lock)
     assert "--require-hashes" in commands[0]
     assert commands[0][commands[0].index("--requirement") + 1] == str(lock)
+
+
+def test_collects_header_tree_and_records_hashes(tmp_path, monkeypatch):
+    def download(command, check):
+        directory = Path(command[command.index("--dest") + 1])
+        wheel = write_wheel(directory, "sdk", {"libsdk.so": b"\x7fELFsdk"})
+        with zipfile.ZipFile(wheel, "a") as archive:
+            archive.writestr("nvidia/sdk/include/detail/types.h", "typedef int handle;")
+
+    monkeypatch.setattr(wheels.subprocess, "run", download)
+    libraries = tmp_path / "libraries"
+    libraries.mkdir()
+    headers = tmp_path / "headers"
+    _, packages = wheels.download_libraries(tmp_path / "wheels", ["sdk==1.0"], libraries, headers=headers)
+    output = headers / "detail/types.h"
+    assert output.read_text() == "typedef int handle;"
+    assert packages[0]["headers"] == [{"path": "detail/types.h", "sha256": hashlib.sha256(output.read_bytes()).hexdigest()}]
+
+
+def test_conflicting_headers_are_rejected(tmp_path, monkeypatch):
+    def download(command, check):
+        directory = Path(command[command.index("--dest") + 1])
+        for name in ("one", "two"):
+            wheel = write_wheel(directory, name, {f"lib{name}.so": b"\x7fELFsdk"})
+            with zipfile.ZipFile(wheel, "a") as archive:
+                archive.writestr(f"nvidia/{name}/include/api.h", name)
+
+    monkeypatch.setattr(wheels.subprocess, "run", download)
+    libraries = tmp_path / "libraries"
+    libraries.mkdir()
+    with pytest.raises(ValueError, match="conflicting header"):
+        wheels.download_libraries(tmp_path / "wheels", ["one==1.0", "two==1.0"], libraries, headers=tmp_path / "headers")

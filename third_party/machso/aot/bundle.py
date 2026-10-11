@@ -68,7 +68,8 @@ DYNAMIC_LINKER_APIS = {'dlopen', 'dlmopen', 'dlsym', 'dlvsym', 'dlclose', 'dlerr
 
 
 class Bundle:
-    def __init__(self, source, library_paths=(), additional_roots=(), native_providers=(), dependency_provider=None):
+    def __init__(self, source, library_paths=(), additional_roots=(), native_providers=(), dependency_provider=None,
+                 export_interface=None):
         self.graph = Graph(source, library_paths, additional_roots, native_providers, dependency_provider)
         if self.graph.root.elf.machine != 183:
             raise ValueError('native bundle backend requires ARM64 ELF; x86-64 needs a different code-generation backend')
@@ -108,14 +109,29 @@ class Bundle:
             base = align(end, 0x10000)+0x10000
         # Public native names use the group's ELF search order. Versioned imports
         # retain separate internal symbols and bind to their exact definitions.
-        self.public = {}
-        for node in self.graph.scope(self.graph.root):
-            if node.intrinsic:
-                continue
-            for index, symbol in enumerate(node.elf.symbols):
-                if exported(symbol) and not symbol['version_hidden'] and symbol['name'] not in self.public:
-                    self.public[symbol['name']] = (node, index)
-                    self.plans[node.index].public[index] = symbol['name']
+        self.public = self.graph.public_definitions()
+        for name, (node, index) in self.public.items():
+            self.plans[node.index].public[index] = name
+        self.export_bridges = {}
+        self.export_interface = None
+        if export_interface is not None:
+            from aot.native_abi import validate_signatures
+            self.export_interface = json.loads(Path(export_interface).read_text())
+            if (not isinstance(self.export_interface, dict) or self.export_interface.get('schema') != 1 or
+                    self.export_interface.get('architecture') not in ('arm64', 'aarch64')):
+                raise ValueError('export interface requires schema 1 and ARM64 architecture')
+            names = self.export_interface.get('exports')
+            if not isinstance(names, list) or any(not isinstance(name, str) or not name for name in names):
+                raise ValueError('export interface requires exported names')
+            signatures = validate_signatures(self.export_interface)
+            for name, signature in signatures.items():
+                if name not in self.public:
+                    raise ValueError(f'{name}: export signature does not name a public ELF definition')
+                node, index = self.public[name]
+                if node.elf.symbols[index]['info'] & 15 != 2:
+                    raise ValueError(f'{name}: export ABI bridges require regular ELF functions')
+                self.export_bridges[name] = (node, index, signature)
+                del self.plans[node.index].public[index]
         # A single static TLS image replaces loader-managed dynamic modules.
         self.link_order = ([self.core] if self.core else [])+[n for n in self.nodes if n is not self.core]
         offset = 16
@@ -255,13 +271,29 @@ class Bundle:
             required.update(owner.native.get('signature_report', {}).get('unsupported', {}))
             existing = report.setdefault('native_dynamic_exports', {}).get(owner.name, [])
             report['native_dynamic_exports'][owner.name] = sorted(set(existing) | required)
+        if self.export_bridges:
+            from aot.native_abi import emit_export_pointer_resolver
+            unsupported = [self.public[name] for name in
+                           self.export_interface.get('signature_report', {}).get('unsupported', {})
+                           if name in self.public and self.public[name][0].elf.symbols[self.public[name][1]]['info'] & 15 == 2]
+            native = '#define AOT_EXPORT_ABI 1\nvoid *aot_import_function_pointer(void *);\n'+native
+            native += emit_export_pointer_resolver(self.export_bridges, self.native_bridges, unsupported)
         (directory/'native.c').write_text(native)
-        if self.native_bridges:
+        if self.native_bridges or self.export_bridges:
             from aot.native_abi import emit_bridge
-            (directory/'native_abi.S').write_text(''.join(
+            assembly = ''.join(
                 emit_bridge(label, '_'+name, signature, self.native_pointer_resolvers.get(label))
-                for label, (name, signature) in self.native_bridges.items()))
+                for label, (name, signature) in self.native_bridges.items())
+            assembly += ''.join(
+                emit_bridge('_g_'+name, node.symbol_name(index), signature,
+                            '_aot_export_function_pointer' if signature.get('function_pointer_output') else None,
+                            caller_abi='darwin', indirect=True, private=False)
+                for name, (node, index, signature) in self.export_bridges.items())
+            (directory/'native_abi.S').write_text(assembly)
         report['native_abi_bridges'] = sorted(name for name, _ in self.native_bridges.values())
+        report['export_abi_bridges'] = sorted(self.export_bridges)
+        if self.export_interface is not None:
+            report['export_interface'] = self.export_interface
         (directory/'exports.txt').write_text(''.join('_g_'+name+'\n' for name in sorted(self.public)))
         (directory/'manifest.json').write_text(json.dumps(report, indent=2)+'\n')
         return report

@@ -10,9 +10,54 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "third_party/machso"))
 from compile_bundle import prepare_bundle
+from aot.graph import Graph
+from machso import ELF
 from cuda_wheels import download_libraries
 
 CUDA_RUNTIME_VERSION = "13.3.29"
+API_HEADERS = (
+    "cuda_runtime_api.h", "cublas_v2.h", "cublasLt.h", "cudnn.h", "nvrtc.h",
+    "nvJitLink.h", "cufft.h", "curand.h", "cusolverDn.h", "cusparse.h",
+)
+
+
+def runtime_library(libraries):
+    candidates = []
+    for path in dict.fromkeys(libraries):
+        soname = ELF.from_file(path, allow_tls=True, machines=(183,)).soname
+        if soname and soname.startswith("libcudart.so."):
+            candidates.append(path)
+    if len(candidates) != 1:
+        raise ValueError(f"expected one CUDA runtime SONAME, found {len(candidates)}")
+    return candidates[0]
+
+
+def export_interface(source, paths, roots, providers, dependency_provider, directory, includes):
+    from aot.headers import read_signatures
+    from aot.native_abi import validate_signatures
+
+    graph = Graph(source, paths, roots, providers, dependency_provider)
+    definitions = graph.public_definitions()
+    functions = [name for name, (node, index) in definitions.items()
+                 if node.elf.symbols[index]['info'] & 15 == 2]
+    headers = [next((p / name for p in includes if (p / name).is_file()), None)
+               for name in API_HEADERS]
+    headers = [p for p in headers if p is not None]
+    if not headers:
+        raise ValueError("native export ABI inspection requires CUDA API headers")
+    report = read_signatures(headers, functions, includes)
+    signatures = report.pop("signatures")
+    for name in ("cudaGetDriverEntryPoint", "cudaGetDriverEntryPointByVersion"):
+        if name in signatures:
+            signatures[name]["function_pointer_output"] = {
+                "argument": 1, "unavailable_result": 801,
+            }
+    interface = {"schema": 1, "architecture": "arm64", "exports": sorted(definitions),
+                 "signatures": signatures, "signature_report": report}
+    validate_signatures(interface)
+    path = directory / "export-interface.json"
+    path.write_text(json.dumps(interface, indent=2) + "\n")
+    return path
 
 
 def main():
@@ -26,6 +71,8 @@ def main():
     )
     parser.add_argument("--version", default=CUDA_RUNTIME_VERSION)
     parser.add_argument("--native-provider", type=Path, action="append", default=[])
+    parser.add_argument("--native-exports", action="store_true", help="derive native export ABIs from SDK headers")
+    parser.add_argument("--api-include", type=Path, action="append", default=[])
     parser.add_argument("--ubuntu-cache", type=Path)
     parser.add_argument(
         "--ubuntu-keyring", type=Path,
@@ -51,30 +98,33 @@ def main():
         directory = Path(temporary)
         inputs = directory / "libraries"
         inputs.mkdir()
+        headers = directory / "headers"
         requested = list(args.package)
         if not args.runtime:
             requested.append("nvidia-cuda-runtime==" + args.version)
         libraries, packages = (
             download_libraries(
-                directory / "wheels", requested, inputs, args.requirements
+                directory / "wheels", requested, inputs, args.requirements,
+                headers if args.native_exports else None,
             )
             if requested or args.requirements
             else ([], [])
         )
-        source = args.runtime or next(
-            (p for p in libraries if p.name == "libcudart.so.13"), None
-        )
-        if source is None:
-            raise ValueError("runtime wheel must contain libcudart.so.13")
+        source = args.runtime or runtime_library(libraries)
         extra = sorted({p for p in libraries if p.resolve() != source.resolve()})
+        paths = [inputs, *args.library_path]
+        interface = (export_interface(source, paths, extra, args.native_provider, provider,
+                                      directory, [headers, *args.api_include])
+                     if args.native_exports else None)
         report = prepare_bundle(
             source,
             args.output,
-            [inputs, *args.library_path],
+            paths,
             experimental=True,
             additional_roots=extra,
             native_providers=args.native_provider,
             dependency_provider=provider,
+            export_interface=interface,
         )
         report["runtime_source"] = (
             {"path": str(args.runtime)}

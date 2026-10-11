@@ -63,11 +63,14 @@ def test_spilled_bool_values_are_canonical():
 
 def test_native_driver_functions_keep_their_original_abi():
     runtime = Runtime.__new__(Runtime)
+    runtime.export_abi = None
     runtime.runtime = SimpleNamespace(function=SimpleNamespace())
     driver = SimpleNamespace(function=SimpleNamespace())
     types = (ct.c_int,) * 11
     assert runtime.bind(driver, "function", *types).argtypes == types
     assert runtime.bind(runtime.runtime, "function", *types).argtypes[-1] is LinuxInt64
+    runtime.export_abi = lambda name: name == b"function"
+    assert runtime.bind(runtime.runtime, "function", *types).argtypes == types
 
 
 @pytest.fixture
@@ -77,6 +80,7 @@ def converted_fixture():
         pytest.skip("requires the converted ARM64 ABI fixture on macOS")
     runtime = Runtime.__new__(Runtime)
     runtime.runtime = ct.CDLL(path)
+    runtime.export_abi = None
     return runtime
 
 

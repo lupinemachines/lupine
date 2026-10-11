@@ -24,7 +24,7 @@ def file_hash(path):
     return digest.hexdigest()
 
 
-def download_libraries(directory, requested, destination, requirements=None):
+def download_libraries(directory, requested, destination, requirements=None, headers=None):
     if any("==" not in package or "*" in package for package in requested):
         raise ValueError("CUDA input packages must use an exact == version pin")
     directory.mkdir(parents=True)
@@ -63,8 +63,20 @@ def download_libraries(directory, requested, destination, requirements=None):
             package = BytesParser().parsebytes(archive.read(metadata[0]))
             if not package["Name"] or not package["Version"]:
                 raise ValueError(f"{wheel.name} has incomplete package metadata")
-            members = []
+            members, header_members = [], []
             for name in archive.namelist():
+                if headers is not None and "/include/" in name and not name.endswith("/"):
+                    relative = Path(name.split("/include/", 1)[1])
+                    if relative.is_absolute() or ".." in relative.parts:
+                        raise ValueError(f"invalid header input path: {name}")
+                    output = headers / relative
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    data = archive.read(name)
+                    digest = hashlib.sha256(data).hexdigest()
+                    if output.exists() and file_hash(output) != digest:
+                        raise ValueError(f"conflicting header inputs: {relative}")
+                    output.write_bytes(data)
+                    header_members.append({"path": str(relative), "sha256": digest})
                 if "/lib/" not in name or name.endswith("/"):
                     continue
                 with archive.open(name) as member:
@@ -89,6 +101,7 @@ def download_libraries(directory, requested, destination, requirements=None):
                     "sha256": file_hash(wheel),
                     "requires_dist": package.get_all("Requires-Dist", []),
                     "libraries": members,
+                    "headers": header_members,
                 }
             )
     if not libraries:

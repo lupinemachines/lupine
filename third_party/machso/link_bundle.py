@@ -43,12 +43,24 @@ def link_bundle(directory, output, native_libraries=()):
         dependencies.append(str(library))
     output.parent.mkdir(parents=True, exist_ok=True)
     objects = ['native.o']
+    exports = 'exports.txt'
+    export_bridges = report.get('export_abi_bridges', [])
+    if export_bridges:
+        from aot.native_abi import emit_export_metadata
+        if 'machso_native_export_abi' in report['public_names']:
+            raise ValueError('ELF exports collide with the compiler ABI metadata entry point')
+        (directory/'export_abi.c').write_text(emit_export_metadata(export_bridges))
+        (directory/'native_exports.txt').write_text((directory/'exports.txt').read_text()+'_g_machso_native_export_abi\n')
+        exports = 'native_exports.txt'
     try:
         run(['clang', '-arch', 'arm64', '-fvisibility=hidden', '-O2', '-Wall', '-Wextra', '-Werror',
              '-c', 'native.c', '-o', 'native.o'], directory)
         if build.get('abi_bridge'):
             run(['clang', '-arch', 'arm64', '-c', build['abi_bridge'], '-o', 'native_abi.o'], directory)
             objects.append('native_abi.o')
+        if export_bridges:
+            run(['clang', '-arch', 'arm64', '-O2', '-c', 'export_abi.c', '-o', 'export_abi.o'], directory)
+            objects.append('export_abi.o')
         for module in build['modules']:
             # Retain optional Linux CPU dispatch variants. The platform profile
             # advertises baseline ARM64 capabilities; it must not select SVE/SME
@@ -58,13 +70,15 @@ def link_bundle(directory, output, native_libraries=()):
             objects.append(module+'/image.o')
         run(['clang', '-dynamiclib', *objects, *dependencies, '-Wl,'+','.join(build['linker_flags']),
              *(['-Wl,-rpath,@loader_path'] if dependencies else []),
-             '-Wl,-exported_symbols_list,exports.txt', '-install_name', '@rpath/'+output.name,
+             '-Wl,-exported_symbols_list,'+exports, '-install_name', '@rpath/'+output.name,
              '-o', str(output)], directory)
         report['native_exports'] = finish(output, report['segments'])
         report['native_dependencies'] = run(['otool', '-L', str(output)], directory)
         report['output_sha256'] = file_hash(output)
         report['build_status'] = 'linked'
         report['signed'] = False
+        if export_bridges:
+            report['export_abi_metadata'] = 'machso_native_export_abi'
     except subprocess.CalledProcessError as error:
         report['build_status'] = 'failed'
         report['build_error'] = {'command': error.cmd, 'stderr': error.stderr, 'stdout': error.stdout}

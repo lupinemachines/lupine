@@ -74,6 +74,19 @@ Returned declared functions use their ABI bridges. Known unsupported functions
 return a null pointer and the supplied unavailable status; native errors retain
 their original status and output. Undeclared function pointers pass through.
 
+To make exported scalar functions callable with the native Darwin ABI, inspect
+the portable plan against their API headers and supply `--export-interface`:
+
+```sh
+uv run python compile_bundle.py library.so build/api.json -L /path/to/linux/libraries --plan-only
+uv run --extra headers python inspect_headers.py build/api.json build/typed-api.json --header api.h
+uv run python compile_bundle.py library.so build/prepared -L /path/to/linux/libraries \
+  --export-interface build/typed-api.json --experimental
+```
+
+Internal ELF calls retain the Linux ABI. Declared function-pointer outputs also
+translate back to native entries. Unannotated exports retain their original ABI.
+
 This is a prototype with partial Linux ABI support. The glibc platform profile
 targets ARM64 glibc 2.39; unsupported syscalls return `ENOSYS`, and some loader
 operations remain trap stubs. Successful conversion does not establish that every

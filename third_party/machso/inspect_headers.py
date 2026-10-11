@@ -32,7 +32,7 @@ def main():
             if name in typedefs:
                 raise ValueError(f'{name}: duplicate signature typedef selection')
             typedefs[name] = type_
-        report = read_signatures(args.header, interface['exports'], args.include_dir,
+        report = read_signatures(args.header, interface.get('function_exports', interface['exports']), args.include_dir,
                                  args.clang, args.language, args.sysroot, typedefs)
         interface['signatures'] = report['signatures']
         for output in args.function_pointer_output:
