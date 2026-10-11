@@ -64,6 +64,15 @@ Pass `typed-provider.json` to `--native-provider`. It records undeclared exports
 and unsupported signatures; using a known unsupported signature fails preparation.
 On macOS, use `--sysroot` with ARM64 Linux headers when an API includes Linux
 system headers. Parsing always targets the Linux caller's type layout.
+Use `--signature-typedef NAME:TYPEDEF` for an older exported API whose signature
+is available as a historical function-pointer typedef.
+
+For status-returning APIs that write a function pointer, add
+`--function-pointer-output NAME:ARGUMENT:UNAVAILABLE` to header inspection.
+`ARGUMENT` is the zero-based pointer-output argument; status zero means success.
+Returned declared functions use their ABI bridges. Known unsupported functions
+return a null pointer and the supplied unavailable status; native errors retain
+their original status and output. Undeclared function pointers pass through.
 
 This is a prototype with partial Linux ABI support. The glibc platform profile
 targets ARM64 glibc 2.39; unsupported syscalls return `ENOSYS`, and some loader

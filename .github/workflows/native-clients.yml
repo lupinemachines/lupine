@@ -77,7 +77,11 @@ jobs:
           uv run --project third_party/machso --extra headers python third_party/machso/inspect_headers.py
           build/native-cuda-interface.json build/native-cuda-typed-interface.json
           --header cuda-sdk/nvidia/cu13/include/cuda.h
+          --header cuda-sdk/nvidia/cu13/include/cudaTypedefs.h
           -I cuda-sdk/nvidia/cu13/include --sysroot /usr/aarch64-linux-gnu
+          --signature-typedef cuGetProcAddress:PFN_cuGetProcAddress_v11030
+          --function-pointer-output cuGetProcAddress:1:500
+          --function-pointer-output cuGetProcAddress_v2:1:500
       - name: Compile runtime into portable native inputs
         run: >
           uv run --project third_party/machso --with pip python cmake/prepare_macos_runtime.py
@@ -106,10 +110,22 @@ jobs:
           import sys
           sys.path[:0] = ['third_party/machso/tests', 'third_party/machso']
           from test_native_module_lookup import prepare_fixture
-          directory = Path('build/macos-runtime/loader-fixture').resolve()
-          directory.mkdir(parents=True)
-          prepare_fixture(directory)
+          from test_native_function_pointers import prepare_fixture as prepare_queries
+          for name, prepare in [('loader-fixture', prepare_fixture), ('query-fixture', prepare_queries)]:
+              directory = Path('build/macos-runtime', name).resolve()
+              directory.mkdir(parents=True)
+              prepare(directory)
           PY
+      - name: Prepare actual native CUDA query fixture
+        run: |
+          aarch64-linux-gnu-gcc -shared -fPIC -nostdlib -x c /dev/null \
+            -Wl,-soname,libcuda.so.1 -o build/native-cuda-provider.so
+          aarch64-linux-gnu-gcc -shared -fPIC -nostdlib -O2 \
+            -I cuda-sdk/nvidia/cu13/include python/tests/fixtures/native_cuda_queries.c \
+            -Wl,--no-as-needed -L build -l:native-cuda-provider.so -o build/native-cuda-query.so
+          uv run --project third_party/machso python third_party/machso/compile_bundle.py \
+            build/native-cuda-query.so build/macos-runtime/cuda-query-fixture \
+            --native-provider build/native-cuda-typed-interface.json --experimental
       - uses: actions/upload-artifact@v7
         with:
           name: lupine-macos-runtime-input
@@ -267,6 +283,32 @@ jobs:
           LUPINE_AUTO=0 PYTHONPATH="$PWD/python" \
             LUPINE_TEST_NATIVE_LOOKUP_DYLIB="$PWD/build/native-loader.dylib" \
             uv run --project third_party/machso --with pytest python -m pytest -q python/tests/test_native_loader.py
+
+      - name: Verify native function pointer outputs on macOS
+        if: matrix.tag == 'macosx-arm64'
+        run: |
+          clang -dynamiclib -arch arm64 build/macos-runtime/query-fixture/provider.c \
+            -install_name @rpath/libscalar-provider.dylib -o build/libscalar-provider.dylib
+          uv run --project third_party/machso python third_party/machso/link_bundle.py \
+            build/macos-runtime/query-fixture/prepared build/native-query.dylib \
+            --native-library build/libscalar-provider.dylib
+          uv run --project third_party/machso python third_party/machso/sign_bundle.py \
+            build/native-query.dylib
+          LUPINE_AUTO=0 PYTHONPATH="$PWD/python" \
+            LUPINE_TEST_NATIVE_QUERY_DYLIB="$PWD/build/native-query.dylib" \
+            uv run --project third_party/machso --with pytest python -m pytest -q python/tests/test_native_function_pointers.py
+
+      - name: Verify actual native CUDA query outputs on macOS
+        if: matrix.tag == 'macosx-arm64'
+        run: |
+          uv run --project third_party/machso python third_party/machso/link_bundle.py \
+            build/macos-runtime/cuda-query-fixture build/native-cuda-query.dylib \
+            --native-library build/libcuda.dylib
+          uv run --project third_party/machso python third_party/machso/sign_bundle.py \
+            build/native-cuda-query.dylib
+          LUPINE_AUTO=0 PYTHONPATH="$PWD/python" \
+            LUPINE_TEST_NATIVE_CUDA_QUERY_DYLIB="$PWD/build/native-cuda-query.dylib" \
+            uv run --project third_party/machso --with pytest python -m pytest -q python/tests/test_native_cuda_queries.py
 
       - name: Build client (Windows)
         if: runner.os == 'Windows'

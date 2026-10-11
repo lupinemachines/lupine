@@ -160,15 +160,22 @@ class Bundle:
                         plan.imports[index] = None
         # Loader lookups can request functions absent from the ELF import table.
         # Prepare the declared ABI bridges before those pointers escape to Linux.
-        if self.core:
-            for owner in self.graph.nodes:
-                if not owner.native:
-                    continue
-                signatures = owner.native.get('signatures', {})
+        self.native_pointer_providers = []
+        self.native_pointer_resolvers = {}
+        for owner in self.graph.nodes:
+            if not owner.native:
+                continue
+            signatures = owner.native.get('signatures', {})
+            pointer_outputs = any(s.get('function_pointer_output') for s in signatures.values())
+            if pointer_outputs:
+                self.native_pointer_providers.append(owner)
+            if self.core or pointer_outputs:
                 for index, symbol in enumerate(owner.elf.symbols):
                     if symbol['name'] in signatures:
                         label = f'_aot_native_{owner.identifier}_s{index}'
                         self.native_bridges[label] = (symbol['name'], signatures[symbol['name']])
+                        if signatures[symbol['name']].get('function_pointer_output'):
+                            self.native_pointer_resolvers[label] = f'_aot_native_{owner.identifier}_function_pointer'
 
     def emit(self, directory):
         directory = Path(directory)
@@ -241,11 +248,18 @@ class Bundle:
         native = '\n'.join(declarations)+'\n'+native
         if finalizers:
             native += '\n__attribute__((destructor)) static void aot_finalize(void) {'+('aot_linux___call_tls_dtors(); ' if self.core else '')+' '.join(reversed(finalizers))+'}\n'
+        from aot.native_abi import emit_pointer_resolver
+        native += ''.join(emit_pointer_resolver(owner) for owner in self.native_pointer_providers)
+        for owner in self.native_pointer_providers:
+            required = set(owner.native.get('signatures', {}))
+            required.update(owner.native.get('signature_report', {}).get('unsupported', {}))
+            existing = report.setdefault('native_dynamic_exports', {}).get(owner.name, [])
+            report['native_dynamic_exports'][owner.name] = sorted(set(existing) | required)
         (directory/'native.c').write_text(native)
         if self.native_bridges:
             from aot.native_abi import emit_bridge
             (directory/'native_abi.S').write_text(''.join(
-                emit_bridge(label, '_'+name, signature)
+                emit_bridge(label, '_'+name, signature, self.native_pointer_resolvers.get(label))
                 for label, (name, signature) in self.native_bridges.items()))
         report['native_abi_bridges'] = sorted(name for name, _ in self.native_bridges.values())
         (directory/'exports.txt').write_text(''.join('_g_'+name+'\n' for name in sorted(self.public)))
