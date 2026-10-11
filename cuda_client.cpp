@@ -1,6 +1,7 @@
 #include "device_stdout.h"
 #include "fatbin_filter.h"
 #include "lupine_platform.h"
+#include "macos_library_profile.h"
 
 #include <algorithm>
 #include <atomic>
@@ -5315,7 +5316,7 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
   return 0;
 }
 
-// A profiled library image: the GNU build-id of the mapped object it is
+// A profiled library image: the build-id/UUID of the mapped object it is
 // embedded in, its file offset there, and the library options. `record` is the
 // profile form: kind, packed size, id length, id, offset, then the options with
 // an absent value array encoded as each option's complement, which is also how
@@ -5470,6 +5471,29 @@ lupine_mapped_fatbin(lupine_library_reference *ref) {
              ? locator.data
              : nullptr;
 }
+#elif defined(__APPLE__)
+static bool lupine_locate_fatbin(const void *data,
+                                 lupine_library_reference *ref) {
+  ref->id.clear();
+  return lupine_macos_profile::image(static_cast<const unsigned char *>(data),
+                                     ref->size, ref->id,
+                                     ref->offset) != nullptr;
+}
+
+static const unsigned char *
+lupine_mapped_fatbin(lupine_library_reference *ref) {
+  const auto *data =
+      lupine_macos_profile::image(nullptr, ref->size, ref->id, ref->offset);
+  if (data == nullptr) {
+    return nullptr;
+  }
+  const auto *header = reinterpret_cast<const lupine_fatbin_header *>(data);
+  return header->magic == LUPINE_FATBIN_MAGIC &&
+                 header->header_size <= ref->size &&
+                 header->files_size == ref->size - header->header_size
+             ? data
+             : nullptr;
+}
 #else
 static bool lupine_locate_fatbin(const void *, lupine_library_reference *) {
   return false;
@@ -5569,9 +5593,13 @@ static std::filesystem::path lupine_library_profile_path() {
   const char *home = std::getenv("HOME");
   std::string key = name != nullptr ? name : "";
   if (name == nullptr) {
+#if defined(__APPLE__)
+    std::string argv = lupine_macos_profile::command_line();
+#else
     std::ifstream cmdline("/proc/self/cmdline", std::ios::binary);
     std::string argv((std::istreambuf_iterator<char>(cmdline)),
                      std::istreambuf_iterator<char>());
+#endif
     char hex[17];
     std::snprintf(
         hex, sizeof(hex), "%016llx",

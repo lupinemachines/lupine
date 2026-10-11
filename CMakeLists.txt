@@ -777,6 +777,23 @@ endif()
 # on socketpair(), MAP_FIXED_NOREPLACE and memfd_create(); anything free of
 # those belongs here instead, so it covers every platform the client ships for.
 if(BUILD_TESTING)
+    if(APPLE)
+        add_library(macos_library_profile_fixture SHARED macos_library_profile_fixture.cpp)
+        add_library(macos_library_profile_other SHARED macos_library_profile_fixture.cpp)
+        target_compile_definitions(macos_library_profile_other PRIVATE PROFILE_VARIANT=2)
+        add_executable(macos_library_profile_test macos_library_profile_test.cpp)
+        lupine_apply_sanitizer(macos_library_profile_test)
+        foreach(mode record replay)
+            add_test(NAME macos_library_profile_${mode}
+                COMMAND macos_library_profile_test ${mode}
+                    ${CMAKE_CURRENT_BINARY_DIR}/macos-library-profile.bin
+                    $<TARGET_FILE:macos_library_profile_fixture>
+                    $<TARGET_FILE:macos_library_profile_other>)
+        endforeach()
+        set_tests_properties(macos_library_profile_record PROPERTIES FIXTURES_SETUP macos_profile)
+        set_tests_properties(macos_library_profile_replay PROPERTIES FIXTURES_REQUIRED macos_profile)
+    endif()
+
     add_executable(fatbin_filter_test fatbin_filter_test.cpp)
     lupine_apply_sanitizer(fatbin_filter_test)
     add_test(NAME fatbin_filter_test COMMAND fatbin_filter_test)
