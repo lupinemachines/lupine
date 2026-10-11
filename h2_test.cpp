@@ -366,11 +366,14 @@ std::unique_ptr<SSL_CTX, ssl_ctx_deleter> test_tls_server_context() {
   ASN1_INTEGER_set(X509_get_serialNumber(cert), 1);
   X509_gmtime_adj(X509_getm_notBefore(cert), 0);
   X509_gmtime_adj(X509_getm_notAfter(cert), 3600);
-  X509_NAME *name = X509_get_subject_name(cert);
+  X509_NAME *name = X509_NAME_new();
+  require(name != nullptr, "TLS test certificate name allocation");
   X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
                              reinterpret_cast<const unsigned char *>("lupine"),
                              -1, -1, 0);
+  X509_set_subject_name(cert, name);
   X509_set_issuer_name(cert, name);
+  X509_NAME_free(name);
   X509_set_pubkey(cert, key);
   require(X509_sign(cert, key, EVP_sha256()) > 0, "TLS test certificate");
   std::unique_ptr<SSL_CTX, ssl_ctx_deleter> context(
