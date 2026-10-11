@@ -777,6 +777,12 @@ endif()
 # on socketpair(), MAP_FIXED_NOREPLACE and memfd_create(); anything free of
 # those belongs here instead, so it covers every platform the client ships for.
 if(BUILD_TESTING)
+    add_executable(late_trace_test late_trace_test.cpp)
+    target_link_libraries(late_trace_test PRIVATE Threads::Threads)
+    lupine_apply_sanitizer(late_trace_test)
+    add_test(NAME late_trace_test COMMAND late_trace_test
+        ${CMAKE_CURRENT_BINARY_DIR}/late-trace.log)
+
     add_executable(fatbin_filter_test fatbin_filter_test.cpp)
     lupine_apply_sanitizer(fatbin_filter_test)
     add_test(NAME fatbin_filter_test COMMAND fatbin_filter_test)
