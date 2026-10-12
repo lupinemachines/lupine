@@ -437,6 +437,7 @@ jobs:
   macos-universal:
     name: Client / macosx-universal2
     needs: client
+    if: always() && !cancelled() && needs.client.result == 'success'
     runs-on: macos-26
     timeout-minutes: 10
     steps:
