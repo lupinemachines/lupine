@@ -812,6 +812,53 @@ extern "C" nvmlReturn_t nvmlDeviceGetPcieReplayCounter(nvmlDevice_t device,
   return lupine_rpc_nvmlDeviceGetPcieReplayCounter(conn, device, value);
 }
 
+static nvmlReturn_t lupine_rpc_nvmlDeviceGetProcessUtilization(
+    conn_t *conn, nvmlDevice_t device,
+    nvmlProcessUtilizationSample_t *utilization,
+    unsigned int *processSamplesCount, unsigned long long lastSeenTimeStamp) {
+  nvmlReturn_t return_value = rpc_error();
+  unsigned int processSamplesCount_requested =
+      (utilization != nullptr) ? *processSamplesCount : 0;
+  uint8_t utilization_null = utilization == nullptr ? 1 : 0;
+  if (rpc_write_start_request(conn, RPC_nvmlDeviceGetProcessUtilization) < 0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, &processSamplesCount_requested, sizeof(unsigned int)) <
+          0 ||
+      rpc_write(conn, &utilization_null, sizeof(uint8_t)) < 0 ||
+      rpc_write(conn, &lastSeenTimeStamp, sizeof(unsigned long long)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read(conn, processSamplesCount, sizeof(unsigned int)) < 0 || ([&]() {
+        if (return_value != NVML_SUCCESS || utilization == nullptr)
+          return false;
+        if (*processSamplesCount > processSamplesCount_requested ||
+            *processSamplesCount >
+                size_t(-1) / sizeof(nvmlProcessUtilizationSample_t)) {
+          rpc_close_transport_socket(conn);
+          return true;
+        }
+        return *processSamplesCount != 0 &&
+               rpc_read(conn, utilization,
+                        *processSamplesCount *
+                            sizeof(nvmlProcessUtilizationSample_t)) < 0;
+      }()) ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetProcessUtilization(
+    nvmlDevice_t device, nvmlProcessUtilizationSample_t *utilization,
+    unsigned int *processSamplesCount, unsigned long long lastSeenTimeStamp) {
+  if (processSamplesCount == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetProcessUtilization(
+      conn, device, utilization, processSamplesCount, lastSeenTimeStamp);
+}
+
 static nvmlReturn_t
 lupine_rpc_nvmlDeviceGetMaxMigDeviceCount(conn_t *conn, nvmlDevice_t device,
                                           unsigned int *count) {

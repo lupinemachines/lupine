@@ -360,6 +360,7 @@ class NullableArrayOperation:
     ptr: Pointer
     count: Parameter
     recv_on_error: bool = False
+    recv_on_success: bool = False
 
     def element_type(self) -> str:
         c = self.ptr.ptr_to.const
@@ -422,7 +423,7 @@ class NullableArrayOperation:
     def server_reference(self) -> str:
         return self.parameter.name
 
-    def server_rpc_write(self, f):
+    def server_rpc_write(self, f, *, success: str = ""):
         # Both sides clamp the element count to the requested capacity: only
         # that many elements were allocated, and the clamp keeps the write and
         # the client read sized identically even if the API reports a larger
@@ -431,6 +432,15 @@ class NullableArrayOperation:
         name = self.parameter.name
         requested = self.requested_count_expr()
         returned = self.count.name
+        if self.recv_on_success:
+            if not success:
+                raise RuntimeError("ON_SUCCESS requires a status-first response writer")
+            f.write(
+                f"        (return_value == {success} && !{name}_null && "
+                f"{returned} != 0 && rpc_write(conn, {name}, "
+                f"{returned} * sizeof({elem})) < 0) ||\n"
+            )
+            return
         if not isinstance(self.count.type, Pointer):
             f.write(
                 f"        (!{name}_null && "
@@ -444,7 +454,7 @@ class NullableArrayOperation:
             f" * sizeof({elem})) < 0) ||\n"
         )
 
-    def client_rpc_read(self, f):
+    def client_rpc_read(self, f, *, success: str = ""):
         elem = self.element_type()
         name = self.parameter.name
         requested = self.requested_count_expr()
@@ -453,6 +463,23 @@ class NullableArrayOperation:
             if isinstance(self.count.type, Pointer)
             else self.count.name
         )
+        if self.recv_on_success:
+            if not success:
+                raise RuntimeError("ON_SUCCESS requires a status-first response reader")
+            f.write(
+                f"        ([&]() {{\n"
+                f"          if (return_value != {success} || {name} == nullptr)\n"
+                f"            return false;\n"
+                f"          if ({returned} > {requested} ||\n"
+                f"              {returned} > size_t(-1) / sizeof({elem})) {{\n"
+                f"            rpc_close_transport_socket(conn);\n"
+                f"            return true;\n"
+                f"          }}\n"
+                f"          return {returned} != 0 &&\n"
+                f"                 rpc_read(conn, {name}, {returned} * sizeof({elem})) < 0;\n"
+                f"        }}()) ||\n"
+            )
+            return
         if self.recv_on_error:
             f.write(
                 f"        ([&]() {{\n"

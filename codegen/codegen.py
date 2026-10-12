@@ -416,6 +416,8 @@ NVML = Backend(
     device_routing_kind="NVML_DEVICE",
     symbol_lookup="nvml_symbol",
     lookup_on_all_connections=True,
+    success="NVML_SUCCESS",
+    invalid_result="NVML_ERROR_UNKNOWN",
 )
 
 HIP = Backend(
@@ -684,9 +686,19 @@ def parse_annotation(
                 nullable = "NULLABLE" in args
                 deref = "DEREF" in args
                 recv_on_error = "ON_ERROR" in args
+                recv_on_success = "ON_SUCCESS" in args
                 scalar_arg = next(
                     (arg for arg in args if arg.split(":")[0] == "SCALAR"), None
                 )
+                if recv_on_success and (recv_on_error or deref or scalar_arg
+                                        or "VERSIONED" in args or size_arg
+                                        or null_terminated or not (
+                    nullable and length_arg and recv and not send
+                )):
+                    raise NotImplementedError(
+                        "ON_SUCCESS requires a RECV_ONLY NULLABLE LENGTH out-array "
+                        "without conflicting transfer modifiers"
+                    )
 
                 if "VERSIONED" in args:
                     # VERSIONED [STRINGS:<member>,...] [CLEARED:<member>,...]
@@ -817,6 +829,7 @@ def parse_annotation(
                                 ptr=param.type,
                                 count=length_param,
                                 recv_on_error=recv_on_error,
+                                recv_on_success=recv_on_success,
                             )
                         )
                     else:

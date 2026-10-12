@@ -32,6 +32,11 @@ def client_checks(path):
         assert get_handle(index, C.byref(device)) == 0
         devices.append(device)
     assert query(devices[0], None, None, 0) == 2  # INVALID_ARGUMENT
+    samples = (Sample * 4)()
+    C.memset(samples, 0xA5, C.sizeof(samples))
+    original = bytes(samples)
+    assert query(devices[0], samples, None, 0) == 2  # INVALID_ARGUMENT
+    assert bytes(samples) == original
     assert query(None, None, C.byref(count), 0) == 2
 
     for index, device in enumerate(devices[:2]):
@@ -54,11 +59,16 @@ def client_checks(path):
         count.value = 4
         assert query(device, samples, C.byref(count), 100) == 0 and count.value == 1
         assert samples[0].timeStamp == 200
-        for timestamp, expected in ((200, 6), (10, 3), (20, 15), (30, 999), (40, 7)):
+        for timestamp, expected in ((200, 6), (10, 3), (20, 15), (30, 999),
+                                    (40, 7), (50, 6), (60, 15), (70, 0)):
             before = bytes(samples)
             count.value = 4
             assert query(device, samples, C.byref(count), timestamp) == expected
             assert bytes(samples) == before
+        # A successful count-only query is not limited by its input capacity.
+        count.value = 0
+        assert query(device, None, C.byref(count), 30) == 0
+        assert count.value == 0xffffffff
         # Advertised capacity need not become an unbounded server allocation.
         count.value = 0xffffffff
         assert query(device, samples, C.byref(count), 0) == 0 and count.value == 2

@@ -43,6 +43,17 @@ extern "C" nvmlReturn_t nvmlDeviceGetProcessUtilization(
     *count = 4; // Simulate growth since a previous count query.
     return NVML_ERROR_INSUFFICIENT_SIZE;
   }
+  if (timestamp == 50)
+    return NVML_ERROR_NOT_FOUND; // Real drivers can leave count unchanged.
+  if (timestamp == 60) {
+    if (samples && *count)
+      samples[0] = {}; // Partial native writes must not escape an error.
+    return NVML_ERROR_GPU_IS_LOST;
+  }
+  if (timestamp == 70) {
+    *count = 0;
+    return NVML_SUCCESS;
+  }
   unsigned int required = (timestamp < 100) + (timestamp < 200);
   if (!required) {
     *count = 0;

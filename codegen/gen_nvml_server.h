@@ -39,6 +39,7 @@ int handle_nvmlDeviceGetMaxPcieLinkGeneration(conn_t *conn);
 int handle_nvmlDeviceGetMaxPcieLinkWidth(conn_t *conn);
 int handle_nvmlDeviceGetPcieThroughput(conn_t *conn);
 int handle_nvmlDeviceGetPcieReplayCounter(conn_t *conn);
+int handle_nvmlDeviceGetProcessUtilization(conn_t *conn);
 int handle_nvmlEventSetCreate(conn_t *conn);
 int handle_nvmlEventSetFree(conn_t *conn);
 int handle_nvmlEventSetWait_v2(conn_t *conn);

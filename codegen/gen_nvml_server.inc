@@ -1173,6 +1173,67 @@ ERROR_0:
   return -1;
 }
 
+int handle_nvmlDeviceGetProcessUtilization(conn_t *conn) {
+  nvmlDevice_t device;
+  unsigned int processSamplesCount = 0;
+  unsigned int processSamplesCount_requested = 0;
+  nvmlProcessUtilizationSample_t *utilization = nullptr;
+  uint8_t utilization_null = 0;
+  unsigned long long lastSeenTimeStamp;
+  int request_id;
+  nvmlReturn_t return_value;
+  using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlProcessUtilizationSample_t *,
+                                unsigned int *, unsigned long long);
+  fn_t fn = nullptr;
+  if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_read(conn, &processSamplesCount_requested, sizeof(unsigned int)) <
+          0 ||
+      ((processSamplesCount = processSamplesCount_requested), false) ||
+      rpc_read(conn, &utilization_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!utilization_null) {
+    utilization = (nvmlProcessUtilizationSample_t *)calloc(
+        (processSamplesCount_requested != 0 ? processSamplesCount_requested
+                                            : 1),
+        sizeof(nvmlProcessUtilizationSample_t));
+    if (utilization == nullptr)
+      goto ERROR_0;
+  }
+  if (rpc_read(conn, &lastSeenTimeStamp, sizeof(unsigned long long)) < 0 ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  fn = nvml_symbol<fn_t>("nvmlDeviceGetProcessUtilization");
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(device, utilization, &processSamplesCount,
+                                    lastSeenTimeStamp);
+
+  if (return_value == NVML_SUCCESS &&
+      ((!utilization_null &&
+        processSamplesCount > processSamplesCount_requested))) {
+    return_value = NVML_ERROR_UNKNOWN;
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
+      rpc_write(conn, &processSamplesCount, sizeof(unsigned int)) < 0 ||
+      (return_value == NVML_SUCCESS && !utilization_null &&
+       processSamplesCount != 0 &&
+       rpc_write(conn, utilization,
+                 processSamplesCount * sizeof(nvmlProcessUtilizationSample_t)) <
+           0) ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)utilization);
+  return 0;
+ERROR_0:
+  free((void *)utilization);
+  return -1;
+}
+
 int handle_nvmlEventSetCreate(conn_t *conn) {
   nvmlEventSet_t set{};
   set = {};

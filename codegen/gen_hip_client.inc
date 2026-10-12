@@ -5096,6 +5096,9 @@ static hipError_t lupine_rpc_hipGraphGetEdges(conn_t *conn, hipGraph_t graph,
 
 extern "C" hipError_t hipGraphGetEdges(hipGraph_t graph, hipGraphNode_t *from,
                                        hipGraphNode_t *to, size_t *numEdges) {
+  if (numEdges == nullptr) {
+    return hipErrorInvalidValue;
+  }
   conn_t *conn = connection();
   return lupine_rpc_hipGraphGetEdges(conn, graph, from, to, numEdges);
 }
@@ -5127,6 +5130,9 @@ static hipError_t lupine_rpc_hipGraphGetNodes(conn_t *conn, hipGraph_t graph,
 
 extern "C" hipError_t hipGraphGetNodes(hipGraph_t graph, hipGraphNode_t *nodes,
                                        size_t *numNodes) {
+  if (numNodes == nullptr) {
+    return hipErrorInvalidValue;
+  }
   conn_t *conn = connection();
   return lupine_rpc_hipGraphGetNodes(conn, graph, nodes, numNodes);
 }
@@ -5162,6 +5168,9 @@ static hipError_t lupine_rpc_hipGraphGetRootNodes(conn_t *conn,
 extern "C" hipError_t hipGraphGetRootNodes(hipGraph_t graph,
                                            hipGraphNode_t *pRootNodes,
                                            size_t *pNumRootNodes) {
+  if (pNumRootNodes == nullptr) {
+    return hipErrorInvalidValue;
+  }
   conn_t *conn = connection();
   return lupine_rpc_hipGraphGetRootNodes(conn, graph, pRootNodes,
                                          pNumRootNodes);
@@ -5199,6 +5208,9 @@ lupine_rpc_hipGraphNodeGetDependencies(conn_t *conn, hipGraphNode_t node,
 extern "C" hipError_t hipGraphNodeGetDependencies(hipGraphNode_t node,
                                                   hipGraphNode_t *pDependencies,
                                                   size_t *pNumDependencies) {
+  if (pNumDependencies == nullptr) {
+    return hipErrorInvalidValue;
+  }
   conn_t *conn = connection();
   return lupine_rpc_hipGraphNodeGetDependencies(conn, node, pDependencies,
                                                 pNumDependencies);
@@ -5237,6 +5249,9 @@ extern "C" hipError_t
 hipGraphNodeGetDependentNodes(hipGraphNode_t node,
                               hipGraphNode_t *pDependentNodes,
                               size_t *pNumDependentNodes) {
+  if (pNumDependentNodes == nullptr) {
+    return hipErrorInvalidValue;
+  }
   conn_t *conn = connection();
   return lupine_rpc_hipGraphNodeGetDependentNodes(conn, node, pDependentNodes,
                                                   pNumDependentNodes);

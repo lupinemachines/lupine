@@ -22,5 +22,16 @@ jobs:
       - name: Regenerate checked-in sources
         run: ./codegen/run.sh
 
+      - name: Test codegen boundary handling
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --volume "$PWD:/workspace" \
+            --workdir /workspace \
+            --entrypoint uv \
+            lupine-codegen:cuda-13.3.1 \
+            run --with cxxheaderparser==1.9.2 \
+            python -m unittest discover -s test -p 'test_codegen_*.py'
+
       - name: Verify generated files are current
         run: git diff --exit-code -- codegen

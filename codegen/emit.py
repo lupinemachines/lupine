@@ -42,6 +42,9 @@ class Backend:
     # The library also exports every entry point under this prefix (NCCL's
     # profiling interface), as an alias of the same definition.
     alias_prefix: str = ""
+    # Status codes for explicitly success-only output arrays.
+    success: str = ""
+    invalid_result: str = ""
 
 
 def optional_async(backend: "Backend", metadata) -> bool:
@@ -107,7 +110,7 @@ def write_client_validation(f, backend: Backend, function, operations):
         name = operation.parameter.name
         if isinstance(operation, NullTerminatedOperation) and operation.send:
             checks.append(f"{name} == nullptr")
-        elif isinstance(operation, DereferenceOperation):
+        elif isinstance(operation, (DereferenceOperation, InOutCountOperation)):
             checks.append(f"{name} == nullptr")
         elif isinstance(operation, ArrayOperation) and not operation.nullable:
             checks.append(
@@ -131,10 +134,24 @@ def write_cleared_fields(f, metadata, indent, reference):
             f.write(f"{indent}{parameter}{reference}{name} = nullptr;\n")
 
 
+def success_only_arrays(backend, function, operations, metadata):
+    arrays = [operation for operation in operations
+              if isinstance(operation, NullableArrayOperation)
+              and operation.recv_on_success]
+    if arrays and (function.return_type.format() != backend.result
+                   or not backend.success or not backend.invalid_result
+                   or metadata.async_fire_forget):
+        raise RuntimeError(
+            "ON_SUCCESS requires a synchronous status-returning backend "
+            "with success and invalid-result codes")
+    return arrays
+
+
 def write_client_rpc(f, backend: Backend, function, operations, metadata):
     name = function.name.format()
     result = function.return_type.format()
     params = ", ".join(format_function_params(function))
+    status_first = bool(success_only_arrays(backend, function, operations, metadata))
     submit = optional_async(backend, metadata)
     if submit and (
         result != backend.result
@@ -184,9 +201,14 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
     for operation in operations:
         operation.client_rpc_write(f)
     f.write(f"      {wait}\n")
+    if status_first:
+        f.write("      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||\n")
     for operation in operations:
-        operation.client_rpc_read(f)
-    if result != "void":
+        if isinstance(operation, NullableArrayOperation) and operation.recv_on_success:
+            operation.client_rpc_read(f, success=backend.success)
+        else:
+            operation.client_rpc_read(f)
+    if result != "void" and not status_first:
         f.write("      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||\n")
     f.write(f"      rpc_read_end(conn) < 0{')))' if submit else ')'} {{\n")
     write_cleared_fields(f, metadata, "    ", "->")
@@ -319,6 +341,7 @@ def deferred_dtoh_detach(metadata) -> str:
 def write_server_handler(f, backend: Backend, function, operations, metadata):
     name = function.name.format()
     result = function.return_type.format()
+    success_arrays = success_only_arrays(backend, function, operations, metadata)
     # The driver exports this one unversioned.
     entry = "cuEventElapsedTime" if name == "cuEventElapsedTime_v2" else name
     cleared = {parameter for parameter, _ in metadata.clear_fields}
@@ -444,6 +467,16 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     if metadata.clear_fields:
         write_cleared_fields(f, metadata, "  ", ".")
         f.write("\n")
+    # On success a populated output must fit the caller's capacity. Keep a
+    # count-only query valid even when its reported count exceeds capacity 0.
+    invalid_counts = [
+        f"(!{op.parameter.name}_null && {op.count.name} > {op.requested_count_expr()})"
+        for op in success_arrays if isinstance(op.count.type, Pointer)
+    ]
+    if invalid_counts:
+        f.write(f"  if (return_value == {backend.success} && (\n      "
+                + " ||\n      ".join(invalid_counts) + ")) {\n")
+        f.write(f"    return_value = {backend.invalid_result};\n  }}\n")
     if not always_async:
         f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
         if deferred:
@@ -453,9 +486,14 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
             f.write("      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||\n")
         if stdout:
             f.write("      lupine_write_captured_stdout(conn, capture) < 0 ||\n")
+        if success_arrays:
+            f.write(f"      rpc_write(conn, &return_value, sizeof({result})) < 0 ||\n")
         for operation in operations:
-            operation.server_rpc_write(f)
-        if result != "void":
+            if isinstance(operation, NullableArrayOperation) and operation.recv_on_success:
+                operation.server_rpc_write(f, success=backend.success)
+            else:
+                operation.server_rpc_write(f)
+        if result != "void" and not success_arrays:
             f.write(f"      rpc_write(conn, &return_value, sizeof({result})) < 0 ||\n")
         f.write("      rpc_write_end(conn) < 0)\n")
         f.write("    goto ERROR_0;\n")
