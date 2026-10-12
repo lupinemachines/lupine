@@ -24,15 +24,6 @@ several arrays may share one count.
 `ON_ERROR` may be added to a `RECV_ONLY NULLABLE LENGTH` buffer when CUDA only
 writes the buffer on failure. The generated response preserves the caller's
 buffer on success.
-`ON_SUCCESS` marks a `RECV_ONLY NULLABLE LENGTH` array whose contents are valid
-only on success. Status-returning forwarding backends with configured success
-and invalid-result codes support it. The response sends the status before the
-out-parameters, still returns the count on errors, and sends array elements only
-on success. A successful fill reporting more elements than its capacity becomes
-an invalid-result error; a null-array count query is exempt. This changes the
-annotated call's wire layout, so regenerate and deploy client and server together.
-Unannotated calls retain their existing layout. `ON_SUCCESS` and `ON_ERROR` are
-mutually exclusive.
 `SCALAR` marks a pointer that a library's residence argument places on the host
 or on the device (`ncclRedOpCreatePreMulSum`'s `scalar`). The residence belongs to the
 call's first parameter, or to the parameter named by `SCALAR:<param>`. The
