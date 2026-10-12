@@ -63,7 +63,7 @@ class Backend:
         size = storage.nbytes()
         existing = self.allocations.get(handle)
         if existing is None or size > existing[1]:
-            pointer = self.runtime.malloc(size)
+            pointer = self.runtime.operators.malloc(size)
             if existing is not None:
                 try:
                     self.runtime.check(
@@ -71,11 +71,9 @@ class Backend:
                         "cudaMemcpy(grow storage)",
                     )
                 except BaseException:
-                    self.runtime.free(pointer)
+                    self.runtime.operators.free(pointer)
                     raise
-                self.runtime.check(
-                    self.runtime.free(existing[0]), "cudaFree(grow storage)"
-                )
+                self.runtime.operators.free(existing[0])
             self.allocations[handle] = (pointer, size)
         return P(
             self.allocations[handle][0]
@@ -113,6 +111,32 @@ class Backend:
                     "Lupine native does not support copies between aliased views"
                 )
         with self.runtime.active(), ExitStack() as stack:
+            # Contiguous CPU transfers can use the tensor's final allocation.
+            # cudaMemcpy waits for queued default-stream work before returning.
+            if (
+                destination.shape == source.shape
+                and destination.dtype == source.dtype
+                and destination.is_contiguous()
+                and source.is_contiguous()
+            ):
+                kind = None
+                if self.ours(destination) and source.device.type == "cpu":
+                    target, origin = self.pointer(destination), source.data_ptr()
+                    kind = 1
+                elif destination.device.type == "cpu" and self.ours(source):
+                    target, origin = destination.data_ptr(), self.pointer(source)
+                    kind = 2
+                if kind is not None:
+                    self.runtime.check(
+                        self.runtime.copy(
+                            target,
+                            origin,
+                            destination.numel() * destination.element_size(),
+                            kind,
+                        ),
+                        "cudaMemcpy(contiguous transfer)",
+                    )
+                    return destination
             if not self.ours(destination):
                 if destination.device.type != "cpu" or not self.ours(source):
                     raise NotImplementedError(
@@ -138,8 +162,10 @@ class Backend:
                         "Lupine native cannot copy another accelerator"
                     )
                 host = source.contiguous()
-                source_pointer = self.runtime.malloc(host.numel() * host.element_size())
-                stack.callback(self.runtime.free, source_pointer)
+                source_pointer = self.runtime.operators.malloc(
+                    host.numel() * host.element_size()
+                )
+                stack.callback(self.runtime.operators.free, source_pointer)
                 self.runtime.check(
                     self.runtime.copy(
                         source_pointer,
@@ -664,9 +690,7 @@ class Backend:
         with self.runtime.active():
             allocation = self.allocations.pop(handle, None)
             if allocation is not None:
-                self.runtime.check(
-                    self.runtime.free(allocation[0]), "cudaFree(storage)"
-                )
+                self.runtime.operators.free(allocation[0])
 
     def synchronize(self):
         self.runtime.synchronize()
@@ -720,7 +744,8 @@ class Backend:
             "memory_reserved",
             "max_memory_reserved",
         ):
-            # There is no caching allocator in this prototype.
+            # Only live tensor storage is counted here; operator scratch and
+            # cached allocator reservations are not included.
             if name.startswith("max_"):
                 raise NotImplementedError(
                     "Lupine native does not track peak memory yet"
@@ -728,6 +753,9 @@ class Backend:
             with self.runtime.active():
                 return sum(size for pointer, size in self.allocations.values())
         if name == "empty_cache":
+            with self.runtime.active():
+                if self.runtime._operators is not None:
+                    self.runtime._operators.close()
             return None
         raise NotImplementedError(f"Lupine native does not implement torch.cuda.{name}")
 
@@ -737,7 +765,7 @@ class Backend:
         with self.runtime.active():
             self.runtime.check(self.runtime.sync(), "cudaDeviceSynchronize")
             for pointer, size in self.allocations.values():
-                self.runtime.check(self.runtime.free(pointer), "cudaFree(storage)")
+                self.runtime.operators.free(pointer)
             self.allocations.clear()
             if self.runtime._cudnn is not None:
                 self.runtime._cudnn.close()

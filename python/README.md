@@ -151,7 +151,10 @@ float masks (including fully masked rows) and no dropout, and linear layer train
 Unsupported operators raise `NotImplementedError`. Mixed precision,
 transposed/1D/3D convolution, fused attention, CUDA graphs, and `torch.compile`
 are not supported.
-Kernels run synchronously. Matrix multiplication requires converted cuBLAS.
+Operations enqueue on the default CUDA stream, using ATen's caching allocator
+for tensor storage and temporary operator buffers. CPU transfers, explicit
+synchronization, and backend shutdown wait for queued work. Matrix multiplication
+requires converted cuBLAS.
 2D convolution and its input, weight, and bias gradients use converted cuDNN,
 including grouped and dilated convolutions. Softmax/log-softmax and their
 gradients also use cuDNN. Copies, integer fill/arange, elementwise math,

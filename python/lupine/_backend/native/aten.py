@@ -2,7 +2,7 @@
 
 import ctypes as ct
 
-from .runtime import I, Q, P
+from .runtime import I, Q, P, S
 
 
 class TensorDesc(ct.Structure):
@@ -39,6 +39,10 @@ class Operators:
         self.run.restype = I
         self.error = self.library.lupine_aten_error
         self.error.argtypes, self.error.restype = [], ct.c_char_p
+        self.allocate = self.library.lupine_aten_alloc
+        self.allocate.argtypes, self.allocate.restype = [S, P], I
+        self.deallocate = self.library.lupine_aten_free
+        self.deallocate.argtypes, self.deallocate.restype = [P], I
         self.destroy = self.library.lupine_aten_close
         self.destroy.argtypes, self.destroy.restype = [], I
 
@@ -83,9 +87,18 @@ class Operators:
                 ct.byref(parameters),
             )
         )
-        self.runtime.check(self.runtime.sync(), "cudaDeviceSynchronize(ATen)")
+        # Match CUDA eager execution: enqueue on the default stream. CPU copies
+        # and explicit synchronize() wait; ATen handles cached allocation lifetimes.
         self.runtime.launches += 1
         return parameters
+
+    def malloc(self, size):
+        pointer = P()
+        self.check(self.allocate(size, ct.byref(pointer)))
+        return pointer.value
+
+    def free(self, pointer):
+        self.check(self.deallocate(pointer))
 
     def close(self):
         self.check(self.destroy())

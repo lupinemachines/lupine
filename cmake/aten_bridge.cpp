@@ -18,11 +18,15 @@ struct Parameters {
 };
 static thread_local std::string error;
 static at::Tensor tensor(const TensorDesc *d) {
-  return at::from_blob(d->data, at::IntArrayRef(d->size, d->dims),
-                       at::IntArrayRef(d->stride, d->dims),
-                       at::TensorOptions()
-                           .dtype(d->dtype ? at::kLong : at::kFloat)
-                           .device(at::kCUDA, 0));
+  // All descriptors belong to our device-0 allocator. Supplying the target
+  // avoids a driver pointer-attribute query for every borrowed tensor.
+  return at::for_blob(d->data, at::IntArrayRef(d->size, d->dims))
+      .strides(at::IntArrayRef(d->stride, d->dims))
+      .options(at::TensorOptions()
+                   .dtype(d->dtype ? at::kLong : at::kFloat)
+                   .device(at::kCUDA, 0))
+      .target_device(c10::Device(c10::DeviceType::CUDA, 0))
+      .make_tensor();
 }
 extern "C" const char *lupine_aten_error() { return error.c_str(); }
 extern "C" int lupine_aten_run(int operation, const TensorDesc *destination,
@@ -43,29 +47,36 @@ extern "C" int lupine_aten_run(int operation, const TensorDesc *destination,
       break;
     case 2:
       at::arange_out(out, 0, out.numel(), 1);
-      if (destination->dtype)
-        out.mul_(p->step).add_(p->integer);
-      else
-        out.mul_(p->second).add_(p->first);
+      if (destination->dtype) {
+        if (p->step != 1)
+          out.mul_(p->step);
+        if (p->integer != 0)
+          out.add_(p->integer);
+      } else {
+        if (p->second != 1)
+          out.mul_(p->second);
+        if (p->first != 0)
+          out.add_(p->first);
+      }
       break;
     case 3:
       switch (p->variant) {
       case 0:
-        result =
-            other ? at::add(a, b, p->alpha) : at::add(a, p->first, p->alpha);
+        other ? at::add_out(out, a, b, p->alpha)
+              : at::add_out(out, a, p->first, p->alpha);
         break;
       case 1:
-        result =
-            other ? at::sub(a, b, p->alpha) : at::sub(a, p->first, p->alpha);
+        other ? at::sub_out(out, a, b, p->alpha)
+              : at::sub_out(out, a, p->first, p->alpha);
         break;
       case 2:
-        result = other ? at::mul(a, b) : at::mul(a, p->first);
+        other ? at::mul_out(out, a, b) : at::mul_out(out, a, p->first);
         break;
       case 3:
-        result = other ? at::div(a, b) : at::div(a, p->first);
+        other ? at::div_out(out, a, b) : at::div_out(out, a, p->first);
         break;
       case 4:
-        result = other ? at::pow(a, b) : at::pow(a, p->first);
+        other ? at::pow_out(out, a, b) : at::pow_out(out, a, p->first);
         break;
       default:
         throw std::invalid_argument("invalid binary operation");
@@ -74,48 +85,52 @@ extern "C" int lupine_aten_run(int operation, const TensorDesc *destination,
     case 4:
       switch (p->variant) {
       case 0:
-        result = at::neg(a);
+        at::neg_out(out, a);
         break;
       case 1:
-        result = at::relu(a);
+        at::relu_out(out, a);
         break;
       case 2:
-        result = at::exp(a);
+        at::exp_out(out, a);
         break;
       case 3:
-        result = at::log(a);
+        at::log_out(out, a);
         break;
       case 4:
-        result = at::sqrt(a);
+        at::sqrt_out(out, a);
         break;
       case 5:
-        result = at::rsqrt(a);
+        at::rsqrt_out(out, a);
         break;
       case 6:
-        result = at::sin(a);
+        at::sin_out(out, a);
         break;
       case 7:
-        result = at::cos(a);
+        at::cos_out(out, a);
         break;
       case 8:
-        result = at::tanh(a);
+        at::tanh_out(out, a);
         break;
       case 9:
-        result = at::sigmoid(a);
+        at::sigmoid_out(out, a);
         break;
       case 10:
-        result = at::abs(a);
+        at::abs_out(out, a);
         break;
       case 11:
-        result = at::reciprocal(a);
+        at::reciprocal_out(out, a);
         break;
       default:
         throw std::invalid_argument("invalid unary operation");
       }
       break;
     case 5:
-      result = p->variant ? at::mean(a, at::IntArrayRef(p->axes, p->axis_count))
-                          : at::sum(a, at::IntArrayRef(p->axes, p->axis_count));
+      if (p->variant)
+        at::mean_out(out, a, at::IntArrayRef(p->axes, p->axis_count),
+                     out.dim() == a.dim());
+      else
+        at::sum_out(out, a, at::IntArrayRef(p->axes, p->axis_count),
+                    out.dim() == a.dim());
       break;
     case 6: {
       auto generator = at::detail::getCUDAHooks().getDefaultGenerator(0);
@@ -130,11 +145,11 @@ extern "C" int lupine_aten_run(int operation, const TensorDesc *destination,
     }
     case 7:
       if (p->variant == 0)
-        result = at::threshold_backward(a, b, p->first);
+        at::threshold_backward_out(out, a, b, p->first);
       else if (p->variant == 1)
-        result = at::sigmoid_backward(a, b);
+        at::sigmoid_backward_out(out, a, b);
       else if (p->variant == 2)
-        result = at::tanh_backward(a, b);
+        at::tanh_backward_out(out, a, b);
       else
         throw std::invalid_argument("invalid activation backward operation");
       break;
@@ -146,6 +161,29 @@ extern "C" int lupine_aten_run(int operation, const TensorDesc *destination,
     }
     if (result.defined())
       out.copy_(result.reshape(out.sizes()));
+    return 0;
+  } catch (const std::exception &e) {
+    error = e.what();
+    return 1;
+  }
+}
+
+// Use the same allocator as packaged CUDA operators, including stream-safe
+// reuse.
+extern "C" int lupine_aten_alloc(size_t size, void **pointer) {
+  try {
+    at::globalContext().lazyInitDevice(c10::DeviceType::CUDA);
+    *pointer = c10::cuda::CUDACachingAllocator::raw_alloc(size ? size : 1);
+    return 0;
+  } catch (const std::exception &e) {
+    error = e.what();
+    return 1;
+  }
+}
+
+extern "C" int lupine_aten_free(void *pointer) {
+  try {
+    c10::cuda::CUDACachingAllocator::raw_delete(pointer);
     return 0;
   } catch (const std::exception &e) {
     error = e.what();

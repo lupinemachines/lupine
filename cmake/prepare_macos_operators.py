@@ -133,6 +133,8 @@ def prepare_operators(
                     "lupine_aten_run",
                     "lupine_aten_error",
                     "lupine_aten_close",
+                    "lupine_aten_alloc",
+                    "lupine_aten_free",
                 ],
                 "signatures": {
                     "lupine_aten_run": {
@@ -141,6 +143,8 @@ def prepare_operators(
                     },
                     "lupine_aten_error": {"result": "ptr", "arguments": []},
                     "lupine_aten_close": {"result": "i32", "arguments": []},
+                    "lupine_aten_alloc": {"result": "i32", "arguments": ["i64", "ptr"]},
+                    "lupine_aten_free": {"result": "i32", "arguments": ["ptr"]},
                 },
             },
             indent=2,

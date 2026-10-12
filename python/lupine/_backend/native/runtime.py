@@ -190,7 +190,6 @@ class Runtime:
         )
         if status:
             raise RuntimeError(f"cublasSgemm_v2 failed with cuBLAS status {status}")
-        self.check(self.sync(), "cudaDeviceSynchronize(cuBLAS)")
         self.launches += 1
 
     @property
@@ -248,11 +247,15 @@ class Runtime:
 
     @contextmanager
     def allocated(self, size):
-        pointer = P(self.malloc(size))
+        operators = self._operators
+        pointer = P(operators.malloc(size) if operators is not None else self.malloc(size))
         try:
             yield pointer
         finally:
-            self.check(self.free(pointer), "cudaFree(temporary)")
+            if operators is not None:
+                operators.free(pointer)
+            else:
+                self.check(self.free(pointer), "cudaFree(temporary)")
 
     def synchronize(self):
         with self.active():

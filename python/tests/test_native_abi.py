@@ -73,11 +73,18 @@ def test_native_driver_functions_keep_their_original_abi():
     assert runtime.bind(runtime.runtime, "function", *types).argtypes == types
 
 
-def test_temporary_allocation_is_freed_when_body_fails():
+@pytest.mark.parametrize("cached", [False, True])
+def test_temporary_allocation_is_freed_when_body_fails(cached):
     runtime = Runtime.__new__(Runtime)
     runtime.malloc = lambda size: 4096
     released = []
     runtime.free = lambda pointer: released.append(pointer.value) or 0
+    runtime._operators = (
+        SimpleNamespace(malloc=runtime.malloc, free=runtime.free) if cached else None
+    )
+    if cached:
+        runtime.malloc = lambda size: pytest.fail("must use the operator allocator")
+        runtime.free = lambda pointer: pytest.fail("must return memory to its allocator")
     with pytest.raises(ValueError, match="operation failed"):
         with runtime.allocated(128) as pointer:
             assert pointer.value == 4096
@@ -87,6 +94,7 @@ def test_temporary_allocation_is_freed_when_body_fails():
 
 def test_failed_temporary_allocation_does_not_free_a_pointer():
     runtime = Runtime.__new__(Runtime)
+    runtime._operators = None
     runtime.allocate = lambda pointer, size: 2
     released = []
     runtime.free = lambda pointer: released.append(pointer.value) or 0

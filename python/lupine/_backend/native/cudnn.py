@@ -73,9 +73,6 @@ class Cudnn:
                     out_desc,
                     output,
                 )
-            self.runtime.check(
-                self.runtime.sync(), "cudaDeviceSynchronize(cuDNN softmax)"
-            )
             self.runtime.launches += 1
 
     def execute(self, operation, a_desc, a, b_desc, b, conv, out_desc, out):
@@ -114,9 +111,6 @@ class Cudnn:
                 ct.byref(beta),
                 out_desc,
                 out,
-            )
-            self.runtime.check(
-                self.runtime.sync(), f"cudaDeviceSynchronize(cuDNN {operation})"
             )
             self.runtime.launches += 1
 
@@ -204,7 +198,4 @@ class Cudnn:
                         b_desc,
                         db,
                     )
-                self.runtime.check(
-                    self.runtime.sync(), "cudaDeviceSynchronize(cuDNN bias)"
-                )
                 self.runtime.launches += 1
