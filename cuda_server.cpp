@@ -40,7 +40,6 @@
 #include "cache.h"
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_server.h"
-#include "server_checkpoint.h"
 #include "cuda_server_memcpy.h"
 #include "events.h"
 #include "ipc.h"
@@ -49,6 +48,7 @@
 #include "lupine_log.h"
 #include "monitoring.h"
 #include "rpc.h"
+#include "server_checkpoint.h"
 
 #ifdef _WIN32
 #include <io.h>
@@ -68,6 +68,28 @@ static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
     static_cast<CUmemLocationType>(2);
 #endif
 #endif
+
+namespace {
+
+// Metadata warming uses expected failing CUDA queries to find parameter-list
+// boundaries and unsupported attributes. These are Lupine's queries, rather
+// than application calls, and must not be surfaced to application log hooks.
+thread_local unsigned lupine_internal_cuda_query_depth = 0;
+
+class lupine_internal_cuda_query {
+public:
+  lupine_internal_cuda_query() { ++lupine_internal_cuda_query_depth; }
+  ~lupine_internal_cuda_query() { --lupine_internal_cuda_query_depth; }
+  lupine_internal_cuda_query(const lupine_internal_cuda_query &) = delete;
+  lupine_internal_cuda_query &
+  operator=(const lupine_internal_cuda_query &) = delete;
+};
+
+bool lupine_is_internal_cuda_query() {
+  return lupine_internal_cuda_query_depth != 0;
+}
+
+} // namespace
 
 #define DEFAULT_PORT 14833
 #define MAX_CLIENTS 10
@@ -111,6 +133,7 @@ static constexpr size_t lupine_attribute_snapshot_copy_size() {
 
 template <typename Query>
 static int lupine_write_attribute_snapshot(conn_t *conn, Query query) {
+  lupine_internal_cuda_query probe;
   auto *count = static_cast<uint32_t *>(
       rpc_write_buffer(conn, sizeof(uint32_t), alignof(uint32_t)));
   if (count == nullptr) {
@@ -880,6 +903,7 @@ struct lupine_kernel_record {
 
 template <typename Query>
 static void lupine_collect_params(lupine_kernel_record &record, Query query) {
+  lupine_internal_cuda_query probe;
   for (lupine_param_record param;
        query(record.param_count, &param.offset, &param.size) == CUDA_SUCCESS;
        ++record.param_count) {
@@ -890,6 +914,7 @@ static void lupine_collect_params(lupine_kernel_record &record, Query query) {
 template <typename Query>
 static void lupine_collect_attributes(lupine_attribute_records &attributes,
                                       uint32_t attribute_count, Query query) {
+  lupine_internal_cuda_query probe;
   for (uint32_t i = 0; i < attribute_count; ++i) {
     attributes[i].attribute = static_cast<int>(i);
     attributes[i].result =
@@ -948,6 +973,7 @@ struct lupine_module_snapshot {
 //
 // Like a library's, this runs before the response takes the RPC write lock.
 static lupine_module_snapshot lupine_collect_module(CUmodule module) {
+  lupine_internal_cuda_query probe;
   lupine_module_snapshot snapshot;
 #if CUDA_VERSION >= 12040
   unsigned int function_count = 0;
@@ -1162,7 +1188,10 @@ int handle_lupineFunctionParamLayoutSnapshot(conn_t *conn) {
         rpc_write_buffer(conn, sizeof(size_t), alignof(size_t)));
     auto *param_result = static_cast<CUresult *>(
         rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
-    *param_result = cuFuncGetParamInfo(function, i, offset, size);
+    {
+      lupine_internal_cuda_query probe;
+      *param_result = cuFuncGetParamInfo(function, i, offset, size);
+    }
     if (*param_result != CUDA_SUCCESS) {
       break;
     }
@@ -1206,6 +1235,7 @@ struct lupine_library_snapshot {
 // pinned HtoD callback that needs the RPC write lock to fetch client bytes.
 // Finish every CUDA query before starting the response and taking that lock.
 static lupine_library_snapshot lupine_collect_library(CUlibrary library) {
+  lupine_internal_cuda_query probe;
   lupine_library_snapshot snapshot;
 #if CUDA_VERSION >= 12040
   CUdevice current_device = -1;
@@ -2573,6 +2603,9 @@ void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
 #if CUDA_VERSION >= 12090
 static void CUDA_CB lupine_logs_callback(void *user_data, CUlogLevel level,
                                          char *message, size_t length) {
+  if (lupine_is_internal_cuda_query()) {
+    return;
+  }
   auto *callback = static_cast<lupine_logs_callback_data *>(user_data);
   if (callback == nullptr) {
     return;
@@ -2699,6 +2732,7 @@ int handle_cuGraphKernelNodeGetParams(conn_t *conn) {
       auto *param_result = static_cast<CUresult *>(
           rpc_write_buffer(conn, sizeof(CUresult), alignof(CUresult)));
       *param_result = CUDA_ERROR_INVALID_HANDLE;
+      lupine_internal_cuda_query probe;
       if (node_params.func != nullptr) {
         *param_result = cuFuncGetParamInfo(node_params.func, i, &offset, size);
       }

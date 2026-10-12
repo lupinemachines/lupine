@@ -35,8 +35,10 @@ inline bool lupine_log_enabled(lupine_log_level level) {
 }
 
 inline std::ofstream &lupine_trace_file() {
-  static std::ofstream file;
-  return file;
+  // CUDA dylibs can emit traces from destructors after ordinary C++ statics
+  // have been destroyed. Keep the stream alive for that final teardown.
+  static auto *file = new std::ofstream;
+  return *file;
 }
 
 inline std::ostream *lupine_trace_stream() {
@@ -67,8 +69,8 @@ inline std::ostream *lupine_trace_stream() {
 }
 
 inline std::mutex &lupine_trace_mutex() {
-  static std::mutex mutex;
-  return mutex;
+  static auto *mutex = new std::mutex;
+  return *mutex;
 }
 
 // Stream-style logging helpers, e.g.:
