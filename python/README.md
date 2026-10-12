@@ -16,9 +16,10 @@ and makes driver calls through Lupine. It loads with local visibility so its
 embedded Linux libc cannot replace Python's native libc. Intel macOS bundles
 continue to provide the native driver and NVML only.
 
-The wheel itself is pure Python: a small PyTorch adapter and the loader that
-resolves that client. No NVIDIA driver, CUDA toolkit, or container runtime is
-needed on the client.
+The universal Python wheel contains the adapter and driver loader. ARM64
+macOS additionally needs the [runtime wheel](#arm64-macos-cuda-runtime), which
+packages the converted application dylibs. No local NVIDIA driver or CUDA
+toolkit is needed.
 
 ```python
 import lupine
@@ -72,7 +73,8 @@ pip install ./lupine-VERSION-py3-none-macosx_26_0_arm64.whl
 The universal Python wheel on PyPI provides driver support for all platforms;
 the Mac runtime wheel additionally provides the native PyTorch backend on
 macOS 26 or newer. Set `LUPINE_SERVER` before starting Python; the client
-fetches the server's driver and NVML, then loads its packaged runtime:
+fetches the server's driver and NVML, then loads its packaged runtime. Use
+a Lupine 2.1 or newer server with a CUDA 13.3-compatible GPU driver:
 
 ```python
 import ctypes
@@ -113,7 +115,8 @@ Additional CUDA packages can be prepared with the same pipeline. For example,
 --package nvidia-nvjitlink==13.3.33` includes the FFT/RNG libraries and pins
 cuFFT's declared linker dependency. `tests/test_macos_cuda_libraries.py` checks
 GPU FFT/RNG results and clean process teardown when run on ARM64 macOS with
-`LUPINE_TEST_MACOS_CUDA_LIBRARIES=1` and a matching `LUPINE_LIBDIR`.
+`LUPINE_TEST_MACOS_CUDA_LIBRARIES=1` and the packaged runtime (or a matching
+`LUPINE_RUNTIME_LIBDIR` during development).
 
 The same preparation command accepts `--package nvidia-cusolver==12.3.4.7
 --package nvidia-cusparse==12.8.6.72`. Include exact cuBLAS and nvJitLink pins
