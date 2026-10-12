@@ -7,6 +7,11 @@ concurrency:
 on:
   workflow_call:
     inputs:
+      include_runtime:
+        description: Build the ARM64 macOS application runtime separately from driver clients
+        required: false
+        default: false
+        type: boolean
       checkout_ref:
         description: Exact source revision to build
         required: false
@@ -17,6 +22,7 @@ permissions:
 
 jobs:
   macos-driver:
+    if: inputs.include_runtime
     name: Bootstrap ARM64 macOS driver interface
     runs-on: macos-26
     timeout-minutes: 30
@@ -53,6 +59,7 @@ jobs:
           retention-days: 3
 
   macos-runtime-input:
+    if: inputs.include_runtime
     name: Prepare ARM64 CUDA runtime
     needs: macos-driver
     runs-on: ubuntu-24.04
@@ -148,7 +155,11 @@ jobs:
 
   client:
     name: Client / ${{ matrix.tag }}
-    needs: macos-runtime-input
+    needs: [macos-driver, macos-runtime-input]
+    if: >-
+      always() && !cancelled() &&
+      (needs.macos-driver.result == 'success' || needs.macos-driver.result == 'skipped') &&
+      (needs.macos-runtime-input.result == 'success' || needs.macos-runtime-input.result == 'skipped')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -176,7 +187,7 @@ jobs:
           ref: ${{ inputs.checkout_ref || github.sha }}
 
       - name: Download bootstrapped ARM64 macOS driver
-        if: matrix.tag == 'macosx-arm64'
+        if: matrix.tag == 'macosx-arm64' && inputs.include_runtime
         uses: actions/download-artifact@v8
         with:
           name: lupine-macos-driver-bootstrap
@@ -186,7 +197,7 @@ jobs:
         run: brew install libnghttp2 ninja
 
       - name: Stage CUDA headers (macOS)
-        if: runner.os == 'macOS' && matrix.tag != 'macosx-arm64'
+        if: runner.os == 'macOS' && (matrix.tag != 'macosx-arm64' || !inputs.include_runtime)
         run: python3 cmake/fetch_cuda_headers.py cuda-sdk
 
       - name: Install build dependencies (Windows)
@@ -237,7 +248,7 @@ jobs:
             '
 
       - name: Build client (macOS)
-        if: runner.os == 'macOS' && matrix.tag != 'macosx-arm64'
+        if: runner.os == 'macOS' && (matrix.tag != 'macosx-arm64' || !inputs.include_runtime)
         run: |
           set -euo pipefail
           cmake -S . -B build -G Ninja \
@@ -248,43 +259,43 @@ jobs:
           cmake --build build --parallel --target lupine_cuda_client lupine_nvml
 
       - uses: astral-sh/setup-uv@v5
-        if: matrix.tag == 'macosx-arm64'
+        if: matrix.tag == 'macosx-arm64' && inputs.include_runtime
 
       - name: Download compiled runtime inputs
-        if: matrix.tag == 'macosx-arm64'
+        if: matrix.tag == 'macosx-arm64' && inputs.include_runtime
         uses: actions/download-artifact@v8
         with:
           name: lupine-macos-runtime-input
           path: build/macos-runtime
 
       - name: Link converted CUDA runtime
-        if: matrix.tag == 'macosx-arm64'
+        if: matrix.tag == 'macosx-arm64' && inputs.include_runtime
         run: >
           uv run --project third_party/machso python third_party/machso/link_bundle.py
           build/macos-runtime build/libcudart.dylib
           --native-library build/libcuda.dylib
 
       - name: Sign converted CUDA runtime
-        if: matrix.tag == 'macosx-arm64'
+        if: matrix.tag == 'macosx-arm64' && inputs.include_runtime
         run: >
           uv run --project third_party/machso python third_party/machso/sign_bundle.py
           build/libcudart.dylib
 
       - name: Link packaged CUDA operators
-        if: matrix.tag == 'macosx-arm64'
+        if: matrix.tag == 'macosx-arm64' && inputs.include_runtime
         run: >
           uv run --project third_party/machso python third_party/machso/link_bundle.py
           build/macos-runtime/torch-operators build/liblupine_aten.dylib
           --native-library build/libcuda.dylib --native-library build/libcudart.dylib
 
       - name: Sign packaged CUDA operators
-        if: matrix.tag == 'macosx-arm64'
+        if: matrix.tag == 'macosx-arm64' && inputs.include_runtime
         run: >
           uv run --project third_party/machso python third_party/machso/sign_bundle.py
           build/liblupine_aten.dylib
 
       - name: Verify converted Linux ABI on native macOS
-        if: matrix.tag == 'macosx-arm64'
+        if: matrix.tag == 'macosx-arm64' && inputs.include_runtime
         run: |
           uv run --project third_party/machso python third_party/machso/link_bundle.py \
             build/macos-runtime/abi-fixture build/native-abi.dylib
@@ -297,7 +308,7 @@ jobs:
             uv run --project third_party/machso --with pytest python -m pytest -q python/tests/test_native_abi.py
 
       - name: Verify native dependency lookup on macOS
-        if: matrix.tag == 'macosx-arm64'
+        if: matrix.tag == 'macosx-arm64' && inputs.include_runtime
         run: |
           clang -dynamiclib -arch arm64 build/macos-runtime/loader-fixture/provider.c \
             -install_name @rpath/libscalar-provider.dylib -o build/libscalar-provider.dylib
@@ -311,7 +322,7 @@ jobs:
             uv run --project third_party/machso --with pytest python -m pytest -q python/tests/test_native_loader.py
 
       - name: Verify native function pointer outputs on macOS
-        if: matrix.tag == 'macosx-arm64'
+        if: matrix.tag == 'macosx-arm64' && inputs.include_runtime
         run: |
           clang -dynamiclib -arch arm64 build/macos-runtime/query-fixture/provider.c \
             -install_name @rpath/libscalar-provider.dylib -o build/libscalar-provider.dylib
@@ -325,7 +336,7 @@ jobs:
             uv run --project third_party/machso --with pytest python -m pytest -q python/tests/test_native_function_pointers.py
 
       - name: Verify actual native CUDA query outputs on macOS
-        if: matrix.tag == 'macosx-arm64'
+        if: matrix.tag == 'macosx-arm64' && inputs.include_runtime
         run: |
           uv run --project third_party/machso python third_party/machso/link_bundle.py \
             build/macos-runtime/cuda-query-fixture build/native-cuda-query.dylib \
@@ -337,7 +348,7 @@ jobs:
             uv run --project third_party/machso --with pytest python -m pytest -q python/tests/test_native_cuda_queries.py
 
       - name: Verify exported ABI boundaries on macOS
-        if: matrix.tag == 'macosx-arm64'
+        if: matrix.tag == 'macosx-arm64' && inputs.include_runtime
         run: |
           mkdir -p build/native-export-fixtures
           cp build/macos-runtime/export-fixtures/exports/provider.json build/native-export-fixtures/
@@ -390,9 +401,6 @@ jobs:
               ;;
             macosx-*)
               cp build/libcuda.dylib build/libnvidia-ml.dylib client/
-              if [ "${{ matrix.tag }}" = macosx-arm64 ]; then
-                cp build/libcudart.dylib build/liblupine_aten.dylib client/
-              fi
               ;;
             *)
               # Each shim carries its real counterpart's SONAME, and the NCCL
@@ -407,6 +415,17 @@ jobs:
               ;;
           esac
           ls -1 client
+
+      - name: Upload application runtime separately from server drivers
+        if: matrix.tag == 'macosx-arm64' && inputs.include_runtime
+        uses: actions/upload-artifact@v7
+        with:
+          name: lupine-macos-runtime
+          path: |
+            build/libcudart.dylib
+            build/liblupine_aten.dylib
+          if-no-files-found: error
+          retention-days: 3
 
       - uses: actions/upload-artifact@v7
         with:
@@ -431,8 +450,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p client
-          # The converted runtime has only an ARM64 backend. Fuse the shims
-          # that have both slices; the ARM64 bundle retains its own runtime.
+          # Only driver shims go into server client bundles.
           for path in thin/lupine-client-macosx-arm64/*.dylib; do
             lib="$(basename "$path")"
             test -f "thin/lupine-client-macosx-x86_64/$lib" || continue

@@ -28,6 +28,7 @@ jobs:
     uses: ./.github/workflows/native-clients.yml
     with:
       checkout_ref: ${{ inputs.checkout_ref || github.sha }}
+      include_runtime: true
 
   package:
     name: Assemble and test wheels
@@ -68,3 +69,30 @@ jobs:
         with:
           name: lupine-python-package
           path: python/dist
+
+  macos-package:
+    name: Package ARM64 macOS runtime wheel
+    needs: clients
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.checkout_ref || github.sha }}
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/download-artifact@v8
+        with:
+          name: lupine-macos-runtime
+          path: macos-runtime
+      - name: Build wheel with application dylibs and no driver
+        working-directory: python
+        env:
+          LUPINE_MACOS_RUNTIME_DIR: ${{ github.workspace }}/macos-runtime
+        run: |
+          uv build --wheel --out-dir dist/macos
+          python verify_release.py --macos-dist dist/macos
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lupine-macos-python-package
+          path: python/dist/macos
+          if-no-files-found: error

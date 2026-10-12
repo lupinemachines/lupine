@@ -49,9 +49,32 @@ jobs:
     with:
       checkout_ref: ${{ needs.release-metadata.outputs.revision }}
 
+  macos-assets:
+    name: Publish packaged ARM64 macOS runtime wheel
+    needs: [release-metadata, build-python]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release-metadata.outputs.revision }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: lupine-macos-python-package
+          path: macos-dist
+      - name: Validate and split the runtime wheel
+        run: |
+          python python/verify_release.py --tag '${{ needs.release-metadata.outputs.tag }}' --macos-dist macos-dist
+          python cmake/split_release_asset.py macos-dist/*.whl macos-assets
+      - name: Upload Mac wheel parts and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload '${{ needs.release-metadata.outputs.tag }}' macos-assets/* --repo '${{ github.repository }}' --clobber
+
   pypi:
     name: Publish lupine to PyPI
-    needs: [release-metadata, build-python]
+    needs: [release-metadata, build-python, macos-assets]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -83,7 +106,7 @@ jobs:
 
   pypi-auto:
     name: Publish lupine-auto to PyPI
-    needs: [release-metadata, build-python]
+    needs: [release-metadata, build-python, macos-assets]
     runs-on: ubuntu-latest
     permissions:
       id-token: write

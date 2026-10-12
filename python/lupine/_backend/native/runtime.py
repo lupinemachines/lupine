@@ -87,7 +87,7 @@ class Runtime:
         loaded = _native.load(missing_ok=False)
         if "libcudart.dylib" not in loaded:
             raise RuntimeError(
-                "native torch requires an ARM64 macOS bundle with libcudart.dylib"
+                "native torch requires the ARM64 macOS wheel with packaged runtime dylibs"
             )
         self.runtime = ct.CDLL(loaded["libcudart.dylib"], mode=ct.RTLD_LOCAL)
         self.export_abi = getattr(self.runtime, "machso_native_export_abi", None)

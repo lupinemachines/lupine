@@ -9,7 +9,7 @@ brings its own. NCCL and nvSHMEM cannot work through the driver alone, so
 their shims are loaded when the bundle names them and no native copy (an
 `nvidia-nccl-*` wheel or a system library) is installed.
 
-ARM64 macOS client bundles additionally carry NVIDIA's CUDA 13.3 runtime, NVRTC, and cuBLAS,
+The ARM64 macOS wheel separately packages NVIDIA's CUDA 13.3 runtime, NVRTC, and cuBLAS,
 converted from its Linux binary by the vendored
 [machso](https://github.com/kevmo314/machso) compiler. The runtime runs locally
 and makes driver calls through Lupine. It loads with local visibility so its
@@ -57,8 +57,22 @@ native HTTP/2 connection, so:
 
 ## ARM64 macOS CUDA runtime
 
-With a server whose ARM64 macOS bundle includes the converted runtime, Python
-can call the runtime directly. Set `LUPINE_SERVER` before starting Python:
+Install the ARM64 macOS runtime wheel from the release assets. It contains
+`libcudart.dylib` and `liblupine_aten.dylib`, but no driver or NVML shim. The
+wheel is split into parts because the converted NVIDIA libraries are large:
+
+```bash
+# Substitute the release version for VERSION.
+gh release download vVERSION --repo lupinemachines/lupine --pattern '*.whl.part*' --pattern macos-wheel-SHA256SUMS
+cat lupine-VERSION-py3-none-macosx_26_0_arm64.whl.part* > lupine-VERSION-py3-none-macosx_26_0_arm64.whl
+shasum -a 256 -c macos-wheel-SHA256SUMS
+pip install ./lupine-VERSION-py3-none-macosx_26_0_arm64.whl
+```
+
+The universal Python wheel on PyPI provides driver support for all platforms;
+the Mac runtime wheel additionally provides the native PyTorch backend on
+macOS 26 or newer. Set `LUPINE_SERVER` before starting Python; the client
+fetches the server's driver and NVML, then loads its packaged runtime:
 
 ```python
 import ctypes
@@ -83,15 +97,15 @@ resolves their wheel dependencies, records exact versions and wheel hashes in
 `--requirements packages.lock` to replay those inputs with hash verification. It discovers
 their dependency closure from ELF metadata, and builds one shared libc/TLS
 image. Late-loaded helper SONAMEs resolve to this image automatically. The pure Python
-wheel still gets its native objects from the selected server. This runtime
+wheel downloads only driver shims from the selected server. This runtime
 does not supply PyTorch's compiled CUDA operators. Native macOS PyTorch can
 use the custom Lupine backend below.
 
 The GPU integration checks in `tests/test_macos_runtime.py` cover discovery,
 allocation, copies, memset, and coexistence with native CPU PyTorch. Run them
 on ARM64 macOS with `LUPINE_SERVER` configured and
-`LUPINE_TEST_MACOS_RUNTIME=1`; an optional `LUPINE_LIBDIR` selects a local
-client bundle. These checks do not validate PyTorch CUDA operators or kernel
+`LUPINE_TEST_MACOS_RUNTIME=1`; `LUPINE_RUNTIME_LIBDIR` selects locally built application dylibs during
+development. `LUPINE_LIBDIR` is a separate development override for drivers. These checks do not validate PyTorch CUDA operators or kernel
 launches.
 
 Additional CUDA packages can be prepared with the same pipeline. For example,
@@ -135,7 +149,7 @@ kernels introduced in commit `f64a5b8bd`. Each handle now owns a real CUDA
 allocation. Converted CUDART handles memory and transfers; cuBLAS and cuDNN
 handle matrix multiplication, convolution, and ordinary softmax. Other GPU
 operations use PyTorch's packaged CUDA operators through a host-only C API.
-The bundle includes `liblupine_aten.dylib`, converted from a hash-verified
+The Mac wheel includes `liblupine_aten.dylib`, converted from a hash-verified
 ARM64 Linux PyTorch CUDA wheel. The backend ships no CUDA kernel source or PTX.
 The host extension is compiled against the installed native torch; it requires a C++ compiler
 (Xcode Command Line Tools) and `ninja`.
