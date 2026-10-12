@@ -8,7 +8,7 @@ import subprocess
 import urllib.request
 import zipfile
 
-from cuda_wheels import download_libraries
+from cuda_wheels import download_libraries, write_manifest
 from compile_bundle import prepare_bundle
 from machso import ELF
 from aot.graph import exported
@@ -165,13 +165,6 @@ def prepare_operators(
         "url": TORCH_URL,
         "sha256": TORCH_SHA256,
     }
-    report["input_packages"] = packages
-    (output / "manifest.json").write_text(json.dumps(report, indent=2) + "\n")
-    (output / "packages.lock").write_text(
-        "".join(
-            f"{package['package']} --hash=sha256:{package['sha256']}\n"
-            for package in packages
-        )
-    )
+    write_manifest(output, report, packages)
     shutil.copyfile(interface, output / "export-interface.json")
     return report

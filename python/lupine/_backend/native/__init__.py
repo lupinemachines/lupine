@@ -19,11 +19,10 @@ from .aten import Parameters
 class Backend:
     native = True
 
-    def __init__(self, C):
+    def __init__(self):
         import torch
 
         self.torch = torch
-        self.C = C
         self.kind = "lupine"
         self.runtime = Runtime()
         self.allocations = {}
@@ -179,7 +178,6 @@ class Backend:
                 source_pointer = P(source_pointer)
             else:
                 source_pointer = self.pointer(source)
-            destination_pointer = self.pointer(destination)
             self.runtime.operators.call(
                 self, 0, destination, source, source_pointer=source_pointer
             )
@@ -867,14 +865,10 @@ class Backend:
         aten.impl("native_layer_norm", self.layer_norm)
         aten.impl("native_layer_norm_backward", self.layer_norm_backward)
         aten.impl("_fused_sdp_choice", lambda *args, **kwargs: 0)
-        aten.impl("addmm", self.addmm)
-        aten.impl("addmm.out", self.addmm)
-        aten.impl("bmm", self.bmm)
-        aten.impl("bmm.out", self.bmm)
-        aten.impl("cat", self.cat)
-        aten.impl("cat.out", self.cat)
-        aten.impl("mm", self.mm)
-        aten.impl("mm.out", self.mm)
+        for name in ("addmm", "bmm", "cat", "mm"):
+            implementation = getattr(self, name)
+            aten.impl(name, implementation)
+            aten.impl(name + ".out", implementation)
         aten.impl("sum", self.reduce)
         aten.impl("sum.dim_IntList", self.reduce)
         aten.impl("mean", lambda t, **kw: self.reduce(t, mean=True, **kw))
@@ -898,7 +892,7 @@ def start():
     C = _extension()
     import torch
 
-    backend = Backend(C)
+    backend = Backend()
     try:
         backend.install()
         C.register(1, backend.release, backend.synchronize)

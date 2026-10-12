@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "third_party/machso"))
 from compile_bundle import prepare_bundle
 from aot.graph import Graph
 from machso import ELF
-from cuda_wheels import download_libraries
+from cuda_wheels import download_libraries, write_manifest
 
 CUDA_RUNTIME_VERSION = "13.3.29"
 API_HEADERS = (
@@ -142,14 +142,7 @@ def main():
             package = next(p["package"] for p in packages if source.name in p["libraries"])
             name, version = package.split("==", 1)
             report["runtime_source"] = {"package": name, "version": version}
-        report["input_packages"] = packages
-        (args.output / "packages.lock").write_text(
-            "".join(
-                f"{package['package']} --hash=sha256:{package['sha256']}\n"
-                for package in packages
-            )
-        )
-        (args.output / "manifest.json").write_text(json.dumps(report, indent=2) + "\n")
+        write_manifest(args.output, report, packages)
 
 
 if __name__ == "__main__":

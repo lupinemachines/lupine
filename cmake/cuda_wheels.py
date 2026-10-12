@@ -2,6 +2,7 @@
 
 from email.parser import BytesParser
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -16,6 +17,17 @@ PLATFORMS = (
     "manylinux_2_27_aarch64",
     "manylinux_2_28_aarch64",
 )
+
+
+def write_manifest(output, report, packages):
+    report["input_packages"] = packages
+    (output / "manifest.json").write_text(json.dumps(report, indent=2) + "\n")
+    (output / "packages.lock").write_text(
+        "".join(
+            f"{package['package']} --hash=sha256:{package['sha256']}\n"
+            for package in packages
+        )
+    )
 
 
 def file_hash(path):

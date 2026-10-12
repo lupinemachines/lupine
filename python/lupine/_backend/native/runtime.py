@@ -112,21 +112,6 @@ class Runtime:
             self.runtime, "cudaMemGetInfo", ct.POINTER(S), ct.POINTER(S)
         )
         self.set_context = self.bind(self.driver, "cuCtxSetCurrent", P)
-        self.launch = self.bind(
-            self.driver,
-            "cuLaunchKernel",
-            P,
-            U,
-            U,
-            U,
-            U,
-            U,
-            U,
-            U,
-            P,
-            ct.POINTER(P),
-            ct.POINTER(P),
-        )
         count = I()
         self.check(self.get_count(ct.byref(count)), "cudaGetDeviceCount")
         # One default-stream context is intentional for this first backend.

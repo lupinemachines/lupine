@@ -1,5 +1,6 @@
 Repository: https://github.com/kevmo314/machso
 Revision: e01721c45307db3963096738003788a7801acc77
 
-Unmodified source snapshot, including the portable compilation, local linking,
-and independent signing stages. Refresh from the upstream Git archive.
+Unmodified compiler sources and build metadata from the upstream Git archive.
+Only the four test modules used to prepare Lupine integration fixtures are
+included; the remaining compiler tests and binaries stay upstream.

@@ -66,7 +66,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y clang gpgv ubuntu-keyring gcc-aarch64-linux-gnu libc6-arm64-cross libgcc-s1-arm64-cross libstdc++6-arm64-cross g++-aarch64-linux-gnu
-      - name: Test vendored compiler
+      - name: Test compiler integration fixtures
         working-directory: third_party/machso
         run: uv run --extra headers python -m unittest discover -s tests -q
       - uses: actions/download-artifact@v8
