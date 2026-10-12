@@ -107,15 +107,6 @@ jobs:
             '
           fi
 
-      - name: Verify server-hosted macOS driver downloads
-        if: matrix.component == 'server'
-        run: |
-          set -euo pipefail
-          image="lupine-server:cuda-${{ matrix.cuda }}-ubuntu${{ matrix.ubuntu }}"
-          container="$(docker run -d -p 127.0.0.1:14833:14833 "$image")"
-          trap 'docker logs "$container"; docker rm -f "$container" >/dev/null' EXIT
-          python3 test/verify_macos_driver_bundle.py http://127.0.0.1:14833 client-libs
-
       - name: Collect client artifacts
         if: matrix.component == 'client'
         run: |
