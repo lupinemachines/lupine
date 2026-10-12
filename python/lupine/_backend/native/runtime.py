@@ -138,9 +138,14 @@ class Runtime:
         self.context = P()
         get_context = self.bind(self.driver, "cuCtxGetCurrent", ct.POINTER(P))
         self.check(get_context(ct.byref(self.context)), "cuCtxGetCurrent")
-        self.blas = None
-        if hasattr(self.runtime, "cublasCreate_v2"):
-            self.blas = P()
+        self._blas = None
+
+    @property
+    def blas(self):
+        if self.closed:
+            return None
+        if self._blas is None and hasattr(self.runtime, "cublasCreate_v2"):
+            handle = P()
             create = self.bind(self.runtime, "cublasCreate_v2", ct.POINTER(P))
             self.blas_destroy = self.bind(self.runtime, "cublasDestroy_v2", P)
             self.blas_gemm = self.bind(
@@ -161,11 +166,13 @@ class Runtime:
                 P,
                 I,
             )
-            status = create(ct.byref(self.blas))
+            status = create(ct.byref(handle))
             if status:
                 raise RuntimeError(
                     f"cublasCreate_v2 failed with cuBLAS status {status}"
                 )
+            self._blas = handle
+        return self._blas
 
     def matmul(self, output, a, b, m, n, k):
         """Row-major C=A@B via column-major C^T=B^T@A^T."""

@@ -770,13 +770,13 @@ class Backend:
             if self.runtime._cudnn is not None:
                 self.runtime._cudnn.close()
                 self.runtime._cudnn = None
-            if self.runtime.blas is not None:
-                status = self.runtime.blas_destroy(self.runtime.blas)
+            if self.runtime._blas is not None:
+                status = self.runtime.blas_destroy(self.runtime._blas)
                 if status:
                     raise RuntimeError(
                         f"cublasDestroy_v2 failed with cuBLAS status {status}"
                     )
-                self.runtime.blas = None
+                self.runtime._blas = None
             if self.runtime._operators is not None:
                 self.runtime._operators.close()
                 self.runtime._operators = None
