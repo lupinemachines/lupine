@@ -793,6 +793,11 @@ if(BUILD_TESTING)
         set_tests_properties(macos_library_profile_record PROPERTIES FIXTURES_SETUP macos_profile)
         set_tests_properties(macos_library_profile_replay PROPERTIES FIXTURES_REQUIRED macos_profile)
     endif()
+    add_executable(late_trace_test late_trace_test.cpp)
+    target_link_libraries(late_trace_test PRIVATE Threads::Threads)
+    lupine_apply_sanitizer(late_trace_test)
+    add_test(NAME late_trace_test COMMAND late_trace_test
+        ${CMAKE_CURRENT_BINARY_DIR}/late-trace.log)
 
     add_executable(fatbin_filter_test fatbin_filter_test.cpp)
     lupine_apply_sanitizer(fatbin_filter_test)
