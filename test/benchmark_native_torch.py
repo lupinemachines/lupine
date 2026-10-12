@@ -23,7 +23,7 @@ def main():
         parser.error("iterations and size must be positive")
 
     start = time.perf_counter()
-    import lupine
+    import lupine._backend
 
     lupine.connect()
     import torch
@@ -100,9 +100,7 @@ def main():
         ),
         flush=True,
     )
-    from lupine import _backend
-
-    _backend.close()
+    lupine._backend.close()
 
 
 if __name__ == "__main__":

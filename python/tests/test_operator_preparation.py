@@ -1,7 +1,6 @@
 """Verify trusted inputs and ABI declarations for packaged CUDA operators."""
 
 import hashlib
-import importlib.util
 import io
 import json
 from pathlib import Path

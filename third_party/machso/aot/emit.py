@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from capstone import Cs, CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN
 from capstone.arm64 import ARM64_OP_IMM
-from machso import ELF, align
+from machso import ELF
 from aot.ifunc import Resolver
 
 ELF_BASE = 0x400000

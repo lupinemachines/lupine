@@ -10,7 +10,7 @@ def emit_modules(nodes, plans, native_providers=()):
     lines = ['#include <dlfcn.h>', '#include <string.h>',
              'struct aot_symbol {const char *name,*version; const void *address; uintptr_t tls; int hidden,is_tls,unsupported;};',
              'struct aot_module {const char *name,*path; const struct aot_symbol *symbols; size_t count; '
-             'const unsigned *scope; size_t scope_count; void *native;};']
+             + 'const unsigned *scope; size_t scope_count; void *native;};']
     rows = []
     for node in nodes:
         definitions = [(i, s) for i, s in enumerate(node.elf.symbols) if exported(s)]

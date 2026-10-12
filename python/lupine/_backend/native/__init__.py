@@ -793,9 +793,7 @@ class Backend:
         aten.impl("fill_.Scalar", self.fill)
         aten.impl("zero_", lambda tensor: self.fill(tensor, 0))
         aten.impl("arange", lambda end, **kw: self.arange(0, end, **kw))
-        aten.impl(
-            "arange.start", lambda start, end, **kw: self.arange(start, end, **kw)
-        )
+        aten.impl("arange.start", self.arange)
         aten.impl("arange.start_step", self.arange)
         aten.impl("arange.out", lambda end, **kw: self.arange(0, end, **kw))
         aten.impl("arange.start_out", self.arange)

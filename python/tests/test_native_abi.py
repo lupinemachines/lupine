@@ -86,10 +86,12 @@ def test_temporary_allocation_is_freed_when_body_fails(cached):
         runtime.malloc = lambda size: pytest.fail("must use the operator allocator")
         runtime.free = lambda pointer: pytest.fail("must return memory to its allocator")
     with pytest.raises(ValueError, match="operation failed"):
-        with runtime.allocated(128) as pointer:
-            assert pointer.value == 4096
-            raise ValueError("operation failed")
-    assert released == [4096]
+        try:
+            with runtime.allocated(128) as pointer:
+                assert pointer.value == 4096
+                raise ValueError("operation failed")
+        finally:
+            assert released == [4096]
 
 
 def test_failed_temporary_allocation_does_not_free_a_pointer():

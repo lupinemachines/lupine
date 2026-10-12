@@ -46,8 +46,8 @@ int native_query_wide(int choice,void **output){return native_query(choice,outpu
     source = ['#include <stdint.h>', 'int native_query(int,void **);',
               'int native_query_wide(int,void **);', 'int native_unknown(void);',
               'int native_query_stack(unsigned long long,unsigned long long,unsigned long long,'
-              'unsigned long long,unsigned long long,unsigned long long,unsigned long long,'
-              'unsigned long long,int,void **);']
+              + 'unsigned long long,unsigned long long,unsigned long long,unsigned long long,'
+              + 'unsigned long long,int,void **);']
     for choice, (case, arguments) in enumerate(CASES.items()):
         parameters = ','.join(TYPES[kind] for kind in arguments)
         values = [-(i+1) if kind.startswith('i') else i+1 for i, kind in enumerate(arguments)]

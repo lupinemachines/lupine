@@ -18,22 +18,21 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def backend():
-    import lupine
-    from lupine import _backend
+    import lupine._backend
 
     session = lupine.connect()
     import torch
 
     assert torch.version.cuda is None  # native macOS torch, not a converted CUDA wheel
     assert session.device() == torch.device("lupine:0")
-    native = _backend._started["backend"]
-    assert native.native and _backend._started["address"] == "native"
+    native = lupine._backend._started["backend"]
+    assert native.native and lupine._backend._started["address"] == "native"
     if os.environ.get("LUPINE_TEST_NATIVE_LIBRARIES") == "1":
         assert native.runtime.operators.library.lupine_aten_run is not None
         assert native.runtime.blas is not None
     yield torch, native
     torch.lupine.synchronize()
-    _backend.close()
+    lupine._backend.close()
     assert native.runtime.closed and native.runtime._cudnn is None
     assert native.runtime._operators is None
 
