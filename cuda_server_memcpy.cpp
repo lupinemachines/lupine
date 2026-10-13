@@ -2134,11 +2134,7 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   if (pushed_bytes != 0 && pushed_bytes != bytes) {
     return -1;
   }
-  // A copy whose caller is not waiting takes its turn here rather than after
-  // the body: reading a pushed source and submitting it are one step, and the
-  // bytes are already on this lane, so nothing the turn waits for can depend
-  // on the read. The client only sends this form for a small copy, which is
-  // what keeps the window short.
+  // Labels the copy's submission; a later request from any lane waits for it.
   if (fire_and_forget && rpc_async_sequence_begin(conn, async_sequence) < 0) {
     return -1;
   }

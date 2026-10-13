@@ -9,6 +9,7 @@
 #include <cuda_runtime.h>
 
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -85,6 +86,52 @@ void test_source_is_free_on_return(unsigned char *device) {
         "cudaMemcpy DtoH");
   require_equal("source overwritten right after the call returns", back,
                 pattern);
+}
+
+// Large copies skip the reply too unless they stripe over bulk connections:
+// one past the server's 64 MiB fire-and-forget staging window, then a run of
+// medium ones, each source overwritten the instant its call returns.
+void test_large_copies() {
+  constexpr size_t kLargeBytes = 96ull << 20;
+  constexpr size_t kMediumBytes = 4ull << 20;
+  constexpr int kMediumCopies = 24;
+  unsigned char *device = nullptr;
+  check(cudaMalloc(&device, kLargeBytes), "cudaMalloc large");
+  std::vector<unsigned char> pattern(kLargeBytes);
+  std::vector<unsigned char> source(kLargeBytes);
+  std::vector<unsigned char> back(kLargeBytes);
+  // Incompressible, so the transport's flow control carries every byte.
+  uint64_t state = 0x9e3779b97f4a7c15ull;
+  for (unsigned char &byte : pattern) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    byte = static_cast<unsigned char>(state);
+  }
+  source = pattern;
+  check(cudaMemcpy(device, source.data(), kLargeBytes, cudaMemcpyHostToDevice),
+        "cudaMemcpy large HtoD");
+  std::memset(source.data(), 0x11, source.size());
+  check(cudaMemcpy(back.data(), device, kLargeBytes, cudaMemcpyDeviceToHost),
+        "cudaMemcpy large DtoH");
+  require_equal("large copy, source overwritten after return", back, pattern);
+
+  std::vector<unsigned char> medium(kMediumBytes);
+  for (int i = 0; i < kMediumCopies; ++i) {
+    std::memcpy(medium.data(), pattern.data() + i * kMediumBytes, kMediumBytes);
+    check(cudaMemcpy(device + i * kMediumBytes, medium.data(), kMediumBytes,
+                     cudaMemcpyHostToDevice),
+          "cudaMemcpy medium HtoD");
+    std::memset(medium.data(), 0x22, medium.size());
+  }
+  check(cudaMemcpy(back.data(), device, kMediumCopies * kMediumBytes,
+                   cudaMemcpyDeviceToHost),
+        "cudaMemcpy medium DtoH");
+  back.resize(kMediumCopies * kMediumBytes);
+  pattern.resize(back.size());
+  require_equal("medium copies, each source overwritten after return", back,
+                pattern);
+  check(cudaFree(device), "cudaFree large");
 }
 
 // A kernel reading the destination must see the copy even though no other CUDA
@@ -320,6 +367,7 @@ int main() {
   test_captured_graph_reads_the_write(first, device_sum);
   test_upload_loop(first, second);
   test_overlapping_writes(first);
+  test_large_copies();
 
   check(cudaFree(first), "cudaFree first");
   check(cudaFree(second), "cudaFree second");

@@ -4015,11 +4015,6 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
   return return_value;
 }
 
-// Above this a copy's own transfer, not its round trip, is what the caller
-// waits for, and the server holds the submission turn for longer than the
-// request is worth.
-static constexpr size_t LUPINE_HTOD_FIRE_AND_FORGET_MAX_BYTES = 64 * 1024;
-
 // A synchronous host-to-device copy this client can answer without the
 // server's reply.
 //
@@ -4046,7 +4041,6 @@ static bool lupine_htod_fire_and_forget(lupine_route route,
                                         CUdeviceptr destination, size_t bytes,
                                         uint64_t pushed_bytes) {
   return pushed_bytes == bytes && bytes != 0 &&
-         bytes <= LUPINE_HTOD_FIRE_AND_FORGET_MAX_BYTES &&
          lupine_deviceptr_allocation_covers(destination, bytes,
                                             lupine_route_identity(route)) &&
          !lupine_host_ptr_is_tracked(destination);
@@ -4076,7 +4070,15 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                                 : srcHost;
   uint64_t pushed_bytes =
       lupine_htod_pushed_bytes(is_server_authoritative, srcHost, ByteCount);
-  if (lupine_htod_fire_and_forget(route, dstDevice, ByteCount, pushed_bytes)) {
+  lupine_bulk_lanes *lanes = nullptr;
+  if (pushed_bytes == ByteCount && ByteCount >= LUPINE_BULK_COPY_MIN_BYTES &&
+      !lupine_device_copy_uses_remote_callback(
+          dstDevice, reinterpret_cast<CUdeviceptr>(srcHost))) {
+    lanes = lupine_client_transport_bulk_lanes(conn);
+  }
+  // A striped copy still waits: its chunks travel on the bulk connections.
+  if (lanes == nullptr &&
+      lupine_htod_fire_and_forget(route, dstDevice, ByteCount, pushed_bytes)) {
     // The ticket keeps this copy in submission order against work issued on
     // other lanes, which is the ordering the reply used to provide.
     uint8_t fire_and_forget = 1;
@@ -4099,12 +4101,6 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
   }
   uint8_t fire_and_forget = 0;
   uint64_t async_sequence = 0;
-  lupine_bulk_lanes *lanes = nullptr;
-  if (pushed_bytes == ByteCount && ByteCount >= LUPINE_BULK_COPY_MIN_BYTES &&
-      !lupine_device_copy_uses_remote_callback(
-          dstDevice, reinterpret_cast<CUdeviceptr>(srcHost))) {
-    lanes = lupine_client_transport_bulk_lanes(conn);
-  }
   if (lanes != nullptr) {
     return_value = lupine_prepare_rpc(conn) < 0
                        ? CUDA_ERROR_DEVICE_UNAVAILABLE
