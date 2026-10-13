@@ -81,7 +81,7 @@ jobs:
       GCP_WORKLOAD_IDENTITY_PROVIDER: projects/272419586516/locations/global/workloadIdentityPools/lupine-github/providers/github
       GCP_SERVICE_ACCOUNT: lupine-gpu-ci@kevmo314.iam.gserviceaccount.com
       GCP_BUILD_CACHE_BUCKET: kevmo314-lupine-gpu-integration-cache
-      INTEGRATION_IMAGE_CACHE_VERSION: v1
+      INTEGRATION_IMAGE_CACHE_VERSION: v2
       GCP_ZONE: us-central1-a
       GCP_FALLBACK_ZONES: >-
         us-central1-c us-central1-b
@@ -233,8 +233,12 @@ jobs:
           #!/usr/bin/env bash
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
+          # The dependency cache is a tarball of the data root, so every image
+          # must live under /var/lib/docker rather than containerd's store.
+          mkdir -p /etc/docker
+          echo '{"features": {"containerd-snapshotter": false}}' > /etc/docker/daemon.json
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl docker.io iproute2 libnghttp2-14 pigz procps
+          apt-get install -y --no-install-recommends ca-certificates curl docker.io iproute2 libnghttp2-14 procps zstd
           SCRIPT
 
           if [[ -n "$CUDA_COMPAT_DEB_URL" ]]; then
@@ -500,12 +504,12 @@ jobs:
                 "${{ matrix.pytorch_index_url }}" "$CUDA_SAMPLES_ARCH" "$dockerfile_sha"
               sha256sum test/run_cuda_library_samples.sh test/run_cuda_python_tests.sh
               sha256sum test/cuda-library-samples/patches/*.patch
+              "${ssh_base[@]}" "sudo docker version --format '{{.Server.Version}}'"
             } | sha256sum | cut -d' ' -f1
           )"
           dependency_image="lupine-integration-deps:${{ matrix.label }}-$cache_inputs"
-          remote_cache_archive="/home/gha/lupine-integration-image-${{ matrix.label }}.tar.gz"
           cache_prefix="gpu-integration/images/$INTEGRATION_IMAGE_CACHE_VERSION/cuda-${{ matrix.cuda_version }}/sm-$CUDA_SAMPLES_ARCH"
-          cache_uri="gs://$GCP_BUILD_CACHE_BUCKET/$cache_prefix/inputs-$cache_inputs.tar.gz"
+          cache_uri="gs://$GCP_BUILD_CACHE_BUCKET/$cache_prefix/inputs-$cache_inputs.tar.zst"
           cache_hit=false
           start=$SECONDS
           # The VM reads the archive straight from GCS, in region, instead of
@@ -526,17 +530,29 @@ jobs:
               --data-urlencode "subject_token=$(gcloud auth print-access-token)" \
               --data-urlencode "options=$boundary" | jq -r .access_token)"
             echo "::add-mask::$read_token"
-            # gzip's trailer CRC catches a corrupt or truncated download.
+            # docker load applies layers one at a time at a fraction of disk
+            # speed, so the cache is the whole data root, unpacked in place.
+            # zstd's frame checksum catches a corrupt or truncated download.
             restore_script='
               set -euo pipefail
               read -r token
-              curl -fsS -H @<(printf "Authorization: Bearer %s\n" "$token") "$1" |
-                pigz -dc | sudo docker load
-              sudo docker image inspect "$2" >/dev/null
+              sudo systemctl stop docker.socket docker
+              sudo rm -rf /var/lib/docker
+              sudo mkdir -m 710 /var/lib/docker
+              status=0
+              curl -fsS -H @<(printf "Authorization: Bearer %s\n" "$token") "$1" | zstd -dc |
+                sudo tar -C /var/lib/docker --numeric-owner --xattrs --xattrs-include="*" -xf - ||
+                status=$?
+              if [[ "$status" != 0 ]]; then
+                sudo rm -rf /var/lib/docker
+                sudo mkdir -m 710 /var/lib/docker
+              fi
+              sudo systemctl start docker
+              [[ "$status" == 0 ]] && sudo docker image inspect "$2" >/dev/null
             '
             if printf '%s\n' "$read_token" | "${ssh_base[@]}" \
               "bash -c $(printf %q "$restore_script") restore" \
-              "'https://storage.googleapis.com/$GCP_BUILD_CACHE_BUCKET/$cache_prefix/inputs-$cache_inputs.tar.gz'" \
+              "'https://storage.googleapis.com/$GCP_BUILD_CACHE_BUCKET/$cache_prefix/inputs-$cache_inputs.tar.zst'" \
               "'$dependency_image'"; then
               cache_hit=true
               gcloud storage objects update "$cache_uri" \
@@ -550,7 +566,6 @@ jobs:
           fi
           {
             echo "INTEGRATION_IMAGE_CACHE_HIT=$cache_hit"
-            echo "INTEGRATION_IMAGE_CACHE_REMOTE_ARCHIVE=$remote_cache_archive"
             echo "INTEGRATION_IMAGE_CACHE_URI=$cache_uri"
             echo "DEPENDENCY_IMAGE=$dependency_image"
           } >> "$GITHUB_ENV"
@@ -621,28 +636,21 @@ jobs:
             "gha@$VM_IP"
           )
 
-          "${ssh_base[@]}" \
-            "DEPENDENCY_IMAGE='$DEPENDENCY_IMAGE' CACHE_ARCHIVE='$INTEGRATION_IMAGE_CACHE_REMOTE_ARCHIVE' bash -s" <<'REMOTE'
+          # Docker must be stopped for a consistent data root. The client
+          # image built over it is small and its tag is never reused.
+          "${ssh_base[@]}" bash -s <<'REMOTE' |
           set -euo pipefail
-          sudo docker image save "$DEPENDENCY_IMAGE" | gzip -1 > "$CACHE_ARCHIVE"
-          test -s "$CACHE_ARCHIVE"
+          sudo docker builder prune -af >/dev/null
+          sudo systemctl stop docker.socket docker
+          status=0
+          sudo tar -C /var/lib/docker --numeric-owner --xattrs --xattrs-include='*' -cf - . |
+            zstd -T0 -3 -q || status=$?
+          sudo systemctl start docker
+          exit "$status"
           REMOTE
-
-          archive_sha="$(
-            "${ssh_base[@]}" \
-              "sha256sum '$INTEGRATION_IMAGE_CACHE_REMOTE_ARCHIVE' | cut -d' ' -f1"
-          )"
-          upload_status=0
-          "${ssh_base[@]}" "cat '$INTEGRATION_IMAGE_CACHE_REMOTE_ARCHIVE'" | \
             gcloud storage cp - "$INTEGRATION_IMAGE_CACHE_URI" \
-              --content-type=application/gzip \
-              --custom-metadata="sha256=$archive_sha" \
-              --custom-time="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            || upload_status=$?
-          "${ssh_base[@]}" "rm -f '$INTEGRATION_IMAGE_CACHE_REMOTE_ARCHIVE'"
-          if [[ "$upload_status" -ne 0 ]]; then
-            exit "$upload_status"
-          fi
+              --content-type=application/zstd \
+              --custom-time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           echo "Saved integration dependency image to $INTEGRATION_IMAGE_CACHE_URI"
 
       - name: Run ${{ matrix.name }} client inside L4 VM
