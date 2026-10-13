@@ -757,19 +757,15 @@ extern "C" bool lupine_deviceptr_is_tracked(CUdeviceptr ptr) {
 
 extern "C" bool lupine_deviceptr_allocation_covers(CUdeviceptr ptr,
                                                    size_t bytes, int route_id) {
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  for (const auto &entry : lupine_deviceptr_allocations()) {
-    const auto &allocation = entry.second;
-    if (allocation.base == 0 || allocation.size == 0 || ptr < allocation.base) {
-      continue;
-    }
-    uint64_t offset = static_cast<uint64_t>(ptr - allocation.base);
-    if (offset >= allocation.size || bytes > allocation.size - offset) {
-      continue;
-    }
-    return allocation.route_id == route_id;
+  if (bytes == 0) {
+    return false;
   }
-  return false;
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  // An allocation is one interval, so holding both endpoints holds the range.
+  const auto *allocation = lupine_deviceptr_allocation_cache_lookup(ptr);
+  return allocation != nullptr && allocation->route_id == route_id &&
+         allocation ==
+             lupine_deviceptr_allocation_cache_lookup(ptr + bytes - 1);
 }
 
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {

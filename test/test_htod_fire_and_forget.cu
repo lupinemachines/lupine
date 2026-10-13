@@ -138,35 +138,75 @@ void test_copies_read_the_write(unsigned char *device, unsigned char *other) {
   require_equal("device-to-device reads the write", back, pattern);
 }
 
-// The writer returns, hands the destination to another thread through plain
-// host synchronization, and that thread reads it with no CUDA call of its own
-// in between. Nothing orders an unwaited copy against another thread's
-// synchronous read, so a second thread issuing CUDA work is what takes this
-// copy off the unwaited path.
-void test_other_thread_reads_the_write(unsigned char *device) {
+__global__ void spin(long long cycles) {
+  long long start = clock64();
+  while (clock64() - start < cycles) {
+  }
+}
+
+// The writer queues its copy behind a kernel, returns, and hands the
+// destination to another thread through plain host synchronization; that
+// thread reads it with no CUDA call of its own in between. Natively both sit on
+// the legacy stream. Here the reader's request waits at the server for the
+// writer's unwaited submission (#919); without that wait nearly every round
+// reads the zeroed buffer.
+void test_other_thread_reads_the_write(unsigned char *device,
+                                       unsigned long long *device_sum) {
+  constexpr int kRounds = 64;
   std::vector<unsigned char> pattern(kChunkBytes);
   std::vector<unsigned char> back(kChunkBytes);
-  fill(pattern, 37);
-  check(cudaMemset(device, 0, kChunkBytes), "cudaMemset");
+  for (int round = 0; round < kRounds; ++round) {
+    fill(pattern, static_cast<unsigned char>(37 + round));
+    check(cudaMemset(device, 0, kChunkBytes), "cudaMemset");
+    check(cudaDeviceSynchronize(), "cudaDeviceSynchronize");
 
-  std::atomic<int> phase{0};
-  std::thread writer([&] {
-    // Bind this thread to the device before the copy. A thread whose first
-    // CUDA call is a copy fails with cudaErrorDeviceUninitialized on main
-    // today, which is a separate bug from what this case is about.
-    check(cudaSetDevice(0), "cudaSetDevice on writer thread");
-    check(cudaMemcpy(device, pattern.data(), kChunkBytes,
-                     cudaMemcpyHostToDevice),
-          "cudaMemcpy small HtoD on writer thread");
-    phase.store(1, std::memory_order_release);
-  });
-  while (phase.load(std::memory_order_acquire) != 1) {
-    std::this_thread::yield();
+    std::atomic<int> phase{0};
+    std::thread writer([&] {
+      // Bind this thread to the device before the copy. A thread whose first
+      // CUDA call is a copy fails with cudaErrorDeviceUninitialized on main
+      // today, which is a separate bug from what this case is about.
+      check(cudaSetDevice(0), "cudaSetDevice on writer thread");
+      spin<<<1, 1>>>(2000000);
+      check(cudaGetLastError(), "spin launch on writer thread");
+      check(cudaMemcpy(device, pattern.data(), kChunkBytes,
+                       cudaMemcpyHostToDevice),
+            "cudaMemcpy small HtoD on writer thread");
+      phase.store(1, std::memory_order_release);
+    });
+    while (phase.load(std::memory_order_acquire) != 1) {
+      std::this_thread::yield();
+    }
+    if (round % 2 == 0) {
+      check(cudaMemcpy(back.data(), device, kChunkBytes, cudaMemcpyDeviceToHost),
+            "cudaMemcpy DtoH on reader thread");
+    } else {
+      accumulate<<<1, 1>>>(device, kChunkBytes, device_sum);
+      check(cudaGetLastError(), "accumulate launch on reader thread");
+      unsigned long long sum = 0;
+      check(cudaMemcpy(&sum, device_sum, sizeof(sum), cudaMemcpyDeviceToHost),
+            "cudaMemcpy sum on reader thread");
+      unsigned long long expected = 0;
+      for (unsigned char byte : pattern) {
+        expected += byte;
+      }
+      back = pattern;
+      if (sum != expected) {
+        std::fprintf(stderr, "FAIL: another thread reads the write: round %d sum "
+                     "%llu, expected %llu\n", round, sum, expected);
+        std::exit(EXIT_FAILURE);
+      }
+    }
+    writer.join();
+    for (size_t i = 0; i < back.size(); ++i) {
+      if (back[i] != pattern[i]) {
+        std::fprintf(stderr, "FAIL: another thread reads the write: round %d "
+                     "byte %zu is 0x%02x, expected 0x%02x\n", round, i, back[i],
+                     pattern[i]);
+        std::exit(EXIT_FAILURE);
+      }
+    }
   }
-  check(cudaMemcpy(back.data(), device, kChunkBytes, cudaMemcpyDeviceToHost),
-        "cudaMemcpy DtoH on reader thread");
-  writer.join();
-  require_equal("another thread reads the write", back, pattern);
+  std::printf("another thread reads the write: ok\n");
 }
 
 // A replayed graph reads its input at launch. The write that fills that input
@@ -276,7 +316,7 @@ int main() {
   test_source_is_free_on_return(first);
   test_kernel_reads_the_write(first, device_sum);
   test_copies_read_the_write(first, second);
-  test_other_thread_reads_the_write(first);
+  test_other_thread_reads_the_write(first, device_sum);
   test_captured_graph_reads_the_write(first, device_sum);
   test_upload_loop(first, second);
   test_overlapping_writes(first);

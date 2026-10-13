@@ -4020,33 +4020,6 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
 // request is worth.
 static constexpr size_t LUPINE_HTOD_FIRE_AND_FORGET_MAX_BYTES = 64 * 1024;
 
-// Nothing in this shim orders an unwaited operation against a synchronous
-// request another thread issues: submission tickets order ticketed requests
-// against each other, and a synchronous request takes no ticket. Measured on
-// this client, a fire-and-forget kernel launch is invisible to another thread's
-// synchronous read in 64 of 64 rounds, so that gap belongs to every unwaited
-// operation here rather than to this path. While one thread is the only one
-// issuing CUDA work there is no such reader, and that is the condition below.
-// The token is the address of a thread-local, unique among live threads.
-static std::atomic<uint64_t> lupine_rpc_issuing_thread{0};
-static std::atomic<bool> lupine_rpc_multiple_issuers{false};
-
-static bool lupine_one_thread_issues_cuda_work() {
-  if (lupine_rpc_multiple_issuers.load(std::memory_order_relaxed)) {
-    return false;
-  }
-  static thread_local char token = 0;
-  uint64_t self = reinterpret_cast<uint64_t>(&token);
-  uint64_t owner = 0;
-  if (!lupine_rpc_issuing_thread.compare_exchange_strong(
-          owner, self, std::memory_order_acq_rel, std::memory_order_acquire) &&
-      owner != self) {
-    lupine_rpc_multiple_issuers.store(true, std::memory_order_release);
-    return false;
-  }
-  return true;
-}
-
 // A synchronous host-to-device copy this client can answer without the
 // server's reply.
 //
@@ -4059,9 +4032,11 @@ static bool lupine_one_thread_issues_cuda_work() {
 // -- and it never stages a page-locked source, which is why a pinned copy is
 // fully blocking. Both rules are kept here: `lupine_htod_pushed_bytes` answers
 // zero for any source overlapping a tracked host allocation, so only a pageable
-// source is ever sent this way, and `rpc_write_end` encodes the bytes before it
-// returns, into a transport that blocks the caller once its outbound backlog
-// passes 8 MiB rather than growing.
+// source is ever sent this way, and `rpc_write_end` has compressed or copied
+// every byte into the stream's encoder before it returns, into a transport that
+// blocks the caller once its outbound backlog passes 8 MiB rather than growing.
+// A later request from any thread waits for this one's submission at the
+// server (#919), as a later synchronous call does natively.
 //
 // The destination has to be one allocation this client tracks, on this route,
 // with room for the copy, and never a host allocation's device alias, which the
@@ -4072,7 +4047,6 @@ static bool lupine_htod_fire_and_forget(lupine_route route,
                                         uint64_t pushed_bytes) {
   return pushed_bytes == bytes && bytes != 0 &&
          bytes <= LUPINE_HTOD_FIRE_AND_FORGET_MAX_BYTES &&
-         lupine_one_thread_issues_cuda_work() &&
          lupine_deviceptr_allocation_covers(destination, bytes,
                                             lupine_route_identity(route)) &&
          !lupine_host_ptr_is_tracked(destination);
