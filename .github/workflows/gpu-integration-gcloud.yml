@@ -234,7 +234,7 @@ jobs:
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl docker.io iproute2 libnghttp2-14 procps
+          apt-get install -y --no-install-recommends ca-certificates curl docker.io iproute2 libnghttp2-14 pigz procps
           SCRIPT
 
           if [[ -n "$CUDA_COMPAT_DEB_URL" ]]; then
@@ -507,17 +507,37 @@ jobs:
           cache_prefix="gpu-integration/images/$INTEGRATION_IMAGE_CACHE_VERSION/cuda-${{ matrix.cuda_version }}/sm-$CUDA_SAMPLES_ARCH"
           cache_uri="gs://$GCP_BUILD_CACHE_BUCKET/$cache_prefix/inputs-$cache_inputs.tar.gz"
           cache_hit=false
-          expected_sha="$(
-            gcloud storage objects describe "$cache_uri" \
-              --raw --format='value(metadata.sha256)' 2>/dev/null || true
-          )"
           start=$SECONDS
-          if [[ -n "$expected_sha" ]] && \
-            gcloud storage cp "$cache_uri" - | \
-              "${ssh_base[@]}" "cat > '$remote_cache_archive'"; then
-            if actual_sha="$("${ssh_base[@]}" "sha256sum '$remote_cache_archive' | cut -d' ' -f1")" && \
-              [[ "$actual_sha" == "$expected_sha" ]] && \
-              "${ssh_base[@]}" "sudo docker load -i '$remote_cache_archive' && sudo docker image inspect '$dependency_image' >/dev/null"; then
+          # The VM reads the archive straight from GCS, in region, instead of
+          # through this runner. It gets a token downscoped to reading this
+          # cache prefix, on stdin so it never reaches a command line.
+          if gcloud storage objects describe "$cache_uri" >/dev/null 2>&1; then
+            boundary="$(jq -cn --arg bucket "$GCP_BUILD_CACHE_BUCKET" --arg prefix "$cache_prefix" '{
+              accessBoundary: {accessBoundaryRules: [{
+                availablePermissions: ["inRole:roles/storage.objectViewer"],
+                availableResource: "//storage.googleapis.com/projects/_/buckets/\($bucket)",
+                availabilityCondition: {expression:
+                  "resource.name.startsWith(\"projects/_/buckets/\($bucket)/objects/\($prefix)/\")"}
+              }]}}')"
+            read_token="$(curl -fsS https://sts.googleapis.com/v1/token \
+              --data-urlencode grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+              --data-urlencode subject_token_type=urn:ietf:params:oauth:token-type:access_token \
+              --data-urlencode requested_token_type=urn:ietf:params:oauth:token-type:access_token \
+              --data-urlencode "subject_token=$(gcloud auth print-access-token)" \
+              --data-urlencode "options=$boundary" | jq -r .access_token)"
+            echo "::add-mask::$read_token"
+            # gzip's trailer CRC catches a corrupt or truncated download.
+            restore_script='
+              set -euo pipefail
+              read -r token
+              curl -fsS -H @<(printf "Authorization: Bearer %s\n" "$token") "$1" |
+                pigz -dc | sudo docker load
+              sudo docker image inspect "$2" >/dev/null
+            '
+            if printf '%s\n' "$read_token" | "${ssh_base[@]}" \
+              "bash -c $(printf %q "$restore_script") restore" \
+              "'https://storage.googleapis.com/$GCP_BUILD_CACHE_BUCKET/$cache_prefix/inputs-$cache_inputs.tar.gz'" \
+              "'$dependency_image'"; then
               cache_hit=true
               gcloud storage objects update "$cache_uri" \
                 --custom-time="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || \
@@ -525,7 +545,6 @@ jobs:
               echo "Restored dependency image in $((SECONDS - start))s: $cache_uri"
             fi
           fi
-          "${ssh_base[@]}" "rm -f '$remote_cache_archive'"
           if [[ "$cache_hit" != "true" ]]; then
             echo "No valid dependency image at $cache_uri; building it from source"
           fi
