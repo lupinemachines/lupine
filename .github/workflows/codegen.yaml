@@ -24,3 +24,13 @@ jobs:
 
       - name: Verify generated files are current
         run: git diff --exit-code -- codegen
+
+      - name: Test conditional output generation and generated NVML RPCs
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --volume "$PWD:/workspace" \
+            --workdir /workspace \
+            --entrypoint uv \
+            lupine-codegen:cuda-13.3.1 \
+            run test/test_codegen_conditional_arrays.py

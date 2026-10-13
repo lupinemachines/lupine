@@ -812,6 +812,96 @@ extern "C" nvmlReturn_t nvmlDeviceGetPcieReplayCounter(nvmlDevice_t device,
   return lupine_rpc_nvmlDeviceGetPcieReplayCounter(conn, device, value);
 }
 
+static nvmlReturn_t lupine_rpc_nvmlDeviceGetComputeRunningProcesses(
+    conn_t *conn, nvmlDevice_t device, unsigned int *infoCount,
+    nvmlProcessInfo_v1_t *infos) {
+  nvmlReturn_t return_value = rpc_error();
+  unsigned int infoCount_requested = (infos != nullptr) ? *infoCount : 0;
+  uint8_t infos_null = infos == nullptr ? 1 : 0;
+  if (rpc_write_start_request(conn, RPC_nvmlDeviceGetComputeRunningProcesses) <
+          0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, infoCount, sizeof(unsigned int)) < 0 || ([&]() {
+        uint8_t infos_has_data = 0;
+        if (rpc_read(conn, &infos_has_data, sizeof(uint8_t)) < 0)
+          return true;
+        if (infos_has_data == 0)
+          return false;
+        if (infos_has_data != 1 || infos == nullptr ||
+            *infoCount > infoCount_requested ||
+            *infoCount > size_t(-1) / sizeof(nvmlProcessInfo_v1_t)) {
+          rpc_close_transport_socket(conn);
+          return true;
+        }
+        return *infoCount != 0 &&
+               rpc_read(conn, infos,
+                        *infoCount * sizeof(nvmlProcessInfo_v1_t)) < 0;
+      }()) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetComputeRunningProcesses(
+    nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_v1_t *infos) {
+  if (infoCount == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetComputeRunningProcesses(conn, device,
+                                                         infoCount, infos);
+}
+
+static nvmlReturn_t lupine_rpc_nvmlDeviceGetComputeRunningProcesses_v2(
+    conn_t *conn, nvmlDevice_t device, unsigned int *infoCount,
+    nvmlProcessInfo_v2_t *infos) {
+  nvmlReturn_t return_value = rpc_error();
+  unsigned int infoCount_requested = (infos != nullptr) ? *infoCount : 0;
+  uint8_t infos_null = infos == nullptr ? 1 : 0;
+  if (rpc_write_start_request(
+          conn, RPC_nvmlDeviceGetComputeRunningProcesses_v2) < 0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, infoCount, sizeof(unsigned int)) < 0 || ([&]() {
+        uint8_t infos_has_data = 0;
+        if (rpc_read(conn, &infos_has_data, sizeof(uint8_t)) < 0)
+          return true;
+        if (infos_has_data == 0)
+          return false;
+        if (infos_has_data != 1 || infos == nullptr ||
+            *infoCount > infoCount_requested ||
+            *infoCount > size_t(-1) / sizeof(nvmlProcessInfo_v2_t)) {
+          rpc_close_transport_socket(conn);
+          return true;
+        }
+        return *infoCount != 0 &&
+               rpc_read(conn, infos,
+                        *infoCount * sizeof(nvmlProcessInfo_v2_t)) < 0;
+      }()) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetComputeRunningProcesses_v2(
+    nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_v2_t *infos) {
+  if (infoCount == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetComputeRunningProcesses_v2(conn, device,
+                                                            infoCount, infos);
+}
+
 static nvmlReturn_t lupine_rpc_nvmlDeviceGetProcessUtilization(
     conn_t *conn, nvmlDevice_t device,
     nvmlProcessUtilizationSample_t *utilization,
@@ -827,11 +917,14 @@ static nvmlReturn_t lupine_rpc_nvmlDeviceGetProcessUtilization(
       rpc_write(conn, &utilization_null, sizeof(uint8_t)) < 0 ||
       rpc_write(conn, &lastSeenTimeStamp, sizeof(unsigned long long)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read(conn, processSamplesCount, sizeof(unsigned int)) < 0 || ([&]() {
-        if (return_value != NVML_SUCCESS || utilization == nullptr)
+        uint8_t utilization_has_data = 0;
+        if (rpc_read(conn, &utilization_has_data, sizeof(uint8_t)) < 0)
+          return true;
+        if (utilization_has_data == 0)
           return false;
-        if (*processSamplesCount > processSamplesCount_requested ||
+        if (utilization_has_data != 1 || utilization == nullptr ||
+            *processSamplesCount > processSamplesCount_requested ||
             *processSamplesCount >
                 size_t(-1) / sizeof(nvmlProcessUtilizationSample_t)) {
           rpc_close_transport_socket(conn);
@@ -842,6 +935,7 @@ static nvmlReturn_t lupine_rpc_nvmlDeviceGetProcessUtilization(
                         *processSamplesCount *
                             sizeof(nvmlProcessUtilizationSample_t)) < 0;
       }()) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();
   }
@@ -857,6 +951,186 @@ extern "C" nvmlReturn_t nvmlDeviceGetProcessUtilization(
   conn_t *conn = connection_for_device(&device);
   return lupine_rpc_nvmlDeviceGetProcessUtilization(
       conn, device, utilization, processSamplesCount, lastSeenTimeStamp);
+}
+
+static nvmlReturn_t lupine_rpc_nvmlDeviceGetGraphicsRunningProcesses(
+    conn_t *conn, nvmlDevice_t device, unsigned int *infoCount,
+    nvmlProcessInfo_v1_t *infos) {
+  nvmlReturn_t return_value = rpc_error();
+  unsigned int infoCount_requested = (infos != nullptr) ? *infoCount : 0;
+  uint8_t infos_null = infos == nullptr ? 1 : 0;
+  if (rpc_write_start_request(conn, RPC_nvmlDeviceGetGraphicsRunningProcesses) <
+          0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, infoCount, sizeof(unsigned int)) < 0 || ([&]() {
+        uint8_t infos_has_data = 0;
+        if (rpc_read(conn, &infos_has_data, sizeof(uint8_t)) < 0)
+          return true;
+        if (infos_has_data == 0)
+          return false;
+        if (infos_has_data != 1 || infos == nullptr ||
+            *infoCount > infoCount_requested ||
+            *infoCount > size_t(-1) / sizeof(nvmlProcessInfo_v1_t)) {
+          rpc_close_transport_socket(conn);
+          return true;
+        }
+        return *infoCount != 0 &&
+               rpc_read(conn, infos,
+                        *infoCount * sizeof(nvmlProcessInfo_v1_t)) < 0;
+      }()) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetGraphicsRunningProcesses(
+    nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_v1_t *infos) {
+  if (infoCount == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetGraphicsRunningProcesses(conn, device,
+                                                          infoCount, infos);
+}
+
+static nvmlReturn_t lupine_rpc_nvmlDeviceGetGraphicsRunningProcesses_v2(
+    conn_t *conn, nvmlDevice_t device, unsigned int *infoCount,
+    nvmlProcessInfo_v2_t *infos) {
+  nvmlReturn_t return_value = rpc_error();
+  unsigned int infoCount_requested = (infos != nullptr) ? *infoCount : 0;
+  uint8_t infos_null = infos == nullptr ? 1 : 0;
+  if (rpc_write_start_request(
+          conn, RPC_nvmlDeviceGetGraphicsRunningProcesses_v2) < 0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, infoCount, sizeof(unsigned int)) < 0 || ([&]() {
+        uint8_t infos_has_data = 0;
+        if (rpc_read(conn, &infos_has_data, sizeof(uint8_t)) < 0)
+          return true;
+        if (infos_has_data == 0)
+          return false;
+        if (infos_has_data != 1 || infos == nullptr ||
+            *infoCount > infoCount_requested ||
+            *infoCount > size_t(-1) / sizeof(nvmlProcessInfo_v2_t)) {
+          rpc_close_transport_socket(conn);
+          return true;
+        }
+        return *infoCount != 0 &&
+               rpc_read(conn, infos,
+                        *infoCount * sizeof(nvmlProcessInfo_v2_t)) < 0;
+      }()) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetGraphicsRunningProcesses_v2(
+    nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_v2_t *infos) {
+  if (infoCount == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetGraphicsRunningProcesses_v2(conn, device,
+                                                             infoCount, infos);
+}
+
+static nvmlReturn_t lupine_rpc_nvmlDeviceGetMPSComputeRunningProcesses(
+    conn_t *conn, nvmlDevice_t device, unsigned int *infoCount,
+    nvmlProcessInfo_v1_t *infos) {
+  nvmlReturn_t return_value = rpc_error();
+  unsigned int infoCount_requested = (infos != nullptr) ? *infoCount : 0;
+  uint8_t infos_null = infos == nullptr ? 1 : 0;
+  if (rpc_write_start_request(
+          conn, RPC_nvmlDeviceGetMPSComputeRunningProcesses) < 0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, infoCount, sizeof(unsigned int)) < 0 || ([&]() {
+        uint8_t infos_has_data = 0;
+        if (rpc_read(conn, &infos_has_data, sizeof(uint8_t)) < 0)
+          return true;
+        if (infos_has_data == 0)
+          return false;
+        if (infos_has_data != 1 || infos == nullptr ||
+            *infoCount > infoCount_requested ||
+            *infoCount > size_t(-1) / sizeof(nvmlProcessInfo_v1_t)) {
+          rpc_close_transport_socket(conn);
+          return true;
+        }
+        return *infoCount != 0 &&
+               rpc_read(conn, infos,
+                        *infoCount * sizeof(nvmlProcessInfo_v1_t)) < 0;
+      }()) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetMPSComputeRunningProcesses(
+    nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_v1_t *infos) {
+  if (infoCount == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetMPSComputeRunningProcesses(conn, device,
+                                                            infoCount, infos);
+}
+
+static nvmlReturn_t lupine_rpc_nvmlDeviceGetMPSComputeRunningProcesses_v2(
+    conn_t *conn, nvmlDevice_t device, unsigned int *infoCount,
+    nvmlProcessInfo_v2_t *infos) {
+  nvmlReturn_t return_value = rpc_error();
+  unsigned int infoCount_requested = (infos != nullptr) ? *infoCount : 0;
+  uint8_t infos_null = infos == nullptr ? 1 : 0;
+  if (rpc_write_start_request(
+          conn, RPC_nvmlDeviceGetMPSComputeRunningProcesses_v2) < 0 ||
+      rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
+      rpc_write(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, infoCount, sizeof(unsigned int)) < 0 || ([&]() {
+        uint8_t infos_has_data = 0;
+        if (rpc_read(conn, &infos_has_data, sizeof(uint8_t)) < 0)
+          return true;
+        if (infos_has_data == 0)
+          return false;
+        if (infos_has_data != 1 || infos == nullptr ||
+            *infoCount > infoCount_requested ||
+            *infoCount > size_t(-1) / sizeof(nvmlProcessInfo_v2_t)) {
+          rpc_close_transport_socket(conn);
+          return true;
+        }
+        return *infoCount != 0 &&
+               rpc_read(conn, infos,
+                        *infoCount * sizeof(nvmlProcessInfo_v2_t)) < 0;
+      }()) ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return rpc_error();
+  }
+  return return_value;
+}
+
+extern "C" nvmlReturn_t nvmlDeviceGetMPSComputeRunningProcesses_v2(
+    nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_v2_t *infos) {
+  if (infoCount == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
+  conn_t *conn = connection_for_device(&device);
+  return lupine_rpc_nvmlDeviceGetMPSComputeRunningProcesses_v2(
+      conn, device, infoCount, infos);
 }
 
 static nvmlReturn_t

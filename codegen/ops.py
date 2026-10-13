@@ -9,6 +9,7 @@ each one to emit its fragment of the generated client and server code.
 from cxxheaderparser.types import Type, Pointer, Parameter
 from typing import Optional, Union
 from dataclasses import dataclass, field
+from enum import Enum
 
 @dataclass
 class NullableOperation:
@@ -346,6 +347,12 @@ class InOutCountOperation:
         )
 
 
+class ArrayReceivePolicy(Enum):
+    ALWAYS = "always"
+    ON_SUCCESS = "ON_SUCCESS"
+    ON_ERROR = "ON_ERROR"
+
+
 @dataclass
 class NullableArrayOperation:
     """
@@ -359,8 +366,7 @@ class NullableArrayOperation:
     parameter: Parameter
     ptr: Pointer
     count: Parameter
-    recv_on_error: bool = False
-    recv_on_success: bool = False
+    receive_policy: ArrayReceivePolicy = ArrayReceivePolicy.ALWAYS
 
     def element_type(self) -> str:
         c = self.ptr.ptr_to.const
@@ -376,10 +382,14 @@ class NullableArrayOperation:
 
     @property
     def server_declaration(self) -> str:
-        return (
-            f"    {self.element_type()} *{self.parameter.name} = nullptr;\n"
-            f"    uint8_t {self.parameter.name}_null = 0;\n"
+        name = self.parameter.name
+        declaration = (
+            f"    {self.element_type()} *{name} = nullptr;\n"
+            f"    uint8_t {name}_null = 0;\n"
         )
+        if self.receive_policy != ArrayReceivePolicy.ALWAYS:
+            declaration += f"    uint8_t {name}_has_data = 0;\n"
+        return declaration
 
     def client_declaration(self) -> str:
         return (
@@ -423,24 +433,35 @@ class NullableArrayOperation:
     def server_reference(self) -> str:
         return self.parameter.name
 
-    def server_rpc_write(self, f, *, success: str = ""):
-        # Both sides clamp the element count to the requested capacity: only
-        # that many elements were allocated, and the clamp keeps the write and
-        # the client read sized identically even if the API reports a larger
-        # count.
-        elem = self.element_type()
-        name = self.parameter.name
+    def transfer_count_expr(self, *, client=False):
         requested = self.requested_count_expr()
-        returned = self.count.name
-        if self.recv_on_success:
+        if not isinstance(self.count.type, Pointer):
+            return requested
+        returned = f"*{self.count.name}" if client else self.count.name
+        if self.receive_policy == ArrayReceivePolicy.ON_SUCCESS:
+            return returned
+        return f"({returned} < {requested} ? {returned} : {requested})"
+
+    def server_rpc_write(self, f, *, success: str = ""):
+        name = self.parameter.name
+        count = self.transfer_count_expr()
+        if self.receive_policy != ArrayReceivePolicy.ALWAYS:
             if not success:
-                raise RuntimeError("ON_SUCCESS requires a status-first response writer")
+                raise RuntimeError("Conditional output requires a backend success code")
+            comparison = "==" if self.receive_policy == ArrayReceivePolicy.ON_SUCCESS else "!="
             f.write(
-                f"        (return_value == {success} && !{name}_null && "
-                f"{returned} != 0 && rpc_write(conn, {name}, "
-                f"{returned} * sizeof({elem})) < 0) ||\n"
+                f"        (({name}_has_data = !{name}_null && "
+                f"return_value {comparison} {success}), false) ||\n"
+                f"        rpc_write(conn, &{name}_has_data, sizeof(uint8_t)) < 0 ||\n"
+            )
+            f.write(
+                f"        ({name}_has_data && {count} != 0 && "
+                f"rpc_write(conn, {name}, {count} * sizeof({self.element_type()})) < 0) ||\n"
             )
             return
+        elem = self.element_type()
+        requested = self.requested_count_expr()
+        returned = self.count.name
         if not isinstance(self.count.type, Pointer):
             f.write(
                 f"        (!{name}_null && "
@@ -454,44 +475,38 @@ class NullableArrayOperation:
             f" * sizeof({elem})) < 0) ||\n"
         )
 
-    def client_rpc_read(self, f, *, success: str = ""):
+    def client_rpc_read(self, f):
         elem = self.element_type()
         name = self.parameter.name
+        count = self.transfer_count_expr(client=True)
         requested = self.requested_count_expr()
-        returned = (
-            f"*{self.count.name}"
-            if isinstance(self.count.type, Pointer)
-            else self.count.name
-        )
-        if self.recv_on_success:
-            if not success:
-                raise RuntimeError("ON_SUCCESS requires a status-first response reader")
-            f.write(
-                f"        ([&]() {{\n"
-                f"          if (return_value != {success} || {name} == nullptr)\n"
-                f"            return false;\n"
-                f"          if ({returned} > {requested} ||\n"
-                f"              {returned} > size_t(-1) / sizeof({elem})) {{\n"
-                f"            rpc_close_transport_socket(conn);\n"
-                f"            return true;\n"
-                f"          }}\n"
-                f"          return {returned} != 0 &&\n"
-                f"                 rpc_read(conn, {name}, {returned} * sizeof({elem})) < 0;\n"
-                f"        }}()) ||\n"
-            )
-            return
-        if self.recv_on_error:
+        if self.receive_policy != ArrayReceivePolicy.ALWAYS:
             f.write(
                 f"        ([&]() {{\n"
                 f"          uint8_t {name}_has_data = 0;\n"
                 f"          if (rpc_read(conn, &{name}_has_data, sizeof(uint8_t)) < 0)\n"
                 f"            return true;\n"
-                f"          return {name}_has_data != 0 && {requested} != 0 &&\n"
-                f"                 rpc_read(conn, {name},\n"
-                f"                          {requested} * sizeof({elem})) < 0;\n"
+                f"          if ({name}_has_data == 0)\n"
+                f"            return false;\n"
+                f"          if ({name}_has_data != 1 || {name} == nullptr ||\n"
+            )
+            if self.receive_policy == ArrayReceivePolicy.ON_SUCCESS:
+                f.write(f"              {count} > {requested} ||\n")
+            f.write(
+                f"              {count} > size_t(-1) / sizeof({elem})) {{\n"
+                f"            rpc_close_transport_socket(conn);\n"
+                f"            return true;\n"
+                f"          }}\n"
+                f"          return {count} != 0 &&\n"
+                f"                 rpc_read(conn, {name}, {count} * sizeof({elem})) < 0;\n"
                 f"        }}()) ||\n"
             )
             return
+        returned = (
+            f"*{self.count.name}"
+            if isinstance(self.count.type, Pointer)
+            else self.count.name
+        )
         if not isinstance(self.count.type, Pointer):
             f.write(
                 f"        ({name} != nullptr && {requested} != 0 && "

@@ -15,6 +15,7 @@ from ops import (
     DereferenceOperation,
     InOutCountOperation,
     NullableArrayOperation,
+    ArrayReceivePolicy,
     NullableOperation,
     NullTerminatedOperation,
     ScalarOperation,
@@ -42,7 +43,7 @@ class Backend:
     # The library also exports every entry point under this prefix (NCCL's
     # profiling interface), as an alias of the same definition.
     alias_prefix: str = ""
-    # Status codes for explicitly success-only output arrays.
+    # Status codes for conditional output arrays.
     success: str = ""
     invalid_result: str = ""
 
@@ -134,24 +135,32 @@ def write_cleared_fields(f, metadata, indent, reference):
             f.write(f"{indent}{parameter}{reference}{name} = nullptr;\n")
 
 
-def success_only_arrays(backend, function, operations, metadata):
-    arrays = [operation for operation in operations
-              if isinstance(operation, NullableArrayOperation)
-              and operation.recv_on_success]
-    if arrays and (function.return_type.format() != backend.result
-                   or not backend.success or not backend.invalid_result
-                   or metadata.async_fire_forget):
+def conditional_output_arrays(backend, function, operations, metadata):
+    arrays = [
+        op for op in operations
+        if isinstance(op, NullableArrayOperation)
+        and op.receive_policy != ArrayReceivePolicy.ALWAYS
+    ]
+    if arrays and (
+        function.return_type.format() != backend.result
+        or not backend.success or metadata.async_fire_forget
+    ):
         raise RuntimeError(
-            "ON_SUCCESS requires a synchronous status-returning backend "
-            "with success and invalid-result codes")
-    return arrays
+            "Conditional output requires a synchronous status-returning backend "
+            "with a success code"
+        )
+    success_arrays = [op for op in arrays
+                      if op.receive_policy == ArrayReceivePolicy.ON_SUCCESS]
+    if success_arrays and not backend.invalid_result:
+        raise RuntimeError("ON_SUCCESS requires a backend invalid-result code")
+    return success_arrays
 
 
 def write_client_rpc(f, backend: Backend, function, operations, metadata):
     name = function.name.format()
     result = function.return_type.format()
     params = ", ".join(format_function_params(function))
-    status_first = bool(success_only_arrays(backend, function, operations, metadata))
+    conditional_output_arrays(backend, function, operations, metadata)
     submit = optional_async(backend, metadata)
     if submit and (
         result != backend.result
@@ -201,14 +210,9 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
     for operation in operations:
         operation.client_rpc_write(f)
     f.write(f"      {wait}\n")
-    if status_first:
-        f.write("      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||\n")
     for operation in operations:
-        if isinstance(operation, NullableArrayOperation) and operation.recv_on_success:
-            operation.client_rpc_read(f, success=backend.success)
-        else:
-            operation.client_rpc_read(f)
-    if result != "void" and not status_first:
+        operation.client_rpc_read(f)
+    if result != "void":
         f.write("      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||\n")
     f.write(f"      rpc_read_end(conn) < 0{')))' if submit else ')'} {{\n")
     write_cleared_fields(f, metadata, "    ", "->")
@@ -341,7 +345,7 @@ def deferred_dtoh_detach(metadata) -> str:
 def write_server_handler(f, backend: Backend, function, operations, metadata):
     name = function.name.format()
     result = function.return_type.format()
-    success_arrays = success_only_arrays(backend, function, operations, metadata)
+    success_arrays = conditional_output_arrays(backend, function, operations, metadata)
     # The driver exports this one unversioned.
     entry = "cuEventElapsedTime" if name == "cuEventElapsedTime_v2" else name
     cleared = {parameter for parameter, _ in metadata.clear_fields}
@@ -486,14 +490,12 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
             f.write("      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||\n")
         if stdout:
             f.write("      lupine_write_captured_stdout(conn, capture) < 0 ||\n")
-        if success_arrays:
-            f.write(f"      rpc_write(conn, &return_value, sizeof({result})) < 0 ||\n")
         for operation in operations:
-            if isinstance(operation, NullableArrayOperation) and operation.recv_on_success:
+            if isinstance(operation, NullableArrayOperation):
                 operation.server_rpc_write(f, success=backend.success)
             else:
                 operation.server_rpc_write(f)
-        if result != "void" and not success_arrays:
+        if result != "void":
             f.write(f"      rpc_write(conn, &return_value, sizeof({result})) < 0 ||\n")
         f.write("      rpc_write_end(conn) < 0)\n")
         f.write("    goto ERROR_0;\n")

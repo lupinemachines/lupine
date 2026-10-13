@@ -7310,7 +7310,14 @@ CUresult cuGraphInstantiate_v2(CUgraphExec *phGraphExec, CUgraph hGraph,
         uint8_t logBuffer_has_data = 0;
         if (rpc_read(conn, &logBuffer_has_data, sizeof(uint8_t)) < 0)
           return true;
-        return logBuffer_has_data != 0 && bufferSize != 0 &&
+        if (logBuffer_has_data == 0)
+          return false;
+        if (logBuffer_has_data != 1 || logBuffer == nullptr ||
+            bufferSize > size_t(-1) / sizeof(char)) {
+          rpc_close_transport_socket(conn);
+          return true;
+        }
+        return bufferSize != 0 &&
                rpc_read(conn, logBuffer, bufferSize * sizeof(char)) < 0;
       }()) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||

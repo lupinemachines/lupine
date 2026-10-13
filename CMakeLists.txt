@@ -1010,6 +1010,16 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
 
     if(TARGET lupine_nvml_client)
+        if(UNIX)
+            find_path(LUPINE_NVML_TEST_INCLUDE_DIR nvml.h
+                HINTS ${LUPINE_NVML_HEADER_DIR} ${CUDAToolkit_INCLUDE_DIRS}
+                REQUIRED)
+            add_test(NAME nvml_conditional_arrays
+                COMMAND ${CMAKE_COMMAND} -E env "CXX=${CMAKE_CXX_COMPILER}"
+                    python3 ${CMAKE_CURRENT_SOURCE_DIR}/test/test_nvml_conditional_arrays.py
+                    ${LUPINE_NVML_TEST_INCLUDE_DIR})
+            set_tests_properties(nvml_conditional_arrays PROPERTIES TIMEOUT 60)
+        endif()
         add_test(NAME nvml_ecc_exports
             COMMAND bash -c
                 "nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetTotalEccErrors && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetDetailedEccErrors && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetMemoryErrorCounter && nm -D \"$<TARGET_FILE:lupine_nvml_client>\" | grep -q nvmlDeviceGetCudaComputeCapability")

@@ -294,32 +294,6 @@ nvmlReturn_t call_device_string(int op, nvmlDevice_t device, char *value,
   return result;
 }
 
-nvmlReturn_t call_processes(int op, nvmlDevice_t device,
-                            unsigned int *infoCount, nvmlProcessInfo_t *infos) {
-  conn_t *c = connection_for_device(&device);
-  nvmlReturn_t result = rpc_error();
-  unsigned int requested_count = infoCount == nullptr ? 0 : *infoCount;
-  int has_infos = infos == nullptr ? 0 : 1;
-  unsigned int returned_count = 0;
-  unsigned int copied_count = 0;
-  if (c == nullptr || rpc_write_start_request(c, op) < 0 ||
-      rpc_write(c, &device, sizeof(device)) < 0 ||
-      rpc_write(c, &requested_count, sizeof(requested_count)) < 0 ||
-      rpc_write(c, &has_infos, sizeof(has_infos)) < 0 ||
-      rpc_wait_for_response(c) < 0 ||
-      rpc_read(c, &returned_count, sizeof(returned_count)) < 0 ||
-      rpc_read(c, &copied_count, sizeof(copied_count)) < 0 ||
-      (copied_count != 0 &&
-       rpc_read(c, infos, copied_count * sizeof(*infos)) < 0) ||
-      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
-    return rpc_error();
-  }
-  if (infoCount != nullptr) {
-    *infoCount = returned_count;
-  }
-  return result;
-}
-
 nvmlReturn_t call_event_set_create(nvmlEventSet_t *set) {
   conn_t *c = connection();
   nvmlReturn_t result = rpc_error();
@@ -696,40 +670,4 @@ extern "C" nvmlReturn_t nvmlDeviceGetPciInfo_v2(nvmlDevice_t device,
 extern "C" nvmlReturn_t nvmlDeviceGetPciInfo(nvmlDevice_t device,
                                              nvmlPciInfo_t *pci) {
   return nvmlDeviceGetPciInfo_v3(device, pci);
-}
-
-extern "C" nvmlReturn_t nvmlDeviceGetComputeRunningProcesses(
-    nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_t *infos) {
-  return call_processes(RPC_nvmlDeviceGetComputeRunningProcesses, device,
-                        infoCount, infos);
-}
-
-extern "C" nvmlReturn_t nvmlDeviceGetComputeRunningProcesses_v2(
-    nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_t *infos) {
-  return call_processes(RPC_nvmlDeviceGetComputeRunningProcesses_v2, device,
-                        infoCount, infos);
-}
-
-extern "C" nvmlReturn_t nvmlDeviceGetGraphicsRunningProcesses(
-    nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_t *infos) {
-  return call_processes(RPC_nvmlDeviceGetGraphicsRunningProcesses, device,
-                        infoCount, infos);
-}
-
-extern "C" nvmlReturn_t nvmlDeviceGetGraphicsRunningProcesses_v2(
-    nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_t *infos) {
-  return call_processes(RPC_nvmlDeviceGetGraphicsRunningProcesses_v2, device,
-                        infoCount, infos);
-}
-
-extern "C" nvmlReturn_t nvmlDeviceGetMPSComputeRunningProcesses(
-    nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_t *infos) {
-  return call_processes(RPC_nvmlDeviceGetMPSComputeRunningProcesses, device,
-                        infoCount, infos);
-}
-
-extern "C" nvmlReturn_t nvmlDeviceGetMPSComputeRunningProcesses_v2(
-    nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_t *infos) {
-  return call_processes(RPC_nvmlDeviceGetMPSComputeRunningProcesses_v2, device,
-                        infoCount, infos);
 }

@@ -21,9 +21,53 @@ pointer to declare an optional in-array the caller may leave null
 `SEND_RECV` supports the `cuGraphGetNodes` query pattern; a by-value count is a
 fixed capacity. Each array leads with its own presence byte on the wire, and
 several arrays may share one count.
-`ON_ERROR` may be added to a `RECV_ONLY NULLABLE LENGTH` buffer when CUDA only
-writes the buffer on failure. The generated response preserves the caller's
-buffer on success.
+`ON_SUCCESS` and `ON_ERROR` may be added to a `RECV_ONLY NULLABLE LENGTH`
+buffer to select when its contents travel back. They are mutually exclusive:
+
+| Modifier | Array transfer |
+| --- | --- |
+| Neither | Whenever the caller supplied the array, including on API errors |
+| `ON_SUCCESS` | Only when the API returns the backend's success status |
+| `ON_ERROR` | Only when the API returns an error status |
+
+Nullability and transfer policy are independent. A count marked `SEND_RECV`
+still travels back on errors, so an insufficient-buffer response can report the
+required capacity without overwriting caller samples. Conditional responses
+carry a `has_data` byte before each array and retain the ordinary trailing API
+status. Client and server must be regenerated and deployed together when adding
+or changing a conditional annotation. Unannotated layouts are unchanged.
+
+Both policies require a synchronous API returning the backend's status type.
+`ON_SUCCESS` also requires an invalid-result status: a successful non-null
+output reporting more entries than its allocated capacity is converted to that
+error, and its array is omitted. Clients reject invalid presence bytes,
+over-capacity success counts and byte-size overflow before copying samples.
+For `ON_ERROR`, pointer counts retain the usual capacity clamp; by-value counts
+transfer the diagnostic buffer's full capacity, as with `cuGraphInstantiate_v2`.
+
+The six legacy NVML compute, graphics and MPS process-list entry points use
+`ON_SUCCESS` instead of a shared handwritten RPC. Each unversioned entry point
+uses `nvmlProcessInfo_v1_t`; each `_v2` entry point uses `nvmlProcessInfo_v2_t`.
+Their small-buffer and native-error responses update the count while preserving
+caller array contents. A present zero-capacity array remains non-null at the
+native call; it does not silently become a count-only query.
+
+Other APIs reviewed for this policy:
+
+| API family | Finding |
+| --- | --- |
+| NVML process lists `_v3` | Same count/array pattern; can use `ON_SUCCESS` when enabled in `NVML_RPC_FUNCTIONS`. |
+| NVML supported memory/graphics clocks, encoder/FBC sessions | Flat count/array query patterns are suitable candidates; currently excluded from the generated NVML allowlist. |
+| `nvmlDeviceGetSamples` | The samples array can use `ON_SUCCESS`, but `sampleValType` is a separate scalar output whose error behavior also needs review. |
+| `cuGraphInstantiate_v2` | Existing `ON_ERROR` diagnostic buffer shares the conditional reader. Keep its manual server: graph preparation, error-node translation and resource ownership are required beyond buffer transfer. |
+| CUDA/HIP graph node and edge queries | Retain existing unconditional transfers; optional arrays alone do not establish that output is valid only on success. |
+
+Validate conditional generation and the checked-in NVML client/server fragments
+without GPU hardware using `uv run test/test_codegen_conditional_arrays.py`.
+The fixture exercises partial native writes followed by errors, count-only and
+zero-capacity queries, versioned struct sizes, missing symbols, inconsistent
+successful counts, and malformed responses. The standalone NVML fixture is also
+registered with CTest for NVML builds on Unix.
 `SCALAR` marks a pointer that a library's residence argument places on the host
 or on the device (`ncclRedOpCreatePreMulSum`'s `scalar`). The residence belongs to the
 call's first parameter, or to the parameter named by `SCALAR:<param>`. The

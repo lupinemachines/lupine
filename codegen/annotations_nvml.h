@@ -1969,19 +1969,51 @@ nvmlReturn_t
 nvmlDeviceSetNvLinkDeviceLowPowerThreshold(nvmlDevice_t device,
                                            nvmlNvLinkPowerThres_t *info);
 
-// Registry-only operations without API declarations above. The code generator
-// reads these annotations directly; the C++ parser intentionally ignores them.
-#if 0
-/** @disabled */
-void nvmlDeviceGetComputeRunningProcesses();
-/** @disabled */
-void nvmlDeviceGetComputeRunningProcesses_v2();
-/** @disabled */
-void nvmlDeviceGetGraphicsRunningProcesses();
-/** @disabled */
-void nvmlDeviceGetGraphicsRunningProcesses_v2();
-/** @disabled */
-void nvmlDeviceGetMPSComputeRunningProcesses();
-/** @disabled */
-void nvmlDeviceGetMPSComputeRunningProcesses_v2();
-#endif
+
+#undef nvmlDeviceGetComputeRunningProcesses
+/**
+ * @param device SEND_ONLY
+ * @param infoCount SEND_RECV
+ * @param infos RECV_ONLY NULLABLE LENGTH:infoCount ON_SUCCESS
+ */
+nvmlReturn_t nvmlDeviceGetComputeRunningProcesses(nvmlDevice_t device,
+    unsigned int *infoCount, nvmlProcessInfo_v1_t *infos);
+/**
+ * @param device SEND_ONLY
+ * @param infoCount SEND_RECV
+ * @param infos RECV_ONLY NULLABLE LENGTH:infoCount ON_SUCCESS
+ */
+nvmlReturn_t nvmlDeviceGetComputeRunningProcesses_v2(nvmlDevice_t device,
+    unsigned int *infoCount, nvmlProcessInfo_v2_t *infos);
+
+#undef nvmlDeviceGetGraphicsRunningProcesses
+/**
+ * @param device SEND_ONLY
+ * @param infoCount SEND_RECV
+ * @param infos RECV_ONLY NULLABLE LENGTH:infoCount ON_SUCCESS
+ */
+nvmlReturn_t nvmlDeviceGetGraphicsRunningProcesses(nvmlDevice_t device,
+    unsigned int *infoCount, nvmlProcessInfo_v1_t *infos);
+/**
+ * @param device SEND_ONLY
+ * @param infoCount SEND_RECV
+ * @param infos RECV_ONLY NULLABLE LENGTH:infoCount ON_SUCCESS
+ */
+nvmlReturn_t nvmlDeviceGetGraphicsRunningProcesses_v2(nvmlDevice_t device,
+    unsigned int *infoCount, nvmlProcessInfo_v2_t *infos);
+
+#undef nvmlDeviceGetMPSComputeRunningProcesses
+/**
+ * @param device SEND_ONLY
+ * @param infoCount SEND_RECV
+ * @param infos RECV_ONLY NULLABLE LENGTH:infoCount ON_SUCCESS
+ */
+nvmlReturn_t nvmlDeviceGetMPSComputeRunningProcesses(nvmlDevice_t device,
+    unsigned int *infoCount, nvmlProcessInfo_v1_t *infos);
+/**
+ * @param device SEND_ONLY
+ * @param infoCount SEND_RECV
+ * @param infos RECV_ONLY NULLABLE LENGTH:infoCount ON_SUCCESS
+ */
+nvmlReturn_t nvmlDeviceGetMPSComputeRunningProcesses_v2(nvmlDevice_t device,
+    unsigned int *infoCount, nvmlProcessInfo_v2_t *infos);
