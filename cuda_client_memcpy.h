@@ -36,6 +36,13 @@ lupine_device_attribute_is_virtualized(conn_t *conn, CUdevice_attribute attrib);
 extern "C" bool lupine_host_ptr_is_page_locked(const void *host);
 bool lupine_host_range_is_protected(uintptr_t start, size_t size);
 extern "C" bool lupine_is_managed_host_alias(CUdeviceptr ptr);
+extern "C" CUresult lupine_managed_mem_advise(CUdeviceptr ptr, size_t count,
+                                              CUmem_advise advice,
+                                              CUdevice device);
+extern "C" bool lupine_managed_mem_range_attribute(
+    void *data, size_t data_size, CUmem_range_attribute attribute,
+    CUdeviceptr ptr, size_t count, CUresult *result);
+
 extern "C" const void *lupine_mapped_host_read_source(const void *host,
                                                       size_t size);
 extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,

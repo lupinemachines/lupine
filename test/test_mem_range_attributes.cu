@@ -44,11 +44,35 @@ int main() {
 
   constexpr size_t allocation_size = 4096;
   CUdeviceptr allocation = 0;
-  if (check(cuMemAllocManaged(&allocation, allocation_size,
-                              CU_MEM_ATTACH_GLOBAL),
-            "cuMemAllocManaged") != 0) {
+  if (check(
+          cuMemAllocManaged(&allocation, allocation_size, CU_MEM_ATTACH_GLOBAL),
+          "cuMemAllocManaged") != 0) {
     cuDevicePrimaryCtxRelease(device);
     return 2;
+  }
+
+  auto advise = [&](CUmem_advise hint, CUdevice target) {
+#if CUDA_VERSION >= 12020
+    CUmemLocation location = {};
+    location.type = target == CU_DEVICE_CPU ? CU_MEM_LOCATION_TYPE_HOST
+                                            : CU_MEM_LOCATION_TYPE_DEVICE;
+    location.id = target == CU_DEVICE_CPU ? 0 : target;
+    return cuMemAdvise_v2(allocation, allocation_size, hint, location);
+#else
+    return cuMemAdvise(allocation, allocation_size, hint, target);
+#endif
+  };
+  if (check(advise(CU_MEM_ADVISE_SET_READ_MOSTLY, device),
+            "read-mostly advice") ||
+      check(advise(CU_MEM_ADVISE_SET_PREFERRED_LOCATION, CU_DEVICE_CPU),
+            "preferred-location advice") ||
+      check(advise(CU_MEM_ADVISE_SET_ACCESSED_BY, CU_DEVICE_CPU),
+            "CPU access advice") ||
+      check(advise(CU_MEM_ADVISE_SET_ACCESSED_BY, device),
+            "GPU access advice")) {
+    cuMemFree(allocation);
+    cuDevicePrimaryCtxRelease(device);
+    return 7;
   }
 
   CUmem_range_attribute attributes[] = {
@@ -79,6 +103,17 @@ int main() {
     }
   }
 
+  if (individual.read_mostly != 1 ||
+      individual.preferred_location != CU_DEVICE_CPU ||
+      individual.accessed_by[0] != device ||
+      individual.accessed_by[1] != CU_DEVICE_CPU ||
+      individual.accessed_by[2] != CU_DEVICE_INVALID) {
+    std::fprintf(stderr, "managed-memory advice was not retained\n");
+    cuMemFree(allocation);
+    cuDevicePrimaryCtxRelease(device);
+    return 8;
+  }
+
   RangeAttributes plural;
   void *plural_data[] = {
       &plural.read_mostly,
@@ -97,8 +132,9 @@ int main() {
 
   for (size_t i = 0; i < attribute_count; ++i) {
     if (std::memcmp(individual_data[i], plural_data[i], data_sizes[i]) != 0) {
-      std::fprintf(stderr, "attribute %zu differs between singular and plural "
-                           "queries\n",
+      std::fprintf(stderr,
+                   "attribute %zu differs between singular and plural "
+                   "queries\n",
                    i);
       cuMemFree(allocation);
       cuDevicePrimaryCtxRelease(device);
@@ -107,8 +143,8 @@ int main() {
   }
 
   if (check(cuMemFree(allocation), "cuMemFree") != 0 ||
-      check(cuDevicePrimaryCtxRelease(device),
-            "cuDevicePrimaryCtxRelease") != 0) {
+      check(cuDevicePrimaryCtxRelease(device), "cuDevicePrimaryCtxRelease") !=
+          0) {
     return 6;
   }
 

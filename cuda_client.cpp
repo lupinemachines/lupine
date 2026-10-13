@@ -4217,11 +4217,8 @@ extern "C" CUresult cuMemAdvise(CUdeviceptr devPtr, size_t count,
     return lupine_call_real_cuda_fn("cuMemAdvise", devPtr, count, advice,
                                     route_device);
   }
-  // Identity-VA managed allocations are device VMM mappings on the server,
-  // not native managed allocations. The advice cannot be applied there, but
-  // it is only a performance hint, so match the prefetch shim and accept it.
   if (managed_alias) {
-    return CUDA_SUCCESS;
+    return lupine_managed_mem_advise(devPtr, count, advice, device);
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
@@ -4313,6 +4310,10 @@ extern "C" CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count,
                                     route_location);
   }
   if (managed_alias) {
+    if (location.type == CU_MEM_LOCATION_TYPE_DEVICE)
+      return lupine_managed_mem_advise(devPtr, count, advice, location.id);
+    if (location.type == CU_MEM_LOCATION_TYPE_HOST)
+      return lupine_managed_mem_advise(devPtr, count, advice, CU_DEVICE_CPU);
     return CUDA_SUCCESS;
   }
 
@@ -4341,6 +4342,18 @@ extern "C" CUresult cuMemRangeGetAttributes(void **data, size_t *dataSizes,
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuMemRangeGetAttributes", data, dataSizes,
                                     attributes, numAttributes, devPtr, count);
+  }
+
+  if (lupine_is_managed_host_alias(devPtr)) {
+    if (!data || !dataSizes || !attributes || !numAttributes)
+      return CUDA_ERROR_INVALID_VALUE;
+    for (size_t i = 0; i < numAttributes; ++i) {
+      CUresult result = cuMemRangeGetAttribute(data[i], dataSizes[i],
+                                               attributes[i], devPtr, count);
+      if (result != CUDA_SUCCESS)
+        return result;
+    }
+    return CUDA_SUCCESS;
   }
 
   conn_t *conn = lupine_route_remote_conn(route);

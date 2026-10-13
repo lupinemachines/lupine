@@ -1443,7 +1443,14 @@ CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
  */
 CUresult cuMemRangeGetAttribute(void *data, size_t dataSize,
                                 CUmem_range_attribute attribute,
-                                CUdeviceptr devPtr, size_t count);
+                                CUdeviceptr devPtr, size_t count) {
+  CUresult advice_result;
+  if (lupine_managed_mem_range_attribute(data, dataSize, attribute, devPtr,
+                                         count, &advice_result))
+    return advice_result;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @disabled - manual client and server marshal each variable-sized result
  * @param data SEND_RECV

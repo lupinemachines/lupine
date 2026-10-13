@@ -816,6 +816,14 @@ if(BUILD_TESTING)
     add_test(NAME late_trace_test COMMAND late_trace_test
         ${CMAKE_CURRENT_BINARY_DIR}/late-trace.log)
 
+    if(LUPINE_BUILD_CUDA)
+        add_executable(managed_advice_test managed_advice_test.cpp)
+        target_include_directories(managed_advice_test PRIVATE
+            ${CUDAToolkit_INCLUDE_DIRS})
+        lupine_apply_sanitizer(managed_advice_test)
+        add_test(NAME managed_advice_test COMMAND managed_advice_test)
+    endif()
+
     add_executable(fatbin_filter_test fatbin_filter_test.cpp)
     lupine_apply_sanitizer(fatbin_filter_test)
     add_test(NAME fatbin_filter_test COMMAND fatbin_filter_test)

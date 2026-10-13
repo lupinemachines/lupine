@@ -15,6 +15,7 @@
 #include "gen_rpc_ids.h"
 
 #include "client_routing.h"
+#include "cuda_client_memcpy.h"
 #include "rpc.h"
 
 extern int rpc_size();
@@ -2659,6 +2660,10 @@ CUresult cuMemRangeGetAttribute(void *data, size_t dataSize,
                                 CUmem_range_attribute attribute,
                                 CUdeviceptr devPtr, size_t count) {
   lupine_route route = lupine_route_for_deviceptr(devPtr);
+  CUresult advice_result;
+  if (lupine_managed_mem_range_attribute(data, dataSize, attribute, devPtr,
+                                         count, &advice_result))
+    return advice_result;
   CUresult return_value;
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn(

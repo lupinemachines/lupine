@@ -30,6 +30,7 @@
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_client_memcpy.h"
 #include "events.h"
+#include "managed_advice.h"
 
 // Defined with the capture wrappers in cuda_client.cpp; nonzero only while this
 // client holds a stream capture open, where a pageable copy stays a graph node.
@@ -101,6 +102,7 @@ struct lupine_host_allocation {
   bool owned_mmap = false;
   void *io_alias = nullptr;
   bool managed = false;
+  lupine_managed_advice advice;
   bool local_cuda = false;
   bool client_to_server_only = false;
   CUdeviceptr server_host_ptr = 0;
@@ -1531,6 +1533,45 @@ extern "C" bool lupine_is_managed_host_alias(CUdeviceptr ptr) {
   auto it = lupine_find_host_allocation_locked(host);
   return it != lupine_mutable_host_allocations_locked().end() &&
          it->second.managed;
+}
+
+extern "C" CUresult lupine_managed_mem_advise(CUdeviceptr ptr, size_t count,
+                                              CUmem_advise advice,
+                                              CUdevice device) {
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  auto it = lupine_find_host_allocation_locked(reinterpret_cast<void *>(ptr));
+  if (it == lupine_mutable_host_allocations_locked().end() ||
+      !it->second.managed)
+    return CUDA_ERROR_INVALID_VALUE;
+  auto &allocation = it->second;
+  size_t offset = ptr - allocation.user_base;
+  if (!count || offset >= allocation.user_size ||
+      count > allocation.user_size - offset)
+    return CUDA_ERROR_INVALID_VALUE;
+  return allocation.advice.advise(offset, count, allocation.page_size, advice,
+                                  device);
+}
+
+extern "C" bool lupine_managed_mem_range_attribute(
+    void *data, size_t data_size, CUmem_range_attribute attribute,
+    CUdeviceptr ptr, size_t count, CUresult *result) {
+  if (!lupine_managed_advice::supports(attribute))
+    return false;
+  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  auto it = lupine_find_host_allocation_locked(reinterpret_cast<void *>(ptr));
+  if (it == lupine_mutable_host_allocations_locked().end() ||
+      !it->second.managed || it->second.local_cuda)
+    return false;
+  const auto &allocation = it->second;
+  size_t offset = ptr - allocation.user_base;
+  if (!count || offset >= allocation.user_size ||
+      count > allocation.user_size - offset) {
+    *result = CUDA_ERROR_INVALID_VALUE;
+  } else {
+    *result = allocation.advice.query(data, data_size, attribute, offset, count,
+                                      allocation.page_size);
+  }
+  return true;
 }
 
 static bool lupine_translate_client_host_ptr_to_server(

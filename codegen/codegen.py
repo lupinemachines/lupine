@@ -1281,6 +1281,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             "#include <vector>\n\n"
             '#include "gen_rpc_ids.h"\n\n'
             '#include "client_routing.h"\n'
+            '#include "cuda_client_memcpy.h"\n'
             '#include "rpc.h"\n\n'
             "extern int rpc_size();\n"
             "extern conn_t *rpc_client_get_connection(unsigned int index);\n"
