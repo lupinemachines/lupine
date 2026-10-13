@@ -15,7 +15,6 @@ from ops import (
     DereferenceOperation,
     InOutCountOperation,
     NullableArrayOperation,
-    ArrayReceivePolicy,
     NullableOperation,
     NullTerminatedOperation,
     ScalarOperation,
@@ -139,7 +138,7 @@ def conditional_output_arrays(backend, function, operations, metadata):
     arrays = [
         op for op in operations
         if isinstance(op, NullableArrayOperation)
-        and op.receive_policy != ArrayReceivePolicy.ALWAYS
+        and op.recv_on
     ]
     if arrays and (
         function.return_type.format() != backend.result
@@ -150,7 +149,7 @@ def conditional_output_arrays(backend, function, operations, metadata):
             "with a success code"
         )
     success_arrays = [op for op in arrays
-                      if op.receive_policy == ArrayReceivePolicy.ON_SUCCESS]
+                      if op.recv_on == "ON_SUCCESS"]
     if success_arrays and not backend.invalid_result:
         raise RuntimeError("ON_SUCCESS requires a backend invalid-result code")
     return success_arrays

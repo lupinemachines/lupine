@@ -37,7 +37,6 @@ from ops import (
     ArrayOperation,
     InOutCountOperation,
     NullableArrayOperation,
-    ArrayReceivePolicy,
     DeepStructOperation,
     NullTerminatedOperation,
     OpaqueTypeOperation,
@@ -688,16 +687,13 @@ def parse_annotation(
                 null_terminated = "NULL_TERMINATED" in args
                 nullable = "NULLABLE" in args
                 deref = "DEREF" in args
-                receive_modifiers = [policy for policy in ArrayReceivePolicy
-                                     if policy.value in args]
-                if len(receive_modifiers) > 1:
+                if "ON_SUCCESS" in args and "ON_ERROR" in args:
                     raise NotImplementedError("ON_SUCCESS and ON_ERROR are mutually exclusive")
-                receive_policy = (receive_modifiers[0] if receive_modifiers
-                                  else ArrayReceivePolicy.ALWAYS)
+                recv_on = next((arg for arg in args if arg in ("ON_SUCCESS", "ON_ERROR")), None)
                 scalar_arg = next(
                     (arg for arg in args if arg.split(":")[0] == "SCALAR"), None
                 )
-                if receive_policy != ArrayReceivePolicy.ALWAYS and (
+                if recv_on and (
                     deref or scalar_arg or "VERSIONED" in args or size_arg
                     or null_terminated
                     or not (nullable and length_arg and recv and not send)
@@ -829,7 +825,7 @@ def parse_annotation(
                                 parameter=param,
                                 ptr=param.type,
                                 count=length_param,
-                                receive_policy=receive_policy,
+                                recv_on=recv_on,
                             )
                         )
                     else:

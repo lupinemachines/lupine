@@ -9,7 +9,6 @@ each one to emit its fragment of the generated client and server code.
 from cxxheaderparser.types import Type, Pointer, Parameter
 from typing import Optional, Union
 from dataclasses import dataclass, field
-from enum import Enum
 
 @dataclass
 class NullableOperation:
@@ -347,12 +346,6 @@ class InOutCountOperation:
         )
 
 
-class ArrayReceivePolicy(Enum):
-    ALWAYS = "always"
-    ON_SUCCESS = "ON_SUCCESS"
-    ON_ERROR = "ON_ERROR"
-
-
 @dataclass
 class NullableArrayOperation:
     """
@@ -366,7 +359,7 @@ class NullableArrayOperation:
     parameter: Parameter
     ptr: Pointer
     count: Parameter
-    receive_policy: ArrayReceivePolicy = ArrayReceivePolicy.ALWAYS
+    recv_on: Optional[str] = None
 
     def element_type(self) -> str:
         c = self.ptr.ptr_to.const
@@ -387,7 +380,7 @@ class NullableArrayOperation:
             f"    {self.element_type()} *{name} = nullptr;\n"
             f"    uint8_t {name}_null = 0;\n"
         )
-        if self.receive_policy != ArrayReceivePolicy.ALWAYS:
+        if self.recv_on:
             declaration += f"    uint8_t {name}_has_data = 0;\n"
         return declaration
 
@@ -438,41 +431,27 @@ class NullableArrayOperation:
         if not isinstance(self.count.type, Pointer):
             return requested
         returned = f"*{self.count.name}" if client else self.count.name
-        if self.receive_policy == ArrayReceivePolicy.ON_SUCCESS:
+        if self.recv_on == "ON_SUCCESS":
             return returned
         return f"({returned} < {requested} ? {returned} : {requested})"
 
     def server_rpc_write(self, f, *, success: str = ""):
         name = self.parameter.name
         count = self.transfer_count_expr()
-        if self.receive_policy != ArrayReceivePolicy.ALWAYS:
+        present = f"!{name}_null"
+        if self.recv_on:
             if not success:
                 raise RuntimeError("Conditional output requires a backend success code")
-            comparison = "==" if self.receive_policy == ArrayReceivePolicy.ON_SUCCESS else "!="
+            comparison = "==" if self.recv_on == "ON_SUCCESS" else "!="
             f.write(
                 f"        (({name}_has_data = !{name}_null && "
                 f"return_value {comparison} {success}), false) ||\n"
                 f"        rpc_write(conn, &{name}_has_data, sizeof(uint8_t)) < 0 ||\n"
             )
-            f.write(
-                f"        ({name}_has_data && {count} != 0 && "
-                f"rpc_write(conn, {name}, {count} * sizeof({self.element_type()})) < 0) ||\n"
-            )
-            return
-        elem = self.element_type()
-        requested = self.requested_count_expr()
-        returned = self.count.name
-        if not isinstance(self.count.type, Pointer):
-            f.write(
-                f"        (!{name}_null && "
-                f"rpc_write(conn, {name}, {requested} * sizeof({elem})) < 0) ||\n"
-            )
-            return
+            present = f"{name}_has_data && {count} != 0"
         f.write(
-            f"        (!{name}_null && "
-            f"rpc_write(conn, {name}, "
-            f"({returned} < {requested} ? {returned} : {requested})"
-            f" * sizeof({elem})) < 0) ||\n"
+            f"        ({present} && rpc_write(conn, {name}, "
+            f"{count} * sizeof({self.element_type()})) < 0) ||\n"
         )
 
     def client_rpc_read(self, f):
@@ -480,44 +459,32 @@ class NullableArrayOperation:
         name = self.parameter.name
         count = self.transfer_count_expr(client=True)
         requested = self.requested_count_expr()
-        if self.receive_policy != ArrayReceivePolicy.ALWAYS:
-            f.write(
-                f"        ([&]() {{\n"
-                f"          uint8_t {name}_has_data = 0;\n"
-                f"          if (rpc_read(conn, &{name}_has_data, sizeof(uint8_t)) < 0)\n"
-                f"            return true;\n"
-                f"          if ({name}_has_data == 0)\n"
-                f"            return false;\n"
-                f"          if ({name}_has_data != 1 || {name} == nullptr ||\n"
-            )
-            if self.receive_policy == ArrayReceivePolicy.ON_SUCCESS:
-                f.write(f"              {count} > {requested} ||\n")
-            f.write(
-                f"              {count} > size_t(-1) / sizeof({elem})) {{\n"
-                f"            rpc_close_transport_socket(conn);\n"
-                f"            return true;\n"
-                f"          }}\n"
-                f"          return {count} != 0 &&\n"
-                f"                 rpc_read(conn, {name}, {count} * sizeof({elem})) < 0;\n"
-                f"        }}()) ||\n"
-            )
+        if self.recv_on:
+            invalid = [f"{name}_has_data != 1", f"{name} == nullptr"]
+            if self.recv_on == "ON_SUCCESS":
+                invalid.append(f"{count} > {requested}")
+            invalid.append(f"{count} > size_t(-1) / sizeof({elem})")
+            f.write(f"""        ([&]() {{
+          uint8_t {name}_has_data = 0;
+          if (rpc_read(conn, &{name}_has_data, sizeof(uint8_t)) < 0)
+            return true;
+          if ({name}_has_data == 0)
+            return false;
+          if ({' || '.join(invalid)}) {{
+            rpc_close_transport_socket(conn);
+            return true;
+          }}
+          return {count} != 0 &&
+                 rpc_read(conn, {name}, {count} * sizeof({elem})) < 0;
+        }}()) ||
+""")
             return
-        returned = (
-            f"*{self.count.name}"
-            if isinstance(self.count.type, Pointer)
-            else self.count.name
-        )
-        if not isinstance(self.count.type, Pointer):
-            f.write(
-                f"        ({name} != nullptr && {requested} != 0 && "
-                f"rpc_read(conn, {name}, {requested} * sizeof({elem})) < 0) ||\n"
-            )
-            return
+        present = f"{name} != nullptr && {requested} != 0"
+        if isinstance(self.count.type, Pointer):
+            present += f" && *{self.count.name} != 0"
         f.write(
-            f"        ({name} != nullptr && {requested} != 0 && {returned} != 0 && "
-            f"rpc_read(conn, {name}, "
-            f"({returned} < {requested} ? {returned} : {requested})"
-            f" * sizeof({elem})) < 0) ||\n"
+            f"        ({present} && rpc_read(conn, {name}, "
+            f"{count} * sizeof({elem})) < 0) ||\n"
         )
 
 
