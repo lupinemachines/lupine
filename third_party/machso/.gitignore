@@ -1,0 +1,7 @@
+build/
+__pycache__/
+*.pyc
+.venv/
+*.swp
+*.swo
+.DS_Store

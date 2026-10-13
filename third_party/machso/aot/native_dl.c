@@ -1,0 +1,112 @@
+/* Static lowering of Linux loader entry points to native Darwin entry points. */
+#include <dlfcn.h>
+#include <mach-o/dyld.h>
+#include <stdint.h>
+#include <string.h>
+#if !defined(AOT_MODULE_LOOKUP)
+#ifndef AOT_MODULE_SONAMES
+#define AOT_MODULE_SONAMES NULL
+#endif
+static const char *const aot_module_sonames[] = {AOT_MODULE_SONAMES};
+#endif
+extern int *g___errno_location(void);
+static int aot_dlopen_flags(int flags) {
+    const int supported=1|2|4|8|0x100|0x1000;
+    if ((flags & ~supported) || ((flags & 3)!=1 && (flags & 3)!=2)) return -1;
+    int native=(flags & 2) ? RTLD_NOW : RTLD_LAZY;
+    native |= (flags & 0x100) ? RTLD_GLOBAL : RTLD_LOCAL;
+    if (flags & 4) native |= RTLD_NOLOAD;
+    if (flags & 0x1000) native |= RTLD_NODELETE;
+    return native;
+}
+void *aot_linux_dlopen(const char *path,int flags) {
+    int native=aot_dlopen_flags(flags);
+    if (native<0) {*g___errno_location()=22;return NULL;}
+    const char *base=path ? strrchr(path,'/') : NULL;
+    base=base ? base+1 : path;
+#ifdef AOT_MODULE_LOOKUP
+    if (base) {
+        void *module=aot_module_open(base,native);
+        if (module) return module;
+    }
+#else
+    if (base) for (size_t i=0;i<sizeof(aot_module_sonames)/sizeof(aot_module_sonames[0]);i++) {
+        if (aot_module_sonames[i] && !strcmp(base,aot_module_sonames[i])) {
+            Dl_info self;
+            if (dladdr((void *)&aot_linux_dlopen,&self)) return dlopen(self.dli_fname,native);
+        }
+    }
+#endif
+    void *handle=dlopen(path,native);
+    if (handle || !path || strchr(path,'/')) return handle;
+    /* An explicitly preloaded native provider may have a Darwin filename
+     * while its Linux caller requests a SONAME such as libfoo.so.1. */
+    const char *suffix=strstr(path,".so");
+    if (!suffix || (suffix[3] && suffix[3]!='.')) return NULL;
+    for (const char *version=suffix+3; *version; version++)
+        if (*version!='.' && (*version<'0' || *version>'9')) return NULL;
+    size_t stem=(size_t)(suffix-path);
+    for (uint32_t i=0;i<_dyld_image_count();i++) {
+        const char *image=_dyld_get_image_name(i);
+        if (!image) continue;
+        const char *name=strrchr(image,'/');
+        name=name ? name+1 : image;
+        if (strlen(name)==stem+6 && !strncmp(name,path,stem) && !strcmp(name+stem,".dylib"))
+            return dlopen(image,native);
+    }
+    return NULL;
+}
+void *aot_linux_dlmopen(long namespace,const char *path,int flags) {
+    if (namespace) {*g___errno_location()=38;return NULL;}
+    return aot_linux_dlopen(path,flags);
+}
+void *aot_linux_dlsym(void *handle,const char *name) {
+#ifdef AOT_MODULE_LOOKUP
+    struct aot_module *module=aot_module_handle(handle);
+    if (module) return aot_module_symbol(module,name,NULL);
+#ifdef AOT_EXPORT_ABI
+    if (!handle) {
+        /* Native exports may be adapters, and other native images can expose
+         * the same names. Keep this bundle's ELF ABI domain first. */
+        for (size_t i=0;i<sizeof(aot_modules)/sizeof(aot_modules[0]);i++) {
+            if (aot_modules[i].path) continue;
+            void *address=aot_module_symbol(&aot_modules[i],name,NULL);
+            if (address) return address;
+        }
+        aot_module_error=NULL;
+    }
+#endif
+#endif
+    if (!handle) handle=RTLD_DEFAULT;
+    else if (handle==(void *)-1) handle=RTLD_NEXT;
+    void *address=dlsym(handle,name);
+#ifdef AOT_EXPORT_ABI
+    address=aot_import_function_pointer(address);
+#endif
+    return address;
+}
+void *aot_linux_dlvsym(void *handle,const char *name,const char *version) {
+#ifdef AOT_MODULE_LOOKUP
+    struct aot_module *module=aot_module_handle(handle);
+    if (module) return aot_module_symbol(module,name,version);
+#endif
+    (void)version;
+    return aot_linux_dlsym(handle,name);
+}
+int aot_linux_dlclose(void *handle) {
+#ifdef AOT_MODULE_LOOKUP
+    struct aot_module *module=aot_module_handle(handle);
+    if (module) handle=__atomic_load_n(&module->native,__ATOMIC_ACQUIRE);
+#endif
+    return dlclose(handle);
+}
+char *aot_linux_dlerror(void) {
+#ifdef AOT_MODULE_LOOKUP
+    if (aot_module_error) {
+        const char *error=aot_module_error;
+        aot_module_error=NULL;
+        return (char *)error;
+    }
+#endif
+    return dlerror();
+}

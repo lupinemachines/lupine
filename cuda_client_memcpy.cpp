@@ -146,14 +146,16 @@ struct lupine_mapped_host_snapshot {
 using lupine_host_allocation_map =
     std::map<void *, lupine_host_allocation, std::less<void *>>;
 
+// The registry below has process lifetime; its locks must remain usable when
+// CUDA library finalizers query or release allocations during dylib teardown.
 static std::mutex &lupine_host_allocation_mutex() {
-  static std::mutex mutex;
-  return mutex;
+  static auto *mutex = new std::mutex();
+  return *mutex;
 }
 
 static std::mutex &lupine_portable_registration_mutex() {
-  static std::mutex mutex;
-  return mutex;
+  static auto *mutex = new std::mutex();
+  return *mutex;
 }
 
 // CUDA libraries can issue teardown requests after function-local statics have
@@ -259,6 +261,9 @@ static lupine_fault_entry lupine_fault_entries[LUPINE_MAX_FAULT_ENTRIES];
 static volatile sig_atomic_t lupine_fault_entry_high_water = 0;
 static volatile sig_atomic_t lupine_active_fault_handlers = 0;
 static struct sigaction lupine_previous_sigsegv_action;
+#if defined(__APPLE__)
+static struct sigaction lupine_previous_sigbus_action;
+#endif
 static bool lupine_sigsegv_handler_installed = false;
 
 // RPC responses can land in either ordinary pinned I/O buffers or protected
@@ -321,6 +326,12 @@ static bool lupine_server_range(const conn_t *conn, uintptr_t server,
   if (conn != nullptr && conn->va_size != 0) {
     return lupine_va_contains(conn, server, size);
   }
+#if defined(__APPLE__)
+  // Without an identity arena, CUDA chooses the server address. macOS uses
+  // independently mapped local views and the allocation registry translates
+  // their pointers, so the server address need not lie in the legacy bands.
+  return server != 0 && size <= UINTPTR_MAX - server;
+#else
   if (server < LUPINE_HOST_ALLOCATION_SERVER_BASE ||
       size > LUPINE_HOST_ALLOCATION_WINDOW_SIZE ||
       server - LUPINE_HOST_ALLOCATION_SERVER_BASE >
@@ -328,6 +339,7 @@ static bool lupine_server_range(const conn_t *conn, uintptr_t server,
     return false;
   }
   return true;
+#endif
 }
 
 #ifndef _WIN32
@@ -375,11 +387,15 @@ static bool lupine_reserve_host_allocation_windows() {
 
 static void lupine_restore_host_allocation_reservation(void *address,
                                                        size_t size) {
+#if defined(__APPLE__)
+  munmap(address, size);
+#else
   int flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED;
 #ifdef MAP_NORESERVE
   flags |= MAP_NORESERVE;
 #endif
   mmap(address, size, PROT_NONE, flags, -1, 0);
+#endif
 }
 #endif
 
@@ -389,6 +405,8 @@ static bool lupine_create_shared_views(conn_t *conn, uintptr_t server,
   *host_view = nullptr;
   *io_alias = nullptr;
   if (!lupine_server_range(conn, server, size)) {
+    LUPINE_TRACE_LOG("LUPINE host views rejected server=" << reinterpret_cast<void *>(server)
+                     << " size=" << size << " arena=" << (conn ? conn->va_size : 0));
     return false;
   }
   bool identity = conn != nullptr && conn->va_size != 0;
@@ -422,25 +440,41 @@ static bool lupine_create_shared_views(conn_t *conn, uintptr_t server,
     return false;
   }
 #else
+#if !defined(__APPLE__)
   if (!identity && !lupine_reserve_host_allocation_windows()) {
+    LUPINE_TRACE_LOG("LUPINE host views reservation failed errno=" << errno);
     return false;
   }
+#endif
   int fd = lupine_create_shared_memory_fd();
   if (fd < 0 || ftruncate(fd, static_cast<off_t>(size)) != 0) {
+    LUPINE_TRACE_LOG("LUPINE host views storage failed fd=" << fd << " errno=" << errno);
     if (fd >= 0) {
       close(fd);
     }
     return false;
   }
-  void *host = mmap(reinterpret_cast<void *>(host_address), size,
-                    PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0);
+#if defined(__APPLE__)
+  void *host_hint = nullptr;
+  void *alias_hint = nullptr;
+  int shared_flags = MAP_SHARED;
+#else
+  void *host_hint = reinterpret_cast<void *>(host_address);
+  void *alias_hint = reinterpret_cast<void *>(alias_address);
+  int shared_flags = MAP_SHARED | MAP_FIXED;
+#endif
+  void *host = mmap(host_hint, size,
+                    PROT_READ | PROT_WRITE, shared_flags, fd, 0);
   void *alias =
       host == MAP_FAILED
           ? MAP_FAILED
-          : mmap(reinterpret_cast<void *>(alias_address), size,
-                 PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, 0);
+          : mmap(alias_hint, size,
+                 PROT_READ | PROT_WRITE, shared_flags, fd, 0);
   close(fd);
   if (host == MAP_FAILED || alias == MAP_FAILED) {
+    LUPINE_TRACE_LOG("LUPINE host views mapping failed host=" << host
+                     << " alias=" << alias << " errno=" << errno
+                     << " server=" << reinterpret_cast<void *>(server) << " size=" << size);
     if (host != MAP_FAILED) {
       lupine_restore_host_allocation_reservation(host, size);
     }
@@ -488,20 +522,26 @@ static size_t lupine_round_up(size_t value, size_t alignment) {
 }
 
 static void lupine_call_previous_sigsegv(int sig, siginfo_t *info, void *uctx) {
-  if (lupine_previous_sigsegv_action.sa_flags & SA_SIGINFO) {
-    if (lupine_previous_sigsegv_action.sa_sigaction != nullptr) {
-      lupine_previous_sigsegv_action.sa_sigaction(sig, info, uctx);
+#if defined(__APPLE__)
+  const auto &previous = sig == SIGBUS ? lupine_previous_sigbus_action
+                                      : lupine_previous_sigsegv_action;
+#else
+  const auto &previous = lupine_previous_sigsegv_action;
+#endif
+  if (previous.sa_flags & SA_SIGINFO) {
+    if (previous.sa_sigaction != nullptr) {
+      previous.sa_sigaction(sig, info, uctx);
       return;
     }
-  } else if (lupine_previous_sigsegv_action.sa_handler == SIG_IGN) {
+  } else if (previous.sa_handler == SIG_IGN) {
     return;
-  } else if (lupine_previous_sigsegv_action.sa_handler != SIG_DFL &&
-             lupine_previous_sigsegv_action.sa_handler != nullptr) {
-    lupine_previous_sigsegv_action.sa_handler(sig);
+  } else if (previous.sa_handler != SIG_DFL &&
+             previous.sa_handler != nullptr) {
+    previous.sa_handler(sig);
     return;
   }
 
-  sigaction(sig, &lupine_previous_sigsegv_action, nullptr);
+  sigaction(sig, &previous, nullptr);
   raise(sig);
 }
 
@@ -698,6 +738,13 @@ static void lupine_install_sigsegv_handler() {
   sigemptyset(&action.sa_mask);
   action.sa_flags = SA_SIGINFO | SA_NODEFER | SA_ONSTACK;
   if (sigaction(SIGSEGV, &action, &lupine_previous_sigsegv_action) == 0) {
+#if defined(__APPLE__)
+    // Darwin reports writes to protected shared mappings as SIGBUS.
+    if (sigaction(SIGBUS, &action, &lupine_previous_sigbus_action) != 0) {
+      sigaction(SIGSEGV, &lupine_previous_sigsegv_action, nullptr);
+      return;
+    }
+#endif
     lupine_sigsegv_handler_installed = true;
   }
 }

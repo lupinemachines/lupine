@@ -220,6 +220,68 @@ def test_libdir_directory_is_filtered_like_a_bundle(monkeypatch, tmp_path):
     assert tuple(loaded) == _native._REQUIRED[sys.platform]
 
 
+@pytest.mark.parametrize('manifest', [False, True])
+def test_macos_runtime_loads_locally_after_native_driver(monkeypatch, tmp_path, manifest):
+    libdir = tmp_path/'client'
+    monkeypatch.setattr(_native.sys, 'platform', 'darwin')
+    names = _stage(libdir, ('libcudart.dylib', 'liblupine_aten.dylib', 'unrelated.dylib'))
+    loaded = []
+    monkeypatch.setattr(_native, '_loaded', {})
+    monkeypatch.setattr(_native, '_names', names if manifest else ())
+    monkeypatch.setenv('LUPINE_LIBDIR', str(libdir))
+    monkeypatch.setattr(_native.ctypes, 'CDLL',
+                        lambda path, mode: loaded.append((Path(path).name, mode)))
+    runtime_dir = tmp_path / 'runtime'
+    runtime_dir.mkdir()
+    for name in ('libcudart.dylib', 'liblupine_aten.dylib'):
+        (runtime_dir / name).write_bytes(b'packaged-runtime')
+    monkeypatch.setenv('LUPINE_RUNTIME_LIBDIR', str(runtime_dir))
+    result = _native.load(missing_ok=False)
+    assert Path(result['libcudart.dylib']).parent == runtime_dir
+    assert loaded == [
+        ('libcuda.dylib', _native.ctypes.RTLD_GLOBAL),
+        ('libnvidia-ml.dylib', _native.ctypes.RTLD_GLOBAL),
+        ('libcudart.dylib', _native.ctypes.RTLD_LOCAL),
+        ('liblupine_aten.dylib', _native.ctypes.RTLD_LOCAL),
+    ]
+    assert set(result) == {name for name, mode in loaded}
+
+
+def test_macos_downloads_driver_but_uses_packaged_runtime(monkeypatch, tmp_path):
+    from test_bundles import bundle_bytes, bundle_server
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(_native._bundles, "platform_name", lambda: "macos/arm64")
+    monkeypatch.setenv("LUPINE_CACHE_DIR", str(tmp_path / "cache"))
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    runtime_names = _native._RUNTIMES["darwin"]
+    for name in runtime_names:
+        (runtime / name).write_bytes(b"application-runtime")
+    monkeypatch.setenv("LUPINE_RUNTIME_LIBDIR", str(runtime))
+    calls = []
+    monkeypatch.setattr(_native.ctypes, "CDLL", lambda path, mode: calls.append(Path(path)))
+    monkeypatch.setattr(_native, "_loaded", {})
+    monkeypatch.setattr(_native, "_names", ())
+    # Even an older server carrying runtimes must not supply application code.
+    body = bundle_bytes(platforms=("macos/arm64",), names=(
+        *_native._REQUIRED["darwin"], *runtime_names,
+    ))
+    with bundle_server(body) as (server, etag, state):
+        monkeypatch.delenv("LUPINE_LIBDIR", raising=False)
+        monkeypatch.setenv("LUPINE_SERVER", server)
+        loaded = _native.load(missing_ok=False)
+        assert len(state["requests"]) == 1
+        assert os.environ["LUPINE_CLIENT_ETAG"] == etag
+        driver_directory = tmp_path / "cache" / "clients" / _native._bundles._etag_digest(etag)
+        assert calls == [
+            *(driver_directory / name for name in _native._REQUIRED["darwin"]),
+            *(runtime / name for name in runtime_names),
+        ]
+        assert Path(loaded["libcuda.dylib"]).read_bytes() == b"libcuda.dylib"
+        assert Path(loaded["libcudart.dylib"]).read_bytes() == b"application-runtime"
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="NCCL and nvSHMEM are Linux only")
 def test_nccl_shim_loads_only_when_named_and_absent_natively(monkeypatch, tmp_path):
     libdir = tmp_path / "client"

@@ -1,0 +1,6 @@
+Repository: https://github.com/kevmo314/machso
+Revision: f8732b395ec9a1bdcd866e7f402c01466ff8be57
+
+Unmodified compiler sources and build metadata from the upstream Git archive.
+Only the four test modules used to prepare Lupine integration fixtures are
+included; the remaining compiler tests and binaries stay upstream.

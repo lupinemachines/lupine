@@ -1,6 +1,7 @@
 #include "device_stdout.h"
 #include "fatbin_filter.h"
 #include "lupine_platform.h"
+#include "macos_library_profile.h"
 
 #include <algorithm>
 #include <atomic>
@@ -2953,7 +2954,7 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
 #elif defined(__x86_64__)
   constexpr size_t stub_size = 52;
   unsigned char *code = static_cast<unsigned char *>(
-      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE,
            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
   if (code == MAP_FAILED) {
     return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
@@ -2989,6 +2990,14 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
       0xc3                    // ret
   };
   memcpy(code + offset, epilogue, sizeof(epilogue));
+  // Publish immutable executable code only after construction. macOS rejects
+  // anonymous mappings that request write and execute permissions together.
+  if (mprotect(code, stub_size, PROT_READ | PROT_EXEC) != 0) {
+    LUPINE_LOG_ERROR(
+        "Failed to protect private export trampoline: " << strerror(errno));
+    munmap(code, stub_size);
+    return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
+  }
   return code;
 #elif defined(__aarch64__)
   // AAPCS64 mirror of the x86-64 thunk above: the six incoming integer/pointer
@@ -3002,7 +3011,7 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
   constexpr size_t stub_words = 17;
   constexpr size_t stub_size = stub_words * sizeof(uint32_t);
   unsigned char *code = static_cast<unsigned char *>(
-      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE,
            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
   if (code == MAP_FAILED) {
     return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
@@ -3042,6 +3051,14 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
   // fetcher.
   __builtin___clear_cache(reinterpret_cast<char *>(code),
                           reinterpret_cast<char *>(code + stub_size));
+  // Publish immutable executable code only after construction. macOS rejects
+  // anonymous mappings that request write and execute permissions together.
+  if (mprotect(code, stub_size, PROT_READ | PROT_EXEC) != 0) {
+    LUPINE_LOG_ERROR(
+        "Failed to protect private export trampoline: " << strerror(errno));
+    munmap(code, stub_size);
+    return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
+  }
   return code;
 #else
   (void)slot;
@@ -5315,7 +5332,7 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
   return 0;
 }
 
-// A profiled library image: the GNU build-id of the mapped object it is
+// A profiled library image: the build-id/UUID of the mapped object it is
 // embedded in, its file offset there, and the library options. `record` is the
 // profile form: kind, packed size, id length, id, offset, then the options with
 // an absent value array encoded as each option's complement, which is also how
@@ -5470,6 +5487,29 @@ lupine_mapped_fatbin(lupine_library_reference *ref) {
              ? locator.data
              : nullptr;
 }
+#elif defined(__APPLE__)
+static bool lupine_locate_fatbin(const void *data,
+                                 lupine_library_reference *ref) {
+  ref->id.clear();
+  return lupine_macos_profile::image(static_cast<const unsigned char *>(data),
+                                     ref->size, ref->id,
+                                     ref->offset) != nullptr;
+}
+
+static const unsigned char *
+lupine_mapped_fatbin(lupine_library_reference *ref) {
+  const auto *data =
+      lupine_macos_profile::image(nullptr, ref->size, ref->id, ref->offset);
+  if (data == nullptr) {
+    return nullptr;
+  }
+  const auto *header = reinterpret_cast<const lupine_fatbin_header *>(data);
+  return header->magic == LUPINE_FATBIN_MAGIC &&
+                 header->header_size <= ref->size &&
+                 header->files_size == ref->size - header->header_size
+             ? data
+             : nullptr;
+}
 #else
 static bool lupine_locate_fatbin(const void *, lupine_library_reference *) {
   return false;
@@ -5569,9 +5609,13 @@ static std::filesystem::path lupine_library_profile_path() {
   const char *home = std::getenv("HOME");
   std::string key = name != nullptr ? name : "";
   if (name == nullptr) {
+#if defined(__APPLE__)
+    std::string argv = lupine_macos_profile::command_line();
+#else
     std::ifstream cmdline("/proc/self/cmdline", std::ios::binary);
     std::string argv((std::istreambuf_iterator<char>(cmdline)),
                      std::istreambuf_iterator<char>());
+#endif
     char hex[17];
     std::snprintf(
         hex, sizeof(hex), "%016llx",
@@ -8515,7 +8559,28 @@ extern "C" CUresult lupine_integrity_check(unsigned int version,
   uint32_t process_id = static_cast<uint32_t>(getpid());
   uint32_t thread_id =
       static_cast<uint32_t>(reinterpret_cast<uintptr_t>(pthread_self()));
+#ifdef __APPLE__
+  // A translated Linux runtime can carry its own pthread descriptor. The
+  // integrity exchange must use the caller's thread identity on both sides.
+  Dl_info caller_info = {};
+  if (dladdr(__builtin_return_address(0), &caller_info) != 0 &&
+      caller_info.dli_fname != nullptr) {
+    void *caller = dlopen(caller_info.dli_fname, RTLD_LAZY | RTLD_NOLOAD);
+    if (caller != nullptr) {
+      using caller_pthread_self_t = uintptr_t (*)();
+      auto caller_pthread_self = reinterpret_cast<caller_pthread_self_t>(
+          lupine_real_dlsym(caller, "pthread_self"));
+      if (caller_pthread_self != nullptr) {
+        thread_id = static_cast<uint32_t>(caller_pthread_self());
+      }
+      dlclose(caller);
+    }
+  }
 #endif
+#endif
+  LUPINE_TRACE_LOG("LUPINE integrity version="
+                   << version << " seconds=" << unix_seconds
+                   << " pid=" << process_id << " thread=" << thread_id);
   lupine_integrity_pass3_input input = {
       static_cast<uint32_t>(driver_version),
       version,
