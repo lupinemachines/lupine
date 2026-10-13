@@ -1,6 +1,7 @@
 #include "device_stdout.h"
 #include "fatbin_filter.h"
 #include "lupine_platform.h"
+#include "macos_library_profile.h"
 
 #include <algorithm>
 #include <atomic>
@@ -425,6 +426,18 @@ lupine_library_images() {
   static auto *images =
       new std::unordered_map<CUlibrary, lupine_library_image_record>();
   return *images;
+}
+
+struct lupine_library_enumeration {
+  CUresult result = CUDA_ERROR_NOT_SUPPORTED;
+  std::vector<CUkernel> kernels;
+};
+
+static std::unordered_map<CUlibrary, lupine_library_enumeration> &
+lupine_library_enumerations() {
+  static auto *libraries =
+      new std::unordered_map<CUlibrary, lupine_library_enumeration>();
+  return *libraries;
 }
 
 static std::unordered_map<CUkernel, lupine_library_kernel_record> &
@@ -2632,12 +2645,6 @@ extern "C" CUresult cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
                                    flags, true);
 }
 
-static bool lupine_is_private_function(CUfunction function) {
-  std::lock_guard<std::mutex> lock(lupine_private_node_mutex());
-  return lupine_private_node_map().find(function) !=
-         lupine_private_node_map().end();
-}
-
 static bool lupine_is_library_kernel(CUfunction function) {
   std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
   return lupine_library_kernels().find(reinterpret_cast<CUkernel>(function)) !=
@@ -2917,17 +2924,6 @@ static bool lupine_remote_private_exports_enabled() {
   return enabled;
 }
 
-static std::atomic<bool> &lupine_private_export_tables_active_flag() {
-  static std::atomic<bool> active{false};
-  return active;
-}
-
-static bool lupine_private_export_remap_active() {
-  return lupine_stub_private_exports_enabled() ||
-         lupine_private_export_tables_active_flag().load(
-             std::memory_order_relaxed);
-}
-
 #if defined(__aarch64__)
 // Materializes a 64-bit constant into Xd with a fixed four-word
 // movz/movk/movk/movk sequence. The length is deliberately constant (never
@@ -2960,7 +2956,7 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
 #elif defined(__x86_64__)
   constexpr size_t stub_size = 52;
   unsigned char *code = static_cast<unsigned char *>(
-      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE,
            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
   if (code == MAP_FAILED) {
     return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
@@ -2996,6 +2992,14 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
       0xc3                    // ret
   };
   memcpy(code + offset, epilogue, sizeof(epilogue));
+  // Publish immutable executable code only after construction. macOS rejects
+  // anonymous mappings that request write and execute permissions together.
+  if (mprotect(code, stub_size, PROT_READ | PROT_EXEC) != 0) {
+    LUPINE_LOG_ERROR(
+        "Failed to protect private export trampoline: " << strerror(errno));
+    munmap(code, stub_size);
+    return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
+  }
   return code;
 #elif defined(__aarch64__)
   // AAPCS64 mirror of the x86-64 thunk above: the six incoming integer/pointer
@@ -3009,7 +3013,7 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
   constexpr size_t stub_words = 17;
   constexpr size_t stub_size = stub_words * sizeof(uint32_t);
   unsigned char *code = static_cast<unsigned char *>(
-      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE | PROT_EXEC,
+      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE,
            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
   if (code == MAP_FAILED) {
     return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
@@ -3049,6 +3053,14 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
   // fetcher.
   __builtin___clear_cache(reinterpret_cast<char *>(code),
                           reinterpret_cast<char *>(code + stub_size));
+  // Publish immutable executable code only after construction. macOS rejects
+  // anonymous mappings that request write and execute permissions together.
+  if (mprotect(code, stub_size, PROT_READ | PROT_EXEC) != 0) {
+    LUPINE_LOG_ERROR(
+        "Failed to protect private export trampoline: " << strerror(errno));
+    munmap(code, stub_size);
+    return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
+  }
   return code;
 #else
   (void)slot;
@@ -3082,8 +3094,6 @@ static const void *lupine_make_private_export_table(
     lupine_private_export_hashes()[table_name] = code_hashes;
   }
   auto inserted = tables.emplace(table_name, std::move(table));
-  lupine_private_export_tables_active_flag().store(true,
-                                                   std::memory_order_relaxed);
   return inserted.first->second.data();
 }
 
@@ -5238,9 +5248,16 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
       rpc_read(conn, &count, sizeof(count)) < 0 || count > 1024 * 1024) {
     return -1;
   }
+  lupine_library_enumeration enumeration{result, {}};
   if (result != CUDA_SUCCESS) {
-    return count == 0 ? 0 : -1;
+    if (count != 0) {
+      return -1;
+    }
+    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+    lupine_library_enumerations()[library] = std::move(enumeration);
+    return 0;
   }
+  enumeration.kernels.reserve(count);
   lupine_route route = lupine_remote_route_for_conn(conn);
   CUcontext context = nullptr;
   (void)cuCtxGetCurrent(&context);
@@ -5261,6 +5278,7 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
         param_count > 64 * 1024) {
       return -1;
     }
+    enumeration.kernels.push_back(kernel);
     name.resize(name_length - 1);
     for (uint32_t index = 0; index < param_count; ++index) {
       lupine_param_info_value param = {};
@@ -5311,10 +5329,12 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
       lupine_record_library_function(function, kernel);
     }
   }
+  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+  lupine_library_enumerations()[library] = std::move(enumeration);
   return 0;
 }
 
-// A profiled library image: the GNU build-id of the mapped object it is
+// A profiled library image: the build-id/UUID of the mapped object it is
 // embedded in, its file offset there, and the library options. `record` is the
 // profile form: kind, packed size, id length, id, offset, then the options with
 // an absent value array encoded as each option's complement, which is also how
@@ -5469,6 +5489,29 @@ lupine_mapped_fatbin(lupine_library_reference *ref) {
              ? locator.data
              : nullptr;
 }
+#elif defined(__APPLE__)
+static bool lupine_locate_fatbin(const void *data,
+                                 lupine_library_reference *ref) {
+  ref->id.clear();
+  return lupine_macos_profile::image(static_cast<const unsigned char *>(data),
+                                     ref->size, ref->id,
+                                     ref->offset) != nullptr;
+}
+
+static const unsigned char *
+lupine_mapped_fatbin(lupine_library_reference *ref) {
+  const auto *data =
+      lupine_macos_profile::image(nullptr, ref->size, ref->id, ref->offset);
+  if (data == nullptr) {
+    return nullptr;
+  }
+  const auto *header = reinterpret_cast<const lupine_fatbin_header *>(data);
+  return header->magic == LUPINE_FATBIN_MAGIC &&
+                 header->header_size <= ref->size &&
+                 header->files_size == ref->size - header->header_size
+             ? data
+             : nullptr;
+}
 #else
 static bool lupine_locate_fatbin(const void *, lupine_library_reference *) {
   return false;
@@ -5568,9 +5611,13 @@ static std::filesystem::path lupine_library_profile_path() {
   const char *home = std::getenv("HOME");
   std::string key = name != nullptr ? name : "";
   if (name == nullptr) {
+#if defined(__APPLE__)
+    std::string argv = lupine_macos_profile::command_line();
+#else
     std::ifstream cmdline("/proc/self/cmdline", std::ios::binary);
     std::string argv((std::istreambuf_iterator<char>(cmdline)),
                      std::istreambuf_iterator<char>());
+#endif
     char hex[17];
     std::snprintf(
         hex, sizeof(hex), "%016llx",
@@ -5839,6 +5886,50 @@ extern "C" CUresult cuLibraryLoadFromFile(
     }
   }
   return result;
+}
+
+extern "C" CUresult cuLibraryGetKernelCount(unsigned int *count,
+                                            CUlibrary library) {
+  if (count == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  lupine_route route = lupine_route_for_library(library);
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn("cuLibraryGetKernelCount", count, library);
+  }
+  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+  auto it = lupine_library_enumerations().find(library);
+  if (it == lupine_library_enumerations().end()) {
+    return CUDA_ERROR_INVALID_HANDLE;
+  }
+  if (it->second.result == CUDA_SUCCESS) {
+    *count = static_cast<unsigned int>(it->second.kernels.size());
+  }
+  return it->second.result;
+}
+
+extern "C" CUresult cuLibraryEnumerateKernels(CUkernel *kernels,
+                                              unsigned int numKernels,
+                                              CUlibrary library) {
+  if (kernels == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  lupine_route route = lupine_route_for_library(library);
+  if (lupine_route_is_local(route)) {
+    return lupine_call_real_cuda_fn("cuLibraryEnumerateKernels", kernels,
+                                    numKernels, library);
+  }
+  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+  auto it = lupine_library_enumerations().find(library);
+  if (it == lupine_library_enumerations().end()) {
+    return CUDA_ERROR_INVALID_HANDLE;
+  }
+  if (it->second.result == CUDA_SUCCESS) {
+    std::copy_n(it->second.kernels.begin(),
+                std::min<size_t>(numKernels, it->second.kernels.size()),
+                kernels);
+  }
+  return it->second.result;
 }
 
 static CUresult lupine_read_func_param_sizes(CUfunction function,
@@ -6516,6 +6607,7 @@ extern "C" void lupine_release_module_retained_strings(CUmodule module) {
 extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
   std::scoped_lock lock(lupine_library_kernel_mutex(), g_retained_string_mutex);
   lupine_library_images().erase(library);
+  lupine_library_enumerations().erase(library);
   lupine_release_retained_strings_locked(
       reinterpret_cast<const void *>(library));
   auto &kernels = lupine_library_kernels();
@@ -6563,7 +6655,7 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
 }
 
 extern "C" void *lupine_deep_node_cache_get(CUgraphNode node, size_t slot,
-                                           size_t bytes) {
+                                            size_t bytes) {
   std::lock_guard<std::mutex> guard(g_deep_cache_mutex);
   auto &arrays = g_deep_cache[node];
   if (arrays.size() <= slot)
@@ -6591,7 +6683,8 @@ std::vector<CUgraphNode> lupine_deep_cache_graph_nodes(CUgraph graph) {
   if (cuGraphGetNodes(graph, nullptr, &count) != CUDA_SUCCESS)
     return {};
   std::vector<CUgraphNode> nodes(count);
-  if (count != 0 && cuGraphGetNodes(graph, nodes.data(), &count) != CUDA_SUCCESS)
+  if (count != 0 &&
+      cuGraphGetNodes(graph, nodes.data(), &count) != CUDA_SUCCESS)
     return {};
   nodes.resize(count);
   return nodes;
@@ -8468,7 +8561,28 @@ extern "C" CUresult lupine_integrity_check(unsigned int version,
   uint32_t process_id = static_cast<uint32_t>(getpid());
   uint32_t thread_id =
       static_cast<uint32_t>(reinterpret_cast<uintptr_t>(pthread_self()));
+#ifdef __APPLE__
+  // A translated Linux runtime can carry its own pthread descriptor. The
+  // integrity exchange must use the caller's thread identity on both sides.
+  Dl_info caller_info = {};
+  if (dladdr(__builtin_return_address(0), &caller_info) != 0 &&
+      caller_info.dli_fname != nullptr) {
+    void *caller = dlopen(caller_info.dli_fname, RTLD_LAZY | RTLD_NOLOAD);
+    if (caller != nullptr) {
+      using caller_pthread_self_t = uintptr_t (*)();
+      auto caller_pthread_self = reinterpret_cast<caller_pthread_self_t>(
+          lupine_real_dlsym(caller, "pthread_self"));
+      if (caller_pthread_self != nullptr) {
+        thread_id = static_cast<uint32_t>(caller_pthread_self());
+      }
+      dlclose(caller);
+    }
+  }
 #endif
+#endif
+  LUPINE_TRACE_LOG("LUPINE integrity version="
+                   << version << " seconds=" << unix_seconds
+                   << " pid=" << process_id << " thread=" << thread_id);
   lupine_integrity_pass3_input input = {
       static_cast<uint32_t>(driver_version),
       version,
@@ -8793,8 +8907,6 @@ static void *lupine_make_missing_stub(const char *symbol) {
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuCtxCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuModuleLoadData)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryLoadData)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryGetKernelCount)
-LUPINE_DEFINE_UNSUPPORTED_STUB(cuLibraryEnumerateKernels)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLinkCreate)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLinkAddData)
 LUPINE_DEFINE_UNSUPPORTED_STUB(cuLinkAddFile)
@@ -8898,8 +9010,6 @@ static void *lupine_get_unsupported_stub(const char *symbol) {
       LUPINE_STUB_ENTRY(cuCtxCreate),
       LUPINE_STUB_ENTRY(cuModuleLoadData),
       LUPINE_STUB_ENTRY(cuLibraryLoadData),
-      LUPINE_STUB_ENTRY(cuLibraryGetKernelCount),
-      LUPINE_STUB_ENTRY(cuLibraryEnumerateKernels),
       LUPINE_STUB_ENTRY(cuLinkCreate),
       LUPINE_STUB_ENTRY(cuLinkAddData),
       LUPINE_STUB_ENTRY(cuLinkAddFile),
@@ -9786,6 +9896,8 @@ lupine_manual_function_map() {
       {"cuModuleLoadDataEx", (void *)cuModuleLoadDataEx},
       {"cuLibraryLoadData", (void *)cuLibraryLoadData},
       {"cuLibraryLoadFromFile", (void *)cuLibraryLoadFromFile},
+      {"cuLibraryGetKernelCount", (void *)cuLibraryGetKernelCount},
+      {"cuLibraryEnumerateKernels", (void *)cuLibraryEnumerateKernels},
       {"cuLinkCreate", (void *)cuLinkCreate_v2},
       {"cuLinkAddData", (void *)cuLinkAddData_v2},
       {"cuLinkAddFile", (void *)cuLinkAddFile_v2},

@@ -1,13 +1,13 @@
 // Tensors on the backend device are host-side metadata over a storage handle
-// the worker owns. This file gives torch the device: storages that carry a
-// handle instead of memory, the guard, hooks and generator, and the kernels
-// that only touch metadata. Everything else reaches the Python fallback.
+// the native backend owns. This file gives torch the device: storages that
+// carry a handle instead of memory, the guard, hooks and generator, and the
+// kernels that only touch metadata. Everything else reaches the Python
+// fallback.
 #include "backend.h"
 
 #include <ATen/ATen.h>
 #include <ATen/EmptyTensor.h>
 #include <ATen/core/dispatch/Dispatcher.h>
-#include <ATen/detail/CUDAHooksInterface.h>
 #include <ATen/detail/PrivateUse1HooksInterface.h>
 #include <ATen/native/DispatchStub.h>
 #include <ATen/native/transformers/attention.h>
@@ -35,7 +35,6 @@ namespace lupine_torch {
 namespace {
 
 c10::DeviceType g_device_type = c10::DeviceType::PrivateUse1;
-bool g_dual = false;
 int g_device_count = 0;
 std::atomic<uint64_t> g_next_handle{1};
 std::atomic<release_fn> g_release{nullptr};
@@ -45,13 +44,11 @@ thread_local c10::DeviceIndex t_current_device = 0;
 thread_local c10::Device t_alloc_device(c10::DeviceType::PrivateUse1, 0);
 
 bool is_ours_type(c10::DeviceType type) {
-  return type == c10::DeviceType::PrivateUse1 ||
-         (g_dual && type == c10::DeviceType::CUDA);
+  return type == c10::DeviceType::PrivateUse1;
 }
 
-c10::DispatchKey key_for(c10::DeviceType type) {
-  return type == c10::DeviceType::CUDA ? c10::DispatchKey::CUDA
-                                       : c10::DispatchKey::PrivateUse1;
+c10::DispatchKey key_for(c10::DeviceType) {
+  return c10::DispatchKey::PrivateUse1;
 }
 
 void *fake_pointer(uint64_t handle) {
@@ -88,8 +85,8 @@ struct lupine_allocator final : at::Allocator {
 
 lupine_allocator g_allocator;
 
-// Storage growth is host-side bookkeeping: the worker grows its copy in place
-// when a descriptor arrives with more bytes than it holds.
+// Storage growth is host-side bookkeeping: the native runtime grows its
+// allocation when a descriptor arrives with more bytes than it holds.
 void ensure_storage(const at::Tensor &t) {
   size_t needed = at::detail::computeStorageNbytes(
       t.sizes(), t.strides(), t.element_size(), t.storage_offset());
@@ -235,7 +232,7 @@ bool _has_compatible_shallow_copy_type(const at::Tensor &, const at::Tensor &) {
 }
 
 // The three metadata edits Python needs that no aten op expresses: a storage
-// under a handle the worker assigned, a view over a tensor's storage in any
+// under a handle Python assigned, a view over a tensor's storage in any
 // dtype, and an in-place retarget of sizes, strides and offset (an out= tensor
 // the kernel resized); the views grow the storage the host believes in when
 // they reach past it.
@@ -271,17 +268,12 @@ at::Tensor &set_metadata_(at::Tensor &self, c10::IntArrayRef size,
   return self;
 }
 
-// The composite scaled_dot_product_attention asks this stub which fused
-// kernel to use; without it every backend but CPU and CUDA gets the math
-// decomposition. The op itself has no kernel here, so it reaches the Python
-// fallback and the worker's CUDA torch answers.
-int64_t sdp_choice(const at::Tensor &query, const at::Tensor &key,
-                   const at::Tensor &value,
-                   const std::optional<at::Tensor> &attn_mask, double dropout_p,
-                   bool is_causal, std::optional<double> scale,
-                   bool enable_gqa) {
-  return at::_fused_sdp_choice(query, key, value, attn_mask, dropout_p,
-                               is_causal, scale, enable_gqa);
+// Select PyTorch's math attention decomposition (SDPBackend::math = 0).
+// Its operators dispatch back to native kernels; no fused attention yet.
+int64_t sdp_choice(const at::Tensor &, const at::Tensor &, const at::Tensor &,
+                   const std::optional<at::Tensor> &, double, bool,
+                   std::optional<double>, bool) {
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -345,8 +337,7 @@ private:
   c10::DeviceType type_;
 };
 
-// The device module forwards seeds to the worker's CUDA generator; the host
-// object only remembers the seed for initial_seed().
+// Native kernels own RNG counters; this host object remembers generator seeds.
 struct generator_impl final : c10::GeneratorImpl {
   explicit generator_impl(c10::DeviceIndex index)
       : c10::GeneratorImpl(c10::Device(g_device_type, index),
@@ -420,40 +411,6 @@ struct hooks_impl final : at::PrivateUse1HooksInterface {
   }
 };
 
-struct cuda_hooks_impl final : at::CUDAHooksInterface {
-  explicit cuda_hooks_impl(at::CUDAHooksArgs) {}
-  bool isBuilt() const override { return true; }
-  bool isAvailable() const override { return g_device_count > 0; }
-  bool hasCUDA() const override { return g_device_count > 0; }
-  bool hasPrimaryContext(c10::DeviceIndex) const override { return true; }
-  c10::DeviceIndex deviceCount() const override {
-    return static_cast<c10::DeviceIndex>(g_device_count);
-  }
-  void setCurrentDevice(c10::DeviceIndex d) const override {
-    t_current_device = d;
-  }
-  c10::DeviceIndex getCurrentDevice() const override {
-    return t_current_device;
-  }
-  c10::DeviceIndex exchangeDevice(c10::DeviceIndex d) const override {
-    return static_cast<c10::DeviceIndex>(lupine_torch::exchange_device(d));
-  }
-  c10::DeviceIndex maybeExchangeDevice(c10::DeviceIndex d) const override {
-    return d < 0 ? t_current_device : exchangeDevice(d);
-  }
-  bool isPinnedPtr(const void *) const override { return false; }
-  at::Allocator *getPinnedMemoryAllocator() const override {
-    return c10::GetAllocator(c10::DeviceType::CPU);
-  }
-  const at::Generator &
-  getDefaultGenerator(c10::DeviceIndex index) const override {
-    return at::detail::getPrivateUse1Hooks().getDefaultGenerator(index);
-  }
-  at::Generator getNewGenerator(c10::DeviceIndex index) const override {
-    return at::make_generator<generator_impl>(index);
-  }
-};
-
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -479,12 +436,7 @@ void register_kernels(c10::DispatchKey key) {
   aten->impl("_has_compatible_shallow_copy_type",
              TORCH_FN(_has_compatible_shallow_copy_type));
   libraries.push_back(std::move(aten));
-  if (key == c10::DispatchKey::CUDA) {
-    at::native::_fused_sdp_choice_stub.set_cuda_dispatch_ptr(&sdp_choice);
-  } else {
-    at::native::_fused_sdp_choice_stub.set_privateuse1_dispatch_ptr(
-        &sdp_choice);
-  }
+  at::native::_fused_sdp_choice_stub.set_privateuse1_dispatch_ptr(&sdp_choice);
 }
 
 } // namespace
@@ -503,47 +455,24 @@ TORCH_LIBRARY_IMPL(lupine, CompositeExplicitAutograd, m) {
   m.impl("set_metadata_", TORCH_FN(set_metadata_));
 }
 
-void register_backend(int device_count, bool dual, release_fn release,
-                      sync_fn sync) {
+void register_backend(int device_count, release_fn release, sync_fn sync) {
   TORCH_CHECK(g_device_count == 0, "lupine: the torch backend is already "
                                    "registered in this process");
-  TORCH_CHECK(device_count > 0, "lupine: the worker has no device");
+  TORCH_CHECK(device_count > 0, "lupine: the native runtime has no device");
   g_device_count = device_count;
-  g_dual = dual;
-  g_device_type = dual ? c10::DeviceType::CUDA : c10::DeviceType::PrivateUse1;
+  g_device_type = c10::DeviceType::PrivateUse1;
   g_release.store(release);
   g_sync.store(sync);
   static guard_impl private_guard(c10::DeviceType::PrivateUse1);
-  static guard_impl cuda_guard(c10::DeviceType::CUDA);
   c10::impl::DeviceGuardImplRegistrar(c10::DeviceType::PrivateUse1,
                                       &private_guard);
   at::RegisterPrivateUse1HooksInterface(new hooks_impl());
   register_kernels(c10::DispatchKey::PrivateUse1);
-  if (dual) {
-    TORCH_CHECK(at::detail::getCUDAHooks().isBuilt() &&
-                    at::detail::getCUDAHooks().deviceCount() == device_count,
-                "lupine: torch created its CUDA hooks before the backend "
-                "loaded; import lupine and call lupine.connect() before "
-                "importing torch");
-    c10::impl::DeviceGuardImplRegistrar(c10::DeviceType::CUDA, &cuda_guard);
-    register_kernels(c10::DispatchKey::CUDA);
-  }
 }
 
 void clear_callbacks() {
   g_release.store(nullptr);
   g_sync.store(nullptr);
-}
-
-// A torch with no CUDA build has no CUDA hooks; the backend's own are
-// registered when the extension loads, ahead of torch's first use of them.
-void register_cuda_hooks() {
-  if (at::CUDAHooksRegistry()->Has("CUDAHooks")) {
-    return;
-  }
-  at::CUDAHooksRegistry()->Register("CUDAHooks", [](at::CUDAHooksArgs args) {
-    return std::unique_ptr<at::CUDAHooksInterface>(new cuda_hooks_impl(args));
-  });
 }
 
 int device_count() { return g_device_count; }

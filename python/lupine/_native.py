@@ -2,10 +2,11 @@
 
 LUPINE servers publish the compatible client for every supported platform.
 The loader downloads the exact bundle selected by ``LUPINE_SERVER`` before
-CUDA consumers are imported. The wheel itself is pure Python: every native
-object comes from a bound server or an explicit ``LUPINE_LIBDIR``.
+CUDA consumers are imported. The ARM64 macOS wheel packages the converted
+CUDA runtime and operators; the wire-compatible driver and NVML always come
+from the selected server (or an explicit development ``LUPINE_LIBDIR``).
 
-``load()`` preloads the driver and NVML shims:
+``load()`` preloads the driver and NVML shims, then the packaged CUDA runtime:
 
 ============= ================== ====================
 Platform      driver shim        NVML shim
@@ -54,6 +55,10 @@ _REQUIRED = {
 
 _DRIVER = {"linux": "libcuda.so.1", "darwin": "libcuda.dylib", "win32": "nvcuda.dll"}
 
+# The ARM64 macOS wheel packages these application libraries independently of
+# server-selected drivers. Their embedded Linux libc must stay local.
+_RUNTIMES = {"darwin": ("libcudart.dylib", "liblupine_aten.dylib")}
+
 # Shims loaded only when the bundle carries them and no native library
 # answers to the same soname: soname stem -> (``nvidia.*`` wheel package,
 # ``ctypes.util.find_library`` name).
@@ -72,14 +77,10 @@ def libdir() -> Path | None:
     override = os.environ.get("LUPINE_LIBDIR")
     if override:
         return Path(override)
-    servers = tuple(
-        value.strip()
-        for value in os.environ.get("LUPINE_SERVER", "").split(",")
-        if value.strip()
-    )
-    if servers:
-        from . import LupineError
+    from . import LupineError, _servers_from_env
 
+    servers = _servers_from_env()
+    if servers:
         required = _REQUIRED.get(sys.platform)
         if required is None:
             raise LupineError(f"Unsupported LUPINE client platform: {sys.platform}")
@@ -121,8 +122,7 @@ def _shim_names(directory: Path) -> tuple[str, ...]:
 
     A resolved bundle names its files in its manifest; ``LUPINE_LIBDIR``
     points at a plain directory instead, so its contents stand in. Either
-    way only the driver, NVML, and a conditional shim with no native
-    counterpart are selected.
+    way only driver shims are selected; runtimes come from the package.
     """
 
     if _names:
@@ -194,10 +194,23 @@ def load(*, missing_ok: bool = True) -> dict[str, str]:
             if missing_ok:
                 continue
             raise LupineError(f"Selected LUPINE library missing: {path}")
-        # RTLD_GLOBAL so dlopen("libcuda.so.1") from the program's CUDA
-        # runtime resolves to the shim.
         ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
         _loaded[name] = str(path)
+    runtime_names = _RUNTIMES.get(sys.platform, ())
+    runtime_directory = Path(
+        os.environ.get("LUPINE_RUNTIME_LIBDIR", Path(__file__).parent / "_libs")
+    )
+    if runtime_names and runtime_directory.is_dir():
+        for name in runtime_names:
+            if name in _loaded:
+                continue
+            path = runtime_directory / name
+            if not path.is_file():
+                if missing_ok:
+                    continue
+                raise LupineError(f"Packaged LUPINE runtime missing: {path}")
+            ctypes.CDLL(str(path), mode=ctypes.RTLD_LOCAL)
+            _loaded[name] = str(path)
     return dict(_loaded)
 
 

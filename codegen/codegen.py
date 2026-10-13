@@ -5,7 +5,7 @@
 from cxxheaderparser.simple import parse_file, ParsedData, ParserOptions
 from cxxheaderparser.preprocessor import make_gcc_preprocessor
 from cxxheaderparser.types import Type, Pointer, Parameter, Function
-from typing import Optional, Union
+from typing import Optional
 from dataclasses import dataclass
 from string import Template
 from types import SimpleNamespace
@@ -25,7 +25,6 @@ from emit import (
     format_function_params,
     write_client_rpc,
     write_client_wrapper,
-    write_server_buffer_cleanup,
     write_server_handler,
     unsupported,
     write_scalar_slot,
@@ -1583,10 +1582,9 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             )
             if target_function.return_type.format() == "void":
                 f.write(f"    {call};\n")
-                f.write("}\n\n")
             else:
                 f.write(f"    return {call};\n")
-                f.write("}\n\n")
+            f.write("}\n\n")
         f.write("std::unordered_map<std::string, void *> functionMap = {\n")
         for function, _, _, metadata in functions_with_annotations:
             if metadata.guard is not None:
@@ -1599,14 +1597,9 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             if metadata.guard is not None:
                 f.write("#endif\n")
         # write manual overrides
-        function_names = set(
-            f.name.format()
-            for f, _, _, metadata in functions_with_annotations
-            if not metadata.disabled_client
-        )
         for x, y in MANUAL_REMAPPINGS:
             # ensure y exists in the function list
-            if y not in function_names:
+            if y not in function_by_name:
                 print(f"Skipping manual remapping {x} -> {y}")
                 continue
             f.write(
@@ -1616,7 +1609,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 )
             )
         for alias, target, guard in FUNCTION_MAP_ALIASES:
-            if target not in function_names:
+            if target not in function_by_name:
                 continue
             f.write(f"#if {guard}\n")
             f.write(
@@ -1777,14 +1770,14 @@ def main():
         tuple[Function, Function, list[Operation], FunctionAnnotationMetadata]
     ] = []
 
-    dupes = {}
+    seen = set()
 
     for function in functions:
         # ensure duplicate functions can't be written
-        if dupes.get(function.name.format()):
+        if function.name.format() in seen:
             continue
 
-        dupes[function.name.format()] = True
+        seen.add(function.name.format())
 
         try:
             annotation = next(

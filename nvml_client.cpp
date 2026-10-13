@@ -279,8 +279,6 @@ conn_t *connection_for_device(nvmlDevice_t *device) {
   return connection(mapped->conn_index);
 }
 
-nvmlReturn_t call_no_args(int op) { return call_no_args_on(connection(), op); }
-
 nvmlReturn_t call_device_string(int op, nvmlDevice_t device, char *value,
                                 unsigned int length) {
   conn_t *c = connection_for_device(&device);

@@ -5,6 +5,8 @@ build/
 
 *.o
 *.so
+!third_party/machso/tests/libtest.aarch64.so
+!third_party/machso/tests/libtest.x86_64.so
 gdb.txt
 test/cuda-samples/cuda-samples/
 test/cuda-samples/results/

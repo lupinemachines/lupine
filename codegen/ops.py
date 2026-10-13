@@ -8,7 +8,7 @@ each one to emit its fragment of the generated client and server code.
 
 from cxxheaderparser.types import Type, Pointer, Parameter
 from typing import Optional, Union
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 @dataclass
 class NullableOperation:
@@ -1176,25 +1176,13 @@ class FunctionAnnotationMetadata:
     routing_kind: Optional[str] = None
     routing_parameter: Optional[Parameter] = None
     routing_fallback: Optional[RoutingFallbackAnnotation] = None
-    record_owners: list[OwnerAnnotation] = None
-    retains: list[RetainAnnotation] = None
-    releases: list[ReleaseAnnotation] = None
-    parents: list[ParentAnnotation] = None
+    record_owners: list[OwnerAnnotation] = field(default_factory=list)
+    retains: list[RetainAnnotation] = field(default_factory=list)
+    releases: list[ReleaseAnnotation] = field(default_factory=list)
+    parents: list[ParentAnnotation] = field(default_factory=list)
     cross_server_copy: Optional[CrossServerCopyAnnotation] = None
     graph_exec_node: Optional[GraphExecNodeAnnotation] = None
     graph_exec_update: Optional[GraphExecUpdateAnnotation] = None
     client_call_template: Optional[ClientCallTemplate] = None
     # @clearfields: members holding host addresses, cleared on both sides.
-    clear_fields: list[tuple[str, tuple[str, ...]]] = None
-
-    def __post_init__(self):
-        if self.record_owners is None:
-            self.record_owners = []
-        if self.retains is None:
-            self.retains = []
-        if self.releases is None:
-            self.releases = []
-        if self.parents is None:
-            self.parents = []
-        if self.clear_fields is None:
-            self.clear_fields = []
+    clear_fields: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)

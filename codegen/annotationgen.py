@@ -45,24 +45,13 @@ def main(target: str):
             # produce some best-guess annotations
             f.write("/**\n")
             for param in function.parameters:
-                if isinstance(param.type, Type):
-                    f.write(
-                        " * @param {name} SEND_ONLY\n".format(
-                            name=param.name, type=param.type.format()
-                        )
-                    )
-                elif isinstance(param.type, Pointer):
-                    f.write(
-                        " * @param {name} SEND_RECV\n".format(
-                            name=param.name, type=param.type.format()
-                        )
-                    )
-                elif isinstance(param.type, Array):
-                    f.write(
-                        " * @param {name} SEND_ONLY\n".format(
-                            name=param.name, type=param.type.format()
-                        )
-                    )
+                if isinstance(param.type, Pointer):
+                    direction = "SEND_RECV"
+                elif isinstance(param.type, (Type, Array)):
+                    direction = "SEND_ONLY"
+                else:
+                    continue
+                f.write(f" * @param {param.name} {direction}\n")
             f.write(" */\n")
 
             params = []

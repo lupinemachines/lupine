@@ -51,13 +51,6 @@ def _torch() -> Any:
     return torch
 
 
-def _torch_has_cuda() -> bool:
-    try:
-        return _torch().version.cuda is not None
-    except LupineError:
-        return False
-
-
 def _normalize_server(host: str, port: int | None = None) -> str:
     from urllib.parse import urlsplit, urlunsplit
 
@@ -97,19 +90,6 @@ def _normalize_hosts(
     return tuple(_normalize_server(item, port) for item in host)
 
 
-def torch_backend_selected() -> bool:
-    """Whether ``connect()`` runs torch through the worker-backed backend.
-
-    macOS has no CUDA torch, so it always does; elsewhere the driver shims
-    are the default and ``LUPINE_TORCH_BACKEND=1`` opts in.
-    """
-
-    value = os.environ.get("LUPINE_TORCH_BACKEND")
-    if value is not None:
-        return value.strip() not in ("", "0", "false", "no")
-    return sys.platform == "darwin"
-
-
 def _servers_from_env() -> tuple[str, ...]:
     value = os.environ.get("LUPINE_SERVER", "")
     return tuple(server.strip() for server in value.split(",") if server.strip())
@@ -125,8 +105,7 @@ class Session:
     """
 
     servers: tuple[str, ...]
-    # "driver" loads the client shims into this process; "torch" runs the
-    # program's torch ops in the worker (see lupine._backend).
+    # "driver" uses a CUDA-enabled torch; "torch" uses the native Lupine device.
     backend: str = "driver"
     _previous_server: str | None = field(default=None, repr=False)
     _loaded: bool = field(default=False, repr=False)
@@ -147,10 +126,10 @@ class Session:
         self._previous_server = os.environ.get("LUPINE_SERVER")
         if not configured:
             os.environ["LUPINE_SERVER"] = ",".join(self.servers)
-        if torch_backend_selected():
-            from . import _guest
+        if sys.platform == "darwin":
+            from . import _backend
 
-            _guest.start(self.servers)
+            _backend.start()
             self.backend = "torch"
         else:
             from . import _native
@@ -160,19 +139,14 @@ class Session:
         return self
 
     def _device_type(self) -> str:
-        if self.backend == "torch":
-            from . import _backend
-
-            if not _backend.is_dual():
-                return "lupine"
-        return "cuda"
+        return "lupine" if self.backend == "torch" else "cuda"
 
     def _device_count(self) -> int:
         torch = _torch()
         return int(getattr(torch, self._device_type()).device_count())
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
-        if getattr(self, "_previous_server", None) is None:
+        if self._previous_server is None:
             os.environ.pop("LUPINE_SERVER", None)
         else:
             os.environ["LUPINE_SERVER"] = self._previous_server
@@ -240,11 +214,7 @@ def connect(
         if not host:
             raise LupineError("pass host=... or set LUPINE_SERVER")
 
-    servers = _normalize_hosts(host, port)
-    if not servers:
-        return Session(servers=servers)
-
-    session = Session(servers=servers)
+    session = Session(servers=_normalize_hosts(host, port))
     # Bind immediately: the caller may import torch right after connect()
     # without using the context manager form.
     session.__enter__()
@@ -334,5 +304,4 @@ __all__ = [
     "load_native",
     "login",
     "servers",
-    "torch_backend_selected",
 ]

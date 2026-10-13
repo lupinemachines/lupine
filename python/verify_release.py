@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import re
 import sys
 import zipfile
@@ -25,17 +26,19 @@ def _normalized(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-# The client a release loads: the driver and NVML per platform, nothing else.
+# Required driver providers stay stable; the Mac wheel separately packages
+# its application runtime without changing the server's driver bundle.
 REQUIRED = {
     "linux": ("libcuda.so.1", "libnvidia-ml.so.1"),
     "darwin": ("libcuda.dylib", "libnvidia-ml.dylib"),
     "win32": ("nvcuda.dll", "nvml.dll"),
 }
 CONDITIONAL = {"libnccl", "libnvshmem_host"}
+RUNTIMES = {"darwin": ("libcudart.dylib", "liblupine_aten.dylib")}
 
 
 def verify_loader(source: bytes) -> None:
-    """Check that ``lupine/_native.py`` preloads only the driver and NVML."""
+    """Check the required providers and supported optional runtime set."""
 
     found: dict[str, object] = {}
     for node in ast.parse(source).body:
@@ -44,6 +47,7 @@ def verify_loader(source: bytes) -> None:
                 if isinstance(target, ast.Name) and target.id in (
                     "_REQUIRED",
                     "_CONDITIONAL",
+                    "_RUNTIMES",
                 ):
                     found[target.id] = ast.literal_eval(node.value)
     if found.get("_REQUIRED") != REQUIRED:
@@ -54,6 +58,8 @@ def verify_loader(source: bytes) -> None:
         raise ValueError(
             f"loader may condition only NCCL and nvSHMEM, found {found.get('_CONDITIONAL')}"
         )
+    if found.get("_RUNTIMES") != RUNTIMES:
+        raise ValueError(f"unexpected optional runtime set: {found.get('_RUNTIMES')}")
 
 
 def verify_metadata(tag: str | None = None) -> str:
@@ -130,16 +136,46 @@ def verify_wheels(directory: Path, version: str) -> None:
             )
 
 
+def verify_macos_wheel(directory: Path, version: str) -> None:
+    wheels = list(directory.glob("*.whl"))
+    if len(wheels) != 1 or not wheels[0].name.endswith("-py3-none-macosx_26_0_arm64.whl"):
+        raise ValueError("expected one ARM64 macOS runtime wheel")
+    expected = {f"lupine/_libs/{name}" for name in RUNTIMES["darwin"]}
+    with zipfile.ZipFile(wheels[0]) as archive:
+        names = set(archive.namelist())
+        native = {name for name in names if name.endswith((".dylib", ".so", ".dll"))}
+        if native != expected:
+            raise ValueError(f"Mac wheel must contain only application dylibs: {native}")
+        metadata_path = next(name for name in names if name.endswith(".dist-info/METADATA"))
+        metadata = BytesParser().parsebytes(archive.read(metadata_path))
+        if metadata["Name"] != "lupine" or metadata["Version"] != version:
+            raise ValueError("Mac wheel metadata does not match the release")
+        verify_loader(archive.read("lupine/_native.py"))
+        for name in expected:
+            with archive.open(name) as source:
+                digest = hashlib.sha256()
+                size = 0
+                while block := source.read(1024 * 1024):
+                    digest.update(block)
+                    size += len(block)
+                if not size:
+                    raise ValueError(f"Mac wheel runtime is empty: {name}")
+                print(f"Verified {name}: {size} bytes, sha256:{digest.hexdigest()}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", help="GitHub release tag to validate")
     parser.add_argument("--dist", type=Path, help="directory containing built wheels")
+    parser.add_argument("--macos-dist", type=Path, help="directory containing the Mac runtime wheel")
     args = parser.parse_args(argv)
 
     try:
         version = verify_metadata(args.tag)
         if args.dist is not None:
             verify_wheels(args.dist, version)
+        if args.macos_dist is not None:
+            verify_macos_wheel(args.macos_dist, version)
     except (KeyError, OSError, TypeError, ValueError, zipfile.BadZipFile) as exc:
         print(f"release validation failed: {exc}", file=sys.stderr)
         return 1

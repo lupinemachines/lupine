@@ -111,7 +111,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
     set(OpenSSL_FOUND TRUE)
 else()
     find_path(NGHTTP2_INCLUDE_DIR nghttp2/nghttp2.h REQUIRED)
-    find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
+    if(APPLE)
+        # Downloaded drivers must not depend on the build host's Homebrew.
+        find_library(LUPINE_MACOS_NGHTTP2_LIBRARY NAMES libnghttp2.a REQUIRED)
+        set(NGHTTP2_LIBRARY ${LUPINE_MACOS_NGHTTP2_LIBRARY})
+        set(OPENSSL_USE_STATIC_LIBS TRUE)
+    else()
+        find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
+    endif()
     find_package(OpenSSL QUIET)
 endif()
 
@@ -320,7 +327,7 @@ if(LUPINE_MANYLINUX)
     add_dependencies(lupine_rpc_core lupine_manylinux_openssl_external)
 endif()
 if(OpenSSL_FOUND)
-    target_compile_definitions(lupine_rpc_core PRIVATE LUPINE_TLS_OPENSSL)
+    target_compile_definitions(lupine_rpc_core PUBLIC LUPINE_TLS_OPENSSL)
     target_link_libraries(lupine_rpc_core PUBLIC OpenSSL::SSL OpenSSL::Crypto)
 endif()
 if(WIN32)
@@ -334,12 +341,6 @@ lupine_internal_target(lupine_client_transport)
 target_include_directories(lupine_client_transport PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lupine_client_transport PUBLIC lupine_rpc_core)
-if(OpenSSL_FOUND)
-    target_compile_definitions(lupine_client_transport PRIVATE
-        LUPINE_TLS_OPENSSL)
-    target_link_libraries(lupine_client_transport PUBLIC
-        OpenSSL::SSL OpenSSL::Crypto)
-endif()
 
 add_library(lupine_ipc STATIC ${CMAKE_CURRENT_SOURCE_DIR}/ipc.cpp)
 lupine_internal_target(lupine_ipc)
@@ -731,9 +732,19 @@ if(LUPINE_BUILD_SERVER)
             libcuda.so.1 libnvidia-ml.so.1)
         lupine_embed_client_bundle(linux-aarch64 "linux/arm64"
             libcuda.so.1 libnvidia-ml.so.1)
-        lupine_embed_client_bundle(macosx-universal2
-            "macos/amd64;macos/arm64"
-            libcuda.dylib libnvidia-ml.dylib)
+        # Serve the ARM64 driver built at this server revision. CUDA runtimes
+        # belong to the application and must never enter the driver bundle.
+        if(EXISTS ${LUPINE_CLIENT_BUNDLE_INPUT}/lupine-client-macosx-arm64/libcuda.dylib)
+            lupine_embed_client_bundle(macosx-universal2 "macos/amd64"
+                libcuda.dylib libnvidia-ml.dylib)
+            lupine_embed_client_bundle(macosx-arm64 "macos/arm64"
+                libcuda.dylib libnvidia-ml.dylib)
+            target_compile_definitions(lupine_server_runtime PRIVATE
+                LUPINE_EMBED_MACOS_ARM64_CLIENT)
+        else()
+            lupine_embed_client_bundle(macosx-universal2 "macos/amd64;macos/arm64"
+                libcuda.dylib libnvidia-ml.dylib)
+        endif()
         lupine_embed_client_bundle(win-amd64 "windows/amd64"
             nvcuda.dll nvml.dll)
         lupine_embed_client_bundle(win-arm64 "windows/arm64"
@@ -783,6 +794,28 @@ endif()
 # on socketpair(), MAP_FIXED_NOREPLACE and memfd_create(); anything free of
 # those belongs here instead, so it covers every platform the client ships for.
 if(BUILD_TESTING)
+    if(APPLE)
+        add_library(macos_library_profile_fixture SHARED macos_library_profile_fixture.cpp)
+        add_library(macos_library_profile_other SHARED macos_library_profile_fixture.cpp)
+        target_compile_definitions(macos_library_profile_other PRIVATE PROFILE_VARIANT=2)
+        add_executable(macos_library_profile_test macos_library_profile_test.cpp)
+        lupine_apply_sanitizer(macos_library_profile_test)
+        foreach(mode record replay)
+            add_test(NAME macos_library_profile_${mode}
+                COMMAND macos_library_profile_test ${mode}
+                    ${CMAKE_CURRENT_BINARY_DIR}/macos-library-profile.bin
+                    $<TARGET_FILE:macos_library_profile_fixture>
+                    $<TARGET_FILE:macos_library_profile_other>)
+        endforeach()
+        set_tests_properties(macos_library_profile_record PROPERTIES FIXTURES_SETUP macos_profile)
+        set_tests_properties(macos_library_profile_replay PROPERTIES FIXTURES_REQUIRED macos_profile)
+    endif()
+    add_executable(late_trace_test late_trace_test.cpp)
+    target_link_libraries(late_trace_test PRIVATE Threads::Threads)
+    lupine_apply_sanitizer(late_trace_test)
+    add_test(NAME late_trace_test COMMAND late_trace_test
+        ${CMAKE_CURRENT_BINARY_DIR}/late-trace.log)
+
     add_executable(fatbin_filter_test fatbin_filter_test.cpp)
     lupine_apply_sanitizer(fatbin_filter_test)
     add_test(NAME fatbin_filter_test COMMAND fatbin_filter_test)

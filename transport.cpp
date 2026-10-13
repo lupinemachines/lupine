@@ -96,6 +96,14 @@ SSL_CTX *client_tls_context() {
     if (created != nullptr) {
       SSL_CTX_set_min_proto_version(created, TLS1_2_VERSION);
       SSL_CTX_set_default_verify_paths(created);
+#ifdef __APPLE__
+      // Static OpenSSL's default CA path points into Homebrew. Use the OS
+      // trust bundle unless the caller explicitly selected other CA paths.
+      if (std::getenv("SSL_CERT_FILE") == nullptr &&
+          std::getenv("SSL_CERT_DIR") == nullptr) {
+        SSL_CTX_load_verify_locations(created, "/etc/ssl/cert.pem", nullptr);
+      }
+#endif
       SSL_CTX_set_verify(created, SSL_VERIFY_PEER, nullptr);
     }
     return created;

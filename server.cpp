@@ -51,6 +51,10 @@ extern const lupine_client_bundle_payload
     lupine_embedded_client_bundle_linux_aarch64;
 extern const lupine_client_bundle_payload
     lupine_embedded_client_bundle_macosx_universal2;
+#ifdef LUPINE_EMBED_MACOS_ARM64_CLIENT
+extern const lupine_client_bundle_payload
+    lupine_embedded_client_bundle_macosx_arm64;
+#endif
 extern const lupine_client_bundle_payload
     lupine_embedded_client_bundle_win_amd64;
 extern const lupine_client_bundle_payload
@@ -61,7 +65,11 @@ const lupine_client_bundle_entry kClientBundles[] = {
     {"linux/amd64", &lupine_embedded_client_bundle_linux_x86_64},
     {"linux/arm64", &lupine_embedded_client_bundle_linux_aarch64},
     {"macos/amd64", &lupine_embedded_client_bundle_macosx_universal2},
+#ifdef LUPINE_EMBED_MACOS_ARM64_CLIENT
+    {"macos/arm64", &lupine_embedded_client_bundle_macosx_arm64},
+#else
     {"macos/arm64", &lupine_embedded_client_bundle_macosx_universal2},
+#endif
     {"windows/amd64", &lupine_embedded_client_bundle_win_amd64},
     {"windows/arm64", &lupine_embedded_client_bundle_win_arm64},
 };
@@ -358,6 +366,15 @@ static void lupine_serve_bulk_connection(int fd,
 }
 #endif
 
+// Result for a connection that ends before the request loop starts.
+static int lupine_client_handler_exit() {
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+  return lupine_server_checkpoint_child_finish();
+#else
+  return 0;
+#endif
+}
+
 int client_handler(lupine_socket_t connfd) {
   const rpc_handler_registry &handlers = lupine_rpc_handlers();
   const rpc_http2_server_metadata metadata = {
@@ -384,42 +401,26 @@ int client_handler(lupine_socket_t connfd) {
 #endif
   if (lupine_connection_dispatch(connfd, &metadata, metrics) != 0) {
     lupine_socket_close(connfd);
-#ifdef LUPINE_BUILD_CUDA_BACKEND
-    return lupine_server_checkpoint_child_finish();
-#else
-    return 0;
-#endif
+    return lupine_client_handler_exit();
   }
 
   conn_t conn = {};
   if (rpc_conn_init(&conn, connfd, 1) < 0) {
     LUPINE_LOG_ERROR("Error initializing connection synchronization.");
-#ifdef LUPINE_BUILD_CUDA_BACKEND
-    return lupine_server_checkpoint_child_finish();
-#else
-    return 0;
-#endif
+    return lupine_client_handler_exit();
   }
   int http2_init_result = rpc_http2_server_init_with_metadata(&conn, &metadata);
   if (http2_init_result < 0) {
     LUPINE_LOG_ERROR("Error initializing HTTP/2 connection.");
     rpc_conn_destroy(&conn);
-#ifdef LUPINE_BUILD_CUDA_BACKEND
-    return lupine_server_checkpoint_child_finish();
-#else
-    return 0;
-#endif
+    return lupine_client_handler_exit();
   }
   if (http2_init_result != 0) {
     if (rpc_http2_server_graceful_shutdown(&conn) < 0) {
       LUPINE_LOG_DEBUG("HTTP/2 peer closed before acknowledging shutdown");
     }
     rpc_conn_destroy(&conn);
-#ifdef LUPINE_BUILD_CUDA_BACKEND
-    return lupine_server_checkpoint_child_finish();
-#else
-    return 0;
-#endif
+    return lupine_client_handler_exit();
   }
   lupine_monitoring_register_child();
 #ifdef LUPINE_BUILD_CUDA_BACKEND
