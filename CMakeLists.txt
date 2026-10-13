@@ -111,7 +111,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
     set(OpenSSL_FOUND TRUE)
 else()
     find_path(NGHTTP2_INCLUDE_DIR nghttp2/nghttp2.h REQUIRED)
-    find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
+    if(APPLE)
+        # Downloaded drivers must not depend on the build host's Homebrew.
+        find_library(LUPINE_MACOS_NGHTTP2_LIBRARY NAMES libnghttp2.a REQUIRED)
+        set(NGHTTP2_LIBRARY ${LUPINE_MACOS_NGHTTP2_LIBRARY})
+        set(OPENSSL_USE_STATIC_LIBS TRUE)
+    else()
+        find_library(NGHTTP2_LIBRARY nghttp2 REQUIRED)
+    endif()
     find_package(OpenSSL QUIET)
 endif()
 
