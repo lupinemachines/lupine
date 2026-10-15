@@ -29,6 +29,10 @@ const rpc_http2_server_metadata kMetadata = {"13.0-test", nullptr};
 
 std::string test_metrics() { return "test_metric 1\n"; }
 
+bool send_all(int fd, const void *data, size_t size) {
+  return write(fd, data, size) == static_cast<ssize_t>(size);
+}
+
 bool make_pair(int fds[2]) {
   return socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0;
 }
@@ -90,14 +94,16 @@ void test_split_preface_still_dispatches_to_rpc() {
     check(false, "socketpair");
     return;
   }
+  bool sent = false;
   std::thread client([&]() {
-    write(fds[1], kPreface, 9);
+    sent = send_all(fds[1], kPreface, 9);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    write(fds[1], kPreface + 9, kPrefaceLength - 9);
+    sent = send_all(fds[1], kPreface + 9, kPrefaceLength - 9) && sent;
   });
   check(lupine_connection_dispatch(fds[0], &kMetadata) == 0,
         "split preface dispatches to rpc");
   client.join();
+  check(sent, "client writes split preface");
   close(fds[0]);
   close(fds[1]);
 }
@@ -109,7 +115,8 @@ void test_http1_get_root() {
     return;
   }
   const char request[] = "GET / HTTP/1.1\r\nhost: lupine\r\n\r\n";
-  write(fds[1], request, sizeof(request) - 1);
+  check(send_all(fds[1], request, sizeof(request) - 1),
+        "client writes request");
   check(lupine_connection_dispatch(fds[0], &kMetadata) == 1,
         "http/1.1 request is served here");
   close(fds[0]);
@@ -130,7 +137,8 @@ void test_http1_head_root_has_no_body() {
     return;
   }
   const char request[] = "HEAD / HTTP/1.1\r\n\r\n";
-  write(fds[1], request, sizeof(request) - 1);
+  check(send_all(fds[1], request, sizeof(request) - 1),
+        "client writes request");
   check(lupine_connection_dispatch(fds[0], &kMetadata) == 1,
         "HEAD / is served here");
   close(fds[0]);
@@ -147,7 +155,8 @@ void test_http1_unknown_path_is_404() {
     return;
   }
   const char request[] = "GET /metrics HTTP/1.1\r\n\r\n";
-  write(fds[1], request, sizeof(request) - 1);
+  check(send_all(fds[1], request, sizeof(request) - 1),
+        "client writes request");
   check(lupine_connection_dispatch(fds[0], &kMetadata) == 1,
         "unknown path is served here");
   close(fds[0]);
@@ -164,7 +173,8 @@ void test_http1_metrics_handler() {
     return;
   }
   const char request[] = "GET /metrics?source=test HTTP/1.1\r\n\r\n";
-  write(fds[1], request, sizeof(request) - 1);
+  check(send_all(fds[1], request, sizeof(request) - 1),
+        "client writes request");
   check(lupine_connection_dispatch(fds[0], &kMetadata, test_metrics) == 1,
         "metrics request is served here");
   close(fds[0]);
@@ -204,7 +214,8 @@ std::string bundle_request(const rpc_http2_server_metadata *metadata,
     check(false, "socketpair");
     return "";
   }
-  write(fds[1], request.data(), request.size());
+  check(send_all(fds[1], request.data(), request.size()),
+        "client writes request");
   check(lupine_connection_dispatch(fds[0], metadata) == 1,
         "bundle request is served here");
   close(fds[0]);
