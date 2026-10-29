@@ -118,23 +118,24 @@ int main() {
 
   // A second capture into the graph keeps the first one's copy delivered.
   std::memset(pageable, 0, bytes);
-  std::memset(pinned, 0, bytes);
+  auto *second = static_cast<unsigned int *>(std::calloc(1024, sizeof(unsigned int)));
   CUdeviceptr second_buf;
   DRV(cuMemAlloc(&second_buf, bytes));
   DRV(cuStreamBeginCaptureToGraph(stream, graph, nullptr, nullptr, 0,
                                   CU_STREAM_CAPTURE_MODE_GLOBAL));
   DRV(cuMemsetD32Async(second_buf, 0x9abc, 1024, stream));
-  DRV(cuMemcpyDtoHAsync(pinned, second_buf, bytes, stream));
+  DRV(cuMemcpyDtoHAsync(second, second_buf, bytes, stream));
   DRV(cuStreamEndCapture(stream, &graph));
   CUgraphExec twice = instantiate(graph);
   DRV(cuGraphLaunch(twice, stream));
   DRV(cuStreamSynchronize(stream));
   check(pageable[0] == 0x5678 && pageable[1023] == 0x5678,
         "first of two captures into a graph");
-  check(pinned[0] == 0x9abc && pinned[1023] == 0x9abc,
+  check(second[0] == 0x9abc && second[1023] == 0x9abc,
         "second of two captures into a graph");
   DRV(cuGraphExecDestroy(twice));
   DRV(cuMemFree(second_buf));
+  std::free(second);
   DRV(cuGraphDestroy(graph));
 #endif
 
