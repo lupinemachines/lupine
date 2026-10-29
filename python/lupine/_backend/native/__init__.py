@@ -261,15 +261,19 @@ class Backend:
 
     def binary(self, name, a, b, *, alpha=1, out=None):
         torch = self.torch
-        if self.ours(b) and not self.ours(a):
-            # A scalar or CPU 0-dim left operand, as in `1 - x` (rsub).
+
+        def host_scalar(value):
+            return not isinstance(value, torch.Tensor) or (
+                value.device.type == "cpu" and value.ndim == 0
+            )
+
+        if host_scalar(a) and self.ours(b) and out is not a:
+            # A scalar left operand, as in `1 - x` (rsub) or `tensor(2.) * x`.
             a = self.fill(
                 self.empty(()), a.item() if isinstance(a, torch.Tensor) else a
             )
         self.floats(a)
-        scalar = (
-            not isinstance(b, torch.Tensor) or b.device.type == "cpu" and b.ndim == 0
-        )
+        scalar = host_scalar(b)
         if scalar:
             value = b.item() if isinstance(b, torch.Tensor) else b
             shape = a.shape

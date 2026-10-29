@@ -393,3 +393,14 @@ def test_dtype_converting_transfers(backend):
     )
     ints = torch.arange(5).to("lupine", torch.float32)
     torch.testing.assert_close(ints.cpu(), torch.arange(5, dtype=torch.float32))
+
+
+def test_non_scalar_cpu_left_operand_is_rejected(backend):
+    torch, native = backend
+    x = torch.ones(4, device="lupine")
+    with pytest.raises(ValueError, match="device 0"):
+        torch.ones(1, 1) * x
+    a = torch.tensor(0.5)
+    with pytest.raises(ValueError, match="device 0"):
+        a.add_(x)
+    assert a.shape == () and a.item() == 0.5
