@@ -808,7 +808,9 @@ inline int lupine_socket_connect_with_timeout(
   fd_set write_fds;
   FD_ZERO(&write_fds);
   FD_SET(fd, &write_fds);
-  // A refused nonblocking connect is reported only in the exception set.
+  // A CancelIoEx that lands before select() starts is lost; accepted, as the
+  // window is only the in_flight() return. A refused nonblocking connect is
+  // reported only in the exception set.
   fd_set error_fds = write_fds;
   struct timeval tv;
   tv.tv_sec = timeout_ms / 1000;
