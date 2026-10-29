@@ -119,8 +119,10 @@ routes through the client-side cross-server copy helper.
 `@graphexecnode <graph-exec> <node>` translates an original graph node to the
 private graph clone associated with an executable before the generated server
 handler calls CUDA.
-`@graphexecupdate <graph-exec> <graph>` moves an executable's server-side graph
-resources to the update graph's after CUDA reports success.
+`@graphexecupdate <graph-exec> <graph> <error>` updates the executable from a
+private rebound clone of the graph, as instantiation does, moves its server-side
+graph resources to the update graph's after CUDA reports success, and maps
+error nodes in `<error>` back to the caller's graph.
 
 Functions that need custom client-side code around the generated call may be
 written as definitions instead of declarations. The body must contain one

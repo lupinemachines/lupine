@@ -115,7 +115,6 @@ void lupine_forget_event_capture_resources(CUevent event);
 void lupine_wait_event_capture_resources(CUstream stream, CUevent event);
 void lupine_clone_graph_resources(CUgraph clone, CUgraph original);
 void lupine_erase_graph_resources(CUgraph graph);
-void lupine_rebind_graph_exec_resources(CUgraphExec exec, CUgraph graph);
 void lupine_release_graph_resources(lupine_graph_resources *resources);
 void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
                               CUresult result);
@@ -140,6 +139,17 @@ lupine_original_htod_graph_node(const lupine_htod_graph_binding &binding,
 CUgraphNode lupine_htod_graph_exec_node(CUgraphExec exec, CUgraphNode node);
 void lupine_release_htod_graph_binding(lupine_htod_graph_binding *binding);
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec);
+CUresult lupine_prepare_graph_exec_update(CUgraphExec exec, CUgraph graph,
+                                          lupine_htod_graph_binding *binding);
+void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
+                                     lupine_htod_graph_binding *binding,
+                                     CUresult result, CUgraphNode *error_node);
+#if CUDA_VERSION >= 12000
+void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
+                                     lupine_htod_graph_binding *binding,
+                                     CUresult result,
+                                     CUgraphExecUpdateResultInfo *info);
+#endif
 void *lupine_alloc_capture_scratch(size_t bytes);
 void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
                                  const lupine_host_rows &client,
