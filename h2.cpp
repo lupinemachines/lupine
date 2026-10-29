@@ -1086,6 +1086,9 @@ void *h2_write_main(void *arg) {
         chunk.swap(transport->outbound);
       }
       transport->write_busy = true;
+      // Writers blocked on the outbound limit compress the next batch while
+      // this one is on the wire.
+      pthread_cond_broadcast(&transport->outbound_progress);
       if (pause) {
         transport->writer_paused = true;
       }
