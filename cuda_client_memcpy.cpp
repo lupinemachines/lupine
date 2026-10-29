@@ -2148,13 +2148,17 @@ extern "C" void lupine_materialize_host_allocations() {
     std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
     for (auto &entry : lupine_mutable_host_allocations_locked()) {
       if (entry.second.tracking_enabled &&
+          __atomic_load_n(&entry.second.retiring, __ATOMIC_ACQUIRE) == 0 &&
           __atomic_load_n(&entry.second.device_stale, __ATOMIC_ACQUIRE) != 0) {
+        __atomic_add_fetch(&entry.second.pending_dirty_ranges, 1,
+                           __ATOMIC_ACQ_REL);
         stale.push_back(&entry.second);
       }
     }
   }
   for (lupine_host_allocation *allocation : stale) {
     lupine_make_mapped_range_fresh(allocation, 0, allocation->size);
+    __atomic_sub_fetch(&allocation->pending_dirty_ranges, 1, __ATOMIC_RELEASE);
   }
 }
 
