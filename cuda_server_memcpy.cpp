@@ -217,6 +217,11 @@ void lupine_release_graph_resources(lupine_graph_resources *resources) {
 void lupine_retire_dtoh_staging(const lupine_host_rows &client,
                                 void *server_src,
                                 unsigned long long buffer_id) {
+  // Without an id (its context already failed) the buffer would read as heap
+  // staging, so leave it to its context instead.
+  if (buffer_id == 0) {
+    return;
+  }
   auto *node = new lupine_graph_host_copy_node{{client, server_src}, buffer_id};
   std::lock_guard<std::mutex> lock(lupine_retired_dtoh_mutex());
   node->next = lupine_retired_dtoh_copies();
