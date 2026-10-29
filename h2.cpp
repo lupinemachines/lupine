@@ -867,6 +867,17 @@ int h2_flush_session_locked(h2_transport *transport) {
 
 unsigned char *h2_reserve_encoded(h2_stream &stream, size_t capacity) {
   size_t required = stream.encoded_size + capacity;
+  // A peer whose window credits trail the writer keeps the backlog from ever
+  // draining to empty, so reclaim the framed prefix (frames copy the bytes out)
+  // once it is at least as long as the unframed suffix that has to move.
+  size_t backlog = stream.encoded_size - stream.encoded_offset;
+  if (stream.encoded.size() < required && stream.encoded_offset >= backlog) {
+    memmove(stream.encoded.data(),
+            stream.encoded.data() + stream.encoded_offset, backlog);
+    stream.encoded_size = backlog;
+    stream.encoded_offset = 0;
+    required = backlog + capacity;
+  }
   if (stream.encoded.size() < required) {
     stream.encoded.resize(required);
   }
