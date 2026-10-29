@@ -85,8 +85,7 @@ if [[ "${CUDA_PYTHON_SETUP_ONLY:-0}" == "1" || ( "${LIST_TESTS:-0}" != "1" && "$
     *) echo "cannot map CUDA toolkit major '$major' to a cuda-python release" >&2; exit 1 ;;
   esac
 
-  # cuda-bindings 13.4.1+ imports pyglet at module scope in test_graphics_apis.py.
-  "$PYTHON_BIN" -m pip install --quiet "$spec" numpy pytest pytest-benchmark pyglet
+  "$PYTHON_BIN" -m pip install --quiet "$spec" numpy pytest pytest-benchmark
   installed="$("$PYTHON_BIN" -c "from importlib.metadata import version; print(version('$package'))")"
   if [[ -z "$CUDA_PYTHON_REF" ]]; then
     CUDA_PYTHON_REF="v$installed"
