@@ -2012,10 +2012,12 @@ extern "C" CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
   }
   lupine_invalidate_primary_ctx_state(dev);
   lupine_forget_context_local_storage(context);
+  CUresult result = lupine_remote_primary_ctx_release(
+      lupine_route_remote_conn(route), remote_dev);
+  // After the server teardown: a batch requested before it is discarded too.
   lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
   lupine_event_pool_discard(lupine_route_identity(route), remote_dev, nullptr);
-  return lupine_remote_primary_ctx_release(lupine_route_remote_conn(route),
-                                           remote_dev);
+  return result;
 }
 
 extern "C" CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev,
@@ -2094,8 +2096,6 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
   // A reset unloads the primary context's modules; see
   // lupine_forget_destroyed_context.
   lupine_invalidate_function_caches();
-  lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
-  lupine_event_pool_discard(lupine_route_identity(route), remote_dev, nullptr);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value =
@@ -2115,6 +2115,8 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
+  lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
+  lupine_event_pool_discard(lupine_route_identity(route), remote_dev, nullptr);
   if (return_value == CUDA_SUCCESS) {
     lupine_invalidate_current_context_cache();
     auto &retains = lupine_primary_ctx_retains();
@@ -3332,17 +3334,23 @@ lupine_stream_pools() {
   return *pools;
 }
 
+// Bumped by each discard, under the pool mutex. A batch created across a
+// discard died with its context, whose handle value may already be reused.
+static uint64_t lupine_stream_pool_generation;
+
 // The handles arrive in creation order (stream-major, priority-minor); they
 // are pushed in reverse so hand-out pops them in that order.
 static void lupine_stream_pool_init(lupine_route route, CUdevice dev,
                                     CUcontext ctx) {
   auto key = std::make_pair(lupine_route_identity(route), ctx);
+  uint64_t generation;
   {
     std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
     auto &pools = lupine_stream_pools();
     if (pools.find(key) != pools.end()) {
       return;
     }
+    generation = lupine_stream_pool_generation;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   uint32_t created = 0;
@@ -3362,6 +3370,9 @@ static void lupine_stream_pool_init(lupine_route route, CUdevice dev,
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
+  if (generation != lupine_stream_pool_generation) {
+    return;
+  }
   auto &pools = lupine_stream_pools();
   auto &pool = pools[key];
   pool.dev = dev;
@@ -3374,6 +3385,7 @@ static void lupine_stream_pool_init(lupine_route route, CUdevice dev,
 static void lupine_stream_pool_discard(int route_id, CUdevice dev,
                                        CUcontext ctx) {
   std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
+  ++lupine_stream_pool_generation;
   auto &pools = lupine_stream_pools();
   for (auto it = pools.begin(); it != pools.end();) {
     bool matches = ctx != nullptr
@@ -3472,9 +3484,13 @@ lupine_event_pools() {
   return *pools;
 }
 
+// Bumped by each discard, under the pool mutex, like the stream pool's.
+static uint64_t lupine_event_pool_generation;
+
 static void lupine_event_pool_discard(int route_id, CUdevice remote_device,
                                       CUcontext ctx) {
   std::lock_guard<std::mutex> lock(lupine_event_pool_mutex());
+  ++lupine_event_pool_generation;
   auto &pools = lupine_event_pools();
   for (auto it = pools.begin(); it != pools.end();) {
     const bool matches =
@@ -3504,8 +3520,10 @@ extern "C" CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags) {
   if (context != nullptr && (Flags & ~pool_flags) == 0) {
     const auto key =
         std::make_tuple(lupine_route_identity(route), context, Flags);
+    uint64_t generation;
     {
       std::lock_guard<std::mutex> lock(lupine_event_pool_mutex());
+      generation = lupine_event_pool_generation;
       auto &pools = lupine_event_pools();
       auto it = pools.find(key);
       if (it != pools.end() && !it->second.events.empty()) {
@@ -3538,16 +3556,17 @@ extern "C" CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags) {
     if (count == 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
+    *phEvent = events[0];
     {
       std::lock_guard<std::mutex> lock(lupine_event_pool_mutex());
-      auto &pool = lupine_event_pools()[key];
-      pool.remote_device = device;
-      // Preserve creation order when popping the next handle.
-      pool.events.insert(pool.events.end(),
-                         std::reverse_iterator<CUevent *>(events + count),
-                         std::reverse_iterator<CUevent *>(events));
-      *phEvent = pool.events.back();
-      pool.events.pop_back();
+      if (generation == lupine_event_pool_generation) {
+        auto &pool = lupine_event_pools()[key];
+        pool.remote_device = device;
+        // Preserve creation order when popping the next handle.
+        pool.events.insert(pool.events.end(),
+                           std::reverse_iterator<CUevent *>(events + count),
+                           std::reverse_iterator<CUevent *>(events + 1));
+      }
     }
     lupine_note_event_owner_route(*phEvent, route);
     return CUDA_SUCCESS;
