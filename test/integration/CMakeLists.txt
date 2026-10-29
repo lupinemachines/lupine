@@ -58,7 +58,9 @@ endfunction()
 set(TEST_DIR "${CMAKE_CURRENT_LIST_DIR}/..")
 add_suite(cuda "${TEST_DIR}/run_cuda_samples.sh" BUILD_SAMPLES=0)
 add_suite(pytorch "${TEST_DIR}/run_pytorch_lupine_tests.sh")
-add_suite(cuda-python "${TEST_DIR}/run_cuda_python_tests.sh" CUDA_PYTHON_INSTALL=0)
+# test_graphics_apis.py needs CUDA/OpenGL interop, which is not forwarded (#1039).
+add_suite(cuda-python "${TEST_DIR}/run_cuda_python_tests.sh" CUDA_PYTHON_INSTALL=0
+          CUDA_PYTHON_SKIP_LIST=test_graphics_apis.py)
 add_suite(cuda-library "${TEST_DIR}/run_cuda_library_samples.sh" BUILD_SAMPLES=0)
 add_suite(custom "${TEST_DIR}/run_custom_tests.sh")
 
