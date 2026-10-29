@@ -3223,8 +3223,7 @@ static const void *lupine_private_export_table_from_env(const CUuuid *uuid) {
 //
 // CUDA promises the returned pointer has static lifetime, so answers are
 // interned in a never-erased map and each code costs at most one round trip per
-// process. unordered_map nodes are stable, so c_str() stays valid; a present
-// but empty entry records a code the driver rejected.
+// process. unordered_map nodes are stable, so c_str() stays valid.
 static CUresult lupine_error_string_lookup(int rpc_op, const char *symbol,
                                            bool want_name, CUresult error,
                                            const char **pStr) {
@@ -3246,13 +3245,19 @@ static CUresult lupine_error_string_lookup(int rpc_op, const char *symbol,
     return CUDA_SUCCESS;
   }
 
-  // Forward every other code to the server's driver. The result is held in a
-  // per-thread buffer so the returned pointer stays valid until this thread's
-  // next lookup; a length past any real driver string means a desynced stream.
-  thread_local std::string name_result;
-  thread_local std::string description_result;
-  std::string &result = want_name ? name_result : description_result;
+  static auto *mutex = new std::mutex();
+  static auto *interned = new std::unordered_map<int, std::string>[2];
+  std::unordered_map<int, std::string> &strings = interned[want_name];
+  {
+    std::lock_guard<std::mutex> lock(*mutex);
+    auto found = strings.find(error);
+    if (found != strings.end()) {
+      *pStr = found->second.c_str();
+      return CUDA_SUCCESS;
+    }
+  }
 
+  // A length past any real driver string means a desynced stream.
   constexpr uint32_t kMaxLength = 4096;
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
@@ -3273,8 +3278,8 @@ static CUresult lupine_error_string_lookup(int rpc_op, const char *symbol,
   if (return_value != CUDA_SUCCESS) {
     return return_value;
   }
-  result = std::move(text);
-  *pStr = result.c_str();
+  std::lock_guard<std::mutex> lock(*mutex);
+  *pStr = strings.emplace(error, std::move(text)).first->second.c_str();
   return CUDA_SUCCESS;
 }
 
