@@ -207,14 +207,23 @@ static void lupine_retain_graph_resources(lupine_graph_resources *resources) {
 
 // The last owner can be a delivery inside a CUDA callback, where host memory
 // cannot be freed, so release only retires the staging. Graph and exec
-// destruction free it from a handler thread.
+// destruction and pending DtoH cleanups free it from a handler thread.
 void lupine_release_graph_resources(lupine_graph_resources *resources) {
   if (resources != nullptr && resources->owners.fetch_sub(1) == 1) {
     lupine_retire_graph_staging(resources);
   }
 }
 
-static void lupine_free_retired_graph_staging() {
+void lupine_retire_dtoh_staging(const lupine_host_rows &client,
+                                void *server_src,
+                                unsigned long long buffer_id) {
+  auto *node = new lupine_graph_host_copy_node{{client, server_src}, buffer_id};
+  std::lock_guard<std::mutex> lock(lupine_retired_dtoh_mutex());
+  node->next = lupine_retired_dtoh_copies();
+  lupine_retired_dtoh_copies() = node;
+}
+
+void lupine_free_retired_dtoh_staging() {
   lupine_graph_host_copy_node *node = nullptr;
   {
     std::lock_guard<std::mutex> lock(lupine_retired_dtoh_mutex());
@@ -434,7 +443,7 @@ void lupine_clone_graph_resources(CUgraph clone, CUgraph original) {
 void lupine_erase_graph_resources(CUgraph graph) {
   lupine_release_graph_resources(
       lupine_take_graph_resources(lupine_graph_resource_map(), graph));
-  lupine_free_retired_graph_staging();
+  lupine_free_retired_dtoh_staging();
 }
 
 void lupine_rebind_graph_exec_resources(CUgraphExec exec, CUgraph graph) {
@@ -447,7 +456,7 @@ void lupine_rebind_graph_exec_resources(CUgraphExec exec, CUgraph graph) {
     lupine_graph_exec_resource_map().insert_or_assign(exec, resources);
   }
   lupine_release_graph_resources(previous);
-  lupine_free_retired_graph_staging();
+  lupine_free_retired_dtoh_staging();
 }
 
 void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
@@ -1478,7 +1487,7 @@ CUresult lupine_release_graph_exec_resources(CUgraphExec exec) {
   if (result == CUDA_SUCCESS) {
     lupine_release_graph_resources(
         lupine_take_graph_resources(lupine_graph_exec_resource_map(), exec));
-    lupine_free_retired_graph_staging();
+    lupine_free_retired_dtoh_staging();
   }
   return result;
 }
@@ -2971,6 +2980,11 @@ static void lupine_defer_dtoh(conn_t *conn, CUstream stream,
                                           ? lupine_dtoh_storage::pinned
                                           : lupine_dtoh_storage::heap};
         (void)cuStreamGetCtx(stream, &copy.context);
+        if (alloc_result == CUDA_SUCCESS) {
+          (void)cuPointerGetAttribute(&copy.buffer_id,
+                                      CU_POINTER_ATTRIBUTE_BUFFER_ID,
+                                      reinterpret_cast<CUdeviceptr>(host));
+        }
         lupine_pending_dtoh_copies().upsert(
             conn,
             [stream, &copy](lupine_pending_dtoh_streams &streams,

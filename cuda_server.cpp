@@ -850,11 +850,8 @@ int lupine_write_dtoh_rows(conn_t *conn, const lupine_host_rows &client,
              : 0;
 }
 
-void lupine_cleanup_pending_dtoh_copies(
-    std::vector<lupine_pending_dtoh_item> *pending) {
-  if (pending == nullptr) {
-    return;
-  }
+static void lupine_release_pending_dtoh_copies(
+    std::vector<lupine_pending_dtoh_item> *pending, bool in_host_callback) {
   for (auto &copy : *pending) {
     lupine_release_graph_resources(copy.graph_resources);
     if (copy.server_src == nullptr) {
@@ -868,12 +865,25 @@ void lupine_cleanup_pending_dtoh_copies(
       free(copy.server_src);
       break;
     case lupine_dtoh_storage::pinned:
-      cuMemFreeHost(copy.server_src);
+      if (in_host_callback) {
+        lupine_retire_dtoh_staging(copy.client, copy.server_src,
+                                   copy.buffer_id);
+      } else {
+        cuMemFreeHost(copy.server_src);
+      }
       break;
     }
     copy.server_src = nullptr;
   }
   pending->clear();
+}
+
+void lupine_cleanup_pending_dtoh_copies(
+    std::vector<lupine_pending_dtoh_item> *pending) {
+  lupine_free_retired_dtoh_staging();
+  if (pending != nullptr) {
+    lupine_release_pending_dtoh_copies(pending, false);
+  }
 }
 
 #if CUDA_VERSION >= 12040
@@ -2565,7 +2575,7 @@ void CUDA_CB lupine_graph_host_callback(void *userData) {
     rpc_read(conn, &response, sizeof(response));
     rpc_read_end(conn);
   }
-  lupine_cleanup_pending_dtoh_copies(&pending);
+  lupine_release_pending_dtoh_copies(&pending, true);
   if (callback->one_shot) {
     delete callback;
   }
@@ -2596,7 +2606,7 @@ void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
     rpc_read(conn, &response, sizeof(response));
     rpc_read_end(conn);
   }
-  lupine_cleanup_pending_dtoh_copies(&pending);
+  lupine_release_pending_dtoh_copies(&pending, true);
   delete callback;
 }
 
