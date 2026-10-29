@@ -3335,7 +3335,9 @@ lupine_stream_pools() {
 }
 
 // Bumped by each discard, under the pool mutex. A batch created across a
-// discard died with its context, whose handle value may already be reused.
+// discard may have died with its context, whose handle value may already be
+// reused, so it is dropped. Accepted: a batch for an unrelated context is
+// dropped too, and its unclaimed handles live until that context goes.
 static uint64_t lupine_stream_pool_generation;
 
 // The handles arrive in creation order (stream-major, priority-minor); they
