@@ -220,6 +220,48 @@ static int check_concurrent_captured_copies(
   return 0;
 }
 
+#if CUDA_VERSION >= 12030
+// Each capture into a graph keeps its own HtoD callbacks; instantiation must
+// rebind all of them.
+static int check_captures_into_one_graph(CUdeviceptr first_destination,
+                                         CUdeviceptr second_destination,
+                                         CUstream stream,
+                                         unsigned char *first_source,
+                                         unsigned char *second_source,
+                                         size_t bytes) {
+  CUgraph graph = nullptr;
+  CHECK(cuGraphCreate(&graph, 0));
+  CHECK(cuStreamBeginCaptureToGraph(stream, graph, nullptr, nullptr, 0,
+                                    CU_STREAM_CAPTURE_MODE_GLOBAL));
+  CHECK(cuMemcpyHtoDAsync(first_destination, first_source, bytes, stream));
+  CHECK(cuStreamEndCapture(stream, &graph));
+  CHECK(cuStreamBeginCaptureToGraph(stream, graph, nullptr, nullptr, 0,
+                                    CU_STREAM_CAPTURE_MODE_GLOBAL));
+  CHECK(cuMemcpyHtoDAsync(second_destination, second_source, bytes, stream));
+  CHECK(cuStreamEndCapture(stream, &graph));
+  CUgraphExec executable = nullptr;
+  CHECK(cuGraphInstantiateWithFlags(&executable, graph, 0));
+  CHECK(cuGraphLaunch(executable, stream));
+  CHECK(cuStreamSynchronize(stream));
+
+  std::vector<unsigned char> readback(bytes);
+  CHECK(cuMemcpyDtoH(readback.data(), first_destination, bytes));
+  if (!std::equal(readback.begin(), readback.end(), first_source)) {
+    std::fprintf(stderr, "first capture into a graph lost its HtoD\n");
+    return 1;
+  }
+  CHECK(cuMemcpyDtoH(readback.data(), second_destination, bytes));
+  if (!std::equal(readback.begin(), readback.end(), second_source)) {
+    std::fprintf(stderr, "second capture into a graph lost its HtoD\n");
+    return 1;
+  }
+
+  CHECK(cuGraphExecDestroy(executable));
+  CHECK(cuGraphDestroy(graph));
+  return 0;
+}
+#endif
+
 static int check_parallel_graph_instances(CUdeviceptr destination,
                                           CUstream first_stream,
                                           CUstream second_stream,
@@ -431,6 +473,13 @@ int main() {
           second_source.data(), 12 * 1024 * 1024) != 0) {
     return 1;
   }
+#if CUDA_VERSION >= 12030
+  if (check_captures_into_one_graph(destination, second_destination, stream,
+                                    source.data(), second_source.data(),
+                                    12 * 1024 * 1024) != 0) {
+    return 1;
+  }
+#endif
   if (check_parallel_graph_instances(destination, stream, second_stream,
                                      source.data(), 12 * 1024 * 1024) != 0) {
     return 1;
