@@ -278,6 +278,8 @@ void rpc_close_transport_socket(conn_t *conn) {
 #endif
   rpc_cancel_async_waits(conn);
   if (socket == LUPINE_INVALID_SOCKET) {
+    // A session parked for a checkpoint reconnect has no socket of its own.
+    rpc_http2_destroy(conn);
     return;
   }
   struct linger abortive = {};

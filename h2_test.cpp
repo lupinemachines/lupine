@@ -676,6 +676,32 @@ void test_process_control_preserves_queued_output() {
   }
 }
 
+// A checkpoint reconnect that fails leaves the session parked with no socket.
+// Destroying the connection must still stop the session's threads and free it.
+void test_destroy_releases_a_parked_session() {
+  h2_pair pair;
+  init_raw_server_peer(&pair);
+  const unsigned char settings[] = {0, 0, 0, NGHTTP2_SETTINGS, 0, 0, 0, 0, 0};
+  require(raw_write_all(pair.server.connfd, settings, sizeof(settings)),
+          "server SETTINGS write failed");
+  const std::string checkpoint = "session.1";
+  for (char command : {'P', 'C'}) {
+    std::vector<unsigned char> frame(9, 0);
+    frame[2] = static_cast<unsigned char>(checkpoint.size() + 1);
+    frame[3] = LUPINE_HANDOFF_CONTROL_FRAME;
+    frame.push_back(static_cast<unsigned char>(command));
+    frame.insert(frame.end(), checkpoint.begin(), checkpoint.end());
+    require(raw_write_all(pair.server.connfd, frame.data(), frame.size()),
+            "process control write failed");
+  }
+  require(lupine_handoff_park_socket(&pair.client) == 0, "socket park failed");
+  lupine_socket_close(pair.client.connfd);
+  pair.client.connfd = LUPINE_INVALID_SOCKET;
+  rpc_conn_destroy(&pair.client);
+  require(pair.client.http2 == nullptr,
+          "destroying a parked connection leaked its HTTP/2 session");
+}
+
 void test_response_wait_sends_transport_heartbeat() {
   h2_pair pair;
   init_raw_server_peer(&pair);
@@ -2725,6 +2751,7 @@ int main() {
   RUN_CASE(test_rpc_request_nested_in_response_builder());
   RUN_CASE(test_rpc_response_completed_hook());
   RUN_CASE(test_process_control_preserves_queued_output());
+  RUN_CASE(test_destroy_releases_a_parked_session());
   RUN_CASE(test_response_wait_sends_transport_heartbeat());
   RUN_CASE(test_data_provider_frame_sizing());
   RUN_CASE(test_client_to_server());
