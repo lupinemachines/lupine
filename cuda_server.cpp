@@ -880,10 +880,10 @@ static void lupine_release_pending_dtoh_copies(
 
 void lupine_cleanup_pending_dtoh_copies(
     std::vector<lupine_pending_dtoh_item> *pending) {
-  lupine_free_retired_dtoh_staging();
   if (pending != nullptr) {
     lupine_release_pending_dtoh_copies(pending, false);
   }
+  lupine_free_retired_dtoh_staging();
 }
 
 #if CUDA_VERSION >= 12040
