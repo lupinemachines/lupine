@@ -564,6 +564,7 @@ def parse_annotation(
             line = line[2:]
         if line.strip().startswith("@async"):
             metadata.async_fire_forget = True
+            metadata.async_keep_error = line.split()[1:] == ["keep_error"]
             continue
         if line.strip().startswith("@synchronize"):
             parts = line.split()

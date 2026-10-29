@@ -2188,7 +2188,8 @@ int handle_cuMemcpyDtoDAsync_v2(conn_t *conn) {
   if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
-  cuMemcpyDtoDAsync_v2(dstDevice, srcDevice, ByteCount, hStream);
+  lupine_keep_async_error(
+      conn, cuMemcpyDtoDAsync_v2(dstDevice, srcDevice, ByteCount, hStream));
 
   rpc_async_sequence_end(conn);
 
@@ -2386,7 +2387,7 @@ int handle_cuMemsetD8Async(conn_t *conn) {
   if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
-  cuMemsetD8Async(dstDevice, uc, N, hStream);
+  lupine_keep_async_error(conn, cuMemsetD8Async(dstDevice, uc, N, hStream));
 
   rpc_async_sequence_end(conn);
 
@@ -2416,7 +2417,7 @@ int handle_cuMemsetD16Async(conn_t *conn) {
   if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
-  cuMemsetD16Async(dstDevice, us, N, hStream);
+  lupine_keep_async_error(conn, cuMemsetD16Async(dstDevice, us, N, hStream));
 
   rpc_async_sequence_end(conn);
 
@@ -2446,7 +2447,7 @@ int handle_cuMemsetD32Async(conn_t *conn) {
   if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
-  cuMemsetD32Async(dstDevice, ui, N, hStream);
+  lupine_keep_async_error(conn, cuMemsetD32Async(dstDevice, ui, N, hStream));
 
   rpc_async_sequence_end(conn);
 
@@ -2480,7 +2481,8 @@ int handle_cuMemsetD2D8Async(conn_t *conn) {
   if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
-  cuMemsetD2D8Async(dstDevice, dstPitch, uc, Width, Height, hStream);
+  lupine_keep_async_error(
+      conn, cuMemsetD2D8Async(dstDevice, dstPitch, uc, Width, Height, hStream));
 
   rpc_async_sequence_end(conn);
 
@@ -2514,7 +2516,8 @@ int handle_cuMemsetD2D16Async(conn_t *conn) {
   if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
-  cuMemsetD2D16Async(dstDevice, dstPitch, us, Width, Height, hStream);
+  lupine_keep_async_error(conn, cuMemsetD2D16Async(dstDevice, dstPitch, us,
+                                                   Width, Height, hStream));
 
   rpc_async_sequence_end(conn);
 
@@ -2548,7 +2551,8 @@ int handle_cuMemsetD2D32Async(conn_t *conn) {
   if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
-  cuMemsetD2D32Async(dstDevice, dstPitch, ui, Width, Height, hStream);
+  lupine_keep_async_error(conn, cuMemsetD2D32Async(dstDevice, dstPitch, ui,
+                                                   Width, Height, hStream));
 
   rpc_async_sequence_end(conn);
 

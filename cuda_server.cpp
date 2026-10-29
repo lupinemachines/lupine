@@ -437,7 +437,7 @@ lupine_logs_callbacks() {
 #endif
 
 // A fire-and-forget failure is reported by the next synchronizing response.
-static void lupine_keep_async_error(conn_t *conn, CUresult result) {
+void lupine_keep_async_error(conn_t *conn, CUresult result) {
   int none = CUDA_SUCCESS;
   if (result != CUDA_SUCCESS) {
     __atomic_compare_exchange_n(&conn->first_async_error, &none,
@@ -2521,13 +2521,13 @@ int handle_cuLaunchCooperativeKernel(conn_t *conn) {
                                        blockDimX, blockDimY, blockDimZ,
                                        sharedMemBytes, hStream, params);
   }
+  lupine_keep_async_error(conn, result);
   rpc_async_sequence_end(conn);
   std::free(param_sizes);
   std::free(params);
   std::free(param_storage);
 
   (void)request_id;
-  (void)result;
   return 0;
 }
 
@@ -3498,8 +3498,7 @@ int handle_cuStreamWaitEvent(conn_t *conn) {
     return -1;
   }
   lupine_wait_event_capture_resources(stream, event);
-  // Fire-and-forget like cuEventRecord: a failure surfaces at the next sync.
-  cuStreamWaitEvent(stream, event, flags);
+  lupine_keep_async_error(conn, cuStreamWaitEvent(stream, event, flags));
   rpc_async_sequence_end(conn);
   return 0;
 }

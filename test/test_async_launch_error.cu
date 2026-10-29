@@ -84,6 +84,17 @@ int main() {
         "cuStreamQuery reports the error the same way");
   CHECK(cuStreamQuery(nullptr) == CUDA_SUCCESS, "the query clears it");
 
+  launch = cuLaunchCooperativeKernel(function, 1u << 24, 1, 1, 1, 1, 1, 0,
+                                     nullptr, params);
+  sync = cuCtxSynchronize();
+  fprintf(stderr, "cooperative launch=%d sync=%d\n", static_cast<int>(launch),
+          static_cast<int>(sync));
+  CHECK((launch == CUDA_ERROR_COOPERATIVE_LAUNCH_TOO_LARGE &&
+         sync == CUDA_SUCCESS) ||
+            (launch == CUDA_SUCCESS &&
+             sync == CUDA_ERROR_COOPERATIVE_LAUNCH_TOO_LARGE),
+        "an oversized cooperative grid is reported");
+
   uint32_t host = UINT32_MAX;
   DRV(cuMemcpyDtoH(&host, output, sizeof(host)));
   CHECK(host == 0, "the rejected launch did not run");

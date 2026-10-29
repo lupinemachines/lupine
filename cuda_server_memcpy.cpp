@@ -2159,11 +2159,8 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
         conn, CU_STREAM_LEGACY, true,
         lupine_make_linear_htod_copy(destination, source, bytes));
   }
-  // A fire-and-forget copy drops its result, matching launch semantics: the
-  // client checked the arguments it could check before sending, and an
-  // execution failure poisons the context and reaches the client from its next
-  // synchronize.
   if (fire_and_forget) {
+    lupine_keep_async_error(conn, result);
     rpc_async_sequence_end(conn);
     return 0;
   }

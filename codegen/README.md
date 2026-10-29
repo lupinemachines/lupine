@@ -49,6 +49,11 @@ that status; otherwise it sends an ordinary request that carries the all-ones
 ticket and waits for the library's result. NCCL uses this for calls inside a
 group, which the library only queues.
 
+`@async keep_error` on a CUDA call that is always fire-and-forget records its
+failure for the next synchronizing reply, as a launch's is. Leave it off calls
+whose failures callers routinely ignore, such as attribute setters: a native
+caller would see such an error once and carry on, not at an unrelated sync.
+
 Client routing can also be annotated for handles that belong to a specific LUPINE
 server connection. `@routingkey <kind> <param>` selects the connection for the
 generated client wrapper before it writes the RPC. Supported kinds are

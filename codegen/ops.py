@@ -1179,6 +1179,8 @@ class FunctionAnnotationMetadata:
     disabled_server: bool = False
     # @async: fire-and-forget op; client does not wait, server sends no response.
     async_fire_forget: bool = False
+    # The server records a failure for the next synchronizing reply.
+    async_keep_error: bool = False
     # Optional response fields are emitted by the corresponding manual server
     # handler before the generated CUDA result.
     synchronize: Optional[SynchronizeAnnotation] = None

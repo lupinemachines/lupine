@@ -443,6 +443,8 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
                 f.write(f"  fn({args});\n\n")
             else:
                 f.write(f"  return_value = fn({args});\n\n")
+    elif metadata.async_keep_error:
+        f.write(f"  lupine_keep_async_error(conn, {entry}({args}));\n\n")
     elif always_async or result == "void":
         f.write(f"  {entry}({args});\n\n")
     else:
