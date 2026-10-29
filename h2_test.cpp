@@ -700,6 +700,9 @@ void test_destroy_releases_a_parked_session() {
   rpc_conn_destroy(&pair.client);
   require(pair.client.http2 == nullptr,
           "destroying a parked connection leaked its HTTP/2 session");
+  // Give the pair's destructor a live connection to destroy.
+  require(rpc_conn_init(&pair.client, LUPINE_INVALID_SOCKET, 0) == 0,
+          "client RPC reinit failed");
 }
 
 void test_response_wait_sends_transport_heartbeat() {
