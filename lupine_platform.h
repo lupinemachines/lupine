@@ -107,6 +107,7 @@ struct Elf64_Sym {
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <functional>
 #include <io.h>
 #include <mutex>
 #include <new>
@@ -627,6 +628,7 @@ inline int lupine_fd_reopen(int fd) {
 #include <cerrno>
 #include <cstdio>
 #include <fcntl.h>
+#include <functional>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -771,16 +773,19 @@ inline int lupine_socket_apply_transport_options(lupine_socket_t fd) {
 }
 
 // lupine_socket_connect_with_timeout connects `fd` to `addr`, waiting up to
-// `timeout_ms` milliseconds. A non-positive timeout performs a plain blocking
-// connect (the historical behavior). A bounded timeout prevents a
-// packet-filtered port from blocking the connect-retry loop for minutes
-// (the kernel's SYN retransmit backoff). Returns 0 on success, -1 on error
-// or timeout.
-inline int lupine_socket_connect_with_timeout(lupine_socket_t fd,
-                                               const struct sockaddr *addr,
-                                               socklen_t addrlen,
-                                               int timeout_ms) {
-  if (timeout_ms <= 0) {
+// `timeout_ms` milliseconds. A zero timeout performs a plain blocking connect
+// (the historical behavior). A bounded timeout prevents a packet-filtered port
+// from blocking the connect-retry loop for minutes (the kernel's SYN
+// retransmit backoff). A negative timeout waits without bound, but in
+// poll()/select(): shutdown() (CancelIoEx on Windows) of `fd` from another
+// thread interrupts that wait, while macOS leaves a blocking connect() asleep.
+// `in_flight` runs once the connect is underway, the earliest point at which
+// such a shutdown() takes effect, and returning false abandons it. Returns 0
+// on success, -1 on error or timeout.
+inline int lupine_socket_connect_with_timeout(
+    lupine_socket_t fd, const struct sockaddr *addr, socklen_t addrlen,
+    int timeout_ms, const std::function<bool()> &in_flight = nullptr) {
+  if (timeout_ms == 0) {
     return connect(fd, addr, addrlen);
   }
 #ifdef _WIN32
@@ -789,23 +794,27 @@ inline int lupine_socket_connect_with_timeout(lupine_socket_t fd,
     return connect(fd, addr, addrlen);
   }
   int rc = connect(fd, addr, addrlen);
+  if ((rc != 0 && WSAGetLastError() != WSAEWOULDBLOCK) ||
+      (in_flight && !in_flight())) {
+    nonblocking = 0;
+    ioctlsocket(fd, FIONBIO, &nonblocking);
+    return -1;
+  }
   if (rc == 0) {
     nonblocking = 0;
     ioctlsocket(fd, FIONBIO, &nonblocking);
     return 0;
   }
-  if (WSAGetLastError() != WSAEWOULDBLOCK) {
-    nonblocking = 0;
-    ioctlsocket(fd, FIONBIO, &nonblocking);
-    return -1;
-  }
   fd_set write_fds;
   FD_ZERO(&write_fds);
   FD_SET(fd, &write_fds);
+  // A refused nonblocking connect is reported only in the exception set.
+  fd_set error_fds = write_fds;
   struct timeval tv;
   tv.tv_sec = timeout_ms / 1000;
   tv.tv_usec = (timeout_ms % 1000) * 1000;
-  rc = select(0, nullptr, &write_fds, nullptr, &tv);
+  rc = select(0, nullptr, &write_fds, &error_fds,
+              timeout_ms < 0 ? nullptr : &tv);
   nonblocking = 0;
   ioctlsocket(fd, FIONBIO, &nonblocking);
   if (rc <= 0) {
@@ -825,13 +834,13 @@ inline int lupine_socket_connect_with_timeout(lupine_socket_t fd,
     return connect(fd, addr, addrlen);
   }
   int rc = connect(fd, addr, addrlen);
+  if ((rc != 0 && errno != EINPROGRESS) || (in_flight && !in_flight())) {
+    fcntl(fd, F_SETFL, saved_flags);
+    return -1;
+  }
   if (rc == 0) {
     fcntl(fd, F_SETFL, saved_flags);
     return 0;
-  }
-  if (errno != EINPROGRESS) {
-    fcntl(fd, F_SETFL, saved_flags);
-    return -1;
   }
   struct pollfd pfd;
   pfd.fd = fd;
@@ -839,7 +848,8 @@ inline int lupine_socket_connect_with_timeout(lupine_socket_t fd,
   pfd.revents = 0;
   rc = poll(&pfd, 1, timeout_ms);
   fcntl(fd, F_SETFL, saved_flags); // restore blocking mode regardless
-  if (rc <= 0) {
+  // macOS reports a connect cut short by shutdown() as POLLHUP, not an error.
+  if (rc <= 0 || (pfd.revents & POLLHUP) != 0) {
     return -1;
   }
   int so_error = 0;
