@@ -1589,7 +1589,8 @@ void test_flow_controlled_backlog_stays_bounded() {
   require(write_stream_bytes(&pair.client, lane, payload.data(),
                              payload.size()) == 0,
           "flow-controlled lane write failed");
-  size_t retained = heap_in_use() - std::min(baseline, heap_in_use());
+  size_t in_use = heap_in_use();
+  size_t retained = in_use - std::min(baseline, in_use);
   shutdown(pair.server.connfd, LUPINE_TEST_SHUT_RDWR);
   peer.join();
   require(retained < 64 * 1024 * 1024,
