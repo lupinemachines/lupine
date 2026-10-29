@@ -1526,19 +1526,19 @@ void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
   lupine_release_htod_graph_binding(binding);
 }
 
-#if CUDA_VERSION >= 12000
 void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
                                      lupine_htod_graph_binding *binding,
                                      CUresult result,
                                      CUgraphExecUpdateResultInfo *info) {
+#if CUDA_VERSION >= 12000
   if (result != CUDA_SUCCESS) {
     info->errorFromNode =
         lupine_original_htod_graph_node(*binding, info->errorFromNode);
   }
+#endif
   lupine_finish_graph_exec_update(exec, graph, binding, result,
                                   &info->errorNode);
 }
-#endif
 
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec) {
   CUresult result = lupine_release_htod_graph_exec(exec);

@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "cuda_compat.h"
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
@@ -144,12 +145,10 @@ CUresult lupine_prepare_graph_exec_update(CUgraphExec exec, CUgraph graph,
 void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
                                      lupine_htod_graph_binding *binding,
                                      CUresult result, CUgraphNode *error_node);
-#if CUDA_VERSION >= 12000
 void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
                                      lupine_htod_graph_binding *binding,
                                      CUresult result,
                                      CUgraphExecUpdateResultInfo *info);
-#endif
 void *lupine_alloc_capture_scratch(size_t bytes);
 void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
                                  const lupine_host_rows &client,
