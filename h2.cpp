@@ -122,6 +122,9 @@ struct h2_transport {
   std::atomic<uint64_t> output_generation{0};
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
+  // Process controls and incoming lanes wake their idle waiters here rather
+  // than on session_progress, which every send and read pass broadcasts.
+  pthread_cond_t control_progress = PTHREAD_COND_INITIALIZER;
   pthread_cond_t heartbeat_progress = PTHREAD_COND_INITIALIZER;
   pthread_cond_t writer_ready = PTHREAD_COND_INITIALIZER;
   pthread_cond_t outbound_progress = PTHREAD_COND_INITIALIZER;
@@ -186,6 +189,7 @@ void h2_fail_transport_locked(h2_transport *transport) {
     pthread_cond_broadcast(&entry.second.read_ready);
   }
   pthread_cond_broadcast(&transport->session_progress);
+  pthread_cond_broadcast(&transport->control_progress);
 }
 
 bool h2_retryable_handshake_rejection(const h2_transport *transport,
@@ -624,7 +628,7 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     transport->process_controls.emplace_back(command, std::move(checkpoint));
-    pthread_cond_broadcast(&transport->session_progress);
+    pthread_cond_broadcast(&transport->control_progress);
     return 0;
   }
   if (transport->server && frame->hd.type == NGHTTP2_PING &&
@@ -701,6 +705,7 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
       transport->dispatch_stream_id = frame->hd.stream_id;
     } else if (status == 200 && !probe) {
       transport->incoming_streams.push_back(frame->hd.stream_id);
+      pthread_cond_broadcast(&transport->control_progress);
     }
     if (!stream.response_sent &&
         h2_submit_server_response(transport, frame->hd.stream_id, status,
@@ -1635,7 +1640,7 @@ int32_t rpc_http2_accept_stream(conn_t *conn) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   pthread_mutex_lock(&transport->session_mutex);
   while (transport->incoming_streams.empty() && !transport->transport_failed) {
-    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
+    pthread_cond_wait(&transport->control_progress, &transport->session_mutex);
   }
   int32_t stream_id = -1;
   if (!transport->incoming_streams.empty()) {
@@ -1977,7 +1982,7 @@ int lupine_handoff_receive_control(conn_t *conn, char *command,
   auto *transport = static_cast<h2_transport *>(conn->http2);
   pthread_mutex_lock(&transport->session_mutex);
   while (transport->process_controls.empty() && !transport->transport_failed) {
-    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
+    pthread_cond_wait(&transport->control_progress, &transport->session_mutex);
   }
   int result = -1;
   if (!transport->process_controls.empty() && !transport->transport_failed) {
@@ -2090,6 +2095,7 @@ void rpc_http2_destroy(conn_t *conn) {
   pthread_cond_destroy(&transport->writer_ready);
   pthread_cond_destroy(&transport->heartbeat_progress);
   pthread_cond_destroy(&transport->session_progress);
+  pthread_cond_destroy(&transport->control_progress);
   pthread_mutex_destroy(&transport->session_mutex);
   pthread_mutex_destroy(&transport->tls_mutex);
   delete transport;
