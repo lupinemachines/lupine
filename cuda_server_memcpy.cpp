@@ -1045,6 +1045,8 @@ struct lupine_htod_graph_state {
   std::shared_ptr<lupine_htod_graph_execution> execution;
   std::mutex callbacks_mutex;
   std::vector<std::shared_ptr<lupine_htod_callback_data>> callbacks;
+  // Set once the graph's own nodes were rebound in place.
+  std::vector<std::shared_ptr<lupine_htod_graph_execution>> rebound;
 };
 
 using lupine_htod_graph_registry =
@@ -1124,9 +1126,15 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
   *binding = {};
   binding->original = graph;
   binding->prepared = graph;
-  // Each capture into the graph left its own state; the latest comes first.
-  std::vector<std::shared_ptr<lupine_htod_graph_state>> captured_states;
-  std::vector<std::shared_ptr<lupine_htod_graph_execution>> captured_executions;
+  // Each capture into the graph left its own state, latest first. Separate
+  // captures need not be ordered against each other, so each one's copies
+  // get a ring of their own.
+  struct rebinding {
+    std::shared_ptr<lupine_htod_graph_execution> captured;
+    std::shared_ptr<lupine_htod_graph_execution> execution;
+  };
+  std::shared_ptr<lupine_htod_graph_state> latest_state;
+  std::vector<rebinding> rebindings;
   size_t callback_count = 0;
   try {
     for (; resources != nullptr; resources = resources->earlier) {
@@ -1134,25 +1142,38 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
       if (!lupine_htod_graph_states().find(resources, state)) {
         continue;
       }
-      captured_states.push_back(state);
-      auto captured_execution = state->execution;
-      if (std::find(captured_executions.begin(), captured_executions.end(),
-                    captured_execution) == captured_executions.end()) {
-        callback_count += captured_execution->callback_count();
-        captured_executions.push_back(std::move(captured_execution));
+      std::vector<std::shared_ptr<lupine_htod_graph_execution>> executions;
+      {
+        std::lock_guard<std::mutex> lock(state->callbacks_mutex);
+        executions = state->rebound;
+      }
+      bool rebound = !executions.empty();
+      if (!rebound) {
+        executions.push_back(state->execution);
+      }
+      if (latest_state == nullptr) {
+        latest_state = state;
+      }
+      for (auto &captured : executions) {
+        if (std::none_of(rebindings.begin(), rebindings.end(),
+                         [&](const rebinding &existing) {
+                           return existing.captured == captured;
+                         })) {
+          callback_count += captured->callback_count();
+          rebindings.push_back({std::move(captured), nullptr});
+        }
+      }
+      // A graph rebound in place already covers its earlier captures.
+      if (rebound) {
+        break;
       }
     }
   } catch (...) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
-  if (captured_states.empty()) {
+  if (rebindings.empty()) {
     return CUDA_SUCCESS;
   }
-  auto captured = [&](auto &&predicate) {
-    return std::any_of(
-        captured_executions.begin(), captured_executions.end(),
-        [&](const auto &execution) { return predicate(*execution->ring()); });
-  };
 
   bool prepared_in_place = false;
   CUresult result = cuGraphClone(&binding->prepared, graph);
@@ -1169,20 +1190,20 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
     return result;
   }
 
-  auto captured_ring = captured_executions.front()->ring();
-  std::shared_ptr<lupine_htod_side_effect_ring> ring;
-  std::shared_ptr<lupine_htod_graph_execution> execution;
-  try {
-    ring = std::make_shared<lupine_htod_side_effect_ring>(
-        captured_ring->connection(), captured_ring->context());
-    execution =
-        std::make_shared<lupine_htod_graph_execution>(ring, callback_count);
-  } catch (...) {
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
-  result = ring->prepare();
-  if (result != CUDA_SUCCESS) {
-    return result;
+  for (auto &entry : rebindings) {
+    const auto &captured_ring = entry.captured->ring();
+    try {
+      auto ring = std::make_shared<lupine_htod_side_effect_ring>(
+          captured_ring->connection(), captured_ring->context());
+      entry.execution = std::make_shared<lupine_htod_graph_execution>(
+          ring, entry.captured->callback_count());
+    } catch (...) {
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+    result = entry.execution->ring()->prepare();
+    if (result != CUDA_SUCCESS) {
+      return result;
+    }
   }
 
   size_t node_count = 0;
@@ -1209,11 +1230,14 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
   std::unordered_map<const lupine_htod_capture_events *,
                      std::shared_ptr<lupine_htod_capture_events>>
       callback_event_sets;
+  // A captured copy's only dependency is the callback that fills its slot.
+  std::unordered_map<CUgraphNode, const rebinding *> callback_nodes;
   size_t expected_copy_nodes = 0;
   size_t rebound_copy_nodes = 0;
   try {
     callbacks.reserve(callback_count);
     events.reserve(callback_count * 2);
+    callback_nodes.reserve(callback_count);
   } catch (...) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -1240,11 +1264,14 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
       continue;
     }
     auto *captured = static_cast<lupine_htod_callback_data *>(params.userData);
-    if (std::find(captured_executions.begin(), captured_executions.end(),
-                  captured->graph_execution) == captured_executions.end() ||
-        captured->capture_events == nullptr) {
+    auto entry = std::find_if(
+        rebindings.begin(), rebindings.end(), [&](const rebinding &candidate) {
+          return candidate.captured == captured->graph_execution;
+        });
+    if (entry == rebindings.end() || captured->capture_events == nullptr) {
       continue;
     }
+    const auto &ring = entry->execution->ring();
 
     std::shared_ptr<lupine_htod_capture_events> callback_events;
     auto existing_events =
@@ -1270,9 +1297,10 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
     try {
       callback = std::make_shared<lupine_htod_callback_data>(
           lupine_htod_callback_data{ring, captured->copy, captured->fragment,
-                                    execution, callback_events});
+                                    entry->execution, callback_events});
       ++expected_copy_nodes;
       callbacks.push_back(callback);
+      callback_nodes.emplace(node, &*entry);
     } catch (...) {
       return CUDA_ERROR_OUT_OF_MEMORY;
     }
@@ -1282,6 +1310,17 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
       return result;
     }
   }
+
+  auto copy_rebinding = [&](CUgraphNode node) -> const rebinding * {
+    CUgraphNode dependency = nullptr;
+    size_t count = 1;
+    if (cuGraphNodeGetDependencies_v2(node, &dependency, nullptr, &count) !=
+        CUDA_SUCCESS) {
+      return nullptr;
+    }
+    auto found = callback_nodes.find(dependency);
+    return found == callback_nodes.end() ? nullptr : found->second;
+  };
 
   for (CUgraphNode node : nodes) {
     CUgraphNodeType type = CU_GRAPH_NODE_TYPE_EMPTY;
@@ -1295,10 +1334,9 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
       if (result != CUDA_SUCCESS) {
         return result;
       }
-      if (params.func == nullptr ||
-          !captured([&](lupine_htod_side_effect_ring &candidate) {
-            return candidate.is_smemcpy_function(params.func);
-          })) {
+      const rebinding *entry = nullptr;
+      if (params.func == nullptr || (entry = copy_rebinding(node)) == nullptr ||
+          !entry->captured->ring()->is_smemcpy_function(params.func)) {
         continue;
       }
       if (params.kernelParams == nullptr || params.kernelParams[0] == nullptr) {
@@ -1307,12 +1345,10 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
       auto copy =
           *static_cast<const lupine_smemcpy_params *>(params.kernelParams[0]);
       size_t offset = 0;
-      if (!captured([&](lupine_htod_side_effect_ring &candidate) {
-            return candidate.device_data_offset(copy.source, &offset);
-          })) {
+      if (!entry->captured->ring()->device_data_offset(copy.source, &offset)) {
         continue;
       }
-      copy.source = ring->device_data_at(offset);
+      copy.source = entry->execution->ring()->device_data_at(offset);
       void *arguments[] = {&copy};
       params.kernelParams = arguments;
       params.extra = nullptr;
@@ -1327,12 +1363,12 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
       if (result != CUDA_SUCCESS) {
         return result;
       }
+      const rebinding *entry = nullptr;
       size_t offset = 0;
       if (params.srcMemoryType == CU_MEMORYTYPE_HOST &&
-          captured([&](lupine_htod_side_effect_ring &candidate) {
-            return candidate.data_offset(params.srcHost, &offset);
-          })) {
-        params.srcHost = ring->data_at(offset);
+          (entry = copy_rebinding(node)) != nullptr &&
+          entry->captured->ring()->data_offset(params.srcHost, &offset)) {
+        params.srcHost = entry->execution->ring()->data_at(offset);
         result = cuGraphMemcpyNodeSetParams(node, &params);
         if (result != CUDA_SUCCESS) {
           return result;
@@ -1377,14 +1413,18 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
     resources->callbacks = callbacks;
     resources->original = binding->original;
     resources->prepared = binding->prepared;
-    resources->context = ring->context();
+    resources->context = rebindings.front().execution->ring()->context();
     binding->resources = std::move(resources);
     if (prepared_in_place) {
-      for (const auto &state : captured_states) {
-        std::lock_guard<std::mutex> lock(state->callbacks_mutex);
-        state->execution = execution;
-        state->callbacks = callbacks;
+      // Earlier states may be shared with clones taken before the graph
+      // gained allocation nodes; the latest one is the graph's alone.
+      std::vector<std::shared_ptr<lupine_htod_graph_execution>> rebound;
+      for (const auto &entry : rebindings) {
+        rebound.push_back(entry.execution);
       }
+      std::lock_guard<std::mutex> lock(latest_state->callbacks_mutex);
+      latest_state->rebound = std::move(rebound);
+      latest_state->callbacks = std::move(callbacks);
     }
   } catch (...) {
     return CUDA_ERROR_OUT_OF_MEMORY;

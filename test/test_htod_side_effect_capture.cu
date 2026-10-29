@@ -220,43 +220,188 @@ static int check_concurrent_captured_copies(
   return 0;
 }
 
+static const char *kSpinPtx = R"ptx(
+.version 7.0
+.target sm_50
+.address_size 64
+
+.visible .entry spin_kernel(
+    .param .u64 duration
+)
+{
+    .reg .b64 %rd<5>;
+    .reg .pred %p<2>;
+
+    ld.param.u64 %rd1, [duration];
+    mov.u64 %rd2, %globaltimer;
+SPIN:
+    mov.u64 %rd3, %globaltimer;
+    sub.u64 %rd4, %rd3, %rd2;
+    setp.lt.u64 %p1, %rd4, %rd1;
+    @%p1 bra SPIN;
+    ret;
+}
+)ptx";
+
 #if CUDA_VERSION >= 12030
-// Each capture into a graph keeps its own HtoD callbacks; instantiation must
-// rebind all of them.
+// Pitched copies stage through the copy kernel rather than a CUDA memcpy.
+static CUDA_MEMCPY2D pitched_copy(size_t bytes) {
+  CUDA_MEMCPY2D copy = {};
+  copy.WidthInBytes = 4096;
+  copy.Height = bytes / copy.WidthInBytes;
+  return copy;
+}
+
+static int capture_pitched_copy(CUgraph graph, CUstream stream,
+                                CUdeviceptr destination,
+                                unsigned char *source, size_t bytes) {
+  CUDA_MEMCPY2D copy = pitched_copy(bytes);
+  copy.srcMemoryType = CU_MEMORYTYPE_HOST;
+  copy.srcHost = source;
+  copy.srcPitch = copy.WidthInBytes;
+  copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+  copy.dstDevice = destination;
+  copy.dstPitch = 2 * copy.WidthInBytes;
+  CHECK(cuStreamBeginCaptureToGraph(stream, graph, nullptr, nullptr, 0,
+                                    CU_STREAM_CAPTURE_MODE_GLOBAL));
+  CHECK(cuMemcpy2DAsync(&copy, stream));
+  CHECK(cuStreamEndCapture(stream, &graph));
+  return 0;
+}
+
+static int matches_pitched(CUdeviceptr destination, const unsigned char *source,
+                           size_t bytes) {
+  std::vector<unsigned char> readback(bytes);
+  CUDA_MEMCPY2D copy = pitched_copy(bytes);
+  copy.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+  copy.srcDevice = destination;
+  copy.srcPitch = 2 * copy.WidthInBytes;
+  copy.dstMemoryType = CU_MEMORYTYPE_HOST;
+  copy.dstHost = readback.data();
+  copy.dstPitch = copy.WidthInBytes;
+  CHECK(cuMemcpy2D(&copy));
+  return std::equal(readback.begin(), readback.end(), source) ? 0 : 1;
+}
+
+// Each capture into a graph keeps its own HtoD callbacks, and instantiation
+// must rebind all of them. Unordered captures must not share a staging ring:
+// filling every block slot holds back the copy kernels while both callbacks
+// fetch.
 static int check_captures_into_one_graph(CUdeviceptr first_destination,
                                          CUdeviceptr second_destination,
                                          CUstream stream,
                                          unsigned char *first_source,
                                          unsigned char *second_source,
-                                         size_t bytes) {
+                                         size_t bytes, CUfunction spin) {
+  CUgraph graph = nullptr;
+  CHECK(cuGraphCreate(&graph, 0));
+  if (capture_pitched_copy(graph, stream, first_destination, first_source,
+                           bytes) != 0 ||
+      capture_pitched_copy(graph, stream, second_destination, second_source,
+                           bytes) != 0) {
+    return 1;
+  }
+  CUgraphExec executable = nullptr;
+  CHECK(cuGraphInstantiateWithFlags(&executable, graph, 0));
+
+  CUdevice device = 0;
+  CHECK(cuCtxGetDevice(&device));
+  int multiprocessors = 0;
+  int blocks_per_multiprocessor = 0;
+  CHECK(cuDeviceGetAttribute(&multiprocessors,
+                             CU_DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT, device));
+  CHECK(cuDeviceGetAttribute(&blocks_per_multiprocessor,
+                             CU_DEVICE_ATTRIBUTE_MAX_BLOCKS_PER_MULTIPROCESSOR,
+                             device));
+  CUstream spin_stream = nullptr;
+  CHECK(cuStreamCreate(&spin_stream, CU_STREAM_NON_BLOCKING));
+  unsigned long long duration = 300000000ull;
+  void *spin_arguments[] = {&duration};
+  for (int round = 0; round < 4; ++round) {
+    CHECK(cuMemsetD8(first_destination, 0, 2 * bytes));
+    CHECK(cuMemsetD8(second_destination, 0, 2 * bytes));
+    CHECK(cuCtxSynchronize());
+    CHECK(cuLaunchKernel(spin, multiprocessors * blocks_per_multiprocessor, 1,
+                         1, 32, 1, 1, 0, spin_stream, spin_arguments,
+                         nullptr));
+    CHECK(cuGraphLaunch(executable, stream));
+    CHECK(cuStreamSynchronize(stream));
+    if (matches_pitched(first_destination, first_source, bytes) != 0) {
+      std::fprintf(stderr, "first capture into a graph lost its HtoD\n");
+      return 1;
+    }
+    if (matches_pitched(second_destination, second_source, bytes) != 0) {
+      std::fprintf(stderr, "second capture into a graph lost its HtoD\n");
+      return 1;
+    }
+  }
+
+  CHECK(cuStreamDestroy(spin_stream));
+  CHECK(cuGraphExecDestroy(executable));
+  CHECK(cuGraphDestroy(graph));
+  return 0;
+}
+
+static int launch_and_compare(CUgraph graph, CUstream stream,
+                              CUdeviceptr destination,
+                              const unsigned char *source, size_t bytes) {
+  CHECK(cuMemsetD8(destination, 0, bytes));
+  CHECK(cuCtxSynchronize());
+  CUgraphExec executable = nullptr;
+  CHECK(cuGraphInstantiateWithFlags(&executable, graph, 0));
+  CHECK(cuGraphLaunch(executable, stream));
+  CHECK(cuStreamSynchronize(stream));
+  CHECK(cuGraphExecDestroy(executable));
+  std::vector<unsigned char> readback(bytes);
+  CHECK(cuMemcpyDtoH(readback.data(), destination, bytes));
+  return std::equal(readback.begin(), readback.end(), source) ? 0 : 1;
+}
+
+// A capture that adds graph memory nodes makes the graph rebind in place. A
+// clone taken before that still shares the earlier capture's callbacks.
+static int check_in_place_captures_into_one_graph(
+    CUdeviceptr first_destination, CUdeviceptr second_destination,
+    CUstream stream, unsigned char *first_source, unsigned char *second_source,
+    size_t bytes) {
   CUgraph graph = nullptr;
   CHECK(cuGraphCreate(&graph, 0));
   CHECK(cuStreamBeginCaptureToGraph(stream, graph, nullptr, nullptr, 0,
                                     CU_STREAM_CAPTURE_MODE_GLOBAL));
   CHECK(cuMemcpyHtoDAsync(first_destination, first_source, bytes, stream));
   CHECK(cuStreamEndCapture(stream, &graph));
+  CUgraph clone = nullptr;
+  CHECK(cuGraphClone(&clone, graph));
+
+  CUdeviceptr temporary = 0;
   CHECK(cuStreamBeginCaptureToGraph(stream, graph, nullptr, nullptr, 0,
                                     CU_STREAM_CAPTURE_MODE_GLOBAL));
-  CHECK(cuMemcpyHtoDAsync(second_destination, second_source, bytes, stream));
+  CHECK(cuMemAllocAsync(&temporary, bytes, stream));
+  CHECK(cuMemcpyHtoDAsync(temporary, second_source, bytes, stream));
+  CHECK(cuMemcpyDtoDAsync(second_destination, temporary, bytes, stream));
+  CHECK(cuMemFreeAsync(temporary, stream));
   CHECK(cuStreamEndCapture(stream, &graph));
-  CUgraphExec executable = nullptr;
-  CHECK(cuGraphInstantiateWithFlags(&executable, graph, 0));
-  CHECK(cuGraphLaunch(executable, stream));
-  CHECK(cuStreamSynchronize(stream));
 
-  std::vector<unsigned char> readback(bytes);
-  CHECK(cuMemcpyDtoH(readback.data(), first_destination, bytes));
-  if (!std::equal(readback.begin(), readback.end(), first_source)) {
-    std::fprintf(stderr, "first capture into a graph lost its HtoD\n");
+  for (int instance = 0; instance < 2; ++instance) {
+    CHECK(cuMemsetD8(second_destination, 0, bytes));
+    if (launch_and_compare(graph, stream, first_destination, first_source,
+                           bytes) != 0) {
+      std::fprintf(stderr, "in-place graph lost its first capture's HtoD\n");
+      return 1;
+    }
+    std::vector<unsigned char> readback(bytes);
+    CHECK(cuMemcpyDtoH(readback.data(), second_destination, bytes));
+    if (!std::equal(readback.begin(), readback.end(), second_source)) {
+      std::fprintf(stderr, "in-place graph lost its second capture's HtoD\n");
+      return 1;
+    }
+  }
+  if (launch_and_compare(clone, stream, first_destination, first_source,
+                         bytes) != 0) {
+    std::fprintf(stderr, "clone lost its HtoD after in-place rebinding\n");
     return 1;
   }
-  CHECK(cuMemcpyDtoH(readback.data(), second_destination, bytes));
-  if (!std::equal(readback.begin(), readback.end(), second_source)) {
-    std::fprintf(stderr, "second capture into a graph lost its HtoD\n");
-    return 1;
-  }
 
-  CHECK(cuGraphExecDestroy(executable));
+  CHECK(cuGraphDestroy(clone));
   CHECK(cuGraphDestroy(graph));
   return 0;
 }
@@ -405,6 +550,10 @@ int main() {
   CHECK(cuModuleLoadData(&module, kAddPtx));
   CUfunction add_function = nullptr;
   CHECK(cuModuleGetFunction(&add_function, module, "add_kernel"));
+  CUmodule spin_module = nullptr;
+  CHECK(cuModuleLoadData(&spin_module, kSpinPtx));
+  CUfunction spin_function = nullptr;
+  CHECK(cuModuleGetFunction(&spin_function, spin_module, "spin_kernel"));
   CUstream stream = nullptr;
   CHECK(cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING));
   CUstream second_stream = nullptr;
@@ -476,7 +625,12 @@ int main() {
 #if CUDA_VERSION >= 12030
   if (check_captures_into_one_graph(destination, second_destination, stream,
                                     source.data(), second_source.data(),
-                                    12 * 1024 * 1024) != 0) {
+                                    12 * 1024 * 1024, spin_function) != 0) {
+    return 1;
+  }
+  if (check_in_place_captures_into_one_graph(
+          destination, second_destination, stream, source.data(),
+          second_source.data(), 4 * 1024 * 1024) != 0) {
     return 1;
   }
 #endif
@@ -524,6 +678,7 @@ int main() {
   CHECK(cuStreamDestroy(stream));
   CHECK(cuMemFree(second_destination));
   CHECK(cuMemFree(destination));
+  CHECK(cuModuleUnload(spin_module));
   CHECK(cuModuleUnload(module));
   CHECK(cuCtxDestroy(context));
   std::printf(
