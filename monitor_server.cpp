@@ -41,7 +41,7 @@
 namespace {
 
 constexpr uint32_t kRegistryMagic = 0x4c504d52;
-constexpr uint32_t kRegistryVersion = 1;
+constexpr uint32_t kRegistryVersion = 2;
 constexpr size_t kMaxServerChildren = 4096;
 constexpr uint64_t kProcessUtilizationWindowUs = 2 * 1000 * 1000;
 constexpr uint32_t kSlotFree = 0;
@@ -53,6 +53,7 @@ struct alignas(64) monitor_slot {
   int32_t host_pid;
   char client_address[64];
   lupine_client_metadata metadata;
+  char workload_id[LUPINE_WORKLOAD_ID_MAX_BYTES + 1];
 };
 
 struct monitor_registry {
@@ -71,6 +72,7 @@ struct child_snapshot {
   int32_t host_pid = 0;
   char client_address[64] = {};
   lupine_client_metadata metadata = {};
+  char workload_id[LUPINE_WORKLOAD_ID_MAX_BYTES + 1] = {};
 };
 
 monitor_registry *registry = nullptr;
@@ -123,7 +125,7 @@ std::string peer_address(lupine_socket_t socket) {
 }
 
 bool store_metadata(int slot_index, const lupine_client_metadata &metadata,
-                    const char *client_address) {
+                    const char *client_address, const char *workload_id) {
   if (registry == nullptr || slot_index < 0 ||
       slot_index >= static_cast<int>(kMaxServerChildren)) {
     return false;
@@ -135,6 +137,7 @@ bool store_metadata(int slot_index, const lupine_client_metadata &metadata,
   bool stored = slot->state == kSlotActive;
   if (stored) {
     slot->metadata = metadata;
+    memcpy(slot->workload_id, workload_id, sizeof(slot->workload_id));
     memset(slot->client_address, 0, sizeof(slot->client_address));
     if (client_address != nullptr) {
       size_t length = strnlen(client_address, sizeof(slot->client_address) - 1);
@@ -192,6 +195,8 @@ registry_snapshot snapshot_registry() {
     memcpy(snapshot.client_address, slot.client_address,
            sizeof(snapshot.client_address));
     snapshot.metadata = slot.metadata;
+    memcpy(snapshot.workload_id, slot.workload_id,
+           sizeof(snapshot.workload_id));
     terminate_strings(&snapshot.metadata);
     snapshot.client_address[sizeof(snapshot.client_address) - 1] = '\0';
     result.children.push_back(snapshot);
@@ -567,7 +572,8 @@ struct process_sample {
   bool utilization_valid = false;
 };
 
-std::string client_id_for(const child_snapshot &child) {
+// Groups connections from one client process. Not exported.
+std::string process_key_for(const child_snapshot &child) {
   const auto &metadata = child.metadata;
   std::ostringstream out;
   if (metadata.client_pid > 0) {
@@ -579,6 +585,19 @@ std::string client_id_for(const child_snapshot &child) {
     }
     out << ':' << metadata.client_pid;
     return out.str();
+  }
+  return std::string("connection:") + child.client_address + ':' +
+         std::to_string(child.server_pid);
+}
+
+// PID by default. LUPINE_WORKLOAD_ID replaces it for every connection that
+// reports the same value.
+std::string client_id_for(const child_snapshot &child) {
+  if (child.workload_id[0] != '\0') {
+    return child.workload_id;
+  }
+  if (child.metadata.client_pid > 0) {
+    return std::to_string(child.metadata.client_pid);
   }
   return std::string("connection:") + child.client_address + ':' +
          std::to_string(child.server_pid);
@@ -725,6 +744,7 @@ int handle_lupine_client_metadata(conn_t *conn) {
     return -1;
   }
   lupine_client_metadata metadata = {};
+  char workload_id[LUPINE_WORKLOAD_ID_MAX_BYTES + 1] = {};
   if (header.payload_size > LUPINE_CLIENT_METADATA_MAX_PAYLOAD) {
     if (rpc_drain(conn, header.payload_size) < 0) {
       return -1;
@@ -735,12 +755,11 @@ int handle_lupine_client_metadata(conn_t *conn) {
         rpc_read(conn, payload.data(), header.payload_size) != 0) {
       return -1;
     }
-    if (header.version == LUPINE_CLIENT_METADATA_VERSION &&
-        header.payload_size >= sizeof(metadata)) {
-      memcpy(&metadata, payload.data(), sizeof(metadata));
+    if (lupine_decode_client_metadata(header, payload.data(), &metadata,
+                                      workload_id)) {
       terminate_strings(&metadata);
       std::string address = peer_address(conn->connfd);
-      store_metadata(child_slot, metadata, address.c_str());
+      store_metadata(child_slot, metadata, address.c_str(), workload_id);
     }
   }
   return rpc_read_end(conn) < 0 ? -1 : 0;
@@ -756,7 +775,21 @@ void lupine_monitoring_end_context_create(bool context_created) {
 
 std::string lupine_monitoring_render_metrics() {
   registry_snapshot registry_values = snapshot_registry();
-  const std::vector<child_snapshot> &children = registry_values.children;
+  std::vector<child_snapshot> &children = registry_values.children;
+  // CUDA and NVML connections from one process must agree. A disagreement
+  // leaves client_id as the process id.
+  std::map<std::string, std::string> identities;
+  std::set<std::string> conflicts;
+  for (const auto &child : children) {
+    const std::string id = process_key_for(child);
+    auto result = identities.emplace(id, child.workload_id);
+    if (!result.second && result.first->second != child.workload_id)
+      conflicts.insert(id);
+  }
+  for (auto &child : children) {
+    if (conflicts.count(process_key_for(child)))
+      child.workload_id[0] = '\0';
+  }
   nvml_session session;
   std::vector<device_snapshot> devices;
 
