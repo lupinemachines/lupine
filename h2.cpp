@@ -872,6 +872,18 @@ int h2_flush_session_locked(h2_transport *transport) {
 
 unsigned char *h2_reserve_encoded(h2_stream &stream, size_t capacity) {
   size_t required = stream.encoded_size + capacity;
+  // A peer whose window credits trail the writer keeps the backlog from ever
+  // draining to empty, so reclaim the framed prefix (frames copy the bytes out)
+  // once it is at least as long as the unframed suffix that has to move.
+  size_t backlog = stream.encoded_size - stream.encoded_offset;
+  if (stream.encoded.size() < required && stream.encoded_offset != 0 &&
+      stream.encoded_offset >= backlog) {
+    memmove(stream.encoded.data(),
+            stream.encoded.data() + stream.encoded_offset, backlog);
+    stream.encoded_size = backlog;
+    stream.encoded_offset = 0;
+    required = backlog + capacity;
+  }
   if (stream.encoded.size() < required) {
     stream.encoded.resize(required);
   }
@@ -985,9 +997,9 @@ int h2_write_stream_locked(h2_transport *transport, int32_t stream_id,
         continue;
       }
       size_t input = std::min(cursor.size, kH2CompressionBlockBytes);
-      size_t encoded_before = stream.encoded_size;
+      size_t backlog = stream.encoded_size - stream.encoded_offset;
       if (h2_encode_locked(stream, cursor.data, input) < 0 ||
-          (stream.encoded_size != encoded_before &&
+          (stream.encoded_size - stream.encoded_offset != backlog &&
            h2_pump_stream_locked(transport, stream_id, stream) < 0)) {
         return -1;
       }

@@ -1602,6 +1602,47 @@ void test_closed_lanes_release_buffers() {
   size_t retained = heap_in_use() - std::min(baseline, heap_in_use());
   require(retained < 32 * 1024 * 1024, "closed lanes retained their buffers");
 }
+
+// A peer that credits its 64 KiB default window as data arrives never lets the
+// sender's compressed backlog drain to empty mid-transfer.
+void test_flow_controlled_backlog_stays_bounded() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+  raw_h2_peer server(pair.server.connfd, true);
+  require(rpc_http2_client_init(&pair.client) == 0, "client init");
+  server.receive_headers(1);
+  int32_t lane = rpc_http2_lane_stream(&pair.client, 1);
+  require(lane > 0, "lane open");
+  server.receive_headers(2);
+
+  std::vector<unsigned char> payload(128 * 1024 * 1024);
+  uint32_t seed = 31;
+  for (unsigned char &byte : payload) {
+    seed = seed * 1664525u + 1013904223u;
+    byte = static_cast<unsigned char>(seed >> 24);
+  }
+  std::thread peer([&] {
+    std::array<unsigned char, 65536> data;
+    for (;;) {
+      ssize_t size = server.receive(data.data(), data.size());
+      if (size <= 0 ||
+          nghttp2_session_mem_recv(server.session, data.data(), size) != size ||
+          nghttp2_session_send(server.session) != 0) {
+        return;
+      }
+    }
+  });
+  size_t baseline = heap_in_use();
+  require(write_stream_bytes(&pair.client, lane, payload.data(),
+                             payload.size()) == 0,
+          "flow-controlled lane write failed");
+  size_t in_use = heap_in_use();
+  size_t retained = in_use - std::min(baseline, in_use);
+  shutdown(pair.server.connfd, LUPINE_TEST_SHUT_RDWR);
+  peer.join();
+  require(retained < 64 * 1024 * 1024,
+          "flow-controlled backlog kept every compressed byte");
+}
 #endif
 
 void test_socket_reader_hands_off_between_streams() {
@@ -2811,6 +2852,7 @@ int main() {
   RUN_CASE(test_socket_reader_hands_off_between_streams());
 #ifdef __GLIBC__
   RUN_CASE(test_closed_lanes_release_buffers());
+  RUN_CASE(test_flow_controlled_backlog_stays_bounded());
 #endif
   RUN_CASE(test_large_payload());
   RUN_CASE(test_zstd_content_encoding_round_trip());
