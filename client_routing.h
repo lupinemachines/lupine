@@ -185,6 +185,10 @@ extern "C" void lupine_note_deviceptr_owner_route(CUdeviceptr ptr,
 extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
                                                        size_t size,
                                                        lupine_route route);
+// Records the allocation unless another route tracks an overlapping one.
+extern "C" bool lupine_note_disjoint_deviceptr_allocation(CUdeviceptr ptr,
+                                                          size_t size,
+                                                          lupine_route route);
 
 // Resolves a driver entry point once per call site; name must be a literal.
 #define LUPINE_REAL_CUDA_SYMBOL(name)                                          \
