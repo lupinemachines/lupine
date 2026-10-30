@@ -779,7 +779,7 @@ nvmlDeviceGetBridgeChipInfo(nvmlDevice_t device,
 /**
  * @param device SEND_ONLY
  * @param infoCount SEND_RECV
- * @param infos RECV_ONLY LENGTH:infoCount
+ * @param infos RECV_ONLY NULLABLE LENGTH:infoCount ON_SUCCESS
  */
 nvmlReturn_t nvmlDeviceGetComputeRunningProcesses_v3(nvmlDevice_t device,
                                                      unsigned int *infoCount,
@@ -787,7 +787,7 @@ nvmlReturn_t nvmlDeviceGetComputeRunningProcesses_v3(nvmlDevice_t device,
 /**
  * @param device SEND_ONLY
  * @param infoCount SEND_RECV
- * @param infos RECV_ONLY LENGTH:infoCount
+ * @param infos RECV_ONLY NULLABLE LENGTH:infoCount ON_SUCCESS
  */
 nvmlReturn_t nvmlDeviceGetGraphicsRunningProcesses_v3(nvmlDevice_t device,
                                                       unsigned int *infoCount,
@@ -795,7 +795,7 @@ nvmlReturn_t nvmlDeviceGetGraphicsRunningProcesses_v3(nvmlDevice_t device,
 /**
  * @param device SEND_ONLY
  * @param infoCount SEND_RECV
- * @param infos RECV_ONLY LENGTH:infoCount
+ * @param infos RECV_ONLY NULLABLE LENGTH:infoCount ON_SUCCESS
  */
 nvmlReturn_t nvmlDeviceGetMPSComputeRunningProcesses_v3(
     nvmlDevice_t device, unsigned int *infoCount, nvmlProcessInfo_t *infos);
