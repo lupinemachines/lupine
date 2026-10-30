@@ -622,12 +622,9 @@ CUresult cuMemGetInfo_v2(size_t *free, size_t *total);
  */
 CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
   CUresult return_value = LUPINE_GENERATED_CALL();
-  // Servers can hand out the same address (the CUDA 13 forward compatibility
-  // driver starts every heap at one fixed VA) and pointers route by address,
-  // so a block another route holds stays allocated until its context goes.
-  if (return_value == CUDA_SUCCESS && dptr != nullptr &&
-      !lupine_note_disjoint_deviceptr_allocation(*dptr, bytesize, route))
-    return_value = cuMemAlloc_v2(dptr, bytesize);
+  if (return_value == CUDA_SUCCESS && dptr != nullptr)
+    return_value = lupine_record_disjoint_allocation(
+        dptr, bytesize, route, [&] { return cuMemAlloc_v2(dptr, bytesize); });
   return return_value;
 }
 /**
@@ -648,11 +645,11 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
       allocation_size = (*pPitch) * Height;
     else
       allocation_size = WidthInBytes * Height;
-    // As in cuMemAlloc_v2.
-    if (!lupine_note_disjoint_deviceptr_allocation(*dptr, allocation_size,
-                                                   route))
-      return_value = cuMemAllocPitch_v2(dptr, pPitch, WidthInBytes, Height,
-                                        ElementSizeBytes);
+    return_value =
+        lupine_record_disjoint_allocation(dptr, allocation_size, route, [&] {
+          return cuMemAllocPitch_v2(dptr, pPitch, WidthInBytes, Height,
+                                    ElementSizeBytes);
+        });
   }
   return return_value;
 }
