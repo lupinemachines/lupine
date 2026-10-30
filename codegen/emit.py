@@ -376,6 +376,8 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write("  lupine_captured_stdout capture;\n")
     if metadata.async_fire_forget:
         f.write("  uint64_t async_sequence = 0;\n")
+    if metadata.graph_exec_update is not None:
+        f.write("  lupine_htod_graph_binding update_binding;\n")
     f.write("  int request_id;\n")
     if not always_async and result != "void":
         f.write(f"  {result} return_value;\n")
@@ -418,6 +420,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
 
     if stdout:
         f.write("  lupine_start_stdout_capture(&capture);\n")
+    update = metadata.graph_exec_update
     call_args = []
     for parameter in function.parameters:
         operation = next(
@@ -427,8 +430,19 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
             raise RuntimeError(
                 f"{name}: parameter {parameter.name} has no @param annotation"
             )
-        call_args.append(operation.server_reference)
+        if update is not None and parameter.name == update.graph.name:
+            call_args.append("update_binding.prepared")
+        else:
+            call_args.append(operation.server_reference)
+        if update is not None and parameter.name == update.error.name:
+            update_error = operation.server_reference
     args = ", ".join(call_args)
+    if update is not None:
+        f.write(
+            f"  return_value = lupine_prepare_graph_exec_update("
+            f"{update.graph_exec.name}, {update.graph.name}, &update_binding);\n"
+        )
+        f.write("  if (return_value == CUDA_SUCCESS)\n  ")
     if backend.symbol_lookup:
         f.write(f'  fn = {backend.symbol_lookup}<fn_t>("{name}");\n')
         if result == backend.result and not always_async:
@@ -457,11 +471,12 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
 
     if stdout:
         f.write("  lupine_finish_stdout_capture(&capture);\n")
-    if metadata.graph_exec_update is not None:
-        graph_exec = metadata.graph_exec_update.graph_exec.name
-        graph = metadata.graph_exec_update.graph.name
-        f.write("  if (return_value == CUDA_SUCCESS)\n")
-        f.write(f"    lupine_rebind_graph_exec_resources({graph_exec}, {graph});\n\n")
+    if update is not None:
+        f.write(
+            f"  lupine_finish_graph_exec_update({update.graph_exec.name}, "
+            f"{update.graph.name}, &update_binding, return_value, "
+            f"{update_error});\n\n"
+        )
     if deferred:
         f.write("  if (return_value == CUDA_SUCCESS) {\n")
         f.write(deferred_dtoh_detach(metadata))
