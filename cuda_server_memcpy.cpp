@@ -160,16 +160,21 @@ struct lupine_graph_resources {
   }
 
   std::vector<lupine_graph_host_copy> dtoh_copy_snapshot() const {
-    std::vector<lupine_graph_host_copy> copies;
+    auto copies = earlier == nullptr ? std::vector<lupine_graph_host_copy>()
+                                     : earlier->dtoh_copy_snapshot();
+    size_t first = copies.size();
     for (auto *node = dtoh_copies.load(std::memory_order_acquire);
          node != nullptr; node = node->next) {
       copies.push_back(node->copy);
     }
-    std::reverse(copies.begin(), copies.end());
+    std::reverse(copies.begin() + first, copies.end());
     return copies;
   }
 
   std::atomic<lupine_graph_host_copy_node *> dtoh_copies{nullptr};
+  // A capture into an existing graph owns that graph's earlier resources,
+  // whose copies run first. Execs of the earlier graph keep only those.
+  lupine_graph_resources *earlier = nullptr;
   // Graphs, execs and launches whose bytes are undelivered. The object itself
   // outlives them because callbacks and stream maps keep raw pointers.
   std::atomic<int> owners{0};
@@ -211,6 +216,7 @@ static void lupine_retain_graph_resources(lupine_graph_resources *resources) {
 void lupine_release_graph_resources(lupine_graph_resources *resources) {
   if (resources != nullptr && resources->owners.fetch_sub(1) == 1) {
     lupine_retire_graph_staging(resources);
+    lupine_release_graph_resources(std::exchange(resources->earlier, nullptr));
   }
 }
 
@@ -394,8 +400,8 @@ void lupine_finish_stream_capture_resources(CUstream stream, CUgraph graph,
   lupine_erase_capture_resources(lupine_stream_capture_resource_map(),
                                  resources);
   if (success) {
-    // Capturing into a graph replaces its resources. The old ones stay owned:
-    // the graph's earlier nodes still copy into their staging.
+    resources->earlier =
+        lupine_take_graph_resources(lupine_graph_resource_map(), graph);
     lupine_retain_graph_resources(resources);
     lupine_graph_resource_map().insert_or_assign(graph, resources);
   } else {
@@ -451,7 +457,8 @@ void lupine_erase_graph_resources(CUgraph graph) {
   lupine_free_retired_dtoh_staging();
 }
 
-void lupine_rebind_graph_exec_resources(CUgraphExec exec, CUgraph graph) {
+static void lupine_rebind_graph_exec_resources(CUgraphExec exec,
+                                               CUgraph graph) {
   lupine_graph_resources *resources = nullptr;
   (void)lupine_graph_resource_map().find(graph, resources);
   lupine_retain_graph_resources(resources);
@@ -1461,16 +1468,16 @@ void lupine_release_htod_graph_binding(lupine_htod_graph_binding *binding) {
   *binding = {};
 }
 
-static CUresult lupine_release_htod_graph_exec(CUgraphExec exec) {
+// cuGraphExecDestroy and cuGraphExecUpdate leave in-flight launches running.
+// Keep callback data, events, and the pinned ring alive until no launch can
+// still reference them. This synchronization is confined to graph execs that
+// contain pageable HtoD side effects.
+static CUresult lupine_drain_htod_graph_exec(CUgraphExec exec) {
   std::shared_ptr<lupine_htod_exec_resources> resources;
-  if (!lupine_htod_exec_resource_map().find(exec, resources)) {
+  if (!lupine_htod_exec_resource_map().find(exec, resources) ||
+      resources->callbacks.empty()) {
     return CUDA_SUCCESS;
   }
-
-  // cuGraphExecDestroy leaves in-flight launches running. Keep callback data,
-  // events, and the pinned ring alive until no launch can still reference
-  // them. This synchronization is confined to destroying graph execs that
-  // contain pageable HtoD side effects.
   CUresult result = cuCtxPushCurrent_v2(resources->context);
   if (result != CUDA_SUCCESS) {
     return result;
@@ -1478,13 +1485,79 @@ static CUresult lupine_release_htod_graph_exec(CUgraphExec exec) {
   result = cuCtxSynchronize();
   CUcontext popped = nullptr;
   CUresult pop_result = cuCtxPopCurrent_v2(&popped);
-  if (result == CUDA_SUCCESS) {
-    result = pop_result;
-  }
+  return result == CUDA_SUCCESS ? pop_result : result;
+}
+
+static CUresult lupine_release_htod_graph_exec(CUgraphExec exec) {
+  CUresult result = lupine_drain_htod_graph_exec(exec);
   if (result == CUDA_SUCCESS) {
     lupine_htod_exec_resource_map().erase(exec);
   }
   return result;
+}
+
+// An update copies the update graph's node parameters into the exec, so that
+// graph is rebound to a private ring first, exactly as for instantiation.
+CUresult lupine_prepare_graph_exec_update(CUgraphExec exec, CUgraph graph,
+                                          lupine_htod_graph_binding *binding) {
+  CUresult result = lupine_drain_htod_graph_exec(exec);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  lupine_graph_resources *resources = nullptr;
+  return lupine_prepare_graph_exec_resources(graph, &resources, binding);
+}
+
+static void
+lupine_commit_htod_graph_exec_update(CUgraphExec exec,
+                                     lupine_htod_graph_binding *binding) {
+  auto resources =
+      std::static_pointer_cast<lupine_htod_exec_resources>(binding->resources);
+  // CUDA copied the parameters, so the update clone is released with the
+  // binding. Exec-node APIs still take nodes of the instantiation graph, so
+  // the instantiation clone stays the translation target.
+  binding->resources.reset();
+  std::shared_ptr<lupine_htod_exec_resources> previous;
+  (void)lupine_htod_exec_resource_map().find(exec, previous);
+  if (resources == nullptr) {
+    if (previous != nullptr) {
+      previous->callbacks.clear();
+    }
+    return;
+  }
+  resources->original = nullptr;
+  resources->prepared = nullptr;
+  if (previous != nullptr) {
+    std::swap(resources->original, previous->original);
+    std::swap(resources->prepared, previous->prepared);
+  }
+  lupine_htod_exec_resource_map().insert_or_assign(exec, std::move(resources));
+}
+
+void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
+                                     lupine_htod_graph_binding *binding,
+                                     CUresult result, CUgraphNode *error_node) {
+  if (result == CUDA_SUCCESS) {
+    lupine_commit_htod_graph_exec_update(exec, binding);
+    lupine_rebind_graph_exec_resources(exec, graph);
+  } else if (error_node != nullptr) {
+    *error_node = lupine_original_htod_graph_node(*binding, *error_node);
+  }
+  lupine_release_htod_graph_binding(binding);
+}
+
+void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
+                                     lupine_htod_graph_binding *binding,
+                                     CUresult result,
+                                     CUgraphExecUpdateResultInfo *info) {
+#if CUDA_VERSION >= 12000
+  if (result != CUDA_SUCCESS) {
+    info->errorFromNode =
+        lupine_original_htod_graph_node(*binding, info->errorFromNode);
+  }
+#endif
+  lupine_finish_graph_exec_update(exec, graph, binding, result,
+                                  &info->errorNode);
 }
 
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec) {

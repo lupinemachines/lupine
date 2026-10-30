@@ -840,7 +840,7 @@ if(BUILD_TESTING)
 
     add_executable(transport_test
         ${CMAKE_CURRENT_SOURCE_DIR}/transport_test.cpp)
-    target_link_libraries(transport_test PRIVATE lupine_rpc_core)
+    target_link_libraries(transport_test PRIVATE lupine_client_transport)
     lupine_apply_sanitizer(transport_test)
     add_test(NAME transport_test COMMAND transport_test)
 
@@ -864,6 +864,15 @@ if(BUILD_TESTING)
     add_test(NAME checkpoint_test COMMAND checkpoint_test)
     lupine_scaled_timeout(ckpt_timeout 10)
     set_tests_properties(checkpoint_test PROPERTIES TIMEOUT ${ckpt_timeout})
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND LUPINE_BUILD_CUDA AND LUPINE_BUILD_NVML)
+        add_executable(monitor_server_test monitor_server_test.cpp nvml_runtime.cpp)
+        target_compile_definitions(monitor_server_test PRIVATE LUPINE_MONITORING_ENABLED)
+        target_include_directories(monitor_server_test PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+        target_link_libraries(monitor_server_test PRIVATE lupine_rpc_core ${CMAKE_DL_LIBS})
+        lupine_apply_sanitizer(monitor_server_test)
+        add_test(NAME monitor_server_test COMMAND monitor_server_test)
+    endif()
 
     add_executable(h2_test
         ${CMAKE_CURRENT_SOURCE_DIR}/h2_test.cpp

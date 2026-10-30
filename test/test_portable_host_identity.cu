@@ -129,7 +129,44 @@ int main() {
       return 1;
     }
   }
+  // A portable allocation made after the other route last launched, reached
+  // only through device memory, so no launch argument points into it.
+  int *late = nullptr;
+  CUdeviceptr late_device = 0, device_node = 0, output = 0;
   if (!check(cuCtxSetCurrent(contexts[0]), "cuCtxSetCurrent") ||
+      !check(cuMemHostAlloc(reinterpret_cast<void **>(&late), 4096, flags),
+             "cuMemHostAlloc(late)") ||
+      !check(cuMemHostGetDevicePointer(&late_device, late, 0),
+             "cuMemHostGetDevicePointer(late)") ||
+      !check(cuCtxSetCurrent(contexts[1]), "cuCtxSetCurrent") ||
+      !check(cuMemAlloc(&device_node, sizeof(Node)), "cuMemAlloc") ||
+      !check(cuMemAlloc(&output, 2 * sizeof(uint64_t)), "cuMemAlloc")) {
+    return 1;
+  }
+  late[17] = 99;
+  Node late_node = {reinterpret_cast<int *>(late_device) + 17};
+  uint64_t late_scalar = 7;
+  void *late_args[] = {&output, &device_node, &late_scalar};
+  uint64_t observed[2] = {};
+  if (!check(cuMemcpyHtoD(device_node, &late_node, sizeof(late_node)),
+             "cuMemcpyHtoD") ||
+      !check(cuLaunchKernel(functions[1], 1, 1, 1, 1, 1, 1, 0, nullptr,
+                            late_args, nullptr),
+             "launch(late)") ||
+      !check(cuCtxSynchronize(), "cuCtxSynchronize") ||
+      !check(cuMemcpyDtoH(observed, output, sizeof(observed)),
+             "cuMemcpyDtoH") ||
+      !check(cuMemFree(output), "cuMemFree") ||
+      !check(cuMemFree(device_node), "cuMemFree")) {
+    return 1;
+  }
+  if (observed[1] != 99) {
+    std::fprintf(stderr, "late child %llu != 99\n",
+                 static_cast<unsigned long long>(observed[1]));
+    return 1;
+  }
+  if (!check(cuCtxSetCurrent(contexts[0]), "cuCtxSetCurrent") ||
+      !check(cuMemFreeHost(late), "cuMemFreeHost(late)") ||
       !check(cuMemFreeHost(child), "cuMemFreeHost(child)") ||
       !check(cuMemFreeHost(node), "cuMemFreeHost(node)") ||
       !check(cuMemFreeHost(empty), "cuMemFreeHost(empty)")) {

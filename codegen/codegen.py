@@ -650,13 +650,14 @@ def parse_annotation(
             continue
         if line.startswith("@graphexecupdate"):
             parts = line.split()
-            if len(parts) != 3 or metadata.graph_exec_update is not None:
+            if len(parts) != 4 or metadata.graph_exec_update is not None:
                 raise RuntimeError(
-                    "@graphexecupdate requires graph exec and graph parameters"
+                    "@graphexecupdate requires graph exec, graph and error parameters"
                 )
             metadata.graph_exec_update = GraphExecUpdateAnnotation(
                 graph_exec=annotation_param(params, parts[1]),
                 graph=annotation_param(params, parts[2]),
+                error=annotation_param(params, parts[3]),
             )
             continue
         if line.startswith("@deeparray"):

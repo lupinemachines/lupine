@@ -272,10 +272,14 @@ extern void rpc_conn_destroy(conn_t *conn);
 // lupine_socket_apply_transport_options). A server that is not reachable yet
 // (e.g. still provisioning) is retried up to max_retries times with
 // exponential backoff and bounded attempts. Passing zero preserves the
-// client's single blocking attempt. Returns the socket, or
+// client's single blocking attempt. `dialing`, when given, is handed each
+// socket once its connect is underway so a concurrent shutdown() can abort it
+// (returning false abandons the dial), and LUPINE_INVALID_SOCKET before a
+// socket it was handed is closed. Returns the socket, or
 // LUPINE_INVALID_SOCKET on permanent failure.
-extern lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
-                                          unsigned int max_retries = 5);
+extern lupine_socket_t lupine_tcp_connect(
+    const char *host, const char *port, unsigned int max_retries = 5,
+    const std::function<bool(lupine_socket_t)> &dialing = nullptr);
 
 constexpr int LUPINE_RPC_HTTP2_STREAM_END = -2;
 constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;

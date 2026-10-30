@@ -676,6 +676,35 @@ void test_process_control_preserves_queued_output() {
   }
 }
 
+// A checkpoint reconnect that fails leaves the session parked with no socket.
+// Destroying the connection must still stop the session's threads and free it.
+void test_destroy_releases_a_parked_session() {
+  h2_pair pair;
+  init_raw_server_peer(&pair);
+  const unsigned char settings[] = {0, 0, 0, NGHTTP2_SETTINGS, 0, 0, 0, 0, 0};
+  require(raw_write_all(pair.server.connfd, settings, sizeof(settings)),
+          "server SETTINGS write failed");
+  const std::string checkpoint = "session.1";
+  for (char command : {'P', 'C'}) {
+    std::vector<unsigned char> frame(9, 0);
+    frame[2] = static_cast<unsigned char>(checkpoint.size() + 1);
+    frame[3] = LUPINE_HANDOFF_CONTROL_FRAME;
+    frame.push_back(static_cast<unsigned char>(command));
+    frame.insert(frame.end(), checkpoint.begin(), checkpoint.end());
+    require(raw_write_all(pair.server.connfd, frame.data(), frame.size()),
+            "process control write failed");
+  }
+  require(lupine_handoff_park_socket(&pair.client) == 0, "socket park failed");
+  lupine_socket_close(pair.client.connfd);
+  pair.client.connfd = LUPINE_INVALID_SOCKET;
+  rpc_conn_destroy(&pair.client);
+  require(pair.client.http2 == nullptr,
+          "destroying a parked connection leaked its HTTP/2 session");
+  // Give the pair's destructor a live connection to destroy.
+  require(rpc_conn_init(&pair.client, LUPINE_INVALID_SOCKET, 0) == 0,
+          "client RPC reinit failed");
+}
+
 void test_response_wait_sends_transport_heartbeat() {
   h2_pair pair;
   init_raw_server_peer(&pair);
@@ -1014,7 +1043,12 @@ void test_client_await_ready_reports_bulk_token(bool advertise) {
           "bulk token was reported incorrectly");
 }
 
-void test_client_metadata_report() {
+void test_client_metadata_report(bool old_receiver = false,
+                                 const std::string &identity = "") {
+  if (identity.empty())
+    unsetenv("LUPINE_WORKLOAD_ID");
+  else
+    setenv("LUPINE_WORKLOAD_ID", identity.c_str(), 1);
   h2_pair pair;
   init_pair_sockets(&pair);
 
@@ -1052,11 +1086,24 @@ void test_client_metadata_report() {
   lupine_client_metadata received = {};
   require(rpc_read(&pair.server, &header, sizeof(header)) == 0,
           "metadata header read failed");
-  require(header.version == LUPINE_CLIENT_METADATA_VERSION &&
-              header.payload_size == sizeof(received),
-          "metadata header was invalid");
-  require(rpc_read(&pair.server, &received, sizeof(received)) == 0,
+  require(header.version == LUPINE_CLIENT_METADATA_VERSION,
+          "metadata version was invalid");
+  unsigned char payload[LUPINE_CLIENT_METADATA_MAX_PAYLOAD] = {};
+  require(header.payload_size <= sizeof(payload), "metadata payload too large");
+  require(rpc_read(&pair.server, payload, header.payload_size) == 0,
           "metadata payload read failed");
+  char workload[LUPINE_WORKLOAD_ID_MAX_BYTES + 1] = {};
+  if (old_receiver) {
+    // Original receiver reads the entire payload, copies only the known prefix.
+    memcpy(&received, payload, sizeof(received));
+  } else {
+    require(lupine_decode_client_metadata(header, payload, &received, workload),
+            "metadata decode failed");
+  }
+  const std::string expected =
+      !old_receiver && lupine_valid_workload_id(identity.data(), identity.size())
+          ? identity : "";
+  require(workload == expected, "workload identity was invalid");
   require(received.client_pid != 0 &&
               std::string(received.connection_kind) == "test",
           "metadata payload was invalid");
@@ -1554,6 +1601,47 @@ void test_closed_lanes_release_buffers() {
   }
   size_t retained = heap_in_use() - std::min(baseline, heap_in_use());
   require(retained < 32 * 1024 * 1024, "closed lanes retained their buffers");
+}
+
+// A peer that credits its 64 KiB default window as data arrives never lets the
+// sender's compressed backlog drain to empty mid-transfer.
+void test_flow_controlled_backlog_stays_bounded() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+  raw_h2_peer server(pair.server.connfd, true);
+  require(rpc_http2_client_init(&pair.client) == 0, "client init");
+  server.receive_headers(1);
+  int32_t lane = rpc_http2_lane_stream(&pair.client, 1);
+  require(lane > 0, "lane open");
+  server.receive_headers(2);
+
+  std::vector<unsigned char> payload(128 * 1024 * 1024);
+  uint32_t seed = 31;
+  for (unsigned char &byte : payload) {
+    seed = seed * 1664525u + 1013904223u;
+    byte = static_cast<unsigned char>(seed >> 24);
+  }
+  std::thread peer([&] {
+    std::array<unsigned char, 65536> data;
+    for (;;) {
+      ssize_t size = server.receive(data.data(), data.size());
+      if (size <= 0 ||
+          nghttp2_session_mem_recv(server.session, data.data(), size) != size ||
+          nghttp2_session_send(server.session) != 0) {
+        return;
+      }
+    }
+  });
+  size_t baseline = heap_in_use();
+  require(write_stream_bytes(&pair.client, lane, payload.data(),
+                             payload.size()) == 0,
+          "flow-controlled lane write failed");
+  size_t in_use = heap_in_use();
+  size_t retained = in_use - std::min(baseline, in_use);
+  shutdown(pair.server.connfd, LUPINE_TEST_SHUT_RDWR);
+  peer.join();
+  require(retained < 64 * 1024 * 1024,
+          "flow-controlled backlog kept every compressed byte");
 }
 #endif
 
@@ -2725,6 +2813,7 @@ int main() {
   RUN_CASE(test_rpc_request_nested_in_response_builder());
   RUN_CASE(test_rpc_response_completed_hook());
   RUN_CASE(test_process_control_preserves_queued_output());
+  RUN_CASE(test_destroy_releases_a_parked_session());
   RUN_CASE(test_response_wait_sends_transport_heartbeat());
   RUN_CASE(test_data_provider_frame_sizing());
   RUN_CASE(test_client_to_server());
@@ -2740,6 +2829,13 @@ int main() {
   RUN_CASE(test_client_await_ready_reports_bulk_token(true));
   RUN_CASE(test_client_await_ready_reports_bulk_token(false));
   RUN_CASE(test_client_metadata_report());
+  RUN_CASE(test_client_metadata_report(true, "job:old-server"));
+  RUN_CASE(test_client_metadata_report(false));
+  RUN_CASE(test_client_metadata_report(false, "job:worker-1"));
+  RUN_CASE(test_client_metadata_report(false, std::string(256, 'x')));
+  RUN_CASE(test_client_metadata_report(false, std::string(257, 'x')));
+  RUN_CASE(test_client_metadata_report(false, std::string("\xc0\xaf")));
+  unsetenv("LUPINE_WORKLOAD_ID");
   RUN_CASE(test_client_await_ready_reports_va_window());
   RUN_CASE(test_va_window_and_aliases_are_disjoint());
   RUN_CASE(test_va_claim_bumps_within_arena());
@@ -2756,6 +2852,7 @@ int main() {
   RUN_CASE(test_socket_reader_hands_off_between_streams());
 #ifdef __GLIBC__
   RUN_CASE(test_closed_lanes_release_buffers());
+  RUN_CASE(test_flow_controlled_backlog_stays_bounded());
 #endif
   RUN_CASE(test_large_payload());
   RUN_CASE(test_zstd_content_encoding_round_trip());

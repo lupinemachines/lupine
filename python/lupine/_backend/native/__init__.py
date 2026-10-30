@@ -109,6 +109,12 @@ class Backend:
                 raise NotImplementedError(
                     "Lupine native does not support copies between aliased views"
                 )
+        if destination.dtype != source.dtype:
+            # Transfers move bytes, so convert dtype on the host side.
+            if source.device.type == "cpu":
+                source = source.to(destination.dtype)
+            elif destination.device.type == "cpu":
+                return destination.copy_(source.cpu())
         with self.runtime.active(), ExitStack() as stack:
             # Contiguous CPU transfers can use the tensor's final allocation.
             # cudaMemcpy waits for queued default-stream work before returning.
@@ -255,10 +261,19 @@ class Backend:
 
     def binary(self, name, a, b, *, alpha=1, out=None):
         torch = self.torch
+
+        def host_scalar(value):
+            return not isinstance(value, torch.Tensor) or (
+                value.device.type == "cpu" and value.ndim == 0
+            )
+
+        if host_scalar(a) and self.ours(b) and out is not a:
+            # A scalar left operand, as in `1 - x` (rsub) or `tensor(2.) * x`.
+            a = self.fill(
+                self.empty(()), a.item() if isinstance(a, torch.Tensor) else a
+            )
         self.floats(a)
-        scalar = (
-            not isinstance(b, torch.Tensor) or b.device.type == "cpu" and b.ndim == 0
-        )
+        scalar = host_scalar(b)
         if scalar:
             value = b.item() if isinstance(b, torch.Tensor) else b
             shape = a.shape

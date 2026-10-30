@@ -1162,6 +1162,7 @@ class GraphExecNodeAnnotation:
 class GraphExecUpdateAnnotation:
     graph_exec: Parameter
     graph: Parameter
+    error: Parameter
 
 
 @dataclass(frozen=True)
