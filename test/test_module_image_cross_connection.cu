@@ -9,6 +9,7 @@
 
 static const char kWritePtxFormat[] =
     ".version 6.4\n.target sm_52\n.address_size 64\n"
+    ".visible .global .align 4 .u32 g;\n"
     ".visible .entry k(.param .u64 out)\n{\n"
     "  .reg .b64 %%rd<3>;\n  .reg .b32 %%r<2>;\n"
     "  ld.param.u64 %%rd1, [out];\n  cvta.to.global.u64 %%rd2, %%rd1;\n"
@@ -142,6 +143,35 @@ int main() {
     if (threads <= 0 || shared != 1024 * (i + 1)) {
       std::fprintf(stderr, "device %d kernel attributes %d threads, %d shared\n",
                    i, threads, shared);
+      return 1;
+    }
+  }
+  // Modules and globals belong to a context, so they come from the library as
+  // loaded on the current context's connection.
+  for (int i = 0; i < 2; ++i) {
+    CUmodule module = nullptr;
+    CUfunction function = nullptr;
+    CUdeviceptr global = 0;
+    size_t bytes = 0;
+    uint32_t observed = 0;
+    void *args[] = {&global};
+    if (!check(cuCtxSetCurrent(contexts[i]), "cuCtxSetCurrent") ||
+        !check(cuLibraryGetModule(&module, library), "cuLibraryGetModule") ||
+        !check(cuModuleGetFunction(&function, module, "k"),
+               "cuModuleGetFunction(library module)") ||
+        !launch_and_check(function, contexts[i], 100, "library module") ||
+        !check(cuLibraryGetGlobal(&global, &bytes, library, "g"),
+               "cuLibraryGetGlobal") ||
+        !check(cuLaunchKernel(reinterpret_cast<CUfunction>(kernel), 1, 1, 1, 1,
+                              1, 1, 0, nullptr, args, nullptr),
+               "cuLaunchKernel(global)") ||
+        !check(cuCtxSynchronize(), "cuCtxSynchronize") ||
+        !check(cuMemcpyDtoH(&observed, global, sizeof(observed)),
+               "cuMemcpyDtoH(global)")) {
+      return 1;
+    }
+    if (observed != 100) {
+      std::fprintf(stderr, "device %d library global holds %u\n", i, observed);
       return 1;
     }
   }

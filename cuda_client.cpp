@@ -1607,6 +1607,13 @@ static CUresult lupine_resolve_library_kernel_for_route(CUfunction function,
   return CUDA_SUCCESS;
 }
 
+// A library's modules and globals belong to a context, so they come from the
+// library as loaded on the current context's connection.
+extern "C" CUresult lupine_resolve_library_for_route(CUlibrary *library,
+                                                     lupine_route route) {
+  return lupine_load_recorded_library_on_route(*library, route, library);
+}
+
 // Library kernels are context-independent, so a device-scoped kernel call
 // must name the kernel as loaded on that device's connection.
 extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel,

@@ -97,6 +97,8 @@ extern "C" void lupine_kernel_attribute_set_note(int route_id, CUkernel kernel,
 extern "C" void lupine_disable_local_occupancy();
 extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel,
                                                     lupine_route route);
+extern "C" CUresult lupine_resolve_library_for_route(CUlibrary *library,
+                                                     lupine_route route);
 extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);
 extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
@@ -822,7 +824,10 @@ CUresult cuLibraryUnload(CUlibrary library) {
 }
 
 CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
-  lupine_route route = lupine_route_for_library(library);
+  lupine_route route = lupine_route_for_current_context();
+  CUresult resolved = lupine_resolve_library_for_route(&library, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn(
@@ -853,7 +858,10 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
 
 CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
                             const char *name) {
-  lupine_route route = lupine_route_for_library(library);
+  lupine_route route = lupine_route_for_current_context();
+  CUresult resolved = lupine_resolve_library_for_route(&library, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value =

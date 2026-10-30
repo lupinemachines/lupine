@@ -481,14 +481,20 @@ CUresult cuLibraryUnload(CUlibrary library);
 CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
                             const char *name);
 /**
- * @routingkey LIBRARY library
+ * @routingkey CURRENT_CONTEXT
  * @recordowner MODULE pMod
  * @recordparent LIBRARY pMod library
  * @param pMod RECV_ONLY
  * @param library SEND_ONLY
  * @disabled server
  */
-CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library);
+CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
+  CUresult resolved = lupine_resolve_library_for_route(&library, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @disabled client - manual client caches functions per kernel and context
  * @param pFunc RECV_ONLY
@@ -522,7 +528,7 @@ CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
 CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
                             size_t *paramOffset, size_t *paramSize);
 /**
- * @routingkey LIBRARY library
+ * @routingkey CURRENT_CONTEXT
  * @recordowner DEVICEPTR dptr
  * @param dptr RECV_ONLY NULLABLE
  * @param bytes RECV_ONLY NULLABLE
@@ -531,6 +537,9 @@ CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
  */
 CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
                             const char *name) {
+  CUresult resolved = lupine_resolve_library_for_route(&library, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
     lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
