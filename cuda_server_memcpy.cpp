@@ -212,12 +212,26 @@ static void lupine_retain_graph_resources(lupine_graph_resources *resources) {
 
 // The last owner can be a delivery inside a CUDA callback, where host memory
 // cannot be freed, so release only retires the staging. Graph and exec
-// destruction free it from a handler thread.
+// destruction and pending DtoH cleanups free it from a handler thread.
 void lupine_release_graph_resources(lupine_graph_resources *resources) {
   if (resources != nullptr && resources->owners.fetch_sub(1) == 1) {
     lupine_retire_graph_staging(resources);
     lupine_release_graph_resources(std::exchange(resources->earlier, nullptr));
   }
+}
+
+static void lupine_retire_dtoh_staging(const lupine_host_rows &client,
+                                       void *server_src,
+                                       unsigned long long buffer_id) {
+  // Without an id (its context already failed) the buffer would read as heap
+  // staging, so leave it to its context instead.
+  if (buffer_id == 0) {
+    return;
+  }
+  auto *node = new lupine_graph_host_copy_node{{client, server_src}, buffer_id};
+  std::lock_guard<std::mutex> lock(lupine_retired_dtoh_mutex());
+  node->next = lupine_retired_dtoh_copies();
+  lupine_retired_dtoh_copies() = node;
 }
 
 static void lupine_free_retired_graph_staging() {
@@ -241,6 +255,39 @@ static void lupine_free_retired_graph_staging() {
       }
     }
     delete std::exchange(node, node->next);
+  }
+}
+
+void lupine_cleanup_pending_dtoh_copies(lupine_pending_dtoh_items *pending,
+                                        bool in_host_callback) {
+  if (pending != nullptr) {
+    for (auto &copy : *pending) {
+      lupine_release_graph_resources(copy.graph_resources);
+      if (copy.server_src == nullptr) {
+        continue;
+      }
+      lupine_forget_undelivered_dtoh(copy.server_src);
+      switch (copy.storage) {
+      case lupine_dtoh_storage::borrowed:
+        break;
+      case lupine_dtoh_storage::heap:
+        free(copy.server_src);
+        break;
+      case lupine_dtoh_storage::pinned:
+        if (in_host_callback) {
+          lupine_retire_dtoh_staging(copy.client, copy.server_src,
+                                     copy.buffer_id);
+        } else {
+          cuMemFreeHost(copy.server_src);
+        }
+        break;
+      }
+      copy.server_src = nullptr;
+    }
+    pending->clear();
+  }
+  if (!in_host_callback) {
+    lupine_free_retired_graph_staging();
   }
 }
 
@@ -3044,6 +3091,11 @@ static void lupine_defer_dtoh(conn_t *conn, CUstream stream,
                                           ? lupine_dtoh_storage::pinned
                                           : lupine_dtoh_storage::heap};
         (void)cuStreamGetCtx(stream, &copy.context);
+        if (alloc_result == CUDA_SUCCESS) {
+          (void)cuPointerGetAttribute(&copy.buffer_id,
+                                      CU_POINTER_ATTRIBUTE_BUFFER_ID,
+                                      reinterpret_cast<CUdeviceptr>(host));
+        }
         lupine_pending_dtoh_copies().upsert(
             conn,
             [stream, &copy](lupine_pending_dtoh_streams &streams,
