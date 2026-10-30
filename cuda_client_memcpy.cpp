@@ -2333,8 +2333,7 @@ extern "C" void lupine_invalidate_launched_managed(CUdeviceptr pointer,
   sig_atomic_t previous =
       __atomic_load_n(&allocation.device_stale, __ATOMIC_ACQUIRE);
   sig_atomic_t expected = previous;
-  if (!allocation.managed || !allocation.tracking_enabled || conn == nullptr ||
-      previous == 2 ||
+  if (!allocation.tracking_enabled || conn == nullptr || previous == 2 ||
       !__atomic_compare_exchange_n(&allocation.device_stale, &expected, 3,
                                    false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
     return;
@@ -2355,6 +2354,59 @@ extern "C" void lupine_invalidate_launched_managed(CUdeviceptr pointer,
       lupine_protect_host_range(it->first, allocation.storage_size, PROT_NONE);
   __atomic_store_n(&allocation.device_stale, protected_range ? 1 : previous,
                    __ATOMIC_RELEASE);
+}
+
+// The server loads modules with the identity arena active, so a __managed__
+// global can get a client view at its own address. The driver packs globals
+// from every module into shared pages, each its own allocation, so a view is
+// a page run the server reads and writes with the CPU, as it does a host
+// allocation's backing; a device copy could not span the neighbors. Kernels
+// reach it without a launch param, so it is exposed from the start and
+// fetched on first touch. A page an earlier view already covers is refetched
+// instead; the lookup's request flushed its host writes. Accepted risk: host
+// writes to such a page between a module load and the lookup flush stale bytes
+// over the new global's initializer. Views outlive cuModuleUnload.
+extern "C" void lupine_adopt_managed_global(lupine_route route,
+                                            CUdeviceptr global, size_t bytes) {
+  conn_t *conn = lupine_route_remote_conn(route);
+  unsigned int managed = 0;
+  if (conn == nullptr || bytes == 0 ||
+      !lupine_va_contains(conn, global, bytes) ||
+      cuPointerGetAttribute(&managed, CU_POINTER_ATTRIBUTE_IS_MANAGED,
+                            global) != CUDA_SUCCESS ||
+      managed == 0) {
+    return;
+  }
+  size_t page = lupine_page_size();
+  CUdeviceptr start = global & ~static_cast<CUdeviceptr>(page - 1);
+  CUdeviceptr end = lupine_round_up(global + bytes, page);
+  if (lupine_host_ptr_is_tracked(start)) {
+    lupine_invalidate_launched_managed(start, nullptr);
+    start += page;
+  }
+  if (start < end && lupine_host_ptr_is_tracked(end - page)) {
+    lupine_invalidate_launched_managed(end - page, nullptr);
+    end -= page;
+  }
+  // Interior pages belong to this global alone, so a covered one means an
+  // earlier lookup of it already made the view.
+  void *host = nullptr;
+  if (start >= end || lupine_host_ptr_is_tracked(start) ||
+      lupine_adopt_host_allocation(conn, &host, reinterpret_cast<void *>(start),
+                                   start, end - start, 0,
+                                   false) != CUDA_SUCCESS) {
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    auto &allocation = lupine_mutable_host_allocations_locked().at(host);
+    if (!lupine_enable_dirty_tracking_locked(host, &allocation) ||
+        !allocation.tracking_enabled) {
+      return;
+    }
+    allocation.device_pointer_exposed = true;
+  }
+  lupine_invalidate_launched_managed(start, nullptr);
 }
 
 static lupine_host_allocation_map::iterator

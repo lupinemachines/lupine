@@ -55,6 +55,8 @@ CUresult lupine_prepare_portable_host_allocations(lupine_route route,
 extern "C" CUresult lupine_sync_mapped_device_to_host();
 extern "C" void lupine_invalidate_launched_managed(CUdeviceptr pointer,
                                                    CUstream stream);
+extern "C" void lupine_adopt_managed_global(lupine_route route,
+                                            CUdeviceptr global, size_t bytes);
 extern thread_local bool lupine_in_host_callback;
 // Reads one deferred device-to-host copy: its lupine_host_rows, then the rows.
 int lupine_read_deferred_rows(conn_t *conn);

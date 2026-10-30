@@ -718,6 +718,9 @@ CUresult cuModuleUnload(CUmodule hmod) {
 CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
                               const char *name) {
   lupine_route route = lupine_route_for_module(hmod);
+  size_t global_bytes = 0;
+  if (bytes == nullptr && dptr != nullptr)
+    bytes = &global_bytes;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn(
@@ -726,8 +729,10 @@ CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
     if (return_value == CUDA_SUCCESS && dptr != nullptr) {
       lupine_note_deviceptr_owner_route(*dptr, route);
     }
-    if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
+    if (return_value == CUDA_SUCCESS && dptr != nullptr) {
       lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
+      lupine_adopt_managed_global(route, *dptr, *bytes);
+    }
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -751,8 +756,10 @@ CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
   if (return_value == CUDA_SUCCESS && dptr != nullptr) {
     lupine_note_deviceptr_owner_route(*dptr, route);
   }
-  if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
+  if (return_value == CUDA_SUCCESS && dptr != nullptr) {
     lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
+    lupine_adopt_managed_global(route, *dptr, *bytes);
+  }
   return return_value;
 }
 
@@ -903,6 +910,9 @@ CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
 CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
                              CUlibrary library, const char *name) {
   lupine_route route = lupine_route_for_library(library);
+  size_t global_bytes = 0;
+  if (bytes == nullptr && dptr != nullptr)
+    bytes = &global_bytes;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value =
@@ -911,8 +921,10 @@ CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
     if (return_value == CUDA_SUCCESS && dptr != nullptr) {
       lupine_note_deviceptr_owner_route(*dptr, route);
     }
-    if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
+    if (return_value == CUDA_SUCCESS && dptr != nullptr) {
       lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
+      lupine_adopt_managed_global(route, *dptr, *bytes);
+    }
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -936,8 +948,10 @@ CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
   if (return_value == CUDA_SUCCESS && dptr != nullptr) {
     lupine_note_deviceptr_owner_route(*dptr, route);
   }
-  if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
+  if (return_value == CUDA_SUCCESS && dptr != nullptr) {
     lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
+    lupine_adopt_managed_global(route, *dptr, *bytes);
+  }
   return return_value;
 }
 
