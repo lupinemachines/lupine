@@ -363,3 +363,44 @@ def test_math_attention_and_fully_masked_rows(backend):
         torch.testing.assert_close(
             actual.cpu(), reference.detach(), rtol=2e-4, atol=2e-5
         )
+
+
+def test_cpu_scalar_left_operand(backend):
+    torch, native = backend
+    cpu = torch.arange(4, dtype=torch.float32)
+    x = cpu.to("lupine")
+    torch.testing.assert_close((1 - x).cpu(), 1 - cpu)
+    torch.testing.assert_close(
+        torch.rsub(x, 2, alpha=3).cpu(), torch.rsub(cpu, 2, alpha=3)
+    )
+    torch.testing.assert_close((torch.tensor(0.5) * x).cpu(), 0.5 * cpu)
+    torch.testing.assert_close((torch.tensor(3.0) / (x + 1)).cpu(), 3 / (cpu + 1))
+
+
+def test_dtype_converting_transfers(backend):
+    import numpy
+
+    torch, native = backend
+    values = numpy.linspace(-1, 1, 6).reshape(2, 3)
+    x = torch.from_numpy(values).to("lupine", torch.float32)
+    assert x.dtype == torch.float32
+    torch.testing.assert_close(x.cpu(), torch.from_numpy(values).float())
+    torch.testing.assert_close(
+        x.to("cpu", torch.float64), torch.from_numpy(values).float().double()
+    )
+    torch.testing.assert_close(
+        x.T.to("cpu", torch.float64), torch.from_numpy(values).float().double().T
+    )
+    ints = torch.arange(5).to("lupine", torch.float32)
+    torch.testing.assert_close(ints.cpu(), torch.arange(5, dtype=torch.float32))
+
+
+def test_non_scalar_cpu_left_operand_is_rejected(backend):
+    torch, native = backend
+    x = torch.ones(4, device="lupine")
+    with pytest.raises(ValueError, match="device 0"):
+        torch.ones(1, 1) * x
+    a = torch.tensor(0.5)
+    with pytest.raises(ValueError, match="device 0"):
+        a.add_(x)
+    assert a.shape == () and a.item() == 0.5

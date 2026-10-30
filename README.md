@@ -431,3 +431,24 @@ This project is inspired by some existing proprietary solutions:
 - https://www.thundercompute.com/
 - https://www.juicelabs.co/
 - https://en.wikipedia.org/wiki/RCUDA
+
+### Optional client id
+
+`client_id` on the monitoring metrics is the client process id. Set
+`LUPINE_WORKLOAD_ID` to use that value instead, for example `job-123:worker-0`.
+Lupine does not interpret it. Processes that report the same value, from the
+same address and hostname and with the same process name, share one series for
+a device. `client_pid` on `lupine_server_connection_info` stays the process id
+either way. The value is attribution metadata, not an authentication credential.
+
+The identifier must be valid UTF-8 and at most 256 bytes. Empty means unset;
+invalid values are ignored without truncation or disrupting GPU calls.
+Clients read it when establishing each connection, including reconnects.
+The existing metadata version is unchanged: the value is an optional trailing
+extension. Older servers ignore it; newer servers treat metadata from older
+clients as unset and keep the process id.
+
+`lupine_server_connection_info`, `lupine_client_device_memory_used_bytes` and
+`lupine_client_device_utilization_percent` carry this `client_id`. Connections
+from the same client process that report different values keep the process id.
+Disconnecting removes the value with its connection registry entry.

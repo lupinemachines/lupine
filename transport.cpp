@@ -237,15 +237,18 @@ bool reconnect_checkpoint(conn_t *conn, const std::string &checkpoint) {
 #endif
   while (!conn->closed) {
     conn_t replacement = {};
-    replacement.connfd =
-        lupine_tcp_connect(endpoint.host.c_str(), endpoint.port.c_str(), 0);
-    // Closing the client must also interrupt a pending TLS/resume handshake.
-    pthread_mutex_lock(&state.mutex);
-    bool closing = state.shutting_down || conn->closed;
-    if (!closing) {
-      conn->connfd = replacement.connfd;
-    }
-    pthread_mutex_unlock(&state.mutex);
+    // Closing the client must interrupt the dial and then a pending TLS/resume
+    // handshake, so the socket is published to the shutdown path throughout.
+    auto publish = [&](lupine_socket_t socket) {
+      pthread_mutex_lock(&state.mutex);
+      bool closing = state.shutting_down || conn->closed;
+      conn->connfd = closing ? LUPINE_INVALID_SOCKET : socket;
+      pthread_mutex_unlock(&state.mutex);
+      return !closing;
+    };
+    replacement.connfd = lupine_tcp_connect(endpoint.host.c_str(),
+                                            endpoint.port.c_str(), 0, publish);
+    bool closing = !publish(replacement.connfd);
     if (closing) {
       if (replacement.connfd != LUPINE_INVALID_SOCKET) {
         lupine_socket_close(replacement.connfd);
