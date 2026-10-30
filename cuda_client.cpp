@@ -1023,24 +1023,19 @@ static bool lupine_devices_share_gpu(CUdevice a, CUdevice b) {
          memcmp(&uuid_a, &uuid_b, sizeof(uuid_a)) == 0;
 }
 
-static bool lupine_routes_share_gpu(lupine_route a, lupine_route b) {
-  int count = 0;
-  if (lupine_route_is_local(a) || lupine_route_is_local(b) ||
-      cuDeviceGetCount(&count) != CUDA_SUCCESS) {
+// Whether the current context and peer sit on one physical GPU.
+static bool lupine_context_shares_gpu(CUcontext peer) {
+  CUdevice device = 0;
+  CUdevice peer_device = 0;
+  CUcontext popped = nullptr;
+  if (cuCtxGetDevice(&device) != CUDA_SUCCESS ||
+      cuCtxPushCurrent(peer) != CUDA_SUCCESS) {
     return false;
   }
-  for (int i = 0; i < count; ++i) {
-    for (int j = 0; j < count; ++j) {
-      CUdevice dev_i = i;
-      CUdevice dev_j = j;
-      if (lupine_routes_share_server(lupine_route_for_device(&dev_i), a) &&
-          lupine_routes_share_server(lupine_route_for_device(&dev_j), b) &&
-          lupine_devices_share_gpu(i, j)) {
-        return true;
-      }
-    }
-  }
-  return false;
+  CUresult result = cuCtxGetDevice(&peer_device);
+  cuCtxPopCurrent(&popped);
+  return result == CUDA_SUCCESS &&
+         lupine_devices_share_gpu(device, peer_device);
 }
 
 // Rewrites *ptr to its import on route when it points into an allocation of
@@ -1157,7 +1152,9 @@ extern "C" CUresult cuCtxEnablePeerAccess(CUcontext peerContext,
   lupine_route peer_route = lupine_route_for_context(peerContext);
   if (lupine_route_identity(current_route) !=
       lupine_route_identity(peer_route)) {
-    if (!lupine_routes_share_gpu(current_route, peer_route)) {
+    if (lupine_route_is_local(current_route) ||
+        lupine_route_is_local(peer_route) ||
+        !lupine_context_shares_gpu(peerContext)) {
       return CUDA_ERROR_PEER_ACCESS_UNSUPPORTED;
     }
     std::lock_guard<std::mutex> lock(lupine_peer_mutex);
