@@ -577,6 +577,9 @@ CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
  */
 CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
                               CUkernel kernel, CUdevice dev) {
+  CUresult resolved = lupine_resolve_kernel_for_route(&kernel, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (return_value == CUDA_SUCCESS) {
     lupine_kernel_attribute_set_note(lupine_route_identity(route), kernel,
@@ -591,6 +594,9 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
  */
 CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
                                 CUdevice dev) {
+  CUresult resolved = lupine_resolve_kernel_for_route(&kernel, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (return_value == CUDA_SUCCESS)
     lupine_disable_local_occupancy();
