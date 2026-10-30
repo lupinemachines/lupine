@@ -19,6 +19,9 @@ lupine_deviceptr_allocation_cache_lookup(CUdeviceptr ptr);
 void lupine_deviceptr_allocation_cache_insert(CUdeviceptr base, size_t size,
                                              int route_id, CUcontext context);
 void lupine_deviceptr_allocation_cache_erase(CUdeviceptr base);
+bool lupine_deviceptr_allocation_cache_overlaps_other_route(CUdeviceptr base,
+                                                            size_t size,
+                                                            int route_id);
 
 bool lupine_current_context_device_cache_lookup(CUcontext context,
                                                 CUdevice *device);

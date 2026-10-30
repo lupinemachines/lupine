@@ -638,6 +638,23 @@ extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
                                                 lupine_current_context_hint());
 }
 
+extern "C" bool lupine_note_disjoint_deviceptr_allocation(CUdeviceptr ptr,
+                                                          size_t size,
+                                                          lupine_route route) {
+  int route_id = lupine_route_identity(route);
+  if (ptr == 0 || route_id < -1) {
+    return true;
+  }
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  if (lupine_deviceptr_allocation_cache_overlaps_other_route(ptr, size,
+                                                             route_id)) {
+    return false;
+  }
+  lupine_note_deviceptr_allocation_owner_locked(ptr, size, route_id,
+                                                lupine_current_context_hint());
+  return true;
+}
+
 extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   lupine_owners<CUdeviceptr>().erase(ptr);

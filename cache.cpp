@@ -143,6 +143,23 @@ lupine_deviceptr_allocation_cache_lookup(CUdeviceptr ptr) {
   return nullptr;
 }
 
+bool lupine_deviceptr_allocation_cache_overlaps_other_route(CUdeviceptr base,
+                                                            size_t size,
+                                                            int route_id) {
+  const auto *containing = lupine_deviceptr_allocation_cache_lookup(base);
+  if (containing != nullptr && containing->route_id != route_id) {
+    return true;
+  }
+  const auto &allocations = allocation_cache().allocations;
+  for (auto entry = allocations.upper_bound(base);
+       entry != allocations.end() && entry->first - base < size; ++entry) {
+    if (entry->second.route_id != route_id) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool lupine_current_context_device_cache_lookup(CUcontext context,
                                                 CUdevice *device) {
   uint64_t current_epoch =
