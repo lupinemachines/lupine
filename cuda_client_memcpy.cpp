@@ -3324,6 +3324,7 @@ extern "C" CUresult cuMemFree_v2(CUdeviceptr dptr) {
     if (conn == nullptr) {
       return lupine_call_real_cuda_fn("cuMemFree_v2", ptr);
     }
+    lupine_peer_close_imports(ptr);
     CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_request(conn, RPC_cuMemFree_v2) < 0 ||

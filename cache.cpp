@@ -101,7 +101,8 @@ void lupine_deviceptr_allocation_cache_insert(CUdeviceptr base, size_t size,
   }
   auto previous = predecessor(allocations, next);
   auto inserted = allocations.emplace_hint(
-      next, base, lupine_deviceptr_allocation_record{size, route_id, context});
+      next, base,
+      lupine_deviceptr_allocation_record{size, route_id, context, base});
   cache.overlapping_neighbors -= overlaps(allocations, previous, next);
   cache.overlapping_neighbors += overlaps(allocations, previous, inserted);
   cache.overlapping_neighbors += overlaps(allocations, inserted, next);

@@ -18,6 +18,7 @@
 #include <map>
 #include <mutex>
 #include <new>
+#include <set>
 #include <sstream>
 #include <stdio.h>
 #include <string.h>
@@ -1004,11 +1005,113 @@ extern "C" CUresult cuDeviceGetP2PAttribute(int *value,
   return result;
 }
 
+// Connections to two servers sharing one physical GPU get peer access through
+// CUDA IPC: a peer allocation is exported on its owner and imported on the
+// accessing connection, whose kernels receive the imported address.
+static std::mutex lupine_peer_mutex;
+static std::atomic<bool> lupine_peer_access_used{false};
+// (accessor, owner) route identities with peer access enabled.
+static std::set<std::pair<int, int>> lupine_peer_routes;
+// (owner allocation base, accessor route identity) -> imported base.
+static std::map<std::pair<CUdeviceptr, int>, CUdeviceptr> lupine_peer_imports;
+
+static bool lupine_devices_share_gpu(CUdevice a, CUdevice b) {
+  CUuuid uuid_a = {};
+  CUuuid uuid_b = {};
+  return cuDeviceGetUuid(&uuid_a, a) == CUDA_SUCCESS &&
+         cuDeviceGetUuid(&uuid_b, b) == CUDA_SUCCESS &&
+         memcmp(&uuid_a, &uuid_b, sizeof(uuid_a)) == 0;
+}
+
+static bool lupine_routes_share_gpu(lupine_route a, lupine_route b) {
+  int count = 0;
+  if (lupine_route_is_local(a) || lupine_route_is_local(b) ||
+      cuDeviceGetCount(&count) != CUDA_SUCCESS) {
+    return false;
+  }
+  for (int i = 0; i < count; ++i) {
+    for (int j = 0; j < count; ++j) {
+      CUdevice dev_i = i;
+      CUdevice dev_j = j;
+      if (lupine_routes_share_server(lupine_route_for_device(&dev_i), a) &&
+          lupine_routes_share_server(lupine_route_for_device(&dev_j), b) &&
+          lupine_devices_share_gpu(i, j)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Rewrites *ptr to its import on route when it points into an allocation of
+// a peer route that route has peer access to.
+static bool lupine_peer_deviceptr(lupine_route route, CUdeviceptr *ptr) {
+  CUdeviceptr base = 0;
+  int owner = -2;
+  int accessor = lupine_route_identity(route);
+  if (!lupine_deviceptr_allocation_base(*ptr, &base, &owner) ||
+      owner == accessor) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(lupine_peer_mutex);
+  if (lupine_peer_routes.count({accessor, owner}) == 0) {
+    return false;
+  }
+  auto import = lupine_peer_imports.find({base, accessor});
+  if (import == lupine_peer_imports.end()) {
+    CUipcMemHandle handle = {};
+    CUdeviceptr imported = 0;
+    unsigned int flags = CU_IPC_MEM_LAZY_ENABLE_PEER_ACCESS;
+    CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    conn_t *conn = lupine_route_remote_conn(route);
+    if (cuIpcGetMemHandle(&handle, base) != CUDA_SUCCESS ||
+        lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_request(conn, RPC_cuIpcOpenMemHandle_v2) < 0 ||
+        rpc_write(conn, &imported, sizeof(imported)) < 0 ||
+        rpc_write(conn, &handle, sizeof(handle)) < 0 ||
+        rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &imported, sizeof(imported)) < 0 ||
+        rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0 ||
+        result != CUDA_SUCCESS) {
+      return false;
+    }
+    import =
+        lupine_peer_imports.emplace(std::make_pair(base, accessor), imported)
+            .first;
+  }
+  *ptr = import->second + (*ptr - base);
+  return true;
+}
+
+// The owner frees base next, so its imports must be closed first or a later
+// allocation at the same address would resolve to the stale import.
+extern "C" void lupine_peer_close_imports(CUdeviceptr base) {
+  if (!lupine_peer_access_used.load(std::memory_order_acquire)) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(lupine_peer_mutex);
+  for (auto it = lupine_peer_imports.lower_bound({base, -2});
+       it != lupine_peer_imports.end() && it->first.first == base;
+       it = lupine_peer_imports.erase(it)) {
+    conn_t *conn =
+        lupine_route_remote_conn(lupine_route_from_identity(it->first.second));
+    CUresult result;
+    (void)(lupine_prepare_rpc(conn) < 0 ||
+           rpc_write_start_request(conn, RPC_cuIpcCloseMemHandle) < 0 ||
+           rpc_write(conn, &it->second, sizeof(it->second)) < 0 ||
+           rpc_wait_for_response(conn) < 0 ||
+           rpc_read(conn, &result, sizeof(result)) < 0 ||
+           rpc_read_end(conn) < 0);
+  }
+}
+
 extern "C" CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
                                           CUdevice peerDev) {
   if (canAccessPeer == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
+  CUdevice virtual_dev = dev;
   CUdevice peer = peerDev;
   lupine_route route = lupine_route_for_device(&dev);
   lupine_route peer_route = lupine_route_for_device(&peer);
@@ -1029,7 +1132,8 @@ extern "C" CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (!lupine_translate_device_for_conn(conn, &peerDev)) {
-    *canAccessPeer = 0;
+    *canAccessPeer = !lupine_route_is_local(peer_route) &&
+                     lupine_devices_share_gpu(virtual_dev, peerDev);
     return CUDA_SUCCESS;
   }
 
@@ -1053,7 +1157,17 @@ extern "C" CUresult cuCtxEnablePeerAccess(CUcontext peerContext,
   lupine_route peer_route = lupine_route_for_context(peerContext);
   if (lupine_route_identity(current_route) !=
       lupine_route_identity(peer_route)) {
-    return CUDA_ERROR_PEER_ACCESS_UNSUPPORTED;
+    if (!lupine_routes_share_gpu(current_route, peer_route)) {
+      return CUDA_ERROR_PEER_ACCESS_UNSUPPORTED;
+    }
+    std::lock_guard<std::mutex> lock(lupine_peer_mutex);
+    lupine_peer_access_used.store(true, std::memory_order_release);
+    return lupine_peer_routes
+                   .insert({lupine_route_identity(current_route),
+                            lupine_route_identity(peer_route)})
+                   .second
+               ? CUDA_SUCCESS
+               : CUDA_ERROR_PEER_ACCESS_ALREADY_ENABLED;
   }
   if (lupine_route_is_local(current_route)) {
     return lupine_call_real_cuda_fn("cuCtxEnablePeerAccess", peerContext,
@@ -1077,7 +1191,11 @@ extern "C" CUresult cuCtxDisablePeerAccess(CUcontext peerContext) {
   lupine_route peer_route = lupine_route_for_context(peerContext);
   if (lupine_route_identity(current_route) !=
       lupine_route_identity(peer_route)) {
-    return CUDA_ERROR_PEER_ACCESS_NOT_ENABLED;
+    std::lock_guard<std::mutex> lock(lupine_peer_mutex);
+    return lupine_peer_routes.erase({lupine_route_identity(current_route),
+                                     lupine_route_identity(peer_route)}) != 0
+               ? CUDA_SUCCESS
+               : CUDA_ERROR_PEER_ACCESS_NOT_ENABLED;
   }
   if (lupine_route_is_local(current_route)) {
     return lupine_call_real_cuda_fn("cuCtxDisablePeerAccess", peerContext);
@@ -6101,13 +6219,26 @@ lupine_prepare_kernel_params(lupine_route route, void *const *kernel_params,
   return lupine_prepare_portable_host_allocations(route, portable);
 }
 
+// peer holds the rewritten peer pointers the cursors reference, so it must
+// outlive the request's rpc_write_end.
 static std::vector<rpc_write_cursor>
-lupine_kernel_param_cursors(void *const *kernel_params,
-                            const std::vector<size_t> &sizes) {
+lupine_kernel_param_cursors(lupine_route route, void *const *kernel_params,
+                            const std::vector<size_t> &sizes,
+                            std::vector<CUdeviceptr> *peer) {
   std::vector<rpc_write_cursor> cursors;
   cursors.reserve(sizes.size());
+  if (lupine_peer_access_used.load(std::memory_order_acquire)) {
+    peer->resize(sizes.size());
+  }
   for (size_t i = 0; i < sizes.size(); ++i) {
-    cursors.push_back(rpc_write_cursor(kernel_params[i], sizes[i]));
+    const void *param = kernel_params[i];
+    if (!peer->empty() && sizes[i] == sizeof(CUdeviceptr)) {
+      memcpy(&(*peer)[i], param, sizeof(CUdeviceptr));
+      if (lupine_peer_deviceptr(route, &(*peer)[i])) {
+        param = &(*peer)[i];
+      }
+    }
+    cursors.push_back(rpc_write_cursor(param, sizes[i]));
   }
   return cursors;
 }
@@ -6237,8 +6368,9 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
         "cuLaunchKernel", f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
         blockDimZ, sharedMemBytes, hStream, kernelParams, nullptr);
   }
-  std::vector<rpc_write_cursor> rpc_params =
-      lupine_kernel_param_cursors(kernelParams, param_sizes);
+  std::vector<CUdeviceptr> peer_params;
+  std::vector<rpc_write_cursor> rpc_params = lupine_kernel_param_cursors(
+      route, kernelParams, param_sizes, &peer_params);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6327,8 +6459,9 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
     return lupine_call_real_cuda_fn<CUDA_ERROR_NOT_SUPPORTED>(
         "cuLaunchKernelEx", config, f, kernelParams, nullptr);
   }
-  std::vector<rpc_write_cursor> rpc_params =
-      lupine_kernel_param_cursors(kernelParams, param_sizes);
+  std::vector<CUdeviceptr> peer_params;
+  std::vector<rpc_write_cursor> rpc_params = lupine_kernel_param_cursors(
+      route, kernelParams, param_sizes, &peer_params);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6392,8 +6525,9 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
         "cuLaunchCooperativeKernel", f, gridDimX, gridDimY, gridDimZ, blockDimX,
         blockDimY, blockDimZ, sharedMemBytes, hStream, kernelParams);
   }
-  std::vector<rpc_write_cursor> rpc_params =
-      lupine_kernel_param_cursors(kernelParams, param_sizes);
+  std::vector<CUdeviceptr> peer_params;
+  std::vector<rpc_write_cursor> rpc_params = lupine_kernel_param_cursors(
+      route, kernelParams, param_sizes, &peer_params);
 
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0) {

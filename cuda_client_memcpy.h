@@ -30,6 +30,7 @@ extern "C" CUresult
 lupine_free_device_allocation(CUdeviceptr pointer,
                               lupine_device_free_fn release);
 
+extern "C" void lupine_peer_close_imports(CUdeviceptr base);
 extern "C" bool lupine_copy_pointer_is_host(CUdeviceptr ptr);
 extern "C" bool
 lupine_device_attribute_is_virtualized(conn_t *conn, CUdevice_attribute attrib);

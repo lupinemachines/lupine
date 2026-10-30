@@ -64,7 +64,7 @@ CORE_SAMPLES=(
   quasirandomGenerator_nvrtc
   simpleCudaGraphs streamOrderedAllocation streamOrderedAllocationIPC cudaCompressibleMemory simpleZeroCopy alignedTypes LargeKernelParameter UnifiedMemoryPerf
   vectorAddMMAP memMapIPCDrv
-  simple simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
+  simple simpleP2P simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
   globalToShmemAsyncCopy shfl_scan threadFenceReduction warpAggregatedAtomicsCG
   cdpSimplePrint cdpSimpleQuicksort cdpAdvancedQuicksort cdpQuadtree cdpBezierTessellation
   newdelete
@@ -746,7 +746,19 @@ run_sample() {
     sample_argv+=("$arg")
   done < <(sample_args "$sample")
 
-  if ! start_remote_server "$pidfile" "$server_log" "$port"; then
+  # simpleP2P gets two servers pinned to one GPU, on a port past every
+  # sample's own, so its two virtual devices have peer access over CUDA IPC.
+  local servers="$SERVER_HOST:$port"
+  local server_env=""
+  local peer_port=""
+  if [[ "$sample" == "simpleP2P" ]]; then
+    server_env="CUDA_VISIBLE_DEVICES=0"
+    peer_port=$((port + ${#samples[@]}))
+    servers="$servers,$SERVER_HOST:$peer_port"
+  fi
+  if ! start_remote_server "$pidfile" "$server_log" "$port" "$server_env" ||
+    { [[ -n "$peer_port" ]] && ! start_remote_server "$pidfile.peer" "$server_log.peer" "$peer_port" "$server_env"; }; then
+    stop_remote_server "$pidfile" "$server_log"
     status="FAIL:ssh"
     signature="failed to start remote server on port $port"
     printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" > "$result_file"
@@ -758,7 +770,7 @@ run_sample() {
     cd "$sample_cwd"
     timeout --kill-after=5s "$timeout_seconds" env \
       LD_LIBRARY_PATH="$(dirname "$LUPINE_LIB"):$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
-      LUPINE_SERVER="$SERVER_HOST:$port" \
+      LUPINE_SERVER="$servers" \
       LD_PRELOAD="$LUPINE_LIB" \
       "$sample_exe" "${sample_argv[@]}"
   ) >"$log" 2>&1
@@ -766,6 +778,7 @@ run_sample() {
   set -e
 
   stop_remote_server "$pidfile" "$server_log"
+  [[ -z "$peer_port" ]] || stop_remote_server "$pidfile.peer" "$server_log.peer"
 
   if [[ "$rc" == "0" ]]; then
     status="PASS"

@@ -85,6 +85,9 @@ extern "C" bool lupine_deviceptr_is_tracked(CUdeviceptr ptr);
 // [ptr, ptr + bytes).
 extern "C" bool lupine_deviceptr_allocation_covers(CUdeviceptr ptr,
                                                    size_t bytes, int route_id);
+extern "C" bool lupine_deviceptr_allocation_base(CUdeviceptr ptr,
+                                                 CUdeviceptr *base,
+                                                 int *route_id);
 extern "C" bool lupine_translate_device_for_conn(conn_t *conn,
                                                  CUdevice *device);
 extern "C" CUdevice lupine_local_device_for_remote(conn_t *conn,

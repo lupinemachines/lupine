@@ -768,6 +768,19 @@ extern "C" bool lupine_deviceptr_allocation_covers(CUdeviceptr ptr,
              lupine_deviceptr_allocation_cache_lookup(ptr + bytes - 1);
 }
 
+extern "C" bool lupine_deviceptr_allocation_base(CUdeviceptr ptr,
+                                                 CUdeviceptr *base,
+                                                 int *route_id) {
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  const auto *allocation = lupine_deviceptr_allocation_cache_lookup(ptr);
+  if (allocation == nullptr) {
+    return false;
+  }
+  *base = allocation->base;
+  *route_id = allocation->route_id;
+  return true;
+}
+
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
   {
     std::lock_guard<std::mutex> lock(lupine_routing_mutex());

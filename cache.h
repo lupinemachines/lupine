@@ -10,6 +10,7 @@ struct lupine_deviceptr_allocation_record {
   size_t size = 0;
   int route_id = -2;
   CUcontext context = nullptr;
+  CUdeviceptr base = 0;
 };
 
 // The caller holds the routing mutex. Lookup results remain valid until the
