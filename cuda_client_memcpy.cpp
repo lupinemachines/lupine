@@ -155,6 +155,9 @@ static std::mutex &lupine_host_allocation_mutex() {
   return *mutex;
 }
 
+// Bumped under the host allocation mutex by every table insertion.
+static uint64_t lupine_host_allocation_generation;
+
 static std::mutex &lupine_portable_registration_mutex() {
   static auto *mutex = new std::mutex();
   return *mutex;
@@ -962,10 +965,21 @@ bool lupine_prepare_mapped_host_pointer(CUdeviceptr argument, bool *portable) {
 
 CUresult lupine_prepare_portable_host_allocations(lupine_route route,
                                                   bool expose_portable) {
+  // Registrations stay until their allocation is freed, so a route that had
+  // every portable allocation registered stays complete until an insertion.
+  static thread_local std::vector<uint64_t> complete_generation;
+  int route_id = lupine_route_identity(route);
+  size_t slot = static_cast<size_t>(route_id + 2);
+  if (!expose_portable && slot < complete_generation.size() &&
+      complete_generation[slot] ==
+          __atomic_load_n(&lupine_host_allocation_generation,
+                          __ATOMIC_ACQUIRE)) {
+    return CUDA_SUCCESS;
+  }
   std::lock_guard<std::mutex> mapping_lock(
       lupine_portable_registration_mutex());
   std::unique_lock<std::mutex> lock(lupine_host_allocation_mutex());
-  int route_id = lupine_route_identity(route);
+  uint64_t generation = lupine_host_allocation_generation;
   // Register the backing ranges, rather than guessing which launch arguments
   // contain pointers. A portable allocation may be reached through another
   // allocation, without ever appearing as a kernel argument itself.
@@ -1035,6 +1049,10 @@ CUresult lupine_prepare_portable_host_allocations(lupine_route route,
     allocation.portable_routes.push_back(route_id);
     lupine_require_dirty_host_flush();
   }
+  if (slot >= complete_generation.size()) {
+    complete_generation.resize(slot + 1, UINT64_MAX);
+  }
+  complete_generation[slot] = generation;
   return CUDA_SUCCESS;
 }
 
@@ -2565,6 +2583,7 @@ lupine_adopt_host_allocation(conn_t *conn, void **host, void *remote_host,
     allocation.route_id = lupine_route_identity(route);
     auto &allocations = lupine_mutable_host_allocations_locked();
     auto inserted = allocations.emplace(ptr, std::move(allocation));
+    __atomic_add_fetch(&lupine_host_allocation_generation, 1, __ATOMIC_RELEASE);
     if (!inserted.second) {
       if (io_alias != nullptr) {
         lupine_release_shared_views(ptr, io_alias, storage_size);
@@ -2640,6 +2659,8 @@ extern "C" CUresult cuMemHostAlloc(void **pp, size_t bytesize,
         (void)lupine_call_real_cuda_fn("cuMemFreeHost", *pp);
         return CUDA_ERROR_OUT_OF_MEMORY;
       }
+      __atomic_add_fetch(&lupine_host_allocation_generation, 1,
+                         __ATOMIC_RELEASE);
     }
     lupine_note_deviceptr_allocation_route(reinterpret_cast<CUdeviceptr>(*pp),
                                            bytesize, route);
@@ -2987,6 +3008,7 @@ static CUresult lupine_register_host_on_route(lupine_route route, void *p,
       (void)lupine_call_real_cuda_fn("cuMemHostUnregister", p);
       return CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED;
     }
+    __atomic_add_fetch(&lupine_host_allocation_generation, 1, __ATOMIC_RELEASE);
     return CUDA_SUCCESS;
   }
 
@@ -3029,6 +3051,7 @@ static CUresult lupine_register_host_on_route(lupine_route route, void *p,
   allocation.route_id = lupine_route_identity(route);
   lupine_index_host_allocation_locked(
       allocations.emplace(p, std::move(allocation)).first, true);
+  __atomic_add_fetch(&lupine_host_allocation_generation, 1, __ATOMIC_RELEASE);
   if (server_host != nullptr) {
     lupine_note_deviceptr_allocation_route(
         reinterpret_cast<CUdeviceptr>(server_host), bytesize, route);
