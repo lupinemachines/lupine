@@ -1046,9 +1046,9 @@ void test_client_await_ready_reports_bulk_token(bool advertise) {
 void test_client_metadata_report(bool old_receiver = false,
                                  const std::string &identity = "") {
   if (identity.empty())
-    unsetenv("LUPINE_WORKLOAD_ID");
+    lupine_test_unsetenv("LUPINE_WORKLOAD_ID");
   else
-    setenv("LUPINE_WORKLOAD_ID", identity.c_str(), 1);
+    lupine_test_setenv("LUPINE_WORKLOAD_ID", identity.c_str());
   h2_pair pair;
   init_pair_sockets(&pair);
 
@@ -2835,7 +2835,7 @@ int main() {
   RUN_CASE(test_client_metadata_report(false, std::string(256, 'x')));
   RUN_CASE(test_client_metadata_report(false, std::string(257, 'x')));
   RUN_CASE(test_client_metadata_report(false, std::string("\xc0\xaf")));
-  unsetenv("LUPINE_WORKLOAD_ID");
+  lupine_test_unsetenv("LUPINE_WORKLOAD_ID");
   RUN_CASE(test_client_await_ready_reports_va_window());
   RUN_CASE(test_va_window_and_aliases_are_disjoint());
   RUN_CASE(test_va_claim_bumps_within_arena());
