@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <type_traits>
 #include <utility>
 
@@ -185,10 +186,15 @@ extern "C" void lupine_note_deviceptr_owner_route(CUdeviceptr ptr,
 extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
                                                        size_t size,
                                                        lupine_route route);
-// Records the allocation unless another route tracks an overlapping one.
-extern "C" bool lupine_note_disjoint_deviceptr_allocation(CUdeviceptr ptr,
-                                                          size_t size,
-                                                          lupine_route route);
+// Servers can hand out the same address (the CUDA 13 forward compatibility
+// driver starts every heap at one fixed VA) and pointers route by address.
+// Records *ptr unless another route holds an overlapping allocation; then the
+// colliding block stays allocated until its context goes, and again() asks
+// the same route for another.
+CUresult
+lupine_record_disjoint_allocation(CUdeviceptr *ptr, size_t size,
+                                  lupine_route route,
+                                  const std::function<CUresult()> &again);
 
 // Resolves a driver entry point once per call site; name must be a literal.
 #define LUPINE_REAL_CUDA_SYMBOL(name)                                          \

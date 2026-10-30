@@ -1077,12 +1077,9 @@ CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuMemAlloc_v2"), dptr, bytesize);
-    // Servers can hand out the same address (the CUDA 13 forward compatibility
-    // driver starts every heap at one fixed VA) and pointers route by address,
-    // so a block another route holds stays allocated until its context goes.
-    if (return_value == CUDA_SUCCESS && dptr != nullptr &&
-        !lupine_note_disjoint_deviceptr_allocation(*dptr, bytesize, route))
-      return_value = cuMemAlloc_v2(dptr, bytesize);
+    if (return_value == CUDA_SUCCESS && dptr != nullptr)
+      return_value = lupine_record_disjoint_allocation(
+          dptr, bytesize, route, [&] { return cuMemAlloc_v2(dptr, bytesize); });
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -1095,12 +1092,9 @@ CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  // Servers can hand out the same address (the CUDA 13 forward compatibility
-  // driver starts every heap at one fixed VA) and pointers route by address,
-  // so a block another route holds stays allocated until its context goes.
-  if (return_value == CUDA_SUCCESS && dptr != nullptr &&
-      !lupine_note_disjoint_deviceptr_allocation(*dptr, bytesize, route))
-    return_value = cuMemAlloc_v2(dptr, bytesize);
+  if (return_value == CUDA_SUCCESS && dptr != nullptr)
+    return_value = lupine_record_disjoint_allocation(
+        dptr, bytesize, route, [&] { return cuMemAlloc_v2(dptr, bytesize); });
   return return_value;
 }
 
@@ -1119,11 +1113,11 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
         allocation_size = (*pPitch) * Height;
       else
         allocation_size = WidthInBytes * Height;
-      // As in cuMemAlloc_v2.
-      if (!lupine_note_disjoint_deviceptr_allocation(*dptr, allocation_size,
-                                                     route))
-        return_value = cuMemAllocPitch_v2(dptr, pPitch, WidthInBytes, Height,
-                                          ElementSizeBytes);
+      return_value =
+          lupine_record_disjoint_allocation(dptr, allocation_size, route, [&] {
+            return cuMemAllocPitch_v2(dptr, pPitch, WidthInBytes, Height,
+                                      ElementSizeBytes);
+          });
     }
     return return_value;
   }
@@ -1147,11 +1141,11 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
       allocation_size = (*pPitch) * Height;
     else
       allocation_size = WidthInBytes * Height;
-    // As in cuMemAlloc_v2.
-    if (!lupine_note_disjoint_deviceptr_allocation(*dptr, allocation_size,
-                                                   route))
-      return_value = cuMemAllocPitch_v2(dptr, pPitch, WidthInBytes, Height,
-                                        ElementSizeBytes);
+    return_value =
+        lupine_record_disjoint_allocation(dptr, allocation_size, route, [&] {
+          return cuMemAllocPitch_v2(dptr, pPitch, WidthInBytes, Height,
+                                    ElementSizeBytes);
+        });
   }
   return return_value;
 }

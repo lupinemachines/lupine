@@ -638,9 +638,9 @@ extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
                                                 lupine_current_context_hint());
 }
 
-extern "C" bool lupine_note_disjoint_deviceptr_allocation(CUdeviceptr ptr,
-                                                          size_t size,
-                                                          lupine_route route) {
+static bool lupine_note_disjoint_deviceptr_allocation(CUdeviceptr ptr,
+                                                      size_t size,
+                                                      lupine_route route) {
   int route_id = lupine_route_identity(route);
   if (ptr == 0 || route_id < -1) {
     return true;
@@ -653,6 +653,26 @@ extern "C" bool lupine_note_disjoint_deviceptr_allocation(CUdeviceptr ptr,
   lupine_note_deviceptr_allocation_owner_locked(ptr, size, route_id,
                                                 lupine_current_context_hint());
   return true;
+}
+
+static thread_local bool lupine_allocating_again = false;
+
+CUresult
+lupine_record_disjoint_allocation(CUdeviceptr *ptr, size_t size,
+                                  lupine_route route,
+                                  const std::function<CUresult()> &again) {
+  // The repeated allocation re-enters here; this loop records its result.
+  if (lupine_allocating_again) {
+    return CUDA_SUCCESS;
+  }
+  CUresult result = CUDA_SUCCESS;
+  while (result == CUDA_SUCCESS &&
+         !lupine_note_disjoint_deviceptr_allocation(*ptr, size, route)) {
+    lupine_allocating_again = true;
+    result = again();
+    lupine_allocating_again = false;
+  }
+  return result;
 }
 
 extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr) {
