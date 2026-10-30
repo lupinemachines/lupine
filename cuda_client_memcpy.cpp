@@ -2387,10 +2387,13 @@ extern "C" void lupine_adopt_managed_global(lupine_route route,
     lupine_invalidate_launched_managed(end - page, nullptr);
     end -= page;
   }
+  // Interior pages belong to this global alone, so a covered one means an
+  // earlier lookup of it already made the view.
   void *host = nullptr;
-  if (start >= end || lupine_adopt_host_allocation(
-                          conn, &host, reinterpret_cast<void *>(start), start,
-                          end - start, 0, false) != CUDA_SUCCESS) {
+  if (start >= end || lupine_host_ptr_is_tracked(start) ||
+      lupine_adopt_host_allocation(conn, &host, reinterpret_cast<void *>(start),
+                                   start, end - start, 0,
+                                   false) != CUDA_SUCCESS) {
     return;
   }
   {

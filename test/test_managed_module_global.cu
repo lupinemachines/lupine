@@ -32,6 +32,7 @@ static const char kPtx[] =
     ".address_size 64\n"
     ".global .attribute(.managed) .align 4 .u32 xxx = 10;\n"
     ".global .attribute(.managed) .align 4 .u32 yyy = 100;\n"
+    ".global .attribute(.managed) .align 4 .b8 big[16384];\n"
     ".global .align 4 .u32 plain = 5;\n"
     ".visible .entry bump()\n"
     "{\n"
@@ -102,6 +103,15 @@ int main() {
   CHECK(cuModuleGetGlobal(&again, nullptr, module, "xxx"));
   EXPECT(again == xxx);
   EXPECT(*p_xxx == 31);
+
+  // A global spanning several pages keeps its view across lookups.
+  CUdeviceptr big;
+  CHECK(cuModuleGetGlobal(&big, nullptr, module, "big"));
+  int *p_big = host_view(big);
+  EXPECT(p_big != nullptr);
+  p_big[2048] = 5;
+  CHECK(cuModuleGetGlobal(&big, nullptr, module, "big"));
+  EXPECT(p_big[2048] == 5);
 
   EXPECT(runtime_managed == 7);
   bump_runtime<<<1, 1>>>();
