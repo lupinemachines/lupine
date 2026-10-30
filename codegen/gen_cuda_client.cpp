@@ -95,6 +95,10 @@ extern "C" void lupine_occupancy_cache_erase_function(int route_id,
 extern "C" void lupine_kernel_attribute_set_note(int route_id, CUkernel kernel,
                                                  int attrib, int dev, int val);
 extern "C" void lupine_disable_local_occupancy();
+extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel,
+                                                    lupine_route route);
+extern "C" CUresult lupine_resolve_library_for_route(CUlibrary *library,
+                                                     lupine_route route);
 extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);
 extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
@@ -827,7 +831,10 @@ CUresult cuLibraryUnload(CUlibrary library) {
 }
 
 CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
-  lupine_route route = lupine_route_for_library(library);
+  lupine_route route = lupine_route_for_current_context();
+  CUresult resolved = lupine_resolve_library_for_route(&library, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn(
@@ -858,7 +865,10 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
 
 CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
                             const char *name) {
-  lupine_route route = lupine_route_for_library(library);
+  lupine_route route = lupine_route_for_current_context();
+  CUresult resolved = lupine_resolve_library_for_route(&library, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value =
@@ -973,6 +983,9 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
   lupine_route route = lupine_route_for_device(&dev);
   if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
     return CUDA_ERROR_INVALID_DEVICE;
+  CUresult resolved = lupine_resolve_kernel_for_route(&kernel, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn(
@@ -1009,6 +1022,9 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
   lupine_route route = lupine_route_for_device(&dev);
   if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
     return CUDA_ERROR_INVALID_DEVICE;
+  CUresult resolved = lupine_resolve_kernel_for_route(&kernel, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn(
@@ -1091,11 +1107,9 @@ CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuMemAlloc_v2"), dptr, bytesize);
-    if (return_value == CUDA_SUCCESS && dptr != nullptr) {
-      lupine_note_deviceptr_owner_route(*dptr, route);
-    }
     if (return_value == CUDA_SUCCESS && dptr != nullptr)
-      lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
+      return_value = lupine_record_disjoint_allocation(
+          dptr, bytesize, route, [&] { return cuMemAlloc_v2(dptr, bytesize); });
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -1108,11 +1122,9 @@ CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS && dptr != nullptr) {
-    lupine_note_deviceptr_owner_route(*dptr, route);
-  }
   if (return_value == CUDA_SUCCESS && dptr != nullptr)
-    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
+    return_value = lupine_record_disjoint_allocation(
+        dptr, bytesize, route, [&] { return cuMemAlloc_v2(dptr, bytesize); });
   return return_value;
 }
 
@@ -1126,15 +1138,16 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
         LUPINE_REAL_CUDA_SYMBOL("cuMemAllocPitch_v2"), dptr, pPitch,
         WidthInBytes, Height, ElementSizeBytes);
     if (return_value == CUDA_SUCCESS && dptr != nullptr) {
-      lupine_note_deviceptr_owner_route(*dptr, route);
-    }
-    if (return_value == CUDA_SUCCESS && dptr != nullptr) {
       size_t allocation_size = 0;
       if (pPitch != nullptr)
         allocation_size = (*pPitch) * Height;
       else
         allocation_size = WidthInBytes * Height;
-      lupine_note_deviceptr_allocation_route(*dptr, allocation_size, route);
+      return_value =
+          lupine_record_disjoint_allocation(dptr, allocation_size, route, [&] {
+            return cuMemAllocPitch_v2(dptr, pPitch, WidthInBytes, Height,
+                                      ElementSizeBytes);
+          });
     }
     return return_value;
   }
@@ -1153,15 +1166,16 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS && dptr != nullptr) {
-    lupine_note_deviceptr_owner_route(*dptr, route);
-  }
-  if (return_value == CUDA_SUCCESS && dptr != nullptr) {
     size_t allocation_size = 0;
     if (pPitch != nullptr)
       allocation_size = (*pPitch) * Height;
     else
       allocation_size = WidthInBytes * Height;
-    lupine_note_deviceptr_allocation_route(*dptr, allocation_size, route);
+    return_value =
+        lupine_record_disjoint_allocation(dptr, allocation_size, route, [&] {
+          return cuMemAllocPitch_v2(dptr, pPitch, WidthInBytes, Height,
+                                    ElementSizeBytes);
+        });
   }
   return return_value;
 }

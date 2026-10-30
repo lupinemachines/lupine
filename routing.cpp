@@ -638,6 +638,43 @@ extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
                                                 lupine_current_context_hint());
 }
 
+static bool lupine_note_disjoint_deviceptr_allocation(CUdeviceptr ptr,
+                                                      size_t size,
+                                                      lupine_route route) {
+  int route_id = lupine_route_identity(route);
+  if (ptr == 0 || route_id < -1) {
+    return true;
+  }
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  if (lupine_deviceptr_allocation_cache_overlaps_other_route(ptr, size,
+                                                             route_id)) {
+    return false;
+  }
+  lupine_note_deviceptr_allocation_owner_locked(ptr, size, route_id,
+                                                lupine_current_context_hint());
+  return true;
+}
+
+static thread_local bool lupine_allocating_again = false;
+
+CUresult
+lupine_record_disjoint_allocation(CUdeviceptr *ptr, size_t size,
+                                  lupine_route route,
+                                  const std::function<CUresult()> &again) {
+  // The repeated allocation re-enters here; this loop records its result.
+  if (lupine_allocating_again) {
+    return CUDA_SUCCESS;
+  }
+  CUresult result = CUDA_SUCCESS;
+  while (result == CUDA_SUCCESS &&
+         !lupine_note_disjoint_deviceptr_allocation(*ptr, size, route)) {
+    lupine_allocating_again = true;
+    result = again();
+    lupine_allocating_again = false;
+  }
+  return result;
+}
+
 extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   lupine_owners<CUdeviceptr>().erase(ptr);

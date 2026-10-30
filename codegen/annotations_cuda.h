@@ -486,14 +486,20 @@ CUresult cuLibraryUnload(CUlibrary library);
 CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
                             const char *name);
 /**
- * @routingkey LIBRARY library
+ * @routingkey CURRENT_CONTEXT
  * @recordowner MODULE pMod
  * @recordparent LIBRARY pMod library
  * @param pMod RECV_ONLY
  * @param library SEND_ONLY
  * @disabled server
  */
-CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library);
+CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
+  CUresult resolved = lupine_resolve_library_for_route(&library, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @disabled client - manual client caches functions per kernel and context
  * @param pFunc RECV_ONLY
@@ -527,7 +533,7 @@ CUresult cuKernelGetParamInfo(CUkernel kernel, size_t paramIndex,
 CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
                             size_t *paramOffset, size_t *paramSize);
 /**
- * @routingkey LIBRARY library
+ * @routingkey CURRENT_CONTEXT
  * @recordowner DEVICEPTR dptr
  * @param dptr RECV_ONLY NULLABLE
  * @param bytes RECV_ONLY NULLABLE
@@ -536,6 +542,9 @@ CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
  */
 CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
                             const char *name) {
+  CUresult resolved = lupine_resolve_library_for_route(&library, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
     lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
@@ -587,6 +596,9 @@ CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
  */
 CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
                               CUkernel kernel, CUdevice dev) {
+  CUresult resolved = lupine_resolve_kernel_for_route(&kernel, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (return_value == CUDA_SUCCESS) {
     lupine_kernel_attribute_set_note(lupine_route_identity(route), kernel,
@@ -601,6 +613,9 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
  */
 CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
                                 CUdevice dev) {
+  CUresult resolved = lupine_resolve_kernel_for_route(&kernel, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (return_value == CUDA_SUCCESS)
     lupine_disable_local_occupancy();
@@ -621,19 +636,18 @@ CUresult cuKernelGetName(const char **name, CUkernel hfunc);
 CUresult cuMemGetInfo_v2(size_t *free, size_t *total);
 /**
  * @routingkey CURRENT_CONTEXT
- * @recordowner DEVICEPTR dptr
  * @param dptr SEND_RECV
  * @param bytesize SEND_ONLY
  */
 CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (return_value == CUDA_SUCCESS && dptr != nullptr)
-    lupine_note_deviceptr_allocation_route(*dptr, bytesize, route);
+    return_value = lupine_record_disjoint_allocation(
+        dptr, bytesize, route, [&] { return cuMemAlloc_v2(dptr, bytesize); });
   return return_value;
 }
 /**
  * @routingkey CURRENT_CONTEXT
- * @recordowner DEVICEPTR dptr
  * @param dptr SEND_RECV
  * @param pPitch SEND_RECV
  * @param WidthInBytes SEND_ONLY
@@ -650,7 +664,11 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
       allocation_size = (*pPitch) * Height;
     else
       allocation_size = WidthInBytes * Height;
-    lupine_note_deviceptr_allocation_route(*dptr, allocation_size, route);
+    return_value =
+        lupine_record_disjoint_allocation(dptr, allocation_size, route, [&] {
+          return cuMemAllocPitch_v2(dptr, pPitch, WidthInBytes, Height,
+                                    ElementSizeBytes);
+        });
   }
   return return_value;
 }

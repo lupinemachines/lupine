@@ -1607,6 +1607,24 @@ static CUresult lupine_resolve_library_kernel_for_route(CUfunction function,
   return CUDA_SUCCESS;
 }
 
+// A library's modules and globals belong to a context, so they come from the
+// library as loaded on the current context's connection.
+extern "C" CUresult lupine_resolve_library_for_route(CUlibrary *library,
+                                                     lupine_route route) {
+  return lupine_load_recorded_library_on_route(*library, route, library);
+}
+
+// Library kernels are context-independent, so a device-scoped kernel call
+// must name the kernel as loaded on that device's connection.
+extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel,
+                                                    lupine_route route) {
+  CUfunction resolved = nullptr;
+  CUresult result = lupine_resolve_library_kernel_for_route(
+      reinterpret_cast<CUfunction>(*kernel), route, &resolved);
+  *kernel = reinterpret_cast<CUkernel>(resolved);
+  return result;
+}
+
 static CUfunction lupine_translate_private_function(CUfunction function) {
   {
     std::lock_guard<std::mutex> lock(lupine_private_node_mutex());
@@ -2292,7 +2310,10 @@ extern "C" CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
   if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
     return CUDA_ERROR_INVALID_DEVICE;
   }
-  CUresult return_value;
+  CUresult return_value = lupine_resolve_kernel_for_route(&kernel, route);
+  if (return_value != CUDA_SUCCESS) {
+    return return_value;
+  }
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn("cuKernelGetAttribute", pi, attrib,
                                             kernel, dev);

@@ -143,6 +143,26 @@ lupine_deviceptr_allocation_cache_lookup(CUdeviceptr ptr) {
   return nullptr;
 }
 
+bool lupine_deviceptr_allocation_cache_overlaps_other_route(CUdeviceptr base,
+                                                            size_t size,
+                                                            int route_id) {
+  const auto &cache = allocation_cache();
+  auto entry = cache.allocations.lower_bound(base + size);
+  while (entry != cache.allocations.begin()) {
+    --entry;
+    bool overlap =
+        entry->first >= base || base - entry->first < entry->second.size;
+    if (overlap && entry->second.route_id != route_id) {
+      return true;
+    }
+    // Below base only the predecessor can reach it unless records overlap.
+    if (entry->first < base && cache.overlapping_neighbors == 0) {
+      break;
+    }
+  }
+  return false;
+}
+
 bool lupine_current_context_device_cache_lookup(CUcontext context,
                                                 CUdevice *device) {
   uint64_t current_epoch =

@@ -65,6 +65,7 @@ CORE_SAMPLES=(
   simpleCudaGraphs streamOrderedAllocation streamOrderedAllocationIPC cudaCompressibleMemory simpleZeroCopy alignedTypes LargeKernelParameter UnifiedMemoryPerf
   vectorAddMMAP memMapIPCDrv
   simple uvmlite simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
+  simpleP2P p2pBandwidthLatencyTest streamOrderedAllocationP2P conjugateGradientMultiDeviceCG
   globalToShmemAsyncCopy shfl_scan threadFenceReduction warpAggregatedAtomicsCG
   cdpSimplePrint cdpSimpleQuicksort cdpAdvancedQuicksort cdpQuadtree cdpBezierTessellation
   newdelete
@@ -90,7 +91,7 @@ CORE_SAMPLES=(
 
 LIBRARY_SAMPLES=(
   simpleCUBLAS matrixMulCUBLAS simpleCUBLAS_LU batchCUBLAS simpleCUBLASXT
-  simpleCUFFT simpleCUFFT_callback
+  simpleCUFFT simpleCUFFT_callback simpleCUFFT_MGPU simpleCUFFT_2d_MGPU
   oceanFFT
   cuSolverDn_LinearSolver cuSolverSp_LinearSolver cuSolverSp_LowlevelCholesky
   cuSolverSp_LowlevelQR cuSolverRf
@@ -456,6 +457,52 @@ sample_args() {
   esac
 }
 
+# These get two servers, so two GPUs, each on its own connection without peer
+# access or managed memory shared between them.
+sample_uses_two_servers() {
+  case "$1" in
+    simpleP2P|p2pBandwidthLatencyTest|streamOrderedAllocationP2P|\
+      conjugateGradientMultiDeviceCG|simpleCUFFT_MGPU|simpleCUFFT_2d_MGPU)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# Output a two-server sample must print for its waiver to count: it saw both
+# GPUs and waived only for what separate connections do not provide.
+sample_waiver_evidence() {
+  case "$1" in
+    simpleP2P)
+      printf '%s\0' 'CUDA-capable device count: 2' \
+        'Peer to Peer access is not available amongst GPUs'
+      ;;
+    streamOrderedAllocationP2P)
+      printf '%s\0' 'Device=0 CANNOT Access Peer Device=1' \
+        'No Two or more Devices p2p capable found'
+      ;;
+    conjugateGradientMultiDeviceCG)
+      printf '%s\0' 'GPU Device 1:' 'concurrentManagedAccess found'
+      ;;
+  esac
+}
+
+waived_as_expected() {
+  local sample="$1"
+  local log="$2"
+  local evidence=""
+  local found=0
+
+  if ! sample_uses_two_servers "$sample"; then
+    return 0
+  fi
+  while IFS= read -r -d '' evidence; do
+    grep -Fq -- "$evidence" "$log" || return 1
+    found=1
+  done < <(sample_waiver_evidence "$sample")
+  [[ "$found" == "1" ]]
+}
+
 sample_workdir() {
   local sample="$1"
   local sample_exe="$2"
@@ -746,7 +793,21 @@ run_sample() {
     sample_argv+=("$arg")
   done < <(sample_args "$sample")
 
-  if ! start_remote_server "$pidfile" "$server_log" "$port"; then
+  local servers="$SERVER_HOST:$port"
+  local server_env=""
+  local second_port=""
+  if sample_uses_two_servers "$sample"; then
+    # Both servers are pinned to one GPU, so the second connection's first
+    # device is ordinal 1 however many the host has. The port sits past every
+    # sample's own: port + 1 inside a CTest port slot.
+    server_env="CUDA_VISIBLE_DEVICES=0"
+    second_port=$((port + ${#samples[@]}))
+    servers="$servers,$SERVER_HOST:$second_port"
+  fi
+  if ! start_remote_server "$pidfile" "$server_log" "$port" "$server_env" ||
+    { [[ -n "$second_port" ]] &&
+      ! start_remote_server "$pidfile.2" "$server_log.2" "$second_port" "$server_env"; }; then
+    stop_remote_server "$pidfile" "$server_log"
     status="FAIL:ssh"
     signature="failed to start remote server on port $port"
     printf '%s\t%s\t%s\n' "$sample" "$status" "$signature" > "$result_file"
@@ -758,7 +819,7 @@ run_sample() {
     cd "$sample_cwd"
     timeout --kill-after=5s "$timeout_seconds" env \
       LD_LIBRARY_PATH="$(dirname "$LUPINE_LIB"):$CUDA_LIB_DIR:${LD_LIBRARY_PATH:-}" \
-      LUPINE_SERVER="$SERVER_HOST:$port" \
+      LUPINE_SERVER="$servers" \
       LD_PRELOAD="$LUPINE_LIB" \
       "$sample_exe" "${sample_argv[@]}"
   ) >"$log" 2>&1
@@ -766,10 +827,11 @@ run_sample() {
   set -e
 
   stop_remote_server "$pidfile" "$server_log"
+  [[ -z "$second_port" ]] || stop_remote_server "$pidfile.2" "$server_log.2"
 
   if [[ "$rc" == "0" ]]; then
     status="PASS"
-  elif [[ "$rc" == "2" ]]; then
+  elif [[ "$rc" == "2" ]] && waived_as_expected "$sample" "$log"; then
     status="SKIP:waived"
   else
     status="FAIL:$rc"
@@ -851,7 +913,7 @@ if [[ ${#samples[@]} -gt 1 && "$cmake_samples" == "1" && -d "$catalog_dir" ]]; t
   declare -A _enabled=()
   for _s in "${samples[@]}"; do _enabled["$_s"]=1; done
 
-  graphics=0; ipc=0; mgpu=0; um=0; other=0; covered=0; catalog_total=0
+  graphics=0; ipc=0; um=0; other=0; covered=0; catalog_total=0
   while IFS= read -r _c; do
     [[ -n "$_c" ]] || continue
     # 7_libNVVM helper dirs, ptxgen input fixtures and the 9_CUDA_Tile
@@ -866,8 +928,6 @@ if [[ ${#samples[@]} -gt 1 && "$cmake_samples" == "1" && -d "$catalog_dir" ]]; t
       graphics=$((graphics + 1))
     elif [[ " memMapIPCDrv simpleIPC streamOrderedAllocationIPC " == *" $_c "* ]]; then
       ipc=$((ipc + 1))
-    elif [[ " simpleP2P p2pBandwidthLatencyTest streamOrderedAllocationP2P conjugateGradientMultiDeviceCG simpleCUFFT_MGPU simpleCUFFT_2d_MGPU " == *" $_c "* ]]; then
-      mgpu=$((mgpu + 1))
     elif [[ " UnifiedMemoryPerf UnifiedMemoryStreams systemWideAtomics " == *" $_c "* ]]; then
       um=$((um + 1))
     else
@@ -876,7 +936,7 @@ if [[ ${#samples[@]} -gt 1 && "$cmake_samples" == "1" && -d "$catalog_dir" ]]; t
   done < <(find "$catalog_dir" -mindepth 2 -maxdepth 2 -type d -printf '%f\n' 2>/dev/null | sort -u)
 
   _cov_line="CUDA sample coverage: $covered/$catalog_total catalog samples enabled ($CUDA_SAMPLES_REF)"
-  _ne_line="Not enabled: $((catalog_total - covered)) (graphics $graphics, ipc $ipc, multi-gpu $mgpu, unified-memory $um, other $other)"
+  _ne_line="Not enabled: $((catalog_total - covered)) (graphics $graphics, ipc $ipc, unified-memory $um, other $other)"
   echo ""
   echo "$_cov_line"
   echo "$_ne_line"
