@@ -95,6 +95,8 @@ extern "C" void lupine_occupancy_cache_erase_function(int route_id,
 extern "C" void lupine_kernel_attribute_set_note(int route_id, CUkernel kernel,
                                                  int attrib, int dev, int val);
 extern "C" void lupine_disable_local_occupancy();
+extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel,
+                                                    lupine_route route);
 extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);
 extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
@@ -959,6 +961,9 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
   lupine_route route = lupine_route_for_device(&dev);
   if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
     return CUDA_ERROR_INVALID_DEVICE;
+  CUresult resolved = lupine_resolve_kernel_for_route(&kernel, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn(
@@ -995,6 +1000,9 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
   lupine_route route = lupine_route_for_device(&dev);
   if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
     return CUDA_ERROR_INVALID_DEVICE;
+  CUresult resolved = lupine_resolve_kernel_for_route(&kernel, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn(

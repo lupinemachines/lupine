@@ -114,8 +114,38 @@ int main() {
       !launch_and_check(reinterpret_cast<CUfunction>(kernel), contexts[0],
                         100, "library") ||
       !launch_and_check(reinterpret_cast<CUfunction>(kernel), contexts[1],
-                        100, "library on the second connection") ||
-      !check(cuLibraryUnload(library), "cuLibraryUnload")) {
+                        100, "library on the second connection")) {
+    return 1;
+  }
+  // Device-scoped kernel queries and settings act on the kernel as loaded for
+  // that device's connection.
+  for (int i = 0; i < 2; ++i) {
+    int threads = 0;
+    int shared = 0;
+    if (!check(cuKernelSetAttribute(
+                   CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, 1024 * (i + 1),
+                   kernel, devices[i]),
+               "cuKernelSetAttribute") ||
+        !check(cuKernelSetCacheConfig(kernel, CU_FUNC_CACHE_PREFER_SHARED,
+                                      devices[i]),
+               "cuKernelSetCacheConfig") ||
+        !check(cuKernelGetAttribute(&threads,
+                                    CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
+                                    kernel, devices[i]),
+               "cuKernelGetAttribute(MAX_THREADS_PER_BLOCK)") ||
+        !check(cuKernelGetAttribute(
+                   &shared, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                   kernel, devices[i]),
+               "cuKernelGetAttribute(MAX_DYNAMIC_SHARED_SIZE_BYTES)")) {
+      return 1;
+    }
+    if (threads <= 0 || shared != 1024 * (i + 1)) {
+      std::fprintf(stderr, "device %d kernel attributes %d threads, %d shared\n",
+                   i, threads, shared);
+      return 1;
+    }
+  }
+  if (!check(cuLibraryUnload(library), "cuLibraryUnload")) {
     return 1;
   }
 #endif

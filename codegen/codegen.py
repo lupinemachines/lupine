@@ -1330,6 +1330,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             'extern "C" void lupine_occupancy_cache_erase_function(int route_id, CUfunction function);\n'
             'extern "C" void lupine_kernel_attribute_set_note(int route_id, CUkernel kernel, int attrib, int dev, int val);\n'
             'extern "C" void lupine_disable_local_occupancy();\n'
+            'extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel, lupine_route route);\n'
             'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'
             'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
             'extern "C" CUresult lupine_sync_mapped_device_to_host();\n\n'
