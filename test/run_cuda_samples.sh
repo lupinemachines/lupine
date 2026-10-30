@@ -64,7 +64,7 @@ CORE_SAMPLES=(
   quasirandomGenerator_nvrtc
   simpleCudaGraphs streamOrderedAllocation streamOrderedAllocationIPC cudaCompressibleMemory simpleZeroCopy alignedTypes LargeKernelParameter UnifiedMemoryPerf
   vectorAddMMAP memMapIPCDrv
-  simple simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
+  simple uvmlite simpleHyperQ simpleVoteIntrinsics simpleAWBarrier binaryPartitionCG
   globalToShmemAsyncCopy shfl_scan threadFenceReduction warpAggregatedAtomicsCG
   cdpSimplePrint cdpSimpleQuicksort cdpAdvancedQuicksort cdpQuadtree cdpBezierTessellation
   newdelete
@@ -868,7 +868,7 @@ if [[ ${#samples[@]} -gt 1 && "$cmake_samples" == "1" && -d "$catalog_dir" ]]; t
       ipc=$((ipc + 1))
     elif [[ " simpleP2P p2pBandwidthLatencyTest streamOrderedAllocationP2P conjugateGradientMultiDeviceCG simpleCUFFT_MGPU simpleCUFFT_2d_MGPU " == *" $_c "* ]]; then
       mgpu=$((mgpu + 1))
-    elif [[ " UnifiedMemoryPerf UnifiedMemoryStreams systemWideAtomics uvmlite " == *" $_c "* ]]; then
+    elif [[ " UnifiedMemoryPerf UnifiedMemoryStreams systemWideAtomics " == *" $_c "* ]]; then
       um=$((um + 1))
     else
       other=$((other + 1))
