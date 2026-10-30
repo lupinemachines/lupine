@@ -2363,8 +2363,9 @@ extern "C" void lupine_invalidate_launched_managed(CUdeviceptr pointer,
 // allocation's backing; a device copy could not span the neighbors. Kernels
 // reach it without a launch param, so it is exposed from the start and
 // fetched on first touch. A page an earlier view already covers is refetched
-// instead; the lookup's request flushed its host writes. Views outlive
-// cuModuleUnload.
+// instead; the lookup's request flushed its host writes. Accepted risk: host
+// writes to such a page between a module load and the lookup flush stale bytes
+// over the new global's initializer. Views outlive cuModuleUnload.
 extern "C" void lupine_adopt_managed_global(lupine_route route,
                                             CUdeviceptr global, size_t bytes) {
   conn_t *conn = lupine_route_remote_conn(route);

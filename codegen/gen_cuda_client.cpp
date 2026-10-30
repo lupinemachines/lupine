@@ -715,7 +715,7 @@ CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
                               const char *name) {
   lupine_route route = lupine_route_for_module(hmod);
   size_t global_bytes = 0;
-  if (bytes == nullptr)
+  if (bytes == nullptr && dptr != nullptr)
     bytes = &global_bytes;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
@@ -901,7 +901,7 @@ CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
                              CUlibrary library, const char *name) {
   lupine_route route = lupine_route_for_library(library);
   size_t global_bytes = 0;
-  if (bytes == nullptr)
+  if (bytes == nullptr && dptr != nullptr)
     bytes = &global_bytes;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
