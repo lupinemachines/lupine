@@ -160,16 +160,21 @@ struct lupine_graph_resources {
   }
 
   std::vector<lupine_graph_host_copy> dtoh_copy_snapshot() const {
-    std::vector<lupine_graph_host_copy> copies;
+    auto copies = earlier == nullptr ? std::vector<lupine_graph_host_copy>()
+                                     : earlier->dtoh_copy_snapshot();
+    size_t first = copies.size();
     for (auto *node = dtoh_copies.load(std::memory_order_acquire);
          node != nullptr; node = node->next) {
       copies.push_back(node->copy);
     }
-    std::reverse(copies.begin(), copies.end());
+    std::reverse(copies.begin() + first, copies.end());
     return copies;
   }
 
   std::atomic<lupine_graph_host_copy_node *> dtoh_copies{nullptr};
+  // A capture into an existing graph owns that graph's earlier resources,
+  // whose copies run first. Execs of the earlier graph keep only those.
+  lupine_graph_resources *earlier = nullptr;
   // Graphs, execs and launches whose bytes are undelivered. The object itself
   // outlives them because callbacks and stream maps keep raw pointers.
   std::atomic<int> owners{0};
@@ -211,6 +216,7 @@ static void lupine_retain_graph_resources(lupine_graph_resources *resources) {
 void lupine_release_graph_resources(lupine_graph_resources *resources) {
   if (resources != nullptr && resources->owners.fetch_sub(1) == 1) {
     lupine_retire_graph_staging(resources);
+    lupine_release_graph_resources(std::exchange(resources->earlier, nullptr));
   }
 }
 
@@ -380,8 +386,8 @@ void lupine_finish_stream_capture_resources(CUstream stream, CUgraph graph,
   lupine_erase_capture_resources(lupine_stream_capture_resource_map(),
                                  resources);
   if (success) {
-    // Capturing into a graph replaces its resources. The old ones stay owned:
-    // the graph's earlier nodes still copy into their staging.
+    resources->earlier =
+        lupine_take_graph_resources(lupine_graph_resource_map(), graph);
     lupine_retain_graph_resources(resources);
     lupine_graph_resource_map().insert_or_assign(graph, resources);
   } else {
