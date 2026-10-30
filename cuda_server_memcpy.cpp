@@ -220,9 +220,9 @@ void lupine_release_graph_resources(lupine_graph_resources *resources) {
   }
 }
 
-void lupine_retire_dtoh_staging(const lupine_host_rows &client,
-                                void *server_src,
-                                unsigned long long buffer_id) {
+static void lupine_retire_dtoh_staging(const lupine_host_rows &client,
+                                       void *server_src,
+                                       unsigned long long buffer_id) {
   // Without an id (its context already failed) the buffer would read as heap
   // staging, so leave it to its context instead.
   if (buffer_id == 0) {
@@ -234,7 +234,7 @@ void lupine_retire_dtoh_staging(const lupine_host_rows &client,
   lupine_retired_dtoh_copies() = node;
 }
 
-void lupine_free_retired_dtoh_staging() {
+static void lupine_free_retired_graph_staging() {
   lupine_graph_host_copy_node *node = nullptr;
   {
     std::lock_guard<std::mutex> lock(lupine_retired_dtoh_mutex());
@@ -255,6 +255,39 @@ void lupine_free_retired_dtoh_staging() {
       }
     }
     delete std::exchange(node, node->next);
+  }
+}
+
+void lupine_cleanup_pending_dtoh_copies(lupine_pending_dtoh_items *pending,
+                                        bool in_host_callback) {
+  if (pending != nullptr) {
+    for (auto &copy : *pending) {
+      lupine_release_graph_resources(copy.graph_resources);
+      if (copy.server_src == nullptr) {
+        continue;
+      }
+      lupine_forget_undelivered_dtoh(copy.server_src);
+      switch (copy.storage) {
+      case lupine_dtoh_storage::borrowed:
+        break;
+      case lupine_dtoh_storage::heap:
+        free(copy.server_src);
+        break;
+      case lupine_dtoh_storage::pinned:
+        if (in_host_callback) {
+          lupine_retire_dtoh_staging(copy.client, copy.server_src,
+                                     copy.buffer_id);
+        } else {
+          cuMemFreeHost(copy.server_src);
+        }
+        break;
+      }
+      copy.server_src = nullptr;
+    }
+    pending->clear();
+  }
+  if (!in_host_callback) {
+    lupine_free_retired_graph_staging();
   }
 }
 
@@ -454,7 +487,7 @@ void lupine_clone_graph_resources(CUgraph clone, CUgraph original) {
 void lupine_erase_graph_resources(CUgraph graph) {
   lupine_release_graph_resources(
       lupine_take_graph_resources(lupine_graph_resource_map(), graph));
-  lupine_free_retired_dtoh_staging();
+  lupine_free_retired_graph_staging();
 }
 
 static void lupine_rebind_graph_exec_resources(CUgraphExec exec,
@@ -468,7 +501,7 @@ static void lupine_rebind_graph_exec_resources(CUgraphExec exec,
     lupine_graph_exec_resource_map().insert_or_assign(exec, resources);
   }
   lupine_release_graph_resources(previous);
-  lupine_free_retired_dtoh_staging();
+  lupine_free_retired_graph_staging();
 }
 
 void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
@@ -1565,7 +1598,7 @@ CUresult lupine_release_graph_exec_resources(CUgraphExec exec) {
   if (result == CUDA_SUCCESS) {
     lupine_release_graph_resources(
         lupine_take_graph_resources(lupine_graph_exec_resource_map(), exec));
-    lupine_free_retired_dtoh_staging();
+    lupine_free_retired_graph_staging();
   }
   return result;
 }

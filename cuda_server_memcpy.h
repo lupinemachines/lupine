@@ -93,11 +93,9 @@ int lupine_write_dtoh_rows(conn_t *conn, const lupine_host_rows &client,
 int lupine_write_pending_dtoh_copies(conn_t *conn,
                                      const lupine_pending_dtoh_items &pending,
                                      bool include_count);
-void lupine_cleanup_pending_dtoh_copies(lupine_pending_dtoh_items *pending);
 // Host callbacks cannot free pinned staging; a later cleanup frees it.
-void lupine_retire_dtoh_staging(const lupine_host_rows &client,
-                                void *server_src, unsigned long long buffer_id);
-void lupine_free_retired_dtoh_staging();
+void lupine_cleanup_pending_dtoh_copies(lupine_pending_dtoh_items *pending,
+                                        bool in_host_callback = false);
 CUresult lupine_take_async_error(conn_t *conn, CUresult result);
 void lupine_forget_undelivered_dtoh(const void *server_src);
 void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream);
