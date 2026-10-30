@@ -840,7 +840,7 @@ if(BUILD_TESTING)
 
     add_executable(transport_test
         ${CMAKE_CURRENT_SOURCE_DIR}/transport_test.cpp)
-    target_link_libraries(transport_test PRIVATE lupine_rpc_core)
+    target_link_libraries(transport_test PRIVATE lupine_client_transport)
     lupine_apply_sanitizer(transport_test)
     add_test(NAME transport_test COMMAND transport_test)
 

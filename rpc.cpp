@@ -147,8 +147,9 @@ int lupine_va_reserve_server(conn_t *conn, uintptr_t base, size_t size) {
 // lupine_tcp_connect only resolves and dials; the caller owns TLS setup and
 // the HTTP/2 session. Retried connections use bounded attempts and exponential
 // backoff; zero retries preserves the one-shot blocking policy.
-lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
-                                   unsigned int max_retries) {
+lupine_socket_t
+lupine_tcp_connect(const char *host, const char *port, unsigned int max_retries,
+                   const std::function<bool(lupine_socket_t)> &dialing) {
   constexpr int kInitialBackoffMs = 1000;
   constexpr int kMaxBackoffMs = 30000;
   constexpr int kConnectTimeoutMs = 10000;
@@ -181,7 +182,12 @@ lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
           continue;
         }
         lupine_socket_apply_transport_options(sockfd);
-        int result = max_retries == 0
+        bool handed = false;
+        int result = dialing ? lupine_socket_connect_with_timeout(
+                                   sockfd, ai->ai_addr,
+                                   static_cast<socklen_t>(ai->ai_addrlen), -1,
+                                   [&] { return handed = dialing(sockfd); })
+                     : max_retries == 0
                          ? connect(sockfd, ai->ai_addr,
                                    static_cast<socklen_t>(ai->ai_addrlen))
                          : lupine_socket_connect_with_timeout(
@@ -191,6 +197,9 @@ lupine_socket_t lupine_tcp_connect(const char *host, const char *port,
         if (result == 0) {
           freeaddrinfo(res);
           return sockfd;
+        }
+        if (handed) {
+          dialing(LUPINE_INVALID_SOCKET);
         }
         lupine_socket_close(sockfd);
         if (max_retries == 0) {
