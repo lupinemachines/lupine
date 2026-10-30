@@ -59,6 +59,27 @@
 #endif
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
+#if defined(__linux__)
+static thread_local conn_t *lupine_server_va_connection = nullptr;
+#endif
+
+// The mmap interposer places the driver's managed VA reservations made inside
+// `allocate` in the connection's identity arena: cuMemAllocManaged and the
+// __managed__ globals a module load creates.
+template <typename F>
+static CUresult lupine_in_va_arena(conn_t *conn, F &&allocate) {
+#if defined(__linux__)
+  if (conn->va_size != 0) {
+    conn_t *previous = lupine_server_va_connection;
+    lupine_server_va_connection = conn;
+    CUresult result = allocate();
+    lupine_server_va_connection = previous;
+    return result;
+  }
+#endif
+  return allocate();
+}
+
 #if CUDA_VERSION < 12020
 #ifdef CU_MEM_LOCATION_TYPE_HOST
 static constexpr CUmemLocationType LUPINE_CU_MEM_LOCATION_TYPE_HOST =
@@ -1056,7 +1077,8 @@ int handle_cuModuleLoad(conn_t *conn) {
     return -1;
   }
 
-  result = cuModuleLoadData(&module, image.data());
+  result = lupine_in_va_arena(
+      conn, [&] { return cuModuleLoadData(&module, image.data()); });
   if (result == CUDA_SUCCESS) {
     lupine_note_device_stdout_image(image.data(), image_size);
   }
@@ -1094,14 +1116,16 @@ int handle_cuModuleLoadData(conn_t *conn) {
     return -1;
   }
 
-  if (kind == LUPINE_MODULE_IMAGE_FATBINC_V1 ||
-      kind == LUPINE_MODULE_IMAGE_FATBINC_V2) {
-    result = cuModuleLoadFatBinary(&module, image.data());
-  } else if (kind == LUPINE_MODULE_IMAGE_FATBIN_RAW) {
-    result = cuModuleLoadData(&module, image.data());
-  } else {
-    result = CUDA_ERROR_NOT_SUPPORTED;
-  }
+  result = lupine_in_va_arena(conn, [&] {
+    if (kind == LUPINE_MODULE_IMAGE_FATBINC_V1 ||
+        kind == LUPINE_MODULE_IMAGE_FATBINC_V2) {
+      return cuModuleLoadFatBinary(&module, image.data());
+    }
+    if (kind == LUPINE_MODULE_IMAGE_FATBIN_RAW) {
+      return cuModuleLoadData(&module, image.data());
+    }
+    return CUDA_ERROR_NOT_SUPPORTED;
+  });
   if (result == CUDA_SUCCESS) {
     lupine_note_device_stdout_image(image.data(), image.size());
   }
@@ -1143,8 +1167,10 @@ int handle_cuModuleLoadDataEx(conn_t *conn) {
   // The client always unwraps fat binary containers, and cuModuleLoadDataEx
   // takes a cubin, fatbin, or PTX image, so the kind tag the request carries
   // for the options-free entry point makes no difference here.
-  CUresult result = cuModuleLoadDataEx(&module, image.data(), jit.num_options,
-                                       jit.options, jit.option_values);
+  CUresult result = lupine_in_va_arena(conn, [&] {
+    return cuModuleLoadDataEx(&module, image.data(), jit.num_options,
+                              jit.options, jit.option_values);
+  });
   if (result == CUDA_SUCCESS) {
     lupine_note_device_stdout_image(image.data(), image.size());
   }
@@ -1320,7 +1346,8 @@ static int lupine_write_library(conn_t *conn,
   return 0;
 }
 
-static CUresult lupine_load_library(CUlibrary *library, uint32_t kind,
+static CUresult lupine_load_library(conn_t *conn, CUlibrary *library,
+                                    uint32_t kind,
                                     const std::vector<unsigned char> &image,
                                     const lupine_jit_state &jit,
                                     std::vector<CUlibraryOption> &options,
@@ -1340,10 +1367,12 @@ static CUresult lupine_load_library(CUlibrary *library, uint32_t kind,
       kind != LUPINE_MODULE_IMAGE_FATBIN_RAW) {
     return CUDA_ERROR_NOT_SUPPORTED;
   }
-  CUresult result = cuLibraryLoadData(
-      library, code, jit.options, jit.option_values, jit.num_options,
-      options.data(), has_values ? values.data() : nullptr,
-      static_cast<unsigned int>(options.size()));
+  CUresult result = lupine_in_va_arena(conn, [&] {
+    return cuLibraryLoadData(library, code, jit.options, jit.option_values,
+                             jit.num_options, options.data(),
+                             has_values ? values.data() : nullptr,
+                             static_cast<unsigned int>(options.size()));
+  });
   if (result == CUDA_SUCCESS) {
     lupine_note_device_stdout_image(image.data(), image.size());
   }
@@ -1403,9 +1432,9 @@ int handle_cuLibraryLoadData(conn_t *conn) {
     return -1;
   }
 
-  CUresult result =
-      lupine_load_library(&library, kind, image, jit_state, library_options,
-                          library_option_values, has_library_option_values);
+  CUresult result = lupine_load_library(conn, &library, kind, image, jit_state,
+                                        library_options, library_option_values,
+                                        has_library_option_values);
   lupine_library_snapshot snapshot;
   if (result == CUDA_SUCCESS) {
     snapshot = lupine_collect_library(library);
@@ -1480,8 +1509,8 @@ int handle_lupineLibraryLoadBatch(conn_t *conn) {
       }
     }
     if (pushed) {
-      e.result = lupine_load_library(&e.library, kind, image, jit, options,
-                                     values, has_values);
+      e.result = lupine_load_library(conn, &e.library, kind, image, jit,
+                                     options, values, has_values);
     }
     if (e.result == CUDA_SUCCESS) {
       e.snapshot = lupine_collect_library(e.library);
@@ -4059,8 +4088,6 @@ namespace {
 
 static constexpr uintptr_t LUPINE_SERVER_VA_ALIGNMENT = UINT64_C(0x200000);
 
-thread_local conn_t *lupine_server_va_connection = nullptr;
-
 void *lupine_server_mmap(conn_t *conn, void *address, size_t size,
                          size_t alignment, int protection, int flags, int fd,
                          off_t offset) {
@@ -4218,10 +4245,8 @@ CUresult lupine_server_allocate_managed(
 #if !defined(__linux__)
   return CUDA_ERROR_NOT_SUPPORTED;
 #else
-  conn_t *previous = lupine_server_va_connection;
-  lupine_server_va_connection = conn;
-  CUresult result = allocate(pointer, bytes, flags);
-  lupine_server_va_connection = previous;
+  CUresult result =
+      lupine_in_va_arena(conn, [&] { return allocate(pointer, bytes, flags); });
   if (result != CUDA_SUCCESS) {
     return result;
   }

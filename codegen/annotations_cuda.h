@@ -380,9 +380,14 @@ CUresult cuModuleGetFunction(CUfunction *hfunc, CUmodule hmod,
  */
 CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
                               const char *name) {
+  size_t global_bytes = 0;
+  if (bytes == nullptr)
+    bytes = &global_bytes;
   CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
+  if (return_value == CUDA_SUCCESS && dptr != nullptr) {
     lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
+    lupine_adopt_managed_global(route, *dptr, *bytes);
+  }
   return return_value;
 }
 /**
@@ -546,9 +551,14 @@ CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
  */
 CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
                              CUlibrary library, const char *name) {
+  size_t global_bytes = 0;
+  if (bytes == nullptr)
+    bytes = &global_bytes;
   CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS && dptr != nullptr && bytes != nullptr)
+  if (return_value == CUDA_SUCCESS && dptr != nullptr) {
     lupine_note_deviceptr_allocation_route(*dptr, *bytes, route);
+    lupine_adopt_managed_global(route, *dptr, *bytes);
+  }
   return return_value;
 }
 /**
