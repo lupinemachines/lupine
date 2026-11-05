@@ -14,8 +14,8 @@
 
 #include "gen_rpc_ids.h"
 
-#include "attribute_cache.h"
 #include "client_routing.h"
+#include "cuda_client.h"
 #include "cuda_client_memcpy.h"
 #include "rpc.h"
 

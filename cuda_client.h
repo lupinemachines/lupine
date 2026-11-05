@@ -1,5 +1,5 @@
-#ifndef LUPINE_ATTRIBUTE_CACHE_H
-#define LUPINE_ATTRIBUTE_CACHE_H
+#ifndef LUPINE_CUDA_CLIENT_H
+#define LUPINE_CUDA_CLIENT_H
 
 #include <cuda.h>
 

@@ -1,4 +1,4 @@
-#include "attribute_cache.h"
+#include "cuda_client.h"
 #include "device_stdout.h"
 #include "fatbin_filter.h"
 #include "lupine_platform.h"
