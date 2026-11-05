@@ -118,6 +118,40 @@ int main() {
     return 1;
   }
 
+  // A repeat succeeds locally, while failed sets must never enter the memo.
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    if (!check(cuFuncSetAttribute(
+                   function, CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT,
+                   50),
+               "cuFuncSetAttribute(repeat 50)") ||
+        !expect(cuFuncSetAttribute(
+                    function,
+                    CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT, 101),
+                CUDA_ERROR_INVALID_VALUE, "cuFuncSetAttribute(invalid 101)")) {
+      return 1;
+    }
+  }
+
+  // A kernel setter invalidates the function's last-set memo. Setting 50
+  // again must reach the driver after the kernel setter changed it to 75.
+  if (!check(cuKernelSetAttribute(
+                 CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT, 75, kernel,
+                 device),
+             "cuKernelSetAttribute(carveout 75)") ||
+      !check(
+          cuFuncSetAttribute(
+              function, CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT, 50),
+          "cuFuncSetAttribute(50 after kernel set)") ||
+      !check(cuFuncGetAttribute(
+                 &carveout, CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT,
+                 function),
+             "cuFuncGetAttribute(50 after kernel set)") ||
+      carveout != 50) {
+    std::fprintf(stderr,
+                 "function set memo survived kernel attribute change\n");
+    return 1;
+  }
+
   if (!check(
           cuKernelSetAttribute(CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
                                0, kernel, device),

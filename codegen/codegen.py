@@ -1332,6 +1332,8 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             'extern "C" void lupine_kernel_attribute_cache_erase_for_function(int route_id, CUfunction function, int attrib);\n'
             'extern "C" void lupine_occupancy_cache_erase_function(int route_id, CUfunction function);\n'
             'extern "C" void lupine_kernel_attribute_set_note(int route_id, CUkernel kernel, int attrib, int dev, int val);\n'
+            'extern "C" bool lupine_function_attribute_set_is_repeat(int route_id, CUfunction function, int attrib, int value);\n'
+            'extern "C" void lupine_function_attribute_set_note(int route_id, CUfunction function, int attrib, int value);\n'
             'extern "C" void lupine_disable_local_occupancy();\n'
             'extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel, lupine_route route);\n'
             'extern "C" CUresult lupine_resolve_library_for_route(CUlibrary *library, lupine_route route);\n'

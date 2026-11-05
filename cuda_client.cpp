@@ -565,6 +565,18 @@ lupine_function_attribute_cache() {
   return *cache;
 }
 
+// The value each function attribute was last successfully set to, so a repeat
+// set skips the round trip. Separate from the attribute cache above: that one
+// mirrors what the driver reports, which need not equal what was set.
+static libcuckoo::cuckoohash_map<lupine_function_attribute_key, int,
+                                 lupine_function_attribute_key_hash> &
+lupine_function_attribute_set_cache() {
+  static auto *cache =
+      new libcuckoo::cuckoohash_map<lupine_function_attribute_key, int,
+                                    lupine_function_attribute_key_hash>();
+  return *cache;
+}
+
 static int lupine_read_function_attributes(conn_t *conn, lupine_route route,
                                            CUfunction function) {
   int route_id = lupine_route_identity(route);
@@ -2471,6 +2483,33 @@ extern "C" void lupine_kernel_attribute_set_note(int route_id, CUkernel kernel,
   lupine_kernel_attribute_cache().insert_or_assign(key, val);
   lupine_occupancy_cache_erase_function(route_id,
                                         reinterpret_cast<CUfunction>(kernel));
+  // A kernel set moves the attribute of every function instantiated from it,
+  // so a function's last set value no longer says what the driver holds.
+  lupine_function_attribute_set_cache().clear();
+}
+
+// torch sets the same dynamic shared-memory limit before every launch of some
+// kernels. Setting a function attribute to the value it was last successfully
+// set to changes nothing in the driver, so the repeat answers locally instead
+// of costing a round trip and an occupancy cache sweep.
+extern "C" bool lupine_function_attribute_set_is_repeat(int route_id,
+                                                        CUfunction function,
+                                                        int attrib, int value) {
+  int cached = 0;
+  return lupine_function_attribute_set_cache().find(
+             lupine_function_attribute_key{route_id, function, attrib},
+             cached) &&
+         cached == value;
+}
+
+extern "C" void lupine_function_attribute_set_note(int route_id,
+                                                   CUfunction function,
+                                                   int attrib, int value) {
+  lupine_kernel_attribute_cache_erase_for_function(route_id, function, attrib);
+  lupine_function_attribute_cache_erase(route_id, function, attrib);
+  lupine_occupancy_cache_erase_function(route_id, function);
+  lupine_function_attribute_set_cache().insert_or_assign(
+      lupine_function_attribute_key{route_id, function, attrib}, value);
 }
 
 // Occupancy is a pure function of the kernel's attributes and the device's
@@ -6175,6 +6214,7 @@ extern "C" void lupine_invalidate_function_caches() {
   lupine_occupancy_cache().clear();
   lupine_kernel_attribute_cache().clear();
   lupine_function_attribute_cache().clear();
+  lupine_function_attribute_set_cache().clear();
 }
 
 static CUresult lupine_resolve_launch_function_for_route(
@@ -6660,11 +6700,16 @@ extern "C" void lupine_release_module_retained_strings(CUmodule module) {
       lupine_function_attribute_cache(),
       [&](const auto &key, const auto &) { return is_unloaded(key.function); });
   lupine_cache_erase_if(
+      lupine_function_attribute_set_cache(),
+      [&](const auto &key, const auto &) { return is_unloaded(key.function); });
+  lupine_cache_erase_if(
       lupine_occupancy_cache(),
       [&](const auto &key, const auto &) { return is_unloaded(key.function); });
 }
 
 extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
+  // The library's functions are freed and their handles may be reused.
+  lupine_function_attribute_set_cache().clear();
   std::scoped_lock lock(lupine_library_kernel_mutex(), g_retained_string_mutex);
   lupine_library_images().erase(library);
   lupine_library_enumerations().erase(library);

@@ -94,6 +94,12 @@ extern "C" void lupine_occupancy_cache_erase_function(int route_id,
                                                       CUfunction function);
 extern "C" void lupine_kernel_attribute_set_note(int route_id, CUkernel kernel,
                                                  int attrib, int dev, int val);
+extern "C" bool lupine_function_attribute_set_is_repeat(int route_id,
+                                                        CUfunction function,
+                                                        int attrib, int value);
+extern "C" void lupine_function_attribute_set_note(int route_id,
+                                                   CUfunction function,
+                                                   int attrib, int value);
 extern "C" void lupine_disable_local_occupancy();
 extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel,
                                                     lupine_route route);
@@ -3319,21 +3325,18 @@ CUresult cuStreamBatchMemOp_v2(CUstream stream, unsigned int count,
 CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
                             int value) {
   lupine_route route = lupine_route_for_function(hfunc);
+  if (lupine_function_attribute_set_is_repeat(
+          lupine_route_identity(route),
+          lupine_translate_private_function_for_rpc(hfunc), (int)attrib, value))
+    return CUDA_SUCCESS;
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuFuncSetAttribute"), hfunc, attrib, value);
-    if (return_value == CUDA_SUCCESS) {
-      lupine_kernel_attribute_cache_erase_for_function(
+    if (return_value == CUDA_SUCCESS)
+      lupine_function_attribute_set_note(
           lupine_route_identity(route),
-          lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
-      lupine_function_attribute_cache_erase(
-          lupine_route_identity(route),
-          lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
-      lupine_occupancy_cache_erase_function(
-          lupine_route_identity(route),
-          lupine_translate_private_function_for_rpc(hfunc));
-    }
+          lupine_translate_private_function_for_rpc(hfunc), (int)attrib, value);
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -3347,17 +3350,10 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (return_value == CUDA_SUCCESS) {
-    lupine_kernel_attribute_cache_erase_for_function(
+  if (return_value == CUDA_SUCCESS)
+    lupine_function_attribute_set_note(
         lupine_route_identity(route),
-        lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
-    lupine_function_attribute_cache_erase(
-        lupine_route_identity(route),
-        lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
-    lupine_occupancy_cache_erase_function(
-        lupine_route_identity(route),
-        lupine_translate_private_function_for_rpc(hfunc));
-  }
+        lupine_translate_private_function_for_rpc(hfunc), (int)attrib, value);
   return return_value;
 }
 

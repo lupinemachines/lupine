@@ -1985,18 +1985,15 @@ CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
  */
 CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
                             int value) {
+  if (lupine_function_attribute_set_is_repeat(
+          lupine_route_identity(route),
+          lupine_translate_private_function_for_rpc(hfunc), (int)attrib, value))
+    return CUDA_SUCCESS;
   CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS) {
-    lupine_kernel_attribute_cache_erase_for_function(
+  if (return_value == CUDA_SUCCESS)
+    lupine_function_attribute_set_note(
         lupine_route_identity(route),
-        lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
-    lupine_function_attribute_cache_erase(
-        lupine_route_identity(route),
-        lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
-    lupine_occupancy_cache_erase_function(
-        lupine_route_identity(route),
-        lupine_translate_private_function_for_rpc(hfunc));
-  }
+        lupine_translate_private_function_for_rpc(hfunc), (int)attrib, value);
   return return_value;
 }
 /**
