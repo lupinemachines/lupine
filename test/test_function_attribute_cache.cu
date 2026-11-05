@@ -132,12 +132,17 @@ int main() {
     }
   }
 
-  // A kernel setter invalidates the function's last-set memo. Setting 50
-  // again must reach the driver after the kernel setter changed it to 75.
+  // Kernel and function settings are distinct: a function override keeps
+  // precedence even when the kernel's device-wide setting changes later.
   if (!check(cuKernelSetAttribute(
                  CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT, 75, kernel,
                  device),
              "cuKernelSetAttribute(carveout 75)") ||
+      !check(cuFuncGetAttribute(
+                 &carveout, CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT,
+                 function),
+             "cuFuncGetAttribute(function override after kernel set)") ||
+      carveout != 50 ||
       !check(
           cuFuncSetAttribute(
               function, CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT, 50),
@@ -149,6 +154,16 @@ int main() {
       carveout != 50) {
     std::fprintf(stderr,
                  "function set memo survived kernel attribute change\n");
+    return 1;
+  }
+
+  // Unlike carveout above, this attribute has no function override. A kernel
+  // set must invalidate a previously cached function query for it.
+  int function_dynamic_shared_size = -1;
+  if (!check(cuFuncGetAttribute(&function_dynamic_shared_size,
+                                CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                                function),
+             "cuFuncGetAttribute(dynamic shared before kernel set)")) {
     return 1;
   }
 
@@ -170,6 +185,17 @@ int main() {
       dynamic_shared_size != 0) {
     std::fprintf(stderr, "stale kernel attribute value: %d, expected 0\n",
                  dynamic_shared_size);
+    return 1;
+  }
+
+  if (!check(cuFuncGetAttribute(&function_dynamic_shared_size,
+                                CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                                function),
+             "cuFuncGetAttribute(dynamic shared after kernel set)") ||
+      function_dynamic_shared_size != 0) {
+    std::fprintf(stderr,
+                 "stale function query after kernel attribute set: %d\n",
+                 function_dynamic_shared_size);
     return 1;
   }
 

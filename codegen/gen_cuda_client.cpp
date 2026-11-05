@@ -14,6 +14,7 @@
 
 #include "gen_rpc_ids.h"
 
+#include "attribute_cache.h"
 #include "client_routing.h"
 #include "cuda_client_memcpy.h"
 #include "rpc.h"
@@ -85,8 +86,6 @@ extern "C" void lupine_invalidate_current_context_cache();
 extern "C" void lupine_forget_destroyed_context(CUcontext ctx);
 extern "C" void lupine_mark_context_green(CUcontext ctx);
 extern "C" void lupine_invalidate_function_caches();
-extern "C" void lupine_kernel_attribute_set_note(int route_id, CUkernel kernel,
-                                                 int attrib, int dev, int val);
 extern "C" void lupine_disable_local_occupancy();
 extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel,
                                                     lupine_route route);
@@ -984,10 +983,11 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
     return_value = lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuKernelSetAttribute"), attrib, val, kernel,
         dev);
-    if (return_value == CUDA_SUCCESS) {
-      lupine_kernel_attribute_set_note(lupine_route_identity(route), kernel,
-                                       (int)attrib, (int)dev, val);
-    }
+    if (return_value == CUDA_SUCCESS)
+      lupine_attribute_set(
+          lupine_kernel_attribute_key{lupine_route_identity(route), kernel,
+                                      (int)attrib, (int)dev},
+          val, lupine_attribute_source::set);
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -1003,10 +1003,11 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return_value = CUDA_SUCCESS;
-  if (return_value == CUDA_SUCCESS) {
-    lupine_kernel_attribute_set_note(lupine_route_identity(route), kernel,
-                                     (int)attrib, (int)dev, val);
-  }
+  if (return_value == CUDA_SUCCESS)
+    lupine_attribute_set(
+        lupine_kernel_attribute_key{lupine_route_identity(route), kernel,
+                                    (int)attrib, (int)dev},
+        val, lupine_attribute_source::set);
   return return_value;
 }
 
@@ -3306,6 +3307,75 @@ CUresult cuStreamBatchMemOp_v2(CUstream stream, unsigned int count,
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
+                            CUfunction hfunc) {
+  lupine_route route = lupine_route_for_function(hfunc);
+  if (pi == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  hfunc = lupine_translate_private_function_for_rpc(hfunc);
+  route = lupine_route_for_function(hfunc);
+  lupine_function_attribute_key key{lupine_route_identity(route), hfunc,
+                                    (int)attrib};
+  if (!lupine_route_is_local(route) && lupine_attribute_get(key, *pi))
+    return CUDA_SUCCESS;
+  CUresult return_value;
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuFuncGetAttribute"), pi, attrib, hfunc);
+    if (return_value == CUDA_SUCCESS && !lupine_route_is_local(route))
+      lupine_attribute_set(key, *pi);
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuFuncGetAttribute) < 0 ||
+      rpc_write(conn, pi, sizeof(int)) < 0 ||
+      rpc_write(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
+      rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
+      rpc_wait_for_response(conn) < 0 || rpc_read(conn, pi, sizeof(int)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS && !lupine_route_is_local(route))
+    lupine_attribute_set(key, *pi);
+  return return_value;
+}
+
+CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
+                            int value) {
+  lupine_route route = lupine_route_for_function(hfunc);
+  lupine_function_attribute_key key{
+      lupine_route_identity(route),
+      lupine_translate_private_function_for_rpc(hfunc), (int)attrib};
+  int cached = 0;
+  if (lupine_attribute_get(key, cached, lupine_attribute_source::set) &&
+      cached == value)
+    return CUDA_SUCCESS;
+  CUresult return_value;
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuFuncSetAttribute"), hfunc, attrib, value);
+    if (return_value == CUDA_SUCCESS)
+      lupine_attribute_set(key, value, lupine_attribute_source::set);
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuFuncSetAttribute) < 0 ||
+      rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
+      rpc_write(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
+      rpc_write(conn, &value, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    lupine_attribute_set(key, value, lupine_attribute_source::set);
   return return_value;
 }
 
