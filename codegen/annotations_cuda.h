@@ -600,10 +600,11 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
   if (resolved != CUDA_SUCCESS)
     return resolved;
   CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS) {
-    lupine_kernel_attribute_set_note(lupine_route_identity(route), kernel,
-                                     (int)attrib, (int)dev, val);
-  }
+  if (return_value == CUDA_SUCCESS)
+    lupine_attribute_set(
+        lupine_kernel_attribute_key{lupine_route_identity(route), kernel,
+                                    (int)attrib, (int)dev},
+        val, lupine_attribute_source::set);
   return return_value;
 }
 /**
@@ -1969,14 +1970,26 @@ CUresult cuStreamBatchMemOp_v2(CUstream stream, unsigned int count,
                                CUstreamBatchMemOpParams *paramArray,
                                unsigned int flags);
 /**
- * @disabled client - manual client caches successful attribute queries
  * @routingkey FUNCTION hfunc
  * @param pi SEND_RECV
  * @param attrib SEND_ONLY
  * @param hfunc SEND_ONLY
  */
 CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
-                            CUfunction hfunc);
+                            CUfunction hfunc) {
+  if (pi == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  hfunc = lupine_translate_private_function_for_rpc(hfunc);
+  route = lupine_route_for_function(hfunc);
+  lupine_function_attribute_key key{lupine_route_identity(route), hfunc,
+                                    (int)attrib};
+  if (!lupine_route_is_local(route) && lupine_attribute_get(key, *pi))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && !lupine_route_is_local(route))
+    lupine_attribute_set(key, *pi);
+  return return_value;
+}
 /**
  * @routingkey FUNCTION hfunc
  * @param hfunc SEND_ONLY
@@ -1985,18 +1998,16 @@ CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
  */
 CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
                             int value) {
+  lupine_function_attribute_key key{
+      lupine_route_identity(route),
+      lupine_translate_private_function_for_rpc(hfunc), (int)attrib};
+  int cached = 0;
+  if (lupine_attribute_get(key, cached, lupine_attribute_source::set) &&
+      cached == value)
+    return CUDA_SUCCESS;
   CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS) {
-    lupine_kernel_attribute_cache_erase_for_function(
-        lupine_route_identity(route),
-        lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
-    lupine_function_attribute_cache_erase(
-        lupine_route_identity(route),
-        lupine_translate_private_function_for_rpc(hfunc), (int)attrib);
-    lupine_occupancy_cache_erase_function(
-        lupine_route_identity(route),
-        lupine_translate_private_function_for_rpc(hfunc));
-  }
+  if (return_value == CUDA_SUCCESS)
+    lupine_attribute_set(key, value, lupine_attribute_source::set);
   return return_value;
 }
 /**
