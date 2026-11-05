@@ -1,7 +1,9 @@
 #ifndef LUPINE_CUDA_CLIENT_H
 #define LUPINE_CUDA_CLIENT_H
 
-#include <cuda.h>
+#define LUPINE_CUDA_COMPAT_TYPES_ONLY
+#include "cuda_compat.h"
+#undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
 struct lupine_kernel_attribute_key {
   int route_id = -2;
