@@ -1978,24 +1978,14 @@ CUresult cuStreamBatchMemOp_v2(CUstream stream, unsigned int count,
 CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
                             CUfunction hfunc);
 /**
+ * @disabled client - manual client caches successful attribute sets
  * @routingkey FUNCTION hfunc
  * @param hfunc SEND_ONLY
  * @param attrib SEND_ONLY
  * @param value SEND_ONLY
  */
 CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
-                            int value) {
-  if (lupine_function_attribute_set_is_repeat(
-          lupine_route_identity(route),
-          lupine_translate_private_function_for_rpc(hfunc), (int)attrib, value))
-    return CUDA_SUCCESS;
-  CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS)
-    lupine_function_attribute_set_note(
-        lupine_route_identity(route),
-        lupine_translate_private_function_for_rpc(hfunc), (int)attrib, value);
-  return return_value;
-}
+                            int value);
 /**
  * @routingkey FUNCTION hfunc
  * @param hfunc SEND_ONLY

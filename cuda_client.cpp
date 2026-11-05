@@ -2364,15 +2364,12 @@ extern "C" CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
     return CUDA_ERROR_INVALID_VALUE;
   }
 
-  CUfunction translated = lupine_translate_private_function(hfunc);
-  lupine_route route = lupine_route_for_function(translated);
-  CUresult return_value;
+  hfunc = lupine_translate_private_function(hfunc);
+  lupine_route route = lupine_route_for_function(hfunc);
   if (lupine_route_is_local(route)) {
-    return_value =
-        lupine_call_real_cuda_fn("cuFuncGetAttribute", pi, attrib, translated);
-    return return_value;
+    return lupine_call_real_cuda_fn("cuFuncGetAttribute", pi, attrib, hfunc);
   }
-  lupine_function_attribute_key key{lupine_route_identity(route), translated,
+  lupine_function_attribute_key key{lupine_route_identity(route), hfunc,
                                     static_cast<int>(attrib)};
   if (lupine_function_attribute_cache().find(key, *pi)) {
     return CUDA_SUCCESS;
@@ -2380,11 +2377,12 @@ extern "C" CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
 
   conn_t *conn = lupine_route_remote_conn(route);
   int value = 0;
+  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuFuncGetAttribute) < 0 ||
       rpc_write(conn, &value, sizeof(value)) < 0 ||
       rpc_write(conn, &attrib, sizeof(attrib)) < 0 ||
-      rpc_write(conn, &translated, sizeof(translated)) < 0 ||
+      rpc_write(conn, &hfunc, sizeof(hfunc)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &value, sizeof(value)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -2401,7 +2399,7 @@ extern "C" CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
 // A function is one kernel instantiated in one context, so a set on it moves
 // exactly one kernel-attribute entry, and a function of a plain module moves
 // none; without either pairing the whole cache is the only safe target.
-extern "C" void lupine_kernel_attribute_cache_erase_for_function(
+static void lupine_kernel_attribute_cache_erase_for_function(
     int route_id, CUfunction function, int attrib) {
   CUkernel kernel = nullptr;
   int device = -1;
@@ -2430,13 +2428,6 @@ extern "C" void lupine_kernel_attribute_cache_erase_for_function(
       lupine_kernel_attribute_key{route_id, kernel, attrib, device});
 }
 
-extern "C" void lupine_function_attribute_cache_erase(int route_id,
-                                                      CUfunction function,
-                                                      int attrib) {
-  lupine_function_attribute_cache().erase(
-      lupine_function_attribute_key{route_id, function, attrib});
-}
-
 template <typename Cache, typename Match>
 static void lupine_cache_erase_if(Cache &cache, Match match) {
   auto table = cache.lock_table();
@@ -2447,8 +2438,8 @@ static void lupine_cache_erase_if(Cache &cache, Match match) {
 
 // Drops the occupancy answers that depend on one kernel, whichever handle the
 // caller queried it through. Occupancy of every other kernel stays valid.
-extern "C" void lupine_occupancy_cache_erase_function(int route_id,
-                                                      CUfunction function) {
+static void lupine_occupancy_cache_erase_function(int route_id,
+                                                  CUfunction function) {
   std::vector<CUfunction> handles = {function};
   {
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
@@ -2488,28 +2479,43 @@ extern "C" void lupine_kernel_attribute_set_note(int route_id, CUkernel kernel,
   lupine_function_attribute_set_cache().clear();
 }
 
-// torch sets the same dynamic shared-memory limit before every launch of some
-// kernels. Setting a function attribute to the value it was last successfully
-// set to changes nothing in the driver, so the repeat answers locally instead
-// of costing a round trip and an occupancy cache sweep.
-extern "C" bool lupine_function_attribute_set_is_repeat(int route_id,
-                                                        CUfunction function,
-                                                        int attrib, int value) {
+extern "C" CUresult cuFuncSetAttribute(CUfunction hfunc,
+                                       CUfunction_attribute attrib, int value) {
+  lupine_route route = lupine_route_for_function(hfunc);
+  CUfunction function = lupine_translate_private_function_for_rpc(hfunc);
+  lupine_function_attribute_key key{lupine_route_identity(route), function,
+                                    static_cast<int>(attrib)};
   int cached = 0;
-  return lupine_function_attribute_set_cache().find(
-             lupine_function_attribute_key{route_id, function, attrib},
-             cached) &&
-         cached == value;
-}
+  if (lupine_function_attribute_set_cache().find(key, cached) &&
+      cached == value) {
+    return CUDA_SUCCESS;
+  }
 
-extern "C" void lupine_function_attribute_set_note(int route_id,
-                                                   CUfunction function,
-                                                   int attrib, int value) {
-  lupine_kernel_attribute_cache_erase_for_function(route_id, function, attrib);
-  lupine_function_attribute_cache_erase(route_id, function, attrib);
-  lupine_occupancy_cache_erase_function(route_id, function);
-  lupine_function_attribute_set_cache().insert_or_assign(
-      lupine_function_attribute_key{route_id, function, attrib}, value);
+  CUresult return_value;
+  if (lupine_route_is_local(route)) {
+    return_value =
+        lupine_call_real_cuda_fn("cuFuncSetAttribute", hfunc, attrib, value);
+  } else {
+    conn_t *conn = lupine_route_remote_conn(route);
+    if (lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_request(conn, RPC_cuFuncSetAttribute) < 0 ||
+        rpc_write(conn, &function, sizeof(function)) < 0 ||
+        rpc_write(conn, &attrib, sizeof(attrib)) < 0 ||
+        rpc_write(conn, &value, sizeof(value)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+        rpc_read_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+  }
+  if (return_value == CUDA_SUCCESS) {
+    lupine_kernel_attribute_cache_erase_for_function(key.route_id, function,
+                                                     key.attribute);
+    lupine_function_attribute_cache().erase(key);
+    lupine_occupancy_cache_erase_function(key.route_id, function);
+    lupine_function_attribute_set_cache().insert_or_assign(key, value);
+  }
+  return return_value;
 }
 
 // Occupancy is a pure function of the kernel's attributes and the device's
