@@ -322,6 +322,15 @@ struct lupine_function_attribute_key_hash {
 
 enum class lupine_attribute_cache { function, function_set, kernel };
 
+#if CUDA_VERSION >= 12000
+// Cache successful remote encodings by every input, including the route.
+// Serialize insertion and eviction to keep the bound strict across threads.
+static std::mutex lupine_tensor_map_mutex;
+static std::unordered_map<std::string, CUtensorMap> lupine_tensor_maps;
+static constexpr size_t kLupineTensorMapCacheLimit = 4096;
+static uint64_t lupine_tensor_map_generation = 0;
+#endif
+
 template <lupine_attribute_cache Kind> static auto &get_cache() {
   constexpr bool kernel = Kind == lupine_attribute_cache::kernel;
   using key = std::conditional_t<kernel, lupine_kernel_attribute_key,
@@ -6110,6 +6119,13 @@ static CUresult lupine_warm_kernel_param_info(CUkernel kernel) {
 }
 
 extern "C" void lupine_invalidate_function_caches() {
+#if CUDA_VERSION >= 12000
+  {
+    std::lock_guard<std::mutex> lock(lupine_tensor_map_mutex);
+    lupine_tensor_maps.clear();
+    ++lupine_tensor_map_generation;
+  }
+#endif
   lupine_module_function_names().clear();
   lupine_param_info_cache().clear();
   lupine_param_layout_count_cache().clear();
@@ -9379,6 +9395,34 @@ extern "C" CUresult cuTensorMapEncodeTiled(
   const size_t stride_bytes = (tensorRank - 1) * sizeof(cuuint64_t);
   const size_t rank_bytes_u32 = tensorRank * sizeof(cuuint32_t);
 
+  std::string key;
+  auto append = [&key](const auto &value) {
+    key.append(reinterpret_cast<const char *>(&value), sizeof(value));
+  };
+  append(lupine_route_identity(route));
+  append(tensorDataType);
+  append(tensorRank);
+  append(remote_address);
+  key.append(reinterpret_cast<const char *>(globalDim), rank_bytes_u64);
+  if (stride_bytes != 0)
+    key.append(reinterpret_cast<const char *>(globalStrides), stride_bytes);
+  key.append(reinterpret_cast<const char *>(boxDim), rank_bytes_u32);
+  key.append(reinterpret_cast<const char *>(elementStrides), rank_bytes_u32);
+  append(interleave);
+  append(swizzle);
+  append(l2Promotion);
+  append(oobFill);
+  uint64_t generation;
+  {
+    std::lock_guard<std::mutex> lock(lupine_tensor_map_mutex);
+    auto cached = lupine_tensor_maps.find(key);
+    if (cached != lupine_tensor_maps.end()) {
+      *tensorMap = cached->second;
+      return CUDA_SUCCESS;
+    }
+    generation = lupine_tensor_map_generation;
+  }
+
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuTensorMapEncodeTiled) < 0 ||
       rpc_write(conn, &tensorDataType, sizeof(tensorDataType)) < 0 ||
@@ -9396,6 +9440,15 @@ extern "C" CUresult cuTensorMapEncodeTiled(
       rpc_read(conn, tensorMap, sizeof(*tensorMap)) < 0 ||
       rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (result == CUDA_SUCCESS) {
+    std::lock_guard<std::mutex> lock(lupine_tensor_map_mutex);
+    // Do not repopulate a cache cleared while this RPC was in flight.
+    if (generation != lupine_tensor_map_generation)
+      return result;
+    if (lupine_tensor_maps.size() >= kLupineTensorMapCacheLimit)
+      lupine_tensor_maps.clear();
+    lupine_tensor_maps.insert_or_assign(std::move(key), *tensorMap);
   }
   return result;
 }
