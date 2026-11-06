@@ -126,15 +126,19 @@ class Session:
         self._previous_server = os.environ.get("LUPINE_SERVER")
         if not configured:
             os.environ["LUPINE_SERVER"] = ",".join(self.servers)
-        if sys.platform == "darwin":
-            from . import _backend
+        try:
+            if sys.platform == "darwin":
+                from . import _backend
 
-            _backend.start()
-            self.backend = "torch"
-        else:
-            from . import _native
+                _backend.start()
+                self.backend = "torch"
+            else:
+                from . import _native
 
-            _native.load(missing_ok=False)
+                _native.load(missing_ok=False)
+        except BaseException:
+            self.__exit__(None, None, None)
+            raise
         self._loaded = True
         return self
 
