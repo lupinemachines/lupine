@@ -1281,6 +1281,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             "#include <vector>\n\n"
             '#include "gen_rpc_ids.h"\n\n'
             '#include "client_routing.h"\n'
+            '#include "cuda_client.h"\n'
             '#include "cuda_client_memcpy.h"\n'
             '#include "rpc.h"\n\n'
             "extern int rpc_size();\n"
@@ -1328,10 +1329,6 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             'extern "C" void lupine_forget_destroyed_context(CUcontext ctx);\n'
             'extern "C" void lupine_mark_context_green(CUcontext ctx);\n'
             'extern "C" void lupine_invalidate_function_caches();\n'
-            'extern "C" void lupine_function_attribute_cache_erase(int route_id, CUfunction function, int attrib);\n'
-            'extern "C" void lupine_kernel_attribute_cache_erase_for_function(int route_id, CUfunction function, int attrib);\n'
-            'extern "C" void lupine_occupancy_cache_erase_function(int route_id, CUfunction function);\n'
-            'extern "C" void lupine_kernel_attribute_set_note(int route_id, CUkernel kernel, int attrib, int dev, int val);\n'
             'extern "C" void lupine_disable_local_occupancy();\n'
             'extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel, lupine_route route);\n'
             'extern "C" CUresult lupine_resolve_library_for_route(CUlibrary *library, lupine_route route);\n'
