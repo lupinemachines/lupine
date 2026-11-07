@@ -3297,57 +3297,65 @@ CUresult cuCtxDisablePeerAccess(CUcontext peerContext);
  */
 CUresult cuDeviceGetP2PAttribute(int *value, CUdevice_P2PAttribute attrib,
                                  CUdevice srcDevice, CUdevice dstDevice);
+// A graphics resource names an object in the client's own OpenGL context, which
+// no server process can reach, so remote routes stage it on the client.
 /**
- * @param resource SEND_ONLY
+ * @remoteclient lupine_staged_cuGraphicsUnregisterResource
  */
 CUresult cuGraphicsUnregisterResource(CUgraphicsResource resource);
 /**
- * @param pArray SEND_RECV
- * @param resource SEND_ONLY
- * @param arrayIndex SEND_ONLY
- * @param mipLevel SEND_ONLY
+ * @remoteclient lupine_staged_cuGraphicsSubResourceGetMappedArray
  */
 CUresult cuGraphicsSubResourceGetMappedArray(CUarray *pArray,
                                              CUgraphicsResource resource,
                                              unsigned int arrayIndex,
                                              unsigned int mipLevel);
 /**
- * @param pMipmappedArray SEND_RECV
- * @param resource SEND_ONLY
+ * @remoteclient lupine_staged_cuGraphicsResourceGetMappedMipmappedArray
  */
 CUresult
 cuGraphicsResourceGetMappedMipmappedArray(CUmipmappedArray *pMipmappedArray,
                                           CUgraphicsResource resource);
 /**
- * @param pDevPtr SEND_RECV
- * @param pSize SEND_RECV
- * @param resource SEND_ONLY
+ * @remoteclient lupine_staged_cuGraphicsResourceGetMappedPointer_v2
  */
 CUresult cuGraphicsResourceGetMappedPointer_v2(CUdeviceptr *pDevPtr,
                                                size_t *pSize,
                                                CUgraphicsResource resource);
 /**
- * @param resource SEND_ONLY
- * @param flags SEND_ONLY
+ * @remoteclient lupine_staged_cuGraphicsResourceSetMapFlags_v2
  */
 CUresult cuGraphicsResourceSetMapFlags_v2(CUgraphicsResource resource,
                                           unsigned int flags);
 /**
- * @param count SEND_ONLY
- * @param resources SEND_ONLY LENGTH:count
- * @param hStream SEND_ONLY
+ * @remoteclient lupine_staged_cuGraphicsMapResources
  */
 CUresult cuGraphicsMapResources(unsigned int count,
                                 CUgraphicsResource *resources,
                                 CUstream hStream);
 /**
- * @param count SEND_ONLY
- * @param resources SEND_ONLY LENGTH:count
- * @param hStream SEND_ONLY
+ * @remoteclient lupine_staged_cuGraphicsUnmapResources
  */
 CUresult cuGraphicsUnmapResources(unsigned int count,
                                   CUgraphicsResource *resources,
                                   CUstream hStream);
+/**
+ * @remoteclient lupine_staged_cuGraphicsGLRegisterBuffer
+ */
+CUresult cuGraphicsGLRegisterBuffer(CUgraphicsResource *pCudaResource,
+                                    GLuint buffer, unsigned int Flags);
+/**
+ * @remoteclient lupine_staged_cuGraphicsGLRegisterImage
+ */
+CUresult cuGraphicsGLRegisterImage(CUgraphicsResource *pCudaResource,
+                                   GLuint image, GLenum target,
+                                   unsigned int Flags);
+/**
+ * @remoteclient lupine_staged_cuGLGetDevices_v2
+ */
+CUresult cuGLGetDevices_v2(unsigned int *pCudaDeviceCount,
+                           CUdevice *pCudaDevices, unsigned int cudaDeviceCount,
+                           CUGLDeviceList deviceList);
 /**
  * @guard CUDA_VERSION >= 12090
  * @disabled - manual persistent callback forwarding and handle routing
