@@ -98,6 +98,14 @@ not-supported status, and no RPC id, server handler, or registration is
 generated for it. Use it for entry points whose arguments cannot cross the
 wire, such as client callbacks.
 
+`@remoteclient <helper>` serves a remote route on the client: the generated
+wrapper still routes, and calls the driver on a local route, but on a remote
+route it returns `<helper>(<arguments>)` instead of sending an RPC. No RPC id,
+server handler, or registration is generated, and the declaration takes no
+`@param` lines. Use it for APIs whose arguments only mean something in the
+client process, such as OpenGL interop, whose helpers stage the GL object
+through ordinary CUDA calls.
+
 `@guard <preprocessor-expression>` wraps the generated client wrapper, server
 handler, function-map entry, and server registration. Use it for APIs that are
 not declared by every supported CUDA toolkit, such as an API introduced in a

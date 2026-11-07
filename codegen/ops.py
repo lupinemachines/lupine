@@ -1180,6 +1180,8 @@ class FunctionAnnotationMetadata:
     disabled_server: bool = False
     # @async: fire-and-forget op; client does not wait, server sends no response.
     async_fire_forget: bool = False
+    # @remoteclient: a client helper serves remote routes; no RPC is generated.
+    remote_client: Optional[str] = None
     # Optional response fields are emitted by the corresponding manual server
     # handler before the generated CUDA result.
     synchronize: Optional[SynchronizeAnnotation] = None

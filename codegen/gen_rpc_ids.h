@@ -373,13 +373,6 @@
 #define RPC_cuCtxEnablePeerAccess 1737933368
 #define RPC_cuCtxDisablePeerAccess 1900602041
 #define RPC_cuDeviceGetP2PAttribute 281845697
-#define RPC_cuGraphicsUnregisterResource 810484259
-#define RPC_cuGraphicsSubResourceGetMappedArray 65277060
-#define RPC_cuGraphicsResourceGetMappedMipmappedArray 2136009832
-#define RPC_cuGraphicsResourceGetMappedPointer_v2 1222294105
-#define RPC_cuGraphicsResourceSetMapFlags_v2 955282896
-#define RPC_cuGraphicsMapResources 156810469
-#define RPC_cuGraphicsUnmapResources 121118754
 #define RPC_cuCoredumpGetAttributeGlobal 2132238767
 #define RPC_cuCoredumpSetAttributeGlobal 1511844529
 #define RPC_cuGreenCtxCreate 1079242194
