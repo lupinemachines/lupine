@@ -458,7 +458,7 @@ lupine_logs_callbacks() {
 #endif
 
 // A fire-and-forget failure is reported by the next synchronizing response.
-static void lupine_keep_async_error(conn_t *conn, CUresult result) {
+void lupine_keep_async_error(conn_t *conn, CUresult result) {
   int none = CUDA_SUCCESS;
   if (result != CUDA_SUCCESS) {
     __atomic_compare_exchange_n(&conn->first_async_error, &none,

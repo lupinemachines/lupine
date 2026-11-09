@@ -45,6 +45,8 @@ class Backend:
     # Status codes for conditional output arrays.
     success: str = ""
     invalid_result: str = ""
+    # Keeps an unanswered call's failure for the next synchronize to report.
+    keep_async_error: str = ""
 
 
 def optional_async(backend: "Backend", metadata) -> bool:
@@ -438,6 +440,8 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
                 f.write(f"  fn({args});\n\n")
             else:
                 f.write(f"  return_value = fn({args});\n\n")
+    elif always_async and backend.keep_async_error:
+        f.write(f"  {backend.keep_async_error}(conn, {entry}({args}));\n\n")
     elif always_async or result == "void":
         f.write(f"  {entry}({args});\n\n")
     else:

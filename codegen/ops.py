@@ -1178,8 +1178,11 @@ class FunctionAnnotationMetadata:
     guard: Optional[str] = None
     disabled_client: bool = False
     disabled_server: bool = False
-    # @async: fire-and-forget op; client does not wait, server sends no response.
+    # Inferred by infer_async: the client does not wait and the server sends
+    # no response.
     async_fire_forget: bool = False
+    # @blocking: a call answering only its status that must still wait for it.
+    blocking: bool = False
     # Optional response fields are emitted by the corresponding manual server
     # handler before the generated CUDA result.
     synchronize: Optional[SynchronizeAnnotation] = None
@@ -1196,3 +1199,24 @@ class FunctionAnnotationMetadata:
     client_call_template: Optional[ClientCallTemplate] = None
     # @clearfields: members holding host addresses, cleared on both sides.
     clear_fields: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
+
+
+def infer_async(metadata: FunctionAnnotationMetadata, result_type: str,
+                status_type: str) -> bool:
+    """Whether a call can be sent without waiting for its answer.
+
+    A call whose only answer is its status needn't wait for it: a failure
+    reaches the client from its next synchronize. @blocking marks the ones
+    whose contract is the wait itself, or whose status is their result. A call
+    whose answer carries anything else keeps it. A handwritten side has to
+    agree: its call either sends without waiting or is @blocking.
+    """
+    return (
+        result_type == status_type
+        and not metadata.blocking
+        and metadata.synchronize is None
+        and metadata.graph_exec_update is None
+        and metadata.routing_kind != "ALL"
+        and metadata.client_call_template is None
+        and all(not getattr(op, "recv", True) for op in metadata.operations)
+    )

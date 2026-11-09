@@ -13,6 +13,7 @@ import argparse
 from collections import namedtuple
 import io
 import os
+import sys
 import glob
 import re
 import subprocess
@@ -33,6 +34,7 @@ from emit import (
     write_versioned_struct_helper,
 )
 from ops import (
+    infer_async,
     NullableOperation,
     ArrayOperation,
     InOutCountOperation,
@@ -413,6 +415,7 @@ CUDA = Backend(
     not_supported="CUDA_ERROR_NOT_SUPPORTED",
     success="CUDA_SUCCESS",
     invalid_result="CUDA_ERROR_UNKNOWN",
+    keep_async_error="lupine_keep_async_error",
 )
 
 NVML = Backend(
@@ -566,7 +569,11 @@ def parse_annotation(
         if line.startswith("*"):
             line = line[2:]
         if line.strip().startswith("@async"):
-            metadata.async_fire_forget = True
+            raise NotImplementedError(
+                "@async is inferred; mark a status-only call that must wait @blocking"
+            )
+        if line.strip().startswith("@blocking"):
+            metadata.blocking = True
             continue
         if line.strip().startswith("@synchronize"):
             parts = line.split()
@@ -1114,6 +1121,7 @@ def collect_backend_functions(
     server_bindings: dict[str, ServerBinding] = {},
     string_length_type: str = None,
     client_call_templates: dict[str, ClientCallTemplate] = None,
+    async_status: str = None,
 ):
     """Calls in the order named, or every call the annotation file declares."""
     by_name = {
@@ -1130,6 +1138,9 @@ def collect_backend_functions(
         metadata = parse_annotation(function.doxygen, function.parameters)
         if client_call_templates is not None:
             attach_client_call_template(function, metadata, client_call_templates)
+        # Only a backend that can submit without an answer infers async calls.
+        if async_status is not None:
+            infer_async_annotation(function, metadata, async_status)
         if string_length_type is not None:
             for operation in metadata.operations:
                 if isinstance(operation, NullTerminatedOperation):
@@ -1164,24 +1175,19 @@ def find_header_file(filename):
     )
 
 
-def validate_async_annotation(
-    function: Function, metadata: FunctionAnnotationMetadata
+def infer_async_annotation(
+    function: Function, metadata: FunctionAnnotationMetadata, status_type: str
 ) -> None:
-    if not metadata.async_fire_forget:
-        return
-    name = function.name.format()
-    return_type = function.return_type.format()
-    if return_type != "CUresult":
-        raise RuntimeError(
-            f"{name}: @async requires a CUresult return type, got {return_type}"
+    metadata.async_fire_forget = infer_async(
+        metadata, function.return_type.format(), status_type
+    )
+    if metadata.async_fire_forget and os.environ.get("LUPINE_LIST_INFERRED_ASYNC"):
+        side = (
+            " (handwritten client)" if metadata.disabled_client and not metadata.disabled_server
+            else " (handwritten server)" if metadata.disabled_server and not metadata.disabled_client
+            else " (handwritten)" if metadata.disabled_client else ""
         )
-    for operation in metadata.operations:
-        # NullableArrayOperation is an out-parameter with no send/recv flags.
-        if getattr(operation, "recv", True):
-            raise RuntimeError(
-                f"{name}: @async requires every parameter to be SEND_ONLY, "
-                f"but {operation.parameter.name} is received back"
-            )
+        print(f"inferred async: {function.name.format()}{side}", file=sys.stderr)
 
 
 def attach_client_call_template(
@@ -1805,7 +1811,7 @@ def main():
                 f"Error parsing annotation for {function.name.format()}"
             ) from e
         attach_client_call_template(function, metadata, client_call_templates)
-        validate_async_annotation(function, metadata)
+        infer_async_annotation(function, metadata, "CUresult")
         functions_with_annotations.append(
             (function, annotation, metadata.operations, metadata)
         )
@@ -1840,7 +1846,7 @@ def main():
             continue
         metadata = parse_annotation(annotation.doxygen, annotation.parameters)
         attach_client_call_template(annotation, metadata, client_call_templates)
-        validate_async_annotation(annotation, metadata)
+        infer_async_annotation(annotation, metadata, "CUresult")
         annotated_function = (
             annotation,
             annotation,
@@ -1900,6 +1906,7 @@ def main():
     nccl_functions_with_annotations = collect_backend_functions(
         annotations_by_target["nccl"],
         client_call_templates=client_call_templates_by_target["nccl"],
+        async_status=NCCL.result,
     )
     annotated_names = sorted(
         {function.name.format() for function in cuda_annotations.namespace.functions}

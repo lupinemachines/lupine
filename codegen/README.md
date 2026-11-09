@@ -42,12 +42,16 @@ the client addresses named in `CLEARED:<member>,...`. A member some supported
 headers lack takes `MEMBERGUARD:<member>=<condition>`; its length still travels,
 so client and server built against different headers share one wire format.
 
-`@async` on a forwarding backend that sets `async_success` makes the call's
-submission a choice: the generated wrapper asks `submit_async(conn)` and, when
-it says yes, sends the call fire-and-forget with an async ticket and returns
-that status; otherwise it sends an ordinary request that carries the all-ones
-ticket and waits for the library's result. NCCL uses this for calls inside a
-group, which the library only queues.
+A call whose only answer is its status, with every parameter `SEND_ONLY` and
+no `@synchronize`, is sent without waiting for that answer: the RPC layer gives
+it a ticket that later requests from any lane wait on, the server sends no
+response, and a failure reaches the client from its next synchronize. Mark the
+exceptions `@blocking`: calls whose contract is the wait itself, whose status
+is their result, whose server call waits on the GPU, or whose handwritten side
+waits. On a forwarding backend that sets `async_success` the choice is made at
+run time instead: the generated wrapper asks `submit_async(conn)` and only sends
+without waiting when it says yes. NCCL uses this for calls inside a group,
+which the library only queues.
 
 Client routing can also be annotated for handles that belong to a specific LUPINE
 server connection. `@routingkey <kind> <param>` selects the connection for the

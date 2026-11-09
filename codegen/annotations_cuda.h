@@ -17,6 +17,7 @@ CUresult cuGetErrorName(CUresult error, const char **pStr);
 /**
  * @disabled client - manual client initializes every configured route
  * @param Flags SEND_ONLY
+ * @blocking - the handwritten client returns the server's status
  */
 CUresult cuInit(unsigned int Flags);
 /**
@@ -110,6 +111,7 @@ CUresult cuDeviceGetExecAffinitySupport(int *pi, CUexecAffinityType type,
 /**
  * @param target SEND_ONLY
  * @param scope SEND_ONLY
+ * @blocking - returns once the writes are visible
  */
 CUresult cuFlushGPUDirectRDMAWrites(CUflushGPUDirectRDMAWritesTarget target,
                                     CUflushGPUDirectRDMAWritesScope scope);
@@ -142,6 +144,7 @@ CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev);
  * @disabled client - manual client caches primary context state
  * @param dev SEND_ONLY
  * @param flags SEND_ONLY
+ * @blocking - the handwritten client returns the server's status
  */
 CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags);
 /**
@@ -205,6 +208,7 @@ CUresult cuCtxPopCurrent_v2(CUcontext *pctx);
 /**
  * @disabled client - manual client maintains the virtual current context
  * @param ctx SEND_ONLY
+ * @blocking - the handwritten client waits for the server
  */
 CUresult cuCtxSetCurrent(CUcontext ctx);
 /**
@@ -470,7 +474,6 @@ CUresult cuLibraryLoadData(CUlibrary *library, const void *code,
                            unsigned int numLibraryOptions);
 /**
  * @disabled server - manual server keeps the library loaded, see the handler
- * @async
  * @routingkey LIBRARY library
  * @release LIBRARY library
  * @param library SEND_ONLY
@@ -588,7 +591,6 @@ CUresult cuLibraryGetUnifiedFunction(void **fptr, CUlibrary library,
 CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
                               CUkernel kernel, CUdevice dev);
 /**
- * @async
  * @param attrib SEND_ONLY
  * @param val SEND_ONLY
  * @param kernel SEND_ONLY
@@ -784,6 +786,7 @@ CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src, size_t ByteCount);
  * @param srcDevice SEND_ONLY
  * @param srcContext SEND_ONLY
  * @param ByteCount SEND_ONLY
+ * @blocking - the server's copy waits for the stream; a ticket must not
  */
 CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
                       CUdeviceptr srcDevice, CUcontext srcContext,
@@ -823,6 +826,7 @@ CUresult cuMemcpyDtoD_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
  * @param dstOffset SEND_ONLY
  * @param srcDevice SEND_ONLY
  * @param ByteCount SEND_ONLY
+ * @blocking - the server's copy waits for the stream; a ticket must not
  */
 CUresult cuMemcpyDtoA_v2(CUarray dstArray, size_t dstOffset,
                          CUdeviceptr srcDevice, size_t ByteCount);
@@ -832,6 +836,7 @@ CUresult cuMemcpyDtoA_v2(CUarray dstArray, size_t dstOffset,
  * @param srcArray SEND_ONLY
  * @param srcOffset SEND_ONLY
  * @param ByteCount SEND_ONLY
+ * @blocking - the server's copy waits for the stream; a ticket must not
  */
 CUresult cuMemcpyAtoD_v2(CUdeviceptr dstDevice, CUarray srcArray,
                          size_t srcOffset, size_t ByteCount);
@@ -850,6 +855,7 @@ CUresult cuMemcpyAtoH_v2(void *dstHost, CUarray srcArray, size_t srcOffset,
  * @param srcArray SEND_ONLY
  * @param srcOffset SEND_ONLY
  * @param ByteCount SEND_ONLY
+ * @blocking - the server's copy waits for the stream; a ticket must not
  */
 CUresult cuMemcpyAtoA_v2(CUarray dstArray, size_t dstOffset, CUarray srcArray,
                          size_t srcOffset, size_t ByteCount);
@@ -906,7 +912,6 @@ CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice, const void *srcHost,
 CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                               size_t ByteCount, CUstream hStream);
 /**
- * @async
  * @routingkey DEVICEPTR dstDevice
  * @crossservercopy dstDevice srcDevice ByteCount STREAM:hStream ASYNC
  * @param dstDevice SEND_ONLY
@@ -1002,7 +1007,6 @@ CUresult cuMemsetD2D16_v2(CUdeviceptr dstDevice, size_t dstPitch,
 CUresult cuMemsetD2D32_v2(CUdeviceptr dstDevice, size_t dstPitch,
                           unsigned int ui, size_t Width, size_t Height);
 /**
- * @async
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param uc SEND_ONLY
@@ -1012,7 +1016,6 @@ CUresult cuMemsetD2D32_v2(CUdeviceptr dstDevice, size_t dstPitch,
 CUresult cuMemsetD8Async(CUdeviceptr dstDevice, unsigned char uc, size_t N,
                          CUstream hStream);
 /**
- * @async
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param us SEND_ONLY
@@ -1022,7 +1025,6 @@ CUresult cuMemsetD8Async(CUdeviceptr dstDevice, unsigned char uc, size_t N,
 CUresult cuMemsetD16Async(CUdeviceptr dstDevice, unsigned short us, size_t N,
                           CUstream hStream);
 /**
- * @async
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param ui SEND_ONLY
@@ -1032,7 +1034,6 @@ CUresult cuMemsetD16Async(CUdeviceptr dstDevice, unsigned short us, size_t N,
 CUresult cuMemsetD32Async(CUdeviceptr dstDevice, unsigned int ui, size_t N,
                           CUstream hStream);
 /**
- * @async
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param dstPitch SEND_ONLY
@@ -1045,7 +1046,6 @@ CUresult cuMemsetD2D8Async(CUdeviceptr dstDevice, size_t dstPitch,
                            unsigned char uc, size_t Width, size_t Height,
                            CUstream hStream);
 /**
- * @async
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param dstPitch SEND_ONLY
@@ -1058,7 +1058,6 @@ CUresult cuMemsetD2D16Async(CUdeviceptr dstDevice, size_t dstPitch,
                             unsigned short us, size_t Width, size_t Height,
                             CUstream hStream);
 /**
- * @async
  * @routingkey DEVICEPTR dstDevice
  * @param dstDevice SEND_ONLY
  * @param dstPitch SEND_ONLY
@@ -1425,6 +1424,7 @@ CUresult cuPointerGetAttribute(void *data, CUpointer_attribute attribute,
  * @param count SEND_ONLY
  * @param dstDevice SEND_ONLY
  * @param hStream SEND_ONLY
+ * @blocking - the handwritten client returns the server's status
  */
 CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
                             CUdevice dstDevice, CUstream hStream);
@@ -1436,6 +1436,7 @@ CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
  * @param location SEND_ONLY
  * @param flags SEND_ONLY
  * @param hStream SEND_ONLY
+ * @blocking - the handwritten client returns the server's status
  */
 CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
                                CUmemLocation location, unsigned int flags,
@@ -1449,6 +1450,7 @@ CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
  * @param count SEND_ONLY
  * @param advice SEND_ONLY
  * @param device SEND_ONLY
+ * @blocking - the handwritten client returns the server's status
  */
 CUresult cuMemAdvise(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
                      CUdevice device);
@@ -1459,6 +1461,7 @@ CUresult cuMemAdvise(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
  * @param count SEND_ONLY
  * @param advice SEND_ONLY
  * @param location SEND_ONLY
+ * @blocking - the handwritten client returns the server's status
  */
 CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
                         CUmemLocation location);
@@ -1733,7 +1736,6 @@ CUresult cuStreamAddCallback(CUstream hStream, CUstreamCallback callback,
  */
 CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode);
 /**
- * @async
  * @disabled client - manual client tracks the thread's capture mode
  * @param mode SEND_ONLY DEREF
  */
@@ -1828,7 +1830,6 @@ CUresult cuStreamSetAttribute(CUstream hStream, CUstreamAttrID attr,
  */
 CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags);
 /**
- * @async
  * @disabled - manual client tracks which events have work outstanding
  * @routingkey STREAM hStream
  * @param hEvent SEND_ONLY
@@ -1836,7 +1837,6 @@ CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags);
  */
 CUresult cuEventRecord(CUevent hEvent, CUstream hStream);
 /**
- * @async
  * @disabled - manual client tracks which events have work outstanding
  * @routingkey STREAM hStream
  * @param hEvent SEND_ONLY
@@ -2822,7 +2822,6 @@ CUresult cuGraphNodeGetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
  */
 CUresult cuGraphUpload(CUgraphExec hGraphExec, CUstream hStream);
 /**
- * @async
  * @param hGraphExec SEND_ONLY
  * @param hStream SEND_ONLY
  * @disabled server
@@ -2831,6 +2830,7 @@ CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream);
 /**
  * @param hGraphExec SEND_ONLY
  * @disabled server
+ * @blocking - the handwritten server answers
  */
 CUresult cuGraphExecDestroy(CUgraphExec hGraphExec);
 /**
@@ -3281,11 +3281,13 @@ CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
  * @disabled client - manual client validates the peer context route
  * @param peerContext SEND_ONLY
  * @param Flags SEND_ONLY
+ * @blocking - the handwritten client returns the server's status
  */
 CUresult cuCtxEnablePeerAccess(CUcontext peerContext, unsigned int Flags);
 /**
  * @disabled client - manual client validates the peer context route
  * @param peerContext SEND_ONLY
+ * @blocking - the handwritten client returns the server's status
  */
 CUresult cuCtxDisablePeerAccess(CUcontext peerContext);
 /**
@@ -3336,6 +3338,7 @@ CUresult cuGraphicsResourceSetMapFlags_v2(CUgraphicsResource resource,
  * @param count SEND_ONLY
  * @param resources SEND_ONLY LENGTH:count
  * @param hStream SEND_ONLY
+ * @blocking - graphics access is ordered by the call returning
  */
 CUresult cuGraphicsMapResources(unsigned int count,
                                 CUgraphicsResource *resources,
@@ -3344,6 +3347,7 @@ CUresult cuGraphicsMapResources(unsigned int count,
  * @param count SEND_ONLY
  * @param resources SEND_ONLY LENGTH:count
  * @param hStream SEND_ONLY
+ * @blocking - graphics access is ordered by the call returning
  */
 CUresult cuGraphicsUnmapResources(unsigned int count,
                                   CUgraphicsResource *resources,
