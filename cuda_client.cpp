@@ -6865,11 +6865,12 @@ cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
       lupine_write_kernel_node_params(conn, nodeParams->kernelParams,
                                       param_sizes) < 0 ||
-      rpc_write_end(conn) < 0) {
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  // Unanswered: a failure reaches the caller from its next synchronize.
-  return CUDA_SUCCESS;
+  return return_value;
 }
 
 #ifdef cuGraphKernelNodeGetParams
@@ -7046,11 +7047,12 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
       lupine_write_kernel_node_params(conn, nodeParams->kernelParams,
                                       param_sizes) < 0 ||
-      rpc_write_end(conn) < 0) {
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  // Unanswered: a failure reaches the caller from its next synchronize.
-  return CUDA_SUCCESS;
+  return return_value;
 }
 
 #ifdef cuGraphExecKernelNodeSetParams
@@ -7422,16 +7424,18 @@ cuGraphExecHostNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
                                     hNode, nodeParams);
   }
   conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphExecHostNodeSetParams) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
-      rpc_write_end(conn) < 0) {
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  // Unanswered: a failure reaches the caller from its next synchronize.
-  return CUDA_SUCCESS;
+  return return_value;
 }
 
 #ifdef cuGraphInstantiate

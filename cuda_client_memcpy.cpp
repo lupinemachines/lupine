@@ -4127,7 +4127,9 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
 static bool lupine_htod_fire_and_forget(lupine_route route,
                                         CUdeviceptr destination, size_t bytes,
                                         uint64_t pushed_bytes) {
+  // Never under capture, whose failure the caller must see.
   return pushed_bytes == bytes && bytes != 0 &&
+         lupine_active_stream_captures.load(std::memory_order_relaxed) == 0 &&
          lupine_deviceptr_allocation_covers(destination, bytes,
                                             lupine_route_identity(route)) &&
          !lupine_host_ptr_is_tracked(destination);

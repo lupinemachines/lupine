@@ -2595,8 +2595,8 @@ void test_async_prefix_same_lane_elision_and_cross_lane_marker() {
   init_pair(&pair);
   for (int i = 0; i < 2; ++i) {
     require(rpc_write_start_request(&pair.client, 101) == 0 &&
-                pair.client.write_ticket == uint64_t(i) &&
-                rpc_write_end(&pair.client) > 0,
+                rpc_write_end(&pair.client) > 0 &&
+                pair.client.write_ticket == uint64_t(i),
             "same-lane enqueue failed");
   }
   int32_t lane = rpc_http2_accept_stream(&pair.server);
@@ -2636,9 +2636,10 @@ void test_async_prefix_entry_precedes_builder_wait() {
   std::thread caller([&] {
     require(rpc_write_start_request(&pair.client, 101) == 0,
             "blocked request start failed");
-    require(pair.client.write_ticket == 1 && pair.client.write_dependency == 0,
+    require(pair.client.write_dependency == 0,
             "builder contention moved the entry snapshot to enqueue time");
-    require(rpc_write_end(&pair.client) > 0, "blocked request enqueue failed");
+    require(rpc_write_end(&pair.client) > 0 && pair.client.write_ticket == 1,
+            "blocked request enqueue failed");
     require(rpc_write_start_request(&pair.client, 102) == 0 &&
                 rpc_write_end(&pair.client) > 0,
             "following request enqueue failed");

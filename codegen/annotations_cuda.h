@@ -243,6 +243,7 @@ CUresult cuCtxGetId(CUcontext ctx, unsigned long long *ctxId);
  * @guard CUDA_VERSION >= 12050
  * @param hCtx SEND_ONLY
  * @param hEvent SEND_ONLY
+ * @blocking - the client's event completion cache is only updated by cuEventRecord
  */
 CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent);
 /**
@@ -293,6 +294,7 @@ CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
 CUresult cuCtxGetSharedMemConfig(CUsharedconfig *pConfig);
 /**
  * @param config SEND_ONLY
+ * @blocking - changing it synchronizes the context
  */
 CUresult cuCtxSetSharedMemConfig(CUsharedconfig config);
 /**
@@ -771,6 +773,7 @@ CUresult cuIpcOpenMemHandle_v2(CUdeviceptr *pdptr, CUipcMemHandle handle,
                                unsigned int Flags);
 /**
  * @param dptr SEND_ONLY
+ * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuIpcCloseMemHandle(CUdeviceptr dptr);
 /**
@@ -1122,6 +1125,7 @@ CUresult cuArrayGetPlane(CUarray *pPlaneArray, CUarray hArray,
                          unsigned int planeIdx);
 /**
  * @param hArray SEND_ONLY
+ * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuArrayDestroy(CUarray hArray);
 /**
@@ -1155,6 +1159,7 @@ CUresult cuMipmappedArrayGetLevel(CUarray *pLevelArray,
                                   unsigned int level);
 /**
  * @param hMipmappedArray SEND_ONLY
+ * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuMipmappedArrayDestroy(CUmipmappedArray hMipmappedArray);
 /**
@@ -1180,6 +1185,7 @@ CUresult cuMemAddressReserve(CUdeviceptr *ptr, size_t size, size_t alignment,
 /**
  * @param ptr SEND_ONLY
  * @param size SEND_ONLY
+ * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuMemAddressFree(CUdeviceptr ptr, size_t size);
 /**
@@ -1292,6 +1298,7 @@ CUresult cuMemAllocAsync(CUdeviceptr *dptr, size_t bytesize, CUstream hStream) {
 /**
  * @param pool SEND_ONLY
  * @param minBytesToKeep SEND_ONLY
+ * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuMemPoolTrimTo(CUmemoryPool pool, size_t minBytesToKeep);
 /**
@@ -1368,6 +1375,7 @@ CUresult cuMemPoolCreate(CUmemoryPool *pool, const CUmemPoolProps *poolProps) {
 }
 /**
  * @param pool SEND_ONLY
+ * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuMemPoolDestroy(CUmemoryPool pool);
 /**
@@ -1704,6 +1712,7 @@ CUresult cuGreenCtxGetId(CUgreenCtx greenCtx, unsigned long long *greenCtxId);
  * @routingkey CURRENT_CONTEXT
  * @param hCtx SEND_ONLY
  * @param hEvent SEND_ONLY
+ * @blocking - the client's event completion cache is only updated by cuEventRecord
  */
 CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent);
 /**
@@ -1807,6 +1816,7 @@ CUresult cuStreamDestroy_v2(CUstream hStream) {
  * @routingkey STREAM dst
  * @param dst SEND_ONLY
  * @param src SEND_ONLY
+ * @blocking - callers probe attributes and ignore the unsupported ones
  */
 CUresult cuStreamCopyAttributes(CUstream dst, CUstream src);
 /**
@@ -1822,6 +1832,7 @@ CUresult cuStreamGetAttribute(CUstream hStream, CUstreamAttrID attr,
  * @param hStream SEND_ONLY
  * @param attr SEND_ONLY
  * @param value SEND_ONLY DEREF
+ * @blocking - callers probe attributes and ignore the unsupported ones
  */
 CUresult cuStreamSetAttribute(CUstream hStream, CUstreamAttrID attr,
                               const CUstreamAttrValue *value);
@@ -1899,6 +1910,7 @@ CUresult cuExternalMemoryGetMappedMipmappedArray(
     const CUDA_EXTERNAL_MEMORY_MIPMAPPED_ARRAY_DESC *mipmapDesc);
 /**
  * @param extMem SEND_ONLY
+ * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuDestroyExternalMemory(CUexternalMemory extMem);
 /**
@@ -1930,6 +1942,7 @@ CUresult cuWaitExternalSemaphoresAsync(
     unsigned int numExtSems, CUstream stream);
 /**
  * @param extSem SEND_ONLY
+ * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuDestroyExternalSemaphore(CUexternalSemaphore extSem);
 /**
@@ -2223,6 +2236,7 @@ CUresult cuGraphMemcpyNodeGetParams(CUgraphNode hNode,
 /**
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
+ * @blocking - callers act on a rejected node update
  */
 CUresult cuGraphMemcpyNodeSetParams(CUgraphNode hNode,
                                     const CUDA_MEMCPY3D *nodeParams);
@@ -2249,6 +2263,7 @@ CUresult cuGraphMemsetNodeGetParams(CUgraphNode hNode,
 /**
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
+ * @blocking - callers act on a rejected node update
  */
 CUresult cuGraphMemsetNodeSetParams(CUgraphNode hNode,
                                     const CUDA_MEMSET_NODE_PARAMS *nodeParams);
@@ -2439,6 +2454,7 @@ cuGraphBatchMemOpNodeSetParams(CUgraphNode hNode,
  * @param nodeParams SEND_ONLY
  * @deeparray nodeParams paramArray count
  * @graphexecnode hGraphExec hNode
+ * @blocking - callers fall back to re-instantiating when an in-place update is rejected
  */
 CUresult cuGraphExecBatchMemOpNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -2531,6 +2547,7 @@ CUresult cuGraphAddMemFreeNode(CUgraphNode *phGraphNode, CUgraph hGraph,
 CUresult cuGraphMemFreeNodeGetParams(CUgraphNode hNode, CUdeviceptr *dptr_out);
 /**
  * @param device SEND_ONLY
+ * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuDeviceGraphMemTrim(CUdevice device);
 /**
@@ -2707,6 +2724,7 @@ CUresult cuGraphExecGetFlags(CUgraphExec hGraphExec, cuuint64_t *flags);
  * @guard CUDA_VERSION >= 12020
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
+ * @blocking - callers act on a rejected node update
  */
 CUresult cuGraphNodeSetParams(CUgraphNode hNode,
                               CUgraphNodeParams *nodeParams);
@@ -2715,6 +2733,7 @@ CUresult cuGraphNodeSetParams(CUgraphNode hNode,
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
+ * @blocking - callers fall back to re-instantiating when an in-place update is rejected
  */
 CUresult cuGraphExecNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
                                   CUgraphNodeParams *nodeParams);
@@ -2734,6 +2753,7 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
  * @param copyParams SEND_ONLY DEREF
  * @param ctx SEND_ONLY
  * @graphexecnode hGraphExec hNode
+ * @blocking - callers fall back to re-instantiating when an in-place update is rejected
  */
 CUresult cuGraphExecMemcpyNodeSetParams(CUgraphExec hGraphExec,
                                         CUgraphNode hNode,
@@ -2745,6 +2765,7 @@ CUresult cuGraphExecMemcpyNodeSetParams(CUgraphExec hGraphExec,
  * @param memsetParams SEND_ONLY DEREF
  * @param ctx SEND_ONLY
  * @graphexecnode hGraphExec hNode
+ * @blocking - callers fall back to re-instantiating when an in-place update is rejected
  */
 CUresult
 cuGraphExecMemsetNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -2763,6 +2784,7 @@ CUresult cuGraphExecHostNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
  * @param hNode SEND_ONLY
  * @param childGraph SEND_ONLY
  * @graphexecnode hGraphExec hNode
+ * @blocking - callers fall back to re-instantiating when an in-place update is rejected
  */
 CUresult cuGraphExecChildGraphNodeSetParams(CUgraphExec hGraphExec,
                                             CUgraphNode hNode,
@@ -2772,6 +2794,7 @@ CUresult cuGraphExecChildGraphNodeSetParams(CUgraphExec hGraphExec,
  * @param hNode SEND_ONLY
  * @param event SEND_ONLY
  * @graphexecnode hGraphExec hNode
+ * @blocking - callers fall back to re-instantiating when an in-place update is rejected
  */
 CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
                                             CUgraphNode hNode, CUevent event);
@@ -2780,6 +2803,7 @@ CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
  * @param hNode SEND_ONLY
  * @param event SEND_ONLY
  * @graphexecnode hGraphExec hNode
+ * @blocking - callers fall back to re-instantiating when an in-place update is rejected
  */
 CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
                                           CUgraphNode hNode, CUevent event);
@@ -2790,6 +2814,7 @@ CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
  * @deeparray nodeParams extSemArray numExtSems
  * @deeparray nodeParams paramsArray numExtSems
  * @graphexecnode hGraphExec hNode
+ * @blocking - callers fall back to re-instantiating when an in-place update is rejected
  */
 CUresult cuGraphExecExternalSemaphoresSignalNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -2801,6 +2826,7 @@ CUresult cuGraphExecExternalSemaphoresSignalNodeSetParams(
  * @deeparray nodeParams extSemArray numExtSems
  * @deeparray nodeParams paramsArray numExtSems
  * @graphexecnode hGraphExec hNode
+ * @blocking - callers fall back to re-instantiating when an in-place update is rejected
  */
 CUresult cuGraphExecExternalSemaphoresWaitNodeSetParams(
     CUgraphExec hGraphExec, CUgraphNode hNode,
@@ -2810,6 +2836,7 @@ CUresult cuGraphExecExternalSemaphoresWaitNodeSetParams(
  * @param hNode SEND_ONLY
  * @param isEnabled SEND_ONLY
  * @graphexecnode hGraphExec hNode
+ * @blocking - callers fall back to re-instantiating when an in-place update is rejected
  */
 CUresult cuGraphNodeSetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
                                unsigned int isEnabled);
@@ -2897,6 +2924,7 @@ CUresult cuGraphKernelNodeSetAttribute(CUgraphNode hNode,
  * @param hGraph SEND_ONLY
  * @param path SEND_ONLY NULL_TERMINATED
  * @param flags SEND_ONLY
+ * @blocking - the caller reads the file once it returns
  */
 CUresult cuGraphDebugDotPrint(CUgraph hGraph, const char *path,
                               unsigned int flags);
@@ -3306,6 +3334,7 @@ CUresult cuDeviceGetP2PAttribute(int *value, CUdevice_P2PAttribute attrib,
                                  CUdevice srcDevice, CUdevice dstDevice);
 /**
  * @param resource SEND_ONLY
+ * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuGraphicsUnregisterResource(CUgraphicsResource resource);
 /**

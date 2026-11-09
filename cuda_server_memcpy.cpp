@@ -2234,6 +2234,11 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   if (!fire_and_forget) {
     rpc_async_sequence_end(conn);
   }
+  // An unanswered copy is pushed, and lands before its ticket is released,
+  // so later work on any stream sees it as the synchronous call promises.
+  if (fire_and_forget && pushed_bytes != bytes) {
+    return -1;
+  }
   if (pushed_bytes != 0) {
     result = lupine_copy_pushed_host_to_device(
         conn, CU_STREAM_LEGACY, true,
@@ -2252,11 +2257,10 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
         conn, CU_STREAM_LEGACY, true,
         lupine_make_linear_htod_copy(destination, source, bytes));
   }
-  // A fire-and-forget copy drops its result, matching launch semantics: the
-  // client checked the arguments it could check before sending, and an
-  // execution failure poisons the context and reaches the client from its next
-  // synchronize.
+  // An unanswered copy's failure reaches the client from its next
+  // synchronize, as a launch's does.
   if (fire_and_forget) {
+    lupine_keep_async_error(conn, result);
     return 0;
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2816,12 +2820,16 @@ static int lupine_defer_pitched_dtoh(conn_t *conn,
 static int lupine_handle_memcpy3d(conn_t *conn, bool async, bool peer,
                                   lupine_native_memcpy3d native) {
   uint8_t direction = LUPINE_COPY_DIRECTION_DTOD;
+  // Held until the direction says whether this is the unanswered deferred
+  // DtoH; every other copy is answered and needs no ticket.
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &direction, sizeof(direction)) < 0) {
     return -1;
   }
   if (direction == LUPINE_COPY_DIRECTION_DTOH && async && !peer) {
     return lupine_defer_pitched_dtoh(conn, native);
   }
+  rpc_async_sequence_end(conn);
   bool is_server_authoritative = false;
   CUDA_MEMCPY3D copy = {};
   CUstream stream = CU_STREAM_LEGACY;

@@ -738,8 +738,12 @@ void lupine_monitoring_unregister_pid(int64_t server_pid) {
   pthread_mutex_unlock(&registry->registry_mutex);
 }
 
+// Unanswered: the metadata is stored before the request's ticket is released.
 int handle_lupine_client_metadata(conn_t *conn) {
   lupine_client_metadata_header header = {};
+  if (conn != nullptr) {
+    rpc_hold_ticket(conn);
+  }
   if (conn == nullptr || rpc_read(conn, &header, sizeof(header)) != 0) {
     return -1;
   }

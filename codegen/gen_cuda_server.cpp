@@ -997,7 +997,7 @@ int handle_cuCtxRecordEvent(conn_t *conn) {
   CUcontext hCtx;
   CUevent hEvent;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hCtx, sizeof(CUcontext)) < 0 ||
       rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 || false)
     goto ERROR_0;
@@ -1006,8 +1006,12 @@ int handle_cuCtxRecordEvent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuCtxRecordEvent(hCtx, hEvent));
+  return_value = cuCtxRecordEvent(hCtx, hEvent);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -1065,7 +1069,7 @@ ERROR_0:
 int handle_cuCtxSetSharedMemConfig(conn_t *conn) {
   CUsharedconfig config;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &config, sizeof(CUsharedconfig)) < 0 || false)
     goto ERROR_0;
 
@@ -1073,8 +1077,12 @@ int handle_cuCtxSetSharedMemConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuCtxSetSharedMemConfig(config));
+  return_value = cuCtxSetSharedMemConfig(config);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -1903,7 +1911,7 @@ ERROR_0:
 int handle_cuIpcCloseMemHandle(conn_t *conn) {
   CUdeviceptr dptr;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 || false)
     goto ERROR_0;
 
@@ -1911,8 +1919,12 @@ int handle_cuIpcCloseMemHandle(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuIpcCloseMemHandle(dptr));
+  return_value = cuIpcCloseMemHandle(dptr);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -2662,7 +2674,7 @@ ERROR_0:
 int handle_cuArrayDestroy(conn_t *conn) {
   CUarray hArray;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hArray, sizeof(CUarray)) < 0 || false)
     goto ERROR_0;
 
@@ -2670,8 +2682,12 @@ int handle_cuArrayDestroy(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuArrayDestroy(hArray));
+  return_value = cuArrayDestroy(hArray);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -2788,7 +2804,7 @@ ERROR_0:
 int handle_cuMipmappedArrayDestroy(conn_t *conn) {
   CUmipmappedArray hMipmappedArray;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hMipmappedArray, sizeof(CUmipmappedArray)) < 0 || false)
     goto ERROR_0;
 
@@ -2796,8 +2812,12 @@ int handle_cuMipmappedArrayDestroy(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuMipmappedArrayDestroy(hMipmappedArray));
+  return_value = cuMipmappedArrayDestroy(hMipmappedArray);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -2874,7 +2894,7 @@ int handle_cuMemAddressFree(conn_t *conn) {
   CUdeviceptr ptr;
   size_t size;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &size, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
@@ -2883,8 +2903,12 @@ int handle_cuMemAddressFree(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuMemAddressFree(ptr, size));
+  return_value = cuMemAddressFree(ptr, size);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -3211,7 +3235,7 @@ int handle_cuMemPoolTrimTo(conn_t *conn) {
   CUmemoryPool pool;
   size_t minBytesToKeep;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_read(conn, &minBytesToKeep, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
@@ -3220,8 +3244,12 @@ int handle_cuMemPoolTrimTo(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuMemPoolTrimTo(pool, minBytesToKeep));
+  return_value = cuMemPoolTrimTo(pool, minBytesToKeep);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -3316,7 +3344,7 @@ ERROR_0:
 int handle_cuMemPoolDestroy(conn_t *conn) {
   CUmemoryPool pool;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 || false)
     goto ERROR_0;
 
@@ -3324,8 +3352,12 @@ int handle_cuMemPoolDestroy(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuMemPoolDestroy(pool));
+  return_value = cuMemPoolDestroy(pool);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -3855,7 +3887,7 @@ int handle_cuStreamCopyAttributes(conn_t *conn) {
   CUstream dst;
   CUstream src;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &dst, sizeof(CUstream)) < 0 ||
       rpc_read(conn, &src, sizeof(CUstream)) < 0 || false)
     goto ERROR_0;
@@ -3864,8 +3896,12 @@ int handle_cuStreamCopyAttributes(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuStreamCopyAttributes(dst, src));
+  return_value = cuStreamCopyAttributes(dst, src);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -3903,7 +3939,7 @@ int handle_cuStreamSetAttribute(conn_t *conn) {
   CUstreamAttrID attr;
   CUstreamAttrValue value{};
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_read(conn, &attr, sizeof(CUstreamAttrID)) < 0 ||
       rpc_read(conn, &value, sizeof(const CUstreamAttrValue)) < 0 || false)
@@ -3913,8 +3949,12 @@ int handle_cuStreamSetAttribute(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuStreamSetAttribute(hStream, attr, &value));
+  return_value = cuStreamSetAttribute(hStream, attr, &value);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -4097,7 +4137,7 @@ ERROR_0:
 int handle_cuDestroyExternalMemory(conn_t *conn) {
   CUexternalMemory extMem;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &extMem, sizeof(CUexternalMemory)) < 0 || false)
     goto ERROR_0;
 
@@ -4105,8 +4145,12 @@ int handle_cuDestroyExternalMemory(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuDestroyExternalMemory(extMem));
+  return_value = cuDestroyExternalMemory(extMem);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -4247,7 +4291,7 @@ ERROR_0:
 int handle_cuDestroyExternalSemaphore(conn_t *conn) {
   CUexternalSemaphore extSem;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &extSem, sizeof(CUexternalSemaphore)) < 0 || false)
     goto ERROR_0;
 
@@ -4255,8 +4299,12 @@ int handle_cuDestroyExternalSemaphore(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuDestroyExternalSemaphore(extSem));
+  return_value = cuDestroyExternalSemaphore(extSem);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -4860,7 +4908,7 @@ int handle_cuGraphMemcpyNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
   CUDA_MEMCPY3D nodeParams{};
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(const CUDA_MEMCPY3D)) < 0 || false)
     goto ERROR_0;
@@ -4869,8 +4917,12 @@ int handle_cuGraphMemcpyNodeSetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuGraphMemcpyNodeSetParams(hNode, &nodeParams));
+  return_value = cuGraphMemcpyNodeSetParams(hNode, &nodeParams);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -4905,7 +4957,7 @@ int handle_cuGraphMemsetNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
   CUDA_MEMSET_NODE_PARAMS nodeParams{};
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(const CUDA_MEMSET_NODE_PARAMS)) < 0 ||
       false)
@@ -4915,8 +4967,12 @@ int handle_cuGraphMemsetNodeSetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuGraphMemsetNodeSetParams(hNode, &nodeParams));
+  return_value = cuGraphMemsetNodeSetParams(hNode, &nodeParams);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -5603,7 +5659,7 @@ int handle_cuGraphExecBatchMemOpNodeSetParams(conn_t *conn) {
   CUDA_BATCH_MEM_OP_NODE_PARAMS nodeParams = {};
   std::vector<unsigned char> nodeParams_paramArray_buf;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
@@ -5624,9 +5680,13 @@ int handle_cuGraphExecBatchMemOpNodeSetParams(conn_t *conn) {
     goto ERROR_0;
 
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
-  lupine_keep_async_error(
-      conn, cuGraphExecBatchMemOpNodeSetParams(hGraphExec, hNode, &nodeParams));
+  return_value =
+      cuGraphExecBatchMemOpNodeSetParams(hGraphExec, hNode, &nodeParams);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -5787,7 +5847,7 @@ ERROR_0:
 int handle_cuDeviceGraphMemTrim(conn_t *conn) {
   CUdevice device;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &device, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
 
@@ -5795,8 +5855,12 @@ int handle_cuDeviceGraphMemTrim(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuDeviceGraphMemTrim(device));
+  return_value = cuDeviceGraphMemTrim(device);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -6350,7 +6414,7 @@ int handle_cuGraphExecMemcpyNodeSetParams(conn_t *conn) {
   CUDA_MEMCPY3D copyParams{};
   CUcontext ctx;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &copyParams, sizeof(const CUDA_MEMCPY3D)) < 0 ||
@@ -6362,9 +6426,13 @@ int handle_cuGraphExecMemcpyNodeSetParams(conn_t *conn) {
     goto ERROR_0;
 
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
-  lupine_keep_async_error(conn, cuGraphExecMemcpyNodeSetParams(
-                                    hGraphExec, hNode, &copyParams, ctx));
+  return_value =
+      cuGraphExecMemcpyNodeSetParams(hGraphExec, hNode, &copyParams, ctx);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -6376,7 +6444,7 @@ int handle_cuGraphExecMemsetNodeSetParams(conn_t *conn) {
   CUDA_MEMSET_NODE_PARAMS memsetParams{};
   CUcontext ctx;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &memsetParams, sizeof(const CUDA_MEMSET_NODE_PARAMS)) <
@@ -6389,9 +6457,13 @@ int handle_cuGraphExecMemsetNodeSetParams(conn_t *conn) {
     goto ERROR_0;
 
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
-  lupine_keep_async_error(conn, cuGraphExecMemsetNodeSetParams(
-                                    hGraphExec, hNode, &memsetParams, ctx));
+  return_value =
+      cuGraphExecMemsetNodeSetParams(hGraphExec, hNode, &memsetParams, ctx);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -6402,7 +6474,7 @@ int handle_cuGraphExecChildGraphNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
   CUgraph childGraph;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &childGraph, sizeof(CUgraph)) < 0 || false)
@@ -6413,9 +6485,13 @@ int handle_cuGraphExecChildGraphNodeSetParams(conn_t *conn) {
     goto ERROR_0;
 
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
-  lupine_keep_async_error(
-      conn, cuGraphExecChildGraphNodeSetParams(hGraphExec, hNode, childGraph));
+  return_value =
+      cuGraphExecChildGraphNodeSetParams(hGraphExec, hNode, childGraph);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -6426,7 +6502,7 @@ int handle_cuGraphExecEventRecordNodeSetEvent(conn_t *conn) {
   CUgraphNode hNode;
   CUevent event;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &event, sizeof(CUevent)) < 0 || false)
@@ -6437,9 +6513,12 @@ int handle_cuGraphExecEventRecordNodeSetEvent(conn_t *conn) {
     goto ERROR_0;
 
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
-  lupine_keep_async_error(
-      conn, cuGraphExecEventRecordNodeSetEvent(hGraphExec, hNode, event));
+  return_value = cuGraphExecEventRecordNodeSetEvent(hGraphExec, hNode, event);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -6450,7 +6529,7 @@ int handle_cuGraphExecEventWaitNodeSetEvent(conn_t *conn) {
   CUgraphNode hNode;
   CUevent event;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &event, sizeof(CUevent)) < 0 || false)
@@ -6461,9 +6540,12 @@ int handle_cuGraphExecEventWaitNodeSetEvent(conn_t *conn) {
     goto ERROR_0;
 
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
-  lupine_keep_async_error(
-      conn, cuGraphExecEventWaitNodeSetEvent(hGraphExec, hNode, event));
+  return_value = cuGraphExecEventWaitNodeSetEvent(hGraphExec, hNode, event);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -6476,7 +6558,7 @@ int handle_cuGraphExecExternalSemaphoresSignalNodeSetParams(conn_t *conn) {
   std::vector<unsigned char> nodeParams_extSemArray_buf;
   std::vector<unsigned char> nodeParams_paramsArray_buf;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
@@ -6506,10 +6588,13 @@ int handle_cuGraphExecExternalSemaphoresSignalNodeSetParams(conn_t *conn) {
     goto ERROR_0;
 
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
-  lupine_keep_async_error(
-      conn, cuGraphExecExternalSemaphoresSignalNodeSetParams(hGraphExec, hNode,
-                                                             &nodeParams));
+  return_value = cuGraphExecExternalSemaphoresSignalNodeSetParams(
+      hGraphExec, hNode, &nodeParams);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -6522,7 +6607,7 @@ int handle_cuGraphExecExternalSemaphoresWaitNodeSetParams(conn_t *conn) {
   std::vector<unsigned char> nodeParams_extSemArray_buf;
   std::vector<unsigned char> nodeParams_paramsArray_buf;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
@@ -6552,9 +6637,13 @@ int handle_cuGraphExecExternalSemaphoresWaitNodeSetParams(conn_t *conn) {
     goto ERROR_0;
 
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
-  lupine_keep_async_error(conn, cuGraphExecExternalSemaphoresWaitNodeSetParams(
-                                    hGraphExec, hNode, &nodeParams));
+  return_value = cuGraphExecExternalSemaphoresWaitNodeSetParams(
+      hGraphExec, hNode, &nodeParams);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -6565,7 +6654,7 @@ int handle_cuGraphNodeSetEnabled(conn_t *conn) {
   CUgraphNode hNode;
   unsigned int isEnabled;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &isEnabled, sizeof(unsigned int)) < 0 || false)
@@ -6576,9 +6665,12 @@ int handle_cuGraphNodeSetEnabled(conn_t *conn) {
     goto ERROR_0;
 
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
-  lupine_keep_async_error(conn,
-                          cuGraphNodeSetEnabled(hGraphExec, hNode, isEnabled));
+  return_value = cuGraphNodeSetEnabled(hGraphExec, hNode, isEnabled);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -6744,7 +6836,7 @@ int handle_cuGraphDebugDotPrint(conn_t *conn) {
   std::size_t path_len;
   unsigned int flags;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_read(conn, &path_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
@@ -6758,8 +6850,12 @@ int handle_cuGraphDebugDotPrint(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuGraphDebugDotPrint(hGraph, path, flags));
+  return_value = cuGraphDebugDotPrint(hGraph, path, flags);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   free((void *)path);
   return 0;
 ERROR_0:
@@ -6859,7 +6955,7 @@ int handle_cuGraphNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
   CUgraphNodeParams nodeParams{};
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(CUgraphNodeParams)) < 0 || false)
     goto ERROR_0;
@@ -6868,8 +6964,12 @@ int handle_cuGraphNodeSetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuGraphNodeSetParams(hNode, &nodeParams));
+  return_value = cuGraphNodeSetParams(hNode, &nodeParams);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -6883,7 +6983,7 @@ int handle_cuGraphExecNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
   CUgraphNodeParams nodeParams{};
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(CUgraphNodeParams)) < 0 || false)
@@ -6893,9 +6993,12 @@ int handle_cuGraphExecNodeSetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(
-      conn, cuGraphExecNodeSetParams(hGraphExec, hNode, &nodeParams));
+  return_value = cuGraphExecNodeSetParams(hGraphExec, hNode, &nodeParams);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -8099,7 +8202,7 @@ ERROR_0:
 int handle_cuGraphicsUnregisterResource(conn_t *conn) {
   CUgraphicsResource resource;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &resource, sizeof(CUgraphicsResource)) < 0 || false)
     goto ERROR_0;
 
@@ -8107,8 +8210,12 @@ int handle_cuGraphicsUnregisterResource(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuGraphicsUnregisterResource(resource));
+  return_value = cuGraphicsUnregisterResource(resource);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -8716,7 +8823,7 @@ int handle_cuGreenCtxRecordEvent(conn_t *conn) {
   CUgreenCtx hCtx;
   CUevent hEvent;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
       rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 || false)
     goto ERROR_0;
@@ -8725,8 +8832,12 @@ int handle_cuGreenCtxRecordEvent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuGreenCtxRecordEvent(hCtx, hEvent));
+  return_value = cuGreenCtxRecordEvent(hCtx, hEvent);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;

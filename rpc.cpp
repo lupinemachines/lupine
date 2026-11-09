@@ -418,7 +418,8 @@ void rpc_async_sequence_end(conn_t *conn) {
   }
   executing_async_sequence = kNoAsyncSequence;
   pthread_mutex_lock(&conn->async_mutex);
-  if (sequence == conn->serving_async_sequence) {
+  bool advanced = sequence == conn->serving_async_sequence;
+  if (advanced) {
     ++conn->serving_async_sequence;
     while (
         !conn->completed_async_sequences.empty() &&
@@ -428,7 +429,10 @@ void rpc_async_sequence_end(conn_t *conn) {
   } else if (sequence > conn->serving_async_sequence) {
     conn->completed_async_sequences.insert(sequence);
   }
-  pthread_cond_broadcast(&conn->async_cond);
+  // Waiters wait for the watermark, so only its moving can release one.
+  if (advanced) {
+    pthread_cond_broadcast(&conn->async_cond);
+  }
   pthread_mutex_unlock(&conn->async_mutex);
 }
 
@@ -540,6 +544,8 @@ struct rpc_thread_io {
   conn_t *response_conn = nullptr;
   rpc_response_route response;
   int response_op = 0;
+  // The last request's answer has not been started. Its first read waits.
+  bool answer_pending = false;
   conn_t *held_call_lock = nullptr;
 };
 
@@ -704,6 +710,7 @@ int rpc_read_start(conn_t *conn, int write_id) {
   }
   rpc_tls_io.read_conn = conn;
   rpc_tls_io.read = {stream_id, header[0], header[1]};
+  rpc_tls_io.answer_pending = false;
   return 0;
 }
 
@@ -793,7 +800,8 @@ static void rpc_release_unheld_ticket(conn_t *conn) {
 // A client thread's first read of its last request's answer waits for it.
 static bool rpc_answer_pending(conn_t *conn) {
   return conn != nullptr && conn->local_request_parity == 0 &&
-         rpc_tls_io.read_conn != conn && rpc_tls_io.response_conn == conn;
+         rpc_tls_io.answer_pending && rpc_tls_io.response_conn == conn &&
+         rpc_tls_io.read_conn != conn;
 }
 
 int rpc_read(conn_t *conn, void *data, size_t size) {
@@ -916,11 +924,15 @@ static uint64_t lupine_rpc_stats_now_ns() {
 // request and then waits for the corresponding response. this pattern is
 // so common that having this function keeps the codegen much cleaner.
 int rpc_blocking(conn_t *conn) {
-  if (rpc_tls_io.read_conn == conn) {
-    return 0;
-  }
   if (rpc_tls_io.response_conn != conn) {
     return -1;
+  }
+  // Already reading this answer. An outer frame being read (a fault handler or
+  // callback making a nested request) is not it: wait for the nested answer.
+  if (!rpc_tls_io.answer_pending && rpc_tls_io.read_conn == conn &&
+      rpc_tls_io.read.op == -1 &&
+      rpc_tls_io.read.request_id == rpc_tls_io.response.request_id) {
+    return 0;
   }
   uint64_t start =
       lupine_rpc_stats_path() != nullptr ? lupine_rpc_stats_now_ns() : 0;
@@ -1009,10 +1021,6 @@ int rpc_write_start_request(conn_t *conn, const int op) {
     rpc_release_write_builder(conn, request_nested_in_response);
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
-  }
-  // Dense tickets: one is taken only by a request that can be sent.
-  if (conn->local_request_parity == 0) {
-    conn->write_ticket = conn->issued_async_sequence++;
   }
   if (lupine_rpc_stats_path() != nullptr) {
     lupine_rpc_stats_record(op, 1, 0);
@@ -1182,6 +1190,9 @@ int rpc_write_end(conn_t *conn) {
     conn->write_queue[1] =
         rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
     if (client_request) {
+      // Dense tickets: one is taken only by a request that is written, under
+      // the builder lock, and given back below if the write fails.
+      conn->write_ticket = conn->issued_async_sequence++;
       bool wait = conn->write_dependency > conn->async_prefix;
       header = {0,
                 0,
@@ -1197,6 +1208,9 @@ int rpc_write_end(conn_t *conn) {
       conn->write_queue[1] = {};
     }
     result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
+    if (result != 0 && client_request) {
+      --conn->issued_async_sequence;
+    }
     if (result == 0 && client_request) {
       conn->async_prefix = std::max(conn->async_prefix, conn->write_dependency);
       uint64_t published = conn->issued_async_sequence;
@@ -1212,12 +1226,14 @@ int rpc_write_end(conn_t *conn) {
       }
     }
   }
+  int write_op = conn->write_op;
   rpc_release_write_builder(conn, request_nested_in_response);
   if (request) {
     if (result == 0) {
       rpc_tls_io.response_conn = conn;
       rpc_tls_io.response = {write_id, write_stream_id};
-      rpc_tls_io.response_op = conn->write_op;
+      rpc_tls_io.response_op = write_op;
+      rpc_tls_io.answer_pending = true;
     }
     // Servers originate RPCs only on the dedicated server-to-client stream.
     // Keep that stream's request/response exchange serialized so a caller can

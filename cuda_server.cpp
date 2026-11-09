@@ -2519,6 +2519,7 @@ int handle_cuLaunchCooperativeKernel(conn_t *conn) {
                                        blockDimX, blockDimY, blockDimZ,
                                        sharedMemBytes, hStream, params);
   }
+  lupine_keep_async_error(conn, result);
   std::free(param_sizes);
   std::free(params);
   std::free(param_storage);
@@ -2754,8 +2755,6 @@ int handle_cuGraphKernelNodeGetParams(conn_t *conn) {
 }
 
 int handle_cuGraphKernelNodeSetParams(conn_t *conn) {
-  // Unanswered: a failure reaches the client from its next synchronize.
-  rpc_hold_ticket(conn);
   CUgraphNode hNode = nullptr;
   CUDA_KERNEL_NODE_PARAMS nodeParams = {};
   CUresult result = CUDA_ERROR_INVALID_VALUE;
@@ -2801,13 +2800,14 @@ int handle_cuGraphKernelNodeSetParams(conn_t *conn) {
   }
   std::free(params);
 
-  lupine_keep_async_error(conn, result);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
   return 0;
 }
 
 int handle_cuGraphExecKernelNodeSetParams(conn_t *conn) {
-  // Unanswered: a failure reaches the client from its next synchronize.
-  rpc_hold_ticket(conn);
   CUgraphExec hGraphExec = nullptr;
   CUgraphNode hNode = nullptr;
   CUDA_KERNEL_NODE_PARAMS nodeParams = {};
@@ -2856,7 +2856,10 @@ int handle_cuGraphExecKernelNodeSetParams(conn_t *conn) {
   }
   std::free(params);
 
-  lupine_keep_async_error(conn, result);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
   return 0;
 }
 
@@ -3153,8 +3156,6 @@ int handle_cuGraphHostNodeSetParams(conn_t *conn) {
 }
 
 int handle_cuGraphExecHostNodeSetParams(conn_t *conn) {
-  // Unanswered: a failure reaches the client from its next synchronize.
-  rpc_hold_ticket(conn);
   CUgraphExec hGraphExec = nullptr;
   CUgraphNode hNode = nullptr;
   CUDA_HOST_NODE_PARAMS params{};
@@ -3176,7 +3177,10 @@ int handle_cuGraphExecHostNodeSetParams(conn_t *conn) {
   serverParams.userData = callback;
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   result = cuGraphExecHostNodeSetParams(hGraphExec, hNode, &serverParams);
-  lupine_keep_async_error(conn, result);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
   return 0;
 }
 
@@ -3483,7 +3487,7 @@ int handle_cuStreamWaitEvent(conn_t *conn) {
   }
   lupine_wait_event_capture_resources(stream, event);
   // Fire-and-forget like cuEventRecord: a failure surfaces at the next sync.
-  cuStreamWaitEvent(stream, event, flags);
+  lupine_keep_async_error(conn, cuStreamWaitEvent(stream, event, flags));
   return 0;
 }
 
