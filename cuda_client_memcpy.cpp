@@ -1777,17 +1777,49 @@ static uint8_t lupine_infer_copy_direction(CUdeviceptr dst, CUdeviceptr src) {
   return LUPINE_COPY_DIRECTION_DTOD;
 }
 
-extern "C" CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src,
-                             size_t ByteCount) {
+// A copy between host pointers is still a copy on its stream: it waits for the
+// work ahead of it, such as a host function filling a pinned source or a
+// kernel writing a mapped one, and work behind it sees what it wrote. When
+// either side is memory the client tracks, finish that work before copying
+// here. Synchronizing refreshes mapped and managed views, and the stores below
+// reach the server as dirty pages before any later request. A capturing
+// stream cannot be synchronized, so a captured copy still runs at issue.
+static CUresult lupine_order_host_to_host(const void *dst, const void *src,
+                                          CUstream hStream) {
+  if (!lupine_host_ptr_is_tracked(reinterpret_cast<CUdeviceptr>(dst)) &&
+      !lupine_host_ptr_is_tracked(reinterpret_cast<CUdeviceptr>(src))) {
+    return CUDA_SUCCESS;
+  }
+  CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
+  if (lupine_active_stream_captures.load(std::memory_order_relaxed) != 0 &&
+      cuStreamIsCapturing(hStream, &capture_status) == CUDA_SUCCESS &&
+      capture_status != CU_STREAM_CAPTURE_STATUS_NONE) {
+    return CUDA_SUCCESS;
+  }
+  return cuStreamSynchronize(hStream);
+}
+
+static CUresult lupine_memcpy_host_to_host(void *dst, const void *src,
+                                           size_t ByteCount, CUstream hStream) {
+  CUresult result = lupine_order_host_to_host(dst, src, hStream);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  memmove(dst, src, ByteCount);
+  return CUDA_SUCCESS;
+}
+
+static CUresult lupine_memcpy(CUdeviceptr dst, CUdeviceptr src,
+                              size_t ByteCount, CUstream order) {
   if (ByteCount == 0) {
     return CUDA_SUCCESS;
   }
 
   switch (lupine_infer_copy_direction(dst, src)) {
   case LUPINE_COPY_DIRECTION_HTOH:
-    memmove(reinterpret_cast<void *>(dst), reinterpret_cast<const void *>(src),
-            ByteCount);
-    return CUDA_SUCCESS;
+    return lupine_memcpy_host_to_host(reinterpret_cast<void *>(dst),
+                                      reinterpret_cast<const void *>(src),
+                                      ByteCount, order);
   case LUPINE_COPY_DIRECTION_HTOD:
     return cuMemcpyHtoD_v2(dst, reinterpret_cast<const void *>(src), ByteCount);
   case LUPINE_COPY_DIRECTION_DTOH:
@@ -1798,21 +1830,26 @@ extern "C" CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src,
   return CUDA_ERROR_INVALID_VALUE;
 }
 
+extern "C" CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src,
+                             size_t ByteCount) {
+  return lupine_memcpy(dst, src, ByteCount, nullptr);
+}
+
 #ifdef cuMemcpy_ptds
 #undef cuMemcpy_ptds
 #endif
 extern "C" CUresult cuMemcpy_ptds(CUdeviceptr dst, CUdeviceptr src,
                                   size_t ByteCount) {
-  return cuMemcpy(dst, src, ByteCount);
+  return lupine_memcpy(dst, src, ByteCount, CU_STREAM_PER_THREAD);
 }
 
 extern "C" CUresult cuMemcpyAsync(CUdeviceptr dst, CUdeviceptr src,
                                   size_t ByteCount, CUstream hStream) {
   switch (lupine_infer_copy_direction(dst, src)) {
   case LUPINE_COPY_DIRECTION_HTOH:
-    memcpy(reinterpret_cast<void *>(dst), reinterpret_cast<const void *>(src),
-           ByteCount);
-    return CUDA_SUCCESS;
+    return lupine_memcpy_host_to_host(reinterpret_cast<void *>(dst),
+                                      reinterpret_cast<const void *>(src),
+                                      ByteCount, hStream);
   case LUPINE_COPY_DIRECTION_HTOD:
     return cuMemcpyHtoDAsync_v2(dst, reinterpret_cast<const void *>(src),
                                 ByteCount, hStream);
@@ -4495,6 +4532,12 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
                    copy.dstY * copy.dstPitch + copy.dstXInBytes;
   CUresult return_value;
   if (direction == LUPINE_COPY_DIRECTION_HTOH) {
+    // Ordered like a linear host-to-host copy.
+    return_value = lupine_order_host_to_host(dst_base, src_base,
+                                             api.async ? hStream : nullptr);
+    if (return_value != CUDA_SUCCESS) {
+      return return_value;
+    }
     for (size_t z = 0; z < copy.Depth; ++z) {
       for (size_t row = 0; row < copy.Height; ++row) {
         memmove(dst_base + z * dst_slice_pitch + row * copy.dstPitch,
