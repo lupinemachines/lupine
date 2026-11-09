@@ -487,6 +487,7 @@ void rpc_conn_destroy(conn_t *conn) {
   lupine_va_release(conn);
   conn->completed_async_sequences.clear();
   conn->scope_last.clear();
+  conn->retired_scopes.clear();
   rpc_write_buffer_release(conn);
   std::vector<rpc_write_cursor>().swap(conn->write_queue);
   std::vector<rpc_host_allocation_write>().swap(conn->host_allocation_writes);
@@ -594,6 +595,10 @@ struct rpc_thread_io {
 };
 
 static thread_local rpc_thread_io rpc_tls_io;
+// Set while a client answers a server callback: requests it sends then are
+// part of the callback, as ones nested in its response are.
+static thread_local conn_t *rpc_tls_callback_reply = nullptr;
+
 
 void rpc_save_outer_response(conn_t *conn) {
   rpc_nested_write_frame &frame = rpc_tls_io.nested_write;
@@ -1028,6 +1033,9 @@ static void rpc_scope_wait_for(conn_t *conn, const rpc_scope_ticket &last) {
 static int rpc_write_start(conn_t *conn, const int op, bool scoped,
                            uintptr_t key);
 
+void rpc_begin_callback_reply(conn_t *conn) { rpc_tls_callback_reply = conn; }
+void rpc_end_callback_reply() { rpc_tls_callback_reply = nullptr; }
+
 int rpc_write_start_request(conn_t *conn, const int op) {
   return rpc_write_start(conn, op, false, RPC_SCOPE_NONE);
 }
@@ -1071,12 +1079,40 @@ void rpc_scope_forget(conn_t *conn, uintptr_t key) {
   pthread_mutex_unlock(&conn->scope_mutex);
 }
 
+void rpc_scope_retire(conn_t *conn, uintptr_t key) {
+  pthread_mutex_lock(&conn->scope_mutex);
+  conn->retired_scopes.push_back(key);
+  pthread_mutex_unlock(&conn->scope_mutex);
+}
+
+int rpc_request_after_retired(conn_t *conn) {
+  if (conn == nullptr || rpc_tls_io.write_conn != conn) {
+    return -1;
+  }
+  pthread_mutex_lock(&conn->scope_mutex);
+  std::vector<uintptr_t> retired = conn->retired_scopes;
+  pthread_mutex_unlock(&conn->scope_mutex);
+  for (uintptr_t key : retired) {
+    rpc_request_after(conn, key);
+  }
+  conn->write_scope.retired_count = retired.size();
+  return 0;
+}
+
 uint64_t rpc_request_pending_ticket(conn_t *conn, uintptr_t key) {
   if (conn == nullptr || rpc_tls_io.write_conn != conn) {
     return kNoAsyncSequence;
   }
   rpc_scope_ticket last = rpc_scope_snapshot(conn, key);
   return last.lane == conn->write_stream_id ? kNoAsyncSequence : last.ticket;
+}
+
+int rpc_request_publish_connection(conn_t *conn) {
+  if (conn == nullptr || rpc_tls_io.write_conn != conn) {
+    return -1;
+  }
+  conn->write_scope.publish_connection = true;
+  return 0;
 }
 
 int rpc_request_soft(conn_t *conn) {
@@ -1113,7 +1149,8 @@ static int rpc_write_start(conn_t *conn, const int op, bool scoped,
     return -1;
   }
   bool callback = request_nested_in_response ||
-                  (rpc_tls_io.read_conn == conn && rpc_tls_io.read.op != -1);
+                  (rpc_tls_io.read_conn == conn && rpc_tls_io.read.op != -1) ||
+                  rpc_tls_callback_reply == conn;
   if (lupine_handoff_request_begin(conn, op, callback) < 0 || conn->closed) {
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
@@ -1389,6 +1426,15 @@ int rpc_write_end(conn_t *conn) {
       for (int i = 0; i < scope.key_count; ++i) {
         conn->scope_last[scope.keys[i]] = last;
       }
+      // This ticket now stands for the retired scopes it waited for. Retired
+      // scopes are only consumed under the builder lock, so they are still
+      // the first ones listed.
+      for (size_t i = 0; i < scope.retired_count; ++i) {
+        conn->scope_last.erase(conn->retired_scopes[i]);
+      }
+      conn->retired_scopes.erase(conn->retired_scopes.begin(),
+                                 conn->retired_scopes.begin() +
+                                     scope.retired_count);
       pthread_mutex_unlock(&conn->scope_mutex);
     }
     if (result == 0 && client_request) {

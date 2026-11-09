@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -767,8 +768,14 @@ struct lupine_thread_stream {
   ~lupine_thread_stream() {
     lupine_retire_blocking_stream(key(), conns.data(), conns.size());
   }
-  uintptr_t key() const { return reinterpret_cast<uintptr_t>(this); }
+  // Unique per thread: a later thread can reuse this one's TLS address while
+  // its key is still retired. The top bit keeps it apart from any handle.
+  const uintptr_t id = (uintptr_t{1} << (sizeof(uintptr_t) * 8 - 1)) |
+                       next_id.fetch_add(1, std::memory_order_relaxed);
+  uintptr_t key() const { return id; }
+  static std::atomic<uintptr_t> next_id;
 };
+std::atomic<uintptr_t> lupine_thread_stream::next_id{1};
 
 const uintptr_t kLegacyStreamScope =
     reinterpret_cast<uintptr_t>(CU_STREAM_LEGACY);
@@ -805,12 +812,12 @@ extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op,
     for (uintptr_t key : blocking) {
       rpc_request_after(conn, key);
     }
-    // This request now stands for the retired streams' work.
+    // The connection keeps the retired streams until a legacy request that
+    // publishes a ticket has waited for them.
     for (uintptr_t key : retired) {
-      rpc_request_after(conn, key);
-      rpc_scope_forget(conn, key);
+      rpc_scope_retire(conn, key);
     }
-    return 0;
+    return rpc_request_after_retired(conn);
   }
   bool blocking = stream == CU_STREAM_PER_THREAD;
   uintptr_t key = reinterpret_cast<uintptr_t>(stream);

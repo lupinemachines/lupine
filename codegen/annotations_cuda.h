@@ -244,9 +244,10 @@ CUresult cuCtxGetId(CUcontext ctx, unsigned long long *ctxId);
  * @param hEvent SEND_ONLY
  */
 CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent) {
-  // Re-recording re-arms the event, so its cached completion is stale.
-  lupine_event_invalidate_completion(hEvent);
   CUresult return_value = LUPINE_GENERATED_CALL();
+  // Re-recording re-arms the event, so its cached completion is stale.
+  // Invalidate after enqueue so an overlapping query cannot retain old state.
+  lupine_event_invalidate_completion(hEvent);
   return return_value;
 }
 /**
@@ -1710,9 +1711,10 @@ CUresult cuGreenCtxGetId(CUgreenCtx greenCtx, unsigned long long *greenCtxId);
  * @param hEvent SEND_ONLY
  */
 CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent) {
-  // Re-recording re-arms the event, so its cached completion is stale.
-  lupine_event_invalidate_completion(hEvent);
   CUresult return_value = LUPINE_GENERATED_CALL();
+  // Re-recording re-arms the event, so its cached completion is stale.
+  // Invalidate after enqueue so an overlapping query cannot retain old state.
+  lupine_event_invalidate_completion(hEvent);
   return return_value;
 }
 /**

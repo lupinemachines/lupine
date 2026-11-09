@@ -581,12 +581,15 @@ CUresult cuCtxGetExecAffinity(CUexecAffinityParam *pExecAffinity,
 #if CUDA_VERSION >= 12050
 CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent) {
   lupine_route route = lupine_route_for_context(hCtx);
-  // Re-recording re-arms the event, so its cached completion is stale.
-  lupine_event_invalidate_completion(hEvent);
   CUresult return_value;
-  if (lupine_route_is_local(route))
-    return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuCtxRecordEvent"),
-                                    hCtx, hEvent);
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuCtxRecordEvent"), hCtx, hEvent);
+    // Re-recording re-arms the event, so its cached completion is stale.
+    // Invalidate after enqueue so an overlapping query cannot retain old state.
+    lupine_event_invalidate_completion(hEvent);
+    return return_value;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxRecordEvent) < 0 ||
@@ -596,7 +599,11 @@ CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent) {
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return CUDA_SUCCESS;
+  return_value = CUDA_SUCCESS;
+  // Re-recording re-arms the event, so its cached completion is stale.
+  // Invalidate after enqueue so an overlapping query cannot retain old state.
+  lupine_event_invalidate_completion(hEvent);
+  return return_value;
 }
 
 #endif
@@ -5532,6 +5539,7 @@ CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream) {
   if (lupine_prepare_rpc(conn) < 0 ||
       lupine_rpc_start_on_stream(conn, RPC_cuGraphLaunch, hStream) < 0 ||
       rpc_request_on(conn, reinterpret_cast<uintptr_t>(hGraphExec)) < 0 ||
+      rpc_request_publish_connection(conn) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -7202,12 +7210,15 @@ CUresult cuDevResourceGenerateDesc(CUdevResourceDesc *phDesc,
 #if CUDA_VERSION >= 12040
 CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent) {
   lupine_route route = lupine_route_for_current_context();
-  // Re-recording re-arms the event, so its cached completion is stale.
-  lupine_event_invalidate_completion(hEvent);
   CUresult return_value;
-  if (lupine_route_is_local(route))
-    return lupine_call_real_cuda_fn(
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuGreenCtxRecordEvent"), hCtx, hEvent);
+    // Re-recording re-arms the event, so its cached completion is stale.
+    // Invalidate after enqueue so an overlapping query cannot retain old state.
+    lupine_event_invalidate_completion(hEvent);
+    return return_value;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGreenCtxRecordEvent) < 0 ||
@@ -7217,7 +7228,11 @@ CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent) {
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return CUDA_SUCCESS;
+  return_value = CUDA_SUCCESS;
+  // Re-recording re-arms the event, so its cached completion is stale.
+  // Invalidate after enqueue so an overlapping query cannot retain old state.
+  lupine_event_invalidate_completion(hEvent);
+  return return_value;
 }
 
 #endif

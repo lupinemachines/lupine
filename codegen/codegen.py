@@ -1255,6 +1255,9 @@ def client_request_start(function: Function) -> str:
     # A graph executable runs one launch at a time, and is updated or
     # destroyed only after the launches its caller made before.
     start += also_on(rest + execs)
+    # A graph records events and signals semaphores it does not name here.
+    if name == "cuGraphLaunch":
+        start += " < 0 ||\n        rpc_request_publish_connection(conn)"
     # A semaphore's wait is submitted after the signals sent before it.
     for parameter in function.parameters:
         if (

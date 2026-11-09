@@ -187,6 +187,60 @@ int main() {
     std::printf("pageable read of %zu bytes: ok\n", bytes);
   }
 
+  // A query on the legacy stream answers without waiting, so it must not stand
+  // in for a destroyed blocking stream's work: the next legacy launch still
+  // waits for it.
+  CHECK(cudaMemset(slot, 0, sizeof(*slot)));
+  CHECK(hand_off(
+      [&] {
+        cudaStream_t gone = nullptr;
+        cudaError_t r = cudaStreamCreate(&gone);
+        if (r != cudaSuccess) {
+          return r;
+        }
+        slow_store<<<1, 1, 0, gone>>>(slot, 0x77, cycles);
+        r = cudaGetLastError();
+        cudaError_t destroyed = cudaStreamDestroy(gone);
+        return r != cudaSuccess ? r : destroyed;
+      },
+      [&] {
+        (void)cudaStreamQuery(cudaStreamLegacy);
+        copy_slot<<<1, 1, 0, 0>>>(slot, result);
+        return cudaGetLastError();
+      }));
+  if (expect("legacy query, then destroyed blocking stream", result, 0x77) !=
+      0) {
+    return 1;
+  }
+
+  // An event a graph records orders another thread's wait on it, although the
+  // launch names only its stream and executable.
+  {
+    cudaEvent_t recorded = nullptr;
+    CHECK(cudaEventCreateWithFlags(&recorded, cudaEventDisableTiming));
+    cudaGraph_t graph = nullptr;
+    cudaGraphExec_t exec = nullptr;
+    CHECK(cudaStreamBeginCapture(mine, cudaStreamCaptureModeThreadLocal));
+    slow_store<<<1, 1, 0, mine>>>(slot, 0x88, cycles);
+    CHECK(cudaEventRecordWithFlags(recorded, mine, cudaEventRecordExternal));
+    CHECK(cudaStreamEndCapture(mine, &graph));
+    CHECK(cudaGraphInstantiate(&exec, graph, nullptr, nullptr, 0));
+    CHECK(cudaMemset(slot, 0, sizeof(*slot)));
+    CHECK(cudaDeviceSynchronize());
+    CHECK(hand_off([&] { return cudaGraphLaunch(exec, mine); },
+                   [&] {
+                     cudaError_t r = cudaEventSynchronize(recorded);
+                     copy_slot<<<1, 1, 0, shared>>>(slot, result);
+                     return r != cudaSuccess ? r : cudaGetLastError();
+                   }));
+    CHECK(cudaGraphExecDestroy(exec));
+    CHECK(cudaGraphDestroy(graph));
+    CHECK(cudaEventDestroy(recorded));
+    if (expect("event recorded by a graph", result, 0x88) != 0) {
+      return 1;
+    }
+  }
+
   // The legacy stream still waits for a blocking stream destroyed with work
   // pending, and for a thread's per-thread stream after the thread exits.
   CHECK(cudaMemset(slot, 0, sizeof(*slot)));

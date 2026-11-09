@@ -159,6 +159,8 @@ struct rpc_request_scope {
   uintptr_t keys[kMaxKeys] = {};
   int wait_count = 0;
   uint64_t waits[kMaxWaits] = {};
+  // Retired scopes this request waits for, dropped once it publishes.
+  size_t retired_count = 0;
 };
 
 struct conn_t {
@@ -185,6 +187,7 @@ struct conn_t {
   std::set<uint64_t> completed_async_sequences;
   pthread_mutex_t scope_mutex;
   std::unordered_map<uintptr_t, rpc_scope_ticket> scope_last;
+  std::vector<uintptr_t> retired_scopes;
   rpc_scope_ticket connection_last;
   bool async_cancelled;
   int async_sync_initialized;
@@ -283,6 +286,14 @@ extern int rpc_request_on(conn_t *conn, uintptr_t key);
 extern int rpc_request_after(conn_t *conn, uintptr_t key);
 // Makes the request being built check what it is ordered behind instead of
 // waiting for it; the handler asks rpc_request_unsettled.
+// Brackets the requests a client sends while answering a server callback,
+// after it has read the callback's request: they belong to the callback, so a
+// handoff that pauses new requests lets them through.
+extern void rpc_begin_callback_reply(conn_t *conn);
+extern void rpc_end_callback_reply();
+// Every later scoped request waits for this one too: for work that touches
+// objects the request does not name, such as events a graph records.
+extern int rpc_request_publish_connection(conn_t *conn);
 extern int rpc_request_soft(conn_t *conn);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 // A zero-size write is a successful no-op, including when data is null.
@@ -328,6 +339,13 @@ extern bool rpc_request_awaited(conn_t *conn);
 // Drops what is known about `key`, once nothing sent later can be ordered by
 // it: a destroyed object, or one a later request now stands for.
 extern void rpc_scope_forget(conn_t *conn, uintptr_t key);
+// A scope nothing will publish on again whose last work later requests still
+// wait for. rpc_request_after_retired orders the request being built after
+// every retired scope; the first one that publishes a ticket then stands for
+// them, and they are dropped. A request that publishes nothing (an answered
+// one, or a query) keeps them for the next.
+extern void rpc_scope_retire(conn_t *conn, uintptr_t key);
+extern int rpc_request_after_retired(conn_t *conn);
 // The last ticket another lane sent on `key`, for a request being built to
 // carry and the server to check with rpc_async_ticket_released; ~0 if none.
 extern uint64_t rpc_request_pending_ticket(conn_t *conn, uintptr_t key);
