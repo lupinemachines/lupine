@@ -687,16 +687,16 @@ lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
   lupine_pending_dtoh_copies().erase_fn(
       conn, [&](lupine_pending_dtoh_streams &streams) {
         for (auto it = streams.begin(); it != streams.end();) {
-          if (!all_streams && it->first != stream && inherited == nullptr) {
-            ++it;
-            continue;
-          }
           auto &items = it->second;
           items.erase(std::remove_if(
                           items.begin(), items.end(),
                           [&](const auto &item) {
                             if (!all_streams && it->first != stream &&
-                                item.graph_resources != inherited) {
+                                (inherited == nullptr ||
+                                 item.graph_resources != inherited) &&
+                                std::find(item.waiting_streams.begin(),
+                                          item.waiting_streams.end(), stream) ==
+                                    item.waiting_streams.end()) {
                               return false;
                             }
                             if (context != nullptr && item.context != context) {
@@ -780,6 +780,33 @@ void lupine_forget_event_dtoh_marker(conn_t *conn, CUevent event) {
       conn, [event](lupine_pending_dtoh_streams &streams) {
         lupine_remove_event_dtoh_markers(&streams, event);
         return streams.empty();
+      });
+}
+
+// A stream that waits on an event runs after every copy queued ahead of the
+// event's record, so its host functions must see them. Tag those copies rather
+// than move them: the recording stream and the event still deliver them too.
+void lupine_note_event_wait(conn_t *conn, CUstream stream, CUevent event) {
+  lupine_pending_dtoh_copies().update_fn(
+      conn, [&](lupine_pending_dtoh_streams &streams) {
+        for (auto &entry : streams) {
+          auto &items = entry.second;
+          auto marker = std::find_if(
+              items.begin(), items.end(), [event](const auto &item) {
+                return lupine_is_event_dtoh_marker(item, event);
+              });
+          if (marker == items.end()) {
+            continue;
+          }
+          for (auto it = items.begin(); it != marker; ++it) {
+            if (it->event == nullptr && it->context == marker->context &&
+                std::find(it->waiting_streams.begin(),
+                          it->waiting_streams.end(),
+                          stream) == it->waiting_streams.end()) {
+              it->waiting_streams.push_back(stream);
+            }
+          }
+        }
       });
 }
 
@@ -3522,6 +3549,7 @@ int handle_cuStreamWaitEvent(conn_t *conn) {
     return -1;
   }
   lupine_wait_event_capture_resources(stream, event);
+  lupine_note_event_wait(conn, stream, event);
   // Fire-and-forget like cuEventRecord: a failure surfaces at the next sync.
   cuStreamWaitEvent(stream, event, flags);
   return 0;

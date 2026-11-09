@@ -76,6 +76,9 @@ struct lupine_pending_dtoh_item {
   CUcontext context = nullptr;
   // Preserve graph dependencies inherited through cuStreamWaitEvent.
   lupine_graph_resources *graph_resources = nullptr;
+  // Streams that waited on an event recorded after this copy, whose callbacks
+  // and synchronizes may deliver it too.
+  std::vector<CUstream> waiting_streams;
 };
 
 using lupine_pending_dtoh_items = std::vector<lupine_pending_dtoh_item>;
@@ -96,6 +99,7 @@ void lupine_cleanup_pending_dtoh_copies(lupine_pending_dtoh_items *pending);
 CUresult lupine_take_async_error(conn_t *conn, CUresult result);
 void lupine_forget_undelivered_dtoh(const void *server_src);
 void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream);
+void lupine_note_event_wait(conn_t *conn, CUstream stream, CUevent event);
 void lupine_forget_event_dtoh_marker(conn_t *conn, CUevent event);
 
 using lupine_pending_dtoh_streams =
