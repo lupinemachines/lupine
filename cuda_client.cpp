@@ -9128,10 +9128,7 @@ void *rpc_client_dispatch_thread(void *arg) {
 
       // Acknowledging the callback lets queued device work resume. Publish its
       // mapped-memory writes first, even when no application CUDA call follows.
-      lupine_flush_answered = true;
-      int flushed = lupine_prepare_rpc(conn);
-      lupine_flush_answered = false;
-      if (flushed < 0) {
+      if (lupine_prepare_rpc(conn) < 0 || lupine_settle_host_flushes(conn) < 0) {
         LUPINE_LOG_ERROR("Failed to flush host writes from host callback.");
         goto close_connection;
       }
@@ -9168,10 +9165,7 @@ void *rpc_client_dispatch_thread(void *arg) {
         lupine_in_host_callback = false;
       }
 
-      lupine_flush_answered = true;
-      int flushed = lupine_prepare_rpc(conn);
-      lupine_flush_answered = false;
-      if (flushed < 0) {
+      if (lupine_prepare_rpc(conn) < 0 || lupine_settle_host_flushes(conn) < 0) {
         LUPINE_LOG_ERROR("Failed to flush host writes from stream callback.");
         break;
       }

@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstdio>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -39,14 +40,41 @@ long long spin_cycles() {
   return static_cast<long long>(khz) * 20; // ~20 ms
 }
 
-// Runs the producer's launch on its thread, then the consumer's on another
-// once the producer's call has returned, as a host handoff would.
+// Queues a backlog of copies on a stream of the caller's own, so its next
+// requests reach the server late: a request from another thread not ordered
+// behind them would overtake them.
+cudaError_t queue_backlog() {
+  static unsigned char *pinned = nullptr, *backlog = nullptr;
+  static cudaStream_t stream = nullptr;
+  if (backlog == nullptr &&
+      (cudaMallocHost(&pinned, 4096) != cudaSuccess ||
+       cudaMalloc(&backlog, 512 * 4096) != cudaSuccess ||
+       cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking) !=
+           cudaSuccess)) {
+    return cudaErrorMemoryAllocation;
+  }
+  for (int i = 0; i < 512; ++i) {
+    cudaError_t r = cudaMemcpyAsync(backlog + i * 4096, pinned, 4096,
+                                    cudaMemcpyHostToDevice, stream);
+    if (r != cudaSuccess) {
+      return r;
+    }
+  }
+  return cudaSuccess;
+}
+
+// Runs the producer's launch on its thread, behind a backlog, then the
+// consumer's on another once the producer's call has returned, as a host
+// handoff would.
 template <typename Produce, typename Consume>
 cudaError_t hand_off(Produce produce, Consume consume) {
   std::atomic<bool> produced{false};
   cudaError_t produce_result = cudaSuccess;
   std::thread producer([&] {
-    produce_result = produce();
+    produce_result = queue_backlog();
+    if (produce_result == cudaSuccess) {
+      produce_result = produce();
+    }
     produced = true;
   });
   while (!produced) {
@@ -133,6 +161,32 @@ int main() {
     return 1;
   }
 
+  // A copy into pageable memory on a stream reads after another thread's work
+  // on that stream, small or large enough for the bulk path.
+  for (size_t bytes : {sizeof(unsigned int), size_t(64) << 20}) {
+    unsigned int *big = nullptr;
+    CHECK(cudaMalloc(&big, bytes));
+    CHECK(cudaMemset(big, 0, bytes));
+    CHECK(cudaDeviceSynchronize());
+    std::vector<unsigned int> host(bytes / sizeof(unsigned int));
+    CHECK(hand_off(
+        [&] {
+          slow_store<<<1, 1, 0, shared>>>(big + host.size() - 1, 0x66, cycles);
+          return cudaGetLastError();
+        },
+        [&] {
+          return cudaMemcpyAsync(host.data(), big, bytes,
+                                 cudaMemcpyDeviceToHost, shared);
+        }));
+    CHECK(cudaFree(big));
+    if (host.back() != 0x66) {
+      std::fprintf(stderr, "FAIL: pageable read of %zu bytes: read 0x%x\n",
+                   bytes, host.back());
+      return 1;
+    }
+    std::printf("pageable read of %zu bytes: ok\n", bytes);
+  }
+
   // The legacy stream still waits for a blocking stream destroyed with work
   // pending, and for a thread's per-thread stream after the thread exits.
   CHECK(cudaMemset(slot, 0, sizeof(*slot)));
@@ -159,8 +213,11 @@ int main() {
   CHECK(cudaMemset(slot, 0, sizeof(*slot)));
   cudaError_t exited_result = cudaSuccess;
   std::thread exited([&] {
+    exited_result = queue_backlog();
     slow_store<<<1, 1, 0, cudaStreamPerThread>>>(slot, 0x55, cycles);
-    exited_result = cudaGetLastError();
+    if (exited_result == cudaSuccess) {
+      exited_result = cudaGetLastError();
+    }
   });
   exited.join();
   CHECK(exited_result);

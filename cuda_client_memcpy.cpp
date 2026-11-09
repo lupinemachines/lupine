@@ -10,6 +10,7 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 #ifndef _WIN32
 #include <fcntl.h>
 #include <sched.h>
@@ -252,7 +253,45 @@ static uint64_t lupine_dirty_host_epoch = 0;
 static thread_local uint64_t lupine_required_host_epoch = 0;
 static volatile sig_atomic_t lupine_device_work_pending = 0;
 thread_local bool lupine_in_host_callback = false;
-thread_local bool lupine_flush_answered = false;
+// Per connection: unanswered flushes sent, and how many a barrier covered.
+struct lupine_host_flush_count {
+  uint64_t sent = 0;
+  uint64_t settled = 0;
+};
+static std::mutex lupine_host_flush_count_mutex;
+static std::unordered_map<conn_t *, lupine_host_flush_count>
+    lupine_host_flush_counts;
+
+static void lupine_note_host_flush_sent(conn_t *conn) {
+  std::lock_guard<std::mutex> lock(lupine_host_flush_count_mutex);
+  ++lupine_host_flush_counts[conn].sent;
+}
+
+int lupine_settle_host_flushes(conn_t *conn) {
+  uint64_t sent = 0;
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_flush_count_mutex);
+    auto it = lupine_host_flush_counts.find(conn);
+    if (it == lupine_host_flush_counts.end() ||
+        it->second.settled >= it->second.sent) {
+      return 0;
+    }
+    sent = it->second.sent;
+  }
+  // An empty flush waits on the server for every flush sent before it, and
+  // its answer says they are applied.
+  uint32_t count = 0;
+  if (rpc_write_start_request_on(conn, LUPINE_RPC_lupineManagedHostFlush,
+                                 RPC_SCOPE_NONE) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
+    return -1;
+  }
+  std::lock_guard<std::mutex> lock(lupine_host_flush_count_mutex);
+  auto &counts = lupine_host_flush_counts[conn];
+  counts.settled = std::max(counts.settled, sent);
+  return 0;
+}
 static std::atomic<uint64_t> lupine_flushed_host_epoch{0};
 static std::mutex lupine_host_flush_mutex;
 
@@ -1396,11 +1435,10 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     if (rpc_write_start_request_on(conn, LUPINE_RPC_lupineManagedHostFlush, RPC_SCOPE_NONE) < 0 ||
         rpc_write(conn, &count, sizeof(count)) < 0 ||
         rpc_write_cursors(conn, cursors.data(), count * 2) < 0 ||
-        (lupine_flush_answered
-             ? rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0
-             : rpc_write_end(conn) < 0)) {
+        rpc_write_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
+    lupine_note_host_flush_sent(conn);
     return CUDA_SUCCESS;
   };
 
@@ -3872,7 +3910,7 @@ static CUresult lupine_bulk_pull(conn_t *conn, lupine_bulk_lanes *lanes,
   uint64_t copy_id = next_copy_id.fetch_add(1);
   uint32_t readers = lanes->count;
   int request_id = -1;
-  if (lupine_rpc_start_on_stream(conn, LUPINE_RPC_lupineMemcpyDtoHBulk, nullptr) < 0 ||
+  if (lupine_rpc_start_on_stream(conn, LUPINE_RPC_lupineMemcpyDtoHBulk, stream) < 0 ||
       rpc_write(conn, &copy_id, sizeof(copy_id)) < 0 ||
       rpc_write(conn, &source, sizeof(source)) < 0 ||
       rpc_write(conn, &bytes, sizeof(bytes)) < 0 ||
@@ -3965,7 +4003,7 @@ static CUresult lupine_copy_dtoh_pageable(conn_t *conn, void *dstHost,
     return lupine_bulk_pull(conn, lanes, dstHost, srcDevice, ByteCount,
                             hStream);
   }
-  if (lupine_rpc_start_on_stream(conn, RPC_cuMemcpyDtoH_v2, nullptr) < 0 ||
+  if (lupine_rpc_start_on_stream(conn, RPC_cuMemcpyDtoH_v2, hStream) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0) {

@@ -4,6 +4,7 @@
 #include "device_stdout.h"
 
 #include <cuda.h>
+#include <cstdint>
 
 #include <memory>
 #include <optional>
@@ -16,6 +17,12 @@
 
 struct lupine_graph_resources;
 
+// Pending device-to-host copies are numbered as they are queued. A stream's
+// copies are queued in stream order, so a callback takes only those numbered
+// before it: the ones after it in the stream have not run yet.
+uint64_t lupine_next_dtoh_sequence();
+uint64_t lupine_dtoh_sequence_now();
+
 struct lupine_host_callback_data {
   conn_t *conn = nullptr;
   CUhostFn fn = nullptr;
@@ -24,12 +31,15 @@ struct lupine_host_callback_data {
   std::optional<CUstream> stream;
   // Uncaptured launches run once; a captured one is replayed by its graph.
   bool one_shot = false;
+  // Pending copies numbered from here on were queued after the callback.
+  uint64_t dtoh_before = UINT64_MAX;
 };
 
 struct lupine_stream_callback_data {
   conn_t *conn = nullptr;
   CUstreamCallback callback = nullptr;
   void *userData = nullptr;
+  uint64_t dtoh_before = UINT64_MAX;
 };
 
 void CUDA_CB lupine_graph_host_callback(void *userData);
@@ -76,6 +86,7 @@ struct lupine_pending_dtoh_item {
   CUcontext context = nullptr;
   // Preserve graph dependencies inherited through cuStreamWaitEvent.
   lupine_graph_resources *graph_resources = nullptr;
+  uint64_t sequence = lupine_next_dtoh_sequence();
 };
 
 using lupine_pending_dtoh_items = std::vector<lupine_pending_dtoh_item>;
@@ -84,7 +95,8 @@ void lupine_note_device_stdout_image(const unsigned char *image,
 lupine_pending_dtoh_items
 lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
                                   bool all_streams,
-                                  CUcontext context = nullptr);
+                                  CUcontext context = nullptr,
+                                  uint64_t before = UINT64_MAX);
 lupine_pending_dtoh_items lupine_detach_event_dtoh_copies(conn_t *conn,
                                                           CUevent event);
 int lupine_write_dtoh_rows(conn_t *conn, const lupine_host_rows &client,
