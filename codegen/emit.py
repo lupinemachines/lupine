@@ -51,6 +51,25 @@ class Backend:
     keep_async_error: str = ""
 
 
+# Queries that answer CUDA_ERROR_NOT_READY while work they are ordered behind
+# has not been submitted, instead of waiting for it.
+UNSETTLED_NOT_READY = {"cuStreamQuery"}
+
+# Hints whose failure only means the hint did not take: an unanswered one drops
+# it rather than failing the client's next synchronize.
+HINT_FUNCTIONS = {
+    "cuCtxSetCacheConfig",
+    "cuCtxSetSharedMemConfig",
+    "cuFuncSetCacheConfig",
+    "cuKernelSetCacheConfig",
+    "cuMemAdvise",
+    "cuMemAdvise_v2",
+    "cuMemPrefetchAsync",
+    "cuMemPrefetchAsync_v2",
+    "cuStreamAttachMemAsync",
+}
+
+
 def optional_async(backend: "Backend", function, metadata) -> bool:
     """Whether the call skips its answer only when submit_async says so."""
     return bool(backend.async_success) and unanswered(
@@ -207,6 +226,13 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
 
     opening = "  if (conn == nullptr ||\n      " if backend.guard_null_conn else "  if ("
     start = f"rpc_write_start_request(conn, RPC_{name})"
+    # A call on a stream is ordered as CUDA orders that stream's work.
+    stream = next(
+        (p.name for p in function.parameters if p.type.format() == "cudaStream_t"),
+        None,
+    )
+    if stream is not None:
+        start = f"rpc_write_start_request_on_stream(conn, RPC_{name}, {stream})"
     wait, returned = "rpc_wait_for_response(conn) < 0 ||", "return_value"
     if submit:
         # A request sent without waiting gets no answer.
@@ -450,13 +476,18 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
                 f.write(f"  return_value = fn({args});\n\n")
     elif result == "void":
         f.write(f"  {entry}({args});\n\n")
+    elif name in UNSETTLED_NOT_READY:
+        f.write(
+            "  return_value = rpc_request_unsettled(conn) ? CUDA_ERROR_NOT_READY\n"
+            f"                                              : {entry}({args});\n\n"
+        )
     else:
         f.write(f"  return_value = {entry}({args});\n\n")
     if unawaited:
         # A client that does not wait gets no answer; a failure reaches it from
         # its next synchronize instead.
         f.write("  if (!rpc_request_awaited(conn)) {\n")
-        if backend.keep_async_error:
+        if backend.keep_async_error and name not in HINT_FUNCTIONS:
             f.write(f"    {backend.keep_async_error}(conn, return_value);\n")
         write_server_buffer_cleanup(f, owned_buffers, "    ")
         f.write("    return 0;\n  }\n\n")

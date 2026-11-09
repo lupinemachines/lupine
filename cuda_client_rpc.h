@@ -13,6 +13,9 @@ extern "C" {
 typedef struct conn_t conn_t;
 
 int lupine_rpc_write_start_request(conn_t *conn, int op);
+// Starts a request ordered as CUDA orders work on `stream` (a CUstream).
+int lupine_rpc_write_start_request_on_stream(conn_t *conn, int op,
+                                             void *stream);
 int lupine_rpc_write(conn_t *conn, const void *data, size_t size);
 int lupine_rpc_write_end(conn_t *conn);
 int lupine_rpc_wait_for_response(conn_t *conn);

@@ -363,6 +363,7 @@ CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
  * @routingkey MODULE hmod
  * @release MODULE hmod
  * @param hmod SEND_ONLY
+ * @blocking - unloading waits for running work, which a held ticket must not
  */
 CUresult cuModuleUnload(CUmodule hmod);
 /**

@@ -3436,9 +3436,12 @@ int handle_cuEventQuery(conn_t *conn) {
     return -1;
   }
 
+  // A record the client sent that is not submitted yet makes the answer not
+  // ready; the driver would still report the event's previous record.
+  bool unsettled = rpc_request_unsettled(conn);
   CUresult results[kLupineEventQueryBatch + 1];
   for (uint32_t i = 0; i <= count; ++i) {
-    results[i] = cuEventQuery(events[i]);
+    results[i] = unsettled ? CUDA_ERROR_NOT_READY : cuEventQuery(events[i]);
   }
   // Copies ride back only for events[0]; a cached success would skip them.
   for (uint32_t i = 1; i <= count; ++i) {

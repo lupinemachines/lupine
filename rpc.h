@@ -129,8 +129,11 @@ typedef struct conn_t conn_t;
 
 // Requests are ordered against earlier unanswered ones either connection-wide
 // or by the objects they touch. A scope key is an object's handle (a stream or
-// an event); these two values are not handles.
-static constexpr uintptr_t RPC_SCOPE_CONNECTION = 0;
+// an event); these two values are not handles. RPC_SCOPE_NONE orders a request
+// touching no object only behind earlier ones that touched none, and makes an
+// unanswered one an object every later request waits for; RPC_SCOPE_LANE also
+// publishes nothing, so only the sender's own lane follows it.
+static constexpr uintptr_t RPC_SCOPE_NONE = 0;
 static constexpr uintptr_t RPC_SCOPE_LANE = ~uintptr_t{0};
 
 // The last unanswered request on an object, and the lane that sent it.
@@ -142,14 +145,19 @@ struct rpc_scope_ticket {
 // What the request being built is ordered against. A connection-wide request
 // waits for every unanswered request published before it was started. A
 // scoped one waits only for the last unanswered request another lane sent on
-// each of its objects, and for the last connection-wide one: its own lane's
-// requests are already in order.
+// each of its objects, and for the last one that touched no object: its own
+// lane's requests are already in order. A soft request checks those instead
+// of waiting for them, so a query can say they are not done yet.
 struct rpc_request_scope {
+  static constexpr int kMaxWaits = 8;
   bool scoped = false;
+  bool publish_connection = false;
+  bool soft = false;
+  bool wait_all = false;
   int key_count = 0;
   uintptr_t keys[2] = {};
   int wait_count = 0;
-  uint64_t waits[3] = {};
+  uint64_t waits[kMaxWaits] = {};
 };
 
 struct conn_t {
@@ -262,12 +270,18 @@ extern void rpc_expect_answer(conn_t *conn);
 // remote server) or a closed conn fails here, so callers surface their
 // unavailable-server result without per-call-site null checks.
 extern int rpc_write_start_request(conn_t *conn, const int op);
-// Starts a request ordered only by the object `key` names (RPC_SCOPE_LANE: by
-// nothing beyond its own lane), not by every earlier unanswered request.
+// Starts a request ordered only by the object `key` names, not by every
+// earlier unanswered request.
 extern int rpc_write_start_request_on(conn_t *conn, const int op,
                                       uintptr_t key);
 // Adds a second object the request being built is ordered by.
 extern int rpc_request_on(conn_t *conn, uintptr_t key);
+// Orders the request being built behind an object's earlier requests without
+// later requests on that object ordering behind it.
+extern int rpc_request_after(conn_t *conn, uintptr_t key);
+// Makes the request being built check what it is ordered behind instead of
+// waiting for it; the handler asks rpc_request_unsettled.
+extern int rpc_request_soft(conn_t *conn);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 // A zero-size write is a successful no-op, including when data is null.
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
@@ -308,6 +322,8 @@ extern void rpc_async_sequence_end(conn_t *conn);
 // request it does not wait for carries a ticket and gets no answer: its
 // handler keeps a failure for the client's next synchronize instead.
 extern bool rpc_request_awaited(conn_t *conn);
+// Whether something a soft request is ordered behind has not been submitted.
+extern bool rpc_request_unsettled(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // Signals transport readers to stop without releasing connection resources.
 // Owners use this before joining workers that may be blocked on the transport.

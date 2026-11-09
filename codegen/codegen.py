@@ -21,6 +21,7 @@ import textwrap
 import zlib
 from client_templates import collect_client_call_templates
 from emit import (
+    UNSETTLED_NOT_READY,
     Backend,
     format_call_args,
     format_function_params,
@@ -229,6 +230,29 @@ HIP_MANUAL_REMAPPINGS = [
     ("hipGetDeviceProperties", "hipGetDevicePropertiesR0600"),
     ("hipChooseDevice", "hipChooseDeviceR0600"),
 ]
+
+# Calls that wait for the device natively, so they wait for every earlier
+# unanswered request rather than only those on one stream or event.
+DEVICE_WIDE_FUNCTIONS = {
+    "cuArrayDestroy",
+    "cuCtxDestroy_v2",
+    "cuCtxDetach",
+    "cuCtxResetPersistingL2Cache",
+    "cuCtxSetLimit",
+    "cuCtxSynchronize",
+    "cuCtxSynchronize_v2",
+    "cuDestroyExternalMemory",
+    "cuDestroyExternalSemaphore",
+    "cuDevicePrimaryCtxRelease_v2",
+    "cuDevicePrimaryCtxReset_v2",
+    "cuGraphicsUnregisterResource",
+    "cuGreenCtxDestroy",
+    "cuIpcCloseMemHandle",
+    "cuMemFreeHost",
+    "cuMemHostUnregister",
+    "cuMipmappedArrayDestroy",
+    "cuModuleUnload",
+}
 
 PRIVATE_RPC_FUNCTIONS = [
     "cuGetExportTableMetadata",
@@ -1171,6 +1195,44 @@ def find_header_file(filename):
     )
 
 
+def client_request_start(function: Function) -> str:
+    """The request start for a call, ordered as CUDA orders what it touches.
+
+    A call on a stream is ordered as that stream's work is; a synchronous copy
+    or set runs on the legacy stream; an event call by its events; a call that
+    waits for the device by every earlier unanswered request; and any other
+    call only behind earlier calls that touched no stream or event.
+    """
+    name = function.name.format()
+    op = f"RPC_{name}"
+
+    def first(type_name):
+        return [p.name for p in function.parameters if p.type.format() == type_name]
+
+    streams, events = first("CUstream"), first("CUevent")
+    if name in DEVICE_WIDE_FUNCTIONS:
+        return f"rpc_write_start_request(conn, {op})"
+    if streams:
+        start = f"lupine_rpc_start_on_stream(conn, {op}, {streams[0]})"
+    elif re.match(r"cuMem(cpy|set)", name) and "Async" not in name:
+        start = f"lupine_rpc_start_on_stream(conn, {op}, nullptr)"
+    elif events and name.startswith("cuEvent"):
+        start = (
+            f"rpc_write_start_request_on(conn, {op},\n"
+            f"            reinterpret_cast<uintptr_t>({events[0]}))"
+        )
+        for event in events[1:]:
+            start += (
+                " < 0 ||\n"
+                f"        rpc_request_on(conn, reinterpret_cast<uintptr_t>({event}))"
+            )
+    else:
+        start = f"rpc_write_start_request_on(conn, {op}, RPC_SCOPE_NONE)"
+    if name in UNSETTLED_NOT_READY:
+        start += " < 0 ||\n        rpc_request_soft(conn)"
+    return start
+
+
 def attach_client_call_template(
     function: Function,
     metadata: FunctionAnnotationMetadata,
@@ -1482,35 +1544,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                         f, result_code(function.return_type.format(), "invalid_argument")
                     )
 
-            # A call on a stream is ordered by that stream, not by every earlier
-            # unanswered request on the connection.
-            start = f"rpc_write_start_request(conn, RPC_{function.name.format()})"
-            stream = next(
-                (
-                    parameter.name
-                    for parameter in function.parameters
-                    if parameter.type.format() == "CUstream"
-                ),
-                None,
-            )
-            event = next(
-                (
-                    parameter.name
-                    for parameter in function.parameters
-                    if parameter.type.format() == "CUevent"
-                ),
-                None,
-            )
-            if stream is not None:
-                start = (
-                    f"rpc_write_start_request_on(conn, RPC_{function.name.format()},\n"
-                    f"            lupine_rpc_stream_scope({stream}))"
-                )
-            elif event is not None and function.name.format().startswith("cuEvent"):
-                start = (
-                    f"rpc_write_start_request_on(conn, RPC_{function.name.format()},\n"
-                    f"            reinterpret_cast<uintptr_t>({event}))"
-                )
+            start = client_request_start(function)
             if unanswered(function, metadata, "CUresult"):
                 error_return = result_code(function.return_type.format())
                 f.write(

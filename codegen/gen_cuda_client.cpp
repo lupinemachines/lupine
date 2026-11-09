@@ -123,7 +123,8 @@ CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
                                     luid, deviceNodeMask, dev);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetLuid) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceGetLuid, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       (8 != 0 && rpc_read(conn, luid, 8) < 0) ||
@@ -148,8 +149,8 @@ CUresult cuDeviceGetTexture1DLinearMaxWidth(size_t *maxWidthInElements,
         maxWidthInElements, format, numChannels, dev);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetTexture1DLinearMaxWidth) <
-          0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceGetTexture1DLinearMaxWidth,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &format, sizeof(CUarray_format)) < 0 ||
       rpc_write(conn, &numChannels, sizeof(unsigned)) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
@@ -171,7 +172,8 @@ CUresult cuDeviceSetMemPool(CUdevice dev, CUmemoryPool pool) {
         LUPINE_REAL_CUDA_SYMBOL("cuDeviceSetMemPool"), dev, pool);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceSetMemPool) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceSetMemPool, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -195,7 +197,8 @@ CUresult cuDeviceGetMemPool(CUmemoryPool *pool, CUdevice dev) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetMemPool) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceGetMemPool, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pool, sizeof(CUmemoryPool)) < 0 ||
@@ -223,7 +226,8 @@ CUresult cuDeviceGetDefaultMemPool(CUmemoryPool *pool_out, CUdevice dev) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetDefaultMemPool) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceGetDefaultMemPool,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pool_out, sizeof(CUmemoryPool)) < 0 ||
@@ -248,7 +252,8 @@ CUresult cuDeviceGetExecAffinitySupport(int *pi, CUexecAffinityType type,
         dev);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetExecAffinitySupport) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceGetExecAffinitySupport,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &type, sizeof(CUexecAffinityType)) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, pi, sizeof(int)) < 0 ||
@@ -267,7 +272,8 @@ CUresult cuFlushGPUDirectRDMAWrites(CUflushGPUDirectRDMAWritesTarget target,
         LUPINE_REAL_CUDA_SYMBOL("cuFlushGPUDirectRDMAWrites"), target, scope);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuFlushGPUDirectRDMAWrites) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuFlushGPUDirectRDMAWrites,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &target, sizeof(CUflushGPUDirectRDMAWritesTarget)) < 0 ||
       rpc_write(conn, &scope, sizeof(CUflushGPUDirectRDMAWritesScope)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -287,7 +293,8 @@ CUresult cuDeviceGetProperties(CUdevprop *prop, CUdevice dev) {
         LUPINE_REAL_CUDA_SYMBOL("cuDeviceGetProperties"), prop, dev);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetProperties) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceGetProperties,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, prop, sizeof(CUdevprop)) < 0 ||
@@ -308,7 +315,8 @@ CUresult cuDeviceComputeCapability(int *major, int *minor, CUdevice dev) {
         dev);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceComputeCapability) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceComputeCapability,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, major, sizeof(int)) < 0 ||
@@ -359,7 +367,7 @@ CUresult cuCtxGetFlags(unsigned int *flags) {
                                     flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxGetFlags) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxGetFlags, RPC_SCOPE_NONE) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, flags, sizeof(unsigned int)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -376,7 +384,7 @@ CUresult cuCtxGetId(CUcontext ctx, unsigned long long *ctxId) {
                                     ctxId);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxGetId) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxGetId, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &ctx, sizeof(CUcontext)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, ctxId, sizeof(unsigned long long)) < 0 ||
@@ -464,7 +472,7 @@ CUresult cuCtxGetLimit(size_t *pvalue, CUlimit limit) {
                                     pvalue, limit);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxGetLimit) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxGetLimit, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &limit, sizeof(CUlimit)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pvalue, sizeof(size_t)) < 0 ||
@@ -482,7 +490,8 @@ CUresult cuCtxGetCacheConfig(CUfunc_cache *pconfig) {
         LUPINE_REAL_CUDA_SYMBOL("cuCtxGetCacheConfig"), pconfig);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxGetCacheConfig) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxGetCacheConfig,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pconfig, sizeof(CUfunc_cache)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -503,7 +512,8 @@ CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxSetCacheConfig) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxSetCacheConfig,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &config, sizeof(CUfunc_cache)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -522,7 +532,8 @@ CUresult cuCtxGetApiVersion(CUcontext ctx, unsigned int *version) {
         LUPINE_REAL_CUDA_SYMBOL("cuCtxGetApiVersion"), ctx, version);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxGetApiVersion) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxGetApiVersion, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &ctx, sizeof(CUcontext)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, version, sizeof(unsigned int)) < 0 ||
@@ -556,7 +567,8 @@ CUresult cuCtxGetExecAffinity(CUexecAffinityParam *pExecAffinity,
         LUPINE_REAL_CUDA_SYMBOL("cuCtxGetExecAffinity"), pExecAffinity, type);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxGetExecAffinity) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxGetExecAffinity,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &type, sizeof(CUexecAffinityType)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pExecAffinity, sizeof(CUexecAffinityParam)) < 0 ||
@@ -577,7 +589,8 @@ CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent) {
                                     hCtx, hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxRecordEvent) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxRecordEvent, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hCtx, sizeof(CUcontext)) < 0 ||
       rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -597,7 +610,8 @@ CUresult cuCtxWaitEvent(CUcontext hCtx, CUevent hEvent) {
                                     hCtx, hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxWaitEvent) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxWaitEvent, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hCtx, sizeof(CUcontext)) < 0 ||
       rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -616,7 +630,7 @@ CUresult cuCtxAttach(CUcontext *pctx, unsigned int flags) {
                                     pctx, flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxAttach) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxAttach, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pctx, sizeof(CUcontext)) < 0 ||
@@ -657,7 +671,8 @@ CUresult cuCtxGetSharedMemConfig(CUsharedconfig *pConfig) {
         LUPINE_REAL_CUDA_SYMBOL("cuCtxGetSharedMemConfig"), pConfig);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxGetSharedMemConfig) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxGetSharedMemConfig,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pConfig, sizeof(CUsharedconfig)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -674,7 +689,8 @@ CUresult cuCtxSetSharedMemConfig(CUsharedconfig config) {
         LUPINE_REAL_CUDA_SYMBOL("cuCtxSetSharedMemConfig"), config);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxSetSharedMemConfig) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxSetSharedMemConfig,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &config, sizeof(CUsharedconfig)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -695,10 +711,11 @@ CUresult cuModuleUnload(CUmodule hmod) {
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuModuleUnload) < 0 ||
-      rpc_write(conn, &hmod, sizeof(CUmodule)) < 0 || rpc_write_end(conn) < 0) {
+      rpc_write(conn, &hmod, sizeof(CUmodule)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return_value = CUDA_SUCCESS;
   if (return_value == CUDA_SUCCESS)
     lupine_release_module_retained_strings(hmod);
   return return_value;
@@ -729,7 +746,8 @@ CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
   uint8_t bytes_present = bytes != nullptr;
   std::size_t name_len = std::strlen(name) + 1;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuModuleGetGlobal_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuModuleGetGlobal_v2,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &dptr_present, sizeof(uint8_t)) < 0 ||
       (dptr_present && rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0) ||
       rpc_write(conn, &bytes_present, sizeof(uint8_t)) < 0 ||
@@ -761,7 +779,8 @@ CUresult cuModuleGetTexRef(CUtexref *pTexRef, CUmodule hmod, const char *name) {
   conn_t *conn = lupine_route_remote_conn(route);
   std::size_t name_len = std::strlen(name) + 1;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuModuleGetTexRef) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuModuleGetTexRef, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hmod, sizeof(CUmodule)) < 0 ||
       rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||
       rpc_write(conn, name, name_len) < 0 || rpc_wait_for_response(conn) < 0 ||
@@ -782,7 +801,8 @@ CUresult cuModuleGetSurfRef(CUsurfref *pSurfRef, CUmodule hmod,
   conn_t *conn = lupine_route_remote_conn(route);
   std::size_t name_len = std::strlen(name) + 1;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuModuleGetSurfRef) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuModuleGetSurfRef, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hmod, sizeof(CUmodule)) < 0 ||
       rpc_write(conn, &name_len, sizeof(std::size_t)) < 0 ||
       rpc_write(conn, name, name_len) < 0 || rpc_wait_for_response(conn) < 0 ||
@@ -805,7 +825,8 @@ CUresult cuLibraryUnload(CUlibrary library) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLibraryUnload) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuLibraryUnload, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -834,7 +855,8 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLibraryGetModule) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuLibraryGetModule, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pMod, sizeof(CUmodule)) < 0 ||
@@ -872,7 +894,8 @@ CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
   uint8_t bytes_present = bytes != nullptr;
   std::size_t name_len = std::strlen(name) + 1;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLibraryGetGlobal) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuLibraryGetGlobal, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &dptr_present, sizeof(uint8_t)) < 0 ||
       (dptr_present && rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0) ||
       rpc_write(conn, &bytes_present, sizeof(uint8_t)) < 0 ||
@@ -918,7 +941,8 @@ CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
   uint8_t bytes_present = bytes != nullptr;
   std::size_t name_len = std::strlen(name) + 1;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLibraryGetManaged) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuLibraryGetManaged,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &dptr_present, sizeof(uint8_t)) < 0 ||
       (dptr_present && rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0) ||
       rpc_write(conn, &bytes_present, sizeof(uint8_t)) < 0 ||
@@ -952,7 +976,8 @@ CUresult cuLibraryGetUnifiedFunction(void **fptr, CUlibrary library,
   conn_t *conn = lupine_route_remote_conn(route);
   std::size_t symbol_len = std::strlen(symbol) + 1;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLibraryGetUnifiedFunction) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuLibraryGetUnifiedFunction,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_write(conn, &symbol_len, sizeof(std::size_t)) < 0 ||
       rpc_write(conn, symbol, symbol_len) < 0 ||
@@ -986,7 +1011,8 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuKernelSetAttribute) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuKernelSetAttribute,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
       rpc_write(conn, &val, sizeof(int)) < 0 ||
       rpc_write(conn, &kernel, sizeof(CUkernel)) < 0 ||
@@ -1020,7 +1046,8 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuKernelSetCacheConfig) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuKernelSetCacheConfig,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &kernel, sizeof(CUkernel)) < 0 ||
       rpc_write(conn, &config, sizeof(CUfunc_cache)) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 || rpc_write_end(conn) < 0) {
@@ -1045,7 +1072,8 @@ CUresult cuKernelGetName(const char **name, CUkernel hfunc) {
   if (name == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuKernelGetName) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuKernelGetName, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hfunc, sizeof(CUkernel)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0 ||
@@ -1073,7 +1101,8 @@ CUresult cuMemGetInfo_v2(size_t *free, size_t *total) {
                                     free, total);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemGetInfo_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemGetInfo_v2, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, free, sizeof(size_t)) < 0 ||
       rpc_write(conn, total, sizeof(size_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -1098,7 +1127,7 @@ CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemAlloc_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemAlloc_v2, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &bytesize, sizeof(size_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -1137,7 +1166,8 @@ CUresult cuMemAllocPitch_v2(CUdeviceptr *dptr, size_t *pPitch,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemAllocPitch_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemAllocPitch_v2, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, pPitch, sizeof(size_t)) < 0 ||
       rpc_write(conn, &WidthInBytes, sizeof(size_t)) < 0 ||
@@ -1175,7 +1205,8 @@ CUresult cuMemGetAddressRange_v2(CUdeviceptr *pbase, size_t *psize,
   uint8_t pbase_present = pbase != nullptr;
   uint8_t psize_present = psize != nullptr;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemGetAddressRange_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemGetAddressRange_v2,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &pbase_present, sizeof(uint8_t)) < 0 ||
       (pbase_present && rpc_write(conn, pbase, sizeof(CUdeviceptr)) < 0) ||
       rpc_write(conn, &psize_present, sizeof(uint8_t)) < 0 ||
@@ -1205,7 +1236,8 @@ CUresult cuDeviceGetByPCIBusId(CUdevice *dev, const char *pciBusId) {
         uint8_t dev_present = dev != nullptr;
         std::size_t pciBusId_len = std::strlen(pciBusId) + 1;
         if (lupine_prepare_rpc(conn) < 0 ||
-            rpc_write_start_request(conn, RPC_cuDeviceGetByPCIBusId) < 0 ||
+            rpc_write_start_request_on(conn, RPC_cuDeviceGetByPCIBusId,
+                                       RPC_SCOPE_NONE) < 0 ||
             rpc_write(conn, &dev_present, sizeof(uint8_t)) < 0 ||
             (dev_present && rpc_write(conn, dev, sizeof(CUdevice)) < 0) ||
             rpc_write(conn, &pciBusId_len, sizeof(std::size_t)) < 0 ||
@@ -1229,7 +1261,8 @@ CUresult cuDeviceGetPCIBusId(char *pciBusId, int len, CUdevice dev) {
         LUPINE_REAL_CUDA_SYMBOL("cuDeviceGetPCIBusId"), pciBusId, len, dev);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetPCIBusId) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceGetPCIBusId,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &len, sizeof(int)) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -1249,7 +1282,8 @@ CUresult cuIpcGetEventHandle(CUipcEventHandle *pHandle, CUevent event) {
         LUPINE_REAL_CUDA_SYMBOL("cuIpcGetEventHandle"), pHandle, event);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuIpcGetEventHandle) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuIpcGetEventHandle,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pHandle, sizeof(CUipcEventHandle)) < 0 ||
       rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -1268,7 +1302,8 @@ CUresult cuIpcOpenEventHandle(CUevent *phEvent, CUipcEventHandle handle) {
         LUPINE_REAL_CUDA_SYMBOL("cuIpcOpenEventHandle"), phEvent, handle);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuIpcOpenEventHandle) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuIpcOpenEventHandle,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phEvent, sizeof(CUevent)) < 0 ||
       rpc_write(conn, &handle, sizeof(CUipcEventHandle)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -1287,7 +1322,8 @@ CUresult cuIpcGetMemHandle(CUipcMemHandle *pHandle, CUdeviceptr dptr) {
         LUPINE_REAL_CUDA_SYMBOL("cuIpcGetMemHandle"), pHandle, dptr);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuIpcGetMemHandle) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuIpcGetMemHandle, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, pHandle, sizeof(CUipcMemHandle)) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -1307,7 +1343,8 @@ CUresult cuIpcOpenMemHandle_v2(CUdeviceptr *pdptr, CUipcMemHandle handle,
         LUPINE_REAL_CUDA_SYMBOL("cuIpcOpenMemHandle_v2"), pdptr, handle, Flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuIpcOpenMemHandle_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuIpcOpenMemHandle_v2,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pdptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &handle, sizeof(CUipcMemHandle)) < 0 ||
       rpc_write(conn, &Flags, sizeof(unsigned int)) < 0 ||
@@ -1351,7 +1388,7 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
                                     srcContext, ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemcpyPeer) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemcpyPeer, nullptr) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &dstContext, sizeof(CUcontext)) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -1382,7 +1419,7 @@ CUresult cuMemcpyDtoD_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemcpyDtoD_v2) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemcpyDtoD_v2, nullptr) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
@@ -1404,7 +1441,7 @@ CUresult cuMemcpyDtoA_v2(CUarray dstArray, size_t dstOffset,
                                     dstArray, dstOffset, srcDevice, ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemcpyDtoA_v2) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemcpyDtoA_v2, nullptr) < 0 ||
       rpc_write(conn, &dstArray, sizeof(CUarray)) < 0 ||
       rpc_write(conn, &dstOffset, sizeof(size_t)) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -1425,7 +1462,7 @@ CUresult cuMemcpyAtoD_v2(CUdeviceptr dstDevice, CUarray srcArray,
                                     dstDevice, srcArray, srcOffset, ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemcpyAtoD_v2) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemcpyAtoD_v2, nullptr) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &srcArray, sizeof(CUarray)) < 0 ||
       rpc_write(conn, &srcOffset, sizeof(size_t)) < 0 ||
@@ -1447,7 +1484,7 @@ CUresult cuMemcpyAtoA_v2(CUarray dstArray, size_t dstOffset, CUarray srcArray,
                                     ByteCount);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemcpyAtoA_v2) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemcpyAtoA_v2, nullptr) < 0 ||
       rpc_write(conn, &dstArray, sizeof(CUarray)) < 0 ||
       rpc_write(conn, &dstOffset, sizeof(size_t)) < 0 ||
       rpc_write(conn, &srcArray, sizeof(CUarray)) < 0 ||
@@ -1475,8 +1512,7 @@ CUresult cuMemcpyPeerAsync(CUdeviceptr dstDevice, CUcontext dstContext,
         srcDevice, srcContext, ByteCount, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuMemcpyPeerAsync,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemcpyPeerAsync, hStream) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &dstContext, sizeof(CUcontext)) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -1503,8 +1539,7 @@ CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
         ByteCount, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuMemcpyDtoDAsync_v2,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemcpyDtoDAsync_v2, hStream) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
@@ -1527,7 +1562,7 @@ CUresult cuMemsetD8_v2(CUdeviceptr dstDevice, unsigned char uc, size_t N) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemsetD8_v2) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemsetD8_v2, nullptr) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &uc, sizeof(unsigned char)) < 0 ||
       rpc_write(conn, &N, sizeof(size_t)) < 0 ||
@@ -1552,7 +1587,7 @@ CUresult cuMemsetD16_v2(CUdeviceptr dstDevice, unsigned short us, size_t N) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemsetD16_v2) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemsetD16_v2, nullptr) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &us, sizeof(unsigned short)) < 0 ||
       rpc_write(conn, &N, sizeof(size_t)) < 0 ||
@@ -1577,7 +1612,7 @@ CUresult cuMemsetD32_v2(CUdeviceptr dstDevice, unsigned int ui, size_t N) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemsetD32_v2) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemsetD32_v2, nullptr) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ui, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &N, sizeof(size_t)) < 0 ||
@@ -1604,7 +1639,7 @@ CUresult cuMemsetD2D8_v2(CUdeviceptr dstDevice, size_t dstPitch,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemsetD2D8_v2) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemsetD2D8_v2, nullptr) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_write(conn, &uc, sizeof(unsigned char)) < 0 ||
@@ -1633,7 +1668,7 @@ CUresult cuMemsetD2D16_v2(CUdeviceptr dstDevice, size_t dstPitch,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemsetD2D16_v2) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemsetD2D16_v2, nullptr) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_write(conn, &us, sizeof(unsigned short)) < 0 ||
@@ -1662,7 +1697,7 @@ CUresult cuMemsetD2D32_v2(CUdeviceptr dstDevice, size_t dstPitch,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemsetD2D32_v2) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemsetD2D32_v2, nullptr) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_write(conn, &ui, sizeof(unsigned int)) < 0 ||
@@ -1686,8 +1721,7 @@ CUresult cuMemsetD8Async(CUdeviceptr dstDevice, unsigned char uc, size_t N,
                                     dstDevice, uc, N, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuMemsetD8Async,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemsetD8Async, hStream) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &uc, sizeof(unsigned char)) < 0 ||
       rpc_write(conn, &N, sizeof(size_t)) < 0 ||
@@ -1707,8 +1741,7 @@ CUresult cuMemsetD16Async(CUdeviceptr dstDevice, unsigned short us, size_t N,
                                     dstDevice, us, N, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuMemsetD16Async,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemsetD16Async, hStream) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &us, sizeof(unsigned short)) < 0 ||
       rpc_write(conn, &N, sizeof(size_t)) < 0 ||
@@ -1728,8 +1761,7 @@ CUresult cuMemsetD32Async(CUdeviceptr dstDevice, unsigned int ui, size_t N,
                                     dstDevice, ui, N, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuMemsetD32Async,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemsetD32Async, hStream) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ui, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &N, sizeof(size_t)) < 0 ||
@@ -1751,8 +1783,7 @@ CUresult cuMemsetD2D8Async(CUdeviceptr dstDevice, size_t dstPitch,
         Width, Height, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuMemsetD2D8Async,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemsetD2D8Async, hStream) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_write(conn, &uc, sizeof(unsigned char)) < 0 ||
@@ -1776,8 +1807,7 @@ CUresult cuMemsetD2D16Async(CUdeviceptr dstDevice, size_t dstPitch,
         Width, Height, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuMemsetD2D16Async,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemsetD2D16Async, hStream) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_write(conn, &us, sizeof(unsigned short)) < 0 ||
@@ -1801,8 +1831,7 @@ CUresult cuMemsetD2D32Async(CUdeviceptr dstDevice, size_t dstPitch,
         Width, Height, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuMemsetD2D32Async,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemsetD2D32Async, hStream) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_write(conn, &ui, sizeof(unsigned int)) < 0 ||
@@ -1824,7 +1853,8 @@ CUresult cuArrayCreate_v2(CUarray *pHandle,
                                     pHandle, pAllocateArray);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuArrayCreate_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuArrayCreate_v2, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, pHandle, sizeof(CUarray)) < 0 ||
       rpc_write(conn, pAllocateArray, sizeof(const CUDA_ARRAY_DESCRIPTOR)) <
           0 ||
@@ -1846,7 +1876,8 @@ CUresult cuArrayGetDescriptor_v2(CUDA_ARRAY_DESCRIPTOR *pArrayDescriptor,
         hArray);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuArrayGetDescriptor_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuArrayGetDescriptor_v2,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pArrayDescriptor, sizeof(CUDA_ARRAY_DESCRIPTOR)) < 0 ||
       rpc_write(conn, &hArray, sizeof(CUarray)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -1868,7 +1899,8 @@ cuArrayGetSparseProperties(CUDA_ARRAY_SPARSE_PROPERTIES *sparseProperties,
         array);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuArrayGetSparseProperties) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuArrayGetSparseProperties,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, sparseProperties, sizeof(CUDA_ARRAY_SPARSE_PROPERTIES)) <
           0 ||
       rpc_write(conn, &array, sizeof(CUarray)) < 0 ||
@@ -1891,8 +1923,8 @@ CUresult cuMipmappedArrayGetSparseProperties(
         sparseProperties, mipmap);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMipmappedArrayGetSparseProperties) <
-          0 ||
+      rpc_write_start_request_on(conn, RPC_cuMipmappedArrayGetSparseProperties,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, sparseProperties, sizeof(CUDA_ARRAY_SPARSE_PROPERTIES)) <
           0 ||
       rpc_write(conn, &mipmap, sizeof(CUmipmappedArray)) < 0 ||
@@ -1918,7 +1950,8 @@ cuArrayGetMemoryRequirements(CUDA_ARRAY_MEMORY_REQUIREMENTS *memoryRequirements,
         memoryRequirements, array, device);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuArrayGetMemoryRequirements) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuArrayGetMemoryRequirements,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, memoryRequirements,
                 sizeof(CUDA_ARRAY_MEMORY_REQUIREMENTS)) < 0 ||
       rpc_write(conn, &array, sizeof(CUarray)) < 0 ||
@@ -1945,8 +1978,9 @@ CUresult cuMipmappedArrayGetMemoryRequirements(
         memoryRequirements, mipmap, device);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMipmappedArrayGetMemoryRequirements) <
-          0 ||
+      rpc_write_start_request_on(conn,
+                                 RPC_cuMipmappedArrayGetMemoryRequirements,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, memoryRequirements,
                 sizeof(CUDA_ARRAY_MEMORY_REQUIREMENTS)) < 0 ||
       rpc_write(conn, &mipmap, sizeof(CUmipmappedArray)) < 0 ||
@@ -1969,7 +2003,8 @@ CUresult cuArrayGetPlane(CUarray *pPlaneArray, CUarray hArray,
                                     pPlaneArray, hArray, planeIdx);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuArrayGetPlane) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuArrayGetPlane, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, pPlaneArray, sizeof(CUarray)) < 0 ||
       rpc_write(conn, &hArray, sizeof(CUarray)) < 0 ||
       rpc_write(conn, &planeIdx, sizeof(unsigned int)) < 0 ||
@@ -2007,7 +2042,8 @@ CUresult cuArray3DCreate_v2(CUarray *pHandle,
         LUPINE_REAL_CUDA_SYMBOL("cuArray3DCreate_v2"), pHandle, pAllocateArray);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuArray3DCreate_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuArray3DCreate_v2, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, pHandle, sizeof(CUarray)) < 0 ||
       rpc_write(conn, pAllocateArray, sizeof(const CUDA_ARRAY3D_DESCRIPTOR)) <
           0 ||
@@ -2029,7 +2065,8 @@ CUresult cuArray3DGetDescriptor_v2(CUDA_ARRAY3D_DESCRIPTOR *pArrayDescriptor,
         hArray);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuArray3DGetDescriptor_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuArray3DGetDescriptor_v2,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pArrayDescriptor, sizeof(CUDA_ARRAY3D_DESCRIPTOR)) < 0 ||
       rpc_write(conn, &hArray, sizeof(CUarray)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2052,7 +2089,8 @@ cuMipmappedArrayCreate(CUmipmappedArray *pHandle,
         pMipmappedArrayDesc, numMipmapLevels);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMipmappedArrayCreate) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMipmappedArrayCreate,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pHandle, sizeof(CUmipmappedArray)) < 0 ||
       rpc_write(conn, pMipmappedArrayDesc,
                 sizeof(const CUDA_ARRAY3D_DESCRIPTOR)) < 0 ||
@@ -2076,7 +2114,8 @@ CUresult cuMipmappedArrayGetLevel(CUarray *pLevelArray,
         hMipmappedArray, level);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMipmappedArrayGetLevel) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMipmappedArrayGetLevel,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pLevelArray, sizeof(CUarray)) < 0 ||
       rpc_write(conn, &hMipmappedArray, sizeof(CUmipmappedArray)) < 0 ||
       rpc_write(conn, &level, sizeof(unsigned int)) < 0 ||
@@ -2117,7 +2156,8 @@ CUresult cuMemGetHandleForAddressRange(void *handle, CUdeviceptr dptr,
         size, handleType, flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemGetHandleForAddressRange) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemGetHandleForAddressRange,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &size, sizeof(size_t)) < 0 ||
       rpc_write(conn, &handleType, sizeof(CUmemRangeHandleType)) < 0 ||
@@ -2140,7 +2180,8 @@ CUresult cuMemAddressReserve(CUdeviceptr *ptr, size_t size, size_t alignment,
         addr, flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemAddressReserve) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemAddressReserve,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &size, sizeof(size_t)) < 0 ||
       rpc_write(conn, &alignment, sizeof(size_t)) < 0 ||
@@ -2162,7 +2203,8 @@ CUresult cuMemAddressFree(CUdeviceptr ptr, size_t size) {
                                     ptr, size);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemAddressFree) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemAddressFree, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &size, sizeof(size_t)) < 0 || rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2180,7 +2222,7 @@ CUresult cuMemCreate(CUmemGenericAllocationHandle *handle, size_t size,
                                     handle, size, prop, flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemCreate) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemCreate, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &size, sizeof(size_t)) < 0 ||
       rpc_write(conn, prop, sizeof(const CUmemAllocationProp)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
@@ -2200,7 +2242,7 @@ CUresult cuMemRelease(CUmemGenericAllocationHandle handle) {
                                     handle);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemRelease) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemRelease, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2218,7 +2260,7 @@ CUresult cuMemMap(CUdeviceptr ptr, size_t size, size_t offset,
                                     size, offset, handle, flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemMap) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemMap, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &size, sizeof(size_t)) < 0 ||
       rpc_write(conn, &offset, sizeof(size_t)) < 0 ||
@@ -2243,8 +2285,7 @@ CUresult cuMemMapArrayAsync(CUarrayMapInfo *mapInfoList, unsigned int count,
   if (count * sizeof(CUarrayMapInfo) != 0 && mapInfoList == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuMemMapArrayAsync,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemMapArrayAsync, hStream) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, mapInfoList, count * sizeof(CUarrayMapInfo)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -2262,7 +2303,7 @@ CUresult cuMemUnmap(CUdeviceptr ptr, size_t size) {
                                     size);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemUnmap) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemUnmap, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &size, sizeof(size_t)) < 0 || rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2281,7 +2322,8 @@ CUresult cuMemSetAccess(CUdeviceptr ptr, size_t size,
   if (count * sizeof(const CUmemAccessDesc) != 0 && desc == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemSetAccess) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemSetAccess, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &size, sizeof(size_t)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
@@ -2301,7 +2343,8 @@ CUresult cuMemGetAccess(unsigned long long *flags,
                                     flags, location, ptr);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemGetAccess) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemGetAccess, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, location, sizeof(const CUmemLocation)) < 0 ||
       rpc_write(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2324,7 +2367,8 @@ cuMemGetAllocationGranularity(size_t *granularity,
         prop, option);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemGetAllocationGranularity) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemGetAllocationGranularity,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, prop, sizeof(const CUmemAllocationProp)) < 0 ||
       rpc_write(conn, &option, sizeof(CUmemAllocationGranularity_flags)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2346,8 +2390,9 @@ cuMemGetAllocationPropertiesFromHandle(CUmemAllocationProp *prop,
         handle);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn,
-                              RPC_cuMemGetAllocationPropertiesFromHandle) < 0 ||
+      rpc_write_start_request_on(conn,
+                                 RPC_cuMemGetAllocationPropertiesFromHandle,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, prop, sizeof(CUmemAllocationProp)) < 0 ||
       rpc_write(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2367,7 +2412,8 @@ CUresult cuMemRetainAllocationHandle(CUmemGenericAllocationHandle *handle,
         LUPINE_REAL_CUDA_SYMBOL("cuMemRetainAllocationHandle"), handle, addr);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemRetainAllocationHandle) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemRetainAllocationHandle,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &addr, sizeof(void *)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
@@ -2389,8 +2435,7 @@ CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuMemFreeAsync,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemFreeAsync, hStream) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -2418,8 +2463,7 @@ CUresult cuMemAllocAsync(CUdeviceptr *dptr, size_t bytesize, CUstream hStream) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuMemAllocAsync,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemAllocAsync, hStream) < 0 ||
       rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &bytesize, sizeof(size_t)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -2444,7 +2488,8 @@ CUresult cuMemPoolTrimTo(CUmemoryPool pool, size_t minBytesToKeep) {
                                     pool, minBytesToKeep);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemPoolTrimTo) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemPoolTrimTo, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_write(conn, &minBytesToKeep, sizeof(size_t)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -2475,7 +2520,8 @@ CUresult cuMemPoolSetAccess(CUmemoryPool pool, const CUmemAccessDesc *map,
   if (count * sizeof(const CUmemAccessDesc) != 0 && map == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemPoolSetAccess) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemPoolSetAccess, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
       rpc_write(conn, map, count * sizeof(const CUmemAccessDesc)) < 0 ||
@@ -2502,7 +2548,8 @@ CUresult cuMemPoolGetAccess(CUmemAccess_flags *flags, CUmemoryPool memPool,
         location);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemPoolGetAccess) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemPoolGetAccess, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &memPool, sizeof(CUmemoryPool)) < 0 ||
       rpc_write(conn, location, sizeof(CUmemLocation)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2537,7 +2584,8 @@ CUresult cuMemPoolCreate(CUmemoryPool *pool, const CUmemPoolProps *poolProps) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemPoolCreate) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemPoolCreate, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_write(conn, poolProps, sizeof(const CUmemPoolProps)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2559,7 +2607,8 @@ CUresult cuMemPoolDestroy(CUmemoryPool pool) {
                                     pool);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemPoolDestroy) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemPoolDestroy, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2585,8 +2634,8 @@ CUresult cuMemAllocFromPoolAsync(CUdeviceptr *dptr, size_t bytesize,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuMemAllocFromPoolAsync,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemAllocFromPoolAsync, hStream) <
+          0 ||
       rpc_write(conn, dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &bytesize, sizeof(size_t)) < 0 ||
       rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
@@ -2613,7 +2662,8 @@ CUresult cuMemPoolExportPointer(CUmemPoolPtrExportData *shareData_out,
         LUPINE_REAL_CUDA_SYMBOL("cuMemPoolExportPointer"), shareData_out, ptr);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemPoolExportPointer) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemPoolExportPointer,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, shareData_out, sizeof(CUmemPoolPtrExportData)) < 0 ||
       rpc_write(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2634,7 +2684,8 @@ CUresult cuMemPoolImportPointer(CUdeviceptr *ptr_out, CUmemoryPool pool,
         shareData);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemPoolImportPointer) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemPoolImportPointer,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, ptr_out, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_write(conn, shareData, sizeof(CUmemPoolPtrExportData)) < 0 ||
@@ -2662,7 +2713,8 @@ CUresult cuMemRangeGetAttribute(void *data, size_t dataSize,
         attribute, devPtr, count);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemRangeGetAttribute) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemRangeGetAttribute,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &dataSize, sizeof(size_t)) < 0 ||
       rpc_write(conn, &attribute, sizeof(CUmem_range_attribute)) < 0 ||
       rpc_write(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
@@ -2684,8 +2736,7 @@ CUresult cuStreamGetPriority(CUstream hStream, int *priority) {
         LUPINE_REAL_CUDA_SYMBOL("cuStreamGetPriority"), hStream, priority);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamGetPriority,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamGetPriority, hStream) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, priority, sizeof(int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2705,8 +2756,7 @@ CUresult cuStreamGetFlags(CUstream hStream, unsigned int *flags) {
                                     hStream, flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamGetFlags,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamGetFlags, hStream) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, flags, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2726,8 +2776,7 @@ CUresult cuStreamGetId(CUstream hStream, unsigned long long *streamId) {
                                     hStream, streamId);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamGetId,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamGetId, hStream) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, streamId, sizeof(unsigned long long)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2747,8 +2796,7 @@ CUresult cuStreamGetCtx(CUstream hStream, CUcontext *pctx) {
                                     hStream, pctx);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamGetCtx,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamGetCtx, hStream) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, pctx, sizeof(CUcontext)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2770,8 +2818,8 @@ CUresult cuStreamAttachMemAsync(CUstream hStream, CUdeviceptr dptr,
         length, flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamAttachMemAsync,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamAttachMemAsync, hStream) <
+          0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &length, sizeof(size_t)) < 0 ||
@@ -2795,8 +2843,8 @@ CUresult cuStreamQuery(CUstream hStream) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamQuery,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamQuery, hStream) < 0 ||
+      rpc_request_soft(conn) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       lupine_read_deferred_dtoh_copies(conn) < 0 ||
@@ -2821,8 +2869,7 @@ CUresult cuStreamSynchronize(CUstream hStream) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamSynchronize,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamSynchronize, hStream) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       lupine_read_deferred_dtoh_copies(conn) < 0 ||
@@ -2848,8 +2895,7 @@ CUresult cuStreamDestroy_v2(CUstream hStream) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamDestroy_v2,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamDestroy_v2, hStream) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2869,8 +2915,7 @@ CUresult cuStreamCopyAttributes(CUstream dst, CUstream src) {
         LUPINE_REAL_CUDA_SYMBOL("cuStreamCopyAttributes"), dst, src);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamCopyAttributes,
-                                 lupine_rpc_stream_scope(dst)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamCopyAttributes, dst) < 0 ||
       rpc_write(conn, &dst, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &src, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -2891,8 +2936,7 @@ CUresult cuStreamGetAttribute(CUstream hStream, CUstreamAttrID attr,
         value_out);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamGetAttribute,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamGetAttribute, hStream) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &attr, sizeof(CUstreamAttrID)) < 0 ||
       rpc_write(conn, value_out, sizeof(CUstreamAttrValue)) < 0 ||
@@ -2914,8 +2958,7 @@ CUresult cuStreamSetAttribute(CUstream hStream, CUstreamAttrID attr,
         LUPINE_REAL_CUDA_SYMBOL("cuStreamSetAttribute"), hStream, attr, value);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamSetAttribute,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamSetAttribute, hStream) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &attr, sizeof(CUstreamAttrID)) < 0 ||
       rpc_write(conn, value, sizeof(const CUstreamAttrValue)) < 0 ||
@@ -2964,6 +3007,7 @@ CUresult cuEventElapsedTime_v2(float *pMilliseconds, CUevent hStart,
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuEventElapsedTime_v2,
                                  reinterpret_cast<uintptr_t>(hStart)) < 0 ||
+      rpc_request_on(conn, reinterpret_cast<uintptr_t>(hEnd)) < 0 ||
       rpc_write(conn, pMilliseconds, sizeof(float)) < 0 ||
       rpc_write(conn, &hStart, sizeof(CUevent)) < 0 ||
       rpc_write(conn, &hEnd, sizeof(CUevent)) < 0 ||
@@ -2986,7 +3030,8 @@ cuImportExternalMemory(CUexternalMemory *extMem_out,
         memHandleDesc);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuImportExternalMemory) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuImportExternalMemory,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, extMem_out, sizeof(CUexternalMemory)) < 0 ||
       rpc_write(conn, memHandleDesc,
                 sizeof(const CUDA_EXTERNAL_MEMORY_HANDLE_DESC)) < 0 ||
@@ -3009,7 +3054,8 @@ CUresult cuExternalMemoryGetMappedBuffer(
         extMem, bufferDesc);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuExternalMemoryGetMappedBuffer) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuExternalMemoryGetMappedBuffer,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, devPtr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &extMem, sizeof(CUexternalMemory)) < 0 ||
       rpc_write(conn, bufferDesc,
@@ -3033,8 +3079,9 @@ CUresult cuExternalMemoryGetMappedMipmappedArray(
         mipmap, extMem, mipmapDesc);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cuExternalMemoryGetMappedMipmappedArray) < 0 ||
+      rpc_write_start_request_on(conn,
+                                 RPC_cuExternalMemoryGetMappedMipmappedArray,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, mipmap, sizeof(CUmipmappedArray)) < 0 ||
       rpc_write(conn, &extMem, sizeof(CUexternalMemory)) < 0 ||
       rpc_write(conn, mipmapDesc,
@@ -3075,7 +3122,8 @@ CUresult cuImportExternalSemaphore(
         semHandleDesc);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuImportExternalSemaphore) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuImportExternalSemaphore,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, extSem_out, sizeof(CUexternalSemaphore)) < 0 ||
       rpc_write(conn, semHandleDesc,
                 sizeof(const CUDA_EXTERNAL_SEMAPHORE_HANDLE_DESC)) < 0 ||
@@ -3106,8 +3154,8 @@ CUresult cuSignalExternalSemaphoresAsync(
       paramsArray == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuSignalExternalSemaphoresAsync,
-                                 lupine_rpc_stream_scope(stream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuSignalExternalSemaphoresAsync,
+                                 stream) < 0 ||
       rpc_write(conn, &numExtSems, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, extSemArray,
                 numExtSems * sizeof(const CUexternalSemaphore)) < 0 ||
@@ -3140,8 +3188,8 @@ CUresult cuWaitExternalSemaphoresAsync(
       paramsArray == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuWaitExternalSemaphoresAsync,
-                                 lupine_rpc_stream_scope(stream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuWaitExternalSemaphoresAsync,
+                                 stream) < 0 ||
       rpc_write(conn, &numExtSems, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, extSemArray,
                 numExtSems * sizeof(const CUexternalSemaphore)) < 0 ||
@@ -3183,8 +3231,8 @@ CUresult cuStreamWaitValue32_v2(CUstream stream, CUdeviceptr addr,
         flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamWaitValue32_v2,
-                                 lupine_rpc_stream_scope(stream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamWaitValue32_v2, stream) <
+          0 ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &addr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &value, sizeof(cuuint32_t)) < 0 ||
@@ -3206,8 +3254,8 @@ CUresult cuStreamWaitValue64_v2(CUstream stream, CUdeviceptr addr,
         flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamWaitValue64_v2,
-                                 lupine_rpc_stream_scope(stream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamWaitValue64_v2, stream) <
+          0 ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &addr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &value, sizeof(cuuint64_t)) < 0 ||
@@ -3229,8 +3277,8 @@ CUresult cuStreamWriteValue32_v2(CUstream stream, CUdeviceptr addr,
         flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamWriteValue32_v2,
-                                 lupine_rpc_stream_scope(stream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamWriteValue32_v2, stream) <
+          0 ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &addr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &value, sizeof(cuuint32_t)) < 0 ||
@@ -3252,8 +3300,8 @@ CUresult cuStreamWriteValue64_v2(CUstream stream, CUdeviceptr addr,
         flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamWriteValue64_v2,
-                                 lupine_rpc_stream_scope(stream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamWriteValue64_v2, stream) <
+          0 ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &addr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &value, sizeof(cuuint64_t)) < 0 ||
@@ -3278,8 +3326,7 @@ CUresult cuStreamBatchMemOp_v2(CUstream stream, unsigned int count,
   if (count * sizeof(CUstreamBatchMemOpParams) != 0 && paramArray == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamBatchMemOp_v2,
-                                 lupine_rpc_stream_scope(stream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamBatchMemOp_v2, stream) < 0 ||
       rpc_write(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, paramArray, count * sizeof(CUstreamBatchMemOpParams)) <
@@ -3313,7 +3360,8 @@ CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuFuncGetAttribute) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuFuncGetAttribute, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, pi, sizeof(int)) < 0 ||
       rpc_write(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
@@ -3347,7 +3395,8 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuFuncSetAttribute) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuFuncSetAttribute, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
       rpc_write(conn, &value, sizeof(int)) < 0 ||
@@ -3373,7 +3422,8 @@ CUresult cuFuncSetCacheConfig(CUfunction hfunc, CUfunc_cache config) {
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuFuncSetCacheConfig) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuFuncSetCacheConfig,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &config, sizeof(CUfunc_cache)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -3399,7 +3449,8 @@ CUresult cuFuncGetModule(CUmodule *hmod, CUfunction hfunc) {
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuFuncGetModule) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuFuncGetModule, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, hmod, sizeof(CUmodule)) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -3426,7 +3477,7 @@ CUresult cuFuncGetName(const char **name, CUfunction hfunc) {
   if (name == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuFuncGetName) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuFuncGetName, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0 ||
@@ -3455,7 +3506,8 @@ CUresult cuFuncSetBlockShape(CUfunction hfunc, int x, int y, int z) {
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuFuncSetBlockShape) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuFuncSetBlockShape,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &x, sizeof(int)) < 0 ||
       rpc_write(conn, &y, sizeof(int)) < 0 ||
@@ -3474,7 +3526,8 @@ CUresult cuFuncSetSharedSize(CUfunction hfunc, unsigned int bytes) {
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuFuncSetSharedSize) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuFuncSetSharedSize,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &bytes, sizeof(unsigned int)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -3492,7 +3545,8 @@ CUresult cuParamSetSize(CUfunction hfunc, unsigned int numbytes) {
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuParamSetSize) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuParamSetSize, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &numbytes, sizeof(unsigned int)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -3510,7 +3564,7 @@ CUresult cuParamSeti(CUfunction hfunc, int offset, unsigned int value) {
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuParamSeti) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuParamSeti, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &offset, sizeof(int)) < 0 ||
       rpc_write(conn, &value, sizeof(unsigned int)) < 0 ||
@@ -3529,7 +3583,7 @@ CUresult cuParamSetf(CUfunction hfunc, int offset, float value) {
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuParamSetf) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuParamSetf, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &offset, sizeof(int)) < 0 ||
       rpc_write(conn, &value, sizeof(float)) < 0 || rpc_write_end(conn) < 0) {
@@ -3550,7 +3604,7 @@ CUresult cuParamSetv(CUfunction hfunc, int offset, void *ptr,
   if (numbytes != 0 && ptr == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuParamSetv) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuParamSetv, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &offset, sizeof(int)) < 0 ||
       rpc_write(conn, &numbytes, sizeof(unsigned int)) < 0 ||
@@ -3568,7 +3622,7 @@ CUresult cuLaunch(CUfunction f) {
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction f_rpc = lupine_translate_private_function_for_rpc(f);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLaunch) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuLaunch, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &f_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3585,7 +3639,7 @@ CUresult cuLaunchGrid(CUfunction f, int grid_width, int grid_height) {
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction f_rpc = lupine_translate_private_function_for_rpc(f);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLaunchGrid) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuLaunchGrid, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &f_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &grid_width, sizeof(int)) < 0 ||
       rpc_write(conn, &grid_height, sizeof(int)) < 0 ||
@@ -3606,8 +3660,7 @@ CUresult cuLaunchGridAsync(CUfunction f, int grid_width, int grid_height,
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction f_rpc = lupine_translate_private_function_for_rpc(f);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuLaunchGridAsync,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuLaunchGridAsync, hStream) < 0 ||
       rpc_write(conn, &f_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &grid_width, sizeof(int)) < 0 ||
       rpc_write(conn, &grid_height, sizeof(int)) < 0 ||
@@ -3637,7 +3690,8 @@ CUresult cuParamSetTexRef(CUfunction hfunc, int texunit, CUtexref hTexRef) {
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuParamSetTexRef) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuParamSetTexRef, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &texunit, sizeof(int)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
@@ -3656,7 +3710,8 @@ CUresult cuFuncSetSharedMemConfig(CUfunction hfunc, CUsharedconfig config) {
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuFuncSetSharedMemConfig) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuFuncSetSharedMemConfig,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &config, sizeof(CUsharedconfig)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -3678,7 +3733,7 @@ CUresult cuGraphCreate(CUgraph *phGraph, unsigned int flags) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphCreate) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphCreate, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -3702,7 +3757,8 @@ CUresult cuGraphMemcpyNodeGetParams(CUgraphNode hNode,
         nodeParams);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphMemcpyNodeGetParams) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphMemcpyNodeGetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(CUDA_MEMCPY3D)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -3723,7 +3779,8 @@ CUresult cuGraphMemcpyNodeSetParams(CUgraphNode hNode,
         nodeParams);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphMemcpyNodeSetParams) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphMemcpyNodeSetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(const CUDA_MEMCPY3D)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -3743,7 +3800,8 @@ CUresult cuGraphMemsetNodeGetParams(CUgraphNode hNode,
         nodeParams);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphMemsetNodeGetParams) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphMemsetNodeGetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(CUDA_MEMSET_NODE_PARAMS)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -3764,7 +3822,8 @@ CUresult cuGraphMemsetNodeSetParams(CUgraphNode hNode,
         nodeParams);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphMemsetNodeSetParams) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphMemsetNodeSetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(const CUDA_MEMSET_NODE_PARAMS)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -3793,7 +3852,8 @@ CUresult cuGraphAddChildGraphNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       dependencies == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphAddChildGraphNode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphAddChildGraphNode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
@@ -3825,7 +3885,8 @@ CUresult cuGraphChildGraphNodeGetGraph(CUgraphNode hNode, CUgraph *phGraph) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphChildGraphNodeGetGraph) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphChildGraphNodeGetGraph,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, phGraph, sizeof(CUgraph)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -3858,7 +3919,8 @@ CUresult cuGraphAddEmptyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       dependencies == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphAddEmptyNode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphAddEmptyNode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
@@ -3894,7 +3956,8 @@ CUresult cuGraphAddEventRecordNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       dependencies == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphAddEventRecordNode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphAddEventRecordNode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
@@ -3921,7 +3984,8 @@ CUresult cuGraphEventRecordNodeGetEvent(CUgraphNode hNode, CUevent *event_out) {
         event_out);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphEventRecordNodeGetEvent) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphEventRecordNodeGetEvent,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, event_out, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -3941,7 +4005,8 @@ CUresult cuGraphEventRecordNodeSetEvent(CUgraphNode hNode, CUevent event) {
         event);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphEventRecordNodeSetEvent) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphEventRecordNodeSetEvent,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &event, sizeof(CUevent)) < 0 || rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3968,7 +4033,8 @@ CUresult cuGraphAddEventWaitNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       dependencies == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphAddEventWaitNode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphAddEventWaitNode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
@@ -3995,7 +4061,8 @@ CUresult cuGraphEventWaitNodeGetEvent(CUgraphNode hNode, CUevent *event_out) {
         event_out);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphEventWaitNodeGetEvent) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphEventWaitNodeGetEvent,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, event_out, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -4014,7 +4081,8 @@ CUresult cuGraphEventWaitNodeSetEvent(CUgraphNode hNode, CUevent event) {
         LUPINE_REAL_CUDA_SYMBOL("cuGraphEventWaitNodeSetEvent"), hNode, event);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphEventWaitNodeSetEvent) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphEventWaitNodeSetEvent,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &event, sizeof(CUevent)) < 0 || rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -4049,8 +4117,9 @@ CUresult cuGraphAddExternalSemaphoresSignalNode(
       dependencies == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn,
-                              RPC_cuGraphAddExternalSemaphoresSignalNode) < 0 ||
+      rpc_write_start_request_on(conn,
+                                 RPC_cuGraphAddExternalSemaphoresSignalNode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
@@ -4086,8 +4155,9 @@ CUresult cuGraphExternalSemaphoresSignalNodeGetParams(
   if (params_out == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cuGraphExternalSemaphoresSignalNodeGetParams) < 0 ||
+      rpc_write_start_request_on(
+          conn, RPC_cuGraphExternalSemaphoresSignalNodeGetParams,
+          RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, params_out, sizeof(*params_out)) < 0 ||
@@ -4143,8 +4213,9 @@ CUresult cuGraphExternalSemaphoresSignalNodeSetParams(
       (nodeParams->numExtSems != 0 && nodeParams->paramsArray == nullptr))
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cuGraphExternalSemaphoresSignalNodeSetParams) < 0 ||
+      rpc_write_start_request_on(
+          conn, RPC_cuGraphExternalSemaphoresSignalNodeSetParams,
+          RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
       rpc_write(conn, nodeParams->extSemArray,
@@ -4186,8 +4257,8 @@ CUresult cuGraphAddExternalSemaphoresWaitNode(
       dependencies == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphAddExternalSemaphoresWaitNode) <
-          0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphAddExternalSemaphoresWaitNode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
@@ -4223,8 +4294,9 @@ CUresult cuGraphExternalSemaphoresWaitNodeGetParams(
   if (params_out == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cuGraphExternalSemaphoresWaitNodeGetParams) < 0 ||
+      rpc_write_start_request_on(conn,
+                                 RPC_cuGraphExternalSemaphoresWaitNodeGetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, params_out, sizeof(*params_out)) < 0 ||
@@ -4280,8 +4352,9 @@ CUresult cuGraphExternalSemaphoresWaitNodeSetParams(
       (nodeParams->numExtSems != 0 && nodeParams->paramsArray == nullptr))
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cuGraphExternalSemaphoresWaitNodeSetParams) < 0 ||
+      rpc_write_start_request_on(conn,
+                                 RPC_cuGraphExternalSemaphoresWaitNodeSetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
       rpc_write(conn, nodeParams->extSemArray,
@@ -4320,7 +4393,8 @@ CUresult cuGraphAddBatchMemOpNode(
       dependencies == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphAddBatchMemOpNode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphAddBatchMemOpNode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
@@ -4353,7 +4427,8 @@ cuGraphBatchMemOpNodeGetParams(CUgraphNode hNode,
   if (nodeParams_out == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphBatchMemOpNodeGetParams) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphBatchMemOpNodeGetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, nodeParams_out, sizeof(*nodeParams_out)) < 0 ||
@@ -4392,7 +4467,8 @@ CUresult cuGraphBatchMemOpNodeSetParams(
       (nodeParams->count != 0 && nodeParams->paramArray == nullptr))
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphBatchMemOpNodeSetParams) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphBatchMemOpNodeSetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
       rpc_write(conn, nodeParams->paramArray,
@@ -4419,8 +4495,8 @@ CUresult cuGraphExecBatchMemOpNodeSetParams(
       (nodeParams->count != 0 && nodeParams->paramArray == nullptr))
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphExecBatchMemOpNodeSetParams) <
-          0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphExecBatchMemOpNodeSetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
@@ -4487,7 +4563,8 @@ CUresult cuGraphAddMemAllocNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       dependencies == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphAddMemAllocNode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphAddMemAllocNode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
@@ -4546,7 +4623,8 @@ CUresult cuGraphMemAllocNodeGetParams(CUgraphNode hNode,
   if (params_out == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphMemAllocNodeGetParams) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphMemAllocNodeGetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, params_out, sizeof(*params_out)) < 0 ||
@@ -4608,7 +4686,8 @@ CUresult cuGraphAddMemFreeNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       dependencies == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphAddMemFreeNode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphAddMemFreeNode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phGraphNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
@@ -4635,7 +4714,8 @@ CUresult cuGraphMemFreeNodeGetParams(CUgraphNode hNode, CUdeviceptr *dptr_out) {
         dptr_out);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphMemFreeNodeGetParams) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphMemFreeNodeGetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, dptr_out, sizeof(CUdeviceptr)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -4656,7 +4736,8 @@ CUresult cuDeviceGraphMemTrim(CUdevice device) {
         LUPINE_REAL_CUDA_SYMBOL("cuDeviceGraphMemTrim"), device);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceGraphMemTrim) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceGraphMemTrim,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &device, sizeof(CUdevice)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -4677,7 +4758,7 @@ CUresult cuGraphClone(CUgraph *phGraphClone, CUgraph originalGraph) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphClone) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphClone, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phGraphClone, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &originalGraph, sizeof(CUgraph)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -4706,7 +4787,8 @@ CUresult cuGraphNodeFindInClone(CUgraphNode *phNode, CUgraphNode hOriginalNode,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphNodeFindInClone) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphNodeFindInClone,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hOriginalNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &hClonedGraph, sizeof(CUgraph)) < 0 ||
@@ -4729,7 +4811,8 @@ CUresult cuGraphNodeGetType(CUgraphNode hNode, CUgraphNodeType *type) {
         LUPINE_REAL_CUDA_SYMBOL("cuGraphNodeGetType"), hNode, type);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphNodeGetType) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphNodeGetType, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, type, sizeof(CUgraphNodeType)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -4755,7 +4838,8 @@ CUresult cuGraphNodeGetContainingGraph(CUgraphNode hNode, CUgraph *phGraph) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphNodeGetContainingGraph) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphNodeGetContainingGraph,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phGraph, sizeof(CUgraph)) < 0 ||
@@ -4779,7 +4863,8 @@ CUresult cuGraphNodeGetLocalId(CUgraphNode hNode, unsigned int *nodeId) {
         LUPINE_REAL_CUDA_SYMBOL("cuGraphNodeGetLocalId"), hNode, nodeId);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphNodeGetLocalId) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphNodeGetLocalId,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, nodeId, sizeof(unsigned int)) < 0 ||
@@ -4801,7 +4886,8 @@ CUresult cuGraphNodeGetToolsId(CUgraphNode hNode,
         LUPINE_REAL_CUDA_SYMBOL("cuGraphNodeGetToolsId"), hNode, toolsNodeId);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphNodeGetToolsId) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphNodeGetToolsId,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, toolsNodeId, sizeof(unsigned long long)) < 0 ||
@@ -4822,7 +4908,7 @@ CUresult cuGraphGetId(CUgraph hGraph, unsigned int *graphId) {
                                     hGraph, graphId);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphGetId) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphGetId, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, graphId, sizeof(unsigned int)) < 0 ||
@@ -4843,7 +4929,8 @@ CUresult cuGraphExecGetId(CUgraphExec hGraphExec, unsigned int *graphId) {
                                     hGraphExec, graphId);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphExecGetId) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphExecGetId, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, graphId, sizeof(unsigned int)) < 0 ||
@@ -4865,7 +4952,8 @@ CUresult cuGraphGetNodes(CUgraph hGraph, CUgraphNode *nodes, size_t *numNodes) {
   size_t numNodes_requested = (nodes != nullptr) ? *numNodes : 0;
   uint8_t nodes_null = nodes == nullptr ? 1 : 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphGetNodes) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphGetNodes, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numNodes_requested, sizeof(size_t)) < 0 ||
       rpc_write(conn, &nodes_null, sizeof(uint8_t)) < 0 ||
@@ -4894,7 +4982,8 @@ CUresult cuGraphGetRootNodes(CUgraph hGraph, CUgraphNode *rootNodes,
   size_t numRootNodes_requested = (rootNodes != nullptr) ? *numRootNodes : 0;
   uint8_t rootNodes_null = rootNodes == nullptr ? 1 : 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphGetRootNodes) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphGetRootNodes,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numRootNodes_requested, sizeof(size_t)) < 0 ||
       rpc_write(conn, &rootNodes_null, sizeof(uint8_t)) < 0 ||
@@ -4927,7 +5016,8 @@ CUresult cuGraphGetEdges_v2(CUgraph hGraph, CUgraphNode *from, CUgraphNode *to,
   uint8_t to_null = to == nullptr ? 1 : 0;
   uint8_t edgeData_null = edgeData == nullptr ? 1 : 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphGetEdges_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphGetEdges_v2, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &numEdges_requested, sizeof(size_t)) < 0 ||
       rpc_write(conn, &from_null, sizeof(uint8_t)) < 0 ||
@@ -4972,7 +5062,8 @@ CUresult cuGraphNodeGetDependencies_v2(CUgraphNode hNode,
   uint8_t dependencies_null = dependencies == nullptr ? 1 : 0;
   uint8_t edgeData_null = edgeData == nullptr ? 1 : 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphNodeGetDependencies_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphNodeGetDependencies_v2,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &numDependencies_requested, sizeof(size_t)) < 0 ||
       rpc_write(conn, &dependencies_null, sizeof(uint8_t)) < 0 ||
@@ -5015,7 +5106,8 @@ CUresult cuGraphNodeGetDependentNodes_v2(CUgraphNode hNode,
   uint8_t dependentNodes_null = dependentNodes == nullptr ? 1 : 0;
   uint8_t edgeData_null = edgeData == nullptr ? 1 : 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphNodeGetDependentNodes_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphNodeGetDependentNodes_v2,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &numDependentNodes_requested, sizeof(size_t)) < 0 ||
       rpc_write(conn, &dependentNodes_null, sizeof(uint8_t)) < 0 ||
@@ -5054,7 +5146,8 @@ CUresult cuGraphDestroyNode(CUgraphNode hNode) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphDestroyNode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphDestroyNode, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -5080,7 +5173,8 @@ CUresult cuGraphInstantiateWithFlags(CUgraphExec *phGraphExec, CUgraph hGraph,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphInstantiateWithFlags) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphInstantiateWithFlags,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
@@ -5111,7 +5205,8 @@ cuGraphInstantiateWithParams(CUgraphExec *phGraphExec, CUgraph hGraph,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphInstantiateWithParams) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphInstantiateWithParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, instantiateParams,
@@ -5137,7 +5232,8 @@ CUresult cuGraphExecGetFlags(CUgraphExec hGraphExec, cuuint64_t *flags) {
         LUPINE_REAL_CUDA_SYMBOL("cuGraphExecGetFlags"), hGraphExec, flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphExecGetFlags) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphExecGetFlags,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, flags, sizeof(cuuint64_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -5160,7 +5256,8 @@ CUresult cuGraphExecMemcpyNodeSetParams(CUgraphExec hGraphExec,
         hNode, copyParams, ctx);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphExecMemcpyNodeSetParams) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphExecMemcpyNodeSetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, copyParams, sizeof(const CUDA_MEMCPY3D)) < 0 ||
@@ -5184,7 +5281,8 @@ cuGraphExecMemsetNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
         hNode, memsetParams, ctx);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphExecMemsetNodeSetParams) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphExecMemsetNodeSetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, memsetParams, sizeof(const CUDA_MEMSET_NODE_PARAMS)) <
@@ -5208,8 +5306,8 @@ CUresult cuGraphExecChildGraphNodeSetParams(CUgraphExec hGraphExec,
         hGraphExec, hNode, childGraph);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphExecChildGraphNodeSetParams) <
-          0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphExecChildGraphNodeSetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &childGraph, sizeof(CUgraph)) < 0 ||
@@ -5230,8 +5328,8 @@ CUresult cuGraphExecEventRecordNodeSetEvent(CUgraphExec hGraphExec,
         hGraphExec, hNode, event);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphExecEventRecordNodeSetEvent) <
-          0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphExecEventRecordNodeSetEvent,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
@@ -5252,7 +5350,8 @@ CUresult cuGraphExecEventWaitNodeSetEvent(CUgraphExec hGraphExec,
         hNode, event);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphExecEventWaitNodeSetEvent) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphExecEventWaitNodeSetEvent,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &event, sizeof(CUevent)) < 0 ||
@@ -5283,8 +5382,9 @@ CUresult cuGraphExecExternalSemaphoresSignalNodeSetParams(
       (nodeParams->numExtSems != 0 && nodeParams->paramsArray == nullptr))
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cuGraphExecExternalSemaphoresSignalNodeSetParams) < 0 ||
+      rpc_write_start_request_on(
+          conn, RPC_cuGraphExecExternalSemaphoresSignalNodeSetParams,
+          RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
@@ -5321,8 +5421,9 @@ CUresult cuGraphExecExternalSemaphoresWaitNodeSetParams(
       (nodeParams->numExtSems != 0 && nodeParams->paramsArray == nullptr))
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cuGraphExecExternalSemaphoresWaitNodeSetParams) < 0 ||
+      rpc_write_start_request_on(
+          conn, RPC_cuGraphExecExternalSemaphoresWaitNodeSetParams,
+          RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
@@ -5349,7 +5450,8 @@ CUresult cuGraphNodeSetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
         isEnabled);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphNodeSetEnabled) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphNodeSetEnabled,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &isEnabled, sizeof(unsigned int)) < 0 ||
@@ -5370,7 +5472,8 @@ CUresult cuGraphNodeGetEnabled(CUgraphExec hGraphExec, CUgraphNode hNode,
         isEnabled);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphNodeGetEnabled) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphNodeGetEnabled,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, isEnabled, sizeof(unsigned int)) < 0 ||
@@ -5390,8 +5493,7 @@ CUresult cuGraphUpload(CUgraphExec hGraphExec, CUstream hStream) {
                                     hGraphExec, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuGraphUpload,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuGraphUpload, hStream) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -5408,8 +5510,7 @@ CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream) {
                                     hGraphExec, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuGraphLaunch,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuGraphLaunch, hStream) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -5426,7 +5527,8 @@ CUresult cuGraphExecDestroy(CUgraphExec hGraphExec) {
         LUPINE_REAL_CUDA_SYMBOL("cuGraphExecDestroy"), hGraphExec);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphExecDestroy) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphExecDestroy, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -5449,7 +5551,8 @@ CUresult cuGraphDestroy(CUgraph hGraph) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphDestroy) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphDestroy, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -5472,7 +5575,8 @@ CUresult cuGraphExecUpdate_v2(CUgraphExec hGraphExec, CUgraph hGraph,
         resultInfo);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphExecUpdate_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphExecUpdate_v2,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, resultInfo, sizeof(CUgraphExecUpdateResultInfo)) < 0 ||
@@ -5492,7 +5596,8 @@ CUresult cuGraphKernelNodeCopyAttributes(CUgraphNode dst, CUgraphNode src) {
         LUPINE_REAL_CUDA_SYMBOL("cuGraphKernelNodeCopyAttributes"), dst, src);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphKernelNodeCopyAttributes) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphKernelNodeCopyAttributes,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &dst, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &src, sizeof(CUgraphNode)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -5512,7 +5617,8 @@ CUresult cuGraphKernelNodeGetAttribute(CUgraphNode hNode,
         value_out);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphKernelNodeGetAttribute) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphKernelNodeGetAttribute,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &attr, sizeof(CUkernelNodeAttrID)) < 0 ||
       rpc_write(conn, value_out, sizeof(CUkernelNodeAttrValue)) < 0 ||
@@ -5535,7 +5641,8 @@ CUresult cuGraphKernelNodeSetAttribute(CUgraphNode hNode,
         value);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphKernelNodeSetAttribute) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphKernelNodeSetAttribute,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, &attr, sizeof(CUkernelNodeAttrID)) < 0 ||
       rpc_write(conn, value, sizeof(const CUkernelNodeAttrValue)) < 0 ||
@@ -5555,7 +5662,8 @@ CUresult cuGraphDebugDotPrint(CUgraph hGraph, const char *path,
   conn_t *conn = lupine_route_remote_conn(route);
   std::size_t path_len = std::strlen(path) + 1;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphDebugDotPrint) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphDebugDotPrint,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &path_len, sizeof(std::size_t)) < 0 ||
       rpc_write(conn, path, path_len) < 0 ||
@@ -5574,7 +5682,8 @@ CUresult cuUserObjectRetain(CUuserObject object, unsigned int count) {
         LUPINE_REAL_CUDA_SYMBOL("cuUserObjectRetain"), object, count);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuUserObjectRetain) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuUserObjectRetain, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &object, sizeof(CUuserObject)) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -5591,7 +5700,8 @@ CUresult cuUserObjectRelease(CUuserObject object, unsigned int count) {
         LUPINE_REAL_CUDA_SYMBOL("cuUserObjectRelease"), object, count);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuUserObjectRelease) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuUserObjectRelease,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &object, sizeof(CUuserObject)) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -5610,7 +5720,8 @@ CUresult cuGraphRetainUserObject(CUgraph graph, CUuserObject object,
         count, flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphRetainUserObject) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphRetainUserObject,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &graph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &object, sizeof(CUuserObject)) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
@@ -5631,7 +5742,8 @@ CUresult cuGraphReleaseUserObject(CUgraph graph, CUuserObject object,
         count);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphReleaseUserObject) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphReleaseUserObject,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &graph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &object, sizeof(CUuserObject)) < 0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
@@ -5651,7 +5763,8 @@ CUresult cuGraphNodeSetParams(CUgraphNode hNode,
         LUPINE_REAL_CUDA_SYMBOL("cuGraphNodeSetParams"), hNode, nodeParams);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphNodeSetParams) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphNodeSetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(CUgraphNodeParams)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -5674,7 +5787,8 @@ CUresult cuGraphExecNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
         nodeParams);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphExecNodeSetParams) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphExecNodeSetParams,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(CUgraphNodeParams)) < 0 ||
@@ -5699,8 +5813,9 @@ CUresult cuOccupancyAvailableDynamicSMemPerBlock(size_t *dynamicSmemSize,
   conn_t *conn = lupine_route_remote_conn(route);
   CUfunction func_rpc = lupine_translate_private_function_for_rpc(func);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cuOccupancyAvailableDynamicSMemPerBlock) < 0 ||
+      rpc_write_start_request_on(conn,
+                                 RPC_cuOccupancyAvailableDynamicSMemPerBlock,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, dynamicSmemSize, sizeof(size_t)) < 0 ||
       rpc_write(conn, &func_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &numBlocks, sizeof(int)) < 0 ||
@@ -5729,8 +5844,8 @@ CUresult cuOccupancyMaxPotentialClusterSize(int *clusterSize, CUfunction func,
       (config->numAttrs != 0 && config->attrs == nullptr))
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuOccupancyMaxPotentialClusterSize) <
-          0 ||
+      rpc_write_start_request_on(conn, RPC_cuOccupancyMaxPotentialClusterSize,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, clusterSize, sizeof(int)) < 0 ||
       rpc_write(conn, &func_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, config, sizeof(*config)) < 0 ||
@@ -5760,7 +5875,8 @@ CUresult cuOccupancyMaxActiveClusters(int *numClusters, CUfunction func,
       (config->numAttrs != 0 && config->attrs == nullptr))
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuOccupancyMaxActiveClusters) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuOccupancyMaxActiveClusters,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, numClusters, sizeof(int)) < 0 ||
       rpc_write(conn, &func_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, config, sizeof(*config)) < 0 ||
@@ -5783,7 +5899,8 @@ CUresult cuTexRefSetArray(CUtexref hTexRef, CUarray hArray,
                                     hTexRef, hArray, Flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefSetArray) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefSetArray, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, &hArray, sizeof(CUarray)) < 0 ||
       rpc_write(conn, &Flags, sizeof(unsigned int)) < 0 ||
@@ -5804,7 +5921,8 @@ CUresult cuTexRefSetMipmappedArray(CUtexref hTexRef,
         hMipmappedArray, Flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefSetMipmappedArray) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefSetMipmappedArray,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, &hMipmappedArray, sizeof(CUmipmappedArray)) < 0 ||
       rpc_write(conn, &Flags, sizeof(unsigned int)) < 0 ||
@@ -5824,7 +5942,8 @@ CUresult cuTexRefSetAddress_v2(size_t *ByteOffset, CUtexref hTexRef,
         dptr, bytes);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefSetAddress_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefSetAddress_v2,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, ByteOffset, sizeof(size_t)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
@@ -5848,7 +5967,8 @@ CUresult cuTexRefSetAddress2D_v3(CUtexref hTexRef,
         Pitch);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefSetAddress2D_v3) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefSetAddress2D_v3,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, desc, sizeof(const CUDA_ARRAY_DESCRIPTOR)) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
@@ -5868,7 +5988,8 @@ CUresult cuTexRefSetFormat(CUtexref hTexRef, CUarray_format fmt,
         NumPackedComponents);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefSetFormat) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefSetFormat, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, &fmt, sizeof(CUarray_format)) < 0 ||
       rpc_write(conn, &NumPackedComponents, sizeof(int)) < 0 ||
@@ -5886,7 +6007,8 @@ CUresult cuTexRefSetAddressMode(CUtexref hTexRef, int dim, CUaddress_mode am) {
         LUPINE_REAL_CUDA_SYMBOL("cuTexRefSetAddressMode"), hTexRef, dim, am);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefSetAddressMode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefSetAddressMode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, &dim, sizeof(int)) < 0 ||
       rpc_write(conn, &am, sizeof(CUaddress_mode)) < 0 ||
@@ -5904,7 +6026,8 @@ CUresult cuTexRefSetFilterMode(CUtexref hTexRef, CUfilter_mode fm) {
         LUPINE_REAL_CUDA_SYMBOL("cuTexRefSetFilterMode"), hTexRef, fm);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefSetFilterMode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefSetFilterMode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, &fm, sizeof(CUfilter_mode)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -5921,7 +6044,8 @@ CUresult cuTexRefSetMipmapFilterMode(CUtexref hTexRef, CUfilter_mode fm) {
         LUPINE_REAL_CUDA_SYMBOL("cuTexRefSetMipmapFilterMode"), hTexRef, fm);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefSetMipmapFilterMode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefSetMipmapFilterMode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, &fm, sizeof(CUfilter_mode)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -5938,7 +6062,8 @@ CUresult cuTexRefSetMipmapLevelBias(CUtexref hTexRef, float bias) {
         LUPINE_REAL_CUDA_SYMBOL("cuTexRefSetMipmapLevelBias"), hTexRef, bias);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefSetMipmapLevelBias) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefSetMipmapLevelBias,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, &bias, sizeof(float)) < 0 || rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -5957,7 +6082,8 @@ CUresult cuTexRefSetMipmapLevelClamp(CUtexref hTexRef,
         minMipmapLevelClamp, maxMipmapLevelClamp);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefSetMipmapLevelClamp) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefSetMipmapLevelClamp,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, &minMipmapLevelClamp, sizeof(float)) < 0 ||
       rpc_write(conn, &maxMipmapLevelClamp, sizeof(float)) < 0 ||
@@ -5975,7 +6101,8 @@ CUresult cuTexRefSetMaxAnisotropy(CUtexref hTexRef, unsigned int maxAniso) {
         LUPINE_REAL_CUDA_SYMBOL("cuTexRefSetMaxAnisotropy"), hTexRef, maxAniso);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefSetMaxAnisotropy) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefSetMaxAnisotropy,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, &maxAniso, sizeof(unsigned int)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -5993,7 +6120,8 @@ CUresult cuTexRefSetBorderColor(CUtexref hTexRef, float *pBorderColor) {
         pBorderColor);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefSetBorderColor) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefSetBorderColor,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, pBorderColor, 16) < 0 || rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6009,7 +6137,8 @@ CUresult cuTexRefSetFlags(CUtexref hTexRef, unsigned int Flags) {
                                     hTexRef, Flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefSetFlags) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefSetFlags, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, &Flags, sizeof(unsigned int)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -6026,7 +6155,8 @@ CUresult cuTexRefGetAddress_v2(CUdeviceptr *pdptr, CUtexref hTexRef) {
         LUPINE_REAL_CUDA_SYMBOL("cuTexRefGetAddress_v2"), pdptr, hTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefGetAddress_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefGetAddress_v2,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pdptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6045,7 +6175,8 @@ CUresult cuTexRefGetArray(CUarray *phArray, CUtexref hTexRef) {
                                     phArray, hTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefGetArray) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefGetArray, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, phArray, sizeof(CUarray)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6066,7 +6197,8 @@ CUresult cuTexRefGetMipmappedArray(CUmipmappedArray *phMipmappedArray,
         hTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefGetMipmappedArray) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefGetMipmappedArray,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, phMipmappedArray, sizeof(CUmipmappedArray)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6086,7 +6218,8 @@ CUresult cuTexRefGetAddressMode(CUaddress_mode *pam, CUtexref hTexRef,
         LUPINE_REAL_CUDA_SYMBOL("cuTexRefGetAddressMode"), pam, hTexRef, dim);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefGetAddressMode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefGetAddressMode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pam, sizeof(CUaddress_mode)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write(conn, &dim, sizeof(int)) < 0 ||
@@ -6106,7 +6239,8 @@ CUresult cuTexRefGetFilterMode(CUfilter_mode *pfm, CUtexref hTexRef) {
         LUPINE_REAL_CUDA_SYMBOL("cuTexRefGetFilterMode"), pfm, hTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefGetFilterMode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefGetFilterMode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pfm, sizeof(CUfilter_mode)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6127,7 +6261,8 @@ CUresult cuTexRefGetFormat(CUarray_format *pFormat, int *pNumChannels,
         hTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefGetFormat) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefGetFormat, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, pFormat, sizeof(CUarray_format)) < 0 ||
       rpc_write(conn, pNumChannels, sizeof(int)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
@@ -6148,7 +6283,8 @@ CUresult cuTexRefGetMipmapFilterMode(CUfilter_mode *pfm, CUtexref hTexRef) {
         LUPINE_REAL_CUDA_SYMBOL("cuTexRefGetMipmapFilterMode"), pfm, hTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefGetMipmapFilterMode) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefGetMipmapFilterMode,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pfm, sizeof(CUfilter_mode)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6167,7 +6303,8 @@ CUresult cuTexRefGetMipmapLevelBias(float *pbias, CUtexref hTexRef) {
         LUPINE_REAL_CUDA_SYMBOL("cuTexRefGetMipmapLevelBias"), pbias, hTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefGetMipmapLevelBias) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefGetMipmapLevelBias,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pbias, sizeof(float)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6189,7 +6326,8 @@ CUresult cuTexRefGetMipmapLevelClamp(float *pminMipmapLevelClamp,
         pminMipmapLevelClamp, pmaxMipmapLevelClamp, hTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefGetMipmapLevelClamp) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefGetMipmapLevelClamp,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pminMipmapLevelClamp, sizeof(float)) < 0 ||
       rpc_write(conn, pmaxMipmapLevelClamp, sizeof(float)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
@@ -6211,7 +6349,8 @@ CUresult cuTexRefGetMaxAnisotropy(int *pmaxAniso, CUtexref hTexRef) {
         hTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefGetMaxAnisotropy) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefGetMaxAnisotropy,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pmaxAniso, sizeof(int)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6231,7 +6370,8 @@ CUresult cuTexRefGetBorderColor(float *pBorderColor, CUtexref hTexRef) {
         hTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefGetBorderColor) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefGetBorderColor,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       (16 != 0 && rpc_read(conn, pBorderColor, 16) < 0) ||
@@ -6249,7 +6389,8 @@ CUresult cuTexRefGetFlags(unsigned int *pFlags, CUtexref hTexRef) {
                                     pFlags, hTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefGetFlags) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefGetFlags, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, pFlags, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6268,7 +6409,8 @@ CUresult cuTexRefCreate(CUtexref *pTexRef) {
                                     pTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefCreate) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefCreate, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, pTexRef, sizeof(CUtexref)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pTexRef, sizeof(CUtexref)) < 0 ||
@@ -6286,7 +6428,8 @@ CUresult cuTexRefDestroy(CUtexref hTexRef) {
                                     hTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexRefDestroy) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexRefDestroy, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6303,7 +6446,8 @@ CUresult cuSurfRefSetArray(CUsurfref hSurfRef, CUarray hArray,
         LUPINE_REAL_CUDA_SYMBOL("cuSurfRefSetArray"), hSurfRef, hArray, Flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuSurfRefSetArray) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuSurfRefSetArray, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hSurfRef, sizeof(CUsurfref)) < 0 ||
       rpc_write(conn, &hArray, sizeof(CUarray)) < 0 ||
       rpc_write(conn, &Flags, sizeof(unsigned int)) < 0 ||
@@ -6321,7 +6465,8 @@ CUresult cuSurfRefGetArray(CUarray *phArray, CUsurfref hSurfRef) {
         LUPINE_REAL_CUDA_SYMBOL("cuSurfRefGetArray"), phArray, hSurfRef);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuSurfRefGetArray) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuSurfRefGetArray, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, phArray, sizeof(CUarray)) < 0 ||
       rpc_write(conn, &hSurfRef, sizeof(CUsurfref)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6346,7 +6491,8 @@ CUresult cuTexObjectCreate(CUtexObject *pTexObject,
   uint8_t pTexDesc_present = pTexDesc != nullptr;
   uint8_t pResViewDesc_present = pResViewDesc != nullptr;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexObjectCreate) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexObjectCreate, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, pTexObject, sizeof(CUtexObject)) < 0 ||
       rpc_write(conn, pResDesc, sizeof(const CUDA_RESOURCE_DESC)) < 0 ||
       rpc_write(conn, &pTexDesc_present, sizeof(uint8_t)) < 0 ||
@@ -6372,7 +6518,8 @@ CUresult cuTexObjectDestroy(CUtexObject texObject) {
         LUPINE_REAL_CUDA_SYMBOL("cuTexObjectDestroy"), texObject);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexObjectDestroy) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexObjectDestroy, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &texObject, sizeof(CUtexObject)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6390,7 +6537,8 @@ CUresult cuTexObjectGetResourceDesc(CUDA_RESOURCE_DESC *pResDesc,
         texObject);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexObjectGetResourceDesc) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexObjectGetResourceDesc,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pResDesc, sizeof(CUDA_RESOURCE_DESC)) < 0 ||
       rpc_write(conn, &texObject, sizeof(CUtexObject)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6411,7 +6559,8 @@ CUresult cuTexObjectGetTextureDesc(CUDA_TEXTURE_DESC *pTexDesc,
         texObject);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexObjectGetTextureDesc) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexObjectGetTextureDesc,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pTexDesc, sizeof(CUDA_TEXTURE_DESC)) < 0 ||
       rpc_write(conn, &texObject, sizeof(CUtexObject)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6432,7 +6581,8 @@ CUresult cuTexObjectGetResourceViewDesc(CUDA_RESOURCE_VIEW_DESC *pResViewDesc,
         texObject);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTexObjectGetResourceViewDesc) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTexObjectGetResourceViewDesc,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pResViewDesc, sizeof(CUDA_RESOURCE_VIEW_DESC)) < 0 ||
       rpc_write(conn, &texObject, sizeof(CUtexObject)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6452,7 +6602,8 @@ CUresult cuSurfObjectCreate(CUsurfObject *pSurfObject,
         LUPINE_REAL_CUDA_SYMBOL("cuSurfObjectCreate"), pSurfObject, pResDesc);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuSurfObjectCreate) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuSurfObjectCreate, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, pSurfObject, sizeof(CUsurfObject)) < 0 ||
       rpc_write(conn, pResDesc, sizeof(const CUDA_RESOURCE_DESC)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6471,7 +6622,8 @@ CUresult cuSurfObjectDestroy(CUsurfObject surfObject) {
         LUPINE_REAL_CUDA_SYMBOL("cuSurfObjectDestroy"), surfObject);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuSurfObjectDestroy) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuSurfObjectDestroy,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &surfObject, sizeof(CUsurfObject)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6489,7 +6641,8 @@ CUresult cuSurfObjectGetResourceDesc(CUDA_RESOURCE_DESC *pResDesc,
         surfObject);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuSurfObjectGetResourceDesc) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuSurfObjectGetResourceDesc,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pResDesc, sizeof(CUDA_RESOURCE_DESC)) < 0 ||
       rpc_write(conn, &surfObject, sizeof(CUsurfObject)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6512,7 +6665,8 @@ CUresult cuTensorMapReplaceAddress(CUtensorMap *tensorMap,
         globalAddress);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTensorMapReplaceAddress) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuTensorMapReplaceAddress,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, tensorMap, sizeof(CUtensorMap)) < 0 ||
       rpc_write(conn, &globalAddress, sizeof(void *)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6554,8 +6708,8 @@ CUresult cuGraphicsSubResourceGetMappedArray(CUarray *pArray,
         resource, arrayIndex, mipLevel);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphicsSubResourceGetMappedArray) <
-          0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphicsSubResourceGetMappedArray,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pArray, sizeof(CUarray)) < 0 ||
       rpc_write(conn, &resource, sizeof(CUgraphicsResource)) < 0 ||
       rpc_write(conn, &arrayIndex, sizeof(unsigned int)) < 0 ||
@@ -6579,8 +6733,9 @@ cuGraphicsResourceGetMappedMipmappedArray(CUmipmappedArray *pMipmappedArray,
         pMipmappedArray, resource);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cuGraphicsResourceGetMappedMipmappedArray) < 0 ||
+      rpc_write_start_request_on(conn,
+                                 RPC_cuGraphicsResourceGetMappedMipmappedArray,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pMipmappedArray, sizeof(CUmipmappedArray)) < 0 ||
       rpc_write(conn, &resource, sizeof(CUgraphicsResource)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6602,8 +6757,9 @@ CUresult cuGraphicsResourceGetMappedPointer_v2(CUdeviceptr *pDevPtr,
         pDevPtr, pSize, resource);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphicsResourceGetMappedPointer_v2) <
-          0 ||
+      rpc_write_start_request_on(conn,
+                                 RPC_cuGraphicsResourceGetMappedPointer_v2,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, pDevPtr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, pSize, sizeof(size_t)) < 0 ||
       rpc_write(conn, &resource, sizeof(CUgraphicsResource)) < 0 ||
@@ -6626,7 +6782,8 @@ CUresult cuGraphicsResourceSetMapFlags_v2(CUgraphicsResource resource,
         flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphicsResourceSetMapFlags_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphicsResourceSetMapFlags_v2,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &resource, sizeof(CUgraphicsResource)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -6649,8 +6806,8 @@ CUresult cuGraphicsMapResources(unsigned int count,
   if (count * sizeof(CUgraphicsResource) != 0 && resources == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuGraphicsMapResources,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuGraphicsMapResources, hStream) <
+          0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, resources, count * sizeof(CUgraphicsResource)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -6675,8 +6832,8 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
   if (count * sizeof(CUgraphicsResource) != 0 && resources == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuGraphicsUnmapResources,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuGraphicsUnmapResources, hStream) <
+          0 ||
       rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, resources, count * sizeof(CUgraphicsResource)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
@@ -6698,7 +6855,8 @@ CUresult cuCoredumpGetAttributeGlobal(CUcoredumpSettings attrib, void *value,
         size);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCoredumpGetAttributeGlobal) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCoredumpGetAttributeGlobal,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &attrib, sizeof(CUcoredumpSettings)) < 0 ||
       rpc_write(conn, size, sizeof(size_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6725,7 +6883,8 @@ CUresult cuCoredumpSetAttributeGlobal(CUcoredumpSettings attrib, void *value,
   if (*size != 0 && value == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCoredumpSetAttributeGlobal) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCoredumpSetAttributeGlobal,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &attrib, sizeof(CUcoredumpSettings)) < 0 ||
       rpc_write(conn, size, sizeof(size_t)) < 0 ||
       rpc_write(conn, value, *size) < 0 || rpc_wait_for_response(conn) < 0 ||
@@ -6750,7 +6909,8 @@ CUresult cuGreenCtxCreate(CUgreenCtx *phCtx, CUdevResourceDesc desc,
                                     phCtx, desc, dev, flags);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGreenCtxCreate) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGreenCtxCreate, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &desc, sizeof(CUdevResourceDesc)) < 0 ||
       rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
@@ -6806,7 +6966,8 @@ CUresult cuCtxFromGreenCtx(CUcontext *pContext, CUgreenCtx hCtx) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxFromGreenCtx) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxFromGreenCtx, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, pContext, sizeof(CUcontext)) < 0 ||
@@ -6836,7 +6997,8 @@ CUresult cuDeviceGetDevResource(CUdevice device, CUdevResource *resource,
         type);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetDevResource) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceGetDevResource,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &device, sizeof(CUdevice)) < 0 ||
       rpc_write(conn, &type, sizeof(CUdevResourceType)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6859,7 +7021,8 @@ CUresult cuCtxGetDevResource(CUcontext hCtx, CUdevResource *resource,
         LUPINE_REAL_CUDA_SYMBOL("cuCtxGetDevResource"), hCtx, resource, type);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxGetDevResource) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxGetDevResource,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUcontext)) < 0 ||
       rpc_write(conn, &type, sizeof(CUdevResourceType)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6883,7 +7046,8 @@ CUresult cuGreenCtxGetDevResource(CUgreenCtx hCtx, CUdevResource *resource,
         type);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGreenCtxGetDevResource) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGreenCtxGetDevResource,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
       rpc_write(conn, &type, sizeof(CUdevResourceType)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -6911,7 +7075,8 @@ CUresult cuDevSmResourceSplitByCount(
   uint8_t result_null = result == nullptr ? 1 : 0;
   uint8_t remainder_present = remainder != nullptr;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDevSmResourceSplitByCount) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDevSmResourceSplitByCount,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &nbGroups_requested, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &result_null, sizeof(uint8_t)) < 0 ||
       rpc_write(conn, input, sizeof(const CUdevResource)) < 0 ||
@@ -6955,7 +7120,8 @@ CUresult cuDevSmResourceSplit(CUdevResource *result, unsigned int nbGroups,
       groupParams == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDevSmResourceSplit) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDevSmResourceSplit,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &nbGroups, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &result_null, sizeof(uint8_t)) < 0 ||
       rpc_write(conn, input, sizeof(const CUdevResource)) < 0 ||
@@ -6995,7 +7161,8 @@ CUresult cuDevResourceGenerateDesc(CUdevResourceDesc *phDesc,
   if (nbResources * sizeof(CUdevResource) != 0 && resources == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDevResourceGenerateDesc) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDevResourceGenerateDesc,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &nbResources, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, resources, nbResources * sizeof(CUdevResource)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -7019,7 +7186,8 @@ CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent) {
         LUPINE_REAL_CUDA_SYMBOL("cuGreenCtxRecordEvent"), hCtx, hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGreenCtxRecordEvent) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGreenCtxRecordEvent,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
       rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -7039,7 +7207,8 @@ CUresult cuGreenCtxWaitEvent(CUgreenCtx hCtx, CUevent hEvent) {
         LUPINE_REAL_CUDA_SYMBOL("cuGreenCtxWaitEvent"), hCtx, hEvent);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGreenCtxWaitEvent) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGreenCtxWaitEvent,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
       rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -7060,8 +7229,7 @@ CUresult cuStreamGetGreenCtx(CUstream hStream, CUgreenCtx *phCtx) {
         LUPINE_REAL_CUDA_SYMBOL("cuStreamGetGreenCtx"), hStream, phCtx);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamGetGreenCtx,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamGetGreenCtx, hStream) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, phCtx, sizeof(CUgreenCtx)) < 0 ||
@@ -7089,7 +7257,8 @@ CUresult cuGreenCtxStreamCreate(CUstream *phStream, CUgreenCtx greenCtx,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGreenCtxStreamCreate) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGreenCtxStreamCreate,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &greenCtx, sizeof(CUgreenCtx)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &priority, sizeof(int)) < 0 ||
@@ -7115,7 +7284,8 @@ CUresult cuGreenCtxGetId(CUgreenCtx greenCtx, unsigned long long *greenCtxId) {
                                     greenCtx, greenCtxId);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGreenCtxGetId) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGreenCtxGetId, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &greenCtx, sizeof(CUgreenCtx)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, greenCtxId, sizeof(unsigned long long)) < 0 ||
@@ -7139,8 +7309,8 @@ CUresult cuStreamGetDevResource(CUstream hStream, CUdevResource *resource,
         type);
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuStreamGetDevResource,
-                                 lupine_rpc_stream_scope(hStream)) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamGetDevResource, hStream) <
+          0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write(conn, &type, sizeof(CUdevResourceType)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
@@ -7163,7 +7333,7 @@ CUresult cuLogsCurrent(CUlogIterator *iterator_out, unsigned int flags) {
   conn_t *conn = lupine_route_remote_conn(route);
   uint8_t iterator_out_present = iterator_out != nullptr;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLogsCurrent) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuLogsCurrent, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &iterator_out_present, sizeof(uint8_t)) < 0 ||
       (iterator_out_present &&
        rpc_write(conn, iterator_out, sizeof(CUlogIterator)) < 0) ||
@@ -7193,7 +7363,8 @@ CUresult cuLogsDumpToFile(CUlogIterator *iterator, const char *pathToFile,
   uint8_t iterator_present = iterator != nullptr;
   std::size_t pathToFile_len = std::strlen(pathToFile) + 1;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLogsDumpToFile) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuLogsDumpToFile, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &iterator_present, sizeof(uint8_t)) < 0 ||
       (iterator_present &&
        rpc_write(conn, iterator, sizeof(CUlogIterator)) < 0) ||
@@ -7233,7 +7404,8 @@ CUresult cuLogsDumpToMemory(CUlogIterator *iterator, char *buffer, size_t *size,
   size_t size_requested = (buffer != nullptr) ? *size : 0;
   uint8_t buffer_null = buffer == nullptr ? 1 : 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuLogsDumpToMemory) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuLogsDumpToMemory, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &iterator_present, sizeof(uint8_t)) < 0 ||
       (iterator_present &&
        rpc_write(conn, iterator, sizeof(CUlogIterator)) < 0) ||
@@ -7277,7 +7449,8 @@ CUresult cuGraphInstantiate_v2(CUgraphExec *phGraphExec, CUgraph hGraph,
   uint8_t phErrorNode_present = phErrorNode != nullptr;
   uint8_t logBuffer_null = logBuffer == nullptr ? 1 : 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphInstantiate_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphInstantiate_v2,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &phErrorNode_present, sizeof(uint8_t)) < 0 ||
       (phErrorNode_present &&
@@ -7324,7 +7497,8 @@ CUresult cuGraphExecUpdate(CUgraphExec hGraphExec, CUgraph hGraph,
   uint8_t hErrorNode_out_present = hErrorNode_out != nullptr;
   uint8_t updateResult_out_present = updateResult_out != nullptr;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphExecUpdate) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuGraphExecUpdate, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_write(conn, &hErrorNode_out_present, sizeof(uint8_t)) < 0 ||

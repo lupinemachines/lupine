@@ -937,7 +937,6 @@ int handle_cuCtxSetCacheConfig(conn_t *conn) {
   return_value = cuCtxSetCacheConfig(config);
 
   if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
     return 0;
   }
 
@@ -1155,7 +1154,6 @@ int handle_cuCtxSetSharedMemConfig(conn_t *conn) {
   return_value = cuCtxSetSharedMemConfig(config);
 
   if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
     return 0;
   }
 
@@ -1605,7 +1603,6 @@ int handle_cuKernelSetCacheConfig(conn_t *conn) {
   return_value = cuKernelSetCacheConfig(kernel, config, dev);
 
   if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
     return 0;
   }
 
@@ -3765,7 +3762,6 @@ int handle_cuMemPrefetchAsync_v2(conn_t *conn) {
   return_value = cuMemPrefetchAsync_v2(devPtr, count, location, flags, hStream);
 
   if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
     return 0;
   }
 
@@ -3801,7 +3797,6 @@ int handle_cuMemAdvise_v2(conn_t *conn) {
   return_value = cuMemAdvise_v2(devPtr, count, advice, location);
 
   if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
     return 0;
   }
 
@@ -4102,7 +4097,6 @@ int handle_cuStreamAttachMemAsync(conn_t *conn) {
   return_value = cuStreamAttachMemAsync(hStream, dptr, length, flags);
 
   if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
     return 0;
   }
 
@@ -4127,7 +4121,8 @@ int handle_cuStreamQuery(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuStreamQuery(hStream);
+  return_value = rpc_request_unsettled(conn) ? CUDA_ERROR_NOT_READY
+                                             : cuStreamQuery(hStream);
 
   if (return_value == CUDA_SUCCESS) {
     CUcontext context = nullptr;
@@ -4933,7 +4928,6 @@ int handle_cuFuncSetCacheConfig(conn_t *conn) {
   return_value = cuFuncSetCacheConfig(hfunc, config);
 
   if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
     return 0;
   }
 
@@ -10042,7 +10036,6 @@ int handle_cuMemPrefetchAsync(conn_t *conn) {
   return_value = cuMemPrefetchAsync(devPtr, count, dstDevice, hStream);
 
   if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
     return 0;
   }
 
@@ -10075,7 +10068,6 @@ int handle_cuMemAdvise(conn_t *conn) {
   return_value = cuMemAdvise(devPtr, count, advice, device);
 
   if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
     return 0;
   }
 

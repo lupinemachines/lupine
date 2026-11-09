@@ -389,10 +389,21 @@ fail:
 // The ticket claimed by the handler running on this lane, if any.
 static constexpr uint64_t kNoAsyncSequence = ~uint64_t{0};
 static thread_local uint64_t executing_async_sequence = kNoAsyncSequence;
-// Whether the client waits for the answer to the request this lane handles.
+// Whether the client waits for the answer to the request this lane handles,
+// and whether something it only checked was not submitted yet.
 static thread_local bool handling_awaited_request = false;
+static thread_local bool handling_unsettled_request = false;
 
 bool rpc_request_awaited(conn_t *) { return handling_awaited_request; }
+bool rpc_request_unsettled(conn_t *) { return handling_unsettled_request; }
+
+static bool rpc_async_ticket_released(conn_t *conn, uint64_t ticket) {
+  pthread_mutex_lock(&conn->async_mutex);
+  bool released = ticket < conn->serving_async_sequence ||
+                  conn->completed_async_sequences.count(ticket) != 0;
+  pthread_mutex_unlock(&conn->async_mutex);
+  return released;
+}
 
 int rpc_async_sequence_wait(conn_t *conn, uint64_t published) {
   pthread_mutex_lock(&conn->async_mutex);
@@ -662,6 +673,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
     return -1;
   }
   int header[2] = {};
+  bool unsettled = false;
   for (;;) {
     int result = rpc_http2_read_stream(conn, stream_id, header, sizeof(header));
     if (result != 0) {
@@ -676,10 +688,18 @@ int rpc_dispatch(conn_t *conn, int parity) {
     // Optional wait markers: {0, 0, published async count} waits for every
     // ticket below it, {0, 1, ticket} for that one. HTTP/2 continues
     // receiving the following payload while this lane waits for submission.
+    // {0, 2, ticket} only checks that one.
     uint64_t value = 0;
-    if ((header[1] != 0 && header[1] != 1) ||
-        rpc_http2_read_stream(conn, stream_id, &value, sizeof(value)) != 0 ||
-        (header[1] == 0 ? rpc_async_sequence_wait(conn, value)
+    if (header[1] < 0 || header[1] > 2 ||
+        rpc_http2_read_stream(conn, stream_id, &value, sizeof(value)) != 0) {
+      rpc_mark_connection_closed(conn);
+      return -1;
+    }
+    if (header[1] == 2) {
+      unsettled = unsettled || !rpc_async_ticket_released(conn, value);
+      continue;
+    }
+    if ((header[1] == 0 ? rpc_async_sequence_wait(conn, value)
                         : rpc_async_ticket_wait(conn, value)) < 0) {
       rpc_mark_connection_closed(conn);
       return -1;
@@ -699,6 +719,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
       return -1;
     }
     handling_awaited_request = ticket == kNoAsyncSequence;
+    handling_unsettled_request = unsettled;
     if (!handling_awaited_request &&
         rpc_async_sequence_begin(conn, ticket) < 0) {
       rpc_mark_connection_closed(conn);
@@ -957,11 +978,11 @@ int rpc_wait_for_response(conn_t *conn) {
 //
 // only one request can be active at a time, so this function will take the
 // request lock from the connection.
-// The last unanswered request on `key`, or the last connection-wide one.
+// The last unanswered request on `key`, or the last one on no object.
 static rpc_scope_ticket rpc_scope_snapshot(conn_t *conn, uintptr_t key) {
   pthread_mutex_lock(&conn->scope_mutex);
   rpc_scope_ticket last = conn->connection_last;
-  if (key != RPC_SCOPE_CONNECTION) {
+  if (key != RPC_SCOPE_NONE) {
     auto it = conn->scope_last.find(key);
     last = it == conn->scope_last.end() ? rpc_scope_ticket{} : it->second;
   }
@@ -980,8 +1001,10 @@ static void rpc_scope_wait_for(conn_t *conn, const rpc_scope_ticket &last) {
       return;
     }
   }
-  if (scope.wait_count < 3) {
+  if (scope.wait_count < rpc_request_scope::kMaxWaits) {
     scope.waits[scope.wait_count++] = last.ticket;
+  } else {
+    scope.wait_all = true;
   }
 }
 
@@ -989,24 +1012,41 @@ static int rpc_write_start(conn_t *conn, const int op, bool scoped,
                            uintptr_t key);
 
 int rpc_write_start_request(conn_t *conn, const int op) {
-  return rpc_write_start(conn, op, false, RPC_SCOPE_CONNECTION);
+  return rpc_write_start(conn, op, false, RPC_SCOPE_NONE);
 }
 
 int rpc_write_start_request_on(conn_t *conn, const int op, uintptr_t key) {
-  return rpc_write_start(conn, op, key != RPC_SCOPE_CONNECTION, key);
+  return rpc_write_start(conn, op, true, key);
 }
 
-int rpc_request_on(conn_t *conn, uintptr_t key) {
+static int rpc_request_key(conn_t *conn, uintptr_t key, bool publish) {
   if (conn == nullptr || rpc_tls_io.write_conn != conn) {
     return -1;
   }
   rpc_request_scope &scope = conn->write_scope;
-  if (!scope.scoped || key == RPC_SCOPE_CONNECTION || key == RPC_SCOPE_LANE ||
-      scope.key_count == 2) {
+  if (!scope.scoped || key == RPC_SCOPE_NONE || key == RPC_SCOPE_LANE) {
     return 0;
   }
-  scope.keys[scope.key_count++] = key;
+  if (publish && scope.key_count < 2) {
+    scope.keys[scope.key_count++] = key;
+  }
   rpc_scope_wait_for(conn, rpc_scope_snapshot(conn, key));
+  return 0;
+}
+
+int rpc_request_on(conn_t *conn, uintptr_t key) {
+  return rpc_request_key(conn, key, true);
+}
+
+int rpc_request_after(conn_t *conn, uintptr_t key) {
+  return rpc_request_key(conn, key, false);
+}
+
+int rpc_request_soft(conn_t *conn) {
+  if (conn == nullptr || rpc_tls_io.write_conn != conn) {
+    return -1;
+  }
+  conn->write_scope.soft = true;
   return 0;
 }
 
@@ -1030,9 +1070,10 @@ static int rpc_write_start(conn_t *conn, const int op, bool scoped,
           ? __atomic_load_n(&conn->published_async_sequence, __ATOMIC_ACQUIRE)
           : 0;
   rpc_scope_ticket entry_connection, entry_key;
+  bool keyed = scoped && key != RPC_SCOPE_NONE && key != RPC_SCOPE_LANE;
   if (scoped) {
-    entry_connection = rpc_scope_snapshot(conn, RPC_SCOPE_CONNECTION);
-    if (key != RPC_SCOPE_LANE) {
+    entry_connection = rpc_scope_snapshot(conn, RPC_SCOPE_NONE);
+    if (keyed) {
       entry_key = rpc_scope_snapshot(conn, key);
     }
   }
@@ -1084,9 +1125,10 @@ static int rpc_write_start(conn_t *conn, const int op, bool scoped,
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
   }
+  conn->write_scope.publish_connection = !scoped || key == RPC_SCOPE_NONE;
   if (scoped) {
     conn->write_scope.scoped = true;
-    if (key != RPC_SCOPE_LANE) {
+    if (keyed) {
       conn->write_scope.keys[conn->write_scope.key_count++] = key;
     }
     rpc_scope_wait_for(conn, entry_connection);
@@ -1251,8 +1293,9 @@ int rpc_write_end(conn_t *conn) {
     int marker_kind;
     uint64_t value;
   };
+  static constexpr int kMaxMarkers = rpc_request_scope::kMaxWaits;
   struct {
-    rpc_marker markers[3];
+    rpc_marker markers[kMaxMarkers];
     int request_id;
     int op;
     uint64_t ticket;
@@ -1273,12 +1316,16 @@ int rpc_write_end(conn_t *conn) {
       const rpc_request_scope &scope = conn->write_scope;
       int markers = 0;
       auto mark = [&](int kind, uint64_t value) {
-        header.markers[2 - markers++] = {0, kind, value};
+        header.markers[kMaxMarkers - 1 - markers++] = {0, kind, value};
       };
-      if (scope.scoped) {
+      if (scope.scoped && !scope.wait_all) {
+        // A soft request only checks: kind 2 instead of 1.
         for (int i = 0; i < scope.wait_count; ++i) {
-          mark(1, scope.waits[i]);
+          mark(scope.soft ? 2 : 1, scope.waits[i]);
         }
+      } else if (scope.wait_all) {
+        mark(0, __atomic_load_n(&conn->published_async_sequence,
+                                __ATOMIC_ACQUIRE));
       } else if (conn->write_dependency > conn->async_prefix) {
         mark(0, conn->write_dependency);
       }
@@ -1286,7 +1333,7 @@ int rpc_write_end(conn_t *conn) {
       header.op = conn->write_op;
       header.ticket = conn->write_ticket;
       unsigned char *first =
-          reinterpret_cast<unsigned char *>(&header.markers[3 - markers]);
+          reinterpret_cast<unsigned char *>(&header.markers[kMaxMarkers - markers]);
       conn->write_queue[0] = rpc_write_cursor(
           first, reinterpret_cast<unsigned char *>(&header + 1) - first);
       conn->write_queue[1] = {};
@@ -1301,7 +1348,7 @@ int rpc_write_end(conn_t *conn) {
       const rpc_request_scope &scope = conn->write_scope;
       rpc_scope_ticket last{conn->write_ticket, write_stream_id};
       pthread_mutex_lock(&conn->scope_mutex);
-      if (!scope.scoped) {
+      if (scope.publish_connection) {
         conn->connection_last = last;
       }
       for (int i = 0; i < scope.key_count; ++i) {
