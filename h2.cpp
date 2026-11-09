@@ -1061,8 +1061,10 @@ void *h2_write_main(void *arg) {
         uint64_t seen =
             transport->output_generation.load(std::memory_order_relaxed);
         pthread_mutex_unlock(&transport->session_mutex);
+        // Stay awake through short launch bursts to avoid repeatedly waking
+        // the writer and contending for session_mutex on the calling thread.
         auto deadline =
-            std::chrono::steady_clock::now() + std::chrono::microseconds(5);
+            std::chrono::steady_clock::now() + std::chrono::microseconds(20);
         uint32_t spin = 0;
         while (transport->output_generation.load(std::memory_order_acquire) ==
                seen) {
