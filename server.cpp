@@ -314,6 +314,8 @@ static void lupine_serve_lanes(conn_t &conn,
             rpc_shutdown_transport_socket(&conn);
             break;
           }
+          // Completes the ticket a fire-and-forget handler claimed, if any.
+          rpc_async_sequence_end(&conn);
         }
         if (!conn.closed) {
           (void)rpc_http2_end_stream(&conn, lane->id);

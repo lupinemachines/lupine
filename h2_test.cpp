@@ -2520,6 +2520,22 @@ void test_async_prefix_allows_overlap_and_joins_holes() {
   require(joined, "prefix did not advance through the completed hole");
 }
 
+// The lane loop ends every dispatch, so end must complete only a claimed
+// ticket, and only once.
+void test_async_prefix_end_completes_only_claimed_ticket() {
+  h2_pair pair;
+  init_pair(&pair);
+  rpc_async_sequence_end(&pair.server);
+  require(pair.server.serving_async_sequence == 0,
+          "end without a claim completed ticket 0");
+  require(rpc_async_sequence_begin(&pair.server, 0) == 0, "claim failed");
+  rpc_async_sequence_end(&pair.server);
+  rpc_async_sequence_end(&pair.server);
+  require(pair.server.serving_async_sequence == 1 &&
+              pair.server.completed_async_sequences.empty(),
+          "a claimed ticket did not complete exactly once");
+}
+
 void test_async_prefix_same_lane_elision_and_cross_lane_marker() {
   h2_pair pair;
   init_pair(&pair);
@@ -2796,6 +2812,7 @@ int main() {
   RUN_CASE(test_zstd_frame_validation());
   RUN_CASE(test_profile_hash_compatibility());
   RUN_CASE(test_async_prefix_allows_overlap_and_joins_holes());
+  RUN_CASE(test_async_prefix_end_completes_only_claimed_ticket());
   RUN_CASE(test_async_prefix_same_lane_elision_and_cross_lane_marker());
   RUN_CASE(test_async_prefix_entry_precedes_builder_wait());
   RUN_CASE(test_async_prefix_wait_preserves_flow_control());

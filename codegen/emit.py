@@ -461,11 +461,8 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write(f"  {entry}({args});\n\n")
     else:
         f.write(f"  return_value = {entry}({args});\n\n")
-    if always_async:
-        f.write("  rpc_async_sequence_end(conn);\n\n")
-    elif submit:
+    if submit and not always_async:
         f.write("  if (async_sequence != ~uint64_t{0}) {\n")
-        f.write("    rpc_async_sequence_end(conn);\n")
         write_server_buffer_cleanup(f, owned_buffers, "    ")
         f.write("    return 0;\n  }\n\n")
 

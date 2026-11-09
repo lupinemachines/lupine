@@ -378,7 +378,9 @@ fail:
   return -1;
 }
 
-static thread_local uint64_t executing_async_sequence = 0;
+// The ticket claimed by the handler running on this lane, if any.
+static constexpr uint64_t kNoAsyncSequence = ~uint64_t{0};
+static thread_local uint64_t executing_async_sequence = kNoAsyncSequence;
 
 int rpc_async_sequence_wait(conn_t *conn, uint64_t published) {
   pthread_mutex_lock(&conn->async_mutex);
@@ -403,8 +405,12 @@ int rpc_async_sequence_begin(conn_t *conn, uint64_t sequence) {
 }
 
 void rpc_async_sequence_end(conn_t *conn) {
-  pthread_mutex_lock(&conn->async_mutex);
   uint64_t sequence = executing_async_sequence;
+  if (sequence == kNoAsyncSequence) {
+    return;
+  }
+  executing_async_sequence = kNoAsyncSequence;
+  pthread_mutex_lock(&conn->async_mutex);
   if (sequence == conn->serving_async_sequence) {
     ++conn->serving_async_sequence;
     while (
