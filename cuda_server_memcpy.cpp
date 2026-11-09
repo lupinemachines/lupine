@@ -1682,11 +1682,15 @@ static CUresult lupine_prepare_htod_copy(
   return CUDA_SUCCESS;
 }
 
+// With `ticket`, the request's async ticket is ended once the copy is queued
+// on `stream`, before this waits for the stream to reach it: tickets order
+// submission, and a later request from another lane must not wait behind work
+// queued ahead of the copy.
 static CUresult lupine_enqueue_client_htod_copy(lupine_staging_state &state,
                                                 lupine_htod_copy copy,
                                                 CUcontext context,
-                                                CUstream stream,
-                                                bool blocking) {
+                                                CUstream stream, bool blocking,
+                                                conn_t *ticket) {
   if (copy.bytes == 0) {
     return CUDA_SUCCESS;
   }
@@ -1771,6 +1775,9 @@ static CUresult lupine_enqueue_client_htod_copy(lupine_staging_state &state,
     }
     return result;
   }
+  if (ticket != nullptr) {
+    rpc_async_sequence_end(ticket);
+  }
 
   // CUDA may stage pageable HtoD input before an asynchronous API returns.
   // Preserve that source-lifetime guarantee: outside capture, the callback
@@ -1785,7 +1792,8 @@ static CUresult lupine_enqueue_client_htod_copy(lupine_staging_state &state,
 
 static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
                                                   bool blocking,
-                                                  lupine_htod_copy copy) {
+                                                  lupine_htod_copy copy,
+                                                  bool end_ticket = false) {
   // CUDA allows the copy stream to belong to a different context from the
   // caller's current one. The staging stream and its ordering events must be
   // created in that stream's context, then leave the caller's binding intact.
@@ -1811,7 +1819,8 @@ static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
 
   if (result == CUDA_SUCCESS) {
     result = lupine_enqueue_client_htod_copy(*state, std::move(copy), context,
-                                             stream, blocking);
+                                             stream, blocking,
+                                             end_ticket ? conn : nullptr);
   }
   CUcontext popped = nullptr;
   CUresult restore = cuCtxPopCurrent_v2(&popped);
@@ -2922,9 +2931,13 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   uint64_t pushed_bytes = 0;
   size_t byteCount = 0;
   CUstream stream = nullptr;
+  uint8_t fire_and_forget = 0;
+  uint64_t async_sequence = 0;
   CUresult result = CUDA_SUCCESS;
 
-  if (rpc_read(conn, &is_server_authoritative,
+  if (rpc_read(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
+      rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_read(conn, &is_server_authoritative,
                sizeof(is_server_authoritative)) < 0 ||
       rpc_read(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
@@ -2935,6 +2948,26 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   }
   if (pushed_bytes != 0 && pushed_bytes != byteCount) {
     return -1;
+  }
+  // Only a page-locked source is sent fire-and-forget, and its ticket ends
+  // once the copy is queued rather than when the stream reaches it. A failure
+  // reaches the client from its next synchronize.
+  if (fire_and_forget) {
+    if (pushed_bytes != 0 || byteCount == 0 || rpc_read_end(conn) < 0 ||
+        rpc_async_sequence_begin(conn, async_sequence) < 0) {
+      return -1;
+    }
+    lupine_keep_async_error(
+        conn, is_server_authoritative
+                  ? cuMemcpyAsync(dstDevice,
+                                  reinterpret_cast<CUdeviceptr>(srcHost),
+                                  byteCount, stream)
+                  : lupine_copy_client_host_to_device(
+                        conn, stream, false,
+                        lupine_make_linear_htod_copy(dstDevice, srcHost,
+                                                     byteCount),
+                        true));
+    return 0;
   }
   if (pushed_bytes != 0) {
     result = lupine_copy_pushed_host_to_device(
