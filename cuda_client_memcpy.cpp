@@ -1924,7 +1924,7 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
       !lupine_lane_context_cache_matches(allocation->route_id, context)) {
     uint64_t epoch = lupine_lane_context_cache_epoch();
     CUresult bound = CUDA_ERROR_DEVICE_UNAVAILABLE;
-    if (rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
+    if (rpc_write_start_request_on(conn, RPC_cuCtxSetCurrent, RPC_SCOPE_LANE) < 0 ||
         rpc_write(conn, &context, sizeof(context)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &bound, sizeof(bound)) < 0 || rpc_read_end(conn) < 0) {
@@ -4291,7 +4291,7 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
                                         is_server_authoritative,
                                         pushed_bytes)) {
     if (lupine_prepare_rpc(conn) < 0 ||
-        rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
+        rpc_write_start_request_on(conn, RPC_cuMemcpyHtoDAsync_v2, lupine_rpc_stream_scope(hStream)) < 0 ||
         rpc_write(conn, &is_server_authoritative,
                   sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
@@ -4307,7 +4307,7 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
   }
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuMemcpyHtoDAsync_v2, lupine_rpc_stream_scope(hStream)) < 0 ||
       rpc_write(conn, &is_server_authoritative,
                 sizeof(is_server_authoritative)) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
@@ -4489,7 +4489,7 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
   int copy_opcode = pinned_destination ? LUPINE_RPC_lupineMemcpyDtoHAsyncPinned
                                        : RPC_cuMemcpyDtoHAsync_v2;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, copy_opcode) < 0 ||
+      rpc_write_start_request_on(conn, copy_opcode, lupine_rpc_stream_scope(hStream)) < 0 ||
       rpc_write(conn, &dstHost, sizeof(dstHost)) < 0 ||
       (pinned_destination &&
        (rpc_write(conn, &client_alias, sizeof(client_alias)) < 0 ||
@@ -4647,7 +4647,7 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
     // and they land at the next synchronize, which a pageable destination
     // takes right away.
     if (lupine_prepare_rpc(conn) < 0 ||
-        rpc_write_start_request(conn, api.op) < 0 ||
+        rpc_write_start_request_on(conn, api.op, lupine_rpc_stream_scope(hStream)) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
@@ -4663,7 +4663,7 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
                : CUDA_SUCCESS;
   }
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, api.op) < 0 ||
+      rpc_write_start_request_on(conn, api.op, lupine_rpc_stream_scope(hStream)) < 0 ||
       rpc_write(conn, &direction, sizeof(direction)) < 0 ||
       (pull_source && rpc_write(conn, &is_server_authoritative,
                                 sizeof(is_server_authoritative)) < 0) ||

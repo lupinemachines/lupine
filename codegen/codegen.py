@@ -1482,12 +1482,40 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                         f, result_code(function.return_type.format(), "invalid_argument")
                     )
 
+            # A call on a stream is ordered by that stream, not by every earlier
+            # unanswered request on the connection.
+            start = f"rpc_write_start_request(conn, RPC_{function.name.format()})"
+            stream = next(
+                (
+                    parameter.name
+                    for parameter in function.parameters
+                    if parameter.type.format() == "CUstream"
+                ),
+                None,
+            )
+            event = next(
+                (
+                    parameter.name
+                    for parameter in function.parameters
+                    if parameter.type.format() == "CUevent"
+                ),
+                None,
+            )
+            if stream is not None:
+                start = (
+                    f"rpc_write_start_request_on(conn, RPC_{function.name.format()},\n"
+                    f"            lupine_rpc_stream_scope({stream}))"
+                )
+            elif event is not None and function.name.format().startswith("cuEvent"):
+                start = (
+                    f"rpc_write_start_request_on(conn, RPC_{function.name.format()},\n"
+                    f"            reinterpret_cast<uintptr_t>({event}))"
+                )
             if unanswered(function, metadata, "CUresult"):
                 error_return = result_code(function.return_type.format())
                 f.write(
                     f"    if (lupine_prepare_rpc(conn) < 0 ||\n"
-                    f"        rpc_write_start_request(\n"
-                    f"            conn, RPC_{function.name.format()}) < 0 ||\n"
+                    f"        {start} < 0 ||\n"
                 )
                 for operation in operations:
                     operation.client_rpc_write(f)
@@ -1509,7 +1537,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
 
             f.write(
                 f"    if (lupine_prepare_rpc(conn) < 0 ||\n"
-                f"        rpc_write_start_request(conn, RPC_{function.name.format()}) < 0 ||\n"
+                f"        {start} < 0 ||\n"
             )
 
             for operation in operations:

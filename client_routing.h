@@ -196,6 +196,20 @@ lupine_record_disjoint_allocation(CUdeviceptr *ptr, size_t size,
                                   lupine_route route,
                                   const std::function<CUresult()> &again);
 
+// The object a request on `stream` is ordered by. The legacy stream waits for
+// every blocking stream, so its requests stay ordered connection-wide; the
+// per-thread default stream belongs to one thread, whose lane already orders
+// it.
+static inline uintptr_t lupine_rpc_stream_scope(CUstream stream) {
+  if (stream == nullptr || stream == CU_STREAM_LEGACY) {
+    return RPC_SCOPE_CONNECTION;
+  }
+  if (stream == CU_STREAM_PER_THREAD) {
+    return RPC_SCOPE_LANE;
+  }
+  return reinterpret_cast<uintptr_t>(stream);
+}
+
 // Resolves a driver entry point once per call site; name must be a literal.
 #define LUPINE_REAL_CUDA_SYMBOL(name)                                          \
   ([] {                                                                        \

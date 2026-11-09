@@ -4,6 +4,7 @@
 #include "lupine_platform.h"
 #include <chrono>
 #include <set>
+#include <unordered_map>
 #include <stdint.h>
 #include <vector>
 
@@ -126,6 +127,31 @@ struct rpc_host_allocation_write {
 
 typedef struct conn_t conn_t;
 
+// Requests are ordered against earlier unanswered ones either connection-wide
+// or by the objects they touch. A scope key is an object's handle (a stream or
+// an event); these two values are not handles.
+static constexpr uintptr_t RPC_SCOPE_CONNECTION = 0;
+static constexpr uintptr_t RPC_SCOPE_LANE = ~uintptr_t{0};
+
+// The last unanswered request on an object, and the lane that sent it.
+struct rpc_scope_ticket {
+  uint64_t ticket = ~uint64_t{0};
+  int32_t lane = -1;
+};
+
+// What the request being built is ordered against. A connection-wide request
+// waits for every unanswered request published before it was started. A
+// scoped one waits only for the last unanswered request another lane sent on
+// each of its objects, and for the last connection-wide one: its own lane's
+// requests are already in order.
+struct rpc_request_scope {
+  bool scoped = false;
+  int key_count = 0;
+  uintptr_t keys[2] = {};
+  int wait_count = 0;
+  uint64_t waits[3] = {};
+};
+
 struct conn_t {
   lupine_socket_t connfd;
 
@@ -136,6 +162,7 @@ struct conn_t {
   uint64_t write_dependency;
   uint64_t write_ticket;
   bool write_awaited;
+  rpc_request_scope write_scope;
   int32_t async_prefix_stream;
   uint64_t async_prefix;
 
@@ -146,6 +173,9 @@ struct conn_t {
   uint64_t serving_async_sequence;
   uint64_t published_async_sequence;
   std::set<uint64_t> completed_async_sequences;
+  pthread_mutex_t scope_mutex;
+  std::unordered_map<uintptr_t, rpc_scope_ticket> scope_last;
+  rpc_scope_ticket connection_last;
   bool async_cancelled;
   int async_sync_initialized;
   int first_async_error;
@@ -232,6 +262,12 @@ extern void rpc_expect_answer(conn_t *conn);
 // remote server) or a closed conn fails here, so callers surface their
 // unavailable-server result without per-call-site null checks.
 extern int rpc_write_start_request(conn_t *conn, const int op);
+// Starts a request ordered only by the object `key` names (RPC_SCOPE_LANE: by
+// nothing beyond its own lane), not by every earlier unanswered request.
+extern int rpc_write_start_request_on(conn_t *conn, const int op,
+                                      uintptr_t key);
+// Adds a second object the request being built is ordered by.
+extern int rpc_request_on(conn_t *conn, uintptr_t key);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 // A zero-size write is a successful no-op, including when data is null.
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
