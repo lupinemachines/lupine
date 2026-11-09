@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <climits>
+#include <cstring>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -381,6 +382,10 @@ fail:
 // The ticket claimed by the handler running on this lane, if any.
 static constexpr uint64_t kNoAsyncSequence = ~uint64_t{0};
 static thread_local uint64_t executing_async_sequence = kNoAsyncSequence;
+// Whether the request being handled on this lane carried a ticket.
+static thread_local bool handling_async_request = false;
+
+bool rpc_request_is_async(conn_t *) { return handling_async_request; }
 
 int rpc_async_sequence_wait(conn_t *conn, uint64_t published) {
   pthread_mutex_lock(&conn->async_mutex);
@@ -516,6 +521,7 @@ struct rpc_nested_write_frame {
   int write_op = 0;
   int32_t write_stream_id = -1;
   uint64_t write_dependency = 0;
+  uint64_t write_ticket = 0;
   std::vector<rpc_write_cursor> write_queue;
   unsigned char *write_copy_buffer = nullptr;
   size_t write_copy_capacity = 0;
@@ -543,6 +549,7 @@ void rpc_save_outer_response(conn_t *conn) {
   frame.write_op = conn->write_op;
   frame.write_stream_id = conn->write_stream_id;
   frame.write_dependency = conn->write_dependency;
+  frame.write_ticket = conn->write_ticket;
   frame.write_queue = std::move(conn->write_queue);
   frame.write_copy_buffer = conn->write_copy_buffer;
   frame.write_copy_capacity = conn->write_copy_capacity;
@@ -558,6 +565,7 @@ void rpc_restore_outer_response(conn_t *conn) {
   conn->write_op = frame.write_op;
   conn->write_stream_id = frame.write_stream_id;
   conn->write_dependency = frame.write_dependency;
+  conn->write_ticket = frame.write_ticket;
   conn->write_queue = std::move(frame.write_queue);
   conn->write_copy_buffer = frame.write_copy_buffer;
   conn->write_copy_capacity = frame.write_copy_capacity;
@@ -619,6 +627,8 @@ int rpc_dispatch(conn_t *conn, int parity) {
     return -1;
   }
   int header[2] = {};
+  bool async_request = false;
+  uint64_t ticket = 0;
   for (;;) {
     int result = rpc_http2_read_stream(conn, stream_id, header, sizeof(header));
     if (result != 0) {
@@ -630,20 +640,30 @@ int rpc_dispatch(conn_t *conn, int parity) {
     if (parity != 0 || header[0] != 0) {
       break;
     }
-    // Optional wait marker: {0, 0, published async count}. HTTP/2 continues
-    // receiving the following payload while this lane waits for submission.
-    uint64_t published = 0;
-    if (header[1] != 0 ||
-        rpc_http2_read_stream(conn, stream_id, &published, sizeof(published)) !=
-            0 ||
-        rpc_async_sequence_wait(conn, published) < 0) {
+    // Markers lead a request: {0, 0, published async count} waits for those
+    // submissions, and HTTP/2 keeps receiving the payload meanwhile;
+    // {0, 1, ticket} says the client will not wait on this request.
+    uint64_t value = 0;
+    if ((header[1] != 0 && header[1] != 1) ||
+        rpc_http2_read_stream(conn, stream_id, &value, sizeof(value)) != 0 ||
+        (header[1] == 0 && rpc_async_sequence_wait(conn, value) < 0)) {
       rpc_mark_connection_closed(conn);
       return -1;
+    }
+    if (header[1] == 1) {
+      async_request = true;
+      ticket = value;
     }
   }
   if (header[0] < 2 || header[0] % 2 != parity) {
     rpc_mark_connection_closed(conn);
     return -1;
+  }
+  if (parity == 0) {
+    handling_async_request = async_request;
+    if (async_request && rpc_async_sequence_begin(conn, ticket) < 0) {
+      return -1;
+    }
   }
   rpc_tls_io.read_conn = conn;
   rpc_tls_io.read = {stream_id, header[0], header[1]};
@@ -941,6 +961,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   conn->write_id = conn->request_id;
   conn->write_op = op;
   conn->write_dependency = dependency;
+  conn->write_ticket = kNoAsyncSequence;
   conn->write_stream_id = rpc_http2_lane_stream(conn, rpc_tls_lane.id);
   if (conn->write_stream_id < 0) {
     rpc_release_write_builder(conn, request_nested_in_response);
@@ -953,12 +974,11 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   return 0;
 }
 
-int rpc_write_start_async_request(conn_t *conn, const int op,
-                                  uint64_t *sequence) {
-  if (sequence == nullptr || rpc_write_start_request(conn, op) < 0) {
+int rpc_write_start_async_request(conn_t *conn, const int op) {
+  if (rpc_write_start_request(conn, op) < 0) {
     return -1;
   }
-  *sequence = conn->issued_async_sequence++;
+  conn->write_ticket = conn->issued_async_sequence++;
   return 0;
 }
 
@@ -1109,10 +1129,13 @@ int rpc_write_end(conn_t *conn) {
     conn->async_prefix_stream = write_stream_id;
     conn->async_prefix = 0;
   }
-  struct {
+  struct rpc_marker {
     int marker_id;
-    int marker_op;
-    uint64_t published;
+    int marker_kind;
+    uint64_t value;
+  };
+  struct {
+    rpc_marker markers[2];
     int request_id;
     int op;
   } header;
@@ -1121,9 +1144,22 @@ int rpc_write_end(conn_t *conn) {
         rpc_write_cursor(&conn->write_id, sizeof(conn->write_id));
     conn->write_queue[1] =
         rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
+    size_t markers = 0;
     if (client_request && conn->write_dependency > conn->async_prefix) {
-      header = {0, 0, conn->write_dependency, write_id, conn->write_op};
-      conn->write_queue[0] = rpc_write_cursor(&header, sizeof(header));
+      header.markers[markers++] = {0, 0, conn->write_dependency};
+    }
+    if (client_request && conn->write_ticket != kNoAsyncSequence) {
+      header.markers[markers++] = {0, 1, conn->write_ticket};
+    }
+    if (markers != 0) {
+      // The markers and {id, op} are contiguous, so send them as one span.
+      rpc_marker *first = &header.markers[2 - markers];
+      std::memmove(first, header.markers, markers * sizeof(rpc_marker));
+      header.request_id = write_id;
+      header.op = conn->write_op;
+      conn->write_queue[0] = rpc_write_cursor(
+          first, reinterpret_cast<unsigned char *>(&header + 1) -
+                     reinterpret_cast<unsigned char *>(first));
       conn->write_queue[1] = {};
     }
     result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);

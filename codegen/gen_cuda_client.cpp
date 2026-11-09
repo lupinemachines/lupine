@@ -807,11 +807,8 @@ CUresult cuLibraryUnload(CUlibrary library) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, RPC_cuLibraryUnload,
-                                    &async_sequence) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuLibraryUnload) < 0 ||
       rpc_write(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -991,11 +988,8 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, RPC_cuKernelSetAttribute,
-                                    &async_sequence) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuKernelSetAttribute) < 0 ||
       rpc_write(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
       rpc_write(conn, &val, sizeof(int)) < 0 ||
       rpc_write(conn, &kernel, sizeof(CUkernel)) < 0 ||
@@ -1512,11 +1506,8 @@ CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
         LUPINE_REAL_CUDA_SYMBOL("cuMemcpyDtoDAsync_v2"), dstDevice, srcDevice,
         ByteCount, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, RPC_cuMemcpyDtoDAsync_v2,
-                                    &async_sequence) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuMemcpyDtoDAsync_v2) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
@@ -1697,11 +1688,8 @@ CUresult cuMemsetD8Async(CUdeviceptr dstDevice, unsigned char uc, size_t N,
     return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuMemsetD8Async"),
                                     dstDevice, uc, N, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, RPC_cuMemsetD8Async,
-                                    &async_sequence) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuMemsetD8Async) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &uc, sizeof(unsigned char)) < 0 ||
       rpc_write(conn, &N, sizeof(size_t)) < 0 ||
@@ -1720,11 +1708,8 @@ CUresult cuMemsetD16Async(CUdeviceptr dstDevice, unsigned short us, size_t N,
     return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuMemsetD16Async"),
                                     dstDevice, us, N, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, RPC_cuMemsetD16Async,
-                                    &async_sequence) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuMemsetD16Async) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &us, sizeof(unsigned short)) < 0 ||
       rpc_write(conn, &N, sizeof(size_t)) < 0 ||
@@ -1743,11 +1728,8 @@ CUresult cuMemsetD32Async(CUdeviceptr dstDevice, unsigned int ui, size_t N,
     return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuMemsetD32Async"),
                                     dstDevice, ui, N, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, RPC_cuMemsetD32Async,
-                                    &async_sequence) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuMemsetD32Async) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ui, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &N, sizeof(size_t)) < 0 ||
@@ -1768,11 +1750,8 @@ CUresult cuMemsetD2D8Async(CUdeviceptr dstDevice, size_t dstPitch,
         LUPINE_REAL_CUDA_SYMBOL("cuMemsetD2D8Async"), dstDevice, dstPitch, uc,
         Width, Height, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, RPC_cuMemsetD2D8Async,
-                                    &async_sequence) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuMemsetD2D8Async) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_write(conn, &uc, sizeof(unsigned char)) < 0 ||
@@ -1795,11 +1774,8 @@ CUresult cuMemsetD2D16Async(CUdeviceptr dstDevice, size_t dstPitch,
         LUPINE_REAL_CUDA_SYMBOL("cuMemsetD2D16Async"), dstDevice, dstPitch, us,
         Width, Height, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, RPC_cuMemsetD2D16Async,
-                                    &async_sequence) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuMemsetD2D16Async) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_write(conn, &us, sizeof(unsigned short)) < 0 ||
@@ -1822,11 +1798,8 @@ CUresult cuMemsetD2D32Async(CUdeviceptr dstDevice, size_t dstPitch,
         LUPINE_REAL_CUDA_SYMBOL("cuMemsetD2D32Async"), dstDevice, dstPitch, ui,
         Width, Height, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, RPC_cuMemsetD2D32Async,
-                                    &async_sequence) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuMemsetD2D32Async) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_write(conn, &ui, sizeof(unsigned int)) < 0 ||
@@ -5445,11 +5418,8 @@ CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream) {
     return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuGraphLaunch"),
                                     hGraphExec, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, RPC_cuGraphLaunch, &async_sequence) <
-          0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_write_start_async_request(conn, RPC_cuGraphLaunch) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write_end(conn) < 0) {

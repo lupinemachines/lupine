@@ -5,9 +5,8 @@ extern "C" int lupine_rpc_write_start_request(conn_t *conn, int op) {
   return rpc_write_start_request(conn, op);
 }
 
-extern "C" int lupine_rpc_write_start_async_request(conn_t *conn, int op,
-                                                    uint64_t *sequence) {
-  return rpc_write_start_async_request(conn, op, sequence);
+extern "C" int lupine_rpc_write_start_async_request(conn_t *conn, int op) {
+  return rpc_write_start_async_request(conn, op);
 }
 
 extern "C" int lupine_rpc_write(conn_t *conn, const void *data, size_t size) {

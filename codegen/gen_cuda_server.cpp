@@ -1494,10 +1494,8 @@ int handle_cuKernelSetAttribute(conn_t *conn) {
   int val;
   CUkernel kernel;
   CUdevice dev;
-  uint64_t async_sequence = 0;
   int request_id;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
+  if (rpc_read(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
       rpc_read(conn, &val, sizeof(int)) < 0 ||
       rpc_read(conn, &kernel, sizeof(CUkernel)) < 0 ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
@@ -1505,9 +1503,6 @@ int handle_cuKernelSetAttribute(conn_t *conn) {
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
-
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
   cuKernelSetAttribute(attrib, val, kernel, dev);
@@ -2170,10 +2165,8 @@ int handle_cuMemcpyDtoDAsync_v2(conn_t *conn) {
   CUdeviceptr srcDevice;
   size_t ByteCount;
   CUstream hStream;
-  uint64_t async_sequence = 0;
   int request_id;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
+  if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &ByteCount, sizeof(size_t)) < 0 ||
       rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
@@ -2181,9 +2174,6 @@ int handle_cuMemcpyDtoDAsync_v2(conn_t *conn) {
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
-
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
   cuMemcpyDtoDAsync_v2(dstDevice, srcDevice, ByteCount, hStream);
@@ -2366,10 +2356,8 @@ int handle_cuMemsetD8Async(conn_t *conn) {
   unsigned char uc;
   size_t N;
   CUstream hStream;
-  uint64_t async_sequence = 0;
   int request_id;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
+  if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &uc, sizeof(unsigned char)) < 0 ||
       rpc_read(conn, &N, sizeof(size_t)) < 0 ||
       rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
@@ -2377,9 +2365,6 @@ int handle_cuMemsetD8Async(conn_t *conn) {
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
-
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
   cuMemsetD8Async(dstDevice, uc, N, hStream);
@@ -2394,10 +2379,8 @@ int handle_cuMemsetD16Async(conn_t *conn) {
   unsigned short us;
   size_t N;
   CUstream hStream;
-  uint64_t async_sequence = 0;
   int request_id;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
+  if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &us, sizeof(unsigned short)) < 0 ||
       rpc_read(conn, &N, sizeof(size_t)) < 0 ||
       rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
@@ -2405,9 +2388,6 @@ int handle_cuMemsetD16Async(conn_t *conn) {
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
-
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
   cuMemsetD16Async(dstDevice, us, N, hStream);
@@ -2422,10 +2402,8 @@ int handle_cuMemsetD32Async(conn_t *conn) {
   unsigned int ui;
   size_t N;
   CUstream hStream;
-  uint64_t async_sequence = 0;
   int request_id;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
+  if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &ui, sizeof(unsigned int)) < 0 ||
       rpc_read(conn, &N, sizeof(size_t)) < 0 ||
       rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
@@ -2433,9 +2411,6 @@ int handle_cuMemsetD32Async(conn_t *conn) {
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
-
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
   cuMemsetD32Async(dstDevice, ui, N, hStream);
@@ -2452,10 +2427,8 @@ int handle_cuMemsetD2D8Async(conn_t *conn) {
   size_t Width;
   size_t Height;
   CUstream hStream;
-  uint64_t async_sequence = 0;
   int request_id;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
+  if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_read(conn, &uc, sizeof(unsigned char)) < 0 ||
       rpc_read(conn, &Width, sizeof(size_t)) < 0 ||
@@ -2465,9 +2438,6 @@ int handle_cuMemsetD2D8Async(conn_t *conn) {
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
-
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
   cuMemsetD2D8Async(dstDevice, dstPitch, uc, Width, Height, hStream);
@@ -2484,10 +2454,8 @@ int handle_cuMemsetD2D16Async(conn_t *conn) {
   size_t Width;
   size_t Height;
   CUstream hStream;
-  uint64_t async_sequence = 0;
   int request_id;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
+  if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_read(conn, &us, sizeof(unsigned short)) < 0 ||
       rpc_read(conn, &Width, sizeof(size_t)) < 0 ||
@@ -2497,9 +2465,6 @@ int handle_cuMemsetD2D16Async(conn_t *conn) {
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
-
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
   cuMemsetD2D16Async(dstDevice, dstPitch, us, Width, Height, hStream);
@@ -2516,10 +2481,8 @@ int handle_cuMemsetD2D32Async(conn_t *conn) {
   size_t Width;
   size_t Height;
   CUstream hStream;
-  uint64_t async_sequence = 0;
   int request_id;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
+  if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_read(conn, &ui, sizeof(unsigned int)) < 0 ||
       rpc_read(conn, &Width, sizeof(size_t)) < 0 ||
@@ -2529,9 +2492,6 @@ int handle_cuMemsetD2D32Async(conn_t *conn) {
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
-
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
   cuMemsetD2D32Async(dstDevice, dstPitch, ui, Width, Height, hStream);
@@ -3810,17 +3770,12 @@ ERROR_0:
 
 int handle_cuThreadExchangeStreamCaptureMode(conn_t *conn) {
   CUstreamCaptureMode mode{};
-  uint64_t async_sequence = 0;
   int request_id;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &mode, sizeof(CUstreamCaptureMode)) < 0 || false)
+  if (rpc_read(conn, &mode, sizeof(CUstreamCaptureMode)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
-    goto ERROR_0;
-
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0)
     goto ERROR_0;
 
   cuThreadExchangeStreamCaptureMode(&mode);

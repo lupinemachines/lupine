@@ -1497,11 +1497,9 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             if metadata.async_fire_forget:
                 error_return = result_code(function.return_type.format())
                 f.write(
-                    f"    uint64_t async_sequence = 0;\n"
                     f"    if (lupine_prepare_rpc(conn) < 0 ||\n"
                     f"        rpc_write_start_async_request(\n"
-                    f"            conn, RPC_{function.name.format()}, &async_sequence) < 0 ||\n"
-                    f"        rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||\n"
+                    f"            conn, RPC_{function.name.format()}) < 0 ||\n"
                 )
                 for operation in operations:
                     operation.client_rpc_write(f)

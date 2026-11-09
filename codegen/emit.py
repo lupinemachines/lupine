@@ -196,12 +196,8 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
     start = f"rpc_write_start_request(conn, RPC_{name})"
     wait, returned = "rpc_wait_for_response(conn) < 0 ||", "return_value"
     if submit:
-        # The ticket leads the request; a request that expects its answer
-        # carries the all-ones ticket instead of one.
-        f.write("  uint64_t async_sequence = ~uint64_t{0};\n")
         start = (
-            f"(submit_async ? rpc_write_start_async_request(conn, RPC_{name}, &async_sequence) : {start}) < 0 ||\n"
-            "      rpc_write(conn, &async_sequence, sizeof(async_sequence))"
+            f"(submit_async ? rpc_write_start_async_request(conn, RPC_{name}) : {start})"
         )
         wait = "(submit_async ? rpc_write_end(conn) : rpc_wait_for_response(conn)) < 0 ||\n      (!submit_async && ("
         returned = f"submit_async ? {backend.async_success} : return_value"
@@ -374,8 +370,6 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write("  lupine_pending_dtoh_items pending;\n")
     if stdout:
         f.write("  lupine_captured_stdout capture;\n")
-    if metadata.async_fire_forget:
-        f.write("  uint64_t async_sequence = 0;\n")
     if metadata.graph_exec_update is not None:
         f.write("  lupine_htod_graph_binding update_binding;\n")
     f.write("  int request_id;\n")
@@ -388,10 +382,6 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write(f"  using fn_t = {result} (*)({fn_params});\n")
         f.write("  fn_t fn = nullptr;\n")
     f.write("  if (\n")
-    if metadata.async_fire_forget:
-        f.write(
-            "      rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||\n"
-        )
     signed_lengths = signed_length_arrays(operations)
     for operation in operations:
         if operation in signed_lengths:
@@ -408,15 +398,6 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         graph_exec = metadata.graph_exec_node.graph_exec.name
         node = metadata.graph_exec_node.node.name
         f.write(f"  {node} = lupine_htod_graph_exec_node({graph_exec}, {node});\n")
-    if always_async:
-        f.write("  if (rpc_async_sequence_begin(conn, async_sequence) < 0)\n")
-        f.write("    goto ERROR_0;\n\n")
-    elif submit:
-        f.write(
-            "  if (async_sequence != ~uint64_t{0} &&\n"
-            "      rpc_async_sequence_begin(conn, async_sequence) < 0)\n"
-            "    goto ERROR_0;\n\n"
-        )
 
     if stdout:
         f.write("  lupine_start_stdout_capture(&capture);\n")
@@ -462,7 +443,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     else:
         f.write(f"  return_value = {entry}({args});\n\n")
     if submit and not always_async:
-        f.write("  if (async_sequence != ~uint64_t{0}) {\n")
+        f.write("  if (rpc_request_is_async(conn)) {\n")
         write_server_buffer_cleanup(f, owned_buffers, "    ")
         f.write("    return 0;\n  }\n\n")
 

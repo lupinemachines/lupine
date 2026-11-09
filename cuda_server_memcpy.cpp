@@ -2187,16 +2187,14 @@ int lupine_write_lifecycle_response(conn_t *conn, int request_id,
 int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   CUdeviceptr destination = 0;
   const void *source = nullptr;
-  uint8_t fire_and_forget = 0;
-  uint64_t async_sequence = 0;
+  // The client waits for no answer to a request that carried a ticket.
+  bool fire_and_forget = rpc_request_is_async(conn);
   bool is_server_authoritative = false;
   uint64_t pushed_bytes = 0;
   size_t bytes = 0;
   CUresult result = CUDA_SUCCESS;
 
-  if (rpc_read(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
-      rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &is_server_authoritative,
+  if (rpc_read(conn, &is_server_authoritative,
                sizeof(is_server_authoritative)) < 0 ||
       rpc_read(conn, &destination, sizeof(destination)) < 0 ||
       rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
@@ -2205,10 +2203,6 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
     return -1;
   }
   if (pushed_bytes != 0 && pushed_bytes != bytes) {
-    return -1;
-  }
-  // Labels the copy's submission; a later request from any lane waits for it.
-  if (fire_and_forget && rpc_async_sequence_begin(conn, async_sequence) < 0) {
     return -1;
   }
   if (pushed_bytes != 0) {
@@ -3061,18 +3055,15 @@ static void lupine_defer_dtoh(conn_t *conn, CUstream stream,
 }
 
 int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
-  uint64_t async_sequence = 0;
   void *dstHost = nullptr;
   CUdeviceptr srcDevice = 0;
   size_t byteCount = 0;
   CUstream stream = nullptr;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
+  if (rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
       rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0 ||
-      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
   lupine_defer_dtoh(conn, stream, {dstHost, byteCount}, srcDevice);
@@ -3084,13 +3075,10 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
 // rows back to its own pitch.
 static int lupine_defer_pitched_dtoh(conn_t *conn,
                                      lupine_native_memcpy3d native) {
-  uint64_t async_sequence = 0;
   CUDA_MEMCPY3D copy = {};
   CUstream stream = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &copy, sizeof(copy)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0 ||
-      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+  if (rpc_read(conn, &copy, sizeof(copy)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
   size_t slice = copy.dstHeight * copy.dstPitch;
@@ -3116,7 +3104,6 @@ static int lupine_defer_pitched_dtoh(conn_t *conn,
 }
 
 int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
-  uint64_t async_sequence = 0;
   void *dstHost = nullptr;
   void *client_alias = nullptr;
   void *server_host = nullptr;
@@ -3124,8 +3111,7 @@ int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
   size_t byteCount = 0;
   CUstream stream = nullptr;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
+  if (rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
       rpc_read(conn, &client_alias, sizeof(client_alias)) < 0 ||
       rpc_read(conn, &server_host, sizeof(server_host)) < 0 ||
       rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
@@ -3135,10 +3121,6 @@ int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
   }
 
   if (rpc_read_end(conn) < 0) {
-    return -1;
-  }
-
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
     return -1;
   }
 

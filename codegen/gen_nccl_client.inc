@@ -1058,12 +1058,9 @@ static ncclResult_t lupine_rpc_ncclReduce(conn_t *conn, bool submit_async,
                                           ncclComm_t comm,
                                           cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclReduce,
-                                                    &async_sequence)
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclReduce)
                     : rpc_write_start_request(conn, RPC_ncclReduce)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
@@ -1095,12 +1092,9 @@ static ncclResult_t lupine_rpc_ncclBcast(conn_t *conn, bool submit_async,
                                          ncclDataType_t datatype, int root,
                                          ncclComm_t comm, cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async
-           ? rpc_write_start_async_request(conn, RPC_ncclBcast, &async_sequence)
-           : rpc_write_start_request(conn, RPC_ncclBcast)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclBcast)
+                    : rpc_write_start_request(conn, RPC_ncclBcast)) < 0 ||
       rpc_write(conn, &buff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
       rpc_write(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1129,12 +1123,9 @@ lupine_rpc_ncclBroadcast(conn_t *conn, bool submit_async, const void *sendbuff,
                          void *recvbuff, size_t count, ncclDataType_t datatype,
                          int root, ncclComm_t comm, cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclBroadcast,
-                                                    &async_sequence)
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclBroadcast)
                     : rpc_write_start_request(conn, RPC_ncclBroadcast)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
@@ -1165,12 +1156,9 @@ lupine_rpc_ncclAllReduce(conn_t *conn, bool submit_async, const void *sendbuff,
                          void *recvbuff, size_t count, ncclDataType_t datatype,
                          ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclAllReduce,
-                                                    &async_sequence)
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclAllReduce)
                     : rpc_write_start_request(conn, RPC_ncclAllReduce)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
@@ -1201,13 +1189,10 @@ static ncclResult_t lupine_rpc_ncclReduceScatter(
     size_t recvcount, ncclDataType_t datatype, ncclRedOp_t op, ncclComm_t comm,
     cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
       (submit_async
-           ? rpc_write_start_async_request(conn, RPC_ncclReduceScatter,
-                                           &async_sequence)
+           ? rpc_write_start_async_request(conn, RPC_ncclReduceScatter)
            : rpc_write_start_request(conn, RPC_ncclReduceScatter)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &recvcount, sizeof(size_t)) < 0 ||
@@ -1242,12 +1227,9 @@ static ncclResult_t lupine_rpc_ncclAllGather(conn_t *conn, bool submit_async,
                                              ncclComm_t comm,
                                              cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclAllGather,
-                                                    &async_sequence)
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclAllGather)
                     : rpc_write_start_request(conn, RPC_ncclAllGather)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &sendcount, sizeof(size_t)) < 0 ||
@@ -1277,12 +1259,9 @@ lupine_rpc_ncclAlltoAll(conn_t *conn, bool submit_async, const void *sendbuff,
                         void *recvbuff, size_t count, ncclDataType_t datatype,
                         ncclComm_t comm, cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclAlltoAll,
-                                                    &async_sequence)
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclAlltoAll)
                     : rpc_write_start_request(conn, RPC_ncclAlltoAll)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
@@ -1315,12 +1294,9 @@ static ncclResult_t lupine_rpc_ncclGather(conn_t *conn, bool submit_async,
                                           int root, ncclComm_t comm,
                                           cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclGather,
-                                                    &async_sequence)
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclGather)
                     : rpc_write_start_request(conn, RPC_ncclGather)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
@@ -1354,12 +1330,9 @@ lupine_rpc_ncclScatter(conn_t *conn, bool submit_async, const void *sendbuff,
                        void *recvbuff, size_t count, ncclDataType_t datatype,
                        int root, ncclComm_t comm, cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclScatter,
-                                                    &async_sequence)
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclScatter)
                     : rpc_write_start_request(conn, RPC_ncclScatter)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
@@ -1400,13 +1373,10 @@ static ncclResult_t lupine_rpc_ncclAllReduceConfig(
       config->algSelection != nullptr)
     config_algSelection_len =
         static_cast<uint32_t>(std::strlen(config->algSelection) + 1);
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
       (submit_async
-           ? rpc_write_start_async_request(conn, RPC_ncclAllReduceConfig,
-                                           &async_sequence)
+           ? rpc_write_start_async_request(conn, RPC_ncclAllReduceConfig)
            : rpc_write_start_request(conn, RPC_ncclAllReduceConfig)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
@@ -1453,13 +1423,10 @@ static ncclResult_t lupine_rpc_ncclBroadcastConfig(
       config->algSelection != nullptr)
     config_algSelection_len =
         static_cast<uint32_t>(std::strlen(config->algSelection) + 1);
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
       (submit_async
-           ? rpc_write_start_async_request(conn, RPC_ncclBroadcastConfig,
-                                           &async_sequence)
+           ? rpc_write_start_async_request(conn, RPC_ncclBroadcastConfig)
            : rpc_write_start_request(conn, RPC_ncclBroadcastConfig)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
@@ -1506,13 +1473,10 @@ static ncclResult_t lupine_rpc_ncclReduceConfig(
       config->algSelection != nullptr)
     config_algSelection_len =
         static_cast<uint32_t>(std::strlen(config->algSelection) + 1);
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
       (submit_async
-           ? rpc_write_start_async_request(conn, RPC_ncclReduceConfig,
-                                           &async_sequence)
+           ? rpc_write_start_async_request(conn, RPC_ncclReduceConfig)
            : rpc_write_start_request(conn, RPC_ncclReduceConfig)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
@@ -1561,13 +1525,10 @@ static ncclResult_t lupine_rpc_ncclAllGatherConfig(
       config->algSelection != nullptr)
     config_algSelection_len =
         static_cast<uint32_t>(std::strlen(config->algSelection) + 1);
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
       (submit_async
-           ? rpc_write_start_async_request(conn, RPC_ncclAllGatherConfig,
-                                           &async_sequence)
+           ? rpc_write_start_async_request(conn, RPC_ncclAllGatherConfig)
            : rpc_write_start_request(conn, RPC_ncclAllGatherConfig)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &sendcount, sizeof(size_t)) < 0 ||
@@ -1613,13 +1574,10 @@ static ncclResult_t lupine_rpc_ncclReduceScatterConfig(
       config->algSelection != nullptr)
     config_algSelection_len =
         static_cast<uint32_t>(std::strlen(config->algSelection) + 1);
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
       (submit_async
-           ? rpc_write_start_async_request(conn, RPC_ncclReduceScatterConfig,
-                                           &async_sequence)
+           ? rpc_write_start_async_request(conn, RPC_ncclReduceScatterConfig)
            : rpc_write_start_request(conn, RPC_ncclReduceScatterConfig)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &recvcount, sizeof(size_t)) < 0 ||
@@ -1667,13 +1625,10 @@ static ncclResult_t lupine_rpc_ncclAlltoAllConfig(
       config->algSelection != nullptr)
     config_algSelection_len =
         static_cast<uint32_t>(std::strlen(config->algSelection) + 1);
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
       (submit_async
-           ? rpc_write_start_async_request(conn, RPC_ncclAlltoAllConfig,
-                                           &async_sequence)
+           ? rpc_write_start_async_request(conn, RPC_ncclAlltoAllConfig)
            : rpc_write_start_request(conn, RPC_ncclAlltoAllConfig)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
@@ -1720,13 +1675,10 @@ static ncclResult_t lupine_rpc_ncclGatherConfig(
       config->algSelection != nullptr)
     config_algSelection_len =
         static_cast<uint32_t>(std::strlen(config->algSelection) + 1);
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
       (submit_async
-           ? rpc_write_start_async_request(conn, RPC_ncclGatherConfig,
-                                           &async_sequence)
+           ? rpc_write_start_async_request(conn, RPC_ncclGatherConfig)
            : rpc_write_start_request(conn, RPC_ncclGatherConfig)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
@@ -1774,13 +1726,10 @@ static ncclResult_t lupine_rpc_ncclScatterConfig(
       config->algSelection != nullptr)
     config_algSelection_len =
         static_cast<uint32_t>(std::strlen(config->algSelection) + 1);
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
       (submit_async
-           ? rpc_write_start_async_request(conn, RPC_ncclScatterConfig,
-                                           &async_sequence)
+           ? rpc_write_start_async_request(conn, RPC_ncclScatterConfig)
            : rpc_write_start_request(conn, RPC_ncclScatterConfig)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
@@ -1820,12 +1769,9 @@ static ncclResult_t lupine_rpc_ncclSend(conn_t *conn, bool submit_async,
                                         ncclDataType_t datatype, int peer,
                                         ncclComm_t comm, cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async
-           ? rpc_write_start_async_request(conn, RPC_ncclSend, &async_sequence)
-           : rpc_write_start_request(conn, RPC_ncclSend)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclSend)
+                    : rpc_write_start_request(conn, RPC_ncclSend)) < 0 ||
       rpc_write(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
       rpc_write(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1854,12 +1800,9 @@ static ncclResult_t lupine_rpc_ncclRecv(conn_t *conn, bool submit_async,
                                         ncclDataType_t datatype, int peer,
                                         ncclComm_t comm, cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async
-           ? rpc_write_start_async_request(conn, RPC_ncclRecv, &async_sequence)
-           : rpc_write_start_request(conn, RPC_ncclRecv)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclRecv)
+                    : rpc_write_start_request(conn, RPC_ncclRecv)) < 0 ||
       rpc_write(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
       rpc_write(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1891,12 +1834,9 @@ lupine_rpc_ncclPutSignal(conn_t *conn, bool submit_async, const void *localbuff,
                          int ctx, unsigned int flags, ncclComm_t comm,
                          cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclPutSignal,
-                                                    &async_sequence)
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclPutSignal)
                     : rpc_write_start_request(conn, RPC_ncclPutSignal)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &localbuff, sizeof(const void *)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
       rpc_write(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1937,12 +1877,9 @@ static ncclResult_t lupine_rpc_ncclSignal(conn_t *conn, bool submit_async,
                                           unsigned int flags, ncclComm_t comm,
                                           cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclSignal,
-                                                    &async_sequence)
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclSignal)
                     : rpc_write_start_request(conn, RPC_ncclSignal)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &peer, sizeof(int)) < 0 ||
       rpc_write(conn, &sigIdx, sizeof(int)) < 0 ||
       rpc_write(conn, &ctx, sizeof(int)) < 0 ||
@@ -1975,12 +1912,9 @@ static ncclResult_t lupine_rpc_ncclWaitSignal(conn_t *conn, bool submit_async,
                                               ncclComm_t comm,
                                               cudaStream_t stream) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclWaitSignal,
-                                                    &async_sequence)
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclWaitSignal)
                     : rpc_write_start_request(conn, RPC_ncclWaitSignal)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &nDesc, sizeof(int)) < 0 ||
       rpc_write(conn, signalDescs, nDesc * sizeof(ncclWaitSignalDesc_t)) < 0 ||
       rpc_write(conn, &comm, sizeof(ncclComm_t)) < 0 ||
@@ -2010,12 +1944,9 @@ extern "C" ncclResult_t ncclWaitSignal(int nDesc,
 
 static ncclResult_t lupine_rpc_ncclGroupStart(conn_t *conn, bool submit_async) {
   ncclResult_t return_value = rpc_error();
-  uint64_t async_sequence = ~uint64_t{0};
   if (conn == nullptr ||
-      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclGroupStart,
-                                                    &async_sequence)
+      (submit_async ? rpc_write_start_async_request(conn, RPC_ncclGroupStart)
                     : rpc_write_start_request(conn, RPC_ncclGroupStart)) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       (submit_async ? rpc_write_end(conn) : rpc_wait_for_response(conn)) < 0 ||
       (!submit_async &&
        (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||

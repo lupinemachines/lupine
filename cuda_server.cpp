@@ -2254,17 +2254,12 @@ int handle_cuLibraryGetModule(conn_t *conn) {
 // caches the CUkernel handles this one owns, but it only ever sends the unload
 // to the route that loaded it, so freeing here would dangle those handles.
 int handle_cuLibraryUnload(conn_t *conn) {
-  uint64_t async_sequence = 0;
   CUlibrary library = nullptr;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &library, sizeof(library)) < 0) {
+  if (rpc_read(conn, &library, sizeof(library)) < 0) {
     return -1;
   }
   if (rpc_read_end(conn) < 0) {
-    return -1;
-  }
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
     return -1;
   }
   return 0;
@@ -2328,7 +2323,6 @@ int handle_cuModuleGetGlobal_v2(conn_t *conn) {
 }
 
 int handle_cuLaunchKernel(conn_t *conn) {
-  uint64_t async_sequence = 0;
   CUfunction f = nullptr;
   unsigned int gridDimX = 0;
   unsigned int gridDimY = 0;
@@ -2342,8 +2336,7 @@ int handle_cuLaunchKernel(conn_t *conn) {
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &f, sizeof(f)) < 0 ||
+  if (rpc_read(conn, &f, sizeof(f)) < 0 ||
       rpc_read(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_read(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
       rpc_read(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
@@ -2383,12 +2376,6 @@ int handle_cuLaunchKernel(conn_t *conn) {
     return -1;
   }
 
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
-    std::free(param_sizes);
-    std::free(params);
-    std::free(param_storage);
-    return -1;
-  }
   if (result == CUDA_SUCCESS) {
     result =
         cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
@@ -2405,15 +2392,13 @@ int handle_cuLaunchKernel(conn_t *conn) {
 }
 
 int handle_cuLaunchKernelEx(conn_t *conn) {
-  uint64_t async_sequence = 0;
   CUlaunchConfig config = {};
   CUfunction f = nullptr;
   uint32_t param_count = 0;
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &config, sizeof(config)) < 0) {
+  if (rpc_read(conn, &config, sizeof(config)) < 0) {
     return -1;
   }
   CUlaunchAttribute *attributes = static_cast<CUlaunchAttribute *>(
@@ -2457,13 +2442,6 @@ int handle_cuLaunchKernelEx(conn_t *conn) {
     return -1;
   }
 
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
-    std::free(attributes);
-    std::free(param_sizes);
-    std::free(params);
-    std::free(param_storage);
-    return -1;
-  }
 #if CUDA_VERSION >= 11080
   if (result == CUDA_SUCCESS) {
     result = cuLaunchKernelEx(&config, f, params, nullptr);
@@ -2481,7 +2459,6 @@ int handle_cuLaunchKernelEx(conn_t *conn) {
 }
 
 int handle_cuLaunchCooperativeKernel(conn_t *conn) {
-  uint64_t async_sequence = 0;
   CUfunction f = nullptr;
   unsigned int gridDimX = 0;
   unsigned int gridDimY = 0;
@@ -2495,8 +2472,7 @@ int handle_cuLaunchCooperativeKernel(conn_t *conn) {
   int request_id;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &f, sizeof(f)) < 0 ||
+  if (rpc_read(conn, &f, sizeof(f)) < 0 ||
       rpc_read(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_read(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
       rpc_read(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
@@ -2536,12 +2512,6 @@ int handle_cuLaunchCooperativeKernel(conn_t *conn) {
     return -1;
   }
 
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
-    std::free(param_sizes);
-    std::free(params);
-    std::free(param_storage);
-    return -1;
-  }
   if (result == CUDA_SUCCESS) {
     result = cuLaunchCooperativeKernel(f, gridDimX, gridDimY, gridDimZ,
                                        blockDimX, blockDimY, blockDimZ,
@@ -3409,13 +3379,11 @@ void lupine_server_cleanup_log_callbacks(conn_t *conn) {
 }
 
 static int handle_cuEventRecordCommon(conn_t *conn, bool with_flags) {
-  uint64_t async_sequence = 0;
   CUevent event = nullptr;
   CUstream stream = nullptr;
   unsigned int flags = 0;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &event, sizeof(event)) < 0 ||
+  if (rpc_read(conn, &event, sizeof(event)) < 0 ||
       rpc_read(conn, &stream, sizeof(stream)) < 0 ||
       (with_flags && rpc_read(conn, &flags, sizeof(flags)) < 0)) {
     return -1;
@@ -3424,9 +3392,6 @@ static int handle_cuEventRecordCommon(conn_t *conn, bool with_flags) {
     return -1;
   }
 
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
-    return -1;
-  }
   CUresult result = with_flags ? cuEventRecordWithFlags(event, stream, flags)
                                : cuEventRecord(event, stream);
   if (result == CUDA_SUCCESS) {
@@ -3509,16 +3474,13 @@ int handle_cuEventQuery(conn_t *conn) {
 }
 
 int handle_cuStreamWaitEvent(conn_t *conn) {
-  uint64_t async_sequence = 0;
   CUstream stream = nullptr;
   CUevent event = nullptr;
   unsigned int flags = 0;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
       rpc_read(conn, &event, sizeof(event)) < 0 ||
-      rpc_read(conn, &flags, sizeof(flags)) < 0 || rpc_read_end(conn) < 0 ||
-      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+      rpc_read(conn, &flags, sizeof(flags)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
   lupine_wait_event_capture_resources(stream, event);
@@ -4497,13 +4459,10 @@ void lupine_server_cleanup_identity_allocations(conn_t *conn) {
 }
 
 int handle_cuGraphLaunch(conn_t *conn) {
-  uint64_t async_sequence = 0;
   CUgraphExec exec = nullptr;
   CUstream stream = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &exec, sizeof(exec)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0 ||
-      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
   CUresult result = cuGraphLaunch(exec, stream);

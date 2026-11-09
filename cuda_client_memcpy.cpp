@@ -4160,13 +4160,8 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
       lupine_htod_fire_and_forget(route, dstDevice, ByteCount, pushed_bytes)) {
     // The ticket keeps this copy in submission order against work issued on
     // other lanes, which is the ordering the reply used to provide.
-    uint8_t fire_and_forget = 1;
-    uint64_t async_sequence = 0;
     if (lupine_prepare_rpc(conn) < 0 ||
-        rpc_write_start_async_request(conn, RPC_cuMemcpyHtoD_v2,
-                                      &async_sequence) < 0 ||
-        rpc_write(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
-        rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+        rpc_write_start_async_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
         rpc_write(conn, &is_server_authoritative,
                   sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
@@ -4178,8 +4173,6 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
     }
     return lupine_sync_mapped_device_to_host();
   }
-  uint8_t fire_and_forget = 0;
-  uint64_t async_sequence = 0;
   if (lanes != nullptr) {
     return_value = lupine_prepare_rpc(conn) < 0
                        ? CUDA_ERROR_DEVICE_UNAVAILABLE
@@ -4187,8 +4180,6 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                                           ByteCount, false);
   } else if (lupine_prepare_rpc(conn) < 0 ||
              rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
-             rpc_write(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
-             rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
              rpc_write(conn, &is_server_authoritative,
                        sizeof(is_server_authoritative)) < 0 ||
              rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
@@ -4396,7 +4387,6 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
-  uint64_t async_sequence = 0;
   void *client_alias = nullptr;
   void *server_host = nullptr;
   bool page_locked = false;
@@ -4424,8 +4414,7 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
   int copy_opcode = pinned_destination ? LUPINE_RPC_lupineMemcpyDtoHAsyncPinned
                                        : RPC_cuMemcpyDtoHAsync_v2;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, copy_opcode, &async_sequence) < 0 ||
-      rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+      rpc_write_start_async_request(conn, copy_opcode) < 0 ||
       rpc_write(conn, &dstHost, sizeof(dstHost)) < 0 ||
       (pinned_destination &&
        (rpc_write(conn, &client_alias, sizeof(client_alias)) < 0 ||
@@ -4582,11 +4571,9 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
     // Deferred like a linear async copy: the server stages the rows densely
     // and they land at the next synchronize, which a pageable destination
     // takes right away.
-    uint64_t async_sequence = 0;
     if (lupine_prepare_rpc(conn) < 0 ||
-        rpc_write_start_async_request(conn, api.op, &async_sequence) < 0 ||
+        rpc_write_start_async_request(conn, api.op) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
-        rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_write_end(conn) < 0) {

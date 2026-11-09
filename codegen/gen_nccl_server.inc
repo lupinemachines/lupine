@@ -1322,14 +1322,12 @@ int handle_ncclReduce(conn_t *conn) {
   int root;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclRedOp_t, int, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1343,16 +1341,12 @@ int handle_ncclReduce(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclReduce");
   return_value = fn == nullptr ? function_not_found()
                                : fn(sendbuff, recvbuff, count, datatype, op,
                                     root, comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -1372,14 +1366,12 @@ int handle_ncclBcast(conn_t *conn) {
   int root;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(void *, size_t, ncclDataType_t, int, ncclComm_t,
                                 cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &buff, sizeof(void *)) < 0 ||
+  if (rpc_read(conn, &buff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
       rpc_read(conn, &root, sizeof(int)) < 0 ||
@@ -1391,15 +1383,11 @@ int handle_ncclBcast(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclBcast");
   return_value = fn == nullptr ? function_not_found()
                                : fn(buff, count, datatype, root, comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -1420,14 +1408,12 @@ int handle_ncclBroadcast(conn_t *conn) {
   int root;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 int, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1440,16 +1426,12 @@ int handle_ncclBroadcast(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclBroadcast");
   return_value = fn == nullptr ? function_not_found()
                                : fn(sendbuff, recvbuff, count, datatype, root,
                                     comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -1470,14 +1452,12 @@ int handle_ncclAllReduce(conn_t *conn) {
   ncclRedOp_t op;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclRedOp_t, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1490,16 +1470,12 @@ int handle_ncclAllReduce(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclAllReduce");
   return_value =
       fn == nullptr ? function_not_found()
                     : fn(sendbuff, recvbuff, count, datatype, op, comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -1520,14 +1496,12 @@ int handle_ncclReduceScatter(conn_t *conn) {
   ncclRedOp_t op;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclRedOp_t, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &recvcount, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1540,16 +1514,12 @@ int handle_ncclReduceScatter(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclReduceScatter");
   return_value = fn == nullptr ? function_not_found()
                                : fn(sendbuff, recvbuff, recvcount, datatype, op,
                                     comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -1569,14 +1539,12 @@ int handle_ncclAllGather(conn_t *conn) {
   ncclDataType_t datatype;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &sendcount, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1588,16 +1556,12 @@ int handle_ncclAllGather(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclAllGather");
   return_value =
       fn == nullptr ? function_not_found()
                     : fn(sendbuff, recvbuff, sendcount, datatype, comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -1618,14 +1582,12 @@ int handle_ncclAlltoAll(conn_t *conn) {
   ncclDataType_t datatype;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1637,16 +1599,12 @@ int handle_ncclAlltoAll(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclAlltoAll");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(sendbuff, recvbuff, count, datatype, comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -1670,14 +1628,12 @@ int handle_ncclGather(conn_t *conn) {
   int root;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 int, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1690,16 +1646,12 @@ int handle_ncclGather(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclGather");
   return_value = fn == nullptr ? function_not_found()
                                : fn(sendbuff, recvbuff, count, datatype, root,
                                     comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -1723,14 +1675,12 @@ int handle_ncclScatter(conn_t *conn) {
   int root;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 int, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1743,16 +1693,12 @@ int handle_ncclScatter(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclScatter");
   return_value = fn == nullptr ? function_not_found()
                                : fn(sendbuff, recvbuff, count, datatype, root,
                                     comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -1780,15 +1726,13 @@ int handle_ncclAllReduceConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclRedOp_t, ncclComm_t, cudaStream_t,
                                 const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1811,10 +1755,6 @@ int handle_ncclAllReduceConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclAllReduceConfig");
   return_value = fn == nullptr
                      ? function_not_found()
@@ -1831,7 +1771,7 @@ int handle_ncclAllReduceConfig(conn_t *conn) {
                                   offsetof(ncclCollConfig_t, ext),
                               }));
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -1859,15 +1799,13 @@ int handle_ncclBroadcastConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t, int,
                        ncclComm_t, cudaStream_t, const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1890,10 +1828,6 @@ int handle_ncclBroadcastConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclBroadcastConfig");
   return_value =
       fn == nullptr
@@ -1911,7 +1845,7 @@ int handle_ncclBroadcastConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -1940,15 +1874,13 @@ int handle_ncclReduceConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclRedOp_t, int, ncclComm_t, cudaStream_t,
                                 const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1972,10 +1904,6 @@ int handle_ncclReduceConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclReduceConfig");
   return_value =
       fn == nullptr
@@ -1993,7 +1921,7 @@ int handle_ncclReduceConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -2020,15 +1948,13 @@ int handle_ncclAllGatherConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t, ncclComm_t,
                        cudaStream_t, const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &sendcount, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -2050,10 +1976,6 @@ int handle_ncclAllGatherConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclAllGatherConfig");
   return_value = fn == nullptr
                      ? function_not_found()
@@ -2070,7 +1992,7 @@ int handle_ncclAllGatherConfig(conn_t *conn) {
                                   offsetof(ncclCollConfig_t, ext),
                               }));
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -2098,15 +2020,13 @@ int handle_ncclReduceScatterConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclRedOp_t, ncclComm_t, cudaStream_t,
                                 const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &recvcount, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -2129,10 +2049,6 @@ int handle_ncclReduceScatterConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclReduceScatterConfig");
   return_value =
       fn == nullptr
@@ -2150,7 +2066,7 @@ int handle_ncclReduceScatterConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -2177,15 +2093,13 @@ int handle_ncclAlltoAllConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t, ncclComm_t,
                        cudaStream_t, const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -2207,10 +2121,6 @@ int handle_ncclAlltoAllConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclAlltoAllConfig");
   return_value = fn == nullptr
                      ? function_not_found()
@@ -2227,7 +2137,7 @@ int handle_ncclAlltoAllConfig(conn_t *conn) {
                                   offsetof(ncclCollConfig_t, ext),
                               }));
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -2255,15 +2165,13 @@ int handle_ncclGatherConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t, int,
                        ncclComm_t, cudaStream_t, const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -2286,10 +2194,6 @@ int handle_ncclGatherConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclGatherConfig");
   return_value =
       fn == nullptr
@@ -2307,7 +2211,7 @@ int handle_ncclGatherConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -2335,15 +2239,13 @@ int handle_ncclScatterConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t, int,
                        ncclComm_t, cudaStream_t, const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -2366,10 +2268,6 @@ int handle_ncclScatterConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclScatterConfig");
   return_value =
       fn == nullptr
@@ -2387,7 +2285,7 @@ int handle_ncclScatterConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -2409,14 +2307,12 @@ int handle_ncclSend(conn_t *conn) {
   int peer;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, size_t, ncclDataType_t, int,
                                 ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
       rpc_read(conn, &peer, sizeof(int)) < 0 ||
@@ -2428,16 +2324,12 @@ int handle_ncclSend(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclSend");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(sendbuff, count, datatype, peer, comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -2457,14 +2349,12 @@ int handle_ncclRecv(conn_t *conn) {
   int peer;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(void *, size_t, ncclDataType_t, int, ncclComm_t,
                                 cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
+  if (rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
       rpc_read(conn, &peer, sizeof(int)) < 0 ||
@@ -2476,16 +2366,12 @@ int handle_ncclRecv(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclRecv");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(recvbuff, count, datatype, peer, comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -2511,15 +2397,13 @@ int handle_ncclPutSignal(conn_t *conn) {
   unsigned int flags;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, size_t, ncclDataType_t, int,
                                 ncclWindow_t, size_t, int, int, unsigned int,
                                 ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &localbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &localbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
       rpc_read(conn, &peer, sizeof(int)) < 0 ||
@@ -2536,17 +2420,13 @@ int handle_ncclPutSignal(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclPutSignal");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(localbuff, count, datatype, peer, peerWin,
                           peerWinOffset, sigIdx, ctx, flags, comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -2569,14 +2449,12 @@ int handle_ncclSignal(conn_t *conn) {
   unsigned int flags;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(int, int, int, unsigned int, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &peer, sizeof(int)) < 0 ||
+  if (rpc_read(conn, &peer, sizeof(int)) < 0 ||
       rpc_read(conn, &sigIdx, sizeof(int)) < 0 ||
       rpc_read(conn, &ctx, sizeof(int)) < 0 ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 ||
@@ -2588,15 +2466,11 @@ int handle_ncclSignal(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclSignal");
   return_value = fn == nullptr ? function_not_found()
                                : fn(peer, sigIdx, ctx, flags, comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
@@ -2618,14 +2492,12 @@ int handle_ncclWaitSignal(conn_t *conn) {
   size_t signalDescs_size;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(int, ncclWaitSignalDesc_t *, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &nDesc, sizeof(int)) < 0 || nDesc < 0 || false)
+  if (rpc_read(conn, &nDesc, sizeof(int)) < 0 || nDesc < 0 || false)
     goto ERROR_0;
   signalDescs_size = nDesc * sizeof(ncclWaitSignalDesc_t);
   signalDescs = (ncclWaitSignalDesc_t *)malloc(signalDescs_size);
@@ -2641,10 +2513,6 @@ int handle_ncclWaitSignal(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclWaitSignal");
   return_value =
       fn == nullptr
@@ -2654,7 +2522,7 @@ int handle_ncclWaitSignal(conn_t *conn) {
                                                           : signalDescs),
                comm, stream);
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     free((void *)signalDescs);
     return 0;
   }
@@ -2673,26 +2541,21 @@ ERROR_0:
 #endif
 
 int handle_ncclGroupStart(conn_t *conn) {
-  uint64_t async_sequence = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)();
   fn_t fn = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 || false)
+  if (false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  if (async_sequence != ~uint64_t{0} &&
-      rpc_async_sequence_begin(conn, async_sequence) < 0)
-    goto ERROR_0;
-
   fn = nccl_symbol<fn_t>("ncclGroupStart");
   return_value = fn == nullptr ? function_not_found() : fn();
 
-  if (async_sequence != ~uint64_t{0}) {
+  if (rpc_request_is_async(conn)) {
     return 0;
   }
 
