@@ -4279,14 +4279,14 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
                                 : srcHost;
   uint64_t pushed_bytes =
       lupine_htod_pushed_bytes(is_server_authoritative, srcHost, ByteCount);
-  uint8_t fire_and_forget = lupine_htod_async_fire_and_forget(
-      route, dstDevice, srcHost, ByteCount, is_server_authoritative);
-  uint64_t async_sequence = 0;
-  if (fire_and_forget) {
+  // The ticket leads the request; a request that expects its answer carries
+  // the all-ones ticket instead of one.
+  uint64_t async_sequence = ~uint64_t{0};
+  if (lupine_htod_async_fire_and_forget(route, dstDevice, srcHost, ByteCount,
+                                        is_server_authoritative)) {
     if (lupine_prepare_rpc(conn) < 0 ||
         rpc_write_start_async_request(conn, RPC_cuMemcpyHtoDAsync_v2,
                                       &async_sequence) < 0 ||
-        rpc_write(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
         rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
         rpc_write(conn, &is_server_authoritative,
                   sizeof(is_server_authoritative)) < 0 ||
@@ -4303,7 +4303,6 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
-      rpc_write(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
       rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
       rpc_write(conn, &is_server_authoritative,
                 sizeof(is_server_authoritative)) < 0 ||
