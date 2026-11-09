@@ -1353,7 +1353,6 @@ int handle_ncclReduce(conn_t *conn) {
                                     root, comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -1401,7 +1400,6 @@ int handle_ncclBcast(conn_t *conn) {
                                : fn(buff, count, datatype, root, comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -1452,7 +1450,6 @@ int handle_ncclBroadcast(conn_t *conn) {
                                     comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -1503,7 +1500,6 @@ int handle_ncclAllReduce(conn_t *conn) {
                     : fn(sendbuff, recvbuff, count, datatype, op, comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -1554,7 +1550,6 @@ int handle_ncclReduceScatter(conn_t *conn) {
                                     comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -1603,7 +1598,6 @@ int handle_ncclAllGather(conn_t *conn) {
                     : fn(sendbuff, recvbuff, sendcount, datatype, comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -1653,7 +1647,6 @@ int handle_ncclAlltoAll(conn_t *conn) {
                      : fn(sendbuff, recvbuff, count, datatype, comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -1707,7 +1700,6 @@ int handle_ncclGather(conn_t *conn) {
                                     comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -1761,7 +1753,6 @@ int handle_ncclScatter(conn_t *conn) {
                                     comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -1841,7 +1832,6 @@ int handle_ncclAllReduceConfig(conn_t *conn) {
                               }));
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -1922,7 +1912,6 @@ int handle_ncclBroadcastConfig(conn_t *conn) {
                    }));
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -2005,7 +1994,6 @@ int handle_ncclReduceConfig(conn_t *conn) {
                    }));
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -2083,7 +2071,6 @@ int handle_ncclAllGatherConfig(conn_t *conn) {
                               }));
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -2164,7 +2151,6 @@ int handle_ncclReduceScatterConfig(conn_t *conn) {
                    }));
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -2242,7 +2228,6 @@ int handle_ncclAlltoAllConfig(conn_t *conn) {
                               }));
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -2323,7 +2308,6 @@ int handle_ncclGatherConfig(conn_t *conn) {
                    }));
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -2404,7 +2388,6 @@ int handle_ncclScatterConfig(conn_t *conn) {
                    }));
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -2455,7 +2438,6 @@ int handle_ncclSend(conn_t *conn) {
                      : fn(sendbuff, count, datatype, peer, comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -2504,7 +2486,6 @@ int handle_ncclRecv(conn_t *conn) {
                      : fn(recvbuff, count, datatype, peer, comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -2566,7 +2547,6 @@ int handle_ncclPutSignal(conn_t *conn) {
                           peerWinOffset, sigIdx, ctx, flags, comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -2617,7 +2597,6 @@ int handle_ncclSignal(conn_t *conn) {
                                : fn(peer, sigIdx, ctx, flags, comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 
@@ -2676,7 +2655,6 @@ int handle_ncclWaitSignal(conn_t *conn) {
                comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     free((void *)signalDescs);
     return 0;
   }
@@ -2715,7 +2693,6 @@ int handle_ncclGroupStart(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (async_sequence != ~uint64_t{0}) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
 

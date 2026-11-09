@@ -2218,9 +2218,6 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   }
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
-    if (fire_and_forget) {
-      rpc_async_sequence_end(conn);
-    }
     return -1;
   }
 
@@ -2237,7 +2234,6 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   // execution failure poisons the context and reaches the client from its next
   // synchronize.
   if (fire_and_forget) {
-    rpc_async_sequence_end(conn);
     return 0;
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3080,7 +3076,6 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
     return -1;
   }
   lupine_defer_dtoh(conn, stream, {dstHost, byteCount}, srcDevice);
-  rpc_async_sequence_end(conn);
   return 0;
 }
 
@@ -3117,7 +3112,6 @@ static int lupine_defer_pitched_dtoh(conn_t *conn,
     }
     (void)cuMemFreeAsync(copy.dstDevice, stream);
   }
-  rpc_async_sequence_end(conn);
   return 0;
 }
 
@@ -3185,6 +3179,5 @@ int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
     }
   }
 
-  rpc_async_sequence_end(conn);
   return 0;
 }

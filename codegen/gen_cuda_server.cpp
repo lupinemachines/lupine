@@ -1512,8 +1512,6 @@ int handle_cuKernelSetAttribute(conn_t *conn) {
 
   cuKernelSetAttribute(attrib, val, kernel, dev);
 
-  rpc_async_sequence_end(conn);
-
   return 0;
 ERROR_0:
   return -1;
@@ -2190,8 +2188,6 @@ int handle_cuMemcpyDtoDAsync_v2(conn_t *conn) {
 
   cuMemcpyDtoDAsync_v2(dstDevice, srcDevice, ByteCount, hStream);
 
-  rpc_async_sequence_end(conn);
-
   return 0;
 ERROR_0:
   return -1;
@@ -2388,8 +2384,6 @@ int handle_cuMemsetD8Async(conn_t *conn) {
 
   cuMemsetD8Async(dstDevice, uc, N, hStream);
 
-  rpc_async_sequence_end(conn);
-
   return 0;
 ERROR_0:
   return -1;
@@ -2418,8 +2412,6 @@ int handle_cuMemsetD16Async(conn_t *conn) {
 
   cuMemsetD16Async(dstDevice, us, N, hStream);
 
-  rpc_async_sequence_end(conn);
-
   return 0;
 ERROR_0:
   return -1;
@@ -2447,8 +2439,6 @@ int handle_cuMemsetD32Async(conn_t *conn) {
     goto ERROR_0;
 
   cuMemsetD32Async(dstDevice, ui, N, hStream);
-
-  rpc_async_sequence_end(conn);
 
   return 0;
 ERROR_0:
@@ -2482,8 +2472,6 @@ int handle_cuMemsetD2D8Async(conn_t *conn) {
 
   cuMemsetD2D8Async(dstDevice, dstPitch, uc, Width, Height, hStream);
 
-  rpc_async_sequence_end(conn);
-
   return 0;
 ERROR_0:
   return -1;
@@ -2516,8 +2504,6 @@ int handle_cuMemsetD2D16Async(conn_t *conn) {
 
   cuMemsetD2D16Async(dstDevice, dstPitch, us, Width, Height, hStream);
 
-  rpc_async_sequence_end(conn);
-
   return 0;
 ERROR_0:
   return -1;
@@ -2549,8 +2535,6 @@ int handle_cuMemsetD2D32Async(conn_t *conn) {
     goto ERROR_0;
 
   cuMemsetD2D32Async(dstDevice, dstPitch, ui, Width, Height, hStream);
-
-  rpc_async_sequence_end(conn);
 
   return 0;
 ERROR_0:
@@ -3840,8 +3824,6 @@ int handle_cuThreadExchangeStreamCaptureMode(conn_t *conn) {
     goto ERROR_0;
 
   cuThreadExchangeStreamCaptureMode(&mode);
-
-  rpc_async_sequence_end(conn);
 
   return 0;
 ERROR_0:

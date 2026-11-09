@@ -2267,7 +2267,6 @@ int handle_cuLibraryUnload(conn_t *conn) {
   if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
     return -1;
   }
-  rpc_async_sequence_end(conn);
   return 0;
 }
 
@@ -2396,7 +2395,6 @@ int handle_cuLaunchKernel(conn_t *conn) {
                        blockDimZ, sharedMemBytes, hStream, params, nullptr);
   }
   lupine_keep_async_error(conn, result);
-  rpc_async_sequence_end(conn);
   std::free(param_sizes);
   std::free(params);
   std::free(param_storage);
@@ -2472,7 +2470,6 @@ int handle_cuLaunchKernelEx(conn_t *conn) {
   }
 #endif
   lupine_keep_async_error(conn, result);
-  rpc_async_sequence_end(conn);
   std::free(attributes);
   std::free(param_sizes);
   std::free(params);
@@ -2550,7 +2547,6 @@ int handle_cuLaunchCooperativeKernel(conn_t *conn) {
                                        blockDimX, blockDimY, blockDimZ,
                                        sharedMemBytes, hStream, params);
   }
-  rpc_async_sequence_end(conn);
   std::free(param_sizes);
   std::free(params);
   std::free(param_storage);
@@ -3438,7 +3434,6 @@ static int handle_cuEventRecordCommon(conn_t *conn, bool with_flags) {
     lupine_note_event_record(conn, event, stream);
   }
   lupine_keep_async_error(conn, result);
-  rpc_async_sequence_end(conn);
   return 0;
 }
 
@@ -3529,7 +3524,6 @@ int handle_cuStreamWaitEvent(conn_t *conn) {
   lupine_wait_event_capture_resources(stream, event);
   // Fire-and-forget like cuEventRecord: a failure surfaces at the next sync.
   cuStreamWaitEvent(stream, event, flags);
-  rpc_async_sequence_end(conn);
   return 0;
 }
 
@@ -4515,7 +4509,6 @@ int handle_cuGraphLaunch(conn_t *conn) {
   CUresult result = cuGraphLaunch(exec, stream);
   lupine_note_graph_launch(conn, exec, stream, result);
   lupine_keep_async_error(conn, result);
-  rpc_async_sequence_end(conn);
   return 0;
 }
 

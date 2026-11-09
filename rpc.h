@@ -252,7 +252,9 @@ extern int rpc_write_end(conn_t *conn);
 // free to execute and complete in either order.
 extern int rpc_async_sequence_wait(conn_t *conn, uint64_t published);
 extern void rpc_cancel_async_waits(conn_t *conn);
-// Bracket native submission to record completion of the request's sequence.
+// A fire-and-forget handler claims its request's sequence before native
+// submission. The lane loop ends it once the handler returns, so every handler
+// exit completes the claimed ticket; end is a no-op when nothing was claimed.
 // No execution lock is held between begin and end.
 extern int rpc_async_sequence_begin(conn_t *conn, uint64_t sequence);
 extern void rpc_async_sequence_end(conn_t *conn);
