@@ -1,5 +1,4 @@
 #include "client_bundle.h"
-#include "h2_writer_poll.h"
 #include "lupine_log.h"
 #include "monitoring.h"
 #include "process_handoff.h"

@@ -1,5 +1,4 @@
 #include "client_bundle.h"
-#include "h2_writer_poll.h"
 #include "lupine_log.h"
 #include "process_handoff.h"
 #include "rpc.h"
@@ -28,6 +27,21 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+// Grow/retain/shrink polling as in KVM halt polling. These bounds are a CPU
+// spending policy; the connection learns its current budget from idle times.
+void h2_writer_poll_policy::observe(std::chrono::nanoseconds idle_time) {
+  constexpr std::chrono::nanoseconds max_poll = std::chrono::microseconds(32);
+  constexpr std::chrono::nanoseconds initial_poll = std::chrono::microseconds(1);
+  if (idle_time > max_poll) {
+    budget_ /= 2;
+    if (budget_ < initial_poll) {
+      budget_ = std::chrono::nanoseconds{0};
+    }
+  } else if (idle_time > budget_) {
+    budget_ = std::min(max_poll, std::max(initial_poll, budget_ * 2));
+  }
+}
 
 namespace {
 
