@@ -144,7 +144,6 @@ CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev);
  * @disabled client - manual client caches primary context state
  * @param dev SEND_ONLY
  * @param flags SEND_ONLY
- * @blocking - the handwritten client returns the server's status
  */
 CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags);
 /**
@@ -243,9 +242,13 @@ CUresult cuCtxGetId(CUcontext ctx, unsigned long long *ctxId);
  * @guard CUDA_VERSION >= 12050
  * @param hCtx SEND_ONLY
  * @param hEvent SEND_ONLY
- * @blocking - the client's event completion cache is only updated by cuEventRecord
  */
-CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent);
+CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent) {
+  // Re-recording re-arms the event, so its cached completion is stale.
+  lupine_event_invalidate_completion(hEvent);
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @guard CUDA_VERSION >= 12050
  * @param hCtx SEND_ONLY
@@ -294,7 +297,6 @@ CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
 CUresult cuCtxGetSharedMemConfig(CUsharedconfig *pConfig);
 /**
  * @param config SEND_ONLY
- * @blocking - changing it synchronizes the context
  */
 CUresult cuCtxSetSharedMemConfig(CUsharedconfig config);
 /**
@@ -1185,7 +1187,6 @@ CUresult cuMemAddressReserve(CUdeviceptr *ptr, size_t size, size_t alignment,
 /**
  * @param ptr SEND_ONLY
  * @param size SEND_ONLY
- * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuMemAddressFree(CUdeviceptr ptr, size_t size);
 /**
@@ -1298,7 +1299,6 @@ CUresult cuMemAllocAsync(CUdeviceptr *dptr, size_t bytesize, CUstream hStream) {
 /**
  * @param pool SEND_ONLY
  * @param minBytesToKeep SEND_ONLY
- * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuMemPoolTrimTo(CUmemoryPool pool, size_t minBytesToKeep);
 /**
@@ -1375,7 +1375,6 @@ CUresult cuMemPoolCreate(CUmemoryPool *pool, const CUmemPoolProps *poolProps) {
 }
 /**
  * @param pool SEND_ONLY
- * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuMemPoolDestroy(CUmemoryPool pool);
 /**
@@ -1435,7 +1434,6 @@ CUresult cuPointerGetAttribute(void *data, CUpointer_attribute attribute,
  * @param count SEND_ONLY
  * @param dstDevice SEND_ONLY
  * @param hStream SEND_ONLY
- * @blocking - the handwritten client returns the server's status
  */
 CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
                             CUdevice dstDevice, CUstream hStream);
@@ -1447,7 +1445,6 @@ CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
  * @param location SEND_ONLY
  * @param flags SEND_ONLY
  * @param hStream SEND_ONLY
- * @blocking - the handwritten client returns the server's status
  */
 CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
                                CUmemLocation location, unsigned int flags,
@@ -1461,7 +1458,6 @@ CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
  * @param count SEND_ONLY
  * @param advice SEND_ONLY
  * @param device SEND_ONLY
- * @blocking - the handwritten client returns the server's status
  */
 CUresult cuMemAdvise(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
                      CUdevice device);
@@ -1472,7 +1468,6 @@ CUresult cuMemAdvise(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
  * @param count SEND_ONLY
  * @param advice SEND_ONLY
  * @param location SEND_ONLY
- * @blocking - the handwritten client returns the server's status
  */
 CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
                         CUmemLocation location);
@@ -1712,9 +1707,13 @@ CUresult cuGreenCtxGetId(CUgreenCtx greenCtx, unsigned long long *greenCtxId);
  * @routingkey CURRENT_CONTEXT
  * @param hCtx SEND_ONLY
  * @param hEvent SEND_ONLY
- * @blocking - the client's event completion cache is only updated by cuEventRecord
  */
-CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent);
+CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent) {
+  // Re-recording re-arms the event, so its cached completion is stale.
+  lupine_event_invalidate_completion(hEvent);
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @guard CUDA_VERSION >= 12040
  * @routingkey CURRENT_CONTEXT
@@ -2547,7 +2546,6 @@ CUresult cuGraphAddMemFreeNode(CUgraphNode *phGraphNode, CUgraph hGraph,
 CUresult cuGraphMemFreeNodeGetParams(CUgraphNode hNode, CUdeviceptr *dptr_out);
 /**
  * @param device SEND_ONLY
- * @blocking - tearing it down can wait for the GPU, which a held ticket must not
  */
 CUresult cuDeviceGraphMemTrim(CUdevice device);
 /**
@@ -2862,7 +2860,6 @@ CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream);
 /**
  * @param hGraphExec SEND_ONLY
  * @disabled server
- * @blocking - the handwritten server answers
  */
 CUresult cuGraphExecDestroy(CUgraphExec hGraphExec);
 /**
@@ -2924,7 +2921,6 @@ CUresult cuGraphKernelNodeSetAttribute(CUgraphNode hNode,
  * @param hGraph SEND_ONLY
  * @param path SEND_ONLY NULL_TERMINATED
  * @param flags SEND_ONLY
- * @blocking - the caller reads the file once it returns
  */
 CUresult cuGraphDebugDotPrint(CUgraph hGraph, const char *path,
                               unsigned int flags);
@@ -3408,7 +3404,6 @@ CUresult cuLogsCurrent(CUlogIterator *iterator_out, unsigned int flags);
  * @param iterator SEND_RECV NULLABLE
  * @param pathToFile SEND_ONLY NULL_TERMINATED
  * @param flags SEND_ONLY
- * @blocking - the caller reads whether the dump was written
  */
 CUresult cuLogsDumpToFile(CUlogIterator *iterator, const char *pathToFile,
                           unsigned int flags) {

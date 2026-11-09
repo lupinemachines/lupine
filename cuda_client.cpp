@@ -2004,23 +2004,20 @@ extern "C" CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev,
     return CUDA_ERROR_INVALID_DEVICE;
   }
   lupine_invalidate_primary_ctx_state(dev);
-  CUresult return_value;
   if (lupine_route_is_local(route)) {
-    return_value = lupine_call_real_cuda_fn("cuDevicePrimaryCtxSetFlags_v2",
-                                            remote_dev, flags);
-    return return_value;
+    return lupine_call_real_cuda_fn("cuDevicePrimaryCtxSetFlags_v2", remote_dev,
+                                    flags);
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxSetFlags_v2) < 0 ||
       rpc_write(conn, &remote_dev, sizeof(CUdevice)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  // Unanswered: a failure reaches the caller from its next synchronize.
+  return CUDA_SUCCESS;
 }
 
 extern "C" CUresult
@@ -4168,19 +4165,17 @@ extern "C" CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemPrefetchAsync) < 0 ||
       rpc_write(conn, &devPtr, sizeof(devPtr)) < 0 ||
       rpc_write(conn, &count, sizeof(count)) < 0 ||
       rpc_write(conn, &route_device, sizeof(route_device)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  // Unanswered: a failure reaches the caller from its next synchronize.
+  return CUDA_SUCCESS;
 }
 
 extern "C" CUresult cuMemPrefetchAsync_ptsz(CUdeviceptr devPtr, size_t count,
@@ -4212,19 +4207,17 @@ extern "C" CUresult cuMemAdvise(CUdeviceptr devPtr, size_t count,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemAdvise) < 0 ||
       rpc_write(conn, &devPtr, sizeof(devPtr)) < 0 ||
       rpc_write(conn, &count, sizeof(count)) < 0 ||
       rpc_write(conn, &advice, sizeof(advice)) < 0 ||
       rpc_write(conn, &route_device, sizeof(route_device)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  // Unanswered: a failure reaches the caller from its next synchronize.
+  return CUDA_SUCCESS;
 }
 
 #if CUDA_VERSION >= 12020
@@ -4262,7 +4255,6 @@ extern "C" CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemPrefetchAsync_v2) < 0 ||
       rpc_write(conn, &devPtr, sizeof(devPtr)) < 0 ||
@@ -4270,12 +4262,11 @@ extern "C" CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
       rpc_write(conn, &route_location, sizeof(route_location)) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  // Unanswered: a failure reaches the caller from its next synchronize.
+  return CUDA_SUCCESS;
 }
 
 extern "C" CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count,
@@ -4308,19 +4299,17 @@ extern "C" CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemAdvise_v2) < 0 ||
       rpc_write(conn, &devPtr, sizeof(devPtr)) < 0 ||
       rpc_write(conn, &count, sizeof(count)) < 0 ||
       rpc_write(conn, &advice, sizeof(advice)) < 0 ||
       rpc_write(conn, &route_location, sizeof(route_location)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  // Unanswered: a failure reaches the caller from its next synchronize.
+  return CUDA_SUCCESS;
 }
 #endif
 

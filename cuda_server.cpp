@@ -3841,23 +3841,18 @@ int handle_cuGraphInstantiateWithParams(conn_t *conn) {
   return 0;
 }
 
+// Unanswered: a failure reaches the client from its next synchronize.
 int handle_cuGraphExecDestroy(conn_t *conn) {
   CUgraphExec exec = nullptr;
-  if (rpc_read(conn, &exec, sizeof(exec)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  rpc_hold_ticket(conn);
+  if (rpc_read(conn, &exec, sizeof(exec)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
   CUresult result = cuGraphExecDestroy(exec);
   if (result == CUDA_SUCCESS) {
     result = lupine_release_graph_exec_resources(exec);
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 

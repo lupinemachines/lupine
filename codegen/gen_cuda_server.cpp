@@ -494,7 +494,7 @@ int handle_cuDevicePrimaryCtxSetFlags_v2(conn_t *conn) {
   CUdevice dev;
   unsigned int flags;
   int request_id;
-  CUresult return_value;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
@@ -503,12 +503,8 @@ int handle_cuDevicePrimaryCtxSetFlags_v2(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuDevicePrimaryCtxSetFlags_v2(dev, flags);
+  lupine_keep_async_error(conn, cuDevicePrimaryCtxSetFlags_v2(dev, flags));
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -997,7 +993,7 @@ int handle_cuCtxRecordEvent(conn_t *conn) {
   CUcontext hCtx;
   CUevent hEvent;
   int request_id;
-  CUresult return_value;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hCtx, sizeof(CUcontext)) < 0 ||
       rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 || false)
     goto ERROR_0;
@@ -1006,12 +1002,8 @@ int handle_cuCtxRecordEvent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuCtxRecordEvent(hCtx, hEvent);
+  lupine_keep_async_error(conn, cuCtxRecordEvent(hCtx, hEvent));
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -1069,7 +1061,7 @@ ERROR_0:
 int handle_cuCtxSetSharedMemConfig(conn_t *conn) {
   CUsharedconfig config;
   int request_id;
-  CUresult return_value;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &config, sizeof(CUsharedconfig)) < 0 || false)
     goto ERROR_0;
 
@@ -1077,12 +1069,8 @@ int handle_cuCtxSetSharedMemConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuCtxSetSharedMemConfig(config);
+  lupine_keep_async_error(conn, cuCtxSetSharedMemConfig(config));
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -2894,7 +2882,7 @@ int handle_cuMemAddressFree(conn_t *conn) {
   CUdeviceptr ptr;
   size_t size;
   int request_id;
-  CUresult return_value;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &size, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
@@ -2903,12 +2891,8 @@ int handle_cuMemAddressFree(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuMemAddressFree(ptr, size);
+  lupine_keep_async_error(conn, cuMemAddressFree(ptr, size));
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -3235,7 +3219,7 @@ int handle_cuMemPoolTrimTo(conn_t *conn) {
   CUmemoryPool pool;
   size_t minBytesToKeep;
   int request_id;
-  CUresult return_value;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_read(conn, &minBytesToKeep, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
@@ -3244,12 +3228,8 @@ int handle_cuMemPoolTrimTo(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuMemPoolTrimTo(pool, minBytesToKeep);
+  lupine_keep_async_error(conn, cuMemPoolTrimTo(pool, minBytesToKeep));
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -3344,7 +3324,7 @@ ERROR_0:
 int handle_cuMemPoolDestroy(conn_t *conn) {
   CUmemoryPool pool;
   int request_id;
-  CUresult return_value;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 || false)
     goto ERROR_0;
 
@@ -3352,12 +3332,8 @@ int handle_cuMemPoolDestroy(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuMemPoolDestroy(pool);
+  lupine_keep_async_error(conn, cuMemPoolDestroy(pool));
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -3453,7 +3429,7 @@ int handle_cuMemPrefetchAsync_v2(conn_t *conn) {
   unsigned int flags;
   CUstream hStream;
   int request_id;
-  CUresult return_value;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &location, sizeof(CUmemLocation)) < 0 ||
@@ -3465,12 +3441,9 @@ int handle_cuMemPrefetchAsync_v2(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuMemPrefetchAsync_v2(devPtr, count, location, flags, hStream);
+  lupine_keep_async_error(
+      conn, cuMemPrefetchAsync_v2(devPtr, count, location, flags, hStream));
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -3485,7 +3458,7 @@ int handle_cuMemAdvise_v2(conn_t *conn) {
   CUmem_advise advice;
   CUmemLocation location;
   int request_id;
-  CUresult return_value;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &advice, sizeof(CUmem_advise)) < 0 ||
@@ -3496,12 +3469,9 @@ int handle_cuMemAdvise_v2(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuMemAdvise_v2(devPtr, count, advice, location);
+  lupine_keep_async_error(conn,
+                          cuMemAdvise_v2(devPtr, count, advice, location));
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -5847,7 +5817,7 @@ ERROR_0:
 int handle_cuDeviceGraphMemTrim(conn_t *conn) {
   CUdevice device;
   int request_id;
-  CUresult return_value;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &device, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
 
@@ -5855,12 +5825,8 @@ int handle_cuDeviceGraphMemTrim(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuDeviceGraphMemTrim(device);
+  lupine_keep_async_error(conn, cuDeviceGraphMemTrim(device));
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -6836,7 +6802,7 @@ int handle_cuGraphDebugDotPrint(conn_t *conn) {
   std::size_t path_len;
   unsigned int flags;
   int request_id;
-  CUresult return_value;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_read(conn, &path_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
@@ -6850,12 +6816,8 @@ int handle_cuGraphDebugDotPrint(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuGraphDebugDotPrint(hGraph, path, flags);
+  lupine_keep_async_error(conn, cuGraphDebugDotPrint(hGraph, path, flags));
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
   free((void *)path);
   return 0;
 ERROR_0:
@@ -8823,7 +8785,7 @@ int handle_cuGreenCtxRecordEvent(conn_t *conn) {
   CUgreenCtx hCtx;
   CUevent hEvent;
   int request_id;
-  CUresult return_value;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
       rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 || false)
     goto ERROR_0;
@@ -8832,12 +8794,8 @@ int handle_cuGreenCtxRecordEvent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuGreenCtxRecordEvent(hCtx, hEvent);
+  lupine_keep_async_error(conn, cuGreenCtxRecordEvent(hCtx, hEvent));
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -9121,7 +9079,7 @@ int handle_cuMemPrefetchAsync(conn_t *conn) {
   CUdevice dstDevice;
   CUstream hStream;
   int request_id;
-  CUresult return_value;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &dstDevice, sizeof(CUdevice)) < 0 ||
@@ -9132,12 +9090,9 @@ int handle_cuMemPrefetchAsync(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuMemPrefetchAsync(devPtr, count, dstDevice, hStream);
+  lupine_keep_async_error(
+      conn, cuMemPrefetchAsync(devPtr, count, dstDevice, hStream));
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -9149,7 +9104,7 @@ int handle_cuMemAdvise(conn_t *conn) {
   CUmem_advise advice;
   CUdevice device;
   int request_id;
-  CUresult return_value;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &devPtr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &advice, sizeof(CUmem_advise)) < 0 ||
@@ -9160,12 +9115,8 @@ int handle_cuMemAdvise(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuMemAdvise(devPtr, count, advice, device);
+  lupine_keep_async_error(conn, cuMemAdvise(devPtr, count, advice, device));
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_write_end(conn) < 0)
-    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;

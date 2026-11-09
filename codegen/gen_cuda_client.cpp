@@ -17,6 +17,7 @@
 #include "client_routing.h"
 #include "cuda_client.h"
 #include "cuda_client_memcpy.h"
+#include "events.h"
 #include "rpc.h"
 
 extern int rpc_size();
@@ -568,6 +569,8 @@ CUresult cuCtxGetExecAffinity(CUexecAffinityParam *pExecAffinity,
 #if CUDA_VERSION >= 12050
 CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent) {
   lupine_route route = lupine_route_for_context(hCtx);
+  // Re-recording re-arms the event, so its cached completion is stale.
+  lupine_event_invalidate_completion(hEvent);
   CUresult return_value;
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuCtxRecordEvent"),
@@ -577,11 +580,10 @@ CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent) {
       rpc_write_start_request(conn, RPC_cuCtxRecordEvent) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUcontext)) < 0 ||
       rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 #endif
@@ -674,11 +676,10 @@ CUresult cuCtxSetSharedMemConfig(CUsharedconfig config) {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxSetSharedMemConfig) < 0 ||
       rpc_write(conn, &config, sizeof(CUsharedconfig)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 CUresult cuModuleUnload(CUmodule hmod) {
@@ -2155,12 +2156,10 @@ CUresult cuMemAddressFree(CUdeviceptr ptr, size_t size) {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemAddressFree) < 0 ||
       rpc_write(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, &size, sizeof(size_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write(conn, &size, sizeof(size_t)) < 0 || rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 CUresult cuMemCreate(CUmemGenericAllocationHandle *handle, size_t size,
@@ -2437,11 +2436,10 @@ CUresult cuMemPoolTrimTo(CUmemoryPool pool, size_t minBytesToKeep) {
       rpc_write_start_request(conn, RPC_cuMemPoolTrimTo) < 0 ||
       rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_write(conn, &minBytesToKeep, sizeof(size_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 CUresult cuMemPoolSetAccess(CUmemoryPool pool, const CUmemAccessDesc *map,
@@ -2552,11 +2550,10 @@ CUresult cuMemPoolDestroy(CUmemoryPool pool) {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemPoolDestroy) < 0 ||
       rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 CUresult cuMemAllocFromPoolAsync(CUdeviceptr *dptr, size_t bytesize,
@@ -4628,11 +4625,10 @@ CUresult cuDeviceGraphMemTrim(CUdevice device) {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuDeviceGraphMemTrim) < 0 ||
       rpc_write(conn, &device, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 CUresult cuGraphClone(CUgraph *phGraphClone, CUgraph originalGraph) {
@@ -5397,11 +5393,10 @@ CUresult cuGraphExecDestroy(CUgraphExec hGraphExec) {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphExecDestroy) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 CUresult cuGraphDestroy(CUgraph hGraph) {
@@ -5530,11 +5525,10 @@ CUresult cuGraphDebugDotPrint(CUgraph hGraph, const char *path,
       rpc_write(conn, &path_len, sizeof(std::size_t)) < 0 ||
       rpc_write(conn, path, path_len) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 CUresult cuUserObjectRetain(CUuserObject object, unsigned int count) {
@@ -6980,6 +6974,8 @@ CUresult cuDevResourceGenerateDesc(CUdevResourceDesc *phDesc,
 #if CUDA_VERSION >= 12040
 CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent) {
   lupine_route route = lupine_route_for_current_context();
+  // Re-recording re-arms the event, so its cached completion is stale.
+  lupine_event_invalidate_completion(hEvent);
   CUresult return_value;
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn(
@@ -6989,11 +6985,10 @@ CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent) {
       rpc_write_start_request(conn, RPC_cuGreenCtxRecordEvent) < 0 ||
       rpc_write(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
       rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 #endif
