@@ -4221,6 +4221,52 @@ extern "C" CUresult cuMemcpyHtoD(CUdeviceptr dstDevice, const void *srcHost,
   return cuMemcpyHtoD_v2(dstDevice, srcHost, ByteCount);
 }
 
+// An async host-to-device copy this client can issue without the server's
+// reply.
+//
+// The reply only carries the enqueue result. Natively a page-locked source is
+// read when the stream reaches the copy and the call returns at once; here the
+// server copies a mirrored source from its own page-locked copy, and pulls a
+// registered one from this client at that point through a callback the
+// dispatch thread serves whatever the caller is doing. A pageable source of
+// at most LUPINE_INLINE_HTOD_BYTES travels in the request, which has copied it
+// before rpc_write_end returns, and the server hands it to the driver, which
+// stages it before returning just as it does natively. Either way the server
+// ends the copy's ticket once the copy is queued, not when the stream reaches
+// it: a ticket held that long would make every later request from any thread
+// wait behind work queued ahead of the copy, which may itself be waiting on
+// one of those requests. A larger pageable source still waits, since its
+// bytes are staged through a one-fragment ring the handler drains in stream
+// order, and so does a device source on another route.
+//
+// The destination rules and the capture exclusion match the synchronous copy,
+// so argument errors and a capture's failure still reach the call that made
+// them; an enqueue failure past those checks reaches the client from its next
+// synchronize, as for launches.
+static bool lupine_htod_async_fire_and_forget(lupine_route route,
+                                              CUdeviceptr destination,
+                                              const void *source, size_t bytes,
+                                              bool is_server_authoritative,
+                                              uint64_t pushed_bytes) {
+  bool inline_pageable =
+      pushed_bytes == bytes && bytes <= LUPINE_INLINE_HTOD_BYTES;
+  if (!is_server_authoritative && !inline_pageable) {
+    uintptr_t start = reinterpret_cast<uintptr_t>(source);
+    if (start > UINTPTR_MAX - bytes) {
+      return false;
+    }
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    if (!lupine_host_range_registered_locked(start, bytes)) {
+      return false;
+    }
+  }
+  return bytes != 0 &&
+         lupine_active_stream_captures.load(std::memory_order_relaxed) == 0 &&
+         lupine_deviceptr_allocation_covers(destination, bytes,
+                                            lupine_route_identity(route)) &&
+         !lupine_host_ptr_is_tracked(destination);
+}
+
 extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
                                          const void *srcHost, size_t ByteCount,
                                          CUstream hStream) {
@@ -4244,9 +4290,31 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
                                 : srcHost;
   uint64_t pushed_bytes =
       lupine_htod_pushed_bytes(is_server_authoritative, srcHost, ByteCount);
+  // The first byte says whether the client waits for the answer.
+  uint8_t fire_and_forget =
+      lupine_htod_async_fire_and_forget(route, dstDevice, srcHost, ByteCount,
+                                        is_server_authoritative, pushed_bytes);
+  if (fire_and_forget) {
+    if (lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
+        rpc_write(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
+        rpc_write(conn, &is_server_authoritative,
+                  sizeof(is_server_authoritative)) < 0 ||
+        rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
+        rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
+        rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+        rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
+        rpc_write(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0 ||
+        rpc_write(conn, srcHost, pushed_bytes) < 0 ||
+        rpc_write_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    return CUDA_SUCCESS;
+  }
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemcpyHtoDAsync_v2) < 0 ||
+      rpc_write(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
       rpc_write(conn, &is_server_authoritative,
                 sizeof(is_server_authoritative)) < 0 ||
       rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||

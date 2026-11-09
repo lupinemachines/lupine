@@ -1682,7 +1682,8 @@ static CUresult lupine_prepare_htod_copy(
   return CUDA_SUCCESS;
 }
 
-static CUresult lupine_enqueue_client_htod_copy(lupine_staging_state &state,
+static CUresult lupine_enqueue_client_htod_copy(conn_t *conn,
+                                                lupine_staging_state &state,
                                                 lupine_htod_copy copy,
                                                 CUcontext context,
                                                 CUstream stream,
@@ -1771,6 +1772,10 @@ static CUresult lupine_enqueue_client_htod_copy(lupine_staging_state &state,
     }
     return result;
   }
+  // The copy is queued. Tickets order submission, so a ticket the handler
+  // claimed ends here rather than once the stream reaches the copy: a later
+  // request from another lane must not wait behind work queued ahead of it.
+  rpc_async_sequence_end(conn);
 
   // CUDA may stage pageable HtoD input before an asynchronous API returns.
   // Preserve that source-lifetime guarantee: outside capture, the callback
@@ -1810,8 +1815,8 @@ static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
   }
 
   if (result == CUDA_SUCCESS) {
-    result = lupine_enqueue_client_htod_copy(*state, std::move(copy), context,
-                                             stream, blocking);
+    result = lupine_enqueue_client_htod_copy(conn, *state, std::move(copy),
+                                             context, stream, blocking);
   }
   CUcontext popped = nullptr;
   CUresult restore = cuCtxPopCurrent_v2(&popped);
@@ -1844,6 +1849,23 @@ static CUresult lupine_copy_pushed_host_to_device(conn_t *conn, CUstream stream,
   if (result != CUDA_SUCCESS) {
     return rpc_drain(conn, copy.bytes) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE
                                            : result;
+  }
+
+  // The driver stages a small pageable source before an async copy returns,
+  // without waiting for the stream, so a small linear copy goes to it
+  // directly and this handler never waits on the stream.
+  if (!blocking && copy.bytes <= LUPINE_INLINE_HTOD_BYTES &&
+      copy.use_cuda_memcpy && copy.destination_array == nullptr &&
+      copy.slices == 1 && copy.smemcpy.rows == 1) {
+    thread_local std::vector<unsigned char> source;
+    source.resize(copy.bytes);
+    result = rpc_read(conn, source.data(), copy.bytes) < 0
+                 ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                 : cuMemcpyHtoDAsync_v2(copy.smemcpy.destination,
+                                        source.data(), copy.bytes, stream);
+    CUcontext popped = nullptr;
+    CUresult restore = cuCtxPopCurrent_v2(&popped);
+    return result == CUDA_SUCCESS ? restore : result;
   }
 
   lupine_staging_state *state = nullptr;
@@ -2920,9 +2942,11 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   uint64_t pushed_bytes = 0;
   size_t byteCount = 0;
   CUstream stream = nullptr;
+  uint8_t fire_and_forget = 0;
   CUresult result = CUDA_SUCCESS;
 
-  if (rpc_read(conn, &is_server_authoritative,
+  if (rpc_read(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
+      rpc_read(conn, &is_server_authoritative,
                sizeof(is_server_authoritative)) < 0 ||
       rpc_read(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
@@ -2933,6 +2957,40 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   }
   if (pushed_bytes != 0 && pushed_bytes != byteCount) {
     return -1;
+  }
+  // Only a page-locked source or a small pushed one is sent fire-and-forget.
+  // It holds its ticket until the copy is queued, not until the stream reaches
+  // it, and a failure reaches the client from its next synchronize.
+  if (fire_and_forget) {
+    rpc_hold_ticket(conn);
+  }
+  if (fire_and_forget && pushed_bytes != 0) {
+    if (pushed_bytes > LUPINE_INLINE_HTOD_BYTES) {
+      return -1;
+    }
+    result = lupine_copy_pushed_host_to_device(
+        conn, stream, false,
+        lupine_make_linear_htod_copy(dstDevice, srcHost, byteCount));
+    if (rpc_read_end(conn) < 0) {
+      return -1;
+    }
+    lupine_keep_async_error(conn, result);
+    return 0;
+  }
+  if (fire_and_forget) {
+    if (byteCount == 0 || rpc_read_end(conn) < 0) {
+      return -1;
+    }
+    lupine_keep_async_error(
+        conn, is_server_authoritative
+                  ? cuMemcpyAsync(dstDevice,
+                                  reinterpret_cast<CUdeviceptr>(srcHost),
+                                  byteCount, stream)
+                  : lupine_copy_client_host_to_device(
+                        conn, stream, false,
+                        lupine_make_linear_htod_copy(dstDevice, srcHost,
+                                                     byteCount)));
+    return 0;
   }
   if (pushed_bytes != 0) {
     result = lupine_copy_pushed_host_to_device(

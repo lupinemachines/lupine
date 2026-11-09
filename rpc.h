@@ -117,6 +117,13 @@ struct rpc_host_allocation_write {
 // stay uncredited until the staging buffer they landed in retires.
 #define LUPINE_FF_STAGING_WINDOW_BYTES (64ull * 1024 * 1024)
 
+// The largest pageable async host-to-device copy the driver stages before
+// returning without waiting for the stream (measured on driver 580.95: a
+// 64 KiB copy returns in microseconds behind a busy stream, one byte more
+// waits for it). Up to this size the server hands pushed bytes to the driver
+// directly, so the client need not wait for the reply.
+#define LUPINE_INLINE_HTOD_BYTES (64ull * 1024)
+
 typedef struct conn_t conn_t;
 
 struct conn_t {
