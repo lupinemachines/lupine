@@ -47,6 +47,11 @@ class Backend:
     # Status codes for conditional output arrays.
     success: str = ""
     invalid_result: str = ""
+    # Calls on no stream wait only for earlier calls on no stream, except
+    # these, which wait for everything sent before them. Unset, every call on
+    # no stream waits for everything.
+    stream_less_scoped: bool = False
+    waits_for_everything: frozenset = frozenset()
     # Keeps an unanswered call's failure for the next synchronize to report.
     keep_async_error: str = ""
 
@@ -226,6 +231,8 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
 
     opening = "  if (conn == nullptr ||\n      " if backend.guard_null_conn else "  if ("
     start = f"rpc_write_start_request(conn, RPC_{name})"
+    if backend.stream_less_scoped and name not in backend.waits_for_everything:
+        start = f"rpc_write_start_request_on(conn, RPC_{name}, RPC_SCOPE_NONE)"
     # A call on a stream is ordered as CUDA orders that stream's work.
     stream = next(
         (p.name for p in function.parameters if p.type.format() == "cudaStream_t"),
@@ -478,8 +485,9 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write(f"  {entry}({args});\n\n")
     elif name in UNSETTLED_NOT_READY:
         f.write(
-            "  return_value = rpc_request_unsettled(conn) ? CUDA_ERROR_NOT_READY\n"
-            f"                                              : {entry}({args});\n\n"
+            "  return_value = lupine_stream_query_unsettled(conn, hStream)\n"
+            "                     ? CUDA_ERROR_NOT_READY\n"
+            f"                     : {entry}({args});\n\n"
         )
     else:
         f.write(f"  return_value = {entry}({args});\n\n")

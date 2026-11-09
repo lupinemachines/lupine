@@ -252,6 +252,7 @@ static uint64_t lupine_dirty_host_epoch = 0;
 static thread_local uint64_t lupine_required_host_epoch = 0;
 static volatile sig_atomic_t lupine_device_work_pending = 0;
 thread_local bool lupine_in_host_callback = false;
+thread_local bool lupine_flush_answered = false;
 static std::atomic<uint64_t> lupine_flushed_host_epoch{0};
 static std::mutex lupine_host_flush_mutex;
 
@@ -1395,7 +1396,9 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     if (rpc_write_start_request_on(conn, LUPINE_RPC_lupineManagedHostFlush, RPC_SCOPE_NONE) < 0 ||
         rpc_write(conn, &count, sizeof(count)) < 0 ||
         rpc_write_cursors(conn, cursors.data(), count * 2) < 0 ||
-        rpc_write_end(conn) < 0) {
+        (lupine_flush_answered
+             ? rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0
+             : rpc_write_end(conn) < 0)) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     return CUDA_SUCCESS;

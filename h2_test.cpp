@@ -2629,23 +2629,27 @@ void test_async_prefix_same_lane_elision_and_cross_lane_marker() {
           "cross-lane consumer missed the published prefix");
 }
 
-void test_async_prefix_entry_precedes_builder_wait() {
+// A request takes its dependencies once it holds the builder, so one that
+// overlapped another producer still waits for it. Scoped requests wait only
+// for an object's newest ticket, and that ticket must cover every request
+// that returned before a later one started.
+void test_async_prefix_builder_wait_orders_overlap() {
   h2_pair pair;
   init_pair(&pair);
   pthread_mutex_lock(&pair.client.write_mutex);
   std::thread caller([&] {
     require(rpc_write_start_request(&pair.client, 101) == 0,
             "blocked request start failed");
-    require(pair.client.write_dependency == 0,
-            "builder contention moved the entry snapshot to enqueue time");
+    require(pair.client.write_dependency == 1,
+            "a request that waited for the builder missed the overlap");
     require(rpc_write_end(&pair.client) > 0 && pair.client.write_ticket == 1,
             "blocked request enqueue failed");
     require(rpc_write_start_request(&pair.client, 102) == 0 &&
                 rpc_write_end(&pair.client) > 0,
             "following request enqueue failed");
   });
-  // The caller has captured its entry and acquired call_mutex, but cannot
-  // finish starting its builder until this test releases write_mutex.
+  // The caller has acquired call_mutex, but cannot start its builder until
+  // this test releases write_mutex.
   auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
   for (;;) {
     if (pthread_mutex_trylock(&pair.client.call_mutex) != 0) {
@@ -2663,10 +2667,17 @@ void test_async_prefix_entry_precedes_builder_wait() {
   pthread_mutex_unlock(&pair.client.write_mutex);
   caller.join();
   int32_t lane = rpc_http2_accept_stream(&pair.server);
-  int header[2];
-  uint64_t ticket = 0;
   int marker[2];
   uint64_t published = 0;
+  int header[2];
+  uint64_t ticket = 0;
+  require(rpc_http2_read_stream(&pair.server, lane, marker, sizeof(marker)) ==
+                  0 &&
+              marker[0] == 0 && marker[1] == 0 &&
+              rpc_http2_read_stream(&pair.server, lane, &published,
+                                    sizeof(published)) == 0 &&
+              published == 1,
+          "blocked request does not wait for the overlapping producer");
   require(
       rpc_http2_read_stream(&pair.server, lane, header, sizeof(header)) == 0 &&
           header[0] >= 2 && header[1] == 101 &&
@@ -2674,13 +2685,14 @@ void test_async_prefix_entry_precedes_builder_wait() {
               0 &&
           ticket == 1,
       "blocked request lost its ticket");
-  require(rpc_http2_read_stream(&pair.server, lane, marker, sizeof(marker)) ==
-                  0 &&
-              marker[0] == 0 && marker[1] == 0 &&
-              rpc_http2_read_stream(&pair.server, lane, &published,
-                                    sizeof(published)) == 0 &&
-              published == 2,
-          "own-lane completion elided a hole belonging to another producer");
+  // Its own lane already covers both earlier tickets.
+  require(
+      rpc_http2_read_stream(&pair.server, lane, header, sizeof(header)) == 0 &&
+          header[0] >= 2 && header[1] == 102 &&
+          rpc_http2_read_stream(&pair.server, lane, &ticket, sizeof(ticket)) ==
+              0 &&
+          ticket == 2,
+      "following request repeated a covered wait");
 }
 
 void test_async_prefix_wait_preserves_flow_control() {
@@ -2875,7 +2887,7 @@ int main() {
   RUN_CASE(test_async_prefix_allows_overlap_and_joins_holes());
   RUN_CASE(test_async_prefix_end_completes_only_claimed_ticket());
   RUN_CASE(test_async_prefix_same_lane_elision_and_cross_lane_marker());
-  RUN_CASE(test_async_prefix_entry_precedes_builder_wait());
+  RUN_CASE(test_async_prefix_builder_wait_orders_overlap());
   RUN_CASE(test_async_prefix_wait_preserves_flow_control());
   RUN_CASE(test_async_prefix_shutdown_wakes_waiters());
   RUN_CASE(test_request_start_rejects_null_and_closed_conn());

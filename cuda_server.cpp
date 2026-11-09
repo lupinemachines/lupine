@@ -458,6 +458,13 @@ lupine_logs_callbacks() {
 #endif
 
 // A fire-and-forget failure is reported by the next synchronizing response.
+bool lupine_stream_query_unsettled(conn_t *conn, CUstream stream) {
+  CUstreamCaptureStatus capture = CU_STREAM_CAPTURE_STATUS_NONE;
+  return rpc_request_unsettled(conn) &&
+         cuStreamIsCapturing(stream, &capture) == CUDA_SUCCESS &&
+         capture == CU_STREAM_CAPTURE_STATUS_NONE;
+}
+
 void lupine_keep_async_error(conn_t *conn, CUresult result) {
   int none = CUDA_SUCCESS;
   if (result != CUDA_SUCCESS) {
@@ -3425,10 +3432,13 @@ int handle_cuEventDestroy_v2(conn_t *conn) {
 
 int handle_cuEventQuery(conn_t *conn) {
   CUevent events[kLupineEventQueryBatch + 1] = {};
+  uint64_t tickets[kLupineEventQueryBatch + 1] = {};
   uint32_t count = 0;
   if (rpc_read(conn, &events[0], sizeof(events[0])) < 0 ||
       rpc_read(conn, &count, sizeof(count)) < 0 ||
-      rpc_read(conn, events + 1, count * sizeof(*events)) < 0) {
+      count > kLupineEventQueryBatch ||
+      rpc_read(conn, events + 1, count * sizeof(*events)) < 0 ||
+      rpc_read(conn, tickets + 1, count * sizeof(*tickets)) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -3438,9 +3448,10 @@ int handle_cuEventQuery(conn_t *conn) {
 
   // A record the client sent that is not submitted yet makes the answer not
   // ready; the driver would still report the event's previous record.
-  bool unsettled = rpc_request_unsettled(conn);
   CUresult results[kLupineEventQueryBatch + 1];
   for (uint32_t i = 0; i <= count; ++i) {
+    bool unsettled = i == 0 ? rpc_request_unsettled(conn)
+                            : !rpc_async_ticket_released(conn, tickets[i]);
     results[i] = unsettled ? CUDA_ERROR_NOT_READY : cuEventQuery(events[i]);
   }
   // Copies ride back only for events[0]; a cached success would skip them.
@@ -3882,7 +3893,17 @@ int handle_lupineManagedHostFlush(conn_t *conn) {
     }
   }
 
-  return rpc_read_end(conn) < 0 ? -1 : 0;
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  // A host callback's acknowledgement waits for its writes to land.
+  if (rpc_request_awaited(conn) &&
+      (rpc_write_start_response(conn, request_id) < 0 ||
+       rpc_write_end(conn) < 0)) {
+    return -1;
+  }
+  return 0;
 }
 // Serves LUPINE_RPC_lupineDeviceSnapshot: every immutable per-device value the
 // client caches, for every device, in one response. Mutable state (primary

@@ -6,6 +6,11 @@ extern "C" int lupine_rpc_write_start_request(conn_t *conn, int op) {
   return rpc_write_start_request(conn, op);
 }
 
+extern "C" int lupine_rpc_write_start_request_on(conn_t *conn, int op,
+                                                 uintptr_t key) {
+  return rpc_write_start_request_on(conn, op, key);
+}
+
 extern "C" int lupine_rpc_write_start_request_on_stream(conn_t *conn, int op,
                                                         void *stream) {
   return lupine_rpc_start_on_stream(conn, op, static_cast<CUstream>(stream));

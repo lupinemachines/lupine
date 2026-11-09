@@ -4121,8 +4121,9 @@ int handle_cuStreamQuery(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = rpc_request_unsettled(conn) ? CUDA_ERROR_NOT_READY
-                                             : cuStreamQuery(hStream);
+  return_value = lupine_stream_query_unsettled(conn, hStream)
+                     ? CUDA_ERROR_NOT_READY
+                     : cuStreamQuery(hStream);
 
   if (return_value == CUDA_SUCCESS) {
     CUcontext context = nullptr;

@@ -58,6 +58,10 @@ extern "C" void lupine_invalidate_launched_managed(CUdeviceptr pointer,
 extern "C" void lupine_adopt_managed_global(lupine_route route,
                                             CUdeviceptr global, size_t bytes);
 extern thread_local bool lupine_in_host_callback;
+// Set while a host callback's acknowledgement publishes its mapped writes. The
+// acknowledgement resumes the stream as soon as it arrives, so the flush ahead
+// of it waits for its answer instead of only holding a ticket.
+extern thread_local bool lupine_flush_answered;
 // Reads one deferred device-to-host copy: its lupine_host_rows, then the rows.
 int lupine_read_deferred_rows(conn_t *conn);
 extern "C" void lupine_materialize_host_allocations();

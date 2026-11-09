@@ -718,6 +718,19 @@ std::vector<uintptr_t> &lupine_blocking_streams() {
   return *streams;
 }
 
+// Blocking streams that are gone, on the connections they ran on. Their last
+// work may not be submitted yet, so the next legacy request on that connection
+// still waits for it; later ones wait for that request instead.
+struct lupine_retired_stream {
+  conn_t *conn;
+  uintptr_t key;
+};
+
+std::vector<lupine_retired_stream> &lupine_retired_streams() {
+  static auto *streams = new std::vector<lupine_retired_stream>();
+  return *streams;
+}
+
 void lupine_set_stream_blocking(uintptr_t key, bool blocking) {
   std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
   auto &streams = lupine_blocking_streams();
@@ -729,11 +742,31 @@ void lupine_set_stream_blocking(uintptr_t key, bool blocking) {
   }
 }
 
+// Stops treating `key` as blocking, keeping the legacy stream behind what it
+// already sent on `conns`. Returns whether it was blocking.
+bool lupine_retire_blocking_stream(uintptr_t key, conn_t *const *conns,
+                                   size_t count) {
+  std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
+  auto &streams = lupine_blocking_streams();
+  auto it = std::find(streams.begin(), streams.end(), key);
+  if (it == streams.end()) {
+    return false;
+  }
+  streams.erase(it);
+  for (size_t i = 0; i < count; ++i) {
+    lupine_retired_streams().push_back({conns[i], key});
+  }
+  return true;
+}
+
 // The per-thread default stream's scope: one per thread, blocking while the
 // thread lives.
 struct lupine_thread_stream {
+  std::vector<conn_t *> conns; // connections this thread's stream was used on
   lupine_thread_stream() { lupine_set_stream_blocking(key(), true); }
-  ~lupine_thread_stream() { lupine_set_stream_blocking(key(), false); }
+  ~lupine_thread_stream() {
+    lupine_retire_blocking_stream(key(), conns.data(), conns.size());
+  }
   uintptr_t key() const { return reinterpret_cast<uintptr_t>(this); }
 };
 
@@ -753,12 +786,29 @@ extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op,
       return -1;
     }
     std::vector<uintptr_t> blocking;
+    std::vector<uintptr_t> retired;
     {
       std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
       blocking = lupine_blocking_streams();
+      auto &streams = lupine_retired_streams();
+      auto gone = std::remove_if(
+          streams.begin(), streams.end(),
+          [&](const lupine_retired_stream &stream) {
+            if (stream.conn != conn) {
+              return false;
+            }
+            retired.push_back(stream.key);
+            return true;
+          });
+      streams.erase(gone, streams.end());
     }
     for (uintptr_t key : blocking) {
       rpc_request_after(conn, key);
+    }
+    // This request now stands for the retired streams' work.
+    for (uintptr_t key : retired) {
+      rpc_request_after(conn, key);
+      rpc_scope_forget(conn, key);
     }
     return 0;
   }
@@ -767,6 +817,10 @@ extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op,
   if (blocking) {
     static thread_local lupine_thread_stream thread_stream;
     key = thread_stream.key();
+    if (std::find(thread_stream.conns.begin(), thread_stream.conns.end(),
+                  conn) == thread_stream.conns.end()) {
+      thread_stream.conns.push_back(conn);
+    }
   } else {
     std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
     auto &streams = lupine_blocking_streams();
@@ -778,13 +832,34 @@ extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op,
   return blocking ? rpc_request_after(conn, kLegacyStreamScope) : 0;
 }
 
+extern "C" int lupine_rpc_request_on_each(conn_t *conn,
+                                          const void *const *handles,
+                                          unsigned int count) {
+  for (unsigned int i = 0; handles != nullptr && i < count; ++i) {
+    if (rpc_request_on(conn, reinterpret_cast<uintptr_t>(handles[i])) < 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
 extern "C" void lupine_forget_stream_owner(CUstream stream) {
-  lupine_note_stream_blocking(stream, false);
+  conn_t *conn = lupine_route_remote_conn(lupine_route_for_stream(stream));
+  uintptr_t key = reinterpret_cast<uintptr_t>(stream);
+  // A destroyed stream's scope only matters while the legacy stream still
+  // waits for it.
+  if (!lupine_retire_blocking_stream(key, &conn, conn != nullptr) &&
+      conn != nullptr) {
+    rpc_scope_forget(conn, key);
+  }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   lupine_owners<CUstream>().erase(stream);
 }
 
 extern "C" void lupine_forget_event_owner(CUevent event) {
+  if (conn_t *conn = lupine_route_remote_conn(lupine_route_for_event(event))) {
+    rpc_scope_forget(conn, reinterpret_cast<uintptr_t>(event));
+  }
   {
     std::lock_guard<std::mutex> lock(lupine_routing_mutex());
     lupine_owners<CUevent>().erase(event);

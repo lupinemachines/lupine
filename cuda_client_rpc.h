@@ -13,6 +13,8 @@ extern "C" {
 typedef struct conn_t conn_t;
 
 int lupine_rpc_write_start_request(conn_t *conn, int op);
+// Starts a request ordered by `key`, as rpc_write_start_request_on does.
+int lupine_rpc_write_start_request_on(conn_t *conn, int op, uintptr_t key);
 // Starts a request ordered as CUDA orders work on `stream` (a CUstream).
 int lupine_rpc_write_start_request_on_stream(conn_t *conn, int op,
                                              void *stream);

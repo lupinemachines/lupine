@@ -241,12 +241,16 @@ DEVICE_WIDE_FUNCTIONS = {
     "cuCtxSetLimit",
     "cuCtxSynchronize",
     "cuCtxSynchronize_v2",
+    "cuCtxRecordEvent",
+    "cuCtxWaitEvent",
     "cuDestroyExternalMemory",
     "cuDestroyExternalSemaphore",
     "cuDevicePrimaryCtxRelease_v2",
     "cuDevicePrimaryCtxReset_v2",
     "cuGraphicsUnregisterResource",
     "cuGreenCtxDestroy",
+    "cuGreenCtxRecordEvent",
+    "cuGreenCtxWaitEvent",
     "cuIpcCloseMemHandle",
     "cuMemFreeHost",
     "cuMemHostUnregister",
@@ -473,6 +477,17 @@ NCCL = Backend(
     not_supported="ncclInvalidUsage",
     async_success="ncclSuccess",
     alias_prefix="p",
+    # Releasing what queued collectives may still use waits for them.
+    stream_less_scoped=True,
+    waits_for_everything=frozenset({
+        "ncclCommAbort",
+        "ncclCommDeregister",
+        "ncclCommDestroy",
+        "ncclCommFinalize",
+        "ncclCommWindowDeregister",
+        "ncclMemFree",
+        "ncclRedOpDestroy",
+    }),
 )
 
 ANNOTATION_FILES = {
@@ -1210,24 +1225,50 @@ def client_request_start(function: Function) -> str:
         return [p.name for p in function.parameters if p.type.format() == type_name]
 
     streams, events = first("CUstream"), first("CUevent")
+    execs = first("CUgraphExec")
+
+    def also_on(keys):
+        return "".join(
+            " < 0 ||\n"
+            f"        rpc_request_on(conn, reinterpret_cast<uintptr_t>({key}))"
+            for key in keys
+        )
+
     if name in DEVICE_WIDE_FUNCTIONS:
-        return f"rpc_write_start_request(conn, {op})"
+        # Waits for everything already; an event it records is published too.
+        return f"rpc_write_start_request(conn, {op})" + also_on(events)
     if streams:
         start = f"lupine_rpc_start_on_stream(conn, {op}, {streams[0]})"
+        rest = streams[1:] + events
     elif re.match(r"cuMem(cpy|set)", name) and "Async" not in name:
         start = f"lupine_rpc_start_on_stream(conn, {op}, nullptr)"
-    elif events and name.startswith("cuEvent"):
+        rest = events
+    elif events:
         start = (
             f"rpc_write_start_request_on(conn, {op},\n"
             f"            reinterpret_cast<uintptr_t>({events[0]}))"
         )
-        for event in events[1:]:
-            start += (
-                " < 0 ||\n"
-                f"        rpc_request_on(conn, reinterpret_cast<uintptr_t>({event}))"
-            )
+        rest = events[1:]
     else:
         start = f"rpc_write_start_request_on(conn, {op}, RPC_SCOPE_NONE)"
+        rest = []
+    # A graph executable runs one launch at a time, and is updated or
+    # destroyed only after the launches its caller made before.
+    start += also_on(rest + execs)
+    # A semaphore's wait is submitted after the signals sent before it.
+    for parameter in function.parameters:
+        if (
+            isinstance(parameter.type, Pointer)
+            and parameter.type.ptr_to.const
+            and parameter.type.ptr_to.format().replace("const ", "")
+            == "CUexternalSemaphore"
+        ):
+            start += (
+                " < 0 ||\n"
+                "        lupine_rpc_request_on_each(conn,\n"
+                f"            reinterpret_cast<const void *const *>({parameter.name}),\n"
+                "            numExtSems)"
+            )
     if name in UNSETTLED_NOT_READY:
         start += " < 0 ||\n        rpc_request_soft(conn)"
     return start

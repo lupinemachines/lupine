@@ -150,12 +150,13 @@ struct rpc_scope_ticket {
 // of waiting for them, so a query can say they are not done yet.
 struct rpc_request_scope {
   static constexpr int kMaxWaits = 8;
+  static constexpr int kMaxKeys = 4;
   bool scoped = false;
   bool publish_connection = false;
   bool soft = false;
   bool wait_all = false;
   int key_count = 0;
-  uintptr_t keys[2] = {};
+  uintptr_t keys[kMaxKeys] = {};
   int wait_count = 0;
   uint64_t waits[kMaxWaits] = {};
 };
@@ -179,6 +180,7 @@ struct conn_t {
   pthread_cond_t async_cond;
   uint64_t issued_async_sequence;
   uint64_t serving_async_sequence;
+  int async_waiters = 0; // lanes in a ticket wait, under async_mutex
   uint64_t published_async_sequence;
   std::set<uint64_t> completed_async_sequences;
   pthread_mutex_t scope_mutex;
@@ -323,6 +325,13 @@ extern void rpc_async_sequence_end(conn_t *conn);
 // handler keeps a failure for the client's next synchronize instead.
 extern bool rpc_request_awaited(conn_t *conn);
 // Whether something a soft request is ordered behind has not been submitted.
+// Drops what is known about `key`, once nothing sent later can be ordered by
+// it: a destroyed object, or one a later request now stands for.
+extern void rpc_scope_forget(conn_t *conn, uintptr_t key);
+// The last ticket another lane sent on `key`, for a request being built to
+// carry and the server to check with rpc_async_ticket_released; ~0 if none.
+extern uint64_t rpc_request_pending_ticket(conn_t *conn, uintptr_t key);
+extern bool rpc_async_ticket_released(conn_t *conn, uint64_t ticket);
 extern bool rpc_request_unsettled(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // Signals transport readers to stop without releasing connection resources.

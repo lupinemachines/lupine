@@ -202,6 +202,11 @@ lupine_record_disjoint_allocation(CUdeviceptr *ptr, size_t size,
 // behind every blocking stream.
 extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op,
                                           CUstream stream);
+// Orders the request being built by each of `count` handles too, as
+// rpc_request_on does for one.
+extern "C" int lupine_rpc_request_on_each(conn_t *conn,
+                                          const void *const *handles,
+                                          unsigned int count);
 // Records whether a stream this client created waits for the legacy stream.
 extern "C" void lupine_note_stream_blocking(CUstream stream, bool blocking);
 

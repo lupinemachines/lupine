@@ -4814,6 +4814,7 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
       lupine_event_lifecycle_mutex());
   CUevent events[kLupineEventQueryBatch + 1] = {hEvent};
   uint64_t records[kLupineEventQueryBatch + 1];
+  uint64_t tickets[kLupineEventQueryBatch + 1];
   CUresult results[kLupineEventQueryBatch + 1];
   if (!lupine_event_query_needed(hEvent, &records[0])) {
     return lupine_sync_mapped_device_to_host();
@@ -4822,12 +4823,13 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
   uint32_t count =
       lupine_event_collect_query_batch(hEvent, conn, events + 1, records + 1);
   // A query checks the events' records instead of waiting for them: a record
-  // another thread sent that has not been submitted answers not ready.
+  // another thread sent that has not been submitted answers not ready. Each
+  // event that rides along carries its own record's ticket, so one still
+  // being submitted does not make the others not ready.
   auto check_records = [&] {
     for (uint32_t i = 1; i <= count; ++i) {
-      if (rpc_request_after(conn, reinterpret_cast<uintptr_t>(events[i])) < 0) {
-        return -1;
-      }
+      tickets[i] = rpc_request_pending_ticket(
+          conn, reinterpret_cast<uintptr_t>(events[i]));
     }
     return rpc_request_soft(conn);
   };
@@ -4838,6 +4840,7 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
       rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
       rpc_write(conn, &count, sizeof(count)) < 0 ||
       rpc_write(conn, events + 1, count * sizeof(*events)) < 0 ||
+      rpc_write(conn, tickets + 1, count * sizeof(*tickets)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       lupine_read_deferred_dtoh_copies(conn) < 0 ||
       rpc_read(conn, results, (count + 1) * sizeof(*results)) < 0 ||
@@ -9125,7 +9128,10 @@ void *rpc_client_dispatch_thread(void *arg) {
 
       // Acknowledging the callback lets queued device work resume. Publish its
       // mapped-memory writes first, even when no application CUDA call follows.
-      if (lupine_prepare_rpc(conn) < 0) {
+      lupine_flush_answered = true;
+      int flushed = lupine_prepare_rpc(conn);
+      lupine_flush_answered = false;
+      if (flushed < 0) {
         LUPINE_LOG_ERROR("Failed to flush host writes from host callback.");
         goto close_connection;
       }
@@ -9162,7 +9168,10 @@ void *rpc_client_dispatch_thread(void *arg) {
         lupine_in_host_callback = false;
       }
 
-      if (lupine_prepare_rpc(conn) < 0) {
+      lupine_flush_answered = true;
+      int flushed = lupine_prepare_rpc(conn);
+      lupine_flush_answered = false;
+      if (flushed < 0) {
         LUPINE_LOG_ERROR("Failed to flush host writes from stream callback.");
         break;
       }

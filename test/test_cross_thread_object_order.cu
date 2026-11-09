@@ -129,5 +129,42 @@ int main() {
         copy_slot<<<1, 1, 0, 0>>>(slot, result);
         return cudaGetLastError();
       }));
-  return expect("legacy stream", result, 0x33);
+  if (expect("legacy stream", result, 0x33) != 0) {
+    return 1;
+  }
+
+  // The legacy stream still waits for a blocking stream destroyed with work
+  // pending, and for a thread's per-thread stream after the thread exits.
+  CHECK(cudaMemset(slot, 0, sizeof(*slot)));
+  CHECK(hand_off(
+      [&] {
+        cudaStream_t gone = nullptr;
+        cudaError_t r = cudaStreamCreate(&gone);
+        if (r != cudaSuccess) {
+          return r;
+        }
+        slow_store<<<1, 1, 0, gone>>>(slot, 0x44, cycles);
+        r = cudaGetLastError();
+        cudaError_t destroyed = cudaStreamDestroy(gone);
+        return r != cudaSuccess ? r : destroyed;
+      },
+      [&] {
+        copy_slot<<<1, 1, 0, 0>>>(slot, result);
+        return cudaGetLastError();
+      }));
+  if (expect("destroyed blocking stream", result, 0x44) != 0) {
+    return 1;
+  }
+
+  CHECK(cudaMemset(slot, 0, sizeof(*slot)));
+  cudaError_t exited_result = cudaSuccess;
+  std::thread exited([&] {
+    slow_store<<<1, 1, 0, cudaStreamPerThread>>>(slot, 0x55, cycles);
+    exited_result = cudaGetLastError();
+  });
+  exited.join();
+  CHECK(exited_result);
+  copy_slot<<<1, 1, 0, cudaStreamLegacy>>>(slot, result);
+  CHECK(cudaGetLastError());
+  return expect("exited thread's per-thread stream", result, 0x55);
 }

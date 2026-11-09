@@ -49,6 +49,11 @@ ncclResult_t rpc_error() {
 int rpc_write_start_request(conn_t *conn, int op) {
   return lupine_rpc_write_start_request(conn, op);
 }
+// rpc.h's scope for a request on no object.
+constexpr uintptr_t RPC_SCOPE_NONE = 0;
+int rpc_write_start_request_on(conn_t *conn, int op, uintptr_t key) {
+  return lupine_rpc_write_start_request_on(conn, op, key);
+}
 int rpc_write_start_request_on_stream(conn_t *conn, int op, void *stream) {
   return lupine_rpc_write_start_request_on_stream(conn, op, stream);
 }
