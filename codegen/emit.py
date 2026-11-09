@@ -391,8 +391,9 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         )
         f.write(f"  using fn_t = {result} (*)({fn_params});\n")
         f.write("  fn_t fn = nullptr;\n")
-    if always_async:
+    if always_async or submit:
         # No answer: later requests wait for this call's submission instead.
+        # A call that chooses at run time holds it until its first byte says.
         f.write("  rpc_hold_ticket(conn);\n")
     f.write("  if (\n")
     if submit:
@@ -406,7 +407,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     f.write("      false)\n")
     f.write("    goto ERROR_0;\n\n")
     if submit:
-        f.write("  if (unanswered)\n    rpc_hold_ticket(conn);\n")
+        f.write("  if (!unanswered)\n    rpc_async_sequence_end(conn);\n")
     f.write("  request_id = rpc_read_end(conn);\n")
     f.write("  if (request_id < 0)\n")
     f.write("    goto ERROR_0;\n\n")

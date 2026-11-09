@@ -447,10 +447,12 @@ CUresult cuCtxSetLimit(CUlimit limit, size_t value) {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxSetLimit) < 0 ||
       rpc_write(conn, &limit, sizeof(CUlimit)) < 0 ||
-      rpc_write(conn, &value, sizeof(size_t)) < 0 || rpc_write_end(conn) < 0) {
+      rpc_write(conn, &value, sizeof(size_t)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return CUDA_SUCCESS;
+  return return_value;
 }
 
 CUresult cuCtxGetLimit(size_t *pvalue, CUlimit limit) {
@@ -2210,10 +2212,11 @@ CUresult cuMemMap(CUdeviceptr ptr, size_t size, size_t offset,
       rpc_write(conn, &offset, sizeof(size_t)) < 0 ||
       rpc_write(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
-      rpc_write_end(conn) < 0) {
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return CUDA_SUCCESS;
+  return return_value;
 }
 
 CUresult cuMemMapArrayAsync(CUarrayMapInfo *mapInfoList, unsigned int count,
@@ -2271,10 +2274,11 @@ CUresult cuMemSetAccess(CUdeviceptr ptr, size_t size,
       rpc_write(conn, &size, sizeof(size_t)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
       rpc_write(conn, desc, count * sizeof(const CUmemAccessDesc)) < 0 ||
-      rpc_write_end(conn) < 0) {
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return CUDA_SUCCESS;
+  return return_value;
 }
 
 CUresult cuMemGetAccess(unsigned long long *flags,

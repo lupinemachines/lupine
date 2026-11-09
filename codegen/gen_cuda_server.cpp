@@ -811,7 +811,7 @@ int handle_cuCtxSetLimit(conn_t *conn) {
   CUlimit limit;
   size_t value;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &limit, sizeof(CUlimit)) < 0 ||
       rpc_read(conn, &value, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
@@ -820,8 +820,12 @@ int handle_cuCtxSetLimit(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuCtxSetLimit(limit, value));
+  return_value = cuCtxSetLimit(limit, value);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -2953,7 +2957,7 @@ int handle_cuMemMap(conn_t *conn) {
   CUmemGenericAllocationHandle handle;
   unsigned long long flags;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &size, sizeof(size_t)) < 0 ||
       rpc_read(conn, &offset, sizeof(size_t)) < 0 ||
@@ -2965,8 +2969,12 @@ int handle_cuMemMap(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(conn, cuMemMap(ptr, size, offset, handle, flags));
+  return_value = cuMemMap(ptr, size, offset, handle, flags);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   return 0;
 ERROR_0:
   return -1;
@@ -3033,7 +3041,7 @@ int handle_cuMemSetAccess(conn_t *conn) {
   CUmemAccessDesc *desc = nullptr;
   size_t desc_size;
   int request_id;
-  rpc_hold_ticket(conn);
+  CUresult return_value;
   if (rpc_read(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &size, sizeof(size_t)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 || false)
@@ -3049,12 +3057,14 @@ int handle_cuMemSetAccess(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  lupine_keep_async_error(
-      conn, cuMemSetAccess(
-                ptr, size,
-                (count * sizeof(const CUmemAccessDesc) == 0 ? nullptr : desc),
-                count));
+  return_value = cuMemSetAccess(
+      ptr, size, (count * sizeof(const CUmemAccessDesc) == 0 ? nullptr : desc),
+      count);
 
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
   free((void *)desc);
   return 0;
 ERROR_0:

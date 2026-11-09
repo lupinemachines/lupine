@@ -770,6 +770,17 @@ static int rpc_read_http2(conn_t *conn, void *data, size_t size) {
                        : rpc_http2_read_stream(conn, stream_id, data, size);
 }
 
+// A handler that answers needs no ticket: its caller waits for the answer, so
+// no later call depends on it meanwhile. It releases the ticket on its first
+// read of the request, before anything it does can wait; a handler that does
+// not answer calls rpc_hold_ticket before reading.
+static void rpc_release_unheld_ticket(conn_t *conn) {
+  if (!holding_ticket && rpc_tls_io.read_conn == conn &&
+      rpc_tls_io.read.op != -1) {
+    rpc_async_sequence_end(conn);
+  }
+}
+
 // A client thread's first read of its last request's answer waits for it.
 static bool rpc_answer_pending(conn_t *conn) {
   return conn != nullptr && conn->local_request_parity == 0 &&
@@ -780,6 +791,7 @@ int rpc_read(conn_t *conn, void *data, size_t size) {
   if (rpc_answer_pending(conn) && rpc_blocking(conn) < 0) {
     return -1;
   }
+  rpc_release_unheld_ticket(conn);
   void *alias = rpc_host_allocation_alias(conn, data, size);
   int result = rpc_read_http2(conn, alias != nullptr ? alias : data, size);
   if (result < 0 || alias == nullptr) {
@@ -822,11 +834,7 @@ int rpc_read_end(conn_t *conn) {
     int read_id = rpc_tls_io.read.request_id;
     int32_t stream_id = rpc_tls_io.read.stream_id;
     bool completed_response = rpc_tls_io.read.op == -1;
-    // A handler that answers needs no ticket once its request is read: its
-    // caller waits for the answer, so no later call depends on it meanwhile.
-    if (!completed_response && !holding_ticket) {
-      rpc_async_sequence_end(conn);
-    }
+    rpc_release_unheld_ticket(conn);
     rpc_tls_io.read_conn = nullptr;
     rpc_tls_io.read = {};
     rpc_release_held_call_lock(conn);
@@ -987,14 +995,15 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   conn->write_id = conn->request_id;
   conn->write_op = op;
   conn->write_dependency = dependency;
-  if (conn->local_request_parity == 0) {
-    conn->write_ticket = conn->issued_async_sequence++;
-  }
   conn->write_stream_id = rpc_http2_lane_stream(conn, rpc_tls_lane.id);
   if (conn->write_stream_id < 0) {
     rpc_release_write_builder(conn, request_nested_in_response);
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
+  }
+  // Dense tickets: one is taken only by a request that can be sent.
+  if (conn->local_request_parity == 0) {
+    conn->write_ticket = conn->issued_async_sequence++;
   }
   if (lupine_rpc_stats_path() != nullptr) {
     lupine_rpc_stats_record(op, 1, 0);

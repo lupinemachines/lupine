@@ -265,6 +265,7 @@ CUresult cuCtxSynchronize_v2(CUcontext ctx);
 /**
  * @param limit SEND_ONLY
  * @param value SEND_ONLY
+ * @blocking - changing the stack size can wait for running work
  */
 CUresult cuCtxSetLimit(CUlimit limit, size_t value);
 /**
@@ -1197,6 +1198,7 @@ CUresult cuMemRelease(CUmemGenericAllocationHandle handle);
  * @param offset SEND_ONLY
  * @param handle SEND_ONLY
  * @param flags SEND_ONLY
+ * @blocking - a failed mapping must stop the caller before it uses the range
  */
 CUresult cuMemMap(CUdeviceptr ptr, size_t size, size_t offset,
                   CUmemGenericAllocationHandle handle,
@@ -1218,6 +1220,7 @@ CUresult cuMemUnmap(CUdeviceptr ptr, size_t size);
  * @param size SEND_ONLY
  * @param count SEND_ONLY
  * @param desc SEND_ONLY LENGTH:count
+ * @blocking - a failed access change must stop the caller before it uses the range
  */
 CUresult cuMemSetAccess(CUdeviceptr ptr, size_t size,
                         const CUmemAccessDesc *desc, size_t count);

@@ -2215,6 +2215,8 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   size_t bytes = 0;
   CUresult result = CUDA_SUCCESS;
 
+  // Held until the first byte says whether the client waits for the answer.
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
       rpc_read(conn, &is_server_authoritative,
                sizeof(is_server_authoritative)) < 0 ||
@@ -2227,9 +2229,10 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   if (pushed_bytes != 0 && pushed_bytes != bytes) {
     return -1;
   }
-  // An unanswered copy keeps its ticket until it is submitted.
-  if (fire_and_forget) {
-    rpc_hold_ticket(conn);
+  // An answered copy needs no ticket; an unanswered one keeps it until the
+  // copy is submitted.
+  if (!fire_and_forget) {
+    rpc_async_sequence_end(conn);
   }
   if (pushed_bytes != 0) {
     result = lupine_copy_pushed_host_to_device(
@@ -2945,6 +2948,8 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   uint8_t fire_and_forget = 0;
   CUresult result = CUDA_SUCCESS;
 
+  // Held until the first byte says whether the client waits for the answer.
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
       rpc_read(conn, &is_server_authoritative,
                sizeof(is_server_authoritative)) < 0 ||
@@ -2960,9 +2965,10 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   }
   // Only a page-locked source or a small pushed one is sent fire-and-forget.
   // It holds its ticket until the copy is queued, not until the stream reaches
-  // it, and a failure reaches the client from its next synchronize.
-  if (fire_and_forget) {
-    rpc_hold_ticket(conn);
+  // it, and a failure reaches the client from its next synchronize; an
+  // answered copy needs no ticket.
+  if (!fire_and_forget) {
+    rpc_async_sequence_end(conn);
   }
   if (fire_and_forget && pushed_bytes != 0) {
     if (pushed_bytes > LUPINE_INLINE_HTOD_BYTES) {
