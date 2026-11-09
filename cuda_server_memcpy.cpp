@@ -1687,7 +1687,8 @@ static CUresult lupine_enqueue_client_htod_copy(conn_t *conn,
                                                 lupine_htod_copy copy,
                                                 CUcontext context,
                                                 CUstream stream,
-                                                bool blocking) {
+                                                bool blocking,
+                                                bool wait_for_source) {
   if (copy.bytes == 0) {
     return CUDA_SUCCESS;
   }
@@ -1779,9 +1780,13 @@ static CUresult lupine_enqueue_client_htod_copy(conn_t *conn,
 
   // CUDA may stage pageable HtoD input before an asynchronous API returns.
   // Preserve that source-lifetime guarantee: outside capture, the callback
-  // must finish pulling the client buffer before the caller can reuse it.
+  // must finish pulling the client buffer before the caller can reuse it. A
+  // page-locked source has no such guarantee natively, so its unanswered copy
+  // returns once queued: blocking here would hold up every later request on
+  // this lane, whose tickets other lanes wait for. The transfer stream keeps
+  // the ring's slot in order; a writer from the CPU drains it first.
   if (resources == nullptr) {
-    result = ring->synchronize();
+    result = wait_for_source ? ring->synchronize() : CUDA_SUCCESS;
     ring->release_execution();
     return result;
   }
@@ -1790,7 +1795,8 @@ static CUresult lupine_enqueue_client_htod_copy(conn_t *conn,
 
 static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
                                                   bool blocking,
-                                                  lupine_htod_copy copy) {
+                                                  lupine_htod_copy copy,
+                                                  bool wait_for_source = true) {
   // CUDA allows the copy stream to belong to a different context from the
   // caller's current one. The staging stream and its ordering events must be
   // created in that stream's context, then leave the caller's binding intact.
@@ -1816,7 +1822,8 @@ static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
 
   if (result == CUDA_SUCCESS) {
     result = lupine_enqueue_client_htod_copy(conn, *state, std::move(copy),
-                                             context, stream, blocking);
+                                             context, stream, blocking,
+                                             wait_for_source);
   }
   CUcontext popped = nullptr;
   CUresult restore = cuCtxPopCurrent_v2(&popped);
@@ -1888,6 +1895,11 @@ static CUresult lupine_copy_pushed_host_to_device(conn_t *conn, CUstream stream,
   if (result == CUDA_SUCCESS) {
     ring->acquire_execution();
     executing = true;
+    // This copy writes the ring's slot from the CPU, so an unanswered pull
+    // still queued on the transfer stream must leave it first.
+    result = ring->synchronize();
+  }
+  if (result == CUDA_SUCCESS) {
     result = cuEventRecord(ring->ordering_event(), stream);
     if (result == CUDA_SUCCESS) {
       result =
@@ -3003,7 +3015,8 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
                   : lupine_copy_client_host_to_device(
                         conn, stream, false,
                         lupine_make_linear_htod_copy(dstDevice, srcHost,
-                                                     byteCount)));
+                                                     byteCount),
+                        false));
     return 0;
   }
   if (pushed_bytes != 0) {

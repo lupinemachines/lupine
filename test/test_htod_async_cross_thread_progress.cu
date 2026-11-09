@@ -6,7 +6,9 @@
 // source is a cuMemHostAlloc buffer (mirrored on the server), a registered one
 // (pulled from the client when the stream reaches the copy) or small pageable
 // memory (sent in the request). A pageable source is free to reuse once the
-// call returns, so that case also overwrites it straight away.
+// call returns, so that case also overwrites it straight away. The producer
+// then keeps working, as any caller does: its next call must not hold up the
+// second thread either.
 #include <cuda_runtime.h>
 
 #include <chrono>
@@ -43,8 +45,12 @@ int run(const char *label, unsigned int *source, bool pageable,
         long long budget) {
   cudaStream_t waiting = nullptr;
   cudaStream_t signalling = nullptr;
+  cudaStream_t other = nullptr;
+  cudaEvent_t mark = nullptr;
   CHECK(cudaStreamCreateWithFlags(&waiting, cudaStreamNonBlocking));
   CHECK(cudaStreamCreateWithFlags(&signalling, cudaStreamNonBlocking));
+  CHECK(cudaStreamCreateWithFlags(&other, cudaStreamNonBlocking));
+  CHECK(cudaEventCreateWithFlags(&mark, cudaEventDisableTiming));
   unsigned int *flag = nullptr;
   unsigned int *timed_out = nullptr;
   unsigned int *target = nullptr;
@@ -63,6 +69,7 @@ int run(const char *label, unsigned int *source, bool pageable,
   *source = 0x1234abcd;
 
   cudaError_t copy_result = cudaSuccess;
+  cudaError_t next_result = cudaSuccess;
   std::thread producer([&] {
     wait_for_flag<<<1, 1, 0, waiting>>>(flag, timed_out, budget);
     copy_result = cudaMemcpyAsync(target, source, sizeof(*source),
@@ -70,6 +77,7 @@ int run(const char *label, unsigned int *source, bool pageable,
     if (pageable) {
       *source = 0xdeadbeef;
     }
+    next_result = cudaEventRecord(mark, other);
   });
   // Give the producer time to enqueue both without depending on its copy call
   // returning: where that call is held until the stream reaches the copy, the
@@ -80,6 +88,7 @@ int run(const char *label, unsigned int *source, bool pageable,
   producer.join();
   CHECK(signal_result);
   CHECK(copy_result);
+  CHECK(next_result);
   CHECK(cudaStreamSynchronize(signalling));
   CHECK(cudaStreamSynchronize(waiting));
 
@@ -102,8 +111,10 @@ int run(const char *label, unsigned int *source, bool pageable,
   CHECK(cudaFree(flag));
   CHECK(cudaFree(timed_out));
   CHECK(cudaFree(target));
+  CHECK(cudaEventDestroy(mark));
   CHECK(cudaStreamDestroy(waiting));
   CHECK(cudaStreamDestroy(signalling));
+  CHECK(cudaStreamDestroy(other));
   std::printf("%s: ok\n", label);
   return 0;
 }
