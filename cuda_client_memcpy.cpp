@@ -244,12 +244,13 @@ struct lupine_dirty_host_range_queue {
 
 static lupine_dirty_host_range_queue
     lupine_dirty_host_range_queues[LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES];
-// Dirty publications receive globally ordered tickets, but only the publishing
-// thread waits for its latest ticket. Another thread may flush that ticket; the
-// acknowledged global watermark then satisfies the publisher without making
-// unrelated RPC callers join the flush.
+// Dirty publications receive globally ordered tickets, and every RPC waits for
+// the latest one. A host write is ordered before another thread's CUDA call by
+// whatever synchronization the application uses between those threads, which
+// the client cannot observe, so the publishing thread's own calls are not the
+// only ones that must see it. The acknowledged global watermark lets a caller
+// skip the flush when another thread already covered its ticket.
 static uint64_t lupine_dirty_host_epoch = 0;
-static thread_local uint64_t lupine_required_host_epoch = 0;
 static volatile sig_atomic_t lupine_device_work_pending = 0;
 thread_local bool lupine_in_host_callback = false;
 static std::atomic<uint64_t> lupine_flushed_host_epoch{0};
@@ -575,10 +576,7 @@ lupine_reserve_dirty_host_range(lupine_dirty_host_range_queue &queue,
 }
 
 static void lupine_require_dirty_host_flush() {
-  uint64_t required_epoch =
-      __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_ACQ_REL);
-  __atomic_store_n(&lupine_required_host_epoch, required_epoch,
-                   __ATOMIC_RELEASE);
+  __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_ACQ_REL);
 }
 
 static void lupine_queue_dirty_host_range(lupine_host_allocation *allocation,
@@ -1492,12 +1490,10 @@ extern "C" int lupine_prepare_rpc(conn_t *conn) {
   }
 
   uint64_t required_epoch =
-      __atomic_load_n(&lupine_required_host_epoch, __ATOMIC_ACQUIRE);
+      __atomic_load_n(&lupine_dirty_host_epoch, __ATOMIC_ACQUIRE);
   if (lupine_flushed_host_epoch.load(std::memory_order_acquire) <
       required_epoch) {
     std::lock_guard<std::mutex> flush_lock(lupine_host_flush_mutex);
-    required_epoch =
-        __atomic_load_n(&lupine_required_host_epoch, __ATOMIC_ACQUIRE);
     while (lupine_flushed_host_epoch.load(std::memory_order_acquire) <
            required_epoch) {
       uint64_t flush_epoch =
@@ -1509,8 +1505,6 @@ extern "C" int lupine_prepare_rpc(conn_t *conn) {
         }
       }
       lupine_flushed_host_epoch.store(flush_epoch, std::memory_order_release);
-      required_epoch =
-          __atomic_load_n(&lupine_required_host_epoch, __ATOMIC_ACQUIRE);
     }
   }
   return 0;
