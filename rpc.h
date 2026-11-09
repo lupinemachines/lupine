@@ -2,6 +2,7 @@
 #define RPC_H
 
 #include "lupine_platform.h"
+#include <chrono>
 #include <set>
 #include <stdint.h>
 #include <vector>
@@ -282,6 +283,20 @@ extern void rpc_conn_destroy(conn_t *conn);
 extern lupine_socket_t lupine_tcp_connect(
     const char *host, const char *port, unsigned int max_retries = 5,
     const std::function<bool(lupine_socket_t)> &dialing = nullptr);
+
+// Per-connection adaptive polling: grow after a short miss, retain successful
+// budgets, and decay after long idle waits. The 32 us ceiling bounds each idle
+// spin; it is not the target spin time.
+class h2_writer_poll_policy {
+  std::chrono::nanoseconds budget_{0};
+
+public:
+  std::chrono::nanoseconds budget() const { return budget_; }
+
+  // Use the first output arrival, including arrivals after sleeping, rather
+  // than the time the writer is scheduled again. Ignore spurious wakeups.
+  void observe(std::chrono::nanoseconds idle_time);
+};
 
 constexpr int LUPINE_RPC_HTTP2_STREAM_END = -2;
 constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;
