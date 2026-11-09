@@ -4735,7 +4735,7 @@ extern "C" CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, RPC_cuStreamWaitEvent) < 0 ||
+      rpc_write_start_request(conn, RPC_cuStreamWaitEvent) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
       rpc_write(conn, &Flags, sizeof(Flags)) < 0 || rpc_write_end(conn) < 0) {
@@ -4760,7 +4760,7 @@ extern "C" CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, RPC_cuEventRecord) < 0 ||
+      rpc_write_start_request(conn, RPC_cuEventRecord) < 0 ||
       rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write_end(conn) < 0) {
@@ -4788,7 +4788,7 @@ extern "C" CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, RPC_cuEventRecordWithFlags) < 0 ||
+      rpc_write_start_request(conn, RPC_cuEventRecordWithFlags) < 0 ||
       rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 || rpc_write_end(conn) < 0) {
@@ -6214,7 +6214,7 @@ cuLaunchKernel(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
   if (lupine_prepare_rpc(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (rpc_write_start_async_request(conn, RPC_cuLaunchKernel) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuLaunchKernel) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
@@ -6301,7 +6301,7 @@ extern "C" CUresult cuLaunchKernelEx(const CUlaunchConfig *config, CUfunction f,
   if (lupine_prepare_rpc(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (rpc_write_start_async_request(conn, RPC_cuLaunchKernelEx) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuLaunchKernelEx) < 0 ||
       rpc_write(conn, config, sizeof(*config)) < 0 ||
       rpc_write(conn, config->attrs,
                 config->numAttrs * sizeof(*config->attrs)) < 0 ||
@@ -6364,7 +6364,7 @@ cuLaunchCooperativeKernel(CUfunction f, unsigned int gridDimX,
   if (lupine_prepare_rpc(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (rpc_write_start_async_request(conn, RPC_cuLaunchCooperativeKernel) < 0 ||
+  if (rpc_write_start_request(conn, RPC_cuLaunchCooperativeKernel) < 0 ||
       rpc_write(conn, &f, sizeof(f)) < 0 ||
       rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
@@ -7850,8 +7850,8 @@ cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode) {
   for (int i = 0; i < rpc_size(); ++i) {
     conn_t *conn = rpc_client_get_connection(i);
     if (lupine_prepare_rpc(conn) < 0 ||
-        rpc_write_start_async_request(
-            conn, RPC_cuThreadExchangeStreamCaptureMode) < 0 ||
+        rpc_write_start_request(conn, RPC_cuThreadExchangeStreamCaptureMode) <
+            0 ||
         rpc_write(conn, &requested, sizeof(requested)) < 0 ||
         rpc_write_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;

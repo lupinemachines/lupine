@@ -319,6 +319,7 @@ int handle_cuDeviceSetMemPool(conn_t *conn) {
   CUdevice dev;
   CUmemoryPool pool;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 || false)
     goto ERROR_0;
@@ -544,6 +545,7 @@ ERROR_0:
 int handle_cuCtxPushCurrent_v2(conn_t *conn) {
   CUcontext ctx;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &ctx, sizeof(CUcontext)) < 0 || false)
     goto ERROR_0;
 
@@ -809,6 +811,7 @@ int handle_cuCtxSetLimit(conn_t *conn) {
   CUlimit limit;
   size_t value;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &limit, sizeof(CUlimit)) < 0 ||
       rpc_read(conn, &value, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
@@ -949,6 +952,7 @@ ERROR_0:
 
 int handle_cuCtxResetPersistingL2Cache(conn_t *conn) {
   int request_id;
+  rpc_hold_ticket(conn);
   if (false)
     goto ERROR_0;
 
@@ -993,6 +997,7 @@ int handle_cuCtxRecordEvent(conn_t *conn) {
   CUcontext hCtx;
   CUevent hEvent;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hCtx, sizeof(CUcontext)) < 0 ||
       rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 || false)
     goto ERROR_0;
@@ -1015,6 +1020,7 @@ int handle_cuCtxWaitEvent(conn_t *conn) {
   CUcontext hCtx;
   CUevent hEvent;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hCtx, sizeof(CUcontext)) < 0 ||
       rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 || false)
     goto ERROR_0;
@@ -1059,6 +1065,7 @@ ERROR_0:
 int handle_cuCtxSetSharedMemConfig(conn_t *conn) {
   CUsharedconfig config;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &config, sizeof(CUsharedconfig)) < 0 || false)
     goto ERROR_0;
 
@@ -1076,6 +1083,7 @@ ERROR_0:
 int handle_cuModuleUnload(conn_t *conn) {
   CUmodule hmod;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hmod, sizeof(CUmodule)) < 0 || false)
     goto ERROR_0;
 
@@ -1903,6 +1911,7 @@ ERROR_0:
 int handle_cuIpcCloseMemHandle(conn_t *conn) {
   CUdeviceptr dptr;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 || false)
     goto ERROR_0;
 
@@ -1922,6 +1931,7 @@ int handle_cuMemcpy(conn_t *conn) {
   CUdeviceptr src;
   size_t ByteCount;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dst, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &src, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &ByteCount, sizeof(size_t)) < 0 || false)
@@ -2090,6 +2100,7 @@ int handle_cuMemcpyPeerAsync(conn_t *conn) {
   size_t ByteCount;
   CUstream hStream;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &dstContext, sizeof(CUcontext)) < 0 ||
       rpc_read(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
@@ -2117,6 +2128,7 @@ int handle_cuMemcpyDtoDAsync_v2(conn_t *conn) {
   size_t ByteCount;
   CUstream hStream;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &ByteCount, sizeof(size_t)) < 0 ||
@@ -2309,6 +2321,7 @@ int handle_cuMemsetD8Async(conn_t *conn) {
   size_t N;
   CUstream hStream;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &uc, sizeof(unsigned char)) < 0 ||
       rpc_read(conn, &N, sizeof(size_t)) < 0 ||
@@ -2332,6 +2345,7 @@ int handle_cuMemsetD16Async(conn_t *conn) {
   size_t N;
   CUstream hStream;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &us, sizeof(unsigned short)) < 0 ||
       rpc_read(conn, &N, sizeof(size_t)) < 0 ||
@@ -2355,6 +2369,7 @@ int handle_cuMemsetD32Async(conn_t *conn) {
   size_t N;
   CUstream hStream;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &ui, sizeof(unsigned int)) < 0 ||
       rpc_read(conn, &N, sizeof(size_t)) < 0 ||
@@ -2380,6 +2395,7 @@ int handle_cuMemsetD2D8Async(conn_t *conn) {
   size_t Height;
   CUstream hStream;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_read(conn, &uc, sizeof(unsigned char)) < 0 ||
@@ -2408,6 +2424,7 @@ int handle_cuMemsetD2D16Async(conn_t *conn) {
   size_t Height;
   CUstream hStream;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_read(conn, &us, sizeof(unsigned short)) < 0 ||
@@ -2436,6 +2453,7 @@ int handle_cuMemsetD2D32Async(conn_t *conn) {
   size_t Height;
   CUstream hStream;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &dstPitch, sizeof(size_t)) < 0 ||
       rpc_read(conn, &ui, sizeof(unsigned int)) < 0 ||
@@ -2652,6 +2670,7 @@ ERROR_0:
 int handle_cuArrayDestroy(conn_t *conn) {
   CUarray hArray;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hArray, sizeof(CUarray)) < 0 || false)
     goto ERROR_0;
 
@@ -2777,6 +2796,7 @@ ERROR_0:
 int handle_cuMipmappedArrayDestroy(conn_t *conn) {
   CUmipmappedArray hMipmappedArray;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hMipmappedArray, sizeof(CUmipmappedArray)) < 0 || false)
     goto ERROR_0;
 
@@ -2862,6 +2882,7 @@ int handle_cuMemAddressFree(conn_t *conn) {
   CUdeviceptr ptr;
   size_t size;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &size, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
@@ -2909,6 +2930,7 @@ ERROR_0:
 int handle_cuMemRelease(conn_t *conn) {
   CUmemGenericAllocationHandle handle;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
       false)
     goto ERROR_0;
@@ -2931,6 +2953,7 @@ int handle_cuMemMap(conn_t *conn) {
   CUmemGenericAllocationHandle handle;
   unsigned long long flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &size, sizeof(size_t)) < 0 ||
       rpc_read(conn, &offset, sizeof(size_t)) < 0 ||
@@ -2955,6 +2978,7 @@ int handle_cuMemMapArrayAsync(conn_t *conn) {
   size_t mapInfoList_size;
   CUstream hStream;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &count, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
   mapInfoList_size = count * sizeof(CUarrayMapInfo);
@@ -2986,6 +3010,7 @@ int handle_cuMemUnmap(conn_t *conn) {
   CUdeviceptr ptr;
   size_t size;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &size, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
@@ -3008,6 +3033,7 @@ int handle_cuMemSetAccess(conn_t *conn) {
   CUmemAccessDesc *desc = nullptr;
   size_t desc_size;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &ptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &size, sizeof(size_t)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 || false)
@@ -3197,6 +3223,7 @@ int handle_cuMemPoolTrimTo(conn_t *conn) {
   CUmemoryPool pool;
   size_t minBytesToKeep;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_read(conn, &minBytesToKeep, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
@@ -3303,6 +3330,7 @@ ERROR_0:
 int handle_cuMemPoolDestroy(conn_t *conn) {
   CUmemoryPool pool;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 || false)
     goto ERROR_0;
 
@@ -3679,6 +3707,7 @@ ERROR_0:
 int handle_cuThreadExchangeStreamCaptureMode(conn_t *conn) {
   CUstreamCaptureMode mode{};
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &mode, sizeof(CUstreamCaptureMode)) < 0 || false)
     goto ERROR_0;
 
@@ -3725,6 +3754,7 @@ int handle_cuStreamAttachMemAsync(conn_t *conn) {
   size_t length;
   unsigned int flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &length, sizeof(size_t)) < 0 ||
@@ -3843,6 +3873,7 @@ int handle_cuStreamCopyAttributes(conn_t *conn) {
   CUstream dst;
   CUstream src;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dst, sizeof(CUstream)) < 0 ||
       rpc_read(conn, &src, sizeof(CUstream)) < 0 || false)
     goto ERROR_0;
@@ -3890,6 +3921,7 @@ int handle_cuStreamSetAttribute(conn_t *conn) {
   CUstreamAttrID attr;
   CUstreamAttrValue value{};
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_read(conn, &attr, sizeof(CUstreamAttrID)) < 0 ||
       rpc_read(conn, &value, sizeof(const CUstreamAttrValue)) < 0 || false)
@@ -4083,6 +4115,7 @@ ERROR_0:
 int handle_cuDestroyExternalMemory(conn_t *conn) {
   CUexternalMemory extMem;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &extMem, sizeof(CUexternalMemory)) < 0 || false)
     goto ERROR_0;
 
@@ -4132,6 +4165,7 @@ int handle_cuSignalExternalSemaphoresAsync(conn_t *conn) {
   size_t paramsArray_size;
   CUstream stream;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &numExtSems, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
   extSemArray_size = numExtSems * sizeof(const CUexternalSemaphore);
@@ -4184,6 +4218,7 @@ int handle_cuWaitExternalSemaphoresAsync(conn_t *conn) {
   size_t paramsArray_size;
   CUstream stream;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &numExtSems, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
   extSemArray_size = numExtSems * sizeof(const CUexternalSemaphore);
@@ -4230,6 +4265,7 @@ ERROR_0:
 int handle_cuDestroyExternalSemaphore(conn_t *conn) {
   CUexternalSemaphore extSem;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &extSem, sizeof(CUexternalSemaphore)) < 0 || false)
     goto ERROR_0;
 
@@ -4250,6 +4286,7 @@ int handle_cuStreamWaitValue32_v2(conn_t *conn) {
   cuuint32_t value;
   unsigned int flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_read(conn, &addr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &value, sizeof(cuuint32_t)) < 0 ||
@@ -4274,6 +4311,7 @@ int handle_cuStreamWaitValue64_v2(conn_t *conn) {
   cuuint64_t value;
   unsigned int flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_read(conn, &addr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &value, sizeof(cuuint64_t)) < 0 ||
@@ -4298,6 +4336,7 @@ int handle_cuStreamWriteValue32_v2(conn_t *conn) {
   cuuint32_t value;
   unsigned int flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_read(conn, &addr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &value, sizeof(cuuint32_t)) < 0 ||
@@ -4322,6 +4361,7 @@ int handle_cuStreamWriteValue64_v2(conn_t *conn) {
   cuuint64_t value;
   unsigned int flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_read(conn, &addr, sizeof(CUdeviceptr)) < 0 ||
       rpc_read(conn, &value, sizeof(cuuint64_t)) < 0 ||
@@ -4347,6 +4387,7 @@ int handle_cuStreamBatchMemOp_v2(conn_t *conn) {
   size_t paramArray_size;
   unsigned int flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &stream, sizeof(CUstream)) < 0 ||
       rpc_read(conn, &count, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
@@ -4544,6 +4585,7 @@ int handle_cuFuncSetBlockShape(conn_t *conn) {
   int y;
   int z;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hfunc, sizeof(CUfunction)) < 0 ||
       rpc_read(conn, &x, sizeof(int)) < 0 ||
       rpc_read(conn, &y, sizeof(int)) < 0 ||
@@ -4565,6 +4607,7 @@ int handle_cuFuncSetSharedSize(conn_t *conn) {
   CUfunction hfunc;
   unsigned int bytes;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hfunc, sizeof(CUfunction)) < 0 ||
       rpc_read(conn, &bytes, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
@@ -4584,6 +4627,7 @@ int handle_cuParamSetSize(conn_t *conn) {
   CUfunction hfunc;
   unsigned int numbytes;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hfunc, sizeof(CUfunction)) < 0 ||
       rpc_read(conn, &numbytes, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
@@ -4604,6 +4648,7 @@ int handle_cuParamSeti(conn_t *conn) {
   int offset;
   unsigned int value;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hfunc, sizeof(CUfunction)) < 0 ||
       rpc_read(conn, &offset, sizeof(int)) < 0 ||
       rpc_read(conn, &value, sizeof(unsigned int)) < 0 || false)
@@ -4625,6 +4670,7 @@ int handle_cuParamSetf(conn_t *conn) {
   int offset;
   float value;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hfunc, sizeof(CUfunction)) < 0 ||
       rpc_read(conn, &offset, sizeof(int)) < 0 ||
       rpc_read(conn, &value, sizeof(float)) < 0 || false)
@@ -4648,6 +4694,7 @@ int handle_cuParamSetv(conn_t *conn) {
   void *ptr = nullptr;
   size_t ptr_size;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hfunc, sizeof(CUfunction)) < 0 ||
       rpc_read(conn, &offset, sizeof(int)) < 0 ||
       rpc_read(conn, &numbytes, sizeof(unsigned int)) < 0 || false)
@@ -4677,6 +4724,7 @@ ERROR_0:
 int handle_cuLaunch(conn_t *conn) {
   CUfunction f;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &f, sizeof(CUfunction)) < 0 || false)
     goto ERROR_0;
 
@@ -4696,6 +4744,7 @@ int handle_cuLaunchGrid(conn_t *conn) {
   int grid_width;
   int grid_height;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &f, sizeof(CUfunction)) < 0 ||
       rpc_read(conn, &grid_width, sizeof(int)) < 0 ||
       rpc_read(conn, &grid_height, sizeof(int)) < 0 || false)
@@ -4718,6 +4767,7 @@ int handle_cuLaunchGridAsync(conn_t *conn) {
   int grid_height;
   CUstream hStream;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &f, sizeof(CUfunction)) < 0 ||
       rpc_read(conn, &grid_width, sizeof(int)) < 0 ||
       rpc_read(conn, &grid_height, sizeof(int)) < 0 ||
@@ -4741,6 +4791,7 @@ int handle_cuParamSetTexRef(conn_t *conn) {
   int texunit;
   CUtexref hTexRef;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hfunc, sizeof(CUfunction)) < 0 ||
       rpc_read(conn, &texunit, sizeof(int)) < 0 ||
       rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 || false)
@@ -4761,6 +4812,7 @@ int handle_cuFuncSetSharedMemConfig(conn_t *conn) {
   CUfunction hfunc;
   CUsharedconfig config;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hfunc, sizeof(CUfunction)) < 0 ||
       rpc_read(conn, &config, sizeof(CUsharedconfig)) < 0 || false)
     goto ERROR_0;
@@ -4830,6 +4882,7 @@ int handle_cuGraphMemcpyNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
   CUDA_MEMCPY3D nodeParams{};
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(const CUDA_MEMCPY3D)) < 0 || false)
     goto ERROR_0;
@@ -4874,6 +4927,7 @@ int handle_cuGraphMemsetNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
   CUDA_MEMSET_NODE_PARAMS nodeParams{};
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(const CUDA_MEMSET_NODE_PARAMS)) < 0 ||
       false)
@@ -5075,6 +5129,7 @@ int handle_cuGraphEventRecordNodeSetEvent(conn_t *conn) {
   CUgraphNode hNode;
   CUevent event;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &event, sizeof(CUevent)) < 0 || false)
     goto ERROR_0;
@@ -5163,6 +5218,7 @@ int handle_cuGraphEventWaitNodeSetEvent(conn_t *conn) {
   CUgraphNode hNode;
   CUevent event;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &event, sizeof(CUevent)) < 0 || false)
     goto ERROR_0;
@@ -5278,6 +5334,7 @@ int handle_cuGraphExternalSemaphoresSignalNodeSetParams(conn_t *conn) {
   std::vector<unsigned char> nodeParams_extSemArray_buf;
   std::vector<unsigned char> nodeParams_paramsArray_buf;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
       ((nodeParams_extSemArray_buf.resize(nodeParams.numExtSems *
@@ -5412,6 +5469,7 @@ int handle_cuGraphExternalSemaphoresWaitNodeSetParams(conn_t *conn) {
   std::vector<unsigned char> nodeParams_extSemArray_buf;
   std::vector<unsigned char> nodeParams_paramsArray_buf;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
       ((nodeParams_extSemArray_buf.resize(nodeParams.numExtSems *
@@ -5534,6 +5592,7 @@ int handle_cuGraphBatchMemOpNodeSetParams(conn_t *conn) {
   CUDA_BATCH_MEM_OP_NODE_PARAMS nodeParams = {};
   std::vector<unsigned char> nodeParams_paramArray_buf;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
       ((nodeParams_paramArray_buf.resize(nodeParams.count *
@@ -5566,6 +5625,7 @@ int handle_cuGraphExecBatchMemOpNodeSetParams(conn_t *conn) {
   CUDA_BATCH_MEM_OP_NODE_PARAMS nodeParams = {};
   std::vector<unsigned char> nodeParams_paramArray_buf;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
@@ -5749,6 +5809,7 @@ ERROR_0:
 int handle_cuDeviceGraphMemTrim(conn_t *conn) {
   CUdevice device;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &device, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
 
@@ -6315,6 +6376,7 @@ int handle_cuGraphExecMemcpyNodeSetParams(conn_t *conn) {
   CUDA_MEMCPY3D copyParams{};
   CUcontext ctx;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &copyParams, sizeof(const CUDA_MEMCPY3D)) < 0 ||
@@ -6340,6 +6402,7 @@ int handle_cuGraphExecMemsetNodeSetParams(conn_t *conn) {
   CUDA_MEMSET_NODE_PARAMS memsetParams{};
   CUcontext ctx;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &memsetParams, sizeof(const CUDA_MEMSET_NODE_PARAMS)) <
@@ -6365,6 +6428,7 @@ int handle_cuGraphExecChildGraphNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
   CUgraph childGraph;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &childGraph, sizeof(CUgraph)) < 0 || false)
@@ -6388,6 +6452,7 @@ int handle_cuGraphExecEventRecordNodeSetEvent(conn_t *conn) {
   CUgraphNode hNode;
   CUevent event;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &event, sizeof(CUevent)) < 0 || false)
@@ -6411,6 +6476,7 @@ int handle_cuGraphExecEventWaitNodeSetEvent(conn_t *conn) {
   CUgraphNode hNode;
   CUevent event;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &event, sizeof(CUevent)) < 0 || false)
@@ -6436,6 +6502,7 @@ int handle_cuGraphExecExternalSemaphoresSignalNodeSetParams(conn_t *conn) {
   std::vector<unsigned char> nodeParams_extSemArray_buf;
   std::vector<unsigned char> nodeParams_paramsArray_buf;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
@@ -6481,6 +6548,7 @@ int handle_cuGraphExecExternalSemaphoresWaitNodeSetParams(conn_t *conn) {
   std::vector<unsigned char> nodeParams_extSemArray_buf;
   std::vector<unsigned char> nodeParams_paramsArray_buf;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
@@ -6523,6 +6591,7 @@ int handle_cuGraphNodeSetEnabled(conn_t *conn) {
   CUgraphNode hNode;
   unsigned int isEnabled;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &isEnabled, sizeof(unsigned int)) < 0 || false)
@@ -6573,6 +6642,7 @@ int handle_cuGraphUpload(conn_t *conn) {
   CUgraphExec hGraphExec;
   CUstream hStream;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
     goto ERROR_0;
@@ -6628,6 +6698,7 @@ int handle_cuGraphKernelNodeCopyAttributes(conn_t *conn) {
   CUgraphNode dst;
   CUgraphNode src;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &dst, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &src, sizeof(CUgraphNode)) < 0 || false)
     goto ERROR_0;
@@ -6675,6 +6746,7 @@ int handle_cuGraphKernelNodeSetAttribute(conn_t *conn) {
   CUkernelNodeAttrID attr;
   CUkernelNodeAttrValue value{};
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &attr, sizeof(CUkernelNodeAttrID)) < 0 ||
       rpc_read(conn, &value, sizeof(const CUkernelNodeAttrValue)) < 0 || false)
@@ -6698,6 +6770,7 @@ int handle_cuGraphDebugDotPrint(conn_t *conn) {
   std::size_t path_len;
   unsigned int flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
       rpc_read(conn, &path_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
@@ -6724,6 +6797,7 @@ int handle_cuUserObjectRetain(conn_t *conn) {
   CUuserObject object;
   unsigned int count;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &object, sizeof(CUuserObject)) < 0 ||
       rpc_read(conn, &count, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
@@ -6743,6 +6817,7 @@ int handle_cuUserObjectRelease(conn_t *conn) {
   CUuserObject object;
   unsigned int count;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &object, sizeof(CUuserObject)) < 0 ||
       rpc_read(conn, &count, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
@@ -6764,6 +6839,7 @@ int handle_cuGraphRetainUserObject(conn_t *conn) {
   unsigned int count;
   unsigned int flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &graph, sizeof(CUgraph)) < 0 ||
       rpc_read(conn, &object, sizeof(CUuserObject)) < 0 ||
       rpc_read(conn, &count, sizeof(unsigned int)) < 0 ||
@@ -6787,6 +6863,7 @@ int handle_cuGraphReleaseUserObject(conn_t *conn) {
   CUuserObject object;
   unsigned int count;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &graph, sizeof(CUgraph)) < 0 ||
       rpc_read(conn, &object, sizeof(CUuserObject)) < 0 ||
       rpc_read(conn, &count, sizeof(unsigned int)) < 0 || false)
@@ -6808,6 +6885,7 @@ int handle_cuGraphNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
   CUgraphNodeParams nodeParams{};
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(CUgraphNodeParams)) < 0 || false)
     goto ERROR_0;
@@ -6831,6 +6909,7 @@ int handle_cuGraphExecNodeSetParams(conn_t *conn) {
   CUgraphNode hNode;
   CUgraphNodeParams nodeParams{};
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_read(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(CUgraphNodeParams)) < 0 || false)
@@ -7018,6 +7097,7 @@ int handle_cuTexRefSetArray(conn_t *conn) {
   CUarray hArray;
   unsigned int Flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_read(conn, &hArray, sizeof(CUarray)) < 0 ||
       rpc_read(conn, &Flags, sizeof(unsigned int)) < 0 || false)
@@ -7039,6 +7119,7 @@ int handle_cuTexRefSetMipmappedArray(conn_t *conn) {
   CUmipmappedArray hMipmappedArray;
   unsigned int Flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_read(conn, &hMipmappedArray, sizeof(CUmipmappedArray)) < 0 ||
       rpc_read(conn, &Flags, sizeof(unsigned int)) < 0 || false)
@@ -7091,6 +7172,7 @@ int handle_cuTexRefSetAddress2D_v3(conn_t *conn) {
   CUdeviceptr dptr;
   size_t Pitch;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_read(conn, &desc, sizeof(const CUDA_ARRAY_DESCRIPTOR)) < 0 ||
       rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
@@ -7114,6 +7196,7 @@ int handle_cuTexRefSetFormat(conn_t *conn) {
   CUarray_format fmt;
   int NumPackedComponents;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_read(conn, &fmt, sizeof(CUarray_format)) < 0 ||
       rpc_read(conn, &NumPackedComponents, sizeof(int)) < 0 || false)
@@ -7136,6 +7219,7 @@ int handle_cuTexRefSetAddressMode(conn_t *conn) {
   int dim;
   CUaddress_mode am;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_read(conn, &dim, sizeof(int)) < 0 ||
       rpc_read(conn, &am, sizeof(CUaddress_mode)) < 0 || false)
@@ -7156,6 +7240,7 @@ int handle_cuTexRefSetFilterMode(conn_t *conn) {
   CUtexref hTexRef;
   CUfilter_mode fm;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_read(conn, &fm, sizeof(CUfilter_mode)) < 0 || false)
     goto ERROR_0;
@@ -7175,6 +7260,7 @@ int handle_cuTexRefSetMipmapFilterMode(conn_t *conn) {
   CUtexref hTexRef;
   CUfilter_mode fm;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_read(conn, &fm, sizeof(CUfilter_mode)) < 0 || false)
     goto ERROR_0;
@@ -7194,6 +7280,7 @@ int handle_cuTexRefSetMipmapLevelBias(conn_t *conn) {
   CUtexref hTexRef;
   float bias;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_read(conn, &bias, sizeof(float)) < 0 || false)
     goto ERROR_0;
@@ -7214,6 +7301,7 @@ int handle_cuTexRefSetMipmapLevelClamp(conn_t *conn) {
   float minMipmapLevelClamp;
   float maxMipmapLevelClamp;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_read(conn, &minMipmapLevelClamp, sizeof(float)) < 0 ||
       rpc_read(conn, &maxMipmapLevelClamp, sizeof(float)) < 0 || false)
@@ -7236,6 +7324,7 @@ int handle_cuTexRefSetMaxAnisotropy(conn_t *conn) {
   CUtexref hTexRef;
   unsigned int maxAniso;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_read(conn, &maxAniso, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
@@ -7256,6 +7345,7 @@ int handle_cuTexRefSetBorderColor(conn_t *conn) {
   float *pBorderColor = nullptr;
   size_t pBorderColor_size;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 || false)
     goto ERROR_0;
   pBorderColor_size = 16;
@@ -7284,6 +7374,7 @@ int handle_cuTexRefSetFlags(conn_t *conn) {
   CUtexref hTexRef;
   unsigned int Flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 ||
       rpc_read(conn, &Flags, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
@@ -7639,6 +7730,7 @@ ERROR_0:
 int handle_cuTexRefDestroy(conn_t *conn) {
   CUtexref hTexRef;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hTexRef, sizeof(CUtexref)) < 0 || false)
     goto ERROR_0;
 
@@ -7658,6 +7750,7 @@ int handle_cuSurfRefSetArray(conn_t *conn) {
   CUarray hArray;
   unsigned int Flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hSurfRef, sizeof(CUsurfref)) < 0 ||
       rpc_read(conn, &hArray, sizeof(CUarray)) < 0 ||
       rpc_read(conn, &Flags, sizeof(unsigned int)) < 0 || false)
@@ -7741,6 +7834,7 @@ ERROR_0:
 int handle_cuTexObjectDestroy(conn_t *conn) {
   CUtexObject texObject;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &texObject, sizeof(CUtexObject)) < 0 || false)
     goto ERROR_0;
 
@@ -7858,6 +7952,7 @@ ERROR_0:
 int handle_cuSurfObjectDestroy(conn_t *conn) {
   CUsurfObject surfObject;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &surfObject, sizeof(CUsurfObject)) < 0 || false)
     goto ERROR_0;
 
@@ -8030,6 +8125,7 @@ ERROR_0:
 int handle_cuGraphicsUnregisterResource(conn_t *conn) {
   CUgraphicsResource resource;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &resource, sizeof(CUgraphicsResource)) < 0 || false)
     goto ERROR_0;
 
@@ -8133,6 +8229,7 @@ int handle_cuGraphicsResourceSetMapFlags_v2(conn_t *conn) {
   CUgraphicsResource resource;
   unsigned int flags;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &resource, sizeof(CUgraphicsResource)) < 0 ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
@@ -8645,6 +8742,7 @@ int handle_cuGreenCtxRecordEvent(conn_t *conn) {
   CUgreenCtx hCtx;
   CUevent hEvent;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
       rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 || false)
     goto ERROR_0;
@@ -8667,6 +8765,7 @@ int handle_cuGreenCtxWaitEvent(conn_t *conn) {
   CUgreenCtx hCtx;
   CUevent hEvent;
   int request_id;
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &hCtx, sizeof(CUgreenCtx)) < 0 ||
       rpc_read(conn, &hEvent, sizeof(CUevent)) < 0 || false)
     goto ERROR_0;

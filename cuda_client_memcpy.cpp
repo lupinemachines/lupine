@@ -3886,11 +3886,14 @@ static CUresult lupine_bulk_pull(conn_t *conn, lupine_bulk_lanes *lanes,
   auto pull = [&](unsigned int lane) {
     conn_t *bulk = lanes->conn[lane];
     int32_t stream_id = lanes->stream[lane];
+    // A bulk sub-request takes no ticket: the copy RPC on the caller's lane
+    // orders it.
     struct {
       int request_id;
       int op;
+      uint64_t ticket;
       uint64_t copy_id;
-    } request = {2, LUPINE_RPC_lupineBulkRead, copy_id};
+    } request = {2, LUPINE_RPC_lupineBulkRead, ~uint64_t{0}, copy_id};
     std::vector<rpc_write_cursor> cursors = {
         rpc_write_cursor(&request, sizeof(request))};
     if (rpc_http2_write_stream(bulk, stream_id, cursors) < 0) {
@@ -4022,6 +4025,8 @@ static uint64_t lupine_htod_pushed_bytes(bool is_server_authoritative,
 struct lupine_bulk_chunk_header {
   int request_id;
   int op;
+  // No ticket: the copy RPC on the caller's lane orders the chunks.
+  uint64_t ticket;
   uint64_t copy_id;
   uint64_t total;
   uint64_t offset;
@@ -4054,8 +4059,13 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
       size_t offset = chunk * LUPINE_RPC_TRANSFER_CHUNK_BYTES;
       size_t chunk_bytes = std::min(
           static_cast<size_t>(LUPINE_RPC_TRANSFER_CHUNK_BYTES), bytes - offset);
-      lupine_bulk_chunk_header header = {
-          2, LUPINE_RPC_lupineBulkChunk, copy_id, bytes, offset, chunk_bytes};
+      lupine_bulk_chunk_header header = {2,
+                                         LUPINE_RPC_lupineBulkChunk,
+                                         ~uint64_t{0},
+                                         copy_id,
+                                         bytes,
+                                         offset,
+                                         chunk_bytes};
       std::vector<rpc_write_cursor> cursors = {
           rpc_write_cursor(&header, sizeof(header)),
           rpc_write_cursor(data + offset, chunk_bytes)};
@@ -4160,8 +4170,10 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
       lupine_htod_fire_and_forget(route, dstDevice, ByteCount, pushed_bytes)) {
     // The ticket keeps this copy in submission order against work issued on
     // other lanes, which is the ordering the reply used to provide.
+    uint8_t fire_and_forget = 1;
     if (lupine_prepare_rpc(conn) < 0 ||
-        rpc_write_start_async_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
+        rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
+        rpc_write(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
         rpc_write(conn, &is_server_authoritative,
                   sizeof(is_server_authoritative)) < 0 ||
         rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
@@ -4173,6 +4185,7 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
     }
     return lupine_sync_mapped_device_to_host();
   }
+  uint8_t fire_and_forget = 0;
   if (lanes != nullptr) {
     return_value = lupine_prepare_rpc(conn) < 0
                        ? CUDA_ERROR_DEVICE_UNAVAILABLE
@@ -4180,6 +4193,7 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                                           ByteCount, false);
   } else if (lupine_prepare_rpc(conn) < 0 ||
              rpc_write_start_request(conn, RPC_cuMemcpyHtoD_v2) < 0 ||
+             rpc_write(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
              rpc_write(conn, &is_server_authoritative,
                        sizeof(is_server_authoritative)) < 0 ||
              rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
@@ -4414,7 +4428,7 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
   int copy_opcode = pinned_destination ? LUPINE_RPC_lupineMemcpyDtoHAsyncPinned
                                        : RPC_cuMemcpyDtoHAsync_v2;
   if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_async_request(conn, copy_opcode) < 0 ||
+      rpc_write_start_request(conn, copy_opcode) < 0 ||
       rpc_write(conn, &dstHost, sizeof(dstHost)) < 0 ||
       (pinned_destination &&
        (rpc_write(conn, &client_alias, sizeof(client_alias)) < 0 ||
@@ -4572,7 +4586,7 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
     // and they land at the next synchronize, which a pageable destination
     // takes right away.
     if (lupine_prepare_rpc(conn) < 0 ||
-        rpc_write_start_async_request(conn, api.op) < 0 ||
+        rpc_write_start_request(conn, api.op) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
         rpc_write(conn, &copy, sizeof(copy)) < 0 ||
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||

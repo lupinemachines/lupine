@@ -2254,6 +2254,7 @@ int handle_cuLibraryGetModule(conn_t *conn) {
 // caches the CUkernel handles this one owns, but it only ever sends the unload
 // to the route that loaded it, so freeing here would dangle those handles.
 int handle_cuLibraryUnload(conn_t *conn) {
+  rpc_hold_ticket(conn);
   CUlibrary library = nullptr;
 
   if (rpc_read(conn, &library, sizeof(library)) < 0) {
@@ -2323,6 +2324,7 @@ int handle_cuModuleGetGlobal_v2(conn_t *conn) {
 }
 
 int handle_cuLaunchKernel(conn_t *conn) {
+  rpc_hold_ticket(conn);
   CUfunction f = nullptr;
   unsigned int gridDimX = 0;
   unsigned int gridDimY = 0;
@@ -2392,6 +2394,7 @@ int handle_cuLaunchKernel(conn_t *conn) {
 }
 
 int handle_cuLaunchKernelEx(conn_t *conn) {
+  rpc_hold_ticket(conn);
   CUlaunchConfig config = {};
   CUfunction f = nullptr;
   uint32_t param_count = 0;
@@ -2459,6 +2462,7 @@ int handle_cuLaunchKernelEx(conn_t *conn) {
 }
 
 int handle_cuLaunchCooperativeKernel(conn_t *conn) {
+  rpc_hold_ticket(conn);
   CUfunction f = nullptr;
   unsigned int gridDimX = 0;
   unsigned int gridDimY = 0;
@@ -3379,6 +3383,7 @@ void lupine_server_cleanup_log_callbacks(conn_t *conn) {
 }
 
 static int handle_cuEventRecordCommon(conn_t *conn, bool with_flags) {
+  rpc_hold_ticket(conn);
   CUevent event = nullptr;
   CUstream stream = nullptr;
   unsigned int flags = 0;
@@ -3474,6 +3479,7 @@ int handle_cuEventQuery(conn_t *conn) {
 }
 
 int handle_cuStreamWaitEvent(conn_t *conn) {
+  rpc_hold_ticket(conn);
   CUstream stream = nullptr;
   CUevent event = nullptr;
   unsigned int flags = 0;
@@ -4459,6 +4465,7 @@ void lupine_server_cleanup_identity_allocations(conn_t *conn) {
 }
 
 int handle_cuGraphLaunch(conn_t *conn) {
+  rpc_hold_ticket(conn);
   CUgraphExec exec = nullptr;
   CUstream stream = nullptr;
   if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||

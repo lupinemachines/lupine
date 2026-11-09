@@ -2594,25 +2594,21 @@ void test_async_prefix_same_lane_elision_and_cross_lane_marker() {
   h2_pair pair;
   init_pair(&pair);
   for (int i = 0; i < 2; ++i) {
-    require(rpc_write_start_async_request(&pair.client, 101) == 0 &&
+    require(rpc_write_start_request(&pair.client, 101) == 0 &&
                 pair.client.write_ticket == uint64_t(i) &&
                 rpc_write_end(&pair.client) > 0,
             "same-lane enqueue failed");
   }
   int32_t lane = rpc_http2_accept_stream(&pair.server);
   for (int i = 0; i < 2; ++i) {
-    int marker[2];
     int header[2];
     uint64_t ticket;
-    require(rpc_http2_read_stream(&pair.server, lane, marker, sizeof(marker)) ==
+    require(rpc_http2_read_stream(&pair.server, lane, header, sizeof(header)) ==
                     0 &&
-                marker[0] == 0 && marker[1] == 1 &&
+                header[0] >= 2 && header[1] == 101 &&
                 rpc_http2_read_stream(&pair.server, lane, &ticket,
                                       sizeof(ticket)) == 0 &&
-                ticket == uint64_t(i) &&
-                rpc_http2_read_stream(&pair.server, lane, header,
-                                      sizeof(header)) == 0 &&
-                header[0] >= 2 && header[1] == 101,
+                ticket == uint64_t(i),
             "same-lane FIFO emitted a wait marker or lost its ticket");
   }
   std::thread other([&] {
@@ -2638,7 +2634,7 @@ void test_async_prefix_entry_precedes_builder_wait() {
   init_pair(&pair);
   pthread_mutex_lock(&pair.client.write_mutex);
   std::thread caller([&] {
-    require(rpc_write_start_async_request(&pair.client, 101) == 0,
+    require(rpc_write_start_request(&pair.client, 101) == 0,
             "blocked request start failed");
     require(pair.client.write_ticket == 1 && pair.client.write_dependency == 0,
             "builder contention moved the entry snapshot to enqueue time");
@@ -2666,21 +2662,20 @@ void test_async_prefix_entry_precedes_builder_wait() {
   pthread_mutex_unlock(&pair.client.write_mutex);
   caller.join();
   int32_t lane = rpc_http2_accept_stream(&pair.server);
-  int marker[2];
+  int header[2];
   uint64_t ticket = 0;
-  int headers[4];
+  int marker[2];
   uint64_t published = 0;
+  require(
+      rpc_http2_read_stream(&pair.server, lane, header, sizeof(header)) == 0 &&
+          header[0] >= 2 && header[1] == 101 &&
+          rpc_http2_read_stream(&pair.server, lane, &ticket, sizeof(ticket)) ==
+              0 &&
+          ticket == 1,
+      "blocked request lost its ticket");
   require(rpc_http2_read_stream(&pair.server, lane, marker, sizeof(marker)) ==
                   0 &&
-              marker[0] == 0 && marker[1] == 1 &&
-              rpc_http2_read_stream(&pair.server, lane, &ticket,
-                                    sizeof(ticket)) == 0 &&
-              ticket == 1,
-          "blocked request lost its ticket");
-  require(rpc_http2_read_stream(&pair.server, lane, headers, sizeof(headers)) ==
-                  0 &&
-              headers[0] >= 2 && headers[1] == 101 && headers[2] == 0 &&
-              headers[3] == 0 &&
+              marker[0] == 0 && marker[1] == 0 &&
               rpc_http2_read_stream(&pair.server, lane, &published,
                                     sizeof(published)) == 0 &&
               published == 2,
@@ -2690,15 +2685,15 @@ void test_async_prefix_entry_precedes_builder_wait() {
 void test_async_prefix_wait_preserves_flow_control() {
   h2_pair pair;
   init_pair(&pair);
-  require(rpc_write_start_async_request(&pair.client, 101) == 0 &&
+  require(rpc_write_start_request(&pair.client, 101) == 0 &&
               rpc_write_end(&pair.client) > 0,
           "producer enqueue");
   int32_t producer_lane = rpc_http2_accept_stream(&pair.server);
-  // Dispatch claims the producer's ticket; it stays open until ended below.
+  // Dispatch claims the producer's ticket; held, it stays open until ended
+  // below.
   require(rpc_bind_http2_stream(&pair.server, producer_lane) == 0 &&
               rpc_dispatch(&pair.server, 0) == 101 &&
-              rpc_request_is_async(&pair.server) &&
-              rpc_read_end(&pair.server) > 0,
+              (rpc_hold_ticket(&pair.server), rpc_read_end(&pair.server) > 0),
           "producer dispatch");
   // Twice the window: the sender finishes only if the server keeps crediting.
   std::vector<unsigned char> payload(2 * LUPINE_FF_STAGING_WINDOW_BYTES);

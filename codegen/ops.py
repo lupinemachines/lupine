@@ -1178,9 +1178,6 @@ class FunctionAnnotationMetadata:
     guard: Optional[str] = None
     disabled_client: bool = False
     disabled_server: bool = False
-    # Inferred by infer_async: the client does not wait and the server sends
-    # no response.
-    async_fire_forget: bool = False
     # @blocking: a call answering only its status that must still wait for it.
     blocking: bool = False
     # Optional response fields are emitted by the corresponding manual server
@@ -1201,9 +1198,9 @@ class FunctionAnnotationMetadata:
     clear_fields: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
 
 
-def infer_async(metadata: FunctionAnnotationMetadata, result_type: str,
-                status_type: str) -> bool:
-    """Whether a call can be sent without waiting for its answer.
+def unanswered(function, metadata: FunctionAnnotationMetadata,
+               status_type: str) -> bool:
+    """Whether a call is sent without waiting for an answer, and so has none.
 
     A call whose only answer is its status needn't wait for it: a failure
     reaches the client from its next synchronize. @blocking marks the ones
@@ -1212,7 +1209,7 @@ def infer_async(metadata: FunctionAnnotationMetadata, result_type: str,
     agree: its call either sends without waiting or is @blocking.
     """
     return (
-        result_type == status_type
+        function.return_type.format() == status_type
         and not metadata.blocking
         and metadata.synchronize is None
         and metadata.graph_exec_update is None

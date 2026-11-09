@@ -34,7 +34,7 @@ from emit import (
     write_versioned_struct_helper,
 )
 from ops import (
-    infer_async,
+    unanswered,
     NullableOperation,
     ArrayOperation,
     InOutCountOperation,
@@ -1121,7 +1121,6 @@ def collect_backend_functions(
     server_bindings: dict[str, ServerBinding] = {},
     string_length_type: str = None,
     client_call_templates: dict[str, ClientCallTemplate] = None,
-    async_status: str = None,
 ):
     """Calls in the order named, or every call the annotation file declares."""
     by_name = {
@@ -1138,9 +1137,6 @@ def collect_backend_functions(
         metadata = parse_annotation(function.doxygen, function.parameters)
         if client_call_templates is not None:
             attach_client_call_template(function, metadata, client_call_templates)
-        # Only a backend that can submit without an answer infers async calls.
-        if async_status is not None:
-            infer_async_annotation(function, metadata, async_status)
         if string_length_type is not None:
             for operation in metadata.operations:
                 if isinstance(operation, NullTerminatedOperation):
@@ -1173,21 +1169,6 @@ def find_header_file(filename):
     raise FileNotFoundError(
         f"Header file '{filename}' not found in common include directories."
     )
-
-
-def infer_async_annotation(
-    function: Function, metadata: FunctionAnnotationMetadata, status_type: str
-) -> None:
-    metadata.async_fire_forget = infer_async(
-        metadata, function.return_type.format(), status_type
-    )
-    if metadata.async_fire_forget and os.environ.get("LUPINE_LIST_INFERRED_ASYNC"):
-        side = (
-            " (handwritten client)" if metadata.disabled_client and not metadata.disabled_server
-            else " (handwritten server)" if metadata.disabled_server and not metadata.disabled_client
-            else " (handwritten)" if metadata.disabled_client else ""
-        )
-        print(f"inferred async: {function.name.format()}{side}", file=sys.stderr)
 
 
 def attach_client_call_template(
@@ -1381,7 +1362,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                     raise RuntimeError(
                         f"{function.name.format()}: ALL routing requires a CUdevice * output"
                     )
-                if metadata.async_fire_forget:
+                if unanswered(function, metadata, "CUresult"):
                     raise RuntimeError(
                         f"{function.name.format()}: ALL routing cannot be fire-and-forget"
                     )
@@ -1500,11 +1481,11 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                         f, result_code(function.return_type.format(), "invalid_argument")
                     )
 
-            if metadata.async_fire_forget:
+            if unanswered(function, metadata, "CUresult"):
                 error_return = result_code(function.return_type.format())
                 f.write(
                     f"    if (lupine_prepare_rpc(conn) < 0 ||\n"
-                    f"        rpc_write_start_async_request(\n"
+                    f"        rpc_write_start_request(\n"
                     f"            conn, RPC_{function.name.format()}) < 0 ||\n"
                 )
                 for operation in operations:
@@ -1811,7 +1792,6 @@ def main():
                 f"Error parsing annotation for {function.name.format()}"
             ) from e
         attach_client_call_template(function, metadata, client_call_templates)
-        infer_async_annotation(function, metadata, "CUresult")
         functions_with_annotations.append(
             (function, annotation, metadata.operations, metadata)
         )
@@ -1846,7 +1826,6 @@ def main():
             continue
         metadata = parse_annotation(annotation.doxygen, annotation.parameters)
         attach_client_call_template(annotation, metadata, client_call_templates)
-        infer_async_annotation(annotation, metadata, "CUresult")
         annotated_function = (
             annotation,
             annotation,
@@ -1906,7 +1885,6 @@ def main():
     nccl_functions_with_annotations = collect_backend_functions(
         annotations_by_target["nccl"],
         client_call_templates=client_call_templates_by_target["nccl"],
-        async_status=NCCL.result,
     )
     annotated_names = sorted(
         {function.name.format() for function in cuda_annotations.namespace.functions}

@@ -214,17 +214,20 @@ static inline int rpc_read_buffer(conn_t *conn, void *data, size_t size) {
 extern int rpc_drain(conn_t *conn, size_t size);
 extern int rpc_read_end(conn_t *conn);
 
+// Waits for the answer to this thread's last request. The first rpc_read or
+// rpc_read_end of an answer calls it, so a caller that needs nothing back
+// never waits; later calls before the answer is read do nothing.
+extern int rpc_blocking(conn_t *conn);
+// Sends the request being built and waits for its answer.
 extern int rpc_wait_for_response(conn_t *conn);
 
 // Owns connection validation for the request chain: a null conn (route with no
 // remote server) or a closed conn fails here, so callers surface their
-// unavailable-server result without per-call-site null checks.
+// unavailable-server result without per-call-site null checks. Every client
+// request takes a ticket, allocated under the request lock and sent in its
+// header, so a later request from any lane is dispatched only once this one
+// has been submitted; that adds no acknowledgement or round trip.
 extern int rpc_write_start_request(conn_t *conn, const int op);
-// Starts a request the caller will not wait on. Its ticket is allocated while
-// the request lock is held and travels in the request's header, so the server
-// claims it before the handler runs; this adds no acknowledgement or round
-// trip. A later request from any lane waits for the ticket's submission.
-extern int rpc_write_start_async_request(conn_t *conn, const int op);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 // A zero-size write is a successful no-op, including when data is null.
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
@@ -254,15 +257,15 @@ extern int rpc_write_end(conn_t *conn);
 // free to execute and complete in either order.
 extern int rpc_async_sequence_wait(conn_t *conn, uint64_t published);
 extern void rpc_cancel_async_waits(conn_t *conn);
-// Dispatch claims an async request's ticket before its handler runs, and the
-// lane loop ends it once the handler returns; a handler that waits on the GPU
-// after queueing its work may end it earlier. End is a no-op when nothing was
-// claimed. No execution lock is held between begin and end.
+// Dispatch claims a request's ticket before its handler runs. A handler that
+// answers releases it once it has read its request; one that does not answer
+// calls rpc_hold_ticket first, and the lane loop releases it once the handler
+// returns, so later requests wait for its submission. A handler may release
+// it earlier, once its work is queued, with rpc_async_sequence_end, which is a
+// no-op when nothing is claimed. No execution lock is held meanwhile.
 extern int rpc_async_sequence_begin(conn_t *conn, uint64_t sequence);
 extern void rpc_async_sequence_end(conn_t *conn);
-// Whether the request being handled on this lane is one its client does not
-// wait on, so the handler must not answer it.
-extern bool rpc_request_is_async(conn_t *conn);
+extern void rpc_hold_ticket(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // Signals transport readers to stop without releasing connection resources.
 // Owners use this before joining workers that may be blocked on the transport.

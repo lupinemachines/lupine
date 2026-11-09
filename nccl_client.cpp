@@ -49,9 +49,6 @@ ncclResult_t rpc_error() {
 int rpc_write_start_request(conn_t *conn, int op) {
   return lupine_rpc_write_start_request(conn, op);
 }
-int rpc_write_start_async_request(conn_t *conn, int op) {
-  return lupine_rpc_write_start_async_request(conn, op);
-}
 int rpc_write(conn_t *conn, const void *data, size_t size) {
   return lupine_rpc_write(conn, data, size);
 }

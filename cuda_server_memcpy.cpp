@@ -2187,14 +2187,14 @@ int lupine_write_lifecycle_response(conn_t *conn, int request_id,
 int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   CUdeviceptr destination = 0;
   const void *source = nullptr;
-  // The client waits for no answer to a request that carried a ticket.
-  bool fire_and_forget = rpc_request_is_async(conn);
+  uint8_t fire_and_forget = 0;
   bool is_server_authoritative = false;
   uint64_t pushed_bytes = 0;
   size_t bytes = 0;
   CUresult result = CUDA_SUCCESS;
 
-  if (rpc_read(conn, &is_server_authoritative,
+  if (rpc_read(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
+      rpc_read(conn, &is_server_authoritative,
                sizeof(is_server_authoritative)) < 0 ||
       rpc_read(conn, &destination, sizeof(destination)) < 0 ||
       rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
@@ -2204,6 +2204,10 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   }
   if (pushed_bytes != 0 && pushed_bytes != bytes) {
     return -1;
+  }
+  // An unanswered copy keeps its ticket until it is submitted.
+  if (fire_and_forget) {
+    rpc_hold_ticket(conn);
   }
   if (pushed_bytes != 0) {
     result = lupine_copy_pushed_host_to_device(
@@ -3055,6 +3059,7 @@ static void lupine_defer_dtoh(conn_t *conn, CUstream stream,
 }
 
 int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
+  rpc_hold_ticket(conn);
   void *dstHost = nullptr;
   CUdeviceptr srcDevice = 0;
   size_t byteCount = 0;
@@ -3075,6 +3080,7 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
 // rows back to its own pitch.
 static int lupine_defer_pitched_dtoh(conn_t *conn,
                                      lupine_native_memcpy3d native) {
+  rpc_hold_ticket(conn);
   CUDA_MEMCPY3D copy = {};
   CUstream stream = nullptr;
   if (rpc_read(conn, &copy, sizeof(copy)) < 0 ||
@@ -3104,6 +3110,7 @@ static int lupine_defer_pitched_dtoh(conn_t *conn,
 }
 
 int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
+  rpc_hold_ticket(conn);
   void *dstHost = nullptr;
   void *client_alias = nullptr;
   void *server_host = nullptr;
