@@ -56,6 +56,10 @@ CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                               size_t ByteCount, CUstream hStream);
 CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                               size_t ByteCount, CUstream hStream);
+// cuMemcpyDtoH_v2 without its mapped-memory refresh, for readbacks that are
+// themselves part of one.
+static CUresult lupine_memcpy_dtoh(void *dstHost, CUdeviceptr srcDevice,
+                                   size_t ByteCount);
 
 // CUDA stream handles are process-local to their owning driver. A copy whose
 // data lives on another route must fall back to the synchronous staging path.
@@ -2332,7 +2336,7 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
     if (invalidated || skip) {
       continue;
     }
-    CUresult result = cuMemcpyDtoH_v2(
+    CUresult result = lupine_memcpy_dtoh(
         static_cast<unsigned char *>(mapping.host) + mapping.data_offset,
         mapping.device_ptr + mapping.data_offset, mapping.data_bytes);
     __atomic_sub_fetch(&fallback_allocation->pending_dirty_ranges, 1,
@@ -4018,8 +4022,8 @@ static CUresult lupine_copy_dtoh_pageable(conn_t *conn, void *dstHost,
                                  ByteCount);
 }
 
-extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
-                                    size_t ByteCount) {
+static CUresult lupine_memcpy_dtoh(void *dstHost, CUdeviceptr srcDevice,
+                                   size_t ByteCount) {
   lupine_route route = lupine_route_for_deviceptr(srcDevice);
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuMemcpyDtoH_v2", dstHost, srcDevice,
@@ -4027,6 +4031,17 @@ extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
   }
   return lupine_copy_dtoh_pageable(lupine_route_remote_conn(route), dstHost,
                                    srcDevice, ByteCount, CU_STREAM_LEGACY);
+}
+
+extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
+                                    size_t ByteCount) {
+  CUresult return_value = lupine_memcpy_dtoh(dstHost, srcDevice, ByteCount);
+  // The copy waited for the legacy stream, and with it for the blocking and
+  // per-thread streams, so the mapped memory their work wrote is current.
+  if (return_value == CUDA_SUCCESS) {
+    return_value = lupine_sync_mapped_device_to_host();
+  }
+  return return_value;
 }
 
 #ifdef cuMemcpyDtoH
@@ -4351,7 +4366,7 @@ lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
   while (offset < ByteCount) {
     size_t chunk = std::min(staging.size(), ByteCount - offset);
     CUresult result =
-        cuMemcpyDtoH_v2(staging.data(), srcDevice + offset, chunk);
+        lupine_memcpy_dtoh(staging.data(), srcDevice + offset, chunk);
     if (result != CUDA_SUCCESS) {
       return result;
     }
@@ -4463,8 +4478,13 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
     if (lupine_active_stream_captures.load(std::memory_order_relaxed) == 0 ||
         cuStreamIsCapturing(hStream, &capture_status) != CUDA_SUCCESS ||
         capture_status == CU_STREAM_CAPTURE_STATUS_NONE) {
-      return lupine_copy_dtoh_pageable(conn, dstHost, srcDevice, ByteCount,
-                                       hStream);
+      CUresult return_value = lupine_copy_dtoh_pageable(
+          conn, dstHost, srcDevice, ByteCount, hStream);
+      // Like a synchronous readback, this one waited for the stream.
+      if (return_value == CUDA_SUCCESS) {
+        return_value = lupine_sync_mapped_device_to_host();
+      }
+      return return_value;
     }
   }
 
@@ -4672,7 +4692,9 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (direction != LUPINE_COPY_DIRECTION_DTOH && return_value == CUDA_SUCCESS) {
+  // A synchronous readback is a synchronization point like any other copy.
+  if ((direction != LUPINE_COPY_DIRECTION_DTOH || !api.async) &&
+      return_value == CUDA_SUCCESS) {
     return_value = lupine_sync_mapped_device_to_host();
   }
   return return_value;
