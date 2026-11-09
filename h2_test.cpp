@@ -1,4 +1,5 @@
 #include "client_bundle.h"
+#include "h2_writer_poll.h"
 #include "lupine_log.h"
 #include "monitoring.h"
 #include "process_handoff.h"
@@ -91,6 +92,60 @@ void require(bool condition, const char *message) {
     LUPINE_LOG_ERROR(message);
     std::exit(1);
   }
+}
+
+// Feed observed arrival times directly: these policy tests must not depend on
+// OS scheduling or wall-clock sleeps.
+void test_writer_poll_learns_short_arrivals() {
+  using namespace std::chrono_literals;
+  h2_writer_poll_policy policy;
+  require(policy.budget() == 0ns,
+          "a new connection should start without spinning");
+  for (int i = 0; i < 8; ++i) {
+    policy.observe(20us);
+  }
+  require(policy.budget() >= 20us && policy.budget() <= 32us,
+          "short arrivals after sleeping must teach the writer to poll longer");
+  auto learned = policy.budget();
+  for (int i = 0; i < 100; ++i) {
+    policy.observe(12us);
+  }
+  require(policy.budget() == learned,
+          "successful polling should retain its learned budget");
+}
+
+void test_writer_poll_decays_and_recovers() {
+  using namespace std::chrono_literals;
+  h2_writer_poll_policy policy;
+  for (int cycle = 0; cycle < 3; ++cycle) {
+    for (int i = 0; i < 8; ++i) {
+      policy.observe(20us);
+    }
+    require(policy.budget() >= 20us, "writer did not relearn a short burst");
+    auto before = policy.budget();
+    policy.observe(1ms);
+    require(policy.budget() < before,
+            "long waits should reduce wasted polling");
+    for (int i = 0; i < 8; ++i) {
+      policy.observe(1ms);
+    }
+    require(policy.budget() == 0ns, "sparse traffic should stop busy polling");
+  }
+}
+
+void test_writer_poll_ceiling() {
+  using namespace std::chrono_literals;
+  h2_writer_poll_policy policy;
+  for (int i = 0; i < 100; ++i) {
+    policy.observe(32us);
+    require(policy.budget() <= 32us, "writer exceeded its polling ceiling");
+  }
+  require(policy.budget() == 32us,
+          "arrivals at the ceiling should remain eligible for polling");
+  policy.observe(32001ns);
+  require(
+      policy.budget() < 32us,
+      "arrivals beyond the ceiling should decay rather than grow the budget");
 }
 
 thread_local bool expect_response_completed_hook = false;
@@ -2783,6 +2838,9 @@ void test_rpc_read_uses_w_offset() {
 } // namespace
 
 int main() {
+  RUN_CASE(test_writer_poll_learns_short_arrivals());
+  RUN_CASE(test_writer_poll_decays_and_recovers());
+  RUN_CASE(test_writer_poll_ceiling());
   const rpc_lifecycle_hooks hooks = {nullptr, nullptr,
                                      test_response_completed_hook};
   require(rpc_set_lifecycle_hooks(&hooks) == 0,

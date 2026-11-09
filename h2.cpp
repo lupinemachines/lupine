@@ -1,4 +1,5 @@
 #include "client_bundle.h"
+#include "h2_writer_poll.h"
 #include "lupine_log.h"
 #include "process_handoff.h"
 #include "rpc.h"
@@ -120,6 +121,10 @@ struct h2_transport {
   // in flight shares a block instead of paying a block and a flush each.
   std::vector<int32_t> flush_pending;
   std::atomic<uint64_t> output_generation{0};
+  // Protected by session_mutex. Record the first output arrival during an
+  // idle wait so the polling policy does not learn scheduler wakeup latency.
+  bool writer_idle = false;
+  std::chrono::steady_clock::time_point writer_output_ready;
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
   // Process controls and incoming lanes wake their idle waiters here rather
@@ -240,6 +245,14 @@ void receive_bytes(h2_transport *transport, int32_t stream_id,
   stream.local_out.push_back(std::move(buffer));
 }
 
+// Called under session_mutex, only once per client writer idle interval.
+void h2_note_output_ready_locked(h2_transport *transport) {
+  if (transport->writer_idle) {
+    transport->writer_output_ready = std::chrono::steady_clock::now();
+    transport->writer_idle = false;
+  }
+}
+
 // Callers hold session_mutex, as every nghttp2_session_send does.
 void h2_queue_output(h2_transport *transport, const struct iovec *iov,
                      int iov_count) {
@@ -248,6 +261,7 @@ void h2_queue_output(h2_transport *transport, const struct iovec *iov,
     transport->outbound.insert(transport->outbound.end(), data,
                                data + iov[i].iov_len);
   }
+  h2_note_output_ready_locked(transport);
   transport->output_generation.fetch_add(1, std::memory_order_release);
   pthread_cond_broadcast(&transport->writer_ready);
 }
@@ -1048,6 +1062,7 @@ int h2_flush_pending_locked(h2_transport *transport) {
 void *h2_write_main(void *arg) {
   auto *transport = static_cast<h2_transport *>(arg);
   std::vector<unsigned char> chunk;
+  h2_writer_poll_policy poll_policy;
   pthread_mutex_lock(&transport->session_mutex);
   // transport_failed alone does not stop the drain: a rejected handshake
   // sets it while the GOAWAY and shutdown PING are still queued.
@@ -1057,14 +1072,17 @@ void *h2_write_main(void *arg) {
     }
     while (transport->outbound.empty() && transport->flush_pending.empty() &&
            !transport->write_stop) {
+      std::chrono::steady_clock::time_point idle_start;
       if (!transport->server) {
+        idle_start = std::chrono::steady_clock::now();
+        transport->writer_idle = true;
+        transport->writer_output_ready = {};
+      }
+      if (!transport->server && poll_policy.budget().count() != 0) {
         uint64_t seen =
             transport->output_generation.load(std::memory_order_relaxed);
         pthread_mutex_unlock(&transport->session_mutex);
-        // Stay awake through short launch bursts to avoid repeatedly waking
-        // the writer and contending for session_mutex on the calling thread.
-        auto deadline =
-            std::chrono::steady_clock::now() + std::chrono::microseconds(20);
+        auto deadline = idle_start + poll_policy.budget();
         uint32_t spin = 0;
         while (transport->output_generation.load(std::memory_order_acquire) ==
                seen) {
@@ -1081,9 +1099,17 @@ void *h2_write_main(void *arg) {
         }
         pthread_mutex_lock(&transport->session_mutex);
       }
-      if (transport->outbound.empty() && transport->flush_pending.empty() &&
-          !transport->write_stop) {
+      while (transport->outbound.empty() && transport->flush_pending.empty() &&
+             !transport->write_stop) {
         pthread_cond_wait(&transport->writer_ready, &transport->session_mutex);
+      }
+      transport->writer_idle = false;
+      if (!transport->server && !transport->write_stop &&
+          !transport->writer_paused &&
+          transport->writer_output_ready !=
+              std::chrono::steady_clock::time_point{}) {
+        poll_policy.observe(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            transport->writer_output_ready - idle_start));
       }
     }
     if (transport->write_stop) {
@@ -1546,6 +1572,9 @@ int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
 
   pthread_mutex_lock(&transport->session_mutex);
   int result = h2_write_stream_locked(transport, stream_id, cursors);
+  if (!transport->outbound.empty() || !transport->flush_pending.empty()) {
+    h2_note_output_ready_locked(transport);
+  }
   pthread_mutex_unlock(&transport->session_mutex);
   transport->output_generation.fetch_add(1, std::memory_order_release);
   pthread_cond_broadcast(&transport->writer_ready);
