@@ -3,9 +3,10 @@
 // Here a kernel queued ahead of the copy spins until a second thread sets a
 // flag from another stream. Natively the flag always lands; Lupine must not
 // make the second thread's call wait for the first thread's copy, whether the
-// source is a cuMemHostAlloc buffer (mirrored on the server, sent without a
-// reply) or a registered one (pulled from the client when the stream reaches
-// the copy).
+// source is a cuMemHostAlloc buffer (mirrored on the server), a registered one
+// (pulled from the client when the stream reaches the copy) or small pageable
+// memory (sent in the request). A pageable source is free to reuse once the
+// call returns, so that case also overwrites it straight away.
 #include <cuda_runtime.h>
 
 #include <chrono>
@@ -38,7 +39,8 @@ __global__ void wait_for_flag(volatile unsigned int *flag,
   }
 }
 
-int run(const char *label, unsigned int *source, long long budget) {
+int run(const char *label, unsigned int *source, bool pageable,
+        long long budget) {
   cudaStream_t waiting = nullptr;
   cudaStream_t signalling = nullptr;
   CHECK(cudaStreamCreateWithFlags(&waiting, cudaStreamNonBlocking));
@@ -65,6 +67,9 @@ int run(const char *label, unsigned int *source, long long budget) {
     wait_for_flag<<<1, 1, 0, waiting>>>(flag, timed_out, budget);
     copy_result = cudaMemcpyAsync(target, source, sizeof(*source),
                                   cudaMemcpyHostToDevice, waiting);
+    if (pageable) {
+      *source = 0xdeadbeef;
+    }
   });
   // Give the producer time to enqueue both without depending on its copy call
   // returning: where that call is held until the stream reaches the copy, the
@@ -113,7 +118,7 @@ int main() {
 
   unsigned int *allocated = nullptr;
   CHECK(cudaMallocHost(&allocated, sizeof(*allocated)));
-  if (run("cudaMallocHost source", allocated, budget) != 0) {
+  if (run("cudaMallocHost source", allocated, false, budget) != 0) {
     return 1;
   }
   CHECK(cudaFreeHost(allocated));
@@ -123,10 +128,15 @@ int main() {
     return 1;
   }
   CHECK(cudaHostRegister(registered, 4096, cudaHostRegisterDefault));
-  if (run("registered source", registered, budget) != 0) {
+  if (run("registered source", registered, false, budget) != 0) {
     return 1;
   }
   CHECK(cudaHostUnregister(registered));
   std::free(registered);
+
+  static unsigned int pageable = 0;
+  if (run("pageable source", &pageable, true, budget) != 0) {
+    return 1;
+  }
   return 0;
 }
