@@ -42,19 +42,16 @@ the client addresses named in `CLEARED:<member>,...`. A member some supported
 headers lack takes `MEMBERGUARD:<member>=<condition>`; its length still travels,
 so client and server built against different headers share one wire format.
 
-Every request carries a ticket, and a later request from any lane is
-dispatched only once earlier tickets are submitted. A client waits only when it
-reads an answer: the first `rpc_read` calls `rpc_blocking`. A call whose only
-answer is its status, with every parameter `SEND_ONLY` and no `@synchronize`,
-reads nothing, so it never waits: its handler holds its ticket until the call
-is queued (`rpc_hold_ticket`), sends no response, and keeps a failure for the
-client's next synchronize. Every other handler releases its ticket once it has
-read its request. Mark the exceptions `@blocking`: calls whose contract is the
-wait itself, whose status is their result, whose server call waits on the GPU,
-or whose handwritten side waits. On a forwarding backend that sets
-`async_success` the choice is made at run time: the generated wrapper asks
-`submit_async(conn)` and sends it as the request's first byte. NCCL uses this
-for calls inside a group, which the library only queues.
+A call whose only answer is its status, with every parameter `SEND_ONLY` and no
+`@synchronize`, is sent with `rpc_write_end` and not waited for. Such a request
+carries a ticket: its handler sends no answer and keeps a failure for the
+client's next synchronize, and a later request from any lane is dispatched only
+once the call has been submitted. A request sent with `rpc_wait_for_response`
+carries no ticket and is answered. Mark the exceptions `@blocking`: calls whose
+contract is the wait itself, whose status is their result, or whose server call
+waits on the GPU. On a forwarding backend that sets `async_success` the choice
+is made at run time: the generated wrapper asks `submit_async(conn)`. NCCL uses
+this for calls inside a group, which the library only queues.
 
 Client routing can also be annotated for handles that belong to a specific LUPINE
 server connection. `@routingkey <kind> <param>` selects the connection for the

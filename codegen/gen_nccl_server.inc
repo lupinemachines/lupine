@@ -82,6 +82,10 @@ int handle_ncclMemFree(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclMemFree");
   return_value = fn == nullptr ? function_not_found() : fn(ptr);
 
+  if (!rpc_request_awaited(conn)) {
+    return 0;
+  }
+
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -318,6 +322,10 @@ int handle_ncclCommFinalize(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclCommFinalize");
   return_value = fn == nullptr ? function_not_found() : fn(comm);
 
+  if (!rpc_request_awaited(conn)) {
+    return 0;
+  }
+
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -329,18 +337,13 @@ ERROR_0:
 
 int handle_ncclCommDestroy(conn_t *conn) {
   ncclComm_t comm;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclComm_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 || false)
+  if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -348,7 +351,7 @@ int handle_ncclCommDestroy(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclCommDestroy");
   return_value = fn == nullptr ? function_not_found() : fn(comm);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -363,18 +366,13 @@ ERROR_0:
 
 int handle_ncclCommAbort(conn_t *conn) {
   ncclComm_t comm;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclComm_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 || false)
+  if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -382,7 +380,7 @@ int handle_ncclCommAbort(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclCommAbort");
   return_value = fn == nullptr ? function_not_found() : fn(comm);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -413,6 +411,10 @@ int handle_ncclCommRevoke(conn_t *conn) {
 
   fn = nccl_symbol<fn_t>("ncclCommRevoke");
   return_value = fn == nullptr ? function_not_found() : fn(comm, revokeFlags);
+
+  if (!rpc_request_awaited(conn)) {
+    return 0;
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -977,6 +979,10 @@ int handle_ncclCommDeregister(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclCommDeregister");
   return_value = fn == nullptr ? function_not_found() : fn(comm, handle);
 
+  if (!rpc_request_awaited(conn)) {
+    return 0;
+  }
+
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -1007,6 +1013,10 @@ int handle_ncclCommSuspend(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclCommSuspend");
   return_value = fn == nullptr ? function_not_found() : fn(comm, flags);
 
+  if (!rpc_request_awaited(conn)) {
+    return 0;
+  }
+
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -1034,6 +1044,10 @@ int handle_ncclCommResume(conn_t *conn) {
 
   fn = nccl_symbol<fn_t>("ncclCommResume");
   return_value = fn == nullptr ? function_not_found() : fn(comm);
+
+  if (!rpc_request_awaited(conn)) {
+    return 0;
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1136,6 +1150,10 @@ int handle_ncclCommWindowDeregister(conn_t *conn) {
 
   fn = nccl_symbol<fn_t>("ncclCommWindowDeregister");
   return_value = fn == nullptr ? function_not_found() : fn(comm, win);
+
+  if (!rpc_request_awaited(conn)) {
+    return 0;
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1322,6 +1340,10 @@ int handle_ncclRedOpDestroy(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclRedOpDestroy");
   return_value = fn == nullptr ? function_not_found() : fn(op, comm);
 
+  if (!rpc_request_awaited(conn)) {
+    return 0;
+  }
+
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -1340,15 +1362,12 @@ int handle_ncclReduce(conn_t *conn) {
   int root;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclRedOp_t, int, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1358,8 +1377,6 @@ int handle_ncclReduce(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -1369,7 +1386,7 @@ int handle_ncclReduce(conn_t *conn) {
                                : fn(sendbuff, recvbuff, count, datatype, op,
                                     root, comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -1389,15 +1406,12 @@ int handle_ncclBcast(conn_t *conn) {
   int root;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(void *, size_t, ncclDataType_t, int, ncclComm_t,
                                 cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &buff, sizeof(void *)) < 0 ||
+  if (rpc_read(conn, &buff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
       rpc_read(conn, &root, sizeof(int)) < 0 ||
@@ -1405,8 +1419,6 @@ int handle_ncclBcast(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -1415,7 +1427,7 @@ int handle_ncclBcast(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(buff, count, datatype, root, comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -1436,15 +1448,12 @@ int handle_ncclBroadcast(conn_t *conn) {
   int root;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 int, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1453,8 +1462,6 @@ int handle_ncclBroadcast(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -1464,7 +1471,7 @@ int handle_ncclBroadcast(conn_t *conn) {
                                : fn(sendbuff, recvbuff, count, datatype, root,
                                     comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -1485,15 +1492,12 @@ int handle_ncclAllReduce(conn_t *conn) {
   ncclRedOp_t op;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclRedOp_t, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1502,8 +1506,6 @@ int handle_ncclAllReduce(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -1513,7 +1515,7 @@ int handle_ncclAllReduce(conn_t *conn) {
       fn == nullptr ? function_not_found()
                     : fn(sendbuff, recvbuff, count, datatype, op, comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -1534,15 +1536,12 @@ int handle_ncclReduceScatter(conn_t *conn) {
   ncclRedOp_t op;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclRedOp_t, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &recvcount, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1551,8 +1550,6 @@ int handle_ncclReduceScatter(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -1562,7 +1559,7 @@ int handle_ncclReduceScatter(conn_t *conn) {
                                : fn(sendbuff, recvbuff, recvcount, datatype, op,
                                     comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -1582,15 +1579,12 @@ int handle_ncclAllGather(conn_t *conn) {
   ncclDataType_t datatype;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &sendcount, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1598,8 +1592,6 @@ int handle_ncclAllGather(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -1609,7 +1601,7 @@ int handle_ncclAllGather(conn_t *conn) {
       fn == nullptr ? function_not_found()
                     : fn(sendbuff, recvbuff, sendcount, datatype, comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -1630,15 +1622,12 @@ int handle_ncclAlltoAll(conn_t *conn) {
   ncclDataType_t datatype;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1646,8 +1635,6 @@ int handle_ncclAlltoAll(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -1657,7 +1644,7 @@ int handle_ncclAlltoAll(conn_t *conn) {
                      ? function_not_found()
                      : fn(sendbuff, recvbuff, count, datatype, comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -1681,15 +1668,12 @@ int handle_ncclGather(conn_t *conn) {
   int root;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 int, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1698,8 +1682,6 @@ int handle_ncclGather(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -1709,7 +1691,7 @@ int handle_ncclGather(conn_t *conn) {
                                : fn(sendbuff, recvbuff, count, datatype, root,
                                     comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -1733,15 +1715,12 @@ int handle_ncclScatter(conn_t *conn) {
   int root;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 int, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1750,8 +1729,6 @@ int handle_ncclScatter(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -1761,7 +1738,7 @@ int handle_ncclScatter(conn_t *conn) {
                                : fn(sendbuff, recvbuff, count, datatype, root,
                                     comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -1789,16 +1766,13 @@ int handle_ncclAllReduceConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclRedOp_t, ncclComm_t, cudaStream_t,
                                 const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1817,8 +1791,6 @@ int handle_ncclAllReduceConfig(conn_t *conn) {
       false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -1839,7 +1811,7 @@ int handle_ncclAllReduceConfig(conn_t *conn) {
                                   offsetof(ncclCollConfig_t, ext),
                               }));
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -1867,16 +1839,13 @@ int handle_ncclBroadcastConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t, int,
                        ncclComm_t, cudaStream_t, const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1895,8 +1864,6 @@ int handle_ncclBroadcastConfig(conn_t *conn) {
       false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -1918,7 +1885,7 @@ int handle_ncclBroadcastConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -1947,16 +1914,13 @@ int handle_ncclReduceConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclRedOp_t, int, ncclComm_t, cudaStream_t,
                                 const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -1976,8 +1940,6 @@ int handle_ncclReduceConfig(conn_t *conn) {
       false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -1999,7 +1961,7 @@ int handle_ncclReduceConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -2026,16 +1988,13 @@ int handle_ncclAllGatherConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t, ncclComm_t,
                        cudaStream_t, const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &sendcount, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -2053,8 +2012,6 @@ int handle_ncclAllGatherConfig(conn_t *conn) {
       false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -2075,7 +2032,7 @@ int handle_ncclAllGatherConfig(conn_t *conn) {
                                   offsetof(ncclCollConfig_t, ext),
                               }));
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -2103,16 +2060,13 @@ int handle_ncclReduceScatterConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t,
                                 ncclRedOp_t, ncclComm_t, cudaStream_t,
                                 const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &recvcount, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -2131,8 +2085,6 @@ int handle_ncclReduceScatterConfig(conn_t *conn) {
       false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -2154,7 +2106,7 @@ int handle_ncclReduceScatterConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -2181,16 +2133,13 @@ int handle_ncclAlltoAllConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t, ncclComm_t,
                        cudaStream_t, const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -2208,8 +2157,6 @@ int handle_ncclAlltoAllConfig(conn_t *conn) {
       false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -2230,7 +2177,7 @@ int handle_ncclAlltoAllConfig(conn_t *conn) {
                                   offsetof(ncclCollConfig_t, ext),
                               }));
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -2258,16 +2205,13 @@ int handle_ncclGatherConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t, int,
                        ncclComm_t, cudaStream_t, const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -2286,8 +2230,6 @@ int handle_ncclGatherConfig(conn_t *conn) {
       false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -2309,7 +2251,7 @@ int handle_ncclGatherConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -2337,16 +2279,13 @@ int handle_ncclScatterConfig(conn_t *conn) {
   std::vector<unsigned char> config_bytes;
   uint32_t config_algSelection_len = 0;
   std::string config_algSelection;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(const void *, void *, size_t, ncclDataType_t, int,
                        ncclComm_t, cudaStream_t, const ncclCollConfig_t *);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
@@ -2365,8 +2304,6 @@ int handle_ncclScatterConfig(conn_t *conn) {
       false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -2388,7 +2325,7 @@ int handle_ncclScatterConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -2410,15 +2347,12 @@ int handle_ncclSend(conn_t *conn) {
   int peer;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, size_t, ncclDataType_t, int,
                                 ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &sendbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
       rpc_read(conn, &peer, sizeof(int)) < 0 ||
@@ -2426,8 +2360,6 @@ int handle_ncclSend(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -2437,7 +2369,7 @@ int handle_ncclSend(conn_t *conn) {
                      ? function_not_found()
                      : fn(sendbuff, count, datatype, peer, comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -2457,15 +2389,12 @@ int handle_ncclRecv(conn_t *conn) {
   int peer;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(void *, size_t, ncclDataType_t, int, ncclComm_t,
                                 cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
+  if (rpc_read(conn, &recvbuff, sizeof(void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
       rpc_read(conn, &peer, sizeof(int)) < 0 ||
@@ -2473,8 +2402,6 @@ int handle_ncclRecv(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -2484,7 +2411,7 @@ int handle_ncclRecv(conn_t *conn) {
                      ? function_not_found()
                      : fn(recvbuff, count, datatype, peer, comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -2510,16 +2437,13 @@ int handle_ncclPutSignal(conn_t *conn) {
   unsigned int flags;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const void *, size_t, ncclDataType_t, int,
                                 ncclWindow_t, size_t, int, int, unsigned int,
                                 ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &localbuff, sizeof(const void *)) < 0 ||
+  if (rpc_read(conn, &localbuff, sizeof(const void *)) < 0 ||
       rpc_read(conn, &count, sizeof(size_t)) < 0 ||
       rpc_read(conn, &datatype, sizeof(ncclDataType_t)) < 0 ||
       rpc_read(conn, &peer, sizeof(int)) < 0 ||
@@ -2532,8 +2456,6 @@ int handle_ncclPutSignal(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -2544,7 +2466,7 @@ int handle_ncclPutSignal(conn_t *conn) {
                      : fn(localbuff, count, datatype, peer, peerWin,
                           peerWinOffset, sigIdx, ctx, flags, comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -2567,15 +2489,12 @@ int handle_ncclSignal(conn_t *conn) {
   unsigned int flags;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(int, int, int, unsigned int, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &peer, sizeof(int)) < 0 ||
+  if (rpc_read(conn, &peer, sizeof(int)) < 0 ||
       rpc_read(conn, &sigIdx, sizeof(int)) < 0 ||
       rpc_read(conn, &ctx, sizeof(int)) < 0 ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 ||
@@ -2583,8 +2502,6 @@ int handle_ncclSignal(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -2593,7 +2510,7 @@ int handle_ncclSignal(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(peer, sigIdx, ctx, flags, comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -2615,15 +2532,12 @@ int handle_ncclWaitSignal(conn_t *conn) {
   size_t signalDescs_size;
   ncclComm_t comm;
   cudaStream_t stream;
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t =
       ncclResult_t (*)(int, ncclWaitSignalDesc_t *, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
-      rpc_read(conn, &nDesc, sizeof(int)) < 0 || nDesc < 0 || false)
+  if (rpc_read(conn, &nDesc, sizeof(int)) < 0 || nDesc < 0 || false)
     goto ERROR_0;
   signalDescs_size = nDesc * sizeof(ncclWaitSignalDesc_t);
   signalDescs = (ncclWaitSignalDesc_t *)malloc(signalDescs_size);
@@ -2635,8 +2549,6 @@ int handle_ncclWaitSignal(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -2650,7 +2562,7 @@ int handle_ncclWaitSignal(conn_t *conn) {
                                                           : signalDescs),
                comm, stream);
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     free((void *)signalDescs);
     return 0;
   }
@@ -2669,17 +2581,13 @@ ERROR_0:
 #endif
 
 int handle_ncclGroupStart(conn_t *conn) {
-  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)();
   fn_t fn = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 || false)
+  if (false)
     goto ERROR_0;
 
-  if (!unanswered)
-    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
@@ -2687,7 +2595,7 @@ int handle_ncclGroupStart(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclGroupStart");
   return_value = fn == nullptr ? function_not_found() : fn();
 
-  if (unanswered) {
+  if (!rpc_request_awaited(conn)) {
     return 0;
   }
 
@@ -2714,6 +2622,10 @@ int handle_ncclGroupEnd(conn_t *conn) {
 
   fn = nccl_symbol<fn_t>("ncclGroupEnd");
   return_value = fn == nullptr ? function_not_found() : fn();
+
+  if (!rpc_request_awaited(conn)) {
+    return 0;
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||

@@ -2221,16 +2221,14 @@ int lupine_write_lifecycle_response(conn_t *conn, int request_id,
 int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   CUdeviceptr destination = 0;
   const void *source = nullptr;
-  uint8_t fire_and_forget = 0;
+  // The client waits for no answer to a copy it sends fire-and-forget.
+  bool fire_and_forget = !rpc_request_awaited(conn);
   bool is_server_authoritative = false;
   uint64_t pushed_bytes = 0;
   size_t bytes = 0;
   CUresult result = CUDA_SUCCESS;
 
-  // Held until the first byte says whether the client waits for the answer.
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
-      rpc_read(conn, &is_server_authoritative,
+  if (rpc_read(conn, &is_server_authoritative,
                sizeof(is_server_authoritative)) < 0 ||
       rpc_read(conn, &destination, sizeof(destination)) < 0 ||
       rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
@@ -2240,11 +2238,6 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   }
   if (pushed_bytes != 0 && pushed_bytes != bytes) {
     return -1;
-  }
-  // An answered copy needs no ticket; an unanswered one keeps it until the
-  // copy is submitted.
-  if (!fire_and_forget) {
-    rpc_async_sequence_end(conn);
   }
   // An unanswered copy is pushed, and lands before its ticket is released,
   // so later work on any stream sees it as the synchronous call promises.
@@ -2832,16 +2825,12 @@ static int lupine_defer_pitched_dtoh(conn_t *conn,
 static int lupine_handle_memcpy3d(conn_t *conn, bool async, bool peer,
                                   lupine_native_memcpy3d native) {
   uint8_t direction = LUPINE_COPY_DIRECTION_DTOD;
-  // Held until the direction says whether this is the unanswered deferred
-  // DtoH; every other copy is answered and needs no ticket.
-  rpc_hold_ticket(conn);
   if (rpc_read(conn, &direction, sizeof(direction)) < 0) {
     return -1;
   }
   if (direction == LUPINE_COPY_DIRECTION_DTOH && async && !peer) {
     return lupine_defer_pitched_dtoh(conn, native);
   }
-  rpc_async_sequence_end(conn);
   bool is_server_authoritative = false;
   CUDA_MEMCPY3D copy = {};
   CUstream stream = CU_STREAM_LEGACY;
@@ -2965,13 +2954,11 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   uint64_t pushed_bytes = 0;
   size_t byteCount = 0;
   CUstream stream = nullptr;
-  uint8_t fire_and_forget = 0;
+  // The client waits for no answer to a copy it sends fire-and-forget.
+  bool fire_and_forget = !rpc_request_awaited(conn);
   CUresult result = CUDA_SUCCESS;
 
-  // Held until the first byte says whether the client waits for the answer.
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
-      rpc_read(conn, &is_server_authoritative,
+  if (rpc_read(conn, &is_server_authoritative,
                sizeof(is_server_authoritative)) < 0 ||
       rpc_read(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
       rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
@@ -2985,11 +2972,7 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   }
   // Only a page-locked source or a small pushed one is sent fire-and-forget.
   // It holds its ticket until the copy is queued, not until the stream reaches
-  // it, and a failure reaches the client from its next synchronize; an
-  // answered copy needs no ticket.
-  if (!fire_and_forget) {
-    rpc_async_sequence_end(conn);
-  }
+  // it, and a failure reaches the client from its next synchronize.
   if (fire_and_forget && pushed_bytes != 0) {
     if (pushed_bytes > LUPINE_INLINE_HTOD_BYTES) {
       return -1;
@@ -3144,7 +3127,6 @@ static void lupine_defer_dtoh(conn_t *conn, CUstream stream,
 }
 
 int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
-  rpc_hold_ticket(conn);
   void *dstHost = nullptr;
   CUdeviceptr srcDevice = 0;
   size_t byteCount = 0;
@@ -3165,7 +3147,6 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
 // rows back to its own pitch.
 static int lupine_defer_pitched_dtoh(conn_t *conn,
                                      lupine_native_memcpy3d native) {
-  rpc_hold_ticket(conn);
   CUDA_MEMCPY3D copy = {};
   CUstream stream = nullptr;
   if (rpc_read(conn, &copy, sizeof(copy)) < 0 ||
@@ -3195,7 +3176,6 @@ static int lupine_defer_pitched_dtoh(conn_t *conn,
 }
 
 int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
-  rpc_hold_ticket(conn);
   void *dstHost = nullptr;
   void *client_alias = nullptr;
   void *server_host = nullptr;

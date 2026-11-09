@@ -11,6 +11,7 @@ import textwrap
 from cxxheaderparser.types import Function, FunctionType, Parameter, Pointer
 
 from ops import (
+    status_only,
     unanswered,
     ArrayOperation,
     DereferenceOperation,
@@ -57,9 +58,13 @@ def optional_async(backend: "Backend", function, metadata) -> bool:
     )
 
 
-def always_unanswered(backend: "Backend", function, metadata) -> bool:
-    """Whether the call never has an answer: its failure is kept instead."""
-    return bool(backend.keep_async_error) and unanswered(
+def may_go_unanswered(backend: "Backend", function, metadata) -> bool:
+    """Whether the server must check that its client waits before answering.
+
+    Keyed on the status alone, not @blocking: a client that waits always gets
+    its answer, whatever the annotation says.
+    """
+    return bool(backend.keep_async_error or backend.async_success) and status_only(
         function, metadata, backend.result
     )
 
@@ -204,9 +209,7 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
     start = f"rpc_write_start_request(conn, RPC_{name})"
     wait, returned = "rpc_wait_for_response(conn) < 0 ||", "return_value"
     if submit:
-        # The server answers only a request that is waited for.
-        f.write("  uint8_t unanswered = submit_async ? 1 : 0;\n")
-        start = f"{start} < 0 ||\n      rpc_write(conn, &unanswered, sizeof(unanswered))"
+        # A request sent without waiting gets no answer.
         wait = "(submit_async ? rpc_write_end(conn) : rpc_wait_for_response(conn)) < 0 ||\n      (!submit_async && ("
         returned = f"submit_async ? {backend.async_success} : return_value"
     f.write(f"{opening}{start} < 0 ||\n")
@@ -369,8 +372,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
                 f.write(f"  std::memset(&{argument}, 0, sizeof({argument}));\n")
             else:
                 f.write(f"  {argument} = {{}};\n")
-    submit = optional_async(backend, function, metadata)
-    always_async = always_unanswered(backend, function, metadata)
+    unawaited = may_go_unanswered(backend, function, metadata)
     sync = metadata.synchronize
     deferred = sync is not None and sync.deferred_dtoh
     stdout = deferred and sync.stdout
@@ -380,10 +382,8 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write("  lupine_captured_stdout capture;\n")
     if metadata.graph_exec_update is not None:
         f.write("  lupine_htod_graph_binding update_binding;\n")
-    if submit:
-        f.write("  uint8_t unanswered = 0;\n")
     f.write("  int request_id;\n")
-    if not always_async and result != "void":
+    if result != "void":
         f.write(f"  {result} return_value;\n")
     if backend.symbol_lookup:
         fn_params = ", ".join(
@@ -391,13 +391,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         )
         f.write(f"  using fn_t = {result} (*)({fn_params});\n")
         f.write("  fn_t fn = nullptr;\n")
-    if always_async or submit:
-        # No answer: later requests wait for this call's submission instead.
-        # A call that chooses at run time holds it until its first byte says.
-        f.write("  rpc_hold_ticket(conn);\n")
     f.write("  if (\n")
-    if submit:
-        f.write("      rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||\n")
     signed_lengths = signed_length_arrays(operations)
     for operation in operations:
         if operation in signed_lengths:
@@ -406,8 +400,6 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
             owned_buffers.append(owned_buffer)
     f.write("      false)\n")
     f.write("    goto ERROR_0;\n\n")
-    if submit:
-        f.write("  if (!unanswered)\n    rpc_async_sequence_end(conn);\n")
     f.write("  request_id = rpc_read_end(conn);\n")
     f.write("  if (request_id < 0)\n")
     f.write("    goto ERROR_0;\n\n")
@@ -444,7 +436,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write("  if (return_value == CUDA_SUCCESS)\n  ")
     if backend.symbol_lookup:
         f.write(f'  fn = {backend.symbol_lookup}<fn_t>("{name}");\n')
-        if result == backend.result and not always_async:
+        if result == backend.result:
             f.write(
                 "  return_value = fn == nullptr ? function_not_found()\n"
                 f"                               : fn({args});\n\n"
@@ -452,18 +444,20 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         else:
             f.write("  if (fn == nullptr)\n")
             f.write("    goto ERROR_0;\n")
-            if result == "void" or always_async:
+            if result == "void":
                 f.write(f"  fn({args});\n\n")
             else:
                 f.write(f"  return_value = fn({args});\n\n")
-    elif always_async and backend.keep_async_error:
-        f.write(f"  {backend.keep_async_error}(conn, {entry}({args}));\n\n")
-    elif always_async or result == "void":
+    elif result == "void":
         f.write(f"  {entry}({args});\n\n")
     else:
         f.write(f"  return_value = {entry}({args});\n\n")
-    if submit and not always_async:
-        f.write("  if (unanswered) {\n")
+    if unawaited:
+        # A client that does not wait gets no answer; a failure reaches it from
+        # its next synchronize instead.
+        f.write("  if (!rpc_request_awaited(conn)) {\n")
+        if backend.keep_async_error:
+            f.write(f"    {backend.keep_async_error}(conn, return_value);\n")
         write_server_buffer_cleanup(f, owned_buffers, "    ")
         f.write("    return 0;\n  }\n\n")
 
@@ -493,24 +487,23 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write(f"  if (return_value == {backend.success} && (\n      "
                 + " ||\n      ".join(invalid_counts) + ")) {\n")
         f.write(f"    return_value = {backend.invalid_result};\n  }}\n")
-    if not always_async:
-        f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
-        if deferred:
-            # The copy count, then the stdout length, live in the copy buffer.
-            size = "2 * sizeof(uint64_t)" if stdout else "sizeof(uint32_t)"
-            f.write(f"      rpc_copy_alloc(conn, {size}) < 0 ||\n")
-            f.write("      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||\n")
-        if stdout:
-            f.write("      lupine_write_captured_stdout(conn, capture) < 0 ||\n")
-        for operation in operations:
-            if isinstance(operation, NullableArrayOperation):
-                operation.server_rpc_write(f, success=backend.success)
-            else:
-                operation.server_rpc_write(f)
-        if result != "void":
-            f.write(f"      rpc_write(conn, &return_value, sizeof({result})) < 0 ||\n")
-        f.write("      rpc_write_end(conn) < 0)\n")
-        f.write("    goto ERROR_0;\n")
+    f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
+    if deferred:
+        # The copy count, then the stdout length, live in the copy buffer.
+        size = "2 * sizeof(uint64_t)" if stdout else "sizeof(uint32_t)"
+        f.write(f"      rpc_copy_alloc(conn, {size}) < 0 ||\n")
+        f.write("      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||\n")
+    if stdout:
+        f.write("      lupine_write_captured_stdout(conn, capture) < 0 ||\n")
+    for operation in operations:
+        if isinstance(operation, NullableArrayOperation):
+            operation.server_rpc_write(f, success=backend.success)
+        else:
+            operation.server_rpc_write(f)
+    if result != "void":
+        f.write(f"      rpc_write(conn, &return_value, sizeof({result})) < 0 ||\n")
+    f.write("      rpc_write_end(conn) < 0)\n")
+    f.write("    goto ERROR_0;\n")
     write_server_buffer_cleanup(f, owned_buffers, "  ")
     if deferred:
         f.write("  lupine_cleanup_pending_dtoh_copies(&pending);\n")

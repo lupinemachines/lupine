@@ -1198,21 +1198,24 @@ class FunctionAnnotationMetadata:
     clear_fields: list[tuple[str, tuple[str, ...]]] = field(default_factory=list)
 
 
-def unanswered(function, metadata: FunctionAnnotationMetadata,
-               status_type: str) -> bool:
-    """Whether a call is sent without waiting for an answer, and so has none.
-
-    A call whose only answer is its status needn't wait for it: a failure
-    reaches the client from its next synchronize. @blocking marks the ones
-    whose contract is the wait itself, or whose status is their result. A call
-    whose answer carries anything else keeps it. A handwritten side has to
-    agree: its call either sends without waiting or is @blocking.
-    """
+def status_only(function, metadata: FunctionAnnotationMetadata,
+                status_type: str) -> bool:
+    """Whether a call's only answer is its status."""
     return (
         function.return_type.format() == status_type
-        and not metadata.blocking
         and metadata.synchronize is None
         and metadata.graph_exec_update is None
         and metadata.routing_kind != "ALL"
         and all(not getattr(op, "recv", True) for op in metadata.operations)
     )
+
+
+def unanswered(function, metadata: FunctionAnnotationMetadata,
+               status_type: str) -> bool:
+    """Whether the client sends a call without waiting for its answer.
+
+    A call whose only answer is its status needn't wait for it: a failure
+    reaches the client from its next synchronize. @blocking marks the ones
+    whose contract is the wait itself, or whose status is their result.
+    """
+    return status_only(function, metadata, status_type) and not metadata.blocking

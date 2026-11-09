@@ -382,10 +382,10 @@ fail:
 // The ticket claimed by the handler running on this lane, if any.
 static constexpr uint64_t kNoAsyncSequence = ~uint64_t{0};
 static thread_local uint64_t executing_async_sequence = kNoAsyncSequence;
-// Whether the handler running on this lane keeps its ticket until it returns.
-static thread_local bool holding_ticket = false;
+// Whether the client waits for the answer to the request this lane handles.
+static thread_local bool handling_awaited_request = false;
 
-void rpc_hold_ticket(conn_t *) { holding_ticket = true; }
+bool rpc_request_awaited(conn_t *) { return handling_awaited_request; }
 
 int rpc_async_sequence_wait(conn_t *conn, uint64_t published) {
   pthread_mutex_lock(&conn->async_mutex);
@@ -528,6 +528,7 @@ struct rpc_nested_write_frame {
   int32_t write_stream_id = -1;
   uint64_t write_dependency = 0;
   uint64_t write_ticket = 0;
+  bool write_awaited = false;
   std::vector<rpc_write_cursor> write_queue;
   unsigned char *write_copy_buffer = nullptr;
   size_t write_copy_capacity = 0;
@@ -543,9 +544,6 @@ struct rpc_thread_io {
   rpc_nested_write_frame nested_write;
   conn_t *response_conn = nullptr;
   rpc_response_route response;
-  int response_op = 0;
-  // The last request's answer has not been started. Its first read waits.
-  bool answer_pending = false;
   conn_t *held_call_lock = nullptr;
 };
 
@@ -559,6 +557,7 @@ void rpc_save_outer_response(conn_t *conn) {
   frame.write_stream_id = conn->write_stream_id;
   frame.write_dependency = conn->write_dependency;
   frame.write_ticket = conn->write_ticket;
+  frame.write_awaited = conn->write_awaited;
   frame.write_queue = std::move(conn->write_queue);
   frame.write_copy_buffer = conn->write_copy_buffer;
   frame.write_copy_capacity = conn->write_copy_capacity;
@@ -575,6 +574,7 @@ void rpc_restore_outer_response(conn_t *conn) {
   conn->write_stream_id = frame.write_stream_id;
   conn->write_dependency = frame.write_dependency;
   conn->write_ticket = frame.write_ticket;
+  conn->write_awaited = frame.write_awaited;
   conn->write_queue = std::move(frame.write_queue);
   conn->write_copy_buffer = frame.write_copy_buffer;
   conn->write_copy_capacity = frame.write_copy_capacity;
@@ -662,17 +662,21 @@ int rpc_dispatch(conn_t *conn, int parity) {
     rpc_mark_connection_closed(conn);
     return -1;
   }
-  // Every client request carries its ticket after {id, op}. The handler holds
-  // it from here: until it has read its request when it answers, or until it
-  // returns when it does not (rpc_hold_ticket).
+  // A client request carries a ticket after {id, op}, or none when its client
+  // waits for the answer. The handler holds a ticket until it returns, so
+  // later requests from any lane wait for the call's submission.
   if (parity == 0) {
     uint64_t ticket = 0;
-    if (rpc_http2_read_stream(conn, stream_id, &ticket, sizeof(ticket)) != 0 ||
+    if (rpc_http2_read_stream(conn, stream_id, &ticket, sizeof(ticket)) != 0) {
+      rpc_mark_connection_closed(conn);
+      return -1;
+    }
+    handling_awaited_request = ticket == kNoAsyncSequence;
+    if (!handling_awaited_request &&
         rpc_async_sequence_begin(conn, ticket) < 0) {
       rpc_mark_connection_closed(conn);
       return -1;
     }
-    holding_ticket = false;
   }
   rpc_tls_io.read_conn = conn;
   rpc_tls_io.read = {stream_id, header[0], header[1]};
@@ -710,7 +714,6 @@ int rpc_read_start(conn_t *conn, int write_id) {
   }
   rpc_tls_io.read_conn = conn;
   rpc_tls_io.read = {stream_id, header[0], header[1]};
-  rpc_tls_io.answer_pending = false;
   return 0;
 }
 
@@ -786,29 +789,7 @@ static int rpc_read_http2(conn_t *conn, void *data, size_t size) {
                        : rpc_http2_read_stream(conn, stream_id, data, size);
 }
 
-// A handler that answers needs no ticket: its caller waits for the answer, so
-// no later call depends on it meanwhile. It releases the ticket on its first
-// read of the request, before anything it does can wait; a handler that does
-// not answer calls rpc_hold_ticket before reading.
-static void rpc_release_unheld_ticket(conn_t *conn) {
-  if (!holding_ticket && rpc_tls_io.read_conn == conn &&
-      rpc_tls_io.read.op != -1) {
-    rpc_async_sequence_end(conn);
-  }
-}
-
-// A client thread's first read of its last request's answer waits for it.
-static bool rpc_answer_pending(conn_t *conn) {
-  return conn != nullptr && conn->local_request_parity == 0 &&
-         rpc_tls_io.answer_pending && rpc_tls_io.response_conn == conn &&
-         rpc_tls_io.read_conn != conn;
-}
-
 int rpc_read(conn_t *conn, void *data, size_t size) {
-  if (rpc_answer_pending(conn) && rpc_blocking(conn) < 0) {
-    return -1;
-  }
-  rpc_release_unheld_ticket(conn);
   void *alias = rpc_host_allocation_alias(conn, data, size);
   int result = rpc_read_http2(conn, alias != nullptr ? alias : data, size);
   if (result < 0 || alias == nullptr) {
@@ -844,14 +825,10 @@ int rpc_drain(conn_t *conn, size_t size) {
 }
 
 int rpc_read_end(conn_t *conn) {
-  if (rpc_answer_pending(conn) && rpc_blocking(conn) < 0) {
-    return -1;
-  }
   if (rpc_tls_io.read_conn == conn) {
     int read_id = rpc_tls_io.read.request_id;
     int32_t stream_id = rpc_tls_io.read.stream_id;
     bool completed_response = rpc_tls_io.read.op == -1;
-    rpc_release_unheld_ticket(conn);
     rpc_tls_io.read_conn = nullptr;
     rpc_tls_io.read = {};
     rpc_release_held_call_lock(conn);
@@ -920,39 +897,32 @@ static uint64_t lupine_rpc_stats_now_ns() {
       .count();
 }
 
+void rpc_expect_answer(conn_t *conn) { conn->write_awaited = true; }
+
 // rpc_wait_for_response is a convenience function that sends the current
 // request and then waits for the corresponding response. this pattern is
 // so common that having this function keeps the codegen much cleaner.
-int rpc_blocking(conn_t *conn) {
-  if (rpc_tls_io.response_conn != conn) {
-    return -1;
-  }
-  // Already reading this answer. An outer frame being read (a fault handler or
-  // callback making a nested request) is not it: wait for the nested answer.
-  if (!rpc_tls_io.answer_pending && rpc_tls_io.read_conn == conn &&
-      rpc_tls_io.read.op == -1 &&
-      rpc_tls_io.read.request_id == rpc_tls_io.response.request_id) {
-    return 0;
-  }
+int rpc_wait_for_response(conn_t *conn) {
+  int op = conn->write_op;
   uint64_t start =
       lupine_rpc_stats_path() != nullptr ? lupine_rpc_stats_now_ns() : 0;
+  rpc_expect_answer(conn);
+  int write_id = rpc_write_end(conn);
+  if (write_id < 0) {
+    return -1;
+  }
   // The writer sends queued requests independently. Waiting for this response
   // must not also wait for unrelated output on other lanes to drain.
   rpc_http2_response_wait_begin(conn);
-  int result = rpc_read_start(conn, rpc_tls_io.response.request_id);
+  int result = rpc_read_start(conn, write_id);
   rpc_http2_response_wait_end(conn);
   if (result < 0) {
     return -1;
   }
   if (lupine_rpc_stats_path() != nullptr) {
-    lupine_rpc_stats_record(rpc_tls_io.response_op, 0,
-                            lupine_rpc_stats_now_ns() - start);
+    lupine_rpc_stats_record(op, 0, lupine_rpc_stats_now_ns() - start);
   }
   return 0;
-}
-
-int rpc_wait_for_response(conn_t *conn) {
-  return rpc_write_end(conn) < 0 ? -1 : rpc_blocking(conn);
 }
 
 // rpc_write_start_request starts a new request builder on the given connection
@@ -1016,6 +986,7 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   conn->write_id = conn->request_id;
   conn->write_op = op;
   conn->write_dependency = dependency;
+  conn->write_awaited = false;
   conn->write_stream_id = rpc_http2_lane_stream(conn, rpc_tls_lane.id);
   if (conn->write_stream_id < 0) {
     rpc_release_write_builder(conn, request_nested_in_response);
@@ -1189,10 +1160,13 @@ int rpc_write_end(conn_t *conn) {
         rpc_write_cursor(&conn->write_id, sizeof(conn->write_id));
     conn->write_queue[1] =
         rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
+    // Only a request nobody waits for takes a ticket. Tickets are dense: one is
+    // taken only by a request that is written, under the builder lock, and
+    // given back below if the write fails.
+    bool ticketed = client_request && !conn->write_awaited;
+    conn->write_ticket =
+        ticketed ? conn->issued_async_sequence++ : kNoAsyncSequence;
     if (client_request) {
-      // Dense tickets: one is taken only by a request that is written, under
-      // the builder lock, and given back below if the write fails.
-      conn->write_ticket = conn->issued_async_sequence++;
       bool wait = conn->write_dependency > conn->async_prefix;
       header = {0,
                 0,
@@ -1208,7 +1182,7 @@ int rpc_write_end(conn_t *conn) {
       conn->write_queue[1] = {};
     }
     result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
-    if (result != 0 && client_request) {
+    if (result != 0 && ticketed) {
       --conn->issued_async_sequence;
     }
     if (result == 0 && client_request) {
@@ -1226,14 +1200,11 @@ int rpc_write_end(conn_t *conn) {
       }
     }
   }
-  int write_op = conn->write_op;
   rpc_release_write_builder(conn, request_nested_in_response);
   if (request) {
     if (result == 0) {
       rpc_tls_io.response_conn = conn;
       rpc_tls_io.response = {write_id, write_stream_id};
-      rpc_tls_io.response_op = write_op;
-      rpc_tls_io.answer_pending = true;
     }
     // Servers originate RPCs only on the dedicated server-to-client stream.
     // Keep that stream's request/response exchange serialized so a caller can

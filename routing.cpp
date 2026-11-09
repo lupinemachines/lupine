@@ -853,8 +853,7 @@ CUresult lupine_set_current_context_on_route(lupine_route route,
     // unknown or destroyed one still waits, so its error is returned here.
     conn_t *conn = lupine_route_remote_conn(route);
     result = lupine_prepare_rpc(conn) < 0 ||
-                     rpc_write_start_request(
-                         conn, LUPINE_RPC_lupineSetLaneContext) < 0 ||
+                     rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
                      rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
                      rpc_write_end(conn) < 0
                  ? CUDA_ERROR_DEVICE_UNAVAILABLE

@@ -2690,11 +2690,11 @@ void test_async_prefix_wait_preserves_flow_control() {
               rpc_write_end(&pair.client) > 0,
           "producer enqueue");
   int32_t producer_lane = rpc_http2_accept_stream(&pair.server);
-  // Dispatch claims the producer's ticket; held, it stays open until ended
-  // below.
+  // Dispatch claims the producer's ticket; it stays open until ended below.
   require(rpc_bind_http2_stream(&pair.server, producer_lane) == 0 &&
               rpc_dispatch(&pair.server, 0) == 101 &&
-              (rpc_hold_ticket(&pair.server), rpc_read_end(&pair.server) > 0),
+              !rpc_request_awaited(&pair.server) &&
+              rpc_read_end(&pair.server) > 0,
           "producer dispatch");
   // Twice the window: the sender finishes only if the server keeps crediting.
   std::vector<unsigned char> payload(2 * LUPINE_FF_STAGING_WINDOW_BYTES);

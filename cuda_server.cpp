@@ -1537,7 +1537,6 @@ int handle_lupineLibraryLoadBatch(conn_t *conn) {
 
 int handle_cuMemPoolSetAttribute(conn_t *conn) {
   // Unanswered: a failure reaches the client from its next synchronize.
-  rpc_hold_ticket(conn);
   CUmemoryPool pool = nullptr;
   CUmemPool_attribute attr = CU_MEMPOOL_ATTR_RELEASE_THRESHOLD;
   size_t value_size = 0;
@@ -1857,7 +1856,6 @@ int handle_cuPointerGetAttribute(conn_t *conn) {
 
 int handle_cuPointerSetAttribute(conn_t *conn) {
   // Unanswered: a failure reaches the client from its next synchronize.
-  rpc_hold_ticket(conn);
   CUpointer_attribute attribute;
   CUdeviceptr ptr = 0;
   size_t value_size = 0;
@@ -2252,7 +2250,6 @@ int handle_cuLibraryGetModule(conn_t *conn) {
 // caches the CUkernel handles this one owns, but it only ever sends the unload
 // to the route that loaded it, so freeing here would dangle those handles.
 int handle_cuLibraryUnload(conn_t *conn) {
-  rpc_hold_ticket(conn);
   CUlibrary library = nullptr;
 
   if (rpc_read(conn, &library, sizeof(library)) < 0) {
@@ -2322,7 +2319,6 @@ int handle_cuModuleGetGlobal_v2(conn_t *conn) {
 }
 
 int handle_cuLaunchKernel(conn_t *conn) {
-  rpc_hold_ticket(conn);
   CUfunction f = nullptr;
   unsigned int gridDimX = 0;
   unsigned int gridDimY = 0;
@@ -2392,7 +2388,6 @@ int handle_cuLaunchKernel(conn_t *conn) {
 }
 
 int handle_cuLaunchKernelEx(conn_t *conn) {
-  rpc_hold_ticket(conn);
   CUlaunchConfig config = {};
   CUfunction f = nullptr;
   uint32_t param_count = 0;
@@ -2460,7 +2455,6 @@ int handle_cuLaunchKernelEx(conn_t *conn) {
 }
 
 int handle_cuLaunchCooperativeKernel(conn_t *conn) {
-  rpc_hold_ticket(conn);
   CUfunction f = nullptr;
   unsigned int gridDimX = 0;
   unsigned int gridDimY = 0;
@@ -3215,7 +3209,6 @@ int handle_cuGraphHostNodeGetParams(conn_t *conn) {
 
 int handle_cuLaunchHostFunc(conn_t *conn) {
   // Unanswered: a failure reaches the client from its next synchronize.
-  rpc_hold_ticket(conn);
   CUstream stream = nullptr;
   CUhostFn fn = nullptr;
   void *userData = nullptr;
@@ -3250,7 +3243,6 @@ int handle_cuLaunchHostFunc(conn_t *conn) {
 
 int handle_cuStreamAddCallback(conn_t *conn) {
   // Unanswered: a failure reaches the client from its next synchronize.
-  rpc_hold_ticket(conn);
   CUstream stream = nullptr;
   CUstreamCallback callback = nullptr;
   void *userData = nullptr;
@@ -3380,7 +3372,6 @@ void lupine_server_cleanup_log_callbacks(conn_t *conn) {
 }
 
 static int handle_cuEventRecordCommon(conn_t *conn, bool with_flags) {
-  rpc_hold_ticket(conn);
   CUevent event = nullptr;
   CUstream stream = nullptr;
   unsigned int flags = 0;
@@ -3414,7 +3405,6 @@ int handle_cuEventRecordWithFlags(conn_t *conn) {
 
 int handle_cuEventDestroy_v2(conn_t *conn) {
   // Unanswered: a failure reaches the client from its next synchronize.
-  rpc_hold_ticket(conn);
   CUevent event = nullptr;
   if (rpc_read(conn, &event, sizeof(event)) < 0) {
     return -1;
@@ -3475,7 +3465,6 @@ int handle_cuEventQuery(conn_t *conn) {
 }
 
 int handle_cuStreamWaitEvent(conn_t *conn) {
-  rpc_hold_ticket(conn);
   CUstream stream = nullptr;
   CUevent event = nullptr;
   unsigned int flags = 0;
@@ -3844,7 +3833,6 @@ int handle_cuGraphInstantiateWithParams(conn_t *conn) {
 // Unanswered: a failure reaches the client from its next synchronize.
 int handle_cuGraphExecDestroy(conn_t *conn) {
   CUgraphExec exec = nullptr;
-  rpc_hold_ticket(conn);
   if (rpc_read(conn, &exec, sizeof(exec)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
@@ -3860,7 +3848,6 @@ int handle_cuGraphExecDestroy(conn_t *conn) {
 // from its next synchronize.
 int handle_cuGraphDestroy(conn_t *conn) {
   CUgraph graph = nullptr;
-  rpc_hold_ticket(conn);
   if (rpc_read(conn, &graph, sizeof(graph)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
@@ -3870,25 +3857,11 @@ int handle_cuGraphDestroy(conn_t *conn) {
   return 0;
 }
 
-// cuCtxSetCurrent for a context the client knows is live, unanswered: the
-// lane's later requests run in it, and a failure reaches the client from its
-// next synchronize.
-int handle_lupineSetLaneContext(conn_t *conn) {
-  CUcontext ctx = nullptr;
-  rpc_hold_ticket(conn);
-  if (rpc_read(conn, &ctx, sizeof(ctx)) < 0 || rpc_read_end(conn) < 0) {
-    return -1;
-  }
-  lupine_keep_async_error(conn, cuCtxSetCurrent(ctx));
-  return 0;
-}
-
 // Unanswered: the bytes land before the ticket is released, so later
 // requests from every lane see them.
 int handle_lupineManagedHostFlush(conn_t *conn) {
   uint32_t count = 0;
 
-  rpc_hold_ticket(conn);
   if (rpc_read(conn, &count, sizeof(count)) < 0) {
     return -1;
   }
@@ -4463,7 +4436,6 @@ void lupine_server_cleanup_identity_allocations(conn_t *conn) {
 }
 
 int handle_cuGraphLaunch(conn_t *conn) {
-  rpc_hold_ticket(conn);
   CUgraphExec exec = nullptr;
   CUstream stream = nullptr;
   if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
