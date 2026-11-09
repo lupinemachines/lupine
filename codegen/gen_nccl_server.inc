@@ -329,19 +329,28 @@ ERROR_0:
 
 int handle_ncclCommDestroy(conn_t *conn) {
   ncclComm_t comm;
+  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclComm_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 || false)
+  rpc_hold_ticket(conn);
+  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
+      rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 || false)
     goto ERROR_0;
 
+  if (!unanswered)
+    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclCommDestroy");
   return_value = fn == nullptr ? function_not_found() : fn(comm);
+
+  if (unanswered) {
+    return 0;
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -354,19 +363,28 @@ ERROR_0:
 
 int handle_ncclCommAbort(conn_t *conn) {
   ncclComm_t comm;
+  uint8_t unanswered = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclComm_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 || false)
+  rpc_hold_ticket(conn);
+  if (rpc_read(conn, &unanswered, sizeof(unanswered)) < 0 ||
+      rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 || false)
     goto ERROR_0;
 
+  if (!unanswered)
+    rpc_async_sequence_end(conn);
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclCommAbort");
   return_value = fn == nullptr ? function_not_found() : fn(comm);
+
+  if (unanswered) {
+    return 0;
+  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||

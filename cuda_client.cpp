@@ -3582,14 +3582,12 @@ extern "C" CUresult cuEventDestroy_v2(CUevent hEvent) {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuEventDestroy_v2) < 0 ||
       rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  if (result == CUDA_SUCCESS) {
-    lupine_forget_event_owner(hEvent);
-  }
-  return result;
+  // Unanswered: a failure reaches the caller from its next synchronize.
+  lupine_forget_event_owner(hEvent);
+  return CUDA_SUCCESS;
 }
 CUresult cuEventElapsedTime_v2(float *pMilliseconds, CUevent hStart,
                                CUevent hEnd);
@@ -3649,19 +3647,17 @@ extern "C" CUresult cuMemPoolSetAttribute(CUmemoryPool pool,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemPoolSetAttribute) < 0 ||
       rpc_write(conn, &pool, sizeof(pool)) < 0 ||
       rpc_write(conn, &attr, sizeof(attr)) < 0 ||
       rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
       rpc_write(conn, value, value_size) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  // Unanswered: a failure reaches the caller from its next synchronize.
+  return CUDA_SUCCESS;
 }
 
 static thread_local CUcontext lupine_current_context = nullptr;
@@ -6869,12 +6865,11 @@ cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
       lupine_write_kernel_node_params(conn, nodeParams->kernelParams,
                                       param_sizes) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  // Unanswered: a failure reaches the caller from its next synchronize.
+  return CUDA_SUCCESS;
 }
 
 #ifdef cuGraphKernelNodeGetParams
@@ -7051,12 +7046,11 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
       lupine_write_kernel_node_params(conn, nodeParams->kernelParams,
                                       param_sizes) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  // Unanswered: a failure reaches the caller from its next synchronize.
+  return CUDA_SUCCESS;
 }
 
 #ifdef cuGraphExecKernelNodeSetParams
@@ -7428,18 +7422,16 @@ cuGraphExecHostNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
                                     hNode, nodeParams);
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphExecHostNodeSetParams) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(hGraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_write(conn, nodeParams, sizeof(*nodeParams)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  // Unanswered: a failure reaches the caller from its next synchronize.
+  return CUDA_SUCCESS;
 }
 
 #ifdef cuGraphInstantiate
@@ -7461,18 +7453,16 @@ extern "C" CUresult cuLaunchHostFunc(CUstream hStream, CUhostFn fn,
     return lupine_call_real_cuda_fn("cuLaunchHostFunc", hStream, fn, userData);
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuLaunchHostFunc) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &fn, sizeof(fn)) < 0 ||
       rpc_write(conn, &userData, sizeof(userData)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  // Unanswered: a failure reaches the caller from its next synchronize.
+  return CUDA_SUCCESS;
 }
 
 extern "C" CUresult cuStreamAddCallback(CUstream hStream,
@@ -7488,19 +7478,17 @@ extern "C" CUresult cuStreamAddCallback(CUstream hStream,
                                     userData, flags);
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamAddCallback) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &callback, sizeof(callback)) < 0 ||
       rpc_write(conn, &userData, sizeof(userData)) < 0 ||
       rpc_write(conn, &flags, sizeof(flags)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  // Unanswered: a failure reaches the caller from its next synchronize.
+  return CUDA_SUCCESS;
 }
 
 static pending_log_callbacks &lupine_pending_logs() {

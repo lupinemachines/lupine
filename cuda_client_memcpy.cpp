@@ -1388,14 +1388,14 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
       return CUDA_SUCCESS;
     }
     // This is the flush performed by lupine_prepare_rpc(), so it must use
-    // the raw transport primitives. Wait for the server acknowledgement:
-    // requests from different client threads use different HTTP/2 lanes, and
-    // publishing the flushed epoch before this lane is applied would let a
-    // server-authoritative HtoD on another lane observe stale host data.
+    // the raw transport primitives. No answer is needed: the server applies
+    // the bytes before releasing this request's ticket, and every later
+    // request from any lane, such as a server-authoritative HtoD, waits for
+    // it.
     if (rpc_write_start_request(conn, LUPINE_RPC_lupineManagedHostFlush) < 0 ||
         rpc_write(conn, &count, sizeof(count)) < 0 ||
         rpc_write_cursors(conn, cursors.data(), count * 2) < 0 ||
-        rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
+        rpc_write_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
     return CUDA_SUCCESS;
@@ -3493,19 +3493,17 @@ extern "C" CUresult cuPointerSetAttribute(const void *value,
   memcpy(payload, value, value_size);
 
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuPointerSetAttribute) < 0 ||
       rpc_write(conn, &attribute, sizeof(attribute)) < 0 ||
       rpc_write(conn, &target_ptr, sizeof(target_ptr)) < 0 ||
       rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
       rpc_write(conn, payload, value_size) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return return_value;
+  // Unanswered: a failure reaches the caller from its next synchronize.
+  return CUDA_SUCCESS;
 }
 
 // Attribute values of a live mapped-host allocation are immutable, and

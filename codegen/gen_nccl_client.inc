@@ -218,41 +218,51 @@ extern "C" ncclResult_t ncclCommFinalize(ncclComm_t comm) {
   return lupine_rpc_ncclCommFinalize(conn, comm);
 }
 
-static ncclResult_t lupine_rpc_ncclCommDestroy(conn_t *conn, ncclComm_t comm) {
+static ncclResult_t lupine_rpc_ncclCommDestroy(conn_t *conn, bool submit_async,
+                                               ncclComm_t comm) {
   ncclResult_t return_value = rpc_error();
+  uint8_t unanswered = submit_async ? 1 : 0;
   if (conn == nullptr ||
       rpc_write_start_request(conn, RPC_ncclCommDestroy) < 0 ||
+      rpc_write(conn, &unanswered, sizeof(unanswered)) < 0 ||
       rpc_write(conn, &comm, sizeof(ncclComm_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      (submit_async ? rpc_write_end(conn) : rpc_wait_for_response(conn)) < 0 ||
+      (!submit_async &&
+       (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+        rpc_read_end(conn) < 0))) {
     return rpc_error();
   }
-  return return_value;
+  return submit_async ? ncclSuccess : return_value;
 }
 
 extern "C" ncclResult_t ncclCommDestroy(ncclComm_t comm) {
   conn_t *conn = connection_for_handle(comm);
-  ncclResult_t return_value = lupine_rpc_ncclCommDestroy(conn, comm);
+  ncclResult_t return_value =
+      lupine_rpc_ncclCommDestroy(conn, submit_async(conn), comm);
   forget_handle(comm);
   return return_value;
 }
 
-static ncclResult_t lupine_rpc_ncclCommAbort(conn_t *conn, ncclComm_t comm) {
+static ncclResult_t lupine_rpc_ncclCommAbort(conn_t *conn, bool submit_async,
+                                             ncclComm_t comm) {
   ncclResult_t return_value = rpc_error();
+  uint8_t unanswered = submit_async ? 1 : 0;
   if (conn == nullptr || rpc_write_start_request(conn, RPC_ncclCommAbort) < 0 ||
+      rpc_write(conn, &unanswered, sizeof(unanswered)) < 0 ||
       rpc_write(conn, &comm, sizeof(ncclComm_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      (submit_async ? rpc_write_end(conn) : rpc_wait_for_response(conn)) < 0 ||
+      (!submit_async &&
+       (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+        rpc_read_end(conn) < 0))) {
     return rpc_error();
   }
-  return return_value;
+  return submit_async ? ncclSuccess : return_value;
 }
 
 extern "C" ncclResult_t ncclCommAbort(ncclComm_t comm) {
   conn_t *conn = connection_for_handle(comm);
-  ncclResult_t return_value = lupine_rpc_ncclCommAbort(conn, comm);
+  ncclResult_t return_value =
+      lupine_rpc_ncclCommAbort(conn, submit_async(conn), comm);
   forget_handle(comm);
   return return_value;
 }

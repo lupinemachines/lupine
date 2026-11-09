@@ -845,6 +845,20 @@ CUresult lupine_set_current_context_on_route(lupine_route route,
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_route_is_local(route)) {
     result = lupine_call_real_cuda_fn("cuCtxSetCurrent", ctx);
+  } else if (ctx != nullptr &&
+             lupine_routes_share_server(lupine_route_for_known_owner(ctx),
+                                        route)) {
+    // A live context this client created on this route cannot be refused, so
+    // the lane needs no answer: its later requests run after the switch. An
+    // unknown or destroyed one still waits, so its error is returned here.
+    conn_t *conn = lupine_route_remote_conn(route);
+    result = lupine_prepare_rpc(conn) < 0 ||
+                     rpc_write_start_request(
+                         conn, LUPINE_RPC_lupineSetLaneContext) < 0 ||
+                     rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
+                     rpc_write_end(conn) < 0
+                 ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                 : CUDA_SUCCESS;
   } else {
     conn_t *conn = lupine_route_remote_conn(route);
     if (lupine_prepare_rpc(conn) < 0 ||

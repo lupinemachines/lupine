@@ -689,6 +689,15 @@ int rpc_read_start(conn_t *conn, int write_id) {
   int header[2] = {};
   if (rpc_http2_read_stream(conn, stream_id, header, sizeof(header)) != 0 ||
       header[0] != write_id || header[1] != -1) {
+    // An earlier request's answer means client and server disagree on whether
+    // that call is answered: a handwritten side out of step with codegen.
+    if (header[1] == -1 && header[0] < write_id) {
+      LUPINE_LOG_ERROR("answer to request " << header[0]
+                                            << " arrived while waiting for "
+                                            << write_id
+                                            << "; the client did not wait "
+                                               "for it");
+    }
     rpc_mark_connection_closed(conn);
     rpc_release_held_call_lock(conn);
     return -1;

@@ -1214,6 +1214,5 @@ def unanswered(function, metadata: FunctionAnnotationMetadata,
         and metadata.synchronize is None
         and metadata.graph_exec_update is None
         and metadata.routing_kind != "ALL"
-        and metadata.client_call_template is None
         and all(not getattr(op, "recv", True) for op in metadata.operations)
     )

@@ -1536,6 +1536,8 @@ int handle_lupineLibraryLoadBatch(conn_t *conn) {
 }
 
 int handle_cuMemPoolSetAttribute(conn_t *conn) {
+  // Unanswered: a failure reaches the client from its next synchronize.
+  rpc_hold_ticket(conn);
   CUmemoryPool pool = nullptr;
   CUmemPool_attribute attr = CU_MEMPOOL_ATTR_RELEASE_THRESHOLD;
   size_t value_size = 0;
@@ -1564,10 +1566,7 @@ int handle_cuMemPoolSetAttribute(conn_t *conn) {
   }
 
   result = cuMemPoolSetAttribute(pool, attr, value.data());
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
@@ -1857,6 +1856,8 @@ int handle_cuPointerGetAttribute(conn_t *conn) {
 }
 
 int handle_cuPointerSetAttribute(conn_t *conn) {
+  // Unanswered: a failure reaches the client from its next synchronize.
+  rpc_hold_ticket(conn);
   CUpointer_attribute attribute;
   CUdeviceptr ptr = 0;
   size_t value_size = 0;
@@ -1891,10 +1892,7 @@ int handle_cuPointerSetAttribute(conn_t *conn) {
     result = cuPointerSetAttribute(value, attribute, ptr);
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
@@ -2756,6 +2754,8 @@ int handle_cuGraphKernelNodeGetParams(conn_t *conn) {
 }
 
 int handle_cuGraphKernelNodeSetParams(conn_t *conn) {
+  // Unanswered: a failure reaches the client from its next synchronize.
+  rpc_hold_ticket(conn);
   CUgraphNode hNode = nullptr;
   CUDA_KERNEL_NODE_PARAMS nodeParams = {};
   CUresult result = CUDA_ERROR_INVALID_VALUE;
@@ -2801,14 +2801,13 @@ int handle_cuGraphKernelNodeSetParams(conn_t *conn) {
   }
   std::free(params);
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
 int handle_cuGraphExecKernelNodeSetParams(conn_t *conn) {
+  // Unanswered: a failure reaches the client from its next synchronize.
+  rpc_hold_ticket(conn);
   CUgraphExec hGraphExec = nullptr;
   CUgraphNode hNode = nullptr;
   CUDA_KERNEL_NODE_PARAMS nodeParams = {};
@@ -2857,10 +2856,7 @@ int handle_cuGraphExecKernelNodeSetParams(conn_t *conn) {
   }
   std::free(params);
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
@@ -3157,6 +3153,8 @@ int handle_cuGraphHostNodeSetParams(conn_t *conn) {
 }
 
 int handle_cuGraphExecHostNodeSetParams(conn_t *conn) {
+  // Unanswered: a failure reaches the client from its next synchronize.
+  rpc_hold_ticket(conn);
   CUgraphExec hGraphExec = nullptr;
   CUgraphNode hNode = nullptr;
   CUDA_HOST_NODE_PARAMS params{};
@@ -3178,10 +3176,7 @@ int handle_cuGraphExecHostNodeSetParams(conn_t *conn) {
   serverParams.userData = callback;
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   result = cuGraphExecHostNodeSetParams(hGraphExec, hNode, &serverParams);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
@@ -3215,6 +3210,8 @@ int handle_cuGraphHostNodeGetParams(conn_t *conn) {
 }
 
 int handle_cuLaunchHostFunc(conn_t *conn) {
+  // Unanswered: a failure reaches the client from its next synchronize.
+  rpc_hold_ticket(conn);
   CUstream stream = nullptr;
   CUhostFn fn = nullptr;
   void *userData = nullptr;
@@ -3243,14 +3240,13 @@ int handle_cuLaunchHostFunc(conn_t *conn) {
     delete callback;
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
 int handle_cuStreamAddCallback(conn_t *conn) {
+  // Unanswered: a failure reaches the client from its next synchronize.
+  rpc_hold_ticket(conn);
   CUstream stream = nullptr;
   CUstreamCallback callback = nullptr;
   void *userData = nullptr;
@@ -3274,10 +3270,7 @@ int handle_cuStreamAddCallback(conn_t *conn) {
     delete data;
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
@@ -3416,6 +3409,8 @@ int handle_cuEventRecordWithFlags(conn_t *conn) {
 }
 
 int handle_cuEventDestroy_v2(conn_t *conn) {
+  // Unanswered: a failure reaches the client from its next synchronize.
+  rpc_hold_ticket(conn);
   CUevent event = nullptr;
   if (rpc_read(conn, &event, sizeof(event)) < 0) {
     return -1;
@@ -3430,10 +3425,7 @@ int handle_cuEventDestroy_v2(conn_t *conn) {
     lupine_forget_event_capture_resources(event);
     lupine_forget_event_dtoh_marker(conn, event);
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
@@ -3865,27 +3857,39 @@ int handle_cuGraphExecDestroy(conn_t *conn) {
   return 0;
 }
 
+// Unanswered, as the generated client sends it: a failure reaches the client
+// from its next synchronize.
 int handle_cuGraphDestroy(conn_t *conn) {
   CUgraph graph = nullptr;
-  if (rpc_read(conn, &graph, sizeof(graph)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  rpc_hold_ticket(conn);
+  if (rpc_read(conn, &graph, sizeof(graph)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
   CUresult result = cuGraphDestroy(graph);
   lupine_erase_graph_resources(graph);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
+// cuCtxSetCurrent for a context the client knows is live, unanswered: the
+// lane's later requests run in it, and a failure reaches the client from its
+// next synchronize.
+int handle_lupineSetLaneContext(conn_t *conn) {
+  CUcontext ctx = nullptr;
+  rpc_hold_ticket(conn);
+  if (rpc_read(conn, &ctx, sizeof(ctx)) < 0 || rpc_read_end(conn) < 0) {
+    return -1;
+  }
+  lupine_keep_async_error(conn, cuCtxSetCurrent(ctx));
+  return 0;
+}
+
+// Unanswered: the bytes land before the ticket is released, so later
+// requests from every lane see them.
 int handle_lupineManagedHostFlush(conn_t *conn) {
   uint32_t count = 0;
 
+  rpc_hold_ticket(conn);
   if (rpc_read(conn, &count, sizeof(count)) < 0) {
     return -1;
   }
@@ -3903,12 +3907,7 @@ int handle_lupineManagedHostFlush(conn_t *conn) {
     }
   }
 
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0 || rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return rpc_read_end(conn) < 0 ? -1 : 0;
 }
 // Serves LUPINE_RPC_lupineDeviceSnapshot: every immutable per-device value the
 // client caches, for every device, in one response. Mutable state (primary

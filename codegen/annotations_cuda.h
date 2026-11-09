@@ -181,6 +181,7 @@ CUresult cuCtxCreate_v3(CUcontext *pctx, CUexecAffinityParam *paramsArray,
 /**
  * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
+ * @blocking - context teardown reports its status to the caller
  */
 CUresult cuCtxDestroy_v2(CUcontext ctx) {
   CUcontext lupine_current_before_destroy = nullptr;
@@ -323,6 +324,7 @@ CUresult cuCtxAttach(CUcontext *pctx, unsigned int flags);
 /**
  * @disabled server - manual server coordinates retained staging lifecycle
  * @param ctx SEND_ONLY
+ * @blocking - context teardown reports its status to the caller
  */
 CUresult cuCtxDetach(CUcontext ctx) {
   CUresult return_value = LUPINE_GENERATED_CALL();
@@ -1198,7 +1200,6 @@ CUresult cuMemRelease(CUmemGenericAllocationHandle handle);
  * @param offset SEND_ONLY
  * @param handle SEND_ONLY
  * @param flags SEND_ONLY
- * @blocking - a failed mapping must stop the caller before it uses the range
  */
 CUresult cuMemMap(CUdeviceptr ptr, size_t size, size_t offset,
                   CUmemGenericAllocationHandle handle,
@@ -1220,7 +1221,6 @@ CUresult cuMemUnmap(CUdeviceptr ptr, size_t size);
  * @param size SEND_ONLY
  * @param count SEND_ONLY
  * @param desc SEND_ONLY LENGTH:count
- * @blocking - a failed access change must stop the caller before it uses the range
  */
 CUresult cuMemSetAccess(CUdeviceptr ptr, size_t size,
                         const CUmemAccessDesc *desc, size_t count);
@@ -1673,6 +1673,7 @@ CUresult cuCtxFromGreenCtx(CUcontext *pContext, CUgreenCtx hCtx) {
  * @guard CUDA_VERSION >= 12040
  * @routingkey CURRENT_CONTEXT
  * @param hCtx SEND_ONLY
+ * @blocking - context teardown reports its status to the caller
  */
 CUresult cuGreenCtxDestroy(CUgreenCtx hCtx) {
   CUresult return_value = LUPINE_GENERATED_CALL();
@@ -1998,6 +1999,7 @@ CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
  * @param hfunc SEND_ONLY
  * @param attrib SEND_ONLY
  * @param value SEND_ONLY
+ * @blocking - callers act on a rejected attribute, such as too much dynamic shared memory
  */
 CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
                             int value) {
@@ -3377,6 +3379,7 @@ CUresult cuLogsCurrent(CUlogIterator *iterator_out, unsigned int flags);
  * @param iterator SEND_RECV NULLABLE
  * @param pathToFile SEND_ONLY NULL_TERMINATED
  * @param flags SEND_ONLY
+ * @blocking - the caller reads whether the dump was written
  */
 CUresult cuLogsDumpToFile(CUlogIterator *iterator, const char *pathToFile,
                           unsigned int flags) {
@@ -3449,6 +3452,8 @@ void cuStreamUpdateCaptureDependencies_v2();
 void cuStreamGetCaptureInfo_v3();
 /** @disabled */
 void lupineManagedHostFlush();
+/** @disabled */
+void lupineSetLaneContext();
 /** @disabled */
 void lupineMemcpyDtoHAsyncPinned();
 /** @disabled */

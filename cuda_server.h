@@ -83,6 +83,7 @@ int handle_cuGraphDestroy(conn_t *conn);
 int handle_cuMemcpyHtoDAsync_v2(conn_t *conn);
 int handle_lupineDeviceSnapshot(conn_t *conn);
 int handle_lupineManagedHostFlush(conn_t *conn);
+int handle_lupineSetLaneContext(conn_t *conn);
 int handle_cuMemcpyDtoHAsync_v2(conn_t *conn);
 int handle_cuMemHostAlloc(conn_t *conn);
 int handle_cuMemHostGetFlags(conn_t *conn);

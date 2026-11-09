@@ -504,10 +504,10 @@ CUresult cuCtxSetCacheConfig(CUfunc_cache config) {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxSetCacheConfig) < 0 ||
       rpc_write(conn, &config, sizeof(CUfunc_cache)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return_value = CUDA_SUCCESS;
   if (return_value == CUDA_SUCCESS)
     lupine_disable_local_occupancy();
   return return_value;
@@ -987,11 +987,10 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
       rpc_write(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
       rpc_write(conn, &val, sizeof(int)) < 0 ||
       rpc_write(conn, &kernel, sizeof(CUkernel)) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 || rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return_value = CUDA_SUCCESS;
   if (return_value == CUDA_SUCCESS)
     lupine_attribute_set(
         lupine_kernel_attribute_key{lupine_route_identity(route), kernel,
@@ -1021,11 +1020,10 @@ CUresult cuKernelSetCacheConfig(CUkernel kernel, CUfunc_cache config,
       rpc_write_start_request(conn, RPC_cuKernelSetCacheConfig) < 0 ||
       rpc_write(conn, &kernel, sizeof(CUkernel)) < 0 ||
       rpc_write(conn, &config, sizeof(CUfunc_cache)) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 || rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return_value = CUDA_SUCCESS;
   if (return_value == CUDA_SUCCESS)
     lupine_disable_local_occupancy();
   return return_value;
@@ -2212,11 +2210,10 @@ CUresult cuMemMap(CUdeviceptr ptr, size_t size, size_t offset,
       rpc_write(conn, &offset, sizeof(size_t)) < 0 ||
       rpc_write(conn, &handle, sizeof(CUmemGenericAllocationHandle)) < 0 ||
       rpc_write(conn, &flags, sizeof(unsigned long long)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 CUresult cuMemMapArrayAsync(CUarrayMapInfo *mapInfoList, unsigned int count,
@@ -2274,11 +2271,10 @@ CUresult cuMemSetAccess(CUdeviceptr ptr, size_t size,
       rpc_write(conn, &size, sizeof(size_t)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
       rpc_write(conn, desc, count * sizeof(const CUmemAccessDesc)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 CUresult cuMemGetAccess(unsigned long long *flags,
@@ -2381,10 +2377,10 @@ CUresult cuMemFreeAsync(CUdeviceptr dptr, CUstream hStream) {
       rpc_write_start_request(conn, RPC_cuMemFreeAsync) < 0 ||
       rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return_value = CUDA_SUCCESS;
   if (return_value == CUDA_SUCCESS)
     lupine_forget_deviceptr_owner(dptr);
   return return_value;
@@ -2466,11 +2462,10 @@ CUresult cuMemPoolSetAccess(CUmemoryPool pool, const CUmemAccessDesc *map,
       rpc_write(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
       rpc_write(conn, &count, sizeof(size_t)) < 0 ||
       rpc_write(conn, map, count * sizeof(const CUmemAccessDesc)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  }
+  return CUDA_SUCCESS;
 }
 
 CUresult cuMemPoolGetAccess(CUmemAccess_flags *flags, CUmemoryPool memPool,
@@ -2830,10 +2825,10 @@ CUresult cuStreamDestroy_v2(CUstream hStream) {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuStreamDestroy_v2) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return_value = CUDA_SUCCESS;
   if (return_value == CUDA_SUCCESS)
     lupine_forget_stream_owner(hStream);
   return return_value;
@@ -3338,10 +3333,10 @@ CUresult cuFuncSetCacheConfig(CUfunction hfunc, CUfunc_cache config) {
       rpc_write_start_request(conn, RPC_cuFuncSetCacheConfig) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
       rpc_write(conn, &config, sizeof(CUfunc_cache)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return_value = CUDA_SUCCESS;
   if (return_value == CUDA_SUCCESS)
     lupine_disable_local_occupancy();
   return return_value;
@@ -5014,10 +5009,10 @@ CUresult cuGraphDestroyNode(CUgraphNode hNode) {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphDestroyNode) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return_value = CUDA_SUCCESS;
   if (return_value == CUDA_SUCCESS)
     lupine_deep_node_cache_reset(hNode);
   return return_value;
@@ -5396,10 +5391,10 @@ CUresult cuGraphDestroy(CUgraph hGraph) {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuGraphDestroy) < 0 ||
       rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  return_value = CUDA_SUCCESS;
   if (return_value == CUDA_SUCCESS) {
     for (CUgraphNode node : cached_nodes)
       lupine_deep_node_cache_reset(node);
