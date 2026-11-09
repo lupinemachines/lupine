@@ -53,7 +53,10 @@ Client routing can also be annotated for handles that belong to a specific LUPIN
 server connection. `@routingkey <kind> <param>` selects the connection for the
 generated client wrapper before it writes the RPC. Supported kinds are
 `DEVICE`, `CONTEXT`, `MODULE`, `FUNCTION`, `STREAM`, `EVENT`, `MEMORY_POOL`,
-`GRAPH`, `GRAPH_NODE`, `GRAPH_EXEC`, and `DEVICEPTR`.
+`GRAPH`, `GRAPH_NODE`, `GRAPH_EXEC`, `DEVICEPTR`, and `DEVICEPTR_DESTINATION`.
+`DEVICEPTR_DESTINATION` routes like `DEVICEPTR` for an address the call writes
+from the device; when it names a host allocation, the client then refreshes its
+view of that allocation at the next synchronize.
 `@routingkey CURRENT_CONTEXT` routes through the client's current CUDA context
 owner. `DEVICE` and `CONTEXT` routing is inferred from the first non-pointer
 `CUdevice` or `CUcontext` parameter, so those annotations are only needed when
