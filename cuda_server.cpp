@@ -3283,7 +3283,11 @@ int handle_cuLaunchHostFunc(conn_t *conn) {
   auto *callback = new lupine_host_callback_data{
       conn,      fn,     userData,
       resources, stream, capture_status == CU_STREAM_CAPTURE_STATUS_NONE};
-  callback->dtoh_before = lupine_dtoh_sequence_now();
+  // A captured callback runs at each replay, behind copies queued since; only
+  // a one-shot callback knows which copies are ahead of it.
+  if (callback->one_shot) {
+    callback->dtoh_before = lupine_dtoh_sequence_now();
+  }
   result = cuLaunchHostFunc(stream, lupine_graph_host_callback, callback);
   if (result != CUDA_SUCCESS) {
     delete callback;

@@ -68,10 +68,59 @@ int run(const char *label, int mode) {
   return 0;
 }
 
+struct Check {
+  const unsigned int *host;
+  unsigned int want;
+  int wrong;
+};
+
+void CUDART_CB check(void *data) {
+  auto *c = static_cast<Check *>(data);
+  c->wrong += *c->host != c->want;
+}
+
+// A host function captured into a graph, replayed after copies queued on the
+// launch stream: each replay sees the copy queued before its launch.
+int run_captured() {
+  cudaStream_t stream = nullptr;
+  CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+  unsigned int *device = nullptr, *host = nullptr;
+  CHECK(cudaMalloc(&device, sizeof(*device)));
+  CHECK(cudaMallocHost(&host, sizeof(*host)));
+  Check c{host, 0, 0};
+  cudaGraph_t graph = nullptr;
+  cudaGraphExec_t exec = nullptr;
+  CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+  CHECK(cudaLaunchHostFunc(stream, check, &c));
+  CHECK(cudaStreamEndCapture(stream, &graph));
+  CHECK(cudaGraphInstantiate(&exec, graph, nullptr, nullptr, 0));
+  for (int round = 0; round < kRounds; ++round) {
+    c.want = 0x2000u + round;
+    set<<<1, 1, 0, stream>>>(device, c.want);
+    CHECK(cudaGetLastError());
+    CHECK(cudaMemcpyAsync(host, device, sizeof(*device),
+                          cudaMemcpyDeviceToHost, stream));
+    CHECK(cudaGraphLaunch(exec, stream));
+    CHECK(cudaStreamSynchronize(stream));
+  }
+  CHECK(cudaGraphExecDestroy(exec));
+  CHECK(cudaGraphDestroy(graph));
+  CHECK(cudaFreeHost(host));
+  CHECK(cudaFree(device));
+  CHECK(cudaStreamDestroy(stream));
+  if (c.wrong != 0) {
+    std::fprintf(stderr, "FAIL: captured host function: %d/%d copies missing\n",
+                 c.wrong, kRounds);
+    return 1;
+  }
+  std::printf("captured host function: ok\n");
+  return 0;
+}
+
 } // namespace
 
 int main() {
   CHECK(cudaSetDevice(0));
   return run("one thread", 0) || run("synchronized from another thread", 1) ||
-         run("host function on another stream too", 2);
+         run("host function on another stream too", 2) || run_captured();
 }

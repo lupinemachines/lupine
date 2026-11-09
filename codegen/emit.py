@@ -326,15 +326,15 @@ def deferred_dtoh_detach(metadata) -> str:
         return (
             "    CUcontext context = nullptr;\n"
             "    if (cuCtxGetCurrent(&context) == CUDA_SUCCESS)\n"
-            "      pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, context);\n"
+            "      pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, context, dtoh_before);\n"
         )
     if kind == "CONTEXT":
-        return f"    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, {target});\n"
+        return f"    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, {target}, dtoh_before);\n"
     if kind == "STREAM":
         return (
             "    CUcontext context = nullptr;\n"
             f"    if (cuStreamGetCtx({target}, &context) == CUDA_SUCCESS)\n"
-            f"      pending = lupine_detach_pending_dtoh_copies(conn, {target}, {target} == nullptr, context);\n"
+            f"      pending = lupine_detach_pending_dtoh_copies(conn, {target}, {target} == nullptr, context, dtoh_before);\n"
         )
     if kind == "EVENT":
         return f"    pending = lupine_detach_event_dtoh_copies(conn, {target});\n"
@@ -372,6 +372,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     stdout = deferred and sync.stdout
     if deferred:
         f.write("  lupine_pending_dtoh_items pending;\n")
+        f.write("  uint64_t dtoh_before = 0;\n")
     if stdout:
         f.write("  lupine_captured_stdout capture;\n")
     if metadata.async_fire_forget:
@@ -418,6 +419,9 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
             "    goto ERROR_0;\n\n"
         )
 
+    if deferred:
+        # Only copies queued before the synchronize are complete after it.
+        f.write("  dtoh_before = lupine_dtoh_sequence_now();\n")
     if stdout:
         f.write("  lupine_start_stdout_capture(&capture);\n")
     update = metadata.graph_exec_update
