@@ -190,9 +190,10 @@ class ArrayOperation:
         return result
 
     def client_declaration(self) -> str:
-        if not self.nullable:
-            return ""
         name = self.parameter.name
+        if not self.nullable:
+            size = self.transfer_size_expr()
+            return f"    if ({size} != 0 && {name} == nullptr) return CUDA_ERROR_INVALID_VALUE;\n"
         return f"    uint8_t {name}_null = {name} == nullptr ? 1 : 0;\n"
 
     def client_rpc_write(self, f):
