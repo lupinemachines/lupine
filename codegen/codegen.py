@@ -1446,6 +1446,20 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                     f"            {all_output.type.format()} {output_name} = route_output;\n"
                 )
             else:
+                if (
+                    metadata.routing_kind == "DEVICE"
+                    and metadata.routing_parameter is not None
+                    and metadata.client_call_template is not None
+                    and f"virtual_{metadata.routing_parameter.name}"
+                    in (
+                        metadata.client_call_template.before_call
+                        + metadata.client_call_template.after_call
+                    )
+                ):
+                    f.write(
+                        f"    CUdevice virtual_{metadata.routing_parameter.name} = "
+                        f"{metadata.routing_parameter.name};\n"
+                    )
                 route_expr = client_routing_key_expr(
                     metadata.routing_kind, metadata.routing_parameter, metadata
                 )

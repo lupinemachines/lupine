@@ -124,20 +124,26 @@ ERROR_0:
 }
 
 int handle_cuDriverGetVersion(conn_t *conn) {
+  uint8_t driverVersion_present = 0;
   int driverVersion{};
   int request_id;
   CUresult return_value;
-  if (false)
+  if (rpc_read(conn, &driverVersion_present, sizeof(uint8_t)) < 0 ||
+      (driverVersion_present &&
+       rpc_read(conn, &driverVersion, sizeof(int)) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuDriverGetVersion(&driverVersion);
+  return_value =
+      cuDriverGetVersion(driverVersion_present ? &driverVersion : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &driverVersion, sizeof(int)) < 0 ||
+      (driverVersion_present &&
+       rpc_write(conn, &driverVersion, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -196,12 +202,14 @@ ERROR_0:
 int handle_cuDeviceGetName(conn_t *conn) {
   int len;
   char *name = nullptr;
+  uint8_t name_null = 0;
   CUdevice dev;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &len, sizeof(int)) < 0 || false)
+  if (rpc_read(conn, &len, sizeof(int)) < 0 ||
+      rpc_read(conn, &name_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
-  if (true) {
+  if (!name_null) {
     name = (char *)calloc((len <= 0 ? 0 : len * sizeof(char)) == 0
                               ? 1
                               : (len <= 0 ? 0 : len * sizeof(char)),
@@ -219,7 +227,7 @@ int handle_cuDeviceGetName(conn_t *conn) {
   return_value = cuDeviceGetName(name, len, dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      ((len <= 0 ? 0 : len * sizeof(char)) != 0 &&
+      (!name_null && (len <= 0 ? 0 : len * sizeof(char)) != 0 &&
        rpc_write(conn, name, (len <= 0 ? 0 : len * sizeof(char))) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -233,12 +241,13 @@ ERROR_0:
 
 int handle_cuDeviceGetUuid_v2(conn_t *conn) {
   CUuuid *uuid = nullptr;
+  uint8_t uuid_null = 0;
   CUdevice dev;
   int request_id;
   CUresult return_value;
-  if (false)
+  if (rpc_read(conn, &uuid_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
-  if (true) {
+  if (!uuid_null) {
     uuid = (CUuuid *)calloc(16 == 0 ? 1 : 16, 1);
     if (uuid == nullptr)
       goto ERROR_0;
@@ -253,7 +262,7 @@ int handle_cuDeviceGetUuid_v2(conn_t *conn) {
   return_value = cuDeviceGetUuid_v2(uuid, dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (16 != 0 && rpc_write(conn, uuid, 16) < 0) ||
+      (!uuid_null && 16 != 0 && rpc_write(conn, uuid, 16) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -307,21 +316,24 @@ ERROR_0:
 }
 
 int handle_cuDeviceTotalMem_v2(conn_t *conn) {
+  uint8_t bytes_present = 0;
   size_t bytes{};
   CUdevice dev;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
+  if (rpc_read(conn, &bytes_present, sizeof(uint8_t)) < 0 ||
+      (bytes_present && rpc_read(conn, &bytes, sizeof(size_t)) < 0) ||
+      rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuDeviceTotalMem_v2(&bytes, dev);
+  return_value = cuDeviceTotalMem_v2(bytes_present ? &bytes : nullptr, dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &bytes, sizeof(size_t)) < 0 ||
+      (bytes_present && rpc_write(conn, &bytes, sizeof(size_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -366,12 +378,15 @@ ERROR_0:
 }
 
 int handle_cuDeviceGetAttribute(conn_t *conn) {
+  uint8_t pi_present = 0;
   int pi{};
   CUdevice_attribute attrib;
   CUdevice dev;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &attrib, sizeof(CUdevice_attribute)) < 0 ||
+  if (rpc_read(conn, &pi_present, sizeof(uint8_t)) < 0 ||
+      (pi_present && rpc_read(conn, &pi, sizeof(int)) < 0) ||
+      rpc_read(conn, &attrib, sizeof(CUdevice_attribute)) < 0 ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
 
@@ -379,10 +394,10 @@ int handle_cuDeviceGetAttribute(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuDeviceGetAttribute(&pi, attrib, dev);
+  return_value = cuDeviceGetAttribute(pi_present ? &pi : nullptr, attrib, dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pi, sizeof(int)) < 0 ||
+      (pi_present && rpc_write(conn, &pi, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -613,22 +628,30 @@ ERROR_0:
 
 int handle_cuDevicePrimaryCtxGetState(conn_t *conn) {
   CUdevice dev;
+  uint8_t flags_present = 0;
   unsigned int flags{};
+  uint8_t active_present = 0;
   int active{};
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
+  if (rpc_read(conn, &dev, sizeof(CUdevice)) < 0 ||
+      rpc_read(conn, &flags_present, sizeof(uint8_t)) < 0 ||
+      (flags_present && rpc_read(conn, &flags, sizeof(unsigned int)) < 0) ||
+      rpc_read(conn, &active_present, sizeof(uint8_t)) < 0 ||
+      (active_present && rpc_read(conn, &active, sizeof(int)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuDevicePrimaryCtxGetState(dev, &flags, &active);
+  return_value =
+      cuDevicePrimaryCtxGetState(dev, flags_present ? &flags : nullptr,
+                                 active_present ? &active : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &active, sizeof(int)) < 0 ||
+      (flags_present && rpc_write(conn, &flags, sizeof(unsigned int)) < 0) ||
+      (active_present && rpc_write(conn, &active, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1262,20 +1285,25 @@ ERROR_0:
 }
 
 int handle_cuModuleGetLoadingMode(conn_t *conn) {
+  uint8_t mode_present = 0;
   CUmoduleLoadingMode mode{};
   int request_id;
   CUresult return_value;
-  if (false)
+  if (rpc_read(conn, &mode_present, sizeof(uint8_t)) < 0 ||
+      (mode_present &&
+       rpc_read(conn, &mode, sizeof(CUmoduleLoadingMode)) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuModuleGetLoadingMode(&mode);
+  return_value = cuModuleGetLoadingMode(mode_present ? &mode : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &mode, sizeof(CUmoduleLoadingMode)) < 0 ||
+      (mode_present &&
+       rpc_write(conn, &mode, sizeof(CUmoduleLoadingMode)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
