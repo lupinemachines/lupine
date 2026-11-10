@@ -24,7 +24,6 @@ from emit import (
     format_call_args,
     format_function_params,
     write_client_rpc,
-    write_client_validation,
     write_client_wrapper,
     write_server_handler,
     unsupported,
@@ -41,7 +40,6 @@ from ops import (
     DeepStructOperation,
     NullTerminatedOperation,
     OpaqueTypeOperation,
-    DereferenceOperation,
     ScalarOperation,
     VersionedStructOperation,
     Operation,
@@ -532,7 +530,9 @@ UNIFORM_ANNOTATIONS = {
 
 
 def parse_annotation(
-    annotation: str, params: list[Parameter]
+    annotation: str,
+    params: list[Parameter],
+    disabled_client_non_nullable: bool = False,
 ) -> FunctionAnnotationMetadata:
     operations: list[Operation] = []
     metadata = FunctionAnnotationMetadata(operations=operations)
@@ -552,14 +552,14 @@ def parse_annotation(
             scope = line.lstrip(" *").split()[1:2]
             if scope == ["client"]:
                 metadata.disabled_client = True
-                continue
             elif scope == ["server"]:
                 metadata.disabled_server = True
-                continue
             else:
                 metadata.disabled_client = True
                 metadata.disabled_server = True
-                continue
+    for line in annotation.split("\n"):
+        if "@disabled" in line:
+            continue
         if line.startswith("/**"):
             continue
         if line.startswith("*/"):
@@ -786,13 +786,18 @@ def parse_annotation(
                         "Only one of LENGTH, SIZE, NULL_TERMINATED, or NULLABLE can be specified (except NULLABLE LENGTH)"
                     )
 
+                deref_nullable = not (
+                    (metadata.disabled_client and disabled_client_non_nullable)
+                    or metadata.disabled_server
+                )
                 if deref:
                     operations.append(
-                        DereferenceOperation(
+                        NullableOperation(
                             send=send,
                             recv=recv,
                             parameter=param,
-                            type_=param.type,
+                            ptr=param.type,
+                            nullable=deref_nullable,
                         )
                     )
                 elif length_arg:
@@ -846,6 +851,7 @@ def parse_annotation(
                                 parameter=param,
                                 ptr=param.type,
                                 length=length_param,
+                                nullable=deref_nullable,
                             )
                         )
                 elif size_arg:
@@ -857,6 +863,7 @@ def parse_annotation(
                             parameter=param,
                             ptr=param.type,
                             length=int(size_arg.split(":")[1]),
+                            nullable=deref_nullable,
                         )
                     )
                 elif null_terminated:
@@ -897,11 +904,12 @@ def parse_annotation(
                             )
                         # this is an out parameter so use the base type as the server declaration
                         operations.append(
-                            DereferenceOperation(
+                            NullableOperation(
                                 send=send,
                                 recv=recv,
                                 parameter=param,
-                                type_=param.type,
+                                ptr=param.type,
+                                nullable=deref_nullable,
                             )
                         )
                     else:
@@ -941,7 +949,7 @@ def parse_annotation(
         for count_name, anchor in anchors.items():
             for i, op in enumerate(operations):
                 if op.parameter.name == count_name and isinstance(
-                    op, DereferenceOperation
+                    op, NullableOperation
                 ):
                     operations[i] = InOutCountOperation(
                         send=True,
@@ -1388,23 +1396,6 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                     )
 
                 output_name = all_output.name
-                checks = [f"{output_name} == nullptr"]
-                for operation in operations:
-                    if isinstance(operation, NullTerminatedOperation) and operation.send:
-                        checks.append(f"{operation.parameter.name} == nullptr")
-                    elif (
-                        isinstance(operation, DereferenceOperation)
-                        and operation.parameter.name != output_name
-                    ):
-                        checks.append(f"{operation.parameter.name} == nullptr")
-                    elif isinstance(operation, ArrayOperation):
-                        checks.append(
-                            f"({operation.transfer_size_expr()} != 0 && "
-                            f"{operation.parameter.name} == nullptr)"
-                        )
-                f.write("    if (" + " || ".join(checks) + ") {\n")
-                f.write("        return CUDA_ERROR_INVALID_VALUE;\n")
-                f.write("    }\n")
                 f.write(
                     f"    return lupine_lookup_device_on_all_routes({output_name},\n"
                     "        [&](lupine_route route, CUdevice *route_output) {\n"
@@ -1421,7 +1412,6 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                         function.return_type.format(), "invalid_device"
                     )
                     f.write(f"        return {invalid};\n")
-                write_client_validation(f, CUDA, function, operations)
                 for written in metadata.device_writes:
                     f.write(f"    lupine_note_device_write({written.name});\n")
             if metadata.cross_server_copy is not None:
@@ -1468,41 +1458,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
 
             for operation in operations:
-                if isinstance(operation, OpaqueTypeOperation):
-                    f.write(operation.client_declaration())
-                if (
-                    isinstance(operation, InOutCountOperation)
-                    or isinstance(operation, NullableArrayOperation)
-                    or isinstance(operation, NullableOperation)
-                    or isinstance(operation, DeepStructOperation)
-                    or (
-                        isinstance(operation, NullTerminatedOperation)
-                        and operation.recv
-                    )
-                ):
-                    f.write(operation.client_declaration())
-
-            for operation in operations:
-                if isinstance(operation, NullTerminatedOperation) and operation.send:
-                    f.write(f"    std::size_t {operation.parameter.name}_len = std::strlen({operation.parameter.name}) + 1;\n")
-
-            # Reject invalid send buffers before lupine_prepare_rpc() flushes
-            # pending writes and rpc_write_start_request() acquires the
-            # connection's call/write locks. Conditions in the builder below
-            # may skip optional writes, but only rpc_write* calls themselves
-            # are allowed to fail the builder.
-            for operation in operations:
-                if isinstance(operation, ArrayOperation):
-                    operation.client_preflight(
-                        f, result_code(function.return_type.format(), "invalid_argument")
-                    )
-                elif (
-                    isinstance(operation, NullTerminatedOperation)
-                    and operation.recv
-                ):
-                    operation.client_preflight(
-                        f, result_code(function.return_type.format(), "invalid_argument")
-                    )
+                f.write(operation.client_declaration())
 
             if metadata.async_fire_forget:
                 error_return = result_code(function.return_type.format())
@@ -1811,7 +1767,11 @@ def main():
             print(f"Annotation for {function.name} not found")
             continue
         try:
-            metadata = parse_annotation(annotation.doxygen, function.parameters)
+            metadata = parse_annotation(
+                annotation.doxygen,
+                function.parameters,
+                disabled_client_non_nullable=True,
+            )
         except Exception as e:
             raise RuntimeError(
                 f"Error parsing annotation for {function.name.format()}"
@@ -1850,7 +1810,11 @@ def main():
             for directive in directives
         ):
             continue
-        metadata = parse_annotation(annotation.doxygen, annotation.parameters)
+        metadata = parse_annotation(
+            annotation.doxygen,
+            annotation.parameters,
+            disabled_client_non_nullable=True,
+        )
         attach_client_call_template(annotation, metadata, client_call_templates)
         validate_async_annotation(annotation, metadata)
         annotated_function = (
@@ -1932,7 +1896,7 @@ def main():
     with open("gen_nvml_client.inc", "w") as f:
         f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
         for function, _, operations, metadata in nvml_functions_with_annotations:
-            if metadata.disabled_client:
+            if metadata.disabled_client and metadata.disabled_server:
                 continue
             write_client_rpc(f, NVML, function, operations, metadata)
             write_client_wrapper(f, NVML, function, operations, metadata)
@@ -1955,12 +1919,13 @@ def main():
         f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
         hip_client_functions = {}
         for function, _, operations, metadata in hip_functions_with_annotations:
-            if metadata.disabled_client:
+            if metadata.disabled_client and metadata.disabled_server:
                 continue
-            hip_client_functions[function.name.format()] = function
-            if unsupported(function, metadata):
-                write_stub(f, HIP, function)
-                continue
+            if not metadata.disabled_client:
+                hip_client_functions[function.name.format()] = function
+                if unsupported(function, metadata):
+                    write_stub(f, HIP, function)
+                    continue
             write_client_rpc(f, HIP, function, operations, metadata)
             write_client_wrapper(f, HIP, function, operations, metadata)
         for alias, target in HIP_MANUAL_REMAPPINGS:

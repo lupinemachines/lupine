@@ -4426,38 +4426,6 @@ extern "C" CUresult cuMemRangeGetAttributes(void **data, size_t *dataSizes,
   return rpc_read_end(conn) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE : result;
 }
 
-extern "C" CUresult cuCtxGetStreamPriorityRange(int *leastPriority,
-                                                int *greatestPriority) {
-  lupine_route route = lupine_route_for_default();
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn("cuCtxGetStreamPriorityRange",
-                                    leastPriority, greatestPriority);
-  }
-
-  conn_t *conn = lupine_route_remote_conn(route);
-  int least = 0;
-  int greatest = 0;
-  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuCtxGetStreamPriorityRange) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &least, sizeof(least)) < 0 ||
-      rpc_read(conn, &greatest, sizeof(greatest)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (return_value == CUDA_SUCCESS) {
-    if (leastPriority != nullptr) {
-      *leastPriority = least;
-    }
-    if (greatestPriority != nullptr) {
-      *greatestPriority = greatest;
-    }
-  }
-  return return_value;
-}
-
 // The CUDA linker requires the caller's option arrays to stay valid for the
 // lifetime of the CUlinkState, so cuLinkComplete writes its outputs straight
 // back into the arrays cuLinkCreate was given.

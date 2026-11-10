@@ -1173,12 +1173,10 @@ nvmlReturn_t nvmlDeviceGetNvLinkRemoteDeviceType(
     nvmlDevice_t device, unsigned int link,
     nvmlIntNvLinkDeviceType_t *pNvLinkDeviceType);
 /**
- * @disabled client - manual client tracks the server owning the event set
  * @param set RECV_ONLY
  */
 nvmlReturn_t nvmlEventSetCreate(nvmlEventSet_t *set);
 /**
- * @disabled client - manual client routes through the device owning the registration
  * @param device SEND_ONLY
  * @param eventTypes SEND_ONLY
  * @param set SEND_ONLY
@@ -1193,7 +1191,6 @@ nvmlReturn_t nvmlDeviceRegisterEvents(nvmlDevice_t device,
 nvmlReturn_t nvmlDeviceGetSupportedEventTypes(nvmlDevice_t device,
                                               unsigned long long *eventTypes);
 /**
- * @disabled client - manual client tracks the server owning the event set
  * @param set SEND_ONLY
  * @param data RECV_ONLY
  * @param timeoutms SEND_ONLY
@@ -1201,7 +1198,6 @@ nvmlReturn_t nvmlDeviceGetSupportedEventTypes(nvmlDevice_t device,
 nvmlReturn_t nvmlEventSetWait_v2(nvmlEventSet_t set, nvmlEventData_t *data,
                                  unsigned int timeoutms);
 /**
- * @disabled client - manual client tracks the server owning the event set
  * @param set SEND_ONLY
  */
 nvmlReturn_t nvmlEventSetFree(nvmlEventSet_t set);

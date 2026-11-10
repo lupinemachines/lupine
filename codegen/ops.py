@@ -22,6 +22,7 @@ class NullableOperation:
     recv: bool
     parameter: Parameter
     ptr: Pointer
+    nullable: bool = True
 
     @property
     def base_type(self) -> str:
@@ -34,10 +35,18 @@ class NullableOperation:
 
     def client_declaration(self) -> str:
         name = self.parameter.name
+        if not self.nullable:
+            return f"    if ({name} == nullptr) return CUDA_ERROR_INVALID_VALUE;\n"
         return f"    uint8_t {name}_present = {name} != nullptr;\n"
 
     def client_rpc_write(self, f):
         name = self.parameter.name
+        if not self.nullable:
+            if self.send:
+                f.write(
+                    f"        rpc_write(conn, {name}, sizeof({self.ptr.ptr_to.format()})) < 0 ||\n"
+                )
+            return
         f.write(
             f"        rpc_write(conn, &{name}_present, sizeof(uint8_t)) < 0 ||\n"
             f"        ({name}_present && rpc_write(conn, {name}, sizeof({self.base_type})) < 0) ||\n"
@@ -48,15 +57,29 @@ class NullableOperation:
         c = self.ptr.ptr_to.const
         self.ptr.ptr_to.const = False
         # void is treated differently from non void pointer types
-        s = (
-            f"    uint8_t {self.parameter.name}_present = 0;\n"
-            + f"""    {self.ptr.format() if self.ptr.ptr_to.format() == "void" else self.ptr.ptr_to.format()} {self.parameter.name};\n"""
+        decl_type = (
+            self.ptr.format()
+            if self.ptr.ptr_to.format() == "void"
+            else self.ptr.ptr_to.format()
         )
+        if not self.nullable:
+            s = f"    {decl_type} {self.parameter.name}{{}};\n"
+        else:
+            s = (
+                f"    uint8_t {self.parameter.name}_present = 0;\n"
+                f"    {decl_type} {self.parameter.name}{{}};\n"
+            )
         self.ptr.ptr_to.const = c
         return s
 
     def server_rpc_read(self, f):
         name = self.parameter.name
+        if not self.nullable:
+            if self.send:
+                f.write(
+                    f"        rpc_read(conn, &{name}, sizeof({self.ptr.ptr_to.format()})) < 0 ||\n"
+                )
+            return
         f.write(
             f"        rpc_read(conn, &{name}_present, sizeof(uint8_t)) < 0 ||\n"
             f"        ({name}_present && rpc_read(conn, &{name}, sizeof({self.base_type})) < 0) ||\n"
@@ -64,10 +87,17 @@ class NullableOperation:
 
     @property
     def server_reference(self) -> str:
+        if not self.nullable:
+            return f"&{self.parameter.name}"
         return f"{self.parameter.name}_present ? &{self.parameter.name} : nullptr"
 
     def server_rpc_write(self, f):
         if not self.recv:
+            return
+        if not self.nullable:
+            f.write(
+                f"        rpc_write(conn, &{self.parameter.name}, sizeof({self.ptr.ptr_to.format()})) < 0 ||\n"
+            )
             return
         f.write(
             f"        ({self.parameter.name}_present && rpc_write(conn, &{self.parameter.name}, sizeof({self.ptr.ptr_to.format()})) < 0) ||\n"
@@ -75,6 +105,11 @@ class NullableOperation:
 
     def client_rpc_read(self, f):
         if not self.recv:
+            return
+        if not self.nullable:
+            f.write(
+                f"        rpc_read(conn, {self.parameter.name}, sizeof({self.ptr.ptr_to.format()})) < 0 ||\n"
+            )
             return
         f.write(
             f"        ({self.parameter.name}_present && rpc_read(conn, {self.parameter.name}, sizeof({self.ptr.ptr_to.format()})) < 0) ||\n"
@@ -84,7 +119,8 @@ class NullableOperation:
 @dataclass
 class ArrayOperation:
     """
-    Array operations are operations that are passed as a pointer to an array.
+    Array operations are operations that are passed as a pointer to an array;
+    a null-flag byte leads the array on the wire.
     """
 
     send: bool
@@ -93,26 +129,40 @@ class ArrayOperation:
     ptr: Pointer
     # if int, it's a constant length, if Parameter, it's a variable length
     length: Union[int, Parameter]
-    # A SEND_ONLY NULLABLE LENGTH array the caller may leave null; a presence
-    # byte leads it on the wire.
-    nullable: bool = False
+    nullable: bool = True
 
     @property
     def is_void_bytes(self) -> bool:
         return self.ptr.ptr_to.format() in ("void", "const void")
 
+    @property
+    def has_signed_length(self) -> bool:
+        if isinstance(self.length, int):
+            return False
+        t = (
+            self.length.type.ptr_to
+            if isinstance(self.length.type, Pointer)
+            else self.length.type
+        )
+        fmt = t.format()
+        return "unsigned" not in fmt and fmt != "size_t"
+
     def count_expr(self) -> str:
         if isinstance(self.length, int):
             return str(self.length)
         if isinstance(self.length.type, Pointer):
-            return f"*{self.length.name}"
+            return f"({self.length.name} != nullptr ? *{self.length.name} : 0)"
         return self.length.name
 
     def transfer_size_expr(self) -> str:
         # SIZE:<bytes> is a byte count whatever the pointee type.
         if self.is_void_bytes or isinstance(self.length, int):
-            return self.count_expr()
-        return f"{self.count_expr()} * sizeof({self.ptr.ptr_to.format()})"
+            raw = self.count_expr()
+        else:
+            raw = f"{self.count_expr()} * sizeof({self.ptr.ptr_to.format()})"
+        if self.has_signed_length:
+            return f"({self.count_expr()} <= 0 ? 0 : {raw})"
+        return raw
 
     def server_element_count_expr(self) -> str:
         if isinstance(self.length, int):
@@ -122,11 +172,15 @@ class ArrayOperation:
 
     def server_transfer_size_expr(self) -> str:
         if self.is_void_bytes or isinstance(self.length, int):
-            return self.server_element_count_expr()
-        return (
-            f"{self.server_element_count_expr()} * "
-            f"sizeof({self.ptr.ptr_to.format()})"
-        )
+            raw = self.server_element_count_expr()
+        else:
+            raw = (
+                f"{self.server_element_count_expr()} * "
+                f"sizeof({self.ptr.ptr_to.format()})"
+            )
+        if self.has_signed_length:
+            return f"({self.server_element_count_expr()} <= 0 ? 0 : {raw})"
+        return raw
 
     def mutable_ptr_format(self) -> str:
         c = self.ptr.ptr_to.const
@@ -135,156 +189,101 @@ class ArrayOperation:
         self.ptr.ptr_to.const = c
         return result
 
-    def client_preflight(self, f, error_return: str):
-        """Emit argument rejection before the request builder takes its locks.
-
-        Predicates inside client_rpc_write may decide whether an optional or
-        zero-length field is queued, but they must not reject the call after
-        rpc_write_start_request().
-        """
-        if not self.send or self.nullable or isinstance(self.length, int):
-            return
-        f.write(
-            f"    if ({self.transfer_size_expr()} != 0 && {self.parameter.name} == nullptr)\n"
-                f"        return {error_return};\n"
-        )
-    def client_rpc_write(self, f):
-        if not self.send:
-            return
-        if self.nullable:
-            name = self.parameter.name
-            f.write(
-                f"        rpc_write(conn, &{name}_null, sizeof(uint8_t)) < 0 ||\n"
-                f"        (!{name}_null && {self.transfer_size_expr()} != 0 && "
-                f"rpc_write(conn, {name}, {self.transfer_size_expr()}) < 0) ||\n"
-            )
-        elif isinstance(self.length, int):
-            f.write(
-                f"        rpc_write(conn, {self.parameter.name}, {self.length}) < 0 ||\n"
-            )
-        else:
-            f.write(
-                f"        rpc_write(conn, {self.parameter.name}, {self.transfer_size_expr()}) < 0 ||\n"
-            )
-
-    @property
-    def server_declaration(self) -> str:
-        c = self.ptr.ptr_to.const
-        self.ptr.ptr_to.const = False
-        s = f"    {self.ptr.format()} {self.parameter.name} = nullptr;\n"
-        if self.send:
-            s += f"    size_t {self.parameter.name}_size;\n"
-        if self.nullable:
-            s += f"    uint8_t {self.parameter.name}_null = 0;\n"
-        self.ptr.ptr_to.const = c
-        return s
-
     def client_declaration(self) -> str:
+        if not self.nullable:
+            return ""
         name = self.parameter.name
         return f"    uint8_t {name}_null = {name} == nullptr ? 1 : 0;\n"
 
-    def server_rpc_read(self, f) -> Optional[str]:
-        if self.nullable:
-            name = self.parameter.name
-            f.write(
-                f"        rpc_read(conn, &{name}_null, sizeof(uint8_t)) < 0 ||\n"
-            )
-            f.write("        false)\n")
-            f.write("        goto ERROR_0;\n")
-            f.write(f"    {name}_size = {self.server_transfer_size_expr()};\n")
-            f.write(f"    if (!{name}_null) {{\n")
-            f.write(
-                f"        {name} = ({self.mutable_ptr_format()})malloc({name}_size);\n"
-            )
-            f.write(f"        if ({name}_size != 0 && {name} == nullptr)\n")
-            f.write("            goto ERROR_0;\n")
-            f.write("    }\n")
-            f.write("    if(\n")
-            f.write(
-                f"        (!{name}_null && {name}_size != 0 && "
-                f"rpc_read(conn, {name}, {name}_size) < 0) ||\n"
-            )
-            return name
+    def client_rpc_write(self, f):
+        name = self.parameter.name
+        size = self.transfer_size_expr()
+        if not self.nullable:
+            if self.send:
+                f.write(
+                    f"        ({size} != 0 && rpc_write(conn, {name}, {size}) < 0) ||\n"
+                )
+            return
+        f.write(
+            f"        rpc_write(conn, &{name}_null, sizeof(uint8_t)) < 0 ||\n"
+        )
         if not self.send:
-            # The whole buffer goes back on the wire, but the library writes
-            # only as much of it as it has to, so the allocation has to supply
-            # the rest: uninitialized bytes here would be server heap.
-            size_expr = self.server_transfer_size_expr()
-            alloc_expr = (
-                f"({size_expr} == 0 ? 1 : {size_expr})"
-                if self.ptr.ptr_to.format() == "char"
-                else size_expr
-            )
-            f.write("        false)\n")
-            f.write("        goto ERROR_0;\n")
+            return
+        f.write(
+            f"        (!{name}_null && {size} != 0 && "
+            f"rpc_write(conn, {name}, {size}) < 0) ||\n"
+        )
+
+    @property
+    def server_declaration(self) -> str:
+        name = self.parameter.name
+        s = f"    {self.mutable_ptr_format()} {name} = nullptr;\n"
+        if self.nullable:
+            s += f"    uint8_t {name}_null = 0;\n"
+        return s
+
+    def server_rpc_read(self, f) -> Optional[str]:
+        name = self.parameter.name
+        size = self.server_transfer_size_expr()
+        null_read = (
+            f"        rpc_read(conn, &{name}_null, sizeof(uint8_t)) < 0 ||\n"
+            if self.nullable
+            else ""
+        )
+        cond = f"!{name}_null" if self.nullable else "true"
+        f.write(
+            f"{null_read}"
+            "        false)\n"
+            "        goto ERROR_0;\n"
+            f"    if ({cond}) {{\n"
+            f"        {name} = ({self.mutable_ptr_format()})calloc({size} == 0 ? 1 : {size}, 1);\n"
+            f"        if ({name} == nullptr)\n"
+            "            goto ERROR_0;\n"
+            "    }\n"
+            "    if(\n"
+        )
+        if self.send:
+            guard = f"!{name}_null && " if self.nullable else ""
             f.write(
-                f"    {self.parameter.name} = ({self.ptr.format()})calloc({alloc_expr}, 1);\n"
+                f"        ({guard}{size} != 0 && "
+                f"rpc_read(conn, {name}, {size}) < 0) ||\n"
             )
-            f.write(
-                f"    if (({alloc_expr} != 0 && {self.parameter.name} == nullptr) ||\n"
-            )
-            return self.parameter.name
-        f.write("        false)\n")
-        f.write("        goto ERROR_0;\n")
-        f.write(
-            f"    {self.parameter.name}_size = {self.server_transfer_size_expr()};\n"
-        )
-        f.write(
-            "    {param_name} = ({server_type})malloc({size});\n".format(
-                param_name=self.parameter.name,
-                server_type=self.mutable_ptr_format(),
-                size=f"{self.parameter.name}_size",
-            )
-        )
-        f.write(
-            f"    if ({self.parameter.name}_size != 0 && {self.parameter.name} == nullptr)\n"
-        )
-        f.write("        goto ERROR_0;\n")
-        f.write("    if(\n")
-        f.write(
-            "        ({size} != 0 && rpc_read(conn, {param_name}, {size}) < 0) ||\n".format(
-                param_name=self.parameter.name,
-                size=f"{self.parameter.name}_size",
-            )
-        )
-        return self.parameter.name
+        return name
 
     @property
     def server_reference(self) -> str:
-        if isinstance(self.length, int):
-            return f"{self.parameter.name}"
-        if self.nullable:
-            return f"({self.parameter.name}_null ? nullptr : {self.parameter.name})"
-        if not self.send and self.ptr.ptr_to.format() == "char":
-            return f"{self.parameter.name}"
-        return (
-            f"({self.server_transfer_size_expr()} == 0 ? "
-            f"nullptr : {self.parameter.name})"
-        )
+        if (
+            not self.nullable
+            and not isinstance(self.length, int)
+            and not (not self.send and self.ptr.ptr_to.format() == "char")
+        ):
+            return (
+                f"({self.server_transfer_size_expr()} == 0 ? "
+                f"nullptr : {self.parameter.name})"
+            )
+        return self.parameter.name
 
     def server_rpc_write(self, f):
         if not self.recv:
             return
-        if isinstance(self.length, int):
-            f.write(
-                f"        rpc_write(conn, {self.parameter.name}, {self.length}) < 0 ||\n"
-            )
-        else:
-            f.write(
-                f"        rpc_write(conn, {self.parameter.name}, {self.server_transfer_size_expr()}) < 0 ||\n"
-            )
+        name = self.parameter.name
+        size = self.server_transfer_size_expr()
+        guard = f"!{name}_null && " if self.nullable else ""
+        f.write(
+            f"        ({guard}{size} != 0 && "
+            f"rpc_write(conn, {name}, {size}) < 0) ||\n"
+        )
 
     def client_rpc_read(self, f):
         if not self.recv:
             return
-        if isinstance(self.length, int):
-            f.write(
-                f"        ({self.length} != 0 && rpc_read(conn, {self.parameter.name}, {self.length}) < 0) ||\n"
-            )
-        else:
-            f.write(
-                f"        ({self.transfer_size_expr()} != 0 && rpc_read(conn, {self.parameter.name}, {self.transfer_size_expr()}) < 0) ||\n"
-            )
+        name = self.parameter.name
+        size = self.transfer_size_expr()
+        guard = f"!{name}_null && " if self.nullable else ""
+        f.write(
+            f"        ({guard}{size} != 0 && "
+            f"rpc_read(conn, {name}, {size}) < 0) ||\n"
+        )
 
 
 @dataclass
@@ -309,48 +308,59 @@ class InOutCountOperation:
 
     @property
     def server_declaration(self) -> str:
+        name = self.parameter.name
         return (
-            f"    {self.count_type()} {self.parameter.name} = 0;\n"
-            f"    {self.count_type()} {self.parameter.name}_requested = 0;\n"
+            f"    uint8_t {name}_present = 0;\n"
+            f"    {self.count_type()} {name} = 0;\n"
+            f"    {self.count_type()} {name}_requested = 0;\n"
         )
 
     def client_declaration(self) -> str:
+        name = self.parameter.name
         return (
-            f"    {self.count_type()} {self.parameter.name}_requested =\n"
-            f"        ({self.anchor} != nullptr) ? *{self.parameter.name} : 0;\n"
+            f"    uint8_t {name}_present = {name} != nullptr;\n"
+            f"    {self.count_type()} {name}_requested =\n"
+            f"        ({name}_present && {self.anchor} != nullptr) ? *{name} : 0;\n"
         )
 
     def client_rpc_write(self, f):
+        name = self.parameter.name
         f.write(
-            f"        rpc_write(conn, &{self.parameter.name}_requested, "
+            f"        rpc_write(conn, &{name}_present, sizeof(uint8_t)) < 0 ||\n"
+            f"        rpc_write(conn, &{name}_requested, "
             f"sizeof({self.count_type()})) < 0 ||\n"
         )
 
     def client_rpc_read(self, f):
+        name = self.parameter.name
         f.write(
-            f"        rpc_read(conn, {self.parameter.name}, "
-            f"sizeof({self.count_type()})) < 0 ||\n"
+            f"        ({name}_present && rpc_read(conn, {name}, "
+            f"sizeof({self.count_type()})) < 0) ||\n"
         )
 
     def server_rpc_read(self, f):
+        name = self.parameter.name
         f.write(
-            f"        rpc_read(conn, &{self.parameter.name}_requested, "
+            f"        rpc_read(conn, &{name}_present, sizeof(uint8_t)) < 0 ||\n"
+            f"        rpc_read(conn, &{name}_requested, "
             f"sizeof({self.count_type()})) < 0 ||\n"
         )
         # Seed the count with the requested capacity so a non-null buffer is
         # filled (a null buffer makes the API ignore it and report the total).
         f.write(
-            f"        (({self.parameter.name} = {self.parameter.name}_requested), false) ||\n"
+            f"        (({name} = {name}_requested), false) ||\n"
         )
 
     @property
     def server_reference(self) -> str:
-        return f"&{self.parameter.name}"
+        name = self.parameter.name
+        return f"{name}_present ? &{name} : nullptr"
 
     def server_rpc_write(self, f):
+        name = self.parameter.name
         f.write(
-            f"        rpc_write(conn, &{self.parameter.name}, "
-            f"sizeof({self.count_type()})) < 0 ||\n"
+            f"        ({name}_present && rpc_write(conn, &{name}, "
+            f"sizeof({self.count_type()})) < 0) ||\n"
         )
 
 
@@ -438,7 +448,11 @@ class NullableArrayOperation:
         requested = self.requested_count_expr()
         if not isinstance(self.count.type, Pointer):
             return requested
-        returned = f"*{self.count.name}" if client else self.count.name
+        returned = (
+            f"({self.count.name}_present ? *{self.count.name} : 0)"
+            if client
+            else self.count.name
+        )
         if self.recv_on == "ON_SUCCESS":
             return returned
         return f"({returned} < {requested} ? {returned} : {requested})"
@@ -489,7 +503,7 @@ class NullableArrayOperation:
             return
         present = f"{name} != nullptr && {requested} != 0"
         if isinstance(self.count.type, Pointer):
-            present += f" && *{self.count.name} != 0"
+            present += f" && {self.count.name}_present && *{self.count.name} != 0"
         f.write(
             f"        ({present} && rpc_read(conn, {name}, "
             f"{count} * sizeof({elem})) < 0) ||\n"
@@ -533,13 +547,18 @@ class DeepStructOperation:
 
     def client_declaration(self) -> str:
         name = self.parameter.name
-        code = f"    if ({name} == nullptr) return CUDA_ERROR_INVALID_VALUE;\n"
+        err = (
+            "hipErrorInvalidValue"
+            if self.struct_type().startswith("hip")
+            else "CUDA_ERROR_INVALID_VALUE"
+        )
+        code = f"    if ({name} == nullptr) return {err};\n"
         if self.send:
             for member, count in self.members:
                 code += (
                     f"    if ({name}->{count} > SIZE_MAX / sizeof(*{name}->{member}) ||\n"
                     f"        ({name}->{count} != 0 && {name}->{member} == nullptr))\n"
-                    "        return CUDA_ERROR_INVALID_VALUE;\n"
+                    f"        return {err};\n"
                 )
                 if self.recv:
                     code += (
@@ -652,58 +671,71 @@ class NullTerminatedOperation:
 
     def client_declaration(self) -> str:
         name = self.parameter.name
+        if self.send:
+            return (
+                f"    {self.length_type} {name}_len = {name} == nullptr ? 0 : "
+                f"static_cast<{self.length_type}>(std::strlen({name}) + 1);\n"
+            )
         return (
+            f"    uint8_t {name}_present = {name} != nullptr;\n"
             f"    {self.length_type} {name}_len = 0;\n"
             f"    std::string {name}_result;\n"
         )
 
     def client_rpc_write(self, f):
+        name = self.parameter.name
+        if self.recv:
+            f.write(
+                f"        rpc_write(conn, &{name}_present, sizeof(uint8_t)) < 0 ||\n"
+            )
+            return
         if not self.send:
             return
         f.write(
-            f"        rpc_write(conn, &{self.parameter.name}_len, sizeof({self.length_type})) < 0 ||\n"
-        )
-        f.write(
-            f"        rpc_write(conn, {self.parameter.name}, {self.parameter.name}_len) < 0 ||\n"
+            f"        rpc_write(conn, &{name}_len, sizeof({self.length_type})) < 0 ||\n"
+            f"        ({name}_len != 0 && rpc_write(conn, {name}, {name}_len) < 0) ||\n"
         )
 
     @property
     def server_declaration(self) -> str:
         type_ = self.ptr.ptr_to.format() if self.recv else self.ptr.format()
+        present = (
+            f"    uint8_t {self.parameter.name}_present = 0;\n"
+            if self.recv
+            else ""
+        )
         initializer = " = 0" if self.recv else ""
         return (
-            f"    {type_} {self.parameter.name} = nullptr;\n"
+            present
+            + f"    {type_} {self.parameter.name} = nullptr;\n"
             + f"    {self.length_type} {self.parameter.name}_len{initializer};\n"
         )
 
-    def client_preflight(self, f, error_return: str):
-        if not self.recv:
-            return
-        f.write(
-            f"    if ({self.parameter.name} == nullptr)\n"
-            f"        return {error_return};\n"
-        )
-
     def server_rpc_read(self, f) -> Optional[str]:
+        name = self.parameter.name
+        if self.recv:
+            f.write(
+                f"        rpc_read(conn, &{name}_present, sizeof(uint8_t)) < 0 ||\n"
+            )
+            return None
         if not self.send:
             return None
         f.write(
-            f"        rpc_read(conn, &{self.parameter.name}_len, sizeof({self.length_type})) < 0)\n"
+            f"        rpc_read(conn, &{name}_len, sizeof({self.length_type})) < 0)\n"
+            "        goto ERROR_0;\n"
+            f"    if ({name}_len != 0) {{\n"
+            f"        {name} = ({self.ptr.format()})malloc({name}_len);\n"
+            f"        if ({name} == nullptr)\n"
+            "            goto ERROR_0;\n"
+            "    }\n"
+            f"    if (({name}_len != 0 && rpc_read(conn, (void *){name}, {name}_len) < 0) ||\n"
         )
-        f.write("        goto ERROR_0;\n")
-        f.write(
-            f"    {self.parameter.name} = ({self.ptr.format()})malloc({self.parameter.name}_len);\n"
-        )
-        f.write(
-            f"    if (({self.parameter.name}_len != 0 && {self.parameter.name} == nullptr) ||\n"
-                f"        rpc_read(conn, (void *){self.parameter.name}, {self.parameter.name}_len) < 0 ||\n"
-        )
-        return self.parameter.name
+        return name
 
     @property
     def server_reference(self) -> str:
         if self.recv:
-            return f"&{self.parameter.name}"
+            return f"{self.parameter.name}_present ? &{self.parameter.name} : nullptr"
         return self.parameter.name
 
     def server_rpc_write(self, f):
@@ -714,8 +746,8 @@ class NullTerminatedOperation:
             f"        (({name}_len = {name} != nullptr\n"
             f"              ? static_cast<{self.length_type}>(std::strlen({name}))\n"
             f"              : 0), false) ||\n"
-            f"        rpc_write(conn, &{name}_len, sizeof({self.length_type})) < 0 ||\n"
-            f"        ({name}_len != 0 && rpc_write(conn, {name}, {name}_len) < 0) ||\n"
+            f"        ({name}_present && rpc_write(conn, &{name}_len, sizeof({self.length_type})) < 0) ||\n"
+            f"        ({name}_present && {name}_len != 0 && rpc_write(conn, {name}, {name}_len) < 0) ||\n"
         )
 
     def client_rpc_read(self, f):
@@ -723,11 +755,12 @@ class NullTerminatedOperation:
             return
         name = self.parameter.name
         f.write(
-            f"        rpc_read(conn, &{name}_len, sizeof({self.length_type})) < 0 ||\n"
-            f"        {name}_len > (1U << 20) ||\n"
-            f"        ({name}_result.resize({name}_len), false) ||\n"
-            f"        ({name}_len != 0 &&\n"
-            f"         rpc_read(conn, {name}_result.data(), {name}_len) < 0) ||\n"
+            f"        ({name}_present && (\n"
+            f"            rpc_read(conn, &{name}_len, sizeof({self.length_type})) < 0 ||\n"
+            f"            {name}_len > (1U << 20) ||\n"
+            f"            ({name}_result.resize({name}_len), false) ||\n"
+            f"            ({name}_len != 0 &&\n"
+            f"             rpc_read(conn, {name}_result.data(), {name}_len) < 0))) ||\n"
         )
 
     def client_post_rpc(
@@ -741,7 +774,7 @@ class NullTerminatedOperation:
             return
         name = self.parameter.name
         f.write(
-            f"    if (return_value == {success_value}) {{\n"
+            f"    if (return_value == {success_value} && {name}_present) {{\n"
             f"        const char *{name}_stored = lupine_retain_returned_string(\n"
             f"            reinterpret_cast<const void *>({owner_name}), "
             f"{name}_result.data(), {name}_result.size());\n"
@@ -823,60 +856,6 @@ class OpaqueTypeOperation:
 
     def client_rpc_read(self, f):
         pass
-
-
-@dataclass
-class DereferenceOperation:
-    """
-    Opaque type operations are operations that are passed as an opaque type. That is, the
-    data is written directly without any additional dereferencing.
-    """
-
-    send: bool
-    recv: bool
-    parameter: Parameter
-    type_: Pointer
-
-    def client_rpc_write(self, f):
-        if not self.send:
-            return
-        f.write(
-            f"        rpc_write(conn, {self.parameter.name}, sizeof({self.type_.ptr_to.format()})) < 0 ||\n"
-        )
-
-    @property
-    def server_declaration(self) -> str:
-        c = self.type_.ptr_to.const
-        self.type_.ptr_to.const = False
-        result = f"    {self.type_.ptr_to.format()} {self.parameter.name}{{}};\n"
-        self.type_.ptr_to.const = c
-        return result
-
-    def server_rpc_read(self, f):
-        if not self.send:
-            return
-        f.write(
-            f"        rpc_read(conn, &{self.parameter.name}, sizeof({self.type_.ptr_to.format()})) < 0 ||\n"
-        )
-
-    @property
-    def server_reference(self) -> str:
-        return f"&{self.parameter.name}"
-
-    def server_rpc_write(self, f):
-        if not self.recv:
-            return
-        f.write(
-            f"        rpc_write(conn, &{self.parameter.name}, sizeof({self.type_.ptr_to.format()})) < 0 ||\n"
-        )
-
-    def client_rpc_read(self, f):
-        if not self.recv:
-            return
-        # if this parameter is recv only then dereference it.
-        f.write(
-            f"        rpc_read(conn, {self.parameter.name}, sizeof({self.type_.ptr_to.format()})) < 0 ||\n"
-        )
 
 
 @dataclass
@@ -1108,7 +1087,6 @@ Operation = Union[
     ArrayOperation,
     NullTerminatedOperation,
     OpaqueTypeOperation,
-    DereferenceOperation,
     ScalarOperation,
     VersionedStructOperation,
 ]

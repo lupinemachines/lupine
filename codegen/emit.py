@@ -12,7 +12,6 @@ from cxxheaderparser.types import Function, FunctionType, Parameter, Pointer
 
 from ops import (
     ArrayOperation,
-    DereferenceOperation,
     InOutCountOperation,
     NullableArrayOperation,
     NullableOperation,
@@ -88,53 +87,16 @@ def format_call_args(function: Function) -> list[str]:
     return [param.name for param in function.parameters if param.name]
 
 
-def signed_length_arrays(operations) -> list[ArrayOperation]:
-    # A signed element count is read before the buffer it sizes is allocated.
-    # Rejecting negatives keeps signed multiplication from becoming a huge
-    # allocation or wire size.
-    return [
-        operation
-        for operation in operations
-        if isinstance(operation, ArrayOperation)
-        and isinstance(operation.length, Parameter)
-        and operation.length.type.format() == "int"
-    ]
-
-
-def write_client_validation(f, backend: Backend, function, operations):
-    checks = [
-        f"{operation.length.name} < 0"
-        for operation in signed_length_arrays(operations)
-    ]
-    for operation in operations:
-        name = operation.parameter.name
-        if isinstance(operation, NullTerminatedOperation) and operation.send:
-            checks.append(f"{name} == nullptr")
-        elif isinstance(operation, (DereferenceOperation, InOutCountOperation)):
-            checks.append(f"{name} == nullptr")
-        elif isinstance(operation, ArrayOperation) and not operation.nullable:
-            if not operation.send and operation.ptr.ptr_to.format() == "char":
-                checks.append(f"{name} == nullptr")
-            else:
-                checks.append(
-                    f"({operation.transfer_size_expr()} != 0 && {name} == nullptr)"
-                )
-    if checks:
-        f.write("  if (" + " ||\n      ".join(checks) + ") {\n")
-        result = function.return_type.format()
-        if result == backend.result:
-            f.write(f"    return {backend.invalid_argument};\n")
-        elif result == "void":
-            f.write("    return;\n")
-        else:
-            f.write("    return {};\n")
-        f.write("  }\n")
-
-
 def write_cleared_fields(f, metadata, indent, reference):
     for parameter, fields in metadata.clear_fields:
         for name in fields:
-            f.write(f"{indent}{parameter}{reference}{name} = nullptr;\n")
+            if reference == "->":
+                f.write(
+                    f"{indent}if ({parameter} != nullptr)\n"
+                    f"{indent}  {parameter}->{name} = nullptr;\n"
+                )
+            else:
+                f.write(f"{indent}{parameter}{reference}{name} = nullptr;\n")
 
 
 def conditional_output_arrays(backend, function, operations, metadata):
@@ -169,7 +131,8 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
         or any(getattr(operation, "recv", False) for operation in operations)
     ):
         raise RuntimeError(f"{name}: @async needs a status result and SEND_ONLY parameters")
-    f.write(f"static {result} lupine_rpc_{name}(conn_t *conn")
+    maybe_unused = "[[maybe_unused]] " if metadata.disabled_client else ""
+    f.write(f"{maybe_unused}static {result} lupine_rpc_{name}(conn_t *conn")
     if submit:
         f.write(", bool submit_async")
     if params:
@@ -179,21 +142,7 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
         initial_value = "rpc_error()" if result == backend.result else "{}"
         f.write(f"  {result} return_value = {initial_value};\n")
     for operation in operations:
-        if isinstance(
-            operation,
-            (
-                InOutCountOperation,
-                NullableArrayOperation,
-                NullableOperation,
-                ScalarOperation,
-                VersionedStructOperation,
-            ),
-        ) or (isinstance(operation, ArrayOperation) and operation.nullable):
-            f.write(operation.client_declaration())
-        elif isinstance(operation, NullTerminatedOperation):
-            f.write(
-                f"  {operation.length_type} {operation.parameter.name}_len = static_cast<{operation.length_type}>(std::strlen({operation.parameter.name}) + 1);\n"
-            )
+        f.write(operation.client_declaration())
 
     opening = "  if (conn == nullptr ||\n      " if backend.guard_null_conn else "  if ("
     start = f"rpc_write_start_request(conn, RPC_{name})"
@@ -239,7 +188,6 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
     result = function.return_type.format()
     params = ", ".join(format_function_params(function))
     f.write(f'extern "C" {result} {name}({params}) {{\n')
-    write_client_validation(f, backend, function, operations)
 
     call_args = format_call_args(function)
     if optional_async(backend, metadata):
@@ -358,16 +306,14 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     for operation in operations:
         f.write(operation.server_declaration)
         if (
-            isinstance(operation, DereferenceOperation)
+            isinstance(operation, NullableOperation)
             and operation.recv
             and not operation.send
+            and operation.parameter.name in cleared
         ):
             argument = operation.parameter.name
             # Zeroed whole so the cleared fields read as unset, not padding.
-            if argument in cleared:
-                f.write(f"  std::memset(&{argument}, 0, sizeof({argument}));\n")
-            else:
-                f.write(f"  {argument} = {{}};\n")
+            f.write(f"  std::memset(&{argument}, 0, sizeof({argument}));\n")
     submit = optional_async(backend, metadata)
     always_async = metadata.async_fire_forget and not submit
     sync = metadata.synchronize
@@ -396,10 +342,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write(
             "      rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||\n"
         )
-    signed_lengths = signed_length_arrays(operations)
     for operation in operations:
-        if operation in signed_lengths:
-            f.write(f"      {operation.length.name} < 0 ||\n")
         if owned_buffer := operation.server_rpc_read(f):
             owned_buffers.append(owned_buffer)
     f.write("      false)\n")
