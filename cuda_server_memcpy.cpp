@@ -168,10 +168,9 @@ struct lupine_graph_resources {
          node != nullptr; node = node->next) {
       if (node->borrowed && node->buffer_id != 0) {
         unsigned long long current_id = 0;
-        if (cuPointerGetAttribute(
-                &current_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
-                reinterpret_cast<CUdeviceptr>(node->copy.server_src)) !=
-                CUDA_SUCCESS ||
+        if (cuPointerGetAttribute(&current_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
+                                  reinterpret_cast<CUdeviceptr>(
+                                      node->copy.server_src)) != CUDA_SUCCESS ||
             current_id != node->buffer_id) {
           continue;
         }
@@ -325,34 +324,32 @@ static lupine_graph_resources *lupine_take_graph_resources(Map &map, Key key) {
   return resources;
 }
 
-lupine_graph_resources *lupine_get_graph_resources(CUgraph graph) {
+template <typename Map, typename Key>
+static lupine_graph_resources *
+lupine_get_or_create_graph_resources(Map &map, Key key, bool retain_new) {
   auto *candidate = new lupine_graph_resources();
   auto *resources = candidate;
-  lupine_graph_resource_map().upsert(
-      graph,
+  map.upsert(
+      key,
       [&resources](lupine_graph_resources *&existing,
                    libcuckoo::UpsertContext) { resources = existing; },
       candidate);
   if (resources != candidate) {
     delete candidate;
-  } else {
+  } else if (retain_new) {
     lupine_retain_graph_resources(resources);
   }
   return resources;
 }
 
+lupine_graph_resources *lupine_get_graph_resources(CUgraph graph) {
+  return lupine_get_or_create_graph_resources(lupine_graph_resource_map(),
+                                              graph, true);
+}
+
 lupine_graph_resources *lupine_get_stream_resources(CUstream stream) {
-  auto *candidate = new lupine_graph_resources();
-  auto *resources = candidate;
-  lupine_stream_capture_resource_map().upsert(
-      stream,
-      [&resources](lupine_graph_resources *&existing,
-                   libcuckoo::UpsertContext) { resources = existing; },
-      candidate);
-  if (resources != candidate) {
-    delete candidate;
-  }
-  return resources;
+  return lupine_get_or_create_graph_resources(
+      lupine_stream_capture_resource_map(), stream, false);
 }
 
 lupine_graph_resources *lupine_find_stream_resources(CUstream stream) {
@@ -409,22 +406,18 @@ void lupine_finish_stream_capture_resources(CUstream stream, CUgraph graph,
 }
 
 void lupine_record_event_capture_resources(CUevent event, CUstream stream) {
-  lupine_graph_resources *resources = nullptr;
-  (void)lupine_stream_capture_resource_map().find(stream, resources);
-  if (resources == nullptr) {
-    lupine_event_capture_resource_map().erase(event);
-  } else {
-    lupine_event_capture_resource_map().insert_or_assign(event, resources);
-  }
-
-  resources = nullptr;
-  (void)lupine_active_stream_capture_resource_map().find(stream, resources);
-  if (resources == nullptr) {
-    lupine_active_event_capture_resource_map().erase(event);
-  } else {
-    lupine_active_event_capture_resource_map().insert_or_assign(event,
-                                                                resources);
-  }
+  auto record = [&](auto &stream_map, auto &event_map) {
+    lupine_graph_resources *resources = nullptr;
+    if (stream_map.find(stream, resources) && resources != nullptr) {
+      event_map.insert_or_assign(event, resources);
+    } else {
+      event_map.erase(event);
+    }
+  };
+  record(lupine_stream_capture_resource_map(),
+         lupine_event_capture_resource_map());
+  record(lupine_active_stream_capture_resource_map(),
+         lupine_active_event_capture_resource_map());
 }
 
 void lupine_forget_event_capture_resources(CUevent event) {
@@ -859,14 +852,6 @@ public:
     return true;
   }
 
-  void *data_at(size_t offset) const {
-    return static_cast<unsigned char *>(storage_) + offset;
-  }
-
-  CUdeviceptr device_data_at(size_t offset) const {
-    return device_storage_ + offset;
-  }
-
   CUresult synchronize() const { return cuStreamSynchronize(transfer_stream_); }
 
   size_t ring_offset(const lupine_htod_copy &copy,
@@ -1295,7 +1280,7 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
       if (!captured_ring->device_data_offset(copy.source, &offset)) {
         continue;
       }
-      copy.source = ring->device_data_at(offset);
+      copy.source = ring->device_data(offset);
       void *arguments[] = {&copy};
       params.kernelParams = arguments;
       params.extra = nullptr;
@@ -1313,7 +1298,7 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_graph_resources *resources,
       size_t offset = 0;
       if (params.srcMemoryType == CU_MEMORYTYPE_HOST &&
           captured_ring->data_offset(params.srcHost, &offset)) {
-        params.srcHost = ring->data_at(offset);
+        params.srcHost = ring->data(offset);
         result = cuGraphMemcpyNodeSetParams(node, &params);
         if (result != CUDA_SUCCESS) {
           return result;
@@ -1946,20 +1931,10 @@ static lupine_htod_copy lupine_make_htoa_copy(CUarray destination,
                                               size_t destination_offset,
                                               const void *source,
                                               size_t bytes) {
-  lupine_htod_copy copy = {};
-  copy.source = source;
-  copy.source_row_stride = bytes;
-  copy.source_slice_stride = bytes;
-  copy.slices = 1;
-  copy.bytes = bytes;
-  copy.use_cuda_memcpy = true;
+  lupine_htod_copy copy = lupine_make_linear_htod_copy(0, source, bytes);
   copy.destination_is_htoa = true;
   copy.destination_array = destination;
   copy.destination_x = destination_offset;
-  copy.smemcpy.width = bytes;
-  copy.smemcpy.rows = 1;
-  copy.smemcpy.destination_row_stride = bytes;
-  copy.smemcpy.destination_slice_stride = bytes;
   return copy;
 }
 
@@ -2220,7 +2195,7 @@ int lupine_write_lifecycle_response(conn_t *conn, int request_id,
   return 0;
 }
 
-int handle_cuMemcpyHtoD_v2(conn_t *conn) {
+static int lupine_serve_memcpy_htod(conn_t *conn, bool async) {
   CUdeviceptr destination = 0;
   const void *source = nullptr;
   uint8_t fire_and_forget = 0;
@@ -2228,14 +2203,17 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   bool is_server_authoritative = false;
   uint64_t pushed_bytes = 0;
   size_t bytes = 0;
+  CUstream stream = CU_STREAM_LEGACY;
   CUresult result = CUDA_SUCCESS;
 
-  if (rpc_read(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
-      rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
+  if ((!async &&
+       (rpc_read(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
+        rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0)) ||
       rpc_read(conn, &is_server_authoritative,
                sizeof(is_server_authoritative)) < 0 ||
       rpc_read(conn, &destination, sizeof(destination)) < 0 ||
       rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
+      (async && rpc_read(conn, &stream, sizeof(stream)) < 0) ||
       rpc_read(conn, &source, sizeof(source)) < 0 ||
       rpc_read(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0) {
     return -1;
@@ -2249,7 +2227,7 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   }
   if (pushed_bytes != 0) {
     result = lupine_copy_pushed_host_to_device(
-        conn, CU_STREAM_LEGACY, true,
+        conn, stream, !async,
         lupine_make_linear_htod_copy(destination, source, bytes));
   }
   int request_id = rpc_read_end(conn);
@@ -2258,25 +2236,27 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   }
 
   if (bytes != 0 && is_server_authoritative) {
-    result =
-        cuMemcpy(destination, reinterpret_cast<CUdeviceptr>(source), bytes);
+    result = async ? cuMemcpyAsync(destination,
+                                   reinterpret_cast<CUdeviceptr>(source), bytes,
+                                   stream)
+                   : cuMemcpy(destination,
+                              reinterpret_cast<CUdeviceptr>(source), bytes);
   } else if (bytes != 0 && pushed_bytes == 0) {
     result = lupine_copy_client_host_to_device(
-        conn, CU_STREAM_LEGACY, true,
+        conn, stream, !async,
         lupine_make_linear_htod_copy(destination, source, bytes));
   }
   // A fire-and-forget copy drops its result, matching launch semantics: the
   // client checked the arguments it could check before sending, and an
   // execution failure poisons the context and reaches the client from its next
   // synchronize.
-  if (fire_and_forget) {
-    return 0;
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return fire_and_forget
+             ? 0
+             : lupine_write_lifecycle_response(conn, request_id, result);
+}
+
+int handle_cuMemcpyHtoD_v2(conn_t *conn) {
+  return lupine_serve_memcpy_htod(conn, false);
 }
 
 // Chunks of one striped copy arrive on the bulk connections in any order and
@@ -2381,11 +2361,7 @@ int handle_lupineMemcpyHtoDBulk(conn_t *conn) {
         cuMemcpyHtoD_v2(static_cast<CUdeviceptr>(destination), data, bytes);
   }
   free(data);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_lifecycle_response(conn, request_id, result);
 }
 
 // A striped DtoH holds the caller's lane until every reader it announced has
@@ -2518,11 +2494,7 @@ int handle_lupineMemcpyDtoHBulk(conn_t *conn) {
     }
     lupine_bulk_reads.erase(copy_id);
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_lifecycle_response(conn, request_id, result);
 }
 
 static int lupine_write_dtoh_chunk_response(conn_t *conn, int request_id,
@@ -2704,6 +2676,15 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
   bool terminal_error_pending = false;
   size_t terminal_error_offset = 0;
   CUresult terminal_error = CUDA_SUCCESS;
+  auto fallback = [&]() -> int {
+    CUresult cleanup = lupine_cleanup_dtoh_pipeline(pipeline, stream, true);
+    if (cleanup != CUDA_SUCCESS) {
+      return lupine_write_dtoh_chunk_response(conn, request_id, cleanup,
+                                              nullptr, 0);
+    }
+    *fallback_offset = sent_offset;
+    return 1;
+  };
 
   for (auto &slot : pipeline.slots) {
     if (submitted_offset == bytes) {
@@ -2711,13 +2692,7 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
     }
     CUresult result = submit(slot, submitted_offset);
     if (event_record_failed) {
-      CUresult cleanup = lupine_cleanup_dtoh_pipeline(pipeline, stream, true);
-      if (cleanup != CUDA_SUCCESS) {
-        return lupine_write_dtoh_chunk_response(conn, request_id, cleanup,
-                                                nullptr, 0);
-      }
-      *fallback_offset = sent_offset;
-      return 1;
+      return fallback();
     }
     if (result != CUDA_SUCCESS) {
       terminal_error_pending = true;
@@ -2740,13 +2715,7 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
                    LUPINE_DTOH_PIPELINE_SLOT_COUNT;
     auto &slot = pipeline.slots[index];
     if (!slot.in_flight || !slot.event_recorded || slot.offset != sent_offset) {
-      CUresult cleanup = lupine_cleanup_dtoh_pipeline(pipeline, stream, true);
-      if (cleanup != CUDA_SUCCESS) {
-        return lupine_write_dtoh_chunk_response(conn, request_id, cleanup,
-                                                nullptr, 0);
-      }
-      *fallback_offset = sent_offset;
-      return 1;
+      return fallback();
     }
 
     CUresult result = cuEventSynchronize(slot.completion);
@@ -2768,13 +2737,7 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
     if (submitted_offset < bytes && !terminal_error_pending) {
       result = submit(slot, submitted_offset);
       if (event_record_failed) {
-        CUresult cleanup = lupine_cleanup_dtoh_pipeline(pipeline, stream, true);
-        if (cleanup != CUDA_SUCCESS) {
-          return lupine_write_dtoh_chunk_response(conn, request_id, cleanup,
-                                                  nullptr, 0);
-        }
-        *fallback_offset = sent_offset;
-        return 1;
+        return fallback();
       }
       if (result != CUDA_SUCCESS) {
         terminal_error_pending = true;
@@ -2952,49 +2915,7 @@ int handle_cuMemcpy3DPeerAsync(conn_t *conn) {
 }
 
 int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
-  CUdeviceptr dstDevice = 0;
-  const void *srcHost = nullptr;
-  bool is_server_authoritative = false;
-  uint64_t pushed_bytes = 0;
-  size_t byteCount = 0;
-  CUstream stream = nullptr;
-  CUresult result = CUDA_SUCCESS;
-
-  if (rpc_read(conn, &is_server_authoritative,
-               sizeof(is_server_authoritative)) < 0 ||
-      rpc_read(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
-      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_read(conn, &srcHost, sizeof(srcHost)) < 0 ||
-      rpc_read(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0) {
-    return -1;
-  }
-  if (pushed_bytes != 0 && pushed_bytes != byteCount) {
-    return -1;
-  }
-  if (pushed_bytes != 0) {
-    result = lupine_copy_pushed_host_to_device(
-        conn, stream, false,
-        lupine_make_linear_htod_copy(dstDevice, srcHost, byteCount));
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  if (byteCount != 0 && is_server_authoritative) {
-    result = cuMemcpyAsync(dstDevice, reinterpret_cast<CUdeviceptr>(srcHost),
-                           byteCount, stream);
-  } else if (byteCount != 0 && pushed_bytes == 0) {
-    result = lupine_copy_client_host_to_device(
-        conn, stream, false,
-        lupine_make_linear_htod_copy(dstDevice, srcHost, byteCount));
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_serve_memcpy_htod(conn, true);
 }
 
 static int lupine_serve_memcpy_htoa(conn_t *conn, bool async) {
@@ -3039,11 +2960,7 @@ static int lupine_serve_memcpy_htoa(conn_t *conn, bool async) {
         conn, stream, !async,
         lupine_make_htoa_copy(dstArray, dstOffset, srcHost, byteCount));
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_lifecycle_response(conn, request_id, result);
 }
 
 int handle_cuMemcpyHtoA_v2(conn_t *conn) {
