@@ -233,12 +233,24 @@ int main() {
                      copy_slot<<<1, 1, 0, shared>>>(slot, result);
                      return r != cudaSuccess ? r : cudaGetLastError();
                    }));
-    CHECK(cudaGraphExecDestroy(exec));
-    CHECK(cudaGraphDestroy(graph));
-    CHECK(cudaEventDestroy(recorded));
     if (expect("event recorded by a graph", result, 0x88) != 0) {
       return 1;
     }
+    // A completion the client cached does not outlive a relaunch of the graph
+    // that records the event.
+    CHECK(cudaEventQuery(recorded));
+    CHECK(cudaGraphLaunch(exec, mine));
+    cudaError_t relaunched = cudaEventQuery(recorded);
+    CHECK(cudaEventSynchronize(recorded));
+    CHECK(cudaGraphExecDestroy(exec));
+    CHECK(cudaGraphDestroy(graph));
+    CHECK(cudaEventDestroy(recorded));
+    if (relaunched != cudaErrorNotReady) {
+      std::fprintf(stderr, "FAIL: relaunched graph's event: %s\n",
+                   cudaGetErrorName(relaunched));
+      return 1;
+    }
+    std::printf("relaunched graph's event: ok\n");
   }
 
   // The legacy stream still waits for a blocking stream destroyed with work
