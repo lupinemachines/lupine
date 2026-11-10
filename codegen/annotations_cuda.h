@@ -358,15 +358,23 @@ CUresult cuModuleUnload(CUmodule hmod);
  */
 CUresult cuModuleGetLoadingMode(CUmoduleLoadingMode *mode);
 /**
- * @disabled client - manual client follows lookup with a layout snapshot
  * @routingkey MODULE hmod
- * @recordowner FUNCTION hfunc
  * @param hfunc RECV_ONLY
  * @param hmod SEND_ONLY
  * @param name SEND_ONLY NULL_TERMINATED
  */
 CUresult cuModuleGetFunction(CUfunction *hfunc, CUmodule hmod,
-                             const char *name);
+                             const char *name) {
+  if (hfunc == nullptr || name == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (!lupine_route_is_local(route) &&
+      lupine_try_cached_module_function(hmod, name, route, hfunc))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_finish_module_get_function(*hfunc, hmod, name, route);
+  return return_value;
+}
 /**
  * @routingkey MODULE hmod
  * @recordowner DEVICEPTR dptr
@@ -474,14 +482,24 @@ CUresult cuLibraryLoadData(CUlibrary *library, const void *code,
  */
 CUresult cuLibraryUnload(CUlibrary library);
 /**
- * @disabled client - manual client serves the library kernel table
  * @routingkey LIBRARY library
  * @param pKernel RECV_ONLY
  * @param library SEND_ONLY
  * @param name SEND_ONLY NULL_TERMINATED
  */
 CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
-                            const char *name);
+                            const char *name) {
+  if (pKernel == nullptr || name == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (!lupine_route_is_local(route) &&
+      lupine_try_cached_library_kernel(library, name, pKernel))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    return_value =
+        lupine_record_library_kernel(*pKernel, library, name, route);
+  return return_value;
+}
 /**
  * @routingkey CURRENT_CONTEXT
  * @recordowner MODULE pMod
@@ -499,17 +517,37 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
   return return_value;
 }
 /**
- * @disabled client - manual client caches functions per kernel and context
  * @param pFunc RECV_ONLY
  * @param kernel SEND_ONLY
  */
-CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel);
+CUresult cuKernelGetFunction(CUfunction *pFunc, CUkernel kernel) {
+  CUcontext current_context = nullptr;
+  CUfunction staged_func = nullptr;
+  CUfunction *caller_func = pFunc;
+  CUresult status = lupine_prepare_kernel_get_function(
+      caller_func, &kernel, &route, &current_context);
+  if (status != CUDA_ERROR_NOT_READY)
+    return status;
+  pFunc = &staged_func;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return_value = lupine_finish_kernel_get_function(
+      return_value, route, current_context, kernel, staged_func, caller_func);
+  return return_value;
+}
 /**
- * @disabled client
+ * @routingkey FUNCTION kernel
+ * @recordowner LIBRARY pLib
  * @param pLib RECV_ONLY
  * @param kernel SEND_ONLY
  */
-CUresult cuKernelGetLibrary(CUlibrary *pLib, CUkernel kernel);
+CUresult cuKernelGetLibrary(CUlibrary *pLib, CUkernel kernel) {
+  if (pLib == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (lupine_try_cached_kernel_library(kernel, pLib))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @disabled client - manual client caches the parameter layout per kernel
  * @routingkey FUNCTION kernel
@@ -577,14 +615,27 @@ CUresult cuLibraryGetManaged(CUdeviceptr *dptr, size_t *bytes,
 CUresult cuLibraryGetUnifiedFunction(void **fptr, CUlibrary library,
                                      const char *symbol);
 /**
- * @disabled client - manual client caches attributes per kernel and device
- * @param pi SEND_RECV
+ * @param pi RECV_ONLY
  * @param attrib SEND_ONLY
  * @param kernel SEND_ONLY
  * @param dev SEND_ONLY
  */
 CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
-                              CUkernel kernel, CUdevice dev);
+                              CUkernel kernel, CUdevice dev) {
+  if (pi == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  CUresult resolved = lupine_resolve_kernel_for_route(&kernel, route);
+  if (resolved != CUDA_SUCCESS)
+    return resolved;
+  lupine_kernel_attribute_key key{lupine_route_identity(route), kernel,
+                                  (int)attrib, (int)dev};
+  if (!lupine_route_is_local(route) && lupine_attribute_get(key, *pi))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && !lupine_route_is_local(route))
+    lupine_attribute_set(key, *pi);
+  return return_value;
+}
 /**
  * @async
  * @param attrib SEND_ONLY
@@ -1798,12 +1849,18 @@ CUresult cuStreamEndCapture(CUstream hStream, CUgraph *phGraph) {
 }
 /**
  * @routingkey STREAM hStream
- * @disabled client - manual client answers from the local capture count
  * @param hStream SEND_ONLY
- * @param captureStatus SEND_RECV
+ * @param captureStatus RECV_ONLY
  */
 CUresult cuStreamIsCapturing(CUstream hStream,
-                             CUstreamCaptureStatus *captureStatus);
+                             CUstreamCaptureStatus *captureStatus) {
+  if (captureStatus == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (lupine_try_cached_stream_is_capturing(hStream, captureStatus))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
@@ -2980,8 +3037,7 @@ CUresult cuGraphRetainUserObject(CUgraph graph, CUuserObject object,
 CUresult cuGraphReleaseUserObject(CUgraph graph, CUuserObject object,
                                   unsigned int count);
 /**
- * @disabled client - manual client caches occupancy per function
- * @param numBlocks SEND_RECV
+ * @param numBlocks RECV_ONLY
  * @param func SEND_ONLY
  * @param blockSize SEND_ONLY
  * @param dynamicSMemSize SEND_ONLY
@@ -2989,10 +3045,23 @@ CUresult cuGraphReleaseUserObject(CUgraph graph, CUuserObject object,
 CUresult cuOccupancyMaxActiveBlocksPerMultiprocessor(int *numBlocks,
                                                      CUfunction func,
                                                      int blockSize,
-                                                     size_t dynamicSMemSize);
+                                                     size_t dynamicSMemSize) {
+  if (numBlocks == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  func = lupine_translate_private_function_for_rpc(func);
+  route = lupine_route_for_function(func);
+  if (!lupine_route_is_local(route) &&
+      lupine_try_cached_occupancy(route, func, blockSize, dynamicSMemSize, 0,
+                                  false, numBlocks))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && !lupine_route_is_local(route))
+    lupine_store_cached_occupancy(route, func, blockSize, dynamicSMemSize, 0,
+                                  false, *numBlocks);
+  return return_value;
+}
 /**
- * @disabled client - manual client caches occupancy per function
- * @param numBlocks SEND_RECV
+ * @param numBlocks RECV_ONLY
  * @param func SEND_ONLY
  * @param blockSize SEND_ONLY
  * @param dynamicSMemSize SEND_ONLY
@@ -3000,7 +3069,21 @@ CUresult cuOccupancyMaxActiveBlocksPerMultiprocessor(int *numBlocks,
  */
 CUresult cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
     int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize,
-    unsigned int flags);
+    unsigned int flags) {
+  if (numBlocks == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  func = lupine_translate_private_function_for_rpc(func);
+  route = lupine_route_for_function(func);
+  if (!lupine_route_is_local(route) &&
+      lupine_try_cached_occupancy(route, func, blockSize, dynamicSMemSize,
+                                  flags, true, numBlocks))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && !lupine_route_is_local(route))
+    lupine_store_cached_occupancy(route, func, blockSize, dynamicSMemSize,
+                                  flags, true, *numBlocks);
+  return return_value;
+}
 /**
  * @param minGridSize SEND_RECV
  * @param blockSize SEND_RECV

@@ -42,4 +42,33 @@ void lupine_attribute_set(
     const lupine_kernel_attribute_key &key, int value,
     lupine_attribute_source source = lupine_attribute_source::query);
 
+struct lupine_route;
+
+bool lupine_try_cached_module_function(CUmodule module, const char *name,
+                                       lupine_route route,
+                                       CUfunction *function);
+void lupine_finish_module_get_function(CUfunction function, CUmodule module,
+                                       const char *name, lupine_route route);
+bool lupine_try_cached_library_kernel(CUlibrary library, const char *name,
+                                      CUkernel *kernel);
+CUresult lupine_prepare_kernel_get_function(CUfunction *pFunc, CUkernel *kernel,
+                                            lupine_route *route,
+                                            CUcontext *current_context);
+CUresult lupine_finish_kernel_get_function(CUresult return_value,
+                                           lupine_route route,
+                                           CUcontext current_context,
+                                           CUkernel kernel, CUfunction function,
+                                           CUfunction *pFunc);
+bool lupine_try_cached_kernel_library(CUkernel kernel, CUlibrary *pLib);
+bool lupine_try_cached_occupancy(lupine_route route, CUfunction func,
+                                 int blockSize, size_t dynamicSMemSize,
+                                 unsigned int flags, bool with_flags,
+                                 int *numBlocks);
+void lupine_store_cached_occupancy(lupine_route route, CUfunction func,
+                                   int blockSize, size_t dynamicSMemSize,
+                                   unsigned int flags, bool with_flags,
+                                   int numBlocks);
+bool lupine_try_cached_stream_is_capturing(
+    CUstream hStream, CUstreamCaptureStatus *captureStatus);
+
 #endif
