@@ -2846,7 +2846,8 @@ extern "C" CUresult lupine_free_host_allocation(void *p,
     std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
     auto &allocations = lupine_mutable_host_allocations_locked();
     auto it = allocations.find(p);
-    if (it == allocations.end()) {
+    if (it == allocations.end() || !it->second.owned || it->second.managed ||
+        it->second.managed_global) {
       return CUDA_ERROR_INVALID_VALUE;
     }
     owned = it->second.owned;
@@ -3239,7 +3240,7 @@ lupine_unregister_host_allocation(void *p, lupine_host_free_fn release) {
     std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
     auto &allocations = lupine_mutable_host_allocations_locked();
     auto it = lupine_find_host_allocation_locked(p);
-    if (it == allocations.end()) {
+    if (it == allocations.end() || it->second.client_to_server_only) {
       return CUDA_ERROR_HOST_MEMORY_NOT_REGISTERED;
     }
     if (it->second.owned ||
