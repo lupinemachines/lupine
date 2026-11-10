@@ -199,8 +199,7 @@ int main() {
     size_t pc = 2;
     CUgraphNode pbuf[4] = {sentinel, sentinel, sentinel, sentinel};
     CHECK(cuGraphGetNodes(graph, pbuf, &pc) == CUDA_SUCCESS && pc == 2 &&
-              pbuf[0] != sentinel && pbuf[1] != sentinel &&
-              pbuf[2] == sentinel,
+              pbuf[0] != sentinel && pbuf[1] != sentinel && pbuf[2] == sentinel,
           "cuGraphGetNodes partial capacity: 2 filled, rest untouched");
     pc = 2;
     CUgraphNode pf[4] = {sentinel, sentinel, sentinel, sentinel};
@@ -326,6 +325,8 @@ int main() {
   CHECK(cuStreamIsCapturing(stream, &status) == CUDA_SUCCESS &&
             status == CU_STREAM_CAPTURE_STATUS_NONE,
         "cuStreamIsCapturing(idle stream) reports NONE");
+  CHECK(cuStreamEndCapture(stream, nullptr) == CUDA_ERROR_ILLEGAL_STATE,
+        "cuStreamEndCapture(idle stream, nullptr) returns ILLEGAL_STATE");
   DRV(cuStreamBeginCapture(stream, CU_STREAM_CAPTURE_MODE_GLOBAL));
   status = CU_STREAM_CAPTURE_STATUS_NONE;
   CHECK(cuStreamIsCapturing(stream, &status) == CUDA_SUCCESS &&
@@ -335,6 +336,30 @@ int main() {
   DRV(cuStreamEndCapture(stream, &captured));
   if (captured)
     DRV(cuGraphDestroy(captured));
+  DRV(cuStreamBeginCapture(stream, CU_STREAM_CAPTURE_MODE_GLOBAL));
+  CHECK(cuStreamEndCapture(stream, nullptr) == CUDA_SUCCESS,
+        "cuStreamEndCapture(capturing stream, nullptr) succeeds");
+  status = CU_STREAM_CAPTURE_STATUS_ACTIVE;
+  CHECK(cuStreamIsCapturing(stream, &status) == CUDA_SUCCESS &&
+            status == CU_STREAM_CAPTURE_STATUS_NONE,
+        "cuStreamIsCapturing after EndCapture(nullptr) reports NONE");
+
+  cuuint64_t mem_attr = 0;
+  CHECK(cuDeviceGetGraphMemAttribute(dev, CU_GRAPH_MEM_ATTR_USED_MEM_CURRENT,
+                                     &mem_attr) == CUDA_SUCCESS,
+        "cuDeviceGetGraphMemAttribute(dev) succeeds");
+  CHECK(cuDeviceGetGraphMemAttribute(-1, CU_GRAPH_MEM_ATTR_USED_MEM_CURRENT,
+                                     &mem_attr) == CUDA_ERROR_INVALID_DEVICE,
+        "cuDeviceGetGraphMemAttribute(-1) returns INVALID_DEVICE");
+  CHECK(cuDeviceGetGraphMemAttribute(dev, CU_GRAPH_MEM_ATTR_USED_MEM_CURRENT,
+                                     nullptr) == CUDA_ERROR_INVALID_VALUE,
+        "cuDeviceGetGraphMemAttribute(nullptr) returns INVALID_VALUE");
+  CHECK(cuDeviceSetGraphMemAttribute(-1, CU_GRAPH_MEM_ATTR_USED_MEM_HIGH,
+                                     &mem_attr) == CUDA_ERROR_INVALID_DEVICE,
+        "cuDeviceSetGraphMemAttribute(-1) returns INVALID_DEVICE");
+  CHECK(cuDeviceSetGraphMemAttribute(dev, CU_GRAPH_MEM_ATTR_USED_MEM_HIGH,
+                                     nullptr) == CUDA_ERROR_INVALID_VALUE,
+        "cuDeviceSetGraphMemAttribute(nullptr) returns INVALID_VALUE");
 
   DRV(cuStreamDestroy(stream));
   DRV(cuGraphExecDestroy(exec));

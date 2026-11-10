@@ -1759,13 +1759,19 @@ CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
 CUresult cuStreamAddCallback(CUstream hStream, CUstreamCallback callback,
                              void *userData, unsigned int flags);
 /**
- * @disabled handle_cuStreamBeginCapture - manual client coordinates checkpoint
- * capture admission
+ * @disabled server handle_cuStreamBeginCapture - manual server coordinates
+ * capture resources
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param mode SEND_ONLY
  */
-CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode);
+CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode) {
+  lupine_materialize_host_allocations();
+  lupine_capture_begin_guard capture_guard;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  (void)capture_guard.complete(return_value);
+  return return_value;
+}
 /**
  * @async
  * @disabled client - manual client tracks the thread's capture mode
@@ -1773,13 +1779,17 @@ CUresult cuStreamBeginCapture_v2(CUstream hStream, CUstreamCaptureMode mode);
  */
 CUresult cuThreadExchangeStreamCaptureMode(CUstreamCaptureMode *mode);
 /**
- * @disabled - manual client coordinates checkpoint capture completion
+ * @disabled server - manual server coordinates capture resources
  * @recordowner GRAPH phGraph
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param phGraph SEND_RECV NULLABLE
  */
-CUresult cuStreamEndCapture(CUstream hStream, CUgraph *phGraph);
+CUresult cuStreamEndCapture(CUstream hStream, CUgraph *phGraph) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  (void)lupine_complete_stream_end_capture(return_value);
+  return return_value;
+}
 /**
  * @routingkey STREAM hStream
  * @disabled client - manual client answers from the local capture count
@@ -2256,12 +2266,12 @@ CUresult cuGraphMemcpyNodeGetParams(CUgraphNode hNode,
 CUresult cuGraphMemcpyNodeSetParams(CUgraphNode hNode,
                                     const CUDA_MEMCPY3D *nodeParams);
 /**
- * @disabled - manual nested struct serialization
+ * @recordowner GRAPH_NODE phGraphNode
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
- * @param dependencies SEND_RECV
  * @param numDependencies SEND_ONLY
- * @param memsetParams SEND_RECV
+ * @param dependencies SEND_ONLY LENGTH:numDependencies
+ * @param memsetParams SEND_ONLY DEREF
  * @param ctx SEND_ONLY
  */
 CUresult cuGraphAddMemsetNode(CUgraphNode *phGraphNode, CUgraph hGraph,
@@ -2563,14 +2573,14 @@ CUresult cuDeviceGraphMemTrim(CUdevice device);
 /**
  * @param device SEND_ONLY
  * @param attr SEND_ONLY
- * @disabled
+ * @param value RECV_ONLY SIZE:8
  */
 CUresult cuDeviceGetGraphMemAttribute(CUdevice device,
                                       CUgraphMem_attribute attr, void *value);
 /**
  * @param device SEND_ONLY
  * @param attr SEND_ONLY
- * @disabled
+ * @param value SEND_ONLY SIZE:8
  */
 CUresult cuDeviceSetGraphMemAttribute(CUdevice device,
                                       CUgraphMem_attribute attr, void *value);

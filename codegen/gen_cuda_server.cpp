@@ -5498,6 +5498,65 @@ ERROR_0:
   return -1;
 }
 
+int handle_cuGraphAddMemsetNode(conn_t *conn) {
+  uint8_t phGraphNode_present = 0;
+  CUgraphNode phGraphNode{};
+  CUgraph hGraph;
+  size_t numDependencies;
+  CUgraphNode *dependencies = nullptr;
+  uint8_t dependencies_null = 0;
+  uint8_t memsetParams_present = 0;
+  CUDA_MEMSET_NODE_PARAMS memsetParams{};
+  CUcontext ctx;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &phGraphNode_present, sizeof(uint8_t)) < 0 ||
+      (phGraphNode_present &&
+       rpc_read(conn, &phGraphNode, sizeof(CUgraphNode)) < 0) ||
+      rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &dependencies_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!dependencies_null) {
+    dependencies =
+        (CUgraphNode *)calloc(numDependencies * sizeof(const CUgraphNode) == 0
+                                  ? 1
+                                  : numDependencies * sizeof(const CUgraphNode),
+                              1);
+    if (dependencies == nullptr)
+      goto ERROR_0;
+  }
+  if ((!dependencies_null && numDependencies * sizeof(const CUgraphNode) != 0 &&
+       rpc_read(conn, dependencies,
+                numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_read(conn, &memsetParams_present, sizeof(uint8_t)) < 0 ||
+      (memsetParams_present &&
+       rpc_read(conn, &memsetParams, sizeof(const CUDA_MEMSET_NODE_PARAMS)) <
+           0) ||
+      rpc_read(conn, &ctx, sizeof(CUcontext)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuGraphAddMemsetNode(
+      phGraphNode_present ? &phGraphNode : nullptr, hGraph, dependencies,
+      numDependencies, memsetParams_present ? &memsetParams : nullptr, ctx);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (phGraphNode_present &&
+       rpc_write(conn, &phGraphNode, sizeof(CUgraphNode)) < 0) ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)dependencies);
+  return 0;
+ERROR_0:
+  free((void *)dependencies);
+  return -1;
+}
+
 int handle_cuGraphMemsetNodeGetParams(conn_t *conn) {
   CUgraphNode hNode;
   uint8_t nodeParams_present = 0;
@@ -6561,6 +6620,79 @@ int handle_cuDeviceGraphMemTrim(conn_t *conn) {
     goto ERROR_0;
   return 0;
 ERROR_0:
+  return -1;
+}
+
+int handle_cuDeviceGetGraphMemAttribute(conn_t *conn) {
+  CUdevice device;
+  CUgraphMem_attribute attr;
+  void *value = nullptr;
+  uint8_t value_null = 0;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &device, sizeof(CUdevice)) < 0 ||
+      rpc_read(conn, &attr, sizeof(CUgraphMem_attribute)) < 0 ||
+      rpc_read(conn, &value_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!value_null) {
+    value = (void *)calloc(8 == 0 ? 1 : 8, 1);
+    if (value == nullptr)
+      goto ERROR_0;
+  }
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuDeviceGetGraphMemAttribute(device, attr, value);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (!value_null && 8 != 0 && rpc_write(conn, value, 8) < 0) ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)value);
+  return 0;
+ERROR_0:
+  free((void *)value);
+  return -1;
+}
+
+int handle_cuDeviceSetGraphMemAttribute(conn_t *conn) {
+  CUdevice device;
+  CUgraphMem_attribute attr;
+  void *value = nullptr;
+  uint8_t value_null = 0;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &device, sizeof(CUdevice)) < 0 ||
+      rpc_read(conn, &attr, sizeof(CUgraphMem_attribute)) < 0 ||
+      rpc_read(conn, &value_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!value_null) {
+    value = (void *)calloc(8 == 0 ? 1 : 8, 1);
+    if (value == nullptr)
+      goto ERROR_0;
+  }
+  if ((!value_null && 8 != 0 && rpc_read(conn, value, 8) < 0) || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuDeviceSetGraphMemAttribute(device, attr, value);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)value);
+  return 0;
+ERROR_0:
+  free((void *)value);
   return -1;
 }
 

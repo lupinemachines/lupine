@@ -726,10 +726,11 @@ void lupine_queue_pending_dtoh_copies(conn_t *conn, CUstream stream,
       lupine_pending_dtoh_streams{});
 }
 
-lupine_pending_dtoh_items
-lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
-                                  bool all_streams, CUcontext context,
-                                  uint64_t before) {
+lupine_pending_dtoh_items lupine_detach_pending_dtoh_copies(conn_t *conn,
+                                                            CUstream stream,
+                                                            bool all_streams,
+                                                            CUcontext context,
+                                                            uint64_t before) {
   std::vector<lupine_pending_dtoh_item> copies;
   stream = lupine_pending_dtoh_queue(stream);
   auto *inherited = lupine_find_stream_resources(stream);
@@ -746,10 +747,9 @@ lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
           // inherited. Markers are dropped, copies returned.
           lupine_pending_dtoh_items kept;
           for (auto &item : it->second) {
-            bool covered = own ||
-                           (stream == nullptr && item.legacy_ordered) ||
-                           (inherited != nullptr &&
-                            item.graph_resources == inherited);
+            bool covered =
+                own || (stream == nullptr && item.legacy_ordered) ||
+                (inherited != nullptr && item.graph_resources == inherited);
             if (!covered || (context != nullptr && item.context != context) ||
                 item.sequence >= before) {
               kept.push_back(item);
@@ -2241,54 +2241,6 @@ int handle_cuLinkDestroy(conn_t *conn) {
   return 0;
 }
 
-int handle_cuDeviceGetGraphMemAttribute(conn_t *conn) {
-  CUdevice device = 0;
-  CUgraphMem_attribute attr = CU_GRAPH_MEM_ATTR_USED_MEM_CURRENT;
-  cuuint64_t value = 0;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &device, sizeof(device)) < 0 ||
-      rpc_read(conn, &attr, sizeof(attr)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  result = cuDeviceGetGraphMemAttribute(device, attr, &value);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &value, sizeof(value)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-int handle_cuDeviceSetGraphMemAttribute(conn_t *conn) {
-  CUdevice device = 0;
-  CUgraphMem_attribute attr = CU_GRAPH_MEM_ATTR_USED_MEM_CURRENT;
-  cuuint64_t value = 0;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &device, sizeof(device)) < 0 ||
-      rpc_read(conn, &attr, sizeof(attr)) < 0 ||
-      rpc_read(conn, &value, sizeof(value)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  result = cuDeviceSetGraphMemAttribute(device, attr, &value);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
 int handle_cuLibraryGetModule(conn_t *conn) {
   CUlibrary library = nullptr;
   CUmodule module = nullptr;
@@ -3022,36 +2974,6 @@ int handle_cuGraphAddMemcpyNode(conn_t *conn) {
   return 0;
 }
 
-int handle_cuGraphAddMemsetNode(conn_t *conn) {
-  CUgraph hGraph = nullptr;
-  std::vector<CUgraphNode> deps;
-  CUDA_MEMSET_NODE_PARAMS memsetParams = {};
-  CUcontext ctx = nullptr;
-  CUgraphNode graphNode = nullptr;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &hGraph, sizeof(hGraph)) < 0 ||
-      lupine_read_graph_dependencies(conn, &deps) < 0 ||
-      rpc_read(conn, &memsetParams, sizeof(memsetParams)) < 0 ||
-      rpc_read(conn, &ctx, sizeof(ctx)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  result = cuGraphAddMemsetNode(&graphNode, hGraph,
-                                deps.empty() ? nullptr : deps.data(),
-                                deps.size(), &memsetParams, ctx);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &graphNode, sizeof(graphNode)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
 int handle_cuGraphAddHostNode(conn_t *conn) {
   CUgraph hGraph = nullptr;
   std::vector<CUgraphNode> deps;
@@ -3749,13 +3671,13 @@ int handle_cuStreamBeginCapture(conn_t *conn) {
 
 int handle_cuStreamEndCapture(conn_t *conn) {
   CUstream stream = nullptr;
-  CUgraph *graph_out = nullptr;
+  uint8_t graph_present = 0;
   CUgraph graph = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_read(conn, &graph_out, sizeof(graph_out)) < 0 ||
-      (graph_out != nullptr && rpc_read(conn, &graph, sizeof(graph)) < 0)) {
+      rpc_read(conn, &graph_present, sizeof(graph_present)) < 0 ||
+      (graph_present && rpc_read(conn, &graph, sizeof(graph)) < 0)) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -3763,12 +3685,11 @@ int handle_cuStreamEndCapture(conn_t *conn) {
     return -1;
   }
 
-  result = cuStreamEndCapture(stream, &graph);
+  result = cuStreamEndCapture(stream, graph_present ? &graph : nullptr);
   lupine_finish_stream_capture_resources(stream, graph, result == CUDA_SUCCESS);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &graph_out, sizeof(graph_out)) < 0 ||
-      (graph_out != nullptr && rpc_write(conn, &graph, sizeof(graph)) < 0) ||
+      (graph_present && rpc_write(conn, &graph, sizeof(graph)) < 0) ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -4545,8 +4466,8 @@ int handle_cuMemFree_v2(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
-  CUresult result = lupine_server_free_device_allocation(
-      pointer, [](CUdeviceptr ptr) {
+  CUresult result =
+      lupine_server_free_device_allocation(pointer, [](CUdeviceptr ptr) {
         auto release = reinterpret_cast<decltype(&cuMemFree_v2)>(
             lupine_server_checkpoint_cuda_symbol("cuMemFree_v2"));
         return release != nullptr ? release(ptr) : cuMemFree_v2(ptr);
