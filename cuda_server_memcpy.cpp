@@ -593,6 +593,7 @@ struct lupine_htod_copy {
   size_t slices = 0;
   size_t bytes = 0;
   bool use_cuda_memcpy = false;
+  bool destination_is_htoa = false;
   CUarray destination_array = nullptr;
   size_t destination_lod = 0;
   size_t destination_x = 0;
@@ -1601,6 +1602,11 @@ static CUresult lupine_enqueue_htod_fragment(
   size_t ring_offset = ring->ring_offset(copy, fragment.logical_offset);
   void *host_source = ring->data(ring_offset);
   if (copy.use_cuda_memcpy) {
+    if (copy.destination_is_htoa) {
+      return cuMemcpyHtoAAsync_v2(copy.destination_array,
+                                  copy.destination_x + fragment.logical_offset,
+                                  host_source, fragment.bytes, stream);
+    }
     if (copy.destination_array == nullptr) {
       return cuMemcpyHtoDAsync_v2(copy.destination_at(fragment.logical_offset),
                                   host_source, fragment.bytes, stream);
@@ -1916,6 +1922,27 @@ static lupine_htod_copy lupine_make_linear_htod_copy(CUdeviceptr destination,
   copy.bytes = bytes;
   copy.use_cuda_memcpy = true;
   copy.smemcpy.destination = destination;
+  copy.smemcpy.width = bytes;
+  copy.smemcpy.rows = 1;
+  copy.smemcpy.destination_row_stride = bytes;
+  copy.smemcpy.destination_slice_stride = bytes;
+  return copy;
+}
+
+static lupine_htod_copy lupine_make_htoa_copy(CUarray destination,
+                                              size_t destination_offset,
+                                              const void *source,
+                                              size_t bytes) {
+  lupine_htod_copy copy = {};
+  copy.source = source;
+  copy.source_row_stride = bytes;
+  copy.source_slice_stride = bytes;
+  copy.slices = 1;
+  copy.bytes = bytes;
+  copy.use_cuda_memcpy = true;
+  copy.destination_is_htoa = true;
+  copy.destination_array = destination;
+  copy.destination_x = destination_offset;
   copy.smemcpy.width = bytes;
   copy.smemcpy.rows = 1;
   copy.smemcpy.destination_row_stride = bytes;
@@ -2955,6 +2982,63 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
     return -1;
   }
   return 0;
+}
+
+static int lupine_serve_memcpy_htoa(conn_t *conn, bool async) {
+  CUarray dstArray = nullptr;
+  size_t dstOffset = 0;
+  const void *srcHost = nullptr;
+  bool is_server_authoritative = false;
+  uint64_t pushed_bytes = 0;
+  size_t byteCount = 0;
+  CUstream stream = CU_STREAM_LEGACY;
+  CUresult result = CUDA_SUCCESS;
+
+  if (rpc_read(conn, &is_server_authoritative,
+               sizeof(is_server_authoritative)) < 0 ||
+      rpc_read(conn, &dstArray, sizeof(dstArray)) < 0 ||
+      rpc_read(conn, &dstOffset, sizeof(dstOffset)) < 0 ||
+      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
+      (async && rpc_read(conn, &stream, sizeof(stream)) < 0) ||
+      rpc_read(conn, &srcHost, sizeof(srcHost)) < 0 ||
+      rpc_read(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0) {
+    return -1;
+  }
+  if (pushed_bytes != 0 && pushed_bytes != byteCount) {
+    return -1;
+  }
+  if (pushed_bytes != 0) {
+    result = lupine_copy_pushed_host_to_device(
+        conn, stream, !async,
+        lupine_make_htoa_copy(dstArray, dstOffset, srcHost, byteCount));
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+
+  if (byteCount == 0 || dstArray == nullptr || is_server_authoritative) {
+    result = async ? cuMemcpyHtoAAsync_v2(dstArray, dstOffset, srcHost,
+                                          byteCount, stream)
+                   : cuMemcpyHtoA_v2(dstArray, dstOffset, srcHost, byteCount);
+  } else if (pushed_bytes == 0) {
+    result = lupine_copy_client_host_to_device(
+        conn, stream, !async,
+        lupine_make_htoa_copy(dstArray, dstOffset, srcHost, byteCount));
+  }
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+int handle_cuMemcpyHtoA_v2(conn_t *conn) {
+  return lupine_serve_memcpy_htoa(conn, false);
+}
+
+int handle_cuMemcpyHtoAAsync_v2(conn_t *conn) {
+  return lupine_serve_memcpy_htoa(conn, true);
 }
 
 static int lupine_serve_memcpy_atoh(conn_t *conn, bool async) {

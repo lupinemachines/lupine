@@ -3977,9 +3977,8 @@ extern "C" CUresult cuCtxPopCurrent_v2(CUcontext *pctx) {
     return CUDA_ERROR_INVALID_CONTEXT;
   }
   CUcontext popped = lupine_current_context;
-  CUcontext previous = lupine_context_stack->empty()
-                           ? nullptr
-                           : lupine_context_stack->back();
+  CUcontext previous =
+      lupine_context_stack->empty() ? nullptr : lupine_context_stack->back();
   CUresult result = lupine_set_remote_current_context(previous);
   if (result == CUDA_SUCCESS) {
     if (!lupine_context_stack->empty()) {
@@ -9982,8 +9981,12 @@ lupine_manual_function_map() {
       {"cuMemcpyDtoA_v2", (void *)cuMemcpyDtoA_v2},
       {"cuMemcpyAtoD", (void *)cuMemcpyAtoD_v2},
       {"cuMemcpyAtoD_v2", (void *)cuMemcpyAtoD_v2},
+      {"cuMemcpyHtoA", (void *)cuMemcpyHtoA_v2},
+      {"cuMemcpyHtoA_v2", (void *)cuMemcpyHtoA_v2},
+      {"cuMemcpyHtoA_v2_ptds", (void *)cuMemcpyHtoA_v2},
       {"cuMemcpyAtoH", (void *)cuMemcpyAtoH_v2},
       {"cuMemcpyAtoH_v2", (void *)cuMemcpyAtoH_v2},
+      {"cuMemcpyAtoH_v2_ptds", (void *)cuMemcpyAtoH_v2},
       {"cuMemcpyAtoA", (void *)cuMemcpyAtoA_v2},
       {"cuMemcpyAtoA_v2", (void *)cuMemcpyAtoA_v2},
       {"cuMemcpy2D", (void *)cuMemcpy2D_v2},
@@ -10026,7 +10029,12 @@ lupine_manual_function_map() {
       {"cuMemcpyHtoDAsync_v2", (void *)cuMemcpyHtoDAsync_v2},
       {"cuMemcpyDtoHAsync", (void *)cuMemcpyDtoHAsync_v2},
       {"cuMemcpyDtoHAsync_v2", (void *)cuMemcpyDtoHAsync_v2},
+      {"cuMemcpyHtoAAsync", (void *)cuMemcpyHtoAAsync_v2},
+      {"cuMemcpyHtoAAsync_v2", (void *)cuMemcpyHtoAAsync_v2},
+      {"cuMemcpyHtoAAsync_v2_ptsz", (void *)cuMemcpyHtoAAsync_v2},
       {"cuMemcpyAtoHAsync", (void *)cuMemcpyAtoHAsync_v2},
+      {"cuMemcpyAtoHAsync_v2", (void *)cuMemcpyAtoHAsync_v2},
+      {"cuMemcpyAtoHAsync_v2_ptsz", (void *)cuMemcpyAtoHAsync_v2},
       {"cuStreamWaitValue32", (void *)cuStreamWaitValue32_v2},
       {"cuStreamWaitValue64", (void *)cuStreamWaitValue64_v2},
       {"cuStreamWaitEvent", (void *)cuStreamWaitEvent},

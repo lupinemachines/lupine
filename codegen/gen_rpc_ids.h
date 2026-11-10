@@ -103,6 +103,7 @@
 #define RPC_cuMemcpyDtoD_v2 999416204
 #define RPC_cuMemcpyDtoA_v2 206508478
 #define RPC_cuMemcpyAtoD_v2 1772736043
+#define RPC_cuMemcpyHtoA_v2 1273985994
 #define RPC_cuMemcpyAtoH_v2 595554707
 #define RPC_cuMemcpyAtoA_v2 1584872985
 #define RPC_cuMemcpy2D_v2 8262226
@@ -113,6 +114,7 @@
 #define RPC_cuMemcpyHtoDAsync_v2 625534283
 #define RPC_cuMemcpyDtoHAsync_v2 1182161886
 #define RPC_cuMemcpyDtoDAsync_v2 541239498
+#define RPC_cuMemcpyHtoAAsync_v2 1876926468
 #define RPC_cuMemcpyAtoHAsync_v2 1591028942
 #define RPC_cuMemcpy2DAsync_v2 668676181
 #define RPC_cuMemcpy3DAsync_v2 1209621355

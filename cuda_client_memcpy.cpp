@@ -412,8 +412,9 @@ static bool lupine_create_shared_views(conn_t *conn, uintptr_t server,
   *host_view = nullptr;
   *io_alias = nullptr;
   if (!lupine_server_range(conn, server, size)) {
-    LUPINE_TRACE_LOG("LUPINE host views rejected server=" << reinterpret_cast<void *>(server)
-                     << " size=" << size << " arena=" << (conn ? conn->va_size : 0));
+    LUPINE_TRACE_LOG("LUPINE host views rejected server="
+                     << reinterpret_cast<void *>(server) << " size=" << size
+                     << " arena=" << (conn ? conn->va_size : 0));
     return false;
   }
   bool identity = conn != nullptr && conn->va_size != 0;
@@ -455,7 +456,8 @@ static bool lupine_create_shared_views(conn_t *conn, uintptr_t server,
 #endif
   int fd = lupine_create_shared_memory_fd();
   if (fd < 0 || ftruncate(fd, static_cast<off_t>(size)) != 0) {
-    LUPINE_TRACE_LOG("LUPINE host views storage failed fd=" << fd << " errno=" << errno);
+    LUPINE_TRACE_LOG(
+        "LUPINE host views storage failed fd=" << fd << " errno=" << errno);
     if (fd >= 0) {
       close(fd);
     }
@@ -470,18 +472,18 @@ static bool lupine_create_shared_views(conn_t *conn, uintptr_t server,
   void *alias_hint = reinterpret_cast<void *>(alias_address);
   int shared_flags = MAP_SHARED | MAP_FIXED;
 #endif
-  void *host = mmap(host_hint, size,
-                    PROT_READ | PROT_WRITE, shared_flags, fd, 0);
+  void *host =
+      mmap(host_hint, size, PROT_READ | PROT_WRITE, shared_flags, fd, 0);
   void *alias =
       host == MAP_FAILED
           ? MAP_FAILED
-          : mmap(alias_hint, size,
-                 PROT_READ | PROT_WRITE, shared_flags, fd, 0);
+          : mmap(alias_hint, size, PROT_READ | PROT_WRITE, shared_flags, fd, 0);
   close(fd);
   if (host == MAP_FAILED || alias == MAP_FAILED) {
-    LUPINE_TRACE_LOG("LUPINE host views mapping failed host=" << host
-                     << " alias=" << alias << " errno=" << errno
-                     << " server=" << reinterpret_cast<void *>(server) << " size=" << size);
+    LUPINE_TRACE_LOG("LUPINE host views mapping failed host="
+                     << host << " alias=" << alias << " errno=" << errno
+                     << " server=" << reinterpret_cast<void *>(server)
+                     << " size=" << size);
     if (host != MAP_FAILED) {
       lupine_restore_host_allocation_reservation(host, size);
     }
@@ -531,7 +533,7 @@ static size_t lupine_round_up(size_t value, size_t alignment) {
 static void lupine_call_previous_sigsegv(int sig, siginfo_t *info, void *uctx) {
 #if defined(__APPLE__)
   const auto &previous = sig == SIGBUS ? lupine_previous_sigbus_action
-                                      : lupine_previous_sigsegv_action;
+                                       : lupine_previous_sigsegv_action;
 #else
   const auto &previous = lupine_previous_sigsegv_action;
 #endif
@@ -542,8 +544,7 @@ static void lupine_call_previous_sigsegv(int sig, siginfo_t *info, void *uctx) {
     }
   } else if (previous.sa_handler == SIG_IGN) {
     return;
-  } else if (previous.sa_handler != SIG_DFL &&
-             previous.sa_handler != nullptr) {
+  } else if (previous.sa_handler != SIG_DFL && previous.sa_handler != nullptr) {
     previous.sa_handler(sig);
     return;
   }
@@ -1145,9 +1146,8 @@ int lupine_read_deferred_rows(conn_t *conn) {
       (rows.depth == 1 && rows.pitch == rows.width) ||
       (rows.pitch == rows.width && rows.slice == rows.height * rows.pitch);
   if (contiguous) {
-    return lupine_read_deferred_host_copy(conn, rows.dst, rows.bytes()) < 0
-               ? -1
-               : 0;
+    return lupine_read_deferred_host_copy(conn, rows.dst, rows.bytes()) < 0 ? -1
+                                                                            : 0;
   }
   bool pinned_destination = false;
   {
@@ -1325,12 +1325,11 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
       if (primary && (allocation.tracking_enabled || allocation.local_cuda)) {
         continue;
       }
-      __atomic_add_fetch(&allocation.pending_dirty_ranges, 1,
-                         __ATOMIC_ACQ_REL);
-      ranges.push_back({&allocation, allocation.host_base,
-                        allocation.host_base +
-                            (primary ? allocation.size
-                                     : allocation.storage_size)});
+      __atomic_add_fetch(&allocation.pending_dirty_ranges, 1, __ATOMIC_ACQ_REL);
+      ranges.push_back(
+          {&allocation, allocation.host_base,
+           allocation.host_base +
+               (primary ? allocation.size : allocation.storage_size)});
     }
   }
 
@@ -1693,7 +1692,8 @@ static bool lupine_pinned_dtoh_destination(conn_t *conn, void *destination,
     *client_alias = static_cast<unsigned char *>(allocation.io_alias) + offset;
   }
   if (server_host != nullptr) {
-    *server_host = reinterpret_cast<void *>(allocation.server_host_ptr + offset);
+    *server_host =
+        reinterpret_cast<void *>(allocation.server_host_ptr + offset);
   }
   return true;
 }
@@ -4376,6 +4376,113 @@ lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
   return CUDA_SUCCESS;
 }
 
+static CUresult lupine_memcpy_htoa(CUarray dstArray, size_t dstOffset,
+                                   const void *srcHost, size_t ByteCount,
+                                   const CUstream *hStream) {
+  lupine_route route = hStream != nullptr
+                           ? lupine_route_for_stream_or_default(*hStream)
+                           : lupine_route_for_default();
+  if (hStream != nullptr && lupine_stream_crosses_route(*hStream, route)) {
+    return lupine_memcpy_htoa(dstArray, dstOffset, srcHost, ByteCount, nullptr);
+  }
+  CUresult return_value;
+  if (lupine_route_is_local(route)) {
+    return_value =
+        hStream != nullptr
+            ? lupine_call_real_cuda_fn("cuMemcpyHtoAAsync_v2", dstArray,
+                                       dstOffset, srcHost, ByteCount, *hStream)
+            : lupine_call_real_cuda_fn("cuMemcpyHtoA_v2", dstArray, dstOffset,
+                                       srcHost, ByteCount);
+    if (hStream == nullptr && return_value == CUDA_SUCCESS) {
+      return_value = lupine_sync_mapped_device_to_host();
+    }
+    return return_value;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUdeviceptr server_source = 0;
+  bool is_server_authoritative =
+      srcHost == nullptr ||
+      lupine_translate_client_host_range_to_server(
+          &server_source, srcHost, ByteCount, lupine_route_identity(route));
+  const void *wire_source = is_server_authoritative
+                                ? reinterpret_cast<const void *>(server_source)
+                                : srcHost;
+  uint64_t pushed_bytes =
+      dstArray == nullptr ? 0
+                          : lupine_htod_pushed_bytes(is_server_authoritative,
+                                                     srcHost, ByteCount);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, hStream != nullptr
+                                        ? RPC_cuMemcpyHtoAAsync_v2
+                                        : RPC_cuMemcpyHtoA_v2) < 0 ||
+      rpc_write(conn, &is_server_authoritative,
+                sizeof(is_server_authoritative)) < 0 ||
+      rpc_write(conn, &dstArray, sizeof(dstArray)) < 0 ||
+      rpc_write(conn, &dstOffset, sizeof(dstOffset)) < 0 ||
+      rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
+      (hStream != nullptr && rpc_write(conn, hStream, sizeof(*hStream)) < 0) ||
+      rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
+      rpc_write(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0 ||
+      (pushed_bytes != 0 && rpc_write(conn, srcHost, pushed_bytes) < 0) ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (hStream == nullptr && return_value == CUDA_SUCCESS) {
+    return_value = lupine_sync_mapped_device_to_host();
+  }
+  return return_value;
+}
+
+extern "C" CUresult cuMemcpyHtoA_v2(CUarray dstArray, size_t dstOffset,
+                                    const void *srcHost, size_t ByteCount) {
+  return lupine_memcpy_htoa(dstArray, dstOffset, srcHost, ByteCount, nullptr);
+}
+
+#ifdef cuMemcpyHtoA
+#undef cuMemcpyHtoA
+#endif
+extern "C" CUresult cuMemcpyHtoA(CUarray dstArray, size_t dstOffset,
+                                 const void *srcHost, size_t ByteCount) {
+  return cuMemcpyHtoA_v2(dstArray, dstOffset, srcHost, ByteCount);
+}
+
+#ifdef cuMemcpyHtoA_v2_ptds
+#undef cuMemcpyHtoA_v2_ptds
+#endif
+extern "C" CUresult cuMemcpyHtoA_v2_ptds(CUarray dstArray, size_t dstOffset,
+                                         const void *srcHost,
+                                         size_t ByteCount) {
+  return cuMemcpyHtoA_v2(dstArray, dstOffset, srcHost, ByteCount);
+}
+
+extern "C" CUresult cuMemcpyHtoAAsync_v2(CUarray dstArray, size_t dstOffset,
+                                         const void *srcHost, size_t ByteCount,
+                                         CUstream hStream) {
+  return lupine_memcpy_htoa(dstArray, dstOffset, srcHost, ByteCount, &hStream);
+}
+
+#ifdef cuMemcpyHtoAAsync
+#undef cuMemcpyHtoAAsync
+#endif
+extern "C" CUresult cuMemcpyHtoAAsync(CUarray dstArray, size_t dstOffset,
+                                      const void *srcHost, size_t ByteCount,
+                                      CUstream hStream) {
+  return cuMemcpyHtoAAsync_v2(dstArray, dstOffset, srcHost, ByteCount, hStream);
+}
+
+#ifdef cuMemcpyHtoAAsync_v2_ptsz
+#undef cuMemcpyHtoAAsync_v2_ptsz
+#endif
+extern "C" CUresult cuMemcpyHtoAAsync_v2_ptsz(CUarray dstArray,
+                                              size_t dstOffset,
+                                              const void *srcHost,
+                                              size_t ByteCount,
+                                              CUstream hStream) {
+  return cuMemcpyHtoAAsync_v2(dstArray, dstOffset, srcHost, ByteCount, hStream);
+}
+
 static CUresult lupine_memcpy_atoh(void *dstHost, CUarray srcArray,
                                    size_t srcOffset, size_t ByteCount,
                                    const CUstream *hStream) {
@@ -4423,6 +4530,33 @@ extern "C" CUresult cuMemcpyAtoHAsync_v2(void *dstHost, CUarray srcArray,
 extern "C" CUresult cuMemcpyAtoH(void *dstHost, CUarray srcArray,
                                  size_t srcOffset, size_t ByteCount) {
   return cuMemcpyAtoH_v2(dstHost, srcArray, srcOffset, ByteCount);
+}
+
+#ifdef cuMemcpyAtoH_v2_ptds
+#undef cuMemcpyAtoH_v2_ptds
+#endif
+extern "C" CUresult cuMemcpyAtoH_v2_ptds(void *dstHost, CUarray srcArray,
+                                         size_t srcOffset, size_t ByteCount) {
+  return cuMemcpyAtoH_v2(dstHost, srcArray, srcOffset, ByteCount);
+}
+
+#ifdef cuMemcpyAtoHAsync
+#undef cuMemcpyAtoHAsync
+#endif
+extern "C" CUresult cuMemcpyAtoHAsync(void *dstHost, CUarray srcArray,
+                                      size_t srcOffset, size_t ByteCount,
+                                      CUstream hStream) {
+  return cuMemcpyAtoHAsync_v2(dstHost, srcArray, srcOffset, ByteCount, hStream);
+}
+
+#ifdef cuMemcpyAtoHAsync_v2_ptsz
+#undef cuMemcpyAtoHAsync_v2_ptsz
+#endif
+extern "C" CUresult cuMemcpyAtoHAsync_v2_ptsz(void *dstHost, CUarray srcArray,
+                                              size_t srcOffset,
+                                              size_t ByteCount,
+                                              CUstream hStream) {
+  return cuMemcpyAtoHAsync_v2(dstHost, srcArray, srcOffset, ByteCount, hStream);
 }
 
 // Another thread's capture on another stream leaves this one blocking.

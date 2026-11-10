@@ -38,6 +38,8 @@ int handle_cuMemcpy3DPeerAsync(conn_t *conn);
 int handle_cuMemcpy2D_v2(conn_t *conn);
 int handle_cuMemcpy2DUnaligned_v2(conn_t *conn);
 int handle_cuMemcpy2DAsync_v2(conn_t *conn);
+int handle_cuMemcpyHtoA_v2(conn_t *conn);
+int handle_cuMemcpyHtoAAsync_v2(conn_t *conn);
 int handle_cuMemcpyAtoH_v2(conn_t *conn);
 int handle_cuMemcpyAtoHAsync_v2(conn_t *conn);
 int handle_cuDeviceGetGraphMemAttribute(conn_t *conn);
