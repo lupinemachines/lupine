@@ -31,6 +31,17 @@ void lupine_event_invalidate_completion(lupine_event_table *table,
   *victim = {event, record, false};
 }
 
+void lupine_event_invalidate_all_completions(lupine_event_table *table) {
+  std::lock_guard<std::mutex> lock(table->mutex);
+  for (auto &slot : table->slots) {
+    if (slot.event != nullptr) {
+      // A new stamp also voids an answer already in flight.
+      slot.record = table->record_seq.fetch_add(1) + 1;
+      slot.complete = false;
+    }
+  }
+}
+
 void lupine_event_forget(lupine_event_table *table, CUevent event) {
   std::lock_guard<std::mutex> lock(table->mutex);
   for (auto &slot : table->slots) {
@@ -116,6 +127,10 @@ void lupine_event_stale_semaphore_add(lupine_event_table *table,
 
 void lupine_event_invalidate_completion(CUevent event) {
   lupine_event_invalidate_completion(&lupine_event_table_instance(), event);
+}
+
+void lupine_event_invalidate_all_completions() {
+  lupine_event_invalidate_all_completions(&lupine_event_table_instance());
 }
 
 void lupine_event_forget(CUevent event) {

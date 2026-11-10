@@ -3146,6 +3146,8 @@ int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
           cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
       if (result == CUDA_SUCCESS) {
         lupine_graph_note_dtoh_copy(resources, {dstHost, byteCount}, host);
+        lupine_note_dtoh_undelivered(conn, stream, {dstHost, byteCount}, host,
+                                     true);
       }
     }
   } else {
@@ -3160,6 +3162,10 @@ int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
                                     lupine_dtoh_storage::borrowed};
       (void)cuStreamGetCtx(stream, &copy.context);
       lupine_queue_pending_dtoh_copies(conn, stream, {copy});
+      // A later HtoD from this memory reads the client's bytes, which this
+      // copy only reaches at delivery, so it overlays the mirror instead.
+      lupine_note_dtoh_undelivered(conn, stream, {dstHost, byteCount},
+                                   server_host, false);
     }
   }
 

@@ -17,6 +17,7 @@
 #include "client_routing.h"
 #include "cuda_client.h"
 #include "cuda_client_memcpy.h"
+#include "events.h"
 #include "rpc.h"
 
 extern int rpc_size();
@@ -5456,9 +5457,14 @@ CUresult cuGraphUpload(CUgraphExec hGraphExec, CUstream hStream) {
 CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream) {
   lupine_route route = lupine_route_for_graph_exec(hGraphExec);
   CUresult return_value;
-  if (lupine_route_is_local(route))
-    return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuGraphLaunch"),
-                                    hGraphExec, hStream);
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuGraphLaunch"), hGraphExec, hStream);
+    // The graph may re-record events it does not name here, so no cached
+    // completion can be trusted past the launch.
+    lupine_event_invalidate_all_completions();
+    return return_value;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
   uint64_t async_sequence = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -5470,7 +5476,11 @@ CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream) {
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  return CUDA_SUCCESS;
+  return_value = CUDA_SUCCESS;
+  // The graph may re-record events it does not name here, so no cached
+  // completion can be trusted past the launch.
+  lupine_event_invalidate_all_completions();
+  return return_value;
 }
 
 CUresult cuGraphExecDestroy(CUgraphExec hGraphExec) {
