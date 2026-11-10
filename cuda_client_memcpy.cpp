@@ -1765,14 +1765,17 @@ extern "C" bool lupine_copy_pointer_is_host(CUdeviceptr ptr) {
 }
 
 // A managed alias is already the server's address for its allocation, so a
-// copy into it is a device-side write in stream order, as in 2D and 3D copies.
-// Treated as host memory, the bytes would land in the client's view and reach
-// the server only with a later dirty-page flush, on top of whatever the
-// stream's subsequent work had written there.
+// copy into or out of it runs on the device side, in stream order, as in 2D and
+// 3D copies. Treated as host memory, bytes copied into it would land in the
+// client's view and reach the server only with a later dirty-page flush, on
+// top of whatever the stream's subsequent work had written there; and a copy
+// out of it into page-locked memory would block the caller until the stream
+// drained, where the driver returns at once.
 static uint8_t lupine_infer_copy_direction(CUdeviceptr dst, CUdeviceptr src) {
   const bool dst_is_host =
       !lupine_is_managed_host_alias(dst) && lupine_copy_pointer_is_host(dst);
-  const bool src_is_host = lupine_copy_pointer_is_host(src);
+  const bool src_is_host =
+      !lupine_is_managed_host_alias(src) && lupine_copy_pointer_is_host(src);
   if (dst_is_host && src_is_host) {
     return LUPINE_COPY_DIRECTION_HTOH;
   }
