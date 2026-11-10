@@ -2249,6 +2249,10 @@ static CUcontext lupine_demand_fetch_context(CUdeviceptr device_ptr) {
   return context;
 }
 
+static CUresult lupine_copy_dtoh_pageable(conn_t *conn, void *dstHost,
+                                          CUdeviceptr srcDevice,
+                                          size_t ByteCount, CUstream hStream);
+
 extern "C" CUresult lupine_sync_mapped_device_to_host() {
   if (lupine_active_stream_captures.load(std::memory_order_relaxed) != 0) {
     return CUDA_SUCCESS;
@@ -2336,9 +2340,23 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
     if (invalidated || skip) {
       continue;
     }
-    CUresult result = cuMemcpyDtoH_v2(
-        static_cast<unsigned char *>(mapping.host) + mapping.data_offset,
-        mapping.device_ptr + mapping.data_offset, mapping.data_bytes);
+    CUresult result = CUDA_SUCCESS;
+    lupine_route fallback_route =
+        lupine_route_from_identity(fallback_allocation->route_id);
+    if (lupine_route_is_local(fallback_route)) {
+      result = cuMemcpyDtoH_v2(
+          static_cast<unsigned char *>(mapping.host) + mapping.data_offset,
+          mapping.device_ptr + mapping.data_offset, mapping.data_bytes);
+    } else {
+      if (fetch_context != nullptr && lupine_current_context_hint() == nullptr) {
+        (void)lupine_set_current_context_on_route(fallback_route, fetch_context);
+      }
+      result = lupine_copy_dtoh_pageable(
+          lupine_route_remote_conn(fallback_route),
+          static_cast<unsigned char *>(mapping.host) + mapping.data_offset,
+          mapping.device_ptr + mapping.data_offset, mapping.data_bytes,
+          lupine_in_host_callback ? CU_STREAM_PER_THREAD : CU_STREAM_LEGACY);
+    }
     __atomic_sub_fetch(&fallback_allocation->pending_dirty_ranges, 1,
                        __ATOMIC_RELEASE);
     if (result != CUDA_SUCCESS) {

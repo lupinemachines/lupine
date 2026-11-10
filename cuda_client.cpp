@@ -9217,6 +9217,7 @@ void *rpc_client_dispatch_thread(void *arg) {
       }
 
       lupine_in_host_callback = true;
+      (void)lupine_sync_mapped_device_to_host();
       callback(user_data);
       lupine_in_host_callback = false;
 
@@ -9255,6 +9256,7 @@ void *rpc_client_dispatch_thread(void *arg) {
 
       if (callback != nullptr) {
         lupine_in_host_callback = true;
+        (void)lupine_sync_mapped_device_to_host();
         callback(stream, status, user_data);
         lupine_in_host_callback = false;
       }
