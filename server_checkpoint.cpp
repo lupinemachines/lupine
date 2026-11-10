@@ -132,6 +132,19 @@ optional_checkpoint_provider load_provider() {
   return provider;
 }
 
+void teardown_signal_pipe(child_checkpoint_state &state) {
+  signal_write_fd = -1;
+  if (state.handler_installed) {
+    (void)sigaction(SIGTERM, &state.previous_sigterm, nullptr);
+    state.handler_installed = false;
+  }
+  if (state.signal_pipe[0] >= 0) {
+    close(state.signal_pipe[0]);
+    close(state.signal_pipe[1]);
+    state.signal_pipe[0] = state.signal_pipe[1] = -1;
+  }
+}
+
 void wait_for_shutdown(child_checkpoint_state &state) {
   for (;;) {
     char event = 0;
@@ -171,27 +184,15 @@ bool lupine_server_checkpoint_child_start(lupine_socket_t connection,
   sigterm_received = 0;
   state.provider = use_provider ? load_provider() : optional_checkpoint_provider{};
 
-  if (pipe(state.signal_pipe) != 0) {
-    unload_provider(state.provider);
-    return false;
-  }
-  int flags = fcntl(state.signal_pipe[1], F_GETFL, 0);
-  if (flags < 0 ||
-      fcntl(state.signal_pipe[1], F_SETFL, flags | O_NONBLOCK) != 0) {
-    close(state.signal_pipe[0]);
-    close(state.signal_pipe[1]);
-    state.signal_pipe[0] = state.signal_pipe[1] = -1;
-    unload_provider(state.provider);
-    return false;
-  }
-
   struct sigaction action = {};
   action.sa_handler = checkpoint_sigterm_handler;
   sigemptyset(&action.sa_mask);
-  if (sigaction(SIGTERM, &action, &state.previous_sigterm) != 0) {
-    close(state.signal_pipe[0]);
-    close(state.signal_pipe[1]);
-    state.signal_pipe[0] = state.signal_pipe[1] = -1;
+  int flags = -1;
+  if (pipe(state.signal_pipe) != 0 ||
+      (flags = fcntl(state.signal_pipe[1], F_GETFL, 0)) < 0 ||
+      fcntl(state.signal_pipe[1], F_SETFL, flags | O_NONBLOCK) != 0 ||
+      sigaction(SIGTERM, &action, &state.previous_sigterm) != 0) {
+    teardown_signal_pipe(state);
     unload_provider(state.provider);
     return false;
   }
@@ -201,12 +202,7 @@ bool lupine_server_checkpoint_child_start(lupine_socket_t connection,
   try {
     state.signal_thread = std::thread([&state] { wait_for_shutdown(state); });
   } catch (...) {
-    signal_write_fd = -1;
-    (void)sigaction(SIGTERM, &state.previous_sigterm, nullptr);
-    state.handler_installed = false;
-    close(state.signal_pipe[0]);
-    close(state.signal_pipe[1]);
-    state.signal_pipe[0] = state.signal_pipe[1] = -1;
+    teardown_signal_pipe(state);
     unload_provider(state.provider);
     return false;
   }
@@ -258,15 +254,7 @@ int lupine_server_checkpoint_child_finish() {
   if (state.signal_thread.joinable()) {
     state.signal_thread.join();
   }
-
-  signal_write_fd = -1;
-  if (state.handler_installed) {
-    (void)sigaction(SIGTERM, &state.previous_sigterm, nullptr);
-    state.handler_installed = false;
-  }
-  close(state.signal_pipe[0]);
-  close(state.signal_pipe[1]);
-  state.signal_pipe[0] = state.signal_pipe[1] = -1;
+  teardown_signal_pipe(state);
 
   int result = 0;
   bool should_checkpoint =

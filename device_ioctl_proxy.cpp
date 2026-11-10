@@ -19,6 +19,13 @@ registry &proxies() {
   static auto *state = new registry;
   return *state;
 }
+int raw_dup(int fd, int destination, int flags, bool fixed) {
+  if (!fixed)
+    return static_cast<int>(syscall(SYS_fcntl, fd, F_DUPFD, 0));
+  if (fd == destination && flags == 0)
+    return static_cast<int>(syscall(SYS_fcntl, fd, F_GETFD, 0)) < 0 ? -1 : fd;
+  return static_cast<int>(syscall(SYS_dup3, fd, destination, flags));
+}
 } // namespace
 
 int lupine_device_proxy_create(int route, uint64_t token, bool uvm) {
@@ -76,28 +83,15 @@ int lupine_device_proxy_close(int fd) {
 }
 
 int lupine_device_proxy_dup(int fd, int destination, int flags, bool fixed) {
-  if (proxies().process != getpid()) {
-    if (!fixed)
-      return static_cast<int>(syscall(SYS_fcntl, fd, F_DUPFD, 0));
-    if (fd == destination && flags == 0)
-      return static_cast<int>(syscall(SYS_fcntl, fd, F_GETFD, 0)) < 0 ? -1 : fd;
-    return static_cast<int>(syscall(SYS_dup3, fd, destination, flags));
-  }
+  if (proxies().process != getpid())
+    return raw_dup(fd, destination, flags, fixed);
   std::shared_ptr<lupine_device_proxy> replaced;
   int result;
   {
     auto &state = proxies();
     std::lock_guard<std::mutex> lock(state.mutex);
-    if (fixed) {
-      if (fd == destination && flags == 0) {
-        return static_cast<int>(syscall(SYS_fcntl, fd, F_GETFD, 0)) < 0 ? -1
-                                                                        : fd;
-      }
-      result = static_cast<int>(syscall(SYS_dup3, fd, destination, flags));
-    } else {
-      result = static_cast<int>(syscall(SYS_fcntl, fd, F_DUPFD, 0));
-    }
-    if (result < 0)
+    result = raw_dup(fd, destination, flags, fixed);
+    if (result < 0 || result == fd)
       return result;
     auto source = state.descriptors.find(fd);
     auto owner = source == state.descriptors.end() ? nullptr : source->second;
