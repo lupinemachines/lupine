@@ -699,6 +699,15 @@ uint64_t lupine_dtoh_sequence_now() {
   return lupine_dtoh_sequence().load(std::memory_order_relaxed);
 }
 
+// The legacy default stream waits for blocking streams' earlier work but not
+// for non-blocking streams, whose copies may not have run when it finishes.
+static bool lupine_legacy_stream_waits_for(CUstream stream) {
+  unsigned int flags = 0;
+  return stream == nullptr ||
+         (cuStreamGetFlags(stream, &flags) == CUDA_SUCCESS &&
+          (flags & CU_STREAM_NON_BLOCKING) == 0);
+}
+
 lupine_pending_dtoh_items
 lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
                                   bool all_streams, CUcontext context,
@@ -708,7 +717,10 @@ lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
   lupine_pending_dtoh_copies().erase_fn(
       conn, [&](lupine_pending_dtoh_streams &streams) {
         for (auto it = streams.begin(); it != streams.end();) {
-          if (!all_streams && it->first != stream && inherited == nullptr) {
+          bool covered =
+              all_streams || it->first == stream ||
+              (stream == nullptr && lupine_legacy_stream_waits_for(it->first));
+          if (!covered && inherited == nullptr) {
             ++it;
             continue;
           }
@@ -716,8 +728,7 @@ lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
           items.erase(std::remove_if(
                           items.begin(), items.end(),
                           [&](const auto &item) {
-                            if (!all_streams && it->first != stream &&
-                                item.graph_resources != inherited) {
+                            if (!covered && item.graph_resources != inherited) {
                               return false;
                             }
                             if (context != nullptr && item.context != context) {

@@ -245,12 +245,13 @@ struct lupine_dirty_host_range_queue {
 
 static lupine_dirty_host_range_queue
     lupine_dirty_host_range_queues[LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES];
-// Dirty publications receive globally ordered tickets, but only the publishing
-// thread waits for its latest ticket. Another thread may flush that ticket; the
-// acknowledged global watermark then satisfies the publisher without making
-// unrelated RPC callers join the flush.
+// Dirty publications receive globally ordered tickets, and every RPC waits for
+// the latest one. A host write is ordered before another thread's CUDA call by
+// whatever synchronization the application uses between those threads, which
+// the client cannot observe, so the publishing thread's own calls are not the
+// only ones that must see it. The acknowledged global watermark lets a caller
+// skip the flush when another thread already covered its ticket.
 static uint64_t lupine_dirty_host_epoch = 0;
-static thread_local uint64_t lupine_required_host_epoch = 0;
 static volatile sig_atomic_t lupine_device_work_pending = 0;
 thread_local bool lupine_in_host_callback = false;
 // Per connection: unanswered flushes sent, and how many a barrier covered.
@@ -615,10 +616,7 @@ lupine_reserve_dirty_host_range(lupine_dirty_host_range_queue &queue,
 }
 
 static void lupine_require_dirty_host_flush() {
-  uint64_t required_epoch =
-      __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_ACQ_REL);
-  __atomic_store_n(&lupine_required_host_epoch, required_epoch,
-                   __ATOMIC_RELEASE);
+  __atomic_add_fetch(&lupine_dirty_host_epoch, 1, __ATOMIC_ACQ_REL);
 }
 
 static void lupine_queue_dirty_host_range(lupine_host_allocation *allocation,
@@ -1001,6 +999,14 @@ bool lupine_prepare_mapped_host_pointer(CUdeviceptr argument, bool *portable) {
   *portable |=
       !it->second.managed && (it->second.flags & CU_MEMHOSTALLOC_PORTABLE) != 0;
   return it->second.managed;
+}
+
+// A copy or memset into a host allocation's device address writes it from the
+// device, as a kernel given that address would, so it exposes the allocation
+// the same way: the next synchronize then refreshes the client's view.
+extern "C" void lupine_note_device_write(CUdeviceptr ptr) {
+  bool portable = false;
+  lupine_prepare_mapped_host_pointer(ptr, &portable);
 }
 
 CUresult lupine_prepare_portable_host_allocations(lupine_route route,
@@ -1533,12 +1539,10 @@ extern "C" int lupine_prepare_rpc(conn_t *conn) {
   }
 
   uint64_t required_epoch =
-      __atomic_load_n(&lupine_required_host_epoch, __ATOMIC_ACQUIRE);
+      __atomic_load_n(&lupine_dirty_host_epoch, __ATOMIC_ACQUIRE);
   if (lupine_flushed_host_epoch.load(std::memory_order_acquire) <
       required_epoch) {
     std::lock_guard<std::mutex> flush_lock(lupine_host_flush_mutex);
-    required_epoch =
-        __atomic_load_n(&lupine_required_host_epoch, __ATOMIC_ACQUIRE);
     while (lupine_flushed_host_epoch.load(std::memory_order_acquire) <
            required_epoch) {
       uint64_t flush_epoch =
@@ -1550,8 +1554,6 @@ extern "C" int lupine_prepare_rpc(conn_t *conn) {
         }
       }
       lupine_flushed_host_epoch.store(flush_epoch, std::memory_order_release);
-      required_epoch =
-          __atomic_load_n(&lupine_required_host_epoch, __ATOMIC_ACQUIRE);
     }
   }
   return 0;
@@ -1803,8 +1805,14 @@ extern "C" bool lupine_copy_pointer_is_host(CUdeviceptr ptr) {
   return lupine_is_client_mapped_address(ptr);
 }
 
+// A managed alias is already the server's address for its allocation, so a
+// copy into it is a device-side write in stream order, as in 2D and 3D copies.
+// Treated as host memory, the bytes would land in the client's view and reach
+// the server only with a later dirty-page flush, on top of whatever the
+// stream's subsequent work had written there.
 static uint8_t lupine_infer_copy_direction(CUdeviceptr dst, CUdeviceptr src) {
-  const bool dst_is_host = lupine_copy_pointer_is_host(dst);
+  const bool dst_is_host =
+      !lupine_is_managed_host_alias(dst) && lupine_copy_pointer_is_host(dst);
   const bool src_is_host = lupine_copy_pointer_is_host(src);
   if (dst_is_host && src_is_host) {
     return LUPINE_COPY_DIRECTION_HTOH;
@@ -1818,17 +1826,49 @@ static uint8_t lupine_infer_copy_direction(CUdeviceptr dst, CUdeviceptr src) {
   return LUPINE_COPY_DIRECTION_DTOD;
 }
 
-extern "C" CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src,
-                             size_t ByteCount) {
+// A copy between host pointers is still a copy on its stream: it waits for the
+// work ahead of it, such as a host function filling a pinned source or a
+// kernel writing a mapped one, and work behind it sees what it wrote. When
+// either side is memory the client tracks, finish that work before copying
+// here. Synchronizing refreshes mapped and managed views, and the stores below
+// reach the server as dirty pages before any later request. A capturing
+// stream cannot be synchronized, so a captured copy still runs at issue.
+static CUresult lupine_order_host_to_host(const void *dst, const void *src,
+                                          CUstream hStream) {
+  if (!lupine_host_ptr_is_tracked(reinterpret_cast<CUdeviceptr>(dst)) &&
+      !lupine_host_ptr_is_tracked(reinterpret_cast<CUdeviceptr>(src))) {
+    return CUDA_SUCCESS;
+  }
+  CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
+  if (lupine_active_stream_captures.load(std::memory_order_relaxed) != 0 &&
+      cuStreamIsCapturing(hStream, &capture_status) == CUDA_SUCCESS &&
+      capture_status != CU_STREAM_CAPTURE_STATUS_NONE) {
+    return CUDA_SUCCESS;
+  }
+  return cuStreamSynchronize(hStream);
+}
+
+static CUresult lupine_memcpy_host_to_host(void *dst, const void *src,
+                                           size_t ByteCount, CUstream hStream) {
+  CUresult result = lupine_order_host_to_host(dst, src, hStream);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  memmove(dst, src, ByteCount);
+  return CUDA_SUCCESS;
+}
+
+static CUresult lupine_memcpy(CUdeviceptr dst, CUdeviceptr src,
+                              size_t ByteCount, CUstream order) {
   if (ByteCount == 0) {
     return CUDA_SUCCESS;
   }
 
   switch (lupine_infer_copy_direction(dst, src)) {
   case LUPINE_COPY_DIRECTION_HTOH:
-    memmove(reinterpret_cast<void *>(dst), reinterpret_cast<const void *>(src),
-            ByteCount);
-    return CUDA_SUCCESS;
+    return lupine_memcpy_host_to_host(reinterpret_cast<void *>(dst),
+                                      reinterpret_cast<const void *>(src),
+                                      ByteCount, order);
   case LUPINE_COPY_DIRECTION_HTOD:
     return cuMemcpyHtoD_v2(dst, reinterpret_cast<const void *>(src), ByteCount);
   case LUPINE_COPY_DIRECTION_DTOH:
@@ -1839,21 +1879,26 @@ extern "C" CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src,
   return CUDA_ERROR_INVALID_VALUE;
 }
 
+extern "C" CUresult cuMemcpy(CUdeviceptr dst, CUdeviceptr src,
+                             size_t ByteCount) {
+  return lupine_memcpy(dst, src, ByteCount, nullptr);
+}
+
 #ifdef cuMemcpy_ptds
 #undef cuMemcpy_ptds
 #endif
 extern "C" CUresult cuMemcpy_ptds(CUdeviceptr dst, CUdeviceptr src,
                                   size_t ByteCount) {
-  return cuMemcpy(dst, src, ByteCount);
+  return lupine_memcpy(dst, src, ByteCount, CU_STREAM_PER_THREAD);
 }
 
 extern "C" CUresult cuMemcpyAsync(CUdeviceptr dst, CUdeviceptr src,
                                   size_t ByteCount, CUstream hStream) {
   switch (lupine_infer_copy_direction(dst, src)) {
   case LUPINE_COPY_DIRECTION_HTOH:
-    memcpy(reinterpret_cast<void *>(dst), reinterpret_cast<const void *>(src),
-           ByteCount);
-    return CUDA_SUCCESS;
+    return lupine_memcpy_host_to_host(reinterpret_cast<void *>(dst),
+                                      reinterpret_cast<const void *>(src),
+                                      ByteCount, hStream);
   case LUPINE_COPY_DIRECTION_HTOD:
     return cuMemcpyHtoDAsync_v2(dst, reinterpret_cast<const void *>(src),
                                 ByteCount, hStream);
@@ -4179,6 +4224,7 @@ static bool lupine_htod_fire_and_forget(lupine_route route,
 
 extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                                     size_t ByteCount) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
@@ -4308,6 +4354,7 @@ static bool lupine_htod_async_fire_and_forget(lupine_route route,
 extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
                                          const void *srcHost, size_t ByteCount,
                                          CUstream hStream) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   if (lupine_stream_crosses_route(hStream, route)) {
     return cuMemcpyHtoD_v2(dstDevice, srcHost, ByteCount);
@@ -4600,6 +4647,12 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
                    copy.dstY * copy.dstPitch + copy.dstXInBytes;
   CUresult return_value;
   if (direction == LUPINE_COPY_DIRECTION_HTOH) {
+    // Ordered like a linear host-to-host copy.
+    return_value = lupine_order_host_to_host(dst_base, src_base,
+                                             api.async ? hStream : nullptr);
+    if (return_value != CUDA_SUCCESS) {
+      return return_value;
+    }
     for (size_t z = 0; z < copy.Depth; ++z) {
       for (size_t row = 0; row < copy.Height; ++row) {
         memmove(dst_base + z * dst_slice_pitch + row * copy.dstPitch,
@@ -4643,6 +4696,7 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
     }
     // A device pointer picks the route; array-only copies follow the stream.
     if (direction != LUPINE_COPY_DIRECTION_DTOH && !dst_array) {
+      lupine_note_device_write(copy.dstDevice);
       route = lupine_route_for_deviceptr(copy.dstDevice);
     } else if (direction != LUPINE_COPY_DIRECTION_HTOD && !src_array) {
       route = lupine_route_for_deviceptr(copy.srcDevice);

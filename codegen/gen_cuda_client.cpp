@@ -1410,6 +1410,7 @@ CUresult cuMemcpyPeer(CUdeviceptr dstDevice, CUcontext dstContext,
 
 CUresult cuMemcpyDtoD_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                          size_t ByteCount) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   if (!lupine_deviceptrs_share_route(dstDevice, srcDevice)) {
     return lupine_cuMemcpyDtoD_via_client(dstDevice, srcDevice, ByteCount,
@@ -1462,6 +1463,7 @@ CUresult cuMemcpyDtoA_v2(CUarray dstArray, size_t dstOffset,
 
 CUresult cuMemcpyAtoD_v2(CUdeviceptr dstDevice, CUarray srcArray,
                          size_t srcOffset, size_t ByteCount) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route))
@@ -1534,6 +1536,7 @@ CUresult cuMemcpyPeerAsync(CUdeviceptr dstDevice, CUcontext dstContext,
 
 CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                               size_t ByteCount, CUstream hStream) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   if (!lupine_deviceptrs_share_route(dstDevice, srcDevice)) {
     return lupine_cuMemcpyDtoD_via_client(dstDevice, srcDevice, ByteCount,
@@ -1558,6 +1561,7 @@ CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
 }
 
 CUresult cuMemsetD8_v2(CUdeviceptr dstDevice, unsigned char uc, size_t N) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
@@ -1583,6 +1587,7 @@ CUresult cuMemsetD8_v2(CUdeviceptr dstDevice, unsigned char uc, size_t N) {
 }
 
 CUresult cuMemsetD16_v2(CUdeviceptr dstDevice, unsigned short us, size_t N) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
@@ -1608,6 +1613,7 @@ CUresult cuMemsetD16_v2(CUdeviceptr dstDevice, unsigned short us, size_t N) {
 }
 
 CUresult cuMemsetD32_v2(CUdeviceptr dstDevice, unsigned int ui, size_t N) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
@@ -1634,6 +1640,7 @@ CUresult cuMemsetD32_v2(CUdeviceptr dstDevice, unsigned int ui, size_t N) {
 
 CUresult cuMemsetD2D8_v2(CUdeviceptr dstDevice, size_t dstPitch,
                          unsigned char uc, size_t Width, size_t Height) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
@@ -1663,6 +1670,7 @@ CUresult cuMemsetD2D8_v2(CUdeviceptr dstDevice, size_t dstPitch,
 
 CUresult cuMemsetD2D16_v2(CUdeviceptr dstDevice, size_t dstPitch,
                           unsigned short us, size_t Width, size_t Height) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
@@ -1692,6 +1700,7 @@ CUresult cuMemsetD2D16_v2(CUdeviceptr dstDevice, size_t dstPitch,
 
 CUresult cuMemsetD2D32_v2(CUdeviceptr dstDevice, size_t dstPitch,
                           unsigned int ui, size_t Width, size_t Height) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
@@ -1721,6 +1730,7 @@ CUresult cuMemsetD2D32_v2(CUdeviceptr dstDevice, size_t dstPitch,
 
 CUresult cuMemsetD8Async(CUdeviceptr dstDevice, unsigned char uc, size_t N,
                          CUstream hStream) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route))
@@ -1741,6 +1751,7 @@ CUresult cuMemsetD8Async(CUdeviceptr dstDevice, unsigned char uc, size_t N,
 
 CUresult cuMemsetD16Async(CUdeviceptr dstDevice, unsigned short us, size_t N,
                           CUstream hStream) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route))
@@ -1761,6 +1772,7 @@ CUresult cuMemsetD16Async(CUdeviceptr dstDevice, unsigned short us, size_t N,
 
 CUresult cuMemsetD32Async(CUdeviceptr dstDevice, unsigned int ui, size_t N,
                           CUstream hStream) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route))
@@ -1782,6 +1794,7 @@ CUresult cuMemsetD32Async(CUdeviceptr dstDevice, unsigned int ui, size_t N,
 CUresult cuMemsetD2D8Async(CUdeviceptr dstDevice, size_t dstPitch,
                            unsigned char uc, size_t Width, size_t Height,
                            CUstream hStream) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route))
@@ -1806,6 +1819,7 @@ CUresult cuMemsetD2D8Async(CUdeviceptr dstDevice, size_t dstPitch,
 CUresult cuMemsetD2D16Async(CUdeviceptr dstDevice, size_t dstPitch,
                             unsigned short us, size_t Width, size_t Height,
                             CUstream hStream) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route))
@@ -1830,6 +1844,7 @@ CUresult cuMemsetD2D16Async(CUdeviceptr dstDevice, size_t dstPitch,
 CUresult cuMemsetD2D32Async(CUdeviceptr dstDevice, size_t dstPitch,
                             unsigned int ui, size_t Width, size_t Height,
                             CUstream hStream) {
+  lupine_note_device_write(dstDevice);
   lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route))

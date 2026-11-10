@@ -160,6 +160,10 @@ successful call completes, scoped by the routing key (current context, context,
 stream or event), and `STDOUT` returns the device printf output captured around
 the call. Both sides are generated: the server writes these fields ahead of the
 CUDA result and the client reads them in the same order.
+`@synchronize DEVICEPTR <param>` marks an address the call writes from the
+device, as a copy or memset does. It does not synchronize: when the address
+names a mapped host allocation, the next synchronize refreshes the client's
+view of it, as it does for an allocation a kernel was given.
 
 Keep function-specific code in manual files when the behavior cannot be
 described by annotations without embedding C++ for that exact API. Typical

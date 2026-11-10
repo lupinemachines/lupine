@@ -1183,6 +1183,9 @@ class FunctionAnnotationMetadata:
     # Optional response fields are emitted by the corresponding manual server
     # handler before the generated CUDA result.
     synchronize: Optional[SynchronizeAnnotation] = None
+    # @synchronize DEVICEPTR <param>: addresses the call writes from the
+    # device. Mapped host memory there is refreshed at the next synchronize.
+    device_writes: list[Parameter] = field(default_factory=list)
     routing_kind: Optional[str] = None
     routing_parameter: Optional[Parameter] = None
     routing_fallback: Optional[RoutingFallbackAnnotation] = None
