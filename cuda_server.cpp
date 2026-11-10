@@ -253,10 +253,10 @@ static int lupine_write_jit_outputs(conn_t *conn, lupine_jit_state *jit) {
     size_t output_length = sizeof(jit->option_values[i]);
     if (jit->options[i] == CU_JIT_INFO_LOG_BUFFER) {
       output = jit->info_log;
-      output_length = jit->info_log_size;
+      output_length = output == nullptr ? 0 : jit->info_log_size;
     } else if (jit->options[i] == CU_JIT_ERROR_LOG_BUFFER) {
       output = jit->error_log;
-      output_length = jit->error_log_size;
+      output_length = output == nullptr ? 0 : jit->error_log_size;
     }
     if (is_log && output != nullptr && output_length != 0) {
       const auto *end =
