@@ -173,6 +173,7 @@ MANUAL_REMAPPINGS = [
     ("cuMemFreeAsync_ptsz", "cuMemFreeAsync"),
     ("cuMemAllocAsync_ptsz", "cuMemAllocAsync"),
     ("cuMemAllocFromPoolAsync_ptsz", "cuMemAllocFromPoolAsync"),
+    ("cuStreamUpdateCaptureDependencies_v2_ptsz", "cuStreamUpdateCaptureDependencies_v2"),
 ]
 
 # Versioned graph-query ABIs are also exported under their public, unversioned
@@ -189,6 +190,26 @@ FUNCTION_MAP_ALIASES = [
     (
         "cuGraphNodeGetDependentNodes",
         "cuGraphNodeGetDependentNodes_v2",
+        "CUDA_VERSION >= 12030",
+    ),
+    (
+        "cuGraphAddDependencies",
+        "cuGraphAddDependencies_v2",
+        "CUDA_VERSION >= 12030",
+    ),
+    (
+        "cuGraphRemoveDependencies",
+        "cuGraphRemoveDependencies_v2",
+        "CUDA_VERSION >= 12030",
+    ),
+    (
+        "cuStreamUpdateCaptureDependencies",
+        "cuStreamUpdateCaptureDependencies_v2",
+        "CUDA_VERSION >= 12030",
+    ),
+    (
+        "cuStreamUpdateCaptureDependencies_ptsz",
+        "cuStreamUpdateCaptureDependencies_v2",
         "CUDA_VERSION >= 12030",
     ),
 ]
@@ -270,7 +291,6 @@ HIP_MANUAL_REMAPPINGS = [
 
 PRIVATE_RPC_FUNCTIONS = [
     "cuGetExportTableMetadata",
-    "cuGraphConditionalHandleCreate",
     "cuPrivateGetModuleNode",
     "cuStreamBeginCaptureToGraph",
     "cuStreamGetCaptureInfo_v3",
@@ -496,14 +516,6 @@ ANNOTATION_FILES = {
     "nvml": "annotations_nvml.h",
     "hip": "annotations_hip.h",
 }
-
-
-SKIP_FUNCTIONS = {
-    "cuStreamUpdateCaptureDependencies_v2",
-    "cuGraphAddDependencies_v2",
-    "cuGraphRemoveDependencies_v2",
-}
-
 
 
 def annotation_param(params: list[Parameter], name: str) -> Parameter:
@@ -1068,7 +1080,10 @@ def parse_annotation(
 
 
 def client_routing_key_expr(
-    kind: Optional[str], param: Optional[Parameter], metadata: FunctionAnnotationMetadata
+    kind: Optional[str],
+    param: Optional[Parameter],
+    metadata: FunctionAnnotationMetadata,
+    allow_fallback: bool = True,
 ) -> str:
     # The kind names the selector, so a new kind needs one but no change here.
     if kind is None:
@@ -1086,15 +1101,18 @@ def client_routing_key_expr(
         name = f"reinterpret_cast<CUfunction>({name})"
     elif kind == "DEVICEPTR" and isinstance(param.type, Pointer):
         name = f"reinterpret_cast<CUdeviceptr>({name})"
-    elif kind == "STREAM":
+    elif kind == "STREAM" or (
+        allow_fallback and metadata.routing_fallback is not None
+    ):
         # The default stream belongs to no route, so a null handle falls back.
         fallback = (
             client_routing_key_expr(
                 metadata.routing_fallback.kind,
                 metadata.routing_fallback.parameter,
                 metadata,
+                allow_fallback=False,
             )
-            if metadata.routing_fallback is not None
+            if allow_fallback and metadata.routing_fallback is not None
             else "lupine_route_for_default()"
         )
         return f"({name} != nullptr ? {route}({name}) : {fallback})"
@@ -1794,7 +1812,6 @@ def main():
         function
         for function in cuda_ast.namespace.functions
         if function.name.format().startswith("cu")
-        and function.name.format() not in SKIP_FUNCTIONS
     ]
 
     functions_with_annotations: list[

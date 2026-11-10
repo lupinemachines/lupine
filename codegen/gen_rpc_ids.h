@@ -193,6 +193,7 @@
 #define RPC_cuThreadExchangeStreamCaptureMode 1237612350
 #define RPC_cuStreamEndCapture 1177265840
 #define RPC_cuStreamIsCapturing 1190314173
+#define RPC_cuStreamUpdateCaptureDependencies_v2 434730116
 #define RPC_cuStreamAttachMemAsync 95898005
 #define RPC_cuStreamQuery 1660021658
 #define RPC_cuStreamSynchronize 1581600379
@@ -294,6 +295,8 @@
 #define RPC_cuGraphGetEdges_v2 316952113
 #define RPC_cuGraphNodeGetDependencies_v2 773232156
 #define RPC_cuGraphNodeGetDependentNodes_v2 310507977
+#define RPC_cuGraphAddDependencies_v2 1733357590
+#define RPC_cuGraphRemoveDependencies_v2 1606074400
 #define RPC_cuGraphDestroyNode 1083979368
 #define RPC_cuGraphInstantiateWithFlags 115605169
 #define RPC_cuGraphInstantiateWithParams 403780036
@@ -324,6 +327,7 @@
 #define RPC_cuGraphReleaseUserObject 127294699
 #define RPC_cuGraphNodeSetParams 886812701
 #define RPC_cuGraphExecNodeSetParams 598468608
+#define RPC_cuGraphConditionalHandleCreate 1689373620
 #define RPC_cuOccupancyMaxActiveBlocksPerMultiprocessor 949228373
 #define RPC_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags 1746375403
 #define RPC_cuOccupancyMaxPotentialBlockSize 2031689913
@@ -410,10 +414,7 @@
 #define RPC_cuGraphExecUpdate 882549126
 #define RPC_cuCtxCreate_v2 804269166
 #define RPC_cuCtxCreate_v3 1492589816
-#define RPC_cuGraphAddDependencies_v2 1733357590
 #define RPC_cuGraphAddNode_v2 1958016248
-#define RPC_cuGraphRemoveDependencies_v2 1606074400
-#define RPC_cuStreamUpdateCaptureDependencies_v2 434730116
 #define RPC_nvmlInit_v2 2103095296
 #define RPC_nvmlInitWithFlags 1768977338
 #define RPC_nvmlShutdown 999915332
@@ -826,7 +827,6 @@
 #define RPC_ncclParamDumpAll 8880191
 
 #define LUPINE_RPC_cuGetExportTableMetadata 565915314
-#define LUPINE_RPC_cuGraphConditionalHandleCreate 1689373620
 #define LUPINE_RPC_cuPrivateGetModuleNode 1986234018
 #define LUPINE_RPC_cuStreamBeginCaptureToGraph 1423223781
 #define LUPINE_RPC_cuStreamGetCaptureInfo_v3 1793131524

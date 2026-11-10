@@ -4474,6 +4474,70 @@ ERROR_0:
   return -1;
 }
 
+int handle_cuStreamUpdateCaptureDependencies_v2(conn_t *conn) {
+  CUstream hStream;
+  size_t numDependencies;
+  CUgraphNode *dependencies = nullptr;
+  uint8_t dependencies_null = 0;
+  CUgraphEdgeData *dependencyData = nullptr;
+  uint8_t dependencyData_null = 0;
+  unsigned int flags;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
+      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &dependencies_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!dependencies_null) {
+    dependencies =
+        (CUgraphNode *)calloc(numDependencies * sizeof(CUgraphNode) == 0
+                                  ? 1
+                                  : numDependencies * sizeof(CUgraphNode),
+                              1);
+    if (dependencies == nullptr)
+      goto ERROR_0;
+  }
+  if ((!dependencies_null && numDependencies * sizeof(CUgraphNode) != 0 &&
+       rpc_read(conn, dependencies, numDependencies * sizeof(CUgraphNode)) <
+           0) ||
+      rpc_read(conn, &dependencyData_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!dependencyData_null) {
+    dependencyData = (CUgraphEdgeData *)calloc(
+        numDependencies * sizeof(const CUgraphEdgeData) == 0
+            ? 1
+            : numDependencies * sizeof(const CUgraphEdgeData),
+        1);
+    if (dependencyData == nullptr)
+      goto ERROR_0;
+  }
+  if ((!dependencyData_null &&
+       numDependencies * sizeof(const CUgraphEdgeData) != 0 &&
+       rpc_read(conn, dependencyData,
+                numDependencies * sizeof(const CUgraphEdgeData)) < 0) ||
+      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuStreamUpdateCaptureDependencies_v2(
+      hStream, dependencies, dependencyData, numDependencies, flags);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)dependencyData);
+  free((void *)dependencies);
+  return 0;
+ERROR_0:
+  free((void *)dependencyData);
+  free((void *)dependencies);
+  return -1;
+}
+
 int handle_cuStreamAttachMemAsync(conn_t *conn) {
   CUstream hStream;
   CUdeviceptr dptr;
@@ -7548,6 +7612,162 @@ ERROR_0:
   return -1;
 }
 
+int handle_cuGraphAddDependencies_v2(conn_t *conn) {
+  CUgraph hGraph;
+  size_t numDependencies;
+  CUgraphNode *from = nullptr;
+  uint8_t from_null = 0;
+  CUgraphNode *to = nullptr;
+  uint8_t to_null = 0;
+  CUgraphEdgeData *edgeData = nullptr;
+  uint8_t edgeData_null = 0;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &from_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!from_null) {
+    from =
+        (CUgraphNode *)calloc(numDependencies * sizeof(const CUgraphNode) == 0
+                                  ? 1
+                                  : numDependencies * sizeof(const CUgraphNode),
+                              1);
+    if (from == nullptr)
+      goto ERROR_0;
+  }
+  if ((!from_null && numDependencies * sizeof(const CUgraphNode) != 0 &&
+       rpc_read(conn, from, numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_read(conn, &to_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!to_null) {
+    to =
+        (CUgraphNode *)calloc(numDependencies * sizeof(const CUgraphNode) == 0
+                                  ? 1
+                                  : numDependencies * sizeof(const CUgraphNode),
+                              1);
+    if (to == nullptr)
+      goto ERROR_0;
+  }
+  if ((!to_null && numDependencies * sizeof(const CUgraphNode) != 0 &&
+       rpc_read(conn, to, numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_read(conn, &edgeData_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!edgeData_null) {
+    edgeData = (CUgraphEdgeData *)calloc(
+        numDependencies * sizeof(const CUgraphEdgeData) == 0
+            ? 1
+            : numDependencies * sizeof(const CUgraphEdgeData),
+        1);
+    if (edgeData == nullptr)
+      goto ERROR_0;
+  }
+  if ((!edgeData_null && numDependencies * sizeof(const CUgraphEdgeData) != 0 &&
+       rpc_read(conn, edgeData,
+                numDependencies * sizeof(const CUgraphEdgeData)) < 0) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value =
+      cuGraphAddDependencies_v2(hGraph, from, to, edgeData, numDependencies);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)edgeData);
+  free((void *)to);
+  free((void *)from);
+  return 0;
+ERROR_0:
+  free((void *)edgeData);
+  free((void *)to);
+  free((void *)from);
+  return -1;
+}
+
+int handle_cuGraphRemoveDependencies_v2(conn_t *conn) {
+  CUgraph hGraph;
+  size_t numDependencies;
+  CUgraphNode *from = nullptr;
+  uint8_t from_null = 0;
+  CUgraphNode *to = nullptr;
+  uint8_t to_null = 0;
+  CUgraphEdgeData *edgeData = nullptr;
+  uint8_t edgeData_null = 0;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_read(conn, &numDependencies, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &from_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!from_null) {
+    from =
+        (CUgraphNode *)calloc(numDependencies * sizeof(const CUgraphNode) == 0
+                                  ? 1
+                                  : numDependencies * sizeof(const CUgraphNode),
+                              1);
+    if (from == nullptr)
+      goto ERROR_0;
+  }
+  if ((!from_null && numDependencies * sizeof(const CUgraphNode) != 0 &&
+       rpc_read(conn, from, numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_read(conn, &to_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!to_null) {
+    to =
+        (CUgraphNode *)calloc(numDependencies * sizeof(const CUgraphNode) == 0
+                                  ? 1
+                                  : numDependencies * sizeof(const CUgraphNode),
+                              1);
+    if (to == nullptr)
+      goto ERROR_0;
+  }
+  if ((!to_null && numDependencies * sizeof(const CUgraphNode) != 0 &&
+       rpc_read(conn, to, numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_read(conn, &edgeData_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!edgeData_null) {
+    edgeData = (CUgraphEdgeData *)calloc(
+        numDependencies * sizeof(const CUgraphEdgeData) == 0
+            ? 1
+            : numDependencies * sizeof(const CUgraphEdgeData),
+        1);
+    if (edgeData == nullptr)
+      goto ERROR_0;
+  }
+  if ((!edgeData_null && numDependencies * sizeof(const CUgraphEdgeData) != 0 &&
+       rpc_read(conn, edgeData,
+                numDependencies * sizeof(const CUgraphEdgeData)) < 0) ||
+      false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value =
+      cuGraphRemoveDependencies_v2(hGraph, from, to, edgeData, numDependencies);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)edgeData);
+  free((void *)to);
+  free((void *)from);
+  return 0;
+ERROR_0:
+  free((void *)edgeData);
+  free((void *)to);
+  free((void *)from);
+  return -1;
+}
+
 int handle_cuGraphDestroyNode(conn_t *conn) {
   CUgraphNode hNode;
   int request_id;
@@ -8264,6 +8484,43 @@ ERROR_0:
 }
 
 #endif
+
+int handle_cuGraphConditionalHandleCreate(conn_t *conn) {
+  uint8_t pHandle_out_present = 0;
+  CUgraphConditionalHandle pHandle_out{};
+  CUgraph hGraph;
+  CUcontext ctx;
+  unsigned int defaultLaunchValue;
+  unsigned int flags;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &pHandle_out_present, sizeof(uint8_t)) < 0 ||
+      (pHandle_out_present &&
+       rpc_read(conn, &pHandle_out, sizeof(CUgraphConditionalHandle)) < 0) ||
+      rpc_read(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_read(conn, &ctx, sizeof(CUcontext)) < 0 ||
+      rpc_read(conn, &defaultLaunchValue, sizeof(unsigned int)) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuGraphConditionalHandleCreate(
+      pHandle_out_present ? &pHandle_out : nullptr, hGraph, ctx,
+      defaultLaunchValue, flags);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (pHandle_out_present &&
+       rpc_write(conn, &pHandle_out, sizeof(CUgraphConditionalHandle)) < 0) ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
 
 int handle_cuOccupancyMaxActiveBlocksPerMultiprocessor(conn_t *conn) {
   uint8_t numBlocks_present = 0;

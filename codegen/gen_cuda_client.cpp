@@ -3690,6 +3690,42 @@ CUresult cuStreamIsCapturing(CUstream hStream,
   return return_value;
 }
 
+CUresult cuStreamUpdateCaptureDependencies_v2(
+    CUstream hStream, CUgraphNode *dependencies,
+    const CUgraphEdgeData *dependencyData, size_t numDependencies,
+    unsigned int flags) {
+  lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
+                                           : lupine_route_for_default());
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuStreamUpdateCaptureDependencies_v2"),
+        hStream, dependencies, dependencyData, numDependencies, flags);
+  conn_t *conn = lupine_route_remote_conn(route);
+  uint8_t dependencies_null = dependencies == nullptr ? 1 : 0;
+  uint8_t dependencyData_null = dependencyData == nullptr ? 1 : 0;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuStreamUpdateCaptureDependencies_v2) <
+          0 ||
+      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
+      rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &dependencies_null, sizeof(uint8_t)) < 0 ||
+      (!dependencies_null && numDependencies * sizeof(CUgraphNode) != 0 &&
+       rpc_write(conn, dependencies, numDependencies * sizeof(CUgraphNode)) <
+           0) ||
+      rpc_write(conn, &dependencyData_null, sizeof(uint8_t)) < 0 ||
+      (!dependencyData_null &&
+       numDependencies * sizeof(const CUgraphEdgeData) != 0 &&
+       rpc_write(conn, dependencyData,
+                 numDependencies * sizeof(const CUgraphEdgeData)) < 0) ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
 CUresult cuStreamAttachMemAsync(CUstream hStream, CUdeviceptr dptr,
                                 size_t length, unsigned int flags) {
   lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
@@ -6354,6 +6390,78 @@ CUresult cuGraphNodeGetDependentNodes_v2(CUgraphNode hNode,
   return return_value;
 }
 
+CUresult cuGraphAddDependencies_v2(CUgraph hGraph, const CUgraphNode *from,
+                                   const CUgraphNode *to,
+                                   const CUgraphEdgeData *edgeData,
+                                   size_t numDependencies) {
+  lupine_route route = lupine_route_for_graph(hGraph);
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuGraphAddDependencies_v2"), hGraph, from, to,
+        edgeData, numDependencies);
+  conn_t *conn = lupine_route_remote_conn(route);
+  uint8_t from_null = from == nullptr ? 1 : 0;
+  uint8_t to_null = to == nullptr ? 1 : 0;
+  uint8_t edgeData_null = edgeData == nullptr ? 1 : 0;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGraphAddDependencies_v2) < 0 ||
+      rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &from_null, sizeof(uint8_t)) < 0 ||
+      (!from_null && numDependencies * sizeof(const CUgraphNode) != 0 &&
+       rpc_write(conn, from, numDependencies * sizeof(const CUgraphNode)) <
+           0) ||
+      rpc_write(conn, &to_null, sizeof(uint8_t)) < 0 ||
+      (!to_null && numDependencies * sizeof(const CUgraphNode) != 0 &&
+       rpc_write(conn, to, numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_write(conn, &edgeData_null, sizeof(uint8_t)) < 0 ||
+      (!edgeData_null && numDependencies * sizeof(const CUgraphEdgeData) != 0 &&
+       rpc_write(conn, edgeData,
+                 numDependencies * sizeof(const CUgraphEdgeData)) < 0) ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+CUresult cuGraphRemoveDependencies_v2(CUgraph hGraph, const CUgraphNode *from,
+                                      const CUgraphNode *to,
+                                      const CUgraphEdgeData *edgeData,
+                                      size_t numDependencies) {
+  lupine_route route = lupine_route_for_graph(hGraph);
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuGraphRemoveDependencies_v2"), hGraph, from,
+        to, edgeData, numDependencies);
+  conn_t *conn = lupine_route_remote_conn(route);
+  uint8_t from_null = from == nullptr ? 1 : 0;
+  uint8_t to_null = to == nullptr ? 1 : 0;
+  uint8_t edgeData_null = edgeData == nullptr ? 1 : 0;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGraphRemoveDependencies_v2) < 0 ||
+      rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_write(conn, &numDependencies, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &from_null, sizeof(uint8_t)) < 0 ||
+      (!from_null && numDependencies * sizeof(const CUgraphNode) != 0 &&
+       rpc_write(conn, from, numDependencies * sizeof(const CUgraphNode)) <
+           0) ||
+      rpc_write(conn, &to_null, sizeof(uint8_t)) < 0 ||
+      (!to_null && numDependencies * sizeof(const CUgraphNode) != 0 &&
+       rpc_write(conn, to, numDependencies * sizeof(const CUgraphNode)) < 0) ||
+      rpc_write(conn, &edgeData_null, sizeof(uint8_t)) < 0 ||
+      (!edgeData_null && numDependencies * sizeof(const CUgraphEdgeData) != 0 &&
+       rpc_write(conn, edgeData,
+                 numDependencies * sizeof(const CUgraphEdgeData)) < 0) ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
 CUresult cuGraphDestroyNode(CUgraphNode hNode) {
   lupine_route route = lupine_route_for_graph_node(hNode);
   CUresult return_value;
@@ -7076,6 +7184,37 @@ CUresult cuGraphExecNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
 }
 
 #endif
+
+CUresult cuGraphConditionalHandleCreate(CUgraphConditionalHandle *pHandle_out,
+                                        CUgraph hGraph, CUcontext ctx,
+                                        unsigned int defaultLaunchValue,
+                                        unsigned int flags) {
+  lupine_route route = (hGraph != nullptr ? lupine_route_for_graph(hGraph)
+                                          : lupine_route_for_context(ctx));
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuGraphConditionalHandleCreate"), pHandle_out,
+        hGraph, ctx, defaultLaunchValue, flags);
+  conn_t *conn = lupine_route_remote_conn(route);
+  uint8_t pHandle_out_present = pHandle_out != nullptr;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuGraphConditionalHandleCreate) < 0 ||
+      rpc_write(conn, &pHandle_out_present, sizeof(uint8_t)) < 0 ||
+      (pHandle_out_present &&
+       rpc_write(conn, pHandle_out, sizeof(CUgraphConditionalHandle)) < 0) ||
+      rpc_write(conn, &hGraph, sizeof(CUgraph)) < 0 ||
+      rpc_write(conn, &ctx, sizeof(CUcontext)) < 0 ||
+      rpc_write(conn, &defaultLaunchValue, sizeof(unsigned int)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (pHandle_out_present &&
+       rpc_read(conn, pHandle_out, sizeof(CUgraphConditionalHandle)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
 
 CUresult cuOccupancyMaxActiveBlocksPerMultiprocessor(int *numBlocks,
                                                      CUfunction func,
@@ -10336,6 +10475,17 @@ extern "C" CUresult cuMemAllocFromPoolAsync_ptsz(CUdeviceptr *dptr,
   return cuMemAllocFromPoolAsync(dptr, bytesize, pool, hStream);
 }
 
+#ifdef cuStreamUpdateCaptureDependencies_v2_ptsz
+#undef cuStreamUpdateCaptureDependencies_v2_ptsz
+#endif
+extern "C" CUresult cuStreamUpdateCaptureDependencies_v2_ptsz(
+    CUstream hStream, CUgraphNode *dependencies,
+    const CUgraphEdgeData *dependencyData, size_t numDependencies,
+    unsigned int flags) {
+  return cuStreamUpdateCaptureDependencies_v2(
+      hStream, dependencies, dependencyData, numDependencies, flags);
+}
+
 std::unordered_map<std::string, void *> functionMap = {
     {"cuGetErrorString", (void *)cuGetErrorString},
     {"cuGetErrorName", (void *)cuGetErrorName},
@@ -10548,6 +10698,8 @@ std::unordered_map<std::string, void *> functionMap = {
      (void *)cuThreadExchangeStreamCaptureMode},
     {"cuStreamEndCapture", (void *)cuStreamEndCapture},
     {"cuStreamIsCapturing", (void *)cuStreamIsCapturing},
+    {"cuStreamUpdateCaptureDependencies_v2",
+     (void *)cuStreamUpdateCaptureDependencies_v2},
     {"cuStreamAttachMemAsync", (void *)cuStreamAttachMemAsync},
     {"cuStreamQuery", (void *)cuStreamQuery},
     {"cuStreamSynchronize", (void *)cuStreamSynchronize},
@@ -10671,6 +10823,8 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuGraphNodeGetDependencies_v2", (void *)cuGraphNodeGetDependencies_v2},
     {"cuGraphNodeGetDependentNodes_v2",
      (void *)cuGraphNodeGetDependentNodes_v2},
+    {"cuGraphAddDependencies_v2", (void *)cuGraphAddDependencies_v2},
+    {"cuGraphRemoveDependencies_v2", (void *)cuGraphRemoveDependencies_v2},
     {"cuGraphDestroyNode", (void *)cuGraphDestroyNode},
     {"cuGraphInstantiateWithFlags", (void *)cuGraphInstantiateWithFlags},
     {"cuGraphInstantiateWithParams", (void *)cuGraphInstantiateWithParams},
@@ -10712,6 +10866,7 @@ std::unordered_map<std::string, void *> functionMap = {
 #if CUDA_VERSION >= 12020
     {"cuGraphExecNodeSetParams", (void *)cuGraphExecNodeSetParams},
 #endif
+    {"cuGraphConditionalHandleCreate", (void *)cuGraphConditionalHandleCreate},
     {"cuOccupancyMaxActiveBlocksPerMultiprocessor",
      (void *)cuOccupancyMaxActiveBlocksPerMultiprocessor},
     {"cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags",
@@ -10965,6 +11120,8 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemFreeAsync_ptsz", (void *)cuMemFreeAsync},
     {"cuMemAllocAsync_ptsz", (void *)cuMemAllocAsync},
     {"cuMemAllocFromPoolAsync_ptsz", (void *)cuMemAllocFromPoolAsync},
+    {"cuStreamUpdateCaptureDependencies_v2_ptsz",
+     (void *)cuStreamUpdateCaptureDependencies_v2},
 #if CUDA_VERSION >= 12030
     {"cuGraphGetEdges", (void *)cuGraphGetEdges_v2},
 #endif
@@ -10973,6 +11130,20 @@ std::unordered_map<std::string, void *> functionMap = {
 #endif
 #if CUDA_VERSION >= 12030
     {"cuGraphNodeGetDependentNodes", (void *)cuGraphNodeGetDependentNodes_v2},
+#endif
+#if CUDA_VERSION >= 12030
+    {"cuGraphAddDependencies", (void *)cuGraphAddDependencies_v2},
+#endif
+#if CUDA_VERSION >= 12030
+    {"cuGraphRemoveDependencies", (void *)cuGraphRemoveDependencies_v2},
+#endif
+#if CUDA_VERSION >= 12030
+    {"cuStreamUpdateCaptureDependencies",
+     (void *)cuStreamUpdateCaptureDependencies_v2},
+#endif
+#if CUDA_VERSION >= 12030
+    {"cuStreamUpdateCaptureDependencies_ptsz",
+     (void *)cuStreamUpdateCaptureDependencies_v2},
 #endif
 };
 
