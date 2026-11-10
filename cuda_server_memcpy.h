@@ -76,6 +76,9 @@ struct lupine_pending_dtoh_item {
   CUcontext context = nullptr;
   // Preserve graph dependencies inherited through cuStreamWaitEvent.
   lupine_graph_resources *graph_resources = nullptr;
+  // Whether a legacy-stream synchronize waits for this item's stream, settled
+  // when it is queued: the stream can be destroyed before it is collected.
+  bool legacy_ordered = false;
 };
 
 using lupine_pending_dtoh_items = std::vector<lupine_pending_dtoh_item>;
@@ -103,6 +106,8 @@ using lupine_pending_dtoh_streams =
 
 libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies();
+void lupine_queue_pending_dtoh_copies(conn_t *conn, CUstream stream,
+                                      lupine_pending_dtoh_items copies);
 lupine_graph_resources *lupine_get_graph_resources(CUgraph graph);
 lupine_graph_resources *lupine_get_stream_resources(CUstream stream);
 lupine_graph_resources *lupine_find_stream_resources(CUstream stream);

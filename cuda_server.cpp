@@ -679,6 +679,11 @@ static void *lupine_alloc_process_host_buffer(size_t bytes) {
   return ptr;
 }
 
+// Both handles name the legacy default stream; its queue is keyed by null.
+static CUstream lupine_pending_dtoh_queue(CUstream stream) {
+  return stream == CU_STREAM_LEGACY ? nullptr : stream;
+}
+
 // The legacy default stream waits for blocking streams' earlier work but not
 // for non-blocking streams, whose copies may not have run when it finishes.
 static bool lupine_legacy_stream_waits_for(CUstream stream) {
@@ -688,37 +693,60 @@ static bool lupine_legacy_stream_waits_for(CUstream stream) {
           (flags & CU_STREAM_NON_BLOCKING) == 0);
 }
 
+void lupine_queue_pending_dtoh_copies(conn_t *conn, CUstream stream,
+                                      lupine_pending_dtoh_items copies) {
+  if (copies.empty()) {
+    return;
+  }
+  stream = lupine_pending_dtoh_queue(stream);
+  bool legacy_ordered = lupine_legacy_stream_waits_for(stream);
+  for (auto &copy : copies) {
+    copy.legacy_ordered = legacy_ordered;
+  }
+  lupine_pending_dtoh_copies().upsert(
+      conn,
+      [stream, &copies](lupine_pending_dtoh_streams &streams,
+                        libcuckoo::UpsertContext) {
+        auto &items = streams[stream];
+        items.insert(items.end(), copies.begin(), copies.end());
+      },
+      lupine_pending_dtoh_streams{});
+}
+
 std::vector<lupine_pending_dtoh_item>
 lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
                                   bool all_streams, CUcontext context) {
   std::vector<lupine_pending_dtoh_item> copies;
+  stream = lupine_pending_dtoh_queue(stream);
   auto *inherited = lupine_find_stream_resources(stream);
   lupine_pending_dtoh_copies().erase_fn(
       conn, [&](lupine_pending_dtoh_streams &streams) {
         for (auto it = streams.begin(); it != streams.end();) {
-          bool covered =
-              all_streams || it->first == stream ||
-              (stream == nullptr && lupine_legacy_stream_waits_for(it->first));
-          if (!covered && inherited == nullptr) {
+          bool own = all_streams || it->first == stream;
+          if (!own && stream != nullptr && inherited == nullptr) {
             ++it;
             continue;
           }
           auto &items = it->second;
-          items.erase(std::remove_if(
-                          items.begin(), items.end(),
-                          [&](const auto &item) {
-                            if (!covered && item.graph_resources != inherited) {
-                              return false;
-                            }
-                            if (context != nullptr && item.context != context) {
-                              return false;
-                            }
-                            if (item.event == nullptr) {
-                              copies.push_back(item);
-                            }
-                            return true;
-                          }),
-                      items.end());
+          items.erase(
+              std::remove_if(
+                  items.begin(), items.end(),
+                  [&](const auto &item) {
+                    bool covered =
+                        own || (stream == nullptr && item.legacy_ordered);
+                    if (!covered && (inherited == nullptr ||
+                                     item.graph_resources != inherited)) {
+                      return false;
+                    }
+                    if (context != nullptr && item.context != context) {
+                      return false;
+                    }
+                    if (item.event == nullptr) {
+                      copies.push_back(item);
+                    }
+                    return true;
+                  }),
+              items.end());
           if (items.empty()) {
             it = streams.erase(it);
           } else {
@@ -752,6 +780,7 @@ lupine_remove_event_dtoh_markers(lupine_pending_dtoh_streams *streams,
 void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream) {
   CUcontext context = nullptr;
   (void)cuStreamGetCtx(stream, &context);
+  stream = lupine_pending_dtoh_queue(stream);
   lupine_pending_dtoh_item marker{event};
   marker.context = context;
   lupine_pending_dtoh_streams initial;
@@ -769,16 +798,16 @@ void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream) {
         // The legacy default stream orders this event after every blocking
         // stream's prior work. The null queue is its sentinel.
         streams.try_emplace(nullptr);
+        // A queue holding only markers owes no copies, so it needs none.
         for (auto &entry : streams) {
-          if (entry.first != nullptr) {
-            if (entry.first == CU_STREAM_PER_THREAD) {
-              continue;
-            }
-            unsigned int flags = 0;
-            if (cuStreamGetFlags(entry.first, &flags) != CUDA_SUCCESS ||
-                (flags & CU_STREAM_NON_BLOCKING) != 0) {
-              continue;
-            }
+          if (entry.first != nullptr &&
+              (entry.first == CU_STREAM_PER_THREAD ||
+               std::none_of(entry.second.begin(), entry.second.end(),
+                            [](const auto &item) {
+                              return item.event == nullptr &&
+                                     item.legacy_ordered;
+                            }))) {
+            continue;
           }
           entry.second.push_back(marker);
         }
