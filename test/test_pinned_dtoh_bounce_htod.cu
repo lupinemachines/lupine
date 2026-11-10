@@ -77,7 +77,7 @@ static int bounce_graph(cudaStream_t stream, unsigned int *host, size_t count,
   CHECK(cudaMemcpyAsync(host, a, bytes, cudaMemcpyDeviceToHost, stream));
   CHECK(cudaMemcpyAsync(b, host, bytes, cudaMemcpyHostToDevice, stream));
   CHECK(cudaStreamEndCapture(stream, &graph));
-  CHECK(cudaGraphInstantiate(&exec, graph, 0));
+  CHECK(cudaGraphInstantiate(&exec, graph, nullptr, nullptr, 0));
 
   for (unsigned int round = 1; round <= 10; ++round) {
     for (size_t i = 0; i < count; ++i) {
