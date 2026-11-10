@@ -117,7 +117,7 @@ CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
   lupine_route route = lupine_route_for_device(&dev);
   if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
     return CUDA_ERROR_INVALID_DEVICE;
-  if ((8 != 0 && luid == nullptr) || deviceNodeMask == nullptr) {
+  if (luid == nullptr || deviceNodeMask == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   CUresult return_value;
@@ -1309,7 +1309,7 @@ CUresult cuDeviceGetPCIBusId(char *pciBusId, int len, CUdevice dev) {
   lupine_route route = lupine_route_for_device(&dev);
   if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
     return CUDA_ERROR_INVALID_DEVICE;
-  if (len < 0 || (len * sizeof(char) != 0 && pciBusId == nullptr)) {
+  if (len < 0 || pciBusId == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   CUresult return_value;
@@ -8422,6 +8422,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemcpyDtoD_v2", (void *)cuMemcpyDtoD_v2},
     {"cuMemcpyDtoA_v2", (void *)cuMemcpyDtoA_v2},
     {"cuMemcpyAtoD_v2", (void *)cuMemcpyAtoD_v2},
+    {"cuMemcpyHtoA_v2", (void *)cuMemcpyHtoA_v2},
     {"cuMemcpyAtoH_v2", (void *)cuMemcpyAtoH_v2},
     {"cuMemcpyAtoA_v2", (void *)cuMemcpyAtoA_v2},
     {"cuMemcpy2D_v2", (void *)cuMemcpy2D_v2},
@@ -8432,6 +8433,7 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemcpyHtoDAsync_v2", (void *)cuMemcpyHtoDAsync_v2},
     {"cuMemcpyDtoHAsync_v2", (void *)cuMemcpyDtoHAsync_v2},
     {"cuMemcpyDtoDAsync_v2", (void *)cuMemcpyDtoDAsync_v2},
+    {"cuMemcpyHtoAAsync_v2", (void *)cuMemcpyHtoAAsync_v2},
     {"cuMemcpyAtoHAsync_v2", (void *)cuMemcpyAtoHAsync_v2},
     {"cuMemcpy2DAsync_v2", (void *)cuMemcpy2DAsync_v2},
     {"cuMemcpy3DAsync_v2", (void *)cuMemcpy3DAsync_v2},

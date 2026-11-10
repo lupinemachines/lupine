@@ -838,6 +838,15 @@ CUresult cuMemcpyDtoA_v2(CUarray dstArray, size_t dstOffset,
 CUresult cuMemcpyAtoD_v2(CUdeviceptr dstDevice, CUarray srcArray,
                          size_t srcOffset, size_t ByteCount);
 /**
+ * @disabled - manual client/server pipeline large host-to-array copies
+ * @param dstArray SEND_ONLY
+ * @param dstOffset SEND_ONLY
+ * @param ByteCount SEND_ONLY
+ * @param srcHost SEND_ONLY LENGTH:ByteCount
+ */
+CUresult cuMemcpyHtoA_v2(CUarray dstArray, size_t dstOffset,
+                         const void *srcHost, size_t ByteCount);
+/**
  * @disabled - manual client/server chunk large host-copy responses
  * @param srcArray SEND_ONLY
  * @param srcOffset SEND_ONLY
@@ -919,6 +928,17 @@ CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
  */
 CUresult cuMemcpyDtoDAsync_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                               size_t ByteCount, CUstream hStream);
+/**
+ * @disabled - manual client/server pipeline large host-to-array copies
+ * @param dstArray SEND_ONLY
+ * @param dstOffset SEND_ONLY
+ * @param ByteCount SEND_ONLY
+ * @param srcHost SEND_ONLY LENGTH:ByteCount
+ * @param hStream SEND_ONLY
+ */
+CUresult cuMemcpyHtoAAsync_v2(CUarray dstArray, size_t dstOffset,
+                              const void *srcHost, size_t ByteCount,
+                              CUstream hStream);
 /**
  * @disabled - manual client/server chunk large host-copy responses
  * @param srcArray SEND_ONLY
