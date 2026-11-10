@@ -1303,12 +1303,6 @@ int rpc_write_end(conn_t *conn) {
   int32_t write_stream_id = conn->write_stream_id;
   int result = -1;
   bool client_request = request && conn->local_request_parity == 0;
-  // Cache the last lane's FIFO coverage under the existing builder lock.
-  // Switching lanes can resend a fence, but needs no per-thread registry.
-  if (client_request && conn->async_prefix_stream != write_stream_id) {
-    conn->async_prefix_stream = write_stream_id;
-    conn->async_prefix = 0;
-  }
   // A client request is its wait markers, then {id, op} and its ticket. A
   // connection-wide one has a single marker, for every ticket published
   // before it started.
@@ -1332,7 +1326,7 @@ int rpc_write_end(conn_t *conn) {
     if (client_request) {
       const std::vector<rpc_wait_marker> &waits = conn->write_scope.waits;
       conn->write_queue[0] =
-          conn->write_dependency > conn->async_prefix
+          conn->write_dependency > 0
               ? rpc_write_cursor(&fence, sizeof(fence))
               : rpc_write_cursor(waits.data(), waits.size() * sizeof(waits[0]));
       header = {write_id, conn->write_op, conn->write_ticket};
@@ -1360,14 +1354,6 @@ int rpc_write_end(conn_t *conn) {
       conn->retired_scopes.erase(conn->retired_scopes.begin(),
                                  conn->retired_scopes.begin() +
                                      scope.retired_count);
-    }
-    if (result == 0 && client_request) {
-      conn->async_prefix = std::max(conn->async_prefix, conn->write_dependency);
-      // Own-lane FIFO extends a contiguous prefix by one. A gap may belong
-      // to an overlapping producer and must still be fenced on the next call.
-      if (ticketed && conn->issued_async_sequence == conn->async_prefix + 1) {
-        conn->async_prefix = conn->issued_async_sequence;
-      }
     }
   }
   rpc_release_write_builder(conn, request_nested_in_response);

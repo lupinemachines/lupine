@@ -1163,6 +1163,7 @@ void test_client_metadata_report(bool old_receiver = false,
           "metadata payload was invalid");
   int request_id = rpc_read_end(&pair.server);
   require(request_id > 0, "metadata request end failed");
+  rpc_async_sequence_end(&pair.server); // as the lane loop does
   op = rpc_dispatch(&pair.server, 0);
 
   require(op == kFollowupOp, "metadata blocked the next RPC");
@@ -2590,43 +2591,36 @@ void test_async_prefix_end_completes_only_claimed_ticket() {
           "a claimed ticket did not complete exactly once");
 }
 
-void test_async_prefix_same_lane_elision_and_cross_lane_marker() {
+// A connection-wide request leads with a marker for every earlier ticket.
+void test_async_prefix_connection_wide_marker() {
   h2_pair pair;
   init_pair(&pair);
   for (int i = 0; i < 2; ++i) {
     require(rpc_write_start_request(&pair.client, 101) == 0 &&
                 rpc_write_end(&pair.client) > 0 &&
                 pair.client.write_ticket == uint64_t(i),
-            "same-lane enqueue failed");
+            "enqueue failed");
   }
   int32_t lane = rpc_http2_accept_stream(&pair.server);
   for (int i = 0; i < 2; ++i) {
     int header[2];
-    uint64_t ticket;
+    uint64_t value;
+    require(i == 0 ||
+                (rpc_http2_read_stream(&pair.server, lane, header,
+                                       sizeof(header)) == 0 &&
+                 header[0] == 0 && header[1] == 0 &&
+                 rpc_http2_read_stream(&pair.server, lane, &value,
+                                       sizeof(value)) == 0 &&
+                 value == uint64_t(i)),
+            "request missed the earlier ticket");
     require(rpc_http2_read_stream(&pair.server, lane, header, sizeof(header)) ==
                     0 &&
                 header[0] >= 2 && header[1] == 101 &&
-                rpc_http2_read_stream(&pair.server, lane, &ticket,
-                                      sizeof(ticket)) == 0 &&
-                ticket == uint64_t(i),
-            "same-lane FIFO emitted a wait marker or lost its ticket");
+                rpc_http2_read_stream(&pair.server, lane, &value,
+                                      sizeof(value)) == 0 &&
+                value == uint64_t(i),
+            "request lost its ticket");
   }
-  std::thread other([&] {
-    require(rpc_write_start_request(&pair.client, 102) == 0 &&
-                rpc_write_end(&pair.client) > 0,
-            "cross-lane enqueue failed");
-  });
-  other.join();
-  lane = rpc_http2_accept_stream(&pair.server);
-  int marker[2];
-  uint64_t published = 0;
-  require(rpc_http2_read_stream(&pair.server, lane, marker, sizeof(marker)) ==
-                  0 &&
-              marker[0] == 0 && marker[1] == 0 &&
-              rpc_http2_read_stream(&pair.server, lane, &published,
-                                    sizeof(published)) == 0 &&
-              published == 2,
-          "cross-lane consumer missed the published prefix");
 }
 
 // A request takes its dependencies once it holds the builder, so one that
@@ -2683,14 +2677,20 @@ void test_async_prefix_builder_wait_orders_overlap() {
               0 &&
           ticket == 1,
       "blocked request lost its ticket");
-  // Its own lane already covers both earlier tickets.
+  require(rpc_http2_read_stream(&pair.server, lane, marker, sizeof(marker)) ==
+                  0 &&
+              marker[0] == 0 && marker[1] == 0 &&
+              rpc_http2_read_stream(&pair.server, lane, &published,
+                                    sizeof(published)) == 0 &&
+              published == 2,
+          "following request does not wait for both earlier tickets");
   require(
       rpc_http2_read_stream(&pair.server, lane, header, sizeof(header)) == 0 &&
           header[0] >= 2 && header[1] == 102 &&
           rpc_http2_read_stream(&pair.server, lane, &ticket, sizeof(ticket)) ==
               0 &&
           ticket == 2,
-      "following request repeated a covered wait");
+      "following request lost its ticket");
 }
 
 void test_async_prefix_wait_preserves_flow_control() {
@@ -2884,7 +2884,7 @@ int main() {
   RUN_CASE(test_profile_hash_compatibility());
   RUN_CASE(test_async_prefix_allows_overlap_and_joins_holes());
   RUN_CASE(test_async_prefix_end_completes_only_claimed_ticket());
-  RUN_CASE(test_async_prefix_same_lane_elision_and_cross_lane_marker());
+  RUN_CASE(test_async_prefix_connection_wide_marker());
   RUN_CASE(test_async_prefix_builder_wait_orders_overlap());
   RUN_CASE(test_async_prefix_wait_preserves_flow_control());
   RUN_CASE(test_async_prefix_shutdown_wakes_waiters());

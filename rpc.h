@@ -191,8 +191,6 @@ struct conn_t {
   uint64_t write_ticket;
   bool write_awaited;
   rpc_request_scope write_scope;
-  int32_t async_prefix_stream;
-  uint64_t async_prefix;
 
   pthread_t read_thread;
   pthread_mutex_t write_mutex, call_mutex, async_mutex;
