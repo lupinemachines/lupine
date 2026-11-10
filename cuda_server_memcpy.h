@@ -169,7 +169,7 @@ void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
 void *lupine_alloc_capture_scratch(size_t bytes);
 void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
                                  const lupine_host_rows &client,
-                                 void *server_src);
+                                 void *server_src, bool borrowed = false);
 
 // A host side staged on the server is dense: the client sends and receives
 // only the copied rows and keeps its own pitch and offsets.
