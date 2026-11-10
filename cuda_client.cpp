@@ -3697,21 +3697,26 @@ extern "C" void lupine_forget_destroyed_context(CUcontext ctx) {
   lupine_forget_context_owner(ctx);
   lupine_forget_context_local_storage(ctx);
   lupine_stream_pool_discard(-1, -1, ctx);
+  lupine_context_stack->erase(std::remove(lupine_context_stack->begin(),
+                                          lupine_context_stack->end(), ctx),
+                              lupine_context_stack->end());
   if (lupine_current_context == ctx) {
-    lupine_current_context = nullptr;
+    if (!lupine_context_stack->empty()) {
+      lupine_current_context = lupine_context_stack->back();
+      lupine_context_stack->pop_back();
+    } else {
+      lupine_current_context = nullptr;
+    }
   }
   if (lupine_default_context_hint == ctx) {
-    lupine_default_context_hint = nullptr;
+    lupine_default_context_hint = lupine_current_context;
   }
   CUcontext global_hint =
       lupine_global_default_context_hint.load(std::memory_order_relaxed);
   if (global_hint == ctx) {
-    lupine_global_default_context_hint.store(nullptr,
+    lupine_global_default_context_hint.store(lupine_current_context,
                                              std::memory_order_relaxed);
   }
-  lupine_context_stack->erase(std::remove(lupine_context_stack->begin(),
-                                          lupine_context_stack->end(), ctx),
-                              lupine_context_stack->end());
 }
 
 // CUDA IPC shareable handles of type POSIX fd cannot cross the wire as raw
@@ -3875,7 +3880,9 @@ extern "C" void lupine_note_ctx_create(CUcontext ctx, conn_t *conn) {
   lupine_note_context_owner(ctx, conn);
   lupine_lane_context_cache_store(
       lupine_route_identity(lupine_remote_route_for_conn(conn)), ctx);
-  lupine_context_stack->push_back(lupine_current_context);
+  if (lupine_current_context != nullptr) {
+    lupine_context_stack->push_back(lupine_current_context);
+  }
   lupine_current_context = ctx;
   if (ctx != nullptr) {
     lupine_default_context_hint = ctx;
@@ -3888,7 +3895,9 @@ extern "C" void lupine_note_ctx_create_route(CUcontext ctx,
   lupine_note_device_binding_changed();
   lupine_note_context_owner_route(ctx, route);
   lupine_lane_context_cache_store(lupine_route_identity(route), ctx);
-  lupine_context_stack->push_back(lupine_current_context);
+  if (lupine_current_context != nullptr) {
+    lupine_context_stack->push_back(lupine_current_context);
+  }
   lupine_current_context = ctx;
   if (ctx != nullptr) {
     lupine_default_context_hint = ctx;
@@ -3900,16 +3909,17 @@ extern "C" CUresult cuCtxPushCurrent_v2(CUcontext ctx) {
   if (!lupine_cuda_is_initialized()) {
     return CUDA_ERROR_NOT_INITIALIZED;
   }
-  lupine_context_stack->push_back(lupine_current_context);
+  if (ctx == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
   CUresult result = lupine_set_remote_current_context(ctx);
   if (result == CUDA_SUCCESS) {
-    lupine_current_context = ctx;
-    if (ctx != nullptr) {
-      lupine_default_context_hint = ctx;
-      lupine_global_default_context_hint.store(ctx, std::memory_order_relaxed);
+    if (lupine_current_context != nullptr) {
+      lupine_context_stack->push_back(lupine_current_context);
     }
-  } else {
-    lupine_context_stack->pop_back();
+    lupine_current_context = ctx;
+    lupine_default_context_hint = ctx;
+    lupine_global_default_context_hint.store(ctx, std::memory_order_relaxed);
   }
   return result;
 }
@@ -3925,25 +3935,27 @@ extern "C" CUresult cuCtxPopCurrent_v2(CUcontext *pctx) {
   if (!lupine_cuda_is_initialized()) {
     return CUDA_ERROR_NOT_INITIALIZED;
   }
+  if (lupine_current_context == nullptr) {
+    return CUDA_ERROR_INVALID_CONTEXT;
+  }
   CUcontext popped = lupine_current_context;
-  if (pctx != nullptr) {
-    *pctx = popped;
-  }
-  CUcontext previous = nullptr;
-  if (!lupine_context_stack->empty()) {
-    previous = lupine_context_stack->back();
-    lupine_context_stack->pop_back();
-  }
+  CUcontext previous = lupine_context_stack->empty()
+                           ? nullptr
+                           : lupine_context_stack->back();
   CUresult result = lupine_set_remote_current_context(previous);
   if (result == CUDA_SUCCESS) {
+    if (!lupine_context_stack->empty()) {
+      lupine_context_stack->pop_back();
+    }
     lupine_current_context = previous;
     if (previous != nullptr) {
       lupine_default_context_hint = previous;
       lupine_global_default_context_hint.store(previous,
                                                std::memory_order_relaxed);
     }
-  } else {
-    lupine_context_stack->push_back(previous);
+    if (pctx != nullptr) {
+      *pctx = popped;
+    }
   }
   return result;
 }
@@ -3959,13 +3971,17 @@ extern "C" CUresult cuCtxSetCurrent(CUcontext ctx) {
   if (!lupine_cuda_is_initialized()) {
     return CUDA_ERROR_NOT_INITIALIZED;
   }
+  if (ctx == nullptr) {
+    if (lupine_current_context == nullptr) {
+      return CUDA_SUCCESS;
+    }
+    return cuCtxPopCurrent_v2(nullptr);
+  }
   CUresult result = lupine_set_remote_current_context(ctx);
   if (result == CUDA_SUCCESS) {
     lupine_current_context = ctx;
-    if (ctx != nullptr) {
-      lupine_default_context_hint = ctx;
-      lupine_global_default_context_hint.store(ctx, std::memory_order_relaxed);
-    }
+    lupine_default_context_hint = ctx;
+    lupine_global_default_context_hint.store(ctx, std::memory_order_relaxed);
   }
   return result;
 }
