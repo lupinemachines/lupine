@@ -3726,13 +3726,14 @@ static void lupine_pointer_attribute_cache_clear() {
 extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
                                            CUpointer_attribute *attributes,
                                            void **data, CUdeviceptr ptr) {
-  if (numAttributes != 0 && (attributes == nullptr || data == nullptr)) {
+  if (numAttributes == 0 || attributes == nullptr || data == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
 
   std::vector<size_t> value_sizes(numAttributes, 0);
   for (unsigned int i = 0; i < numAttributes; ++i) {
-    if (!lupine_pointer_attribute_size(attributes[i], &value_sizes[i])) {
+    if (data[i] == nullptr ||
+        !lupine_pointer_attribute_size(attributes[i], &value_sizes[i])) {
       return CUDA_ERROR_INVALID_VALUE;
     }
   }
@@ -3786,9 +3787,6 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
         replicable = false;
         break;
       }
-      if (replicable && data[i] == nullptr) {
-        return CUDA_ERROR_INVALID_VALUE;
-      }
     }
     if (replicable) {
       for (unsigned int i = 0; i < numAttributes; ++i) {
@@ -3832,9 +3830,11 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
     cache_key.attributes.assign(attributes, attributes + numAttributes);
     if (lupine_pointer_attribute_cache().find(cache_key, cached_values)) {
       for (unsigned int i = 0; i < numAttributes; ++i) {
-        if (data[i] == nullptr || cached_values[i].size() != value_sizes[i]) {
+        if (cached_values[i].size() != value_sizes[i]) {
           return CUDA_ERROR_INVALID_VALUE;
         }
+      }
+      for (unsigned int i = 0; i < numAttributes; ++i) {
         memcpy(data[i], cached_values[i].data(), cached_values[i].size());
         if ((managed_alias || remote_host_alias) &&
             attributes[i] == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
@@ -3907,13 +3907,12 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
 
   if (return_value == CUDA_SUCCESS) {
     for (unsigned int i = 0; i < numAttributes; ++i) {
-      if (data[i] == nullptr) {
-        return CUDA_ERROR_INVALID_VALUE;
-      }
       // Version skew: the server's width does not fit the caller's buffer.
       if (values[i].size() != value_sizes[i]) {
         return CUDA_ERROR_INVALID_VALUE;
       }
+    }
+    for (unsigned int i = 0; i < numAttributes; ++i) {
       memcpy(data[i], values[i].data(), values[i].size());
       if ((managed_alias || remote_host_alias) &&
           attributes[i] == CU_POINTER_ATTRIBUTE_HOST_POINTER) {

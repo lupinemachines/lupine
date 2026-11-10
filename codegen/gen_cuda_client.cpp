@@ -2952,15 +2952,24 @@ CUresult cuMemRangeGetAttribute(void *data, size_t dataSize,
                                 CUmem_range_attribute attribute,
                                 CUdeviceptr devPtr, size_t count) {
   lupine_route route = lupine_route_for_deviceptr(devPtr);
+  if (data == nullptr || dataSize == 0)
+    return CUDA_ERROR_INVALID_VALUE;
   CUresult advice_result;
   if (lupine_managed_mem_range_attribute(data, dataSize, attribute, devPtr,
                                          count, &advice_result))
     return advice_result;
+  void *caller_data = data;
+  std::vector<unsigned char> staged(dataSize);
+  data = staged.data();
   CUresult return_value;
-  if (lupine_route_is_local(route))
-    return lupine_call_real_cuda_fn(
+  if (lupine_route_is_local(route)) {
+    return_value = lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuMemRangeGetAttribute"), data, dataSize,
         attribute, devPtr, count);
+    if (return_value == CUDA_SUCCESS)
+      std::memcpy(caller_data, staged.data(), dataSize);
+    return return_value;
+  }
   conn_t *conn = lupine_route_remote_conn(route);
   uint8_t data_null = data == nullptr ? 1 : 0;
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -2975,6 +2984,8 @@ CUresult cuMemRangeGetAttribute(void *data, size_t dataSize,
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_SUCCESS)
+    std::memcpy(caller_data, staged.data(), dataSize);
   return return_value;
 }
 

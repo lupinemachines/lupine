@@ -4180,17 +4180,21 @@ extern "C" CUresult cuMemPoolGetAttribute(CUmemoryPool pool,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
+  unsigned char staged[64] = {};
   CUresult return_value;
-  if (lupine_prepare_rpc(conn) < 0 ||
+  if (value_size > sizeof(staged) || lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemPoolGetAttribute) < 0 ||
       rpc_write(conn, &pool, sizeof(pool)) < 0 ||
       rpc_write(conn, &attr, sizeof(attr)) < 0 ||
       rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, value, value_size) < 0 ||
+      rpc_read(conn, staged, value_size) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (return_value == CUDA_SUCCESS) {
+    memcpy(value, staged, value_size);
   }
   return return_value;
 }
@@ -4406,39 +4410,25 @@ extern "C" CUresult cuMemRangeGetAttributes(void **data, size_t *dataSizes,
                                     attributes, numAttributes, devPtr, count);
   }
 
-  if (lupine_is_managed_host_alias(devPtr)) {
-    if (!data || !dataSizes || !attributes || !numAttributes)
+  if (!data || !dataSizes || !attributes || !numAttributes)
+    return CUDA_ERROR_INVALID_VALUE;
+  for (size_t i = 0; i < numAttributes; ++i) {
+    if (!data[i] || dataSizes[i] == 0)
       return CUDA_ERROR_INVALID_VALUE;
-    for (size_t i = 0; i < numAttributes; ++i) {
-      CUresult result = cuMemRangeGetAttribute(data[i], dataSizes[i],
-                                               attributes[i], devPtr, count);
-      if (result != CUDA_SUCCESS)
-        return result;
-    }
-    return CUDA_SUCCESS;
   }
 
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemRangeGetAttributes) < 0 ||
-      rpc_write(conn, &numAttributes, sizeof(numAttributes)) < 0 ||
-      rpc_write(conn, dataSizes, numAttributes * sizeof(dataSizes[0])) < 0 ||
-      rpc_write(conn, attributes, numAttributes * sizeof(attributes[0])) < 0 ||
-      rpc_write(conn, &devPtr, sizeof(devPtr)) < 0 ||
-      rpc_write(conn, &count, sizeof(count)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  std::vector<std::vector<unsigned char>> staged(numAttributes);
+  for (size_t i = 0; i < numAttributes; ++i) {
+    staged[i].resize(dataSizes[i]);
+    CUresult result = cuMemRangeGetAttribute(staged[i].data(), dataSizes[i],
+                                             attributes[i], devPtr, count);
+    if (result != CUDA_SUCCESS)
+      return result;
   }
-  if (result == CUDA_SUCCESS) {
-    for (size_t i = 0; i < numAttributes; ++i) {
-      if (rpc_read(conn, data[i], dataSizes[i]) < 0) {
-        return CUDA_ERROR_DEVICE_UNAVAILABLE;
-      }
-    }
+  for (size_t i = 0; i < numAttributes; ++i) {
+    memcpy(data[i], staged[i].data(), dataSizes[i]);
   }
-  return rpc_read_end(conn) < 0 ? CUDA_ERROR_DEVICE_UNAVAILABLE : result;
+  return CUDA_SUCCESS;
 }
 
 // The CUDA linker requires the caller's option arrays to stay valid for the

@@ -1507,15 +1507,22 @@ CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
 CUresult cuMemRangeGetAttribute(void *data, size_t dataSize,
                                 CUmem_range_attribute attribute,
                                 CUdeviceptr devPtr, size_t count) {
+  if (data == nullptr || dataSize == 0)
+    return CUDA_ERROR_INVALID_VALUE;
   CUresult advice_result;
   if (lupine_managed_mem_range_attribute(data, dataSize, attribute, devPtr,
                                          count, &advice_result))
     return advice_result;
+  void *caller_data = data;
+  std::vector<unsigned char> staged(dataSize);
+  data = staged.data();
   CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    std::memcpy(caller_data, staged.data(), dataSize);
   return return_value;
 }
 /**
- * @disabled - manual client and server marshal each variable-sized result
+ * @disabled none - manual client loops over cuMemRangeGetAttribute
  * @param data SEND_RECV
  * @param dataSizes SEND_RECV
  * @param attributes SEND_RECV
