@@ -209,13 +209,19 @@ class ArrayOperation:
             # The whole buffer goes back on the wire, but the library writes
             # only as much of it as it has to, so the allocation has to supply
             # the rest: uninitialized bytes here would be server heap.
+            size_expr = self.server_transfer_size_expr()
+            alloc_expr = (
+                f"({size_expr} == 0 ? 1 : {size_expr})"
+                if self.ptr.ptr_to.format() == "char"
+                else size_expr
+            )
             f.write("        false)\n")
             f.write("        goto ERROR_0;\n")
             f.write(
-                f"    {self.parameter.name} = ({self.ptr.format()})calloc({self.server_transfer_size_expr()}, 1);\n"
+                f"    {self.parameter.name} = ({self.ptr.format()})calloc({alloc_expr}, 1);\n"
             )
             f.write(
-                f"    if (({self.server_transfer_size_expr()} != 0 && {self.parameter.name} == nullptr) ||\n"
+                f"    if (({alloc_expr} != 0 && {self.parameter.name} == nullptr) ||\n"
             )
             return self.parameter.name
         f.write("        false)\n")
@@ -249,6 +255,8 @@ class ArrayOperation:
             return f"{self.parameter.name}"
         if self.nullable:
             return f"({self.parameter.name}_null ? nullptr : {self.parameter.name})"
+        if not self.send and self.ptr.ptr_to.format() == "char":
+            return f"{self.parameter.name}"
         return (
             f"({self.server_transfer_size_expr()} == 0 ? "
             f"nullptr : {self.parameter.name})"

@@ -98,7 +98,7 @@ static hipError_t lupine_rpc_hipDeviceGetName(conn_t *conn, char *name, int len,
 }
 
 extern "C" hipError_t hipDeviceGetName(char *name, int len, int deviceId) {
-  if (len < 0 || (len * sizeof(char) != 0 && name == nullptr)) {
+  if (len < 0 || name == nullptr) {
     return hipErrorInvalidValue;
   }
   conn_t *conn = connection_for_device(&deviceId);
@@ -295,7 +295,7 @@ static hipError_t lupine_rpc_hipDeviceGetPCIBusId(conn_t *conn, char *pciBusId,
 
 extern "C" hipError_t hipDeviceGetPCIBusId(char *pciBusId, int len,
                                            int device) {
-  if (len < 0 || (len * sizeof(char) != 0 && pciBusId == nullptr)) {
+  if (len < 0 || pciBusId == nullptr) {
     return hipErrorInvalidValue;
   }
   conn_t *conn = connection_for_device(&device);

@@ -113,9 +113,12 @@ def write_client_validation(f, backend: Backend, function, operations):
         elif isinstance(operation, (DereferenceOperation, InOutCountOperation)):
             checks.append(f"{name} == nullptr")
         elif isinstance(operation, ArrayOperation) and not operation.nullable:
-            checks.append(
-                f"({operation.transfer_size_expr()} != 0 && {name} == nullptr)"
-            )
+            if not operation.send and operation.ptr.ptr_to.format() == "char":
+                checks.append(f"{name} == nullptr")
+            else:
+                checks.append(
+                    f"({operation.transfer_size_expr()} != 0 && {name} == nullptr)"
+                )
     if checks:
         f.write("  if (" + " ||\n      ".join(checks) + ") {\n")
         result = function.return_type.format()

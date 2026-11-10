@@ -146,8 +146,9 @@ int handle_cuDeviceGetName(conn_t *conn) {
   CUresult return_value;
   if (rpc_read(conn, &len, sizeof(int)) < 0 || len < 0 || false)
     goto ERROR_0;
-  name = (char *)calloc(len * sizeof(char), 1);
-  if ((len * sizeof(char) != 0 && name == nullptr) ||
+  name = (char *)calloc((len * sizeof(char) == 0 ? 1 : len * sizeof(char)), 1);
+  if (((len * sizeof(char) == 0 ? 1 : len * sizeof(char)) != 0 &&
+       name == nullptr) ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
 
@@ -155,8 +156,7 @@ int handle_cuDeviceGetName(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value =
-      cuDeviceGetName((len * sizeof(char) == 0 ? nullptr : name), len, dev);
+  return_value = cuDeviceGetName(name, len, dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, name, len * sizeof(char)) < 0 ||
@@ -209,8 +209,8 @@ int handle_cuDeviceGetLuid(conn_t *conn) {
   CUresult return_value;
   if (false)
     goto ERROR_0;
-  luid = (char *)calloc(8, 1);
-  if ((8 != 0 && luid == nullptr) ||
+  luid = (char *)calloc((8 == 0 ? 1 : 8), 1);
+  if (((8 == 0 ? 1 : 8) != 0 && luid == nullptr) ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
 
@@ -1820,8 +1820,10 @@ int handle_cuDeviceGetPCIBusId(conn_t *conn) {
   CUresult return_value;
   if (rpc_read(conn, &len, sizeof(int)) < 0 || len < 0 || false)
     goto ERROR_0;
-  pciBusId = (char *)calloc(len * sizeof(char), 1);
-  if ((len * sizeof(char) != 0 && pciBusId == nullptr) ||
+  pciBusId =
+      (char *)calloc((len * sizeof(char) == 0 ? 1 : len * sizeof(char)), 1);
+  if (((len * sizeof(char) == 0 ? 1 : len * sizeof(char)) != 0 &&
+       pciBusId == nullptr) ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
 
@@ -1829,8 +1831,7 @@ int handle_cuDeviceGetPCIBusId(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuDeviceGetPCIBusId(
-      (len * sizeof(char) == 0 ? nullptr : pciBusId), len, dev);
+  return_value = cuDeviceGetPCIBusId(pciBusId, len, dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, pciBusId, len * sizeof(char)) < 0 ||
