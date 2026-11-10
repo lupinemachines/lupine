@@ -61,6 +61,8 @@ from ops import (
 LEGACY_ABI_FUNCTIONS = {
     "cuGraphExecUpdate",
     "cuGraphInstantiate_v2",
+    "cuMemAdvise",
+    "cuMemPrefetchAsync",
 }
 
 # this table is manually generated from the cuda.h headers
@@ -1064,7 +1066,7 @@ def client_routing_key_expr(
     if kind is None:
         return "lupine_route_for_default()"
     route = f"lupine_route_for_{kind.lower()}"
-    if kind == "CURRENT_CONTEXT":
+    if kind in ("CURRENT_CONTEXT", "DEFAULT"):
         return f"{route}()"
     if param is None:
         raise NotImplementedError(f"Routing key {kind} requires a parameter")

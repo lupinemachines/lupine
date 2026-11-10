@@ -5,6 +5,10 @@
 #include "cuda_compat.h"
 #undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
+#include "cache.h"
+
+bool lupine_cuda_is_initialized();
+
 struct lupine_kernel_attribute_key {
   int route_id = -2;
   CUkernel kernel = nullptr;

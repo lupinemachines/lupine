@@ -14,6 +14,19 @@
 #include "device_stdout.h"
 #include "rpc.h"
 
+#ifdef cuMemPrefetchAsync
+#undef cuMemPrefetchAsync
+#endif
+extern "C" CUresult CUDAAPI cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
+                                               CUdevice dstDevice,
+                                               CUstream hStream);
+
+#ifdef cuMemAdvise
+#undef cuMemAdvise
+#endif
+extern "C" CUresult CUDAAPI cuMemAdvise(CUdeviceptr devPtr, size_t count,
+                                        CUmem_advise advice, CUdevice device);
+
 #ifdef cuGraphInstantiate_v2
 #undef cuGraphInstantiate_v2
 #endif
@@ -29,19 +42,6 @@ extern "C" CUresult CUDAAPI cuGraphInstantiate_v2(CUgraphExec *phGraphExec,
 extern "C" CUresult CUDAAPI cuGraphExecUpdate(
     CUgraphExec hGraphExec, CUgraph hGraph, CUgraphNode *hErrorNode_out,
     CUgraphExecUpdateResult *updateResult_out);
-
-#ifdef cuMemPrefetchAsync
-#undef cuMemPrefetchAsync
-#endif
-extern "C" CUresult CUDAAPI cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
-                                               CUdevice dstDevice,
-                                               CUstream hStream);
-
-#ifdef cuMemAdvise
-#undef cuMemAdvise
-#endif
-extern "C" CUresult CUDAAPI cuMemAdvise(CUdeviceptr devPtr, size_t count,
-                                        CUmem_advise advice, CUdevice device);
 
 int handle_cuGetErrorString(conn_t *conn) {
   CUresult error;
@@ -752,21 +752,24 @@ ERROR_0:
 
 #if CUDA_VERSION >= 13000
 int handle_cuCtxGetDevice_v2(conn_t *conn) {
+  uint8_t device_present = 0;
   CUdevice device{};
   CUcontext ctx;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &ctx, sizeof(CUcontext)) < 0 || false)
+  if (rpc_read(conn, &device_present, sizeof(uint8_t)) < 0 ||
+      (device_present && rpc_read(conn, &device, sizeof(CUdevice)) < 0) ||
+      rpc_read(conn, &ctx, sizeof(CUcontext)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuCtxGetDevice_v2(&device, ctx);
+  return_value = cuCtxGetDevice_v2(device_present ? &device : nullptr, ctx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &device, sizeof(CUdevice)) < 0 ||
+      (device_present && rpc_write(conn, &device, sizeof(CUdevice)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -4144,20 +4147,24 @@ ERROR_0:
 
 int handle_cuStreamGetDevice(conn_t *conn) {
   CUstream hStream;
+  uint8_t device_present = 0;
   CUdevice device{};
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
+  if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
+      rpc_read(conn, &device_present, sizeof(uint8_t)) < 0 ||
+      (device_present && rpc_read(conn, &device, sizeof(CUdevice)) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuStreamGetDevice(hStream, &device);
+  return_value = cuStreamGetDevice(hStream, device_present ? &device : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &device, sizeof(CUdevice)) < 0 ||
+      (device_present && rpc_write(conn, &device, sizeof(CUdevice)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -9444,12 +9451,15 @@ ERROR_0:
 #endif
 
 int handle_cuDeviceCanAccessPeer(conn_t *conn) {
+  uint8_t canAccessPeer_present = 0;
   int canAccessPeer{};
   CUdevice dev;
   CUdevice peerDev;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &canAccessPeer, sizeof(int)) < 0 ||
+  if (rpc_read(conn, &canAccessPeer_present, sizeof(uint8_t)) < 0 ||
+      (canAccessPeer_present &&
+       rpc_read(conn, &canAccessPeer, sizeof(int)) < 0) ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 ||
       rpc_read(conn, &peerDev, sizeof(CUdevice)) < 0 || false)
     goto ERROR_0;
@@ -9458,10 +9468,12 @@ int handle_cuDeviceCanAccessPeer(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuDeviceCanAccessPeer(&canAccessPeer, dev, peerDev);
+  return_value = cuDeviceCanAccessPeer(
+      canAccessPeer_present ? &canAccessPeer : nullptr, dev, peerDev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &canAccessPeer, sizeof(int)) < 0 ||
+      (canAccessPeer_present &&
+       rpc_write(conn, &canAccessPeer, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -9517,13 +9529,15 @@ ERROR_0:
 }
 
 int handle_cuDeviceGetP2PAttribute(conn_t *conn) {
+  uint8_t value_present = 0;
   int value{};
   CUdevice_P2PAttribute attrib;
   CUdevice srcDevice;
   CUdevice dstDevice;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &value, sizeof(int)) < 0 ||
+  if (rpc_read(conn, &value_present, sizeof(uint8_t)) < 0 ||
+      (value_present && rpc_read(conn, &value, sizeof(int)) < 0) ||
       rpc_read(conn, &attrib, sizeof(CUdevice_P2PAttribute)) < 0 ||
       rpc_read(conn, &srcDevice, sizeof(CUdevice)) < 0 ||
       rpc_read(conn, &dstDevice, sizeof(CUdevice)) < 0 || false)
@@ -9533,10 +9547,11 @@ int handle_cuDeviceGetP2PAttribute(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuDeviceGetP2PAttribute(&value, attrib, srcDevice, dstDevice);
+  return_value = cuDeviceGetP2PAttribute(value_present ? &value : nullptr,
+                                         attrib, srcDevice, dstDevice);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &value, sizeof(int)) < 0 ||
+      (value_present && rpc_write(conn, &value, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
