@@ -437,19 +437,12 @@ static inline CUresult cuStreamGetCaptureInfo_v3(
   return cuStreamGetCaptureInfo_v2(stream, captureStatus_out, id_out, graph_out,
                                    dependencies_out, numDependencies_out);
 }
-
-static inline CUresult cuStreamUpdateCaptureDependencies_v2(
-    CUstream stream, CUgraphNode *dependencies, const CUgraphEdgeData *,
-    size_t numDependencies, unsigned int flags) {
-  return cuStreamUpdateCaptureDependencies(stream, dependencies,
-                                           numDependencies, flags);
-}
 #endif
 #endif
 
-// Graph edge-data query ABIs were added in CUDA 12.3. Keep the generated v2
-// RPC surface available to older client builds and adapt server calls to the
-// legacy queries when edge data is not requested.
+// Graph edge-data query and mutation ABIs were added in CUDA 12.3. Keep the
+// generated v2 RPC surface available to older client builds and adapt server
+// calls to the legacy APIs when edge data is not requested.
 #if CUDA_VERSION < 12030
 #ifdef LUPINE_CUDA_COMPAT_TYPES_ONLY
 #ifdef __cplusplus
@@ -461,6 +454,17 @@ CUresult cuGraphNodeGetDependencies_v2(CUgraphNode, CUgraphNode *,
                                        CUgraphEdgeData *, size_t *);
 CUresult cuGraphNodeGetDependentNodes_v2(CUgraphNode, CUgraphNode *,
                                          CUgraphEdgeData *, size_t *);
+CUresult cuGraphAddDependencies_v2(CUgraph, const CUgraphNode *,
+                                   const CUgraphNode *,
+                                   const CUgraphEdgeData *, size_t);
+CUresult cuGraphRemoveDependencies_v2(CUgraph, const CUgraphNode *,
+                                      const CUgraphNode *,
+                                      const CUgraphEdgeData *, size_t);
+CUresult cuGraphConditionalHandleCreate(CUgraphConditionalHandle *, CUgraph,
+                                        CUcontext, unsigned int, unsigned int);
+CUresult cuStreamUpdateCaptureDependencies_v2(CUstream, CUgraphNode *,
+                                              const CUgraphEdgeData *, size_t,
+                                              unsigned int);
 #ifdef __cplusplus
 }
 #endif
@@ -493,6 +497,39 @@ cuGraphNodeGetDependentNodes_v2(CUgraphNode node, CUgraphNode *dependentNodes,
     return CUDA_ERROR_NOT_SUPPORTED;
   }
   return cuGraphNodeGetDependentNodes(node, dependentNodes, numDependentNodes);
+}
+
+static inline CUresult
+cuGraphAddDependencies_v2(CUgraph graph, const CUgraphNode *from,
+                          const CUgraphNode *to,
+                          const CUgraphEdgeData *edgeData,
+                          size_t numDependencies) {
+  if (edgeData != nullptr) {
+    return CUDA_ERROR_NOT_SUPPORTED;
+  }
+  return cuGraphAddDependencies(graph, from, to, numDependencies);
+}
+
+static inline CUresult
+cuGraphRemoveDependencies_v2(CUgraph graph, const CUgraphNode *from,
+                             const CUgraphNode *to,
+                             const CUgraphEdgeData *edgeData,
+                             size_t numDependencies) {
+  if (edgeData != nullptr) {
+    return CUDA_ERROR_NOT_SUPPORTED;
+  }
+  return cuGraphRemoveDependencies(graph, from, to, numDependencies);
+}
+
+static inline CUresult cuStreamUpdateCaptureDependencies_v2(
+    CUstream stream, CUgraphNode *dependencies,
+    const CUgraphEdgeData *dependencyData, size_t numDependencies,
+    unsigned int flags) {
+  if (dependencyData != nullptr) {
+    return CUDA_ERROR_NOT_SUPPORTED;
+  }
+  return cuStreamUpdateCaptureDependencies(stream, dependencies,
+                                           numDependencies, flags);
 }
 #endif
 #endif

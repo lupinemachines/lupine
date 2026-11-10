@@ -1946,14 +1946,15 @@ CUresult cuStreamIsCapturing(CUstream hStream,
 /**
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
- * @param dependencies SEND_RECV
  * @param numDependencies SEND_ONLY
+ * @param dependencies SEND_ONLY LENGTH:numDependencies
+ * @param dependencyData SEND_ONLY NULLABLE LENGTH:numDependencies
  * @param flags SEND_ONLY
  */
-CUresult cuStreamUpdateCaptureDependencies(CUstream hStream,
-                                           CUgraphNode *dependencies,
-                                           size_t numDependencies,
-                                           unsigned int flags);
+CUresult cuStreamUpdateCaptureDependencies(
+    CUstream hStream, CUgraphNode *dependencies,
+    const CUgraphEdgeData *dependencyData, size_t numDependencies,
+    unsigned int flags);
 /**
  * @routingkey STREAM hStream
  * @routingfallback DEVICEPTR dptr
@@ -2834,18 +2835,36 @@ CUresult cuGraphNodeGetDependentNodes(CUgraphNode hNode,
  * @param numDependencies SEND_ONLY
  * @param from SEND_ONLY LENGTH:numDependencies
  * @param to SEND_ONLY LENGTH:numDependencies
+ * @param edgeData SEND_ONLY NULLABLE LENGTH:numDependencies
  */
 CUresult cuGraphAddDependencies(CUgraph hGraph, const CUgraphNode *from,
-                                const CUgraphNode *to, size_t numDependencies);
+                                const CUgraphNode *to,
+                                const CUgraphEdgeData *edgeData,
+                                size_t numDependencies);
 /**
  * @param hGraph SEND_ONLY
  * @param numDependencies SEND_ONLY
  * @param from SEND_ONLY LENGTH:numDependencies
  * @param to SEND_ONLY LENGTH:numDependencies
+ * @param edgeData SEND_ONLY NULLABLE LENGTH:numDependencies
  */
 CUresult cuGraphRemoveDependencies(CUgraph hGraph, const CUgraphNode *from,
                                    const CUgraphNode *to,
+                                   const CUgraphEdgeData *edgeData,
                                    size_t numDependencies);
+/**
+ * @routingkey GRAPH hGraph
+ * @routingfallback CONTEXT ctx
+ * @param pHandle_out RECV_ONLY
+ * @param hGraph SEND_ONLY
+ * @param ctx SEND_ONLY
+ * @param defaultLaunchValue SEND_ONLY
+ * @param flags SEND_ONLY
+ */
+CUresult cuGraphConditionalHandleCreate(CUgraphConditionalHandle *pHandle_out,
+                                        CUgraph hGraph, CUcontext ctx,
+                                        unsigned int defaultLaunchValue,
+                                        unsigned int flags);
 /**
  * @param hNode SEND_ONLY
  */
@@ -3698,8 +3717,6 @@ void cuPrivateGetModuleNode();
 void lupineFunctionParamLayoutSnapshot();
 /** @disabled */
 void lupineFunctionAttributeSnapshot();
-/** @disabled */
-void cuGraphConditionalHandleCreate();
 /** @disabled handle_cuGraphAddNode */
 void cuGraphAddNode_v2();
 /** @disabled */
@@ -3710,8 +3727,6 @@ void lupineEventCreateBatch();
 void lupineLibraryLoadBatch();
 /** @disabled */
 void cuStreamBeginCaptureToGraph();
-/** @disabled handle_cuStreamUpdateCaptureDependencies */
-void cuStreamUpdateCaptureDependencies_v2();
 /** @disabled handle_cuStreamGetCaptureInfo */
 void cuStreamGetCaptureInfo_v3();
 /** @disabled */

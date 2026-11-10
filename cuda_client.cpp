@@ -6202,37 +6202,6 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
   return return_value;
 }
 
-extern "C" CUresult cuGraphConditionalHandleCreate(
-    CUgraphConditionalHandle *pHandle_out, CUgraph hGraph, CUcontext ctx,
-    unsigned int defaultLaunchValue, unsigned int flags) {
-  if (pHandle_out == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  lupine_route route = hGraph != nullptr ? lupine_route_for_graph(hGraph)
-                                         : lupine_route_for_context(ctx);
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn("cuGraphConditionalHandleCreate",
-                                    pHandle_out, hGraph, ctx,
-                                    defaultLaunchValue, flags);
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, LUPINE_RPC_cuGraphConditionalHandleCreate) <
-          0 ||
-      rpc_write(conn, &hGraph, sizeof(hGraph)) < 0 ||
-      rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
-      rpc_write(conn, &defaultLaunchValue, sizeof(defaultLaunchValue)) < 0 ||
-      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pHandle_out, sizeof(*pHandle_out)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return return_value;
-}
-
 extern "C" CUresult cuGraphAddNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
                                       const CUgraphNode *dependencies,
                                       const CUgraphEdgeData *dependencyData,
@@ -6411,6 +6380,27 @@ extern "C" CUresult cuGraphNodeGetDependentNodes(CUgraphNode hNode,
                                                  size_t *numDependentNodes) {
   return cuGraphNodeGetDependentNodes_v2(hNode, dependentNodes, nullptr,
                                          numDependentNodes);
+}
+
+#ifdef cuGraphAddDependencies
+#undef cuGraphAddDependencies
+#endif
+#ifdef cuGraphRemoveDependencies
+#undef cuGraphRemoveDependencies
+#endif
+extern "C" CUresult cuGraphAddDependencies(CUgraph hGraph,
+                                           const CUgraphNode *from,
+                                           const CUgraphNode *to,
+                                           size_t numDependencies) {
+  return cuGraphAddDependencies_v2(hGraph, from, to, nullptr, numDependencies);
+}
+
+extern "C" CUresult cuGraphRemoveDependencies(CUgraph hGraph,
+                                              const CUgraphNode *from,
+                                              const CUgraphNode *to,
+                                              size_t numDependencies) {
+  return cuGraphRemoveDependencies_v2(hGraph, from, to, nullptr,
+                                      numDependencies);
 }
 
 #ifdef cuGraphInstantiate
@@ -6843,6 +6833,7 @@ cuStreamBeginCaptureToGraph(CUstream hStream, CUgraph hGraph,
   if (status != CUDA_SUCCESS) {
     return status;
   }
+  lupine_materialize_host_allocations();
   lupine_capture_begin_guard capture_guard;
   lupine_route route =
       hGraph != nullptr ? lupine_route_for_graph(hGraph)
@@ -6872,55 +6863,9 @@ cuStreamBeginCaptureToGraph(CUstream hStream, CUgraph hGraph,
   return capture_guard.complete(return_value);
 }
 
-extern "C" CUresult cuStreamUpdateCaptureDependencies_v2(
-    CUstream hStream, CUgraphNode *dependencies,
-    const CUgraphEdgeData *dependencyData, size_t numDependencies,
-    unsigned int flags) {
-  if (dependencyData != nullptr) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
-  CUresult status =
-      lupine_validate_graph_dependencies(dependencies, numDependencies);
-  if (status != CUDA_SUCCESS) {
-    return status;
-  }
-  lupine_route route = hStream != nullptr ? lupine_route_for_stream(hStream)
-                                          : lupine_route_for_default();
-  CUresult return_value;
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn("cuStreamUpdateCaptureDependencies_v2",
-                                    hStream, dependencies, dependencyData,
-                                    numDependencies, flags);
-  }
-
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuStreamUpdateCaptureDependencies_v2) <
-          0 ||
-      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-      lupine_queue_graph_dependencies(conn, dependencies, &numDependencies) !=
-          CUDA_SUCCESS ||
-      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return return_value;
-}
-
 #ifdef cuStreamUpdateCaptureDependencies
 #undef cuStreamUpdateCaptureDependencies
 #endif
-#if CUDA_VERSION >= 13000
-extern "C" CUresult
-cuStreamUpdateCaptureDependencies(CUstream hStream, CUgraphNode *dependencies,
-                                  const CUgraphEdgeData *dependencyData,
-                                  size_t numDependencies, unsigned int flags) {
-  return cuStreamUpdateCaptureDependencies_v2(
-      hStream, dependencies, dependencyData, numDependencies, flags);
-}
-#else
 extern "C" CUresult cuStreamUpdateCaptureDependencies(CUstream hStream,
                                                       CUgraphNode *dependencies,
                                                       size_t numDependencies,
@@ -6928,24 +6873,13 @@ extern "C" CUresult cuStreamUpdateCaptureDependencies(CUstream hStream,
   return cuStreamUpdateCaptureDependencies_v2(hStream, dependencies, nullptr,
                                               numDependencies, flags);
 }
-#endif
 
-#if CUDA_VERSION >= 13000
-extern "C" CUresult cuStreamUpdateCaptureDependencies_ptsz(
-    CUstream hStream, CUgraphNode *dependencies,
-    const CUgraphEdgeData *dependencyData, size_t numDependencies,
-    unsigned int flags) {
-  return cuStreamUpdateCaptureDependencies_v2(
-      hStream, dependencies, dependencyData, numDependencies, flags);
-}
-#else
 extern "C" CUresult cuStreamUpdateCaptureDependencies_ptsz(
     CUstream hStream, CUgraphNode *dependencies, size_t numDependencies,
     unsigned int flags) {
   return cuStreamUpdateCaptureDependencies_v2(hStream, dependencies, nullptr,
                                               numDependencies, flags);
 }
-#endif
 
 static bool lupine_uuid_equals(const CUuuid *uuid, const unsigned char *bytes) {
   return uuid != nullptr && memcmp(uuid->bytes, bytes, 16) == 0;
@@ -8255,7 +8189,23 @@ CUresult cuGetProcAddress_v2(const char *symbol, void **pfn, int cudaVersion,
       resolve_graph_query(
           "cuGraphNodeGetDependentNodes",
           reinterpret_cast<void *>(&cuGraphNodeGetDependentNodes),
-          reinterpret_cast<void *>(&cuGraphNodeGetDependentNodes_v2))) {
+          reinterpret_cast<void *>(&cuGraphNodeGetDependentNodes_v2)) ||
+      resolve_graph_query(
+          "cuGraphAddDependencies",
+          reinterpret_cast<void *>(&cuGraphAddDependencies),
+          reinterpret_cast<void *>(&cuGraphAddDependencies_v2)) ||
+      resolve_graph_query(
+          "cuGraphRemoveDependencies",
+          reinterpret_cast<void *>(&cuGraphRemoveDependencies),
+          reinterpret_cast<void *>(&cuGraphRemoveDependencies_v2)) ||
+      resolve_graph_query(
+          "cuStreamUpdateCaptureDependencies",
+          reinterpret_cast<void *>(&cuStreamUpdateCaptureDependencies),
+          reinterpret_cast<void *>(&cuStreamUpdateCaptureDependencies_v2)) ||
+      resolve_graph_query(
+          "cuStreamUpdateCaptureDependencies_ptsz",
+          reinterpret_cast<void *>(&cuStreamUpdateCaptureDependencies_ptsz),
+          reinterpret_cast<void *>(&cuStreamUpdateCaptureDependencies_v2))) {
     return CUDA_SUCCESS;
   }
 
@@ -8529,20 +8479,18 @@ lupine_manual_function_map() {
       {"cuGraphGetEdges", (void *)cuGraphGetEdges},
       {"cuGraphNodeGetDependencies", (void *)cuGraphNodeGetDependencies},
       {"cuGraphNodeGetDependentNodes", (void *)cuGraphNodeGetDependentNodes},
+      {"cuGraphAddDependencies", (void *)cuGraphAddDependencies},
+      {"cuGraphRemoveDependencies", (void *)cuGraphRemoveDependencies},
+      {"cuStreamUpdateCaptureDependencies",
+       (void *)cuStreamUpdateCaptureDependencies},
+      {"cuStreamUpdateCaptureDependencies_ptsz",
+       (void *)cuStreamUpdateCaptureDependencies_ptsz},
 #endif
       {"cuGraphAddNode", (void *)cuGraphAddNode},
       {"cuGraphAddNode_v2", (void *)cuGraphAddNode_v2},
-      {"cuGraphConditionalHandleCreate",
-       (void *)cuGraphConditionalHandleCreate},
       {"cuGraphInstantiate", (void *)cuGraphInstantiate},
       {"cuStreamBeginCaptureToGraph", (void *)cuStreamBeginCaptureToGraph},
       {"cuStreamBeginCaptureToGraph_ptsz", (void *)cuStreamBeginCaptureToGraph},
-      {"cuStreamUpdateCaptureDependencies",
-       (void *)cuStreamUpdateCaptureDependencies},
-      {"cuStreamUpdateCaptureDependencies_v2",
-       (void *)cuStreamUpdateCaptureDependencies_v2},
-      {"cuStreamUpdateCaptureDependencies_ptsz",
-       (void *)cuStreamUpdateCaptureDependencies_ptsz},
   };
   return manual_function_map;
 }
