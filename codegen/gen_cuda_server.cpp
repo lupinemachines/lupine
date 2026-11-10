@@ -43,6 +43,64 @@ extern "C" CUresult CUDAAPI cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
 extern "C" CUresult CUDAAPI cuMemAdvise(CUdeviceptr devPtr, size_t count,
                                         CUmem_advise advice, CUdevice device);
 
+int handle_cuGetErrorString(conn_t *conn) {
+  CUresult error;
+  const char *pStr = nullptr;
+  std::size_t pStr_len = 0;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &error, sizeof(CUresult)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuGetErrorString(error, &pStr);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      ((pStr_len =
+            pStr != nullptr ? static_cast<std::size_t>(std::strlen(pStr)) : 0),
+       false) ||
+      (rpc_write(conn, &pStr_len, sizeof(std::size_t)) < 0) ||
+      (pStr_len != 0 && rpc_write(conn, pStr, pStr_len) < 0) ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuGetErrorName(conn_t *conn) {
+  CUresult error;
+  const char *pStr = nullptr;
+  std::size_t pStr_len = 0;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &error, sizeof(CUresult)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuGetErrorName(error, &pStr);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      ((pStr_len =
+            pStr != nullptr ? static_cast<std::size_t>(std::strlen(pStr)) : 0),
+       false) ||
+      (rpc_write(conn, &pStr_len, sizeof(std::size_t)) < 0) ||
+      (pStr_len != 0 && rpc_write(conn, pStr, pStr_len) < 0) ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
 int handle_cuInit(conn_t *conn) {
   unsigned int Flags;
   int request_id;
@@ -1259,6 +1317,52 @@ ERROR_0:
   return -1;
 }
 
+int handle_cuModuleGetGlobal_v2(conn_t *conn) {
+  uint8_t dptr_present = 0;
+  CUdeviceptr dptr{};
+  uint8_t bytes_present = 0;
+  size_t bytes{};
+  CUmodule hmod;
+  const char *name = nullptr;
+  std::size_t name_len;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &dptr_present, sizeof(uint8_t)) < 0 ||
+      (dptr_present && rpc_read(conn, &dptr, sizeof(CUdeviceptr)) < 0) ||
+      rpc_read(conn, &bytes_present, sizeof(uint8_t)) < 0 ||
+      (bytes_present && rpc_read(conn, &bytes, sizeof(size_t)) < 0) ||
+      rpc_read(conn, &hmod, sizeof(CUmodule)) < 0 ||
+      rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
+    goto ERROR_0;
+  if (name_len != 0) {
+    name = (const char *)malloc(name_len);
+    if (name == nullptr)
+      goto ERROR_0;
+  }
+  if ((name_len != 0 && rpc_read(conn, (void *)name, name_len) < 0) || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value =
+      cuModuleGetGlobal_v2(dptr_present ? &dptr : nullptr,
+                           bytes_present ? &bytes : nullptr, hmod, name);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (dptr_present && rpc_write(conn, &dptr, sizeof(CUdeviceptr)) < 0) ||
+      (bytes_present && rpc_write(conn, &bytes, sizeof(size_t)) < 0) ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)name);
+  return 0;
+ERROR_0:
+  free((void *)name);
+  return -1;
+}
+
 int handle_cuModuleGetTexRef(conn_t *conn) {
   uint8_t pTexRef_present = 0;
   CUtexref pTexRef{};
@@ -1372,6 +1476,33 @@ int handle_cuLibraryGetKernel(conn_t *conn) {
   return 0;
 ERROR_0:
   free((void *)name);
+  return -1;
+}
+
+int handle_cuLibraryGetModule(conn_t *conn) {
+  uint8_t pMod_present = 0;
+  CUmodule pMod{};
+  CUlibrary library;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &pMod_present, sizeof(uint8_t)) < 0 ||
+      (pMod_present && rpc_read(conn, &pMod, sizeof(CUmodule)) < 0) ||
+      rpc_read(conn, &library, sizeof(CUlibrary)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuLibraryGetModule(pMod_present ? &pMod : nullptr, library);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (pMod_present && rpc_write(conn, &pMod, sizeof(CUmodule)) < 0) ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
   return -1;
 }
 
@@ -8013,6 +8144,88 @@ int handle_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &numBlocks, sizeof(int)) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuOccupancyMaxPotentialBlockSize(conn_t *conn) {
+  uint8_t minGridSize_present = 0;
+  int minGridSize{};
+  uint8_t blockSize_present = 0;
+  int blockSize{};
+  CUfunction func;
+  CUoccupancyB2DSize blockSizeToDynamicSMemSize{};
+  size_t dynamicSMemSize;
+  int blockSizeLimit;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &minGridSize_present, sizeof(uint8_t)) < 0 ||
+      (minGridSize_present && rpc_read(conn, &minGridSize, sizeof(int)) < 0) ||
+      rpc_read(conn, &blockSize_present, sizeof(uint8_t)) < 0 ||
+      (blockSize_present && rpc_read(conn, &blockSize, sizeof(int)) < 0) ||
+      rpc_read(conn, &func, sizeof(CUfunction)) < 0 ||
+      rpc_read(conn, &dynamicSMemSize, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &blockSizeLimit, sizeof(int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuOccupancyMaxPotentialBlockSize(
+      minGridSize_present ? &minGridSize : nullptr,
+      blockSize_present ? &blockSize : nullptr, func,
+      blockSizeToDynamicSMemSize, dynamicSMemSize, blockSizeLimit);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (minGridSize_present && rpc_write(conn, &minGridSize, sizeof(int)) < 0) ||
+      (blockSize_present && rpc_write(conn, &blockSize, sizeof(int)) < 0) ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  return 0;
+ERROR_0:
+  return -1;
+}
+
+int handle_cuOccupancyMaxPotentialBlockSizeWithFlags(conn_t *conn) {
+  uint8_t minGridSize_present = 0;
+  int minGridSize{};
+  uint8_t blockSize_present = 0;
+  int blockSize{};
+  CUfunction func;
+  CUoccupancyB2DSize blockSizeToDynamicSMemSize{};
+  size_t dynamicSMemSize;
+  int blockSizeLimit;
+  unsigned int flags;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &minGridSize_present, sizeof(uint8_t)) < 0 ||
+      (minGridSize_present && rpc_read(conn, &minGridSize, sizeof(int)) < 0) ||
+      rpc_read(conn, &blockSize_present, sizeof(uint8_t)) < 0 ||
+      (blockSize_present && rpc_read(conn, &blockSize, sizeof(int)) < 0) ||
+      rpc_read(conn, &func, sizeof(CUfunction)) < 0 ||
+      rpc_read(conn, &dynamicSMemSize, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &blockSizeLimit, sizeof(int)) < 0 ||
+      rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuOccupancyMaxPotentialBlockSizeWithFlags(
+      minGridSize_present ? &minGridSize : nullptr,
+      blockSize_present ? &blockSize : nullptr, func,
+      blockSizeToDynamicSMemSize, dynamicSMemSize, blockSizeLimit, flags);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (minGridSize_present && rpc_write(conn, &minGridSize, sizeof(int)) < 0) ||
+      (blockSize_present && rpc_write(conn, &blockSize, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;

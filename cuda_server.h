@@ -5,8 +5,6 @@
 
 #include "rpc.h"
 
-int handle_cuGetErrorName(conn_t *conn);
-int handle_cuGetErrorString(conn_t *conn);
 int handle_cuGetExportTableMetadata(conn_t *conn);
 int handle_cuPrivateGetModuleNode(conn_t *conn);
 int handle_cuModuleLoad(conn_t *conn);
@@ -42,9 +40,7 @@ int handle_cuMemcpyHtoA_v2(conn_t *conn);
 int handle_cuMemcpyHtoAAsync_v2(conn_t *conn);
 int handle_cuMemcpyAtoH_v2(conn_t *conn);
 int handle_cuMemcpyAtoHAsync_v2(conn_t *conn);
-int handle_cuLibraryGetModule(conn_t *conn);
 int handle_cuLibraryUnload(conn_t *conn);
-int handle_cuModuleGetGlobal_v2(conn_t *conn);
 int handle_cuLaunchKernel(conn_t *conn);
 int handle_cuLaunchKernelEx(conn_t *conn);
 int handle_cuLaunchCooperativeKernel(conn_t *conn);
@@ -90,8 +86,6 @@ int handle_cuMemAllocManaged(conn_t *conn);
 int handle_cuMemFree_v2(conn_t *conn);
 void lupine_server_cleanup_identity_allocations(conn_t *conn);
 int handle_cuGraphLaunch(conn_t *conn);
-int handle_cuOccupancyMaxPotentialBlockSize(conn_t *conn);
-int handle_cuOccupancyMaxPotentialBlockSizeWithFlags(conn_t *conn);
 #if CUDA_VERSION >= 12000
 int handle_cuTensorMapEncodeTiled(conn_t *conn);
 int handle_cuTensorMapEncodeIm2col(conn_t *conn);

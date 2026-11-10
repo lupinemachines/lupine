@@ -32,8 +32,8 @@ int main() {
     return 2;
   }
   CUlibrary lib = nullptr;
-  CUresult r = cuLibraryLoadData(&lib, kGlobalPtx, nullptr, nullptr, 0,
-                                 nullptr, nullptr, 0);
+  CUresult r = cuLibraryLoadData(&lib, kGlobalPtx, nullptr, nullptr, 0, nullptr,
+                                 nullptr, 0);
   if (r != CUDA_SUCCESS) {
     printf("RESULT: ERROR cuLibraryLoadData %s\n", cn(r));
     return 2;
@@ -64,6 +64,57 @@ int main() {
   if (r != CUDA_SUCCESS || dptr == 0xDEAD || dptr == 0 || bytes != 16) {
     printf("RESULT: FAIL cuLibraryGetGlobal %s dptr=0x%llx bytes=%zu\n", cn(r),
            (unsigned long long)dptr, bytes);
+    return 1;
+  }
+
+  CUmodule mod = nullptr;
+  r = cuLibraryGetModule(&mod, lib);
+  if (r != CUDA_SUCCESS || mod == nullptr) {
+    printf("RESULT: FAIL cuLibraryGetModule %s\n", cn(r));
+    return 1;
+  }
+  r = cuModuleGetGlobal(nullptr, nullptr, mod, "counter");
+  if (r != CUDA_ERROR_INVALID_VALUE) {
+    printf("RESULT: FAIL cuModuleGetGlobal(null, null) %s\n", cn(r));
+    return 1;
+  }
+  dptr = 0xDEAD;
+  bytes = 0xBEEF;
+  r = cuModuleGetGlobal(&dptr, &bytes, mod, "missing");
+  if (r != CUDA_ERROR_NOT_FOUND || dptr != 0 || bytes != 0) {
+    printf("RESULT: FAIL cuModuleGetGlobal(missing) %s dptr=0x%llx "
+           "bytes=0x%zx\n",
+           cn(r), (unsigned long long)dptr, bytes);
+    return 1;
+  }
+  dptr = 0xDEAD;
+  bytes = 0xBEEF;
+  r = cuModuleGetGlobal(&dptr, &bytes, mod, nullptr);
+  if (r != CUDA_ERROR_INVALID_VALUE || dptr != 0 || bytes != 0) {
+    printf("RESULT: FAIL cuModuleGetGlobal(null name) %s dptr=0x%llx "
+           "bytes=0x%zx\n",
+           cn(r), (unsigned long long)dptr, bytes);
+    return 1;
+  }
+
+  int min_grid = 12345;
+  int block_size = 67890;
+  r = cuOccupancyMaxPotentialBlockSize(&min_grid, &block_size, nullptr, nullptr,
+                                       0, 0);
+  if (r != CUDA_ERROR_INVALID_HANDLE || min_grid != 12345 ||
+      block_size != 67890) {
+    printf(
+        "RESULT: FAIL cuOccupancyMaxPotentialBlockSize %s grid=%d block=%d\n",
+        cn(r), min_grid, block_size);
+    return 1;
+  }
+  r = cuOccupancyMaxPotentialBlockSizeWithFlags(&min_grid, &block_size, nullptr,
+                                                nullptr, 0, 0, 0);
+  if (r != CUDA_ERROR_INVALID_HANDLE || min_grid != 12345 ||
+      block_size != 67890) {
+    printf("RESULT: FAIL cuOccupancyMaxPotentialBlockSizeWithFlags %s grid=%d "
+           "block=%d\n",
+           cn(r), min_grid, block_size);
     return 1;
   }
 

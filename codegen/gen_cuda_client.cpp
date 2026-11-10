@@ -929,6 +929,8 @@ CUresult cuLibraryUnload(CUlibrary library) {
 
 CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
   lupine_route route = lupine_route_for_current_context();
+  if (pMod == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
   CUresult resolved = lupine_resolve_library_for_route(&library, route);
   if (resolved != CUDA_SUCCESS)
     return resolved;
@@ -944,13 +946,14 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  if (pMod == nullptr)
-    return CUDA_ERROR_INVALID_VALUE;
+  uint8_t pMod_present = pMod != nullptr;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuLibraryGetModule) < 0 ||
+      rpc_write(conn, &pMod_present, sizeof(uint8_t)) < 0 ||
+      (pMod_present && rpc_write(conn, pMod, sizeof(CUmodule)) < 0) ||
       rpc_write(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pMod, sizeof(CUmodule)) < 0 ||
+      (pMod_present && rpc_read(conn, pMod, sizeof(CUmodule)) < 0) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -6382,6 +6385,83 @@ CUresult cuGraphExecNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
 }
 
 #endif
+
+CUresult
+cuOccupancyMaxPotentialBlockSize(int *minGridSize, int *blockSize,
+                                 CUfunction func,
+                                 CUoccupancyB2DSize blockSizeToDynamicSMemSize,
+                                 size_t dynamicSMemSize, int blockSizeLimit) {
+  lupine_route route = lupine_route_for_function(func);
+  if (minGridSize == nullptr || blockSize == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (blockSizeToDynamicSMemSize != nullptr)
+    return CUDA_ERROR_NOT_SUPPORTED;
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuOccupancyMaxPotentialBlockSize"),
+        minGridSize, blockSize, func, blockSizeToDynamicSMemSize,
+        dynamicSMemSize, blockSizeLimit);
+  conn_t *conn = lupine_route_remote_conn(route);
+  uint8_t minGridSize_present = minGridSize != nullptr;
+  uint8_t blockSize_present = blockSize != nullptr;
+  CUfunction func_rpc = lupine_translate_private_function_for_rpc(func);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuOccupancyMaxPotentialBlockSize) < 0 ||
+      rpc_write(conn, &minGridSize_present, sizeof(uint8_t)) < 0 ||
+      (minGridSize_present && rpc_write(conn, minGridSize, sizeof(int)) < 0) ||
+      rpc_write(conn, &blockSize_present, sizeof(uint8_t)) < 0 ||
+      (blockSize_present && rpc_write(conn, blockSize, sizeof(int)) < 0) ||
+      rpc_write(conn, &func_rpc, sizeof(CUfunction)) < 0 ||
+      rpc_write(conn, &dynamicSMemSize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &blockSizeLimit, sizeof(int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (minGridSize_present && rpc_read(conn, minGridSize, sizeof(int)) < 0) ||
+      (blockSize_present && rpc_read(conn, blockSize, sizeof(int)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
+
+CUresult cuOccupancyMaxPotentialBlockSizeWithFlags(
+    int *minGridSize, int *blockSize, CUfunction func,
+    CUoccupancyB2DSize blockSizeToDynamicSMemSize, size_t dynamicSMemSize,
+    int blockSizeLimit, unsigned int flags) {
+  lupine_route route = lupine_route_for_function(func);
+  if (minGridSize == nullptr || blockSize == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (blockSizeToDynamicSMemSize != nullptr)
+    return CUDA_ERROR_NOT_SUPPORTED;
+  CUresult return_value;
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuOccupancyMaxPotentialBlockSizeWithFlags"),
+        minGridSize, blockSize, func, blockSizeToDynamicSMemSize,
+        dynamicSMemSize, blockSizeLimit, flags);
+  conn_t *conn = lupine_route_remote_conn(route);
+  uint8_t minGridSize_present = minGridSize != nullptr;
+  uint8_t blockSize_present = blockSize != nullptr;
+  CUfunction func_rpc = lupine_translate_private_function_for_rpc(func);
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(
+          conn, RPC_cuOccupancyMaxPotentialBlockSizeWithFlags) < 0 ||
+      rpc_write(conn, &minGridSize_present, sizeof(uint8_t)) < 0 ||
+      (minGridSize_present && rpc_write(conn, minGridSize, sizeof(int)) < 0) ||
+      rpc_write(conn, &blockSize_present, sizeof(uint8_t)) < 0 ||
+      (blockSize_present && rpc_write(conn, blockSize, sizeof(int)) < 0) ||
+      rpc_write(conn, &func_rpc, sizeof(CUfunction)) < 0 ||
+      rpc_write(conn, &dynamicSMemSize, sizeof(size_t)) < 0 ||
+      rpc_write(conn, &blockSizeLimit, sizeof(int)) < 0 ||
+      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (minGridSize_present && rpc_read(conn, minGridSize, sizeof(int)) < 0) ||
+      (blockSize_present && rpc_read(conn, blockSize, sizeof(int)) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return return_value;
+}
 
 CUresult cuOccupancyAvailableDynamicSMemPerBlock(size_t *dynamicSmemSize,
                                                  CUfunction func, int numBlocks,

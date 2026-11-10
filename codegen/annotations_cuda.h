@@ -1,17 +1,16 @@
 #include <cuda.h>
 
 /**
- * @disabled - the driver returns a static string of unknown length, which the
- * generated marshaller cannot receive; manual client caches, manual server
- * forwards length-prefixed bytes
+ * @disabled client - manual client caches error strings and handles
+ * disconnected fallback
  * @param error SEND_ONLY
- * @param pStr SEND_RECV
+ * @param pStr RECV_ONLY NULL_TERMINATED
  */
 CUresult cuGetErrorString(CUresult error, const char **pStr);
 /**
- * @disabled - see cuGetErrorString
+ * @disabled client - see cuGetErrorString
  * @param error SEND_ONLY
- * @param pStr SEND_RECV
+ * @param pStr RECV_ONLY NULL_TERMINATED
  */
 CUresult cuGetErrorName(CUresult error, const char **pStr);
 /**
@@ -375,7 +374,6 @@ CUresult cuModuleGetFunction(CUfunction *hfunc, CUmodule hmod,
  * @param bytes RECV_ONLY NULLABLE
  * @param hmod SEND_ONLY
  * @param name SEND_ONLY NULL_TERMINATED
- * @disabled server
  */
 CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
                               const char *name) {
@@ -490,9 +488,10 @@ CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
  * @recordparent LIBRARY pMod library
  * @param pMod RECV_ONLY
  * @param library SEND_ONLY
- * @disabled server
  */
 CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
+  if (pMod == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
   CUresult resolved = lupine_resolve_library_for_route(&library, route);
   if (resolved != CUDA_SUCCESS)
     return resolved;
@@ -1649,8 +1648,7 @@ CUresult cuDevSmResourceSplitByCount(CUdevResource *result,
                                      unsigned int *nbGroups,
                                      const CUdevResource *input,
                                      CUdevResource *remainder,
-                                     unsigned int flags,
-                                     unsigned int minCount);
+                                     unsigned int flags, unsigned int minCount);
 /**
  * @guard CUDA_VERSION >= 13010
  * @routingkey CURRENT_CONTEXT
@@ -1661,10 +1659,10 @@ CUresult cuDevSmResourceSplitByCount(CUdevResource *result,
  * @param flags SEND_ONLY
  * @param groupParams SEND_RECV LENGTH:nbGroups
  */
-CUresult cuDevSmResourceSplit(
-    CUdevResource *result, unsigned int nbGroups,
-    const CUdevResource *input, CUdevResource *remainder, unsigned int flags,
-    CU_DEV_SM_RESOURCE_GROUP_PARAMS *groupParams);
+CUresult cuDevSmResourceSplit(CUdevResource *result, unsigned int nbGroups,
+                              const CUdevResource *input,
+                              CUdevResource *remainder, unsigned int flags,
+                              CU_DEV_SM_RESOURCE_GROUP_PARAMS *groupParams);
 /**
  * @guard CUDA_VERSION >= 12040
  * @routingkey CURRENT_CONTEXT
@@ -2503,8 +2501,10 @@ CUresult cuGraphAddMemAllocNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       lupine_translate_mem_location(route, route_params.poolProps.location);
   if (status != CUDA_SUCCESS)
     return status;
-  if (route_params.accessDescCount > SIZE_MAX / sizeof(*route_params.accessDescs) ||
-      (route_params.accessDescCount != 0 && route_params.accessDescs == nullptr))
+  if (route_params.accessDescCount >
+          SIZE_MAX / sizeof(*route_params.accessDescs) ||
+      (route_params.accessDescCount != 0 &&
+       route_params.accessDescs == nullptr))
     return CUDA_ERROR_INVALID_VALUE;
   std::vector<CUmemAccessDesc> route_descriptors;
   if (route_params.accessDescCount != 0)
@@ -2546,7 +2546,8 @@ CUresult cuGraphMemAllocNodeGetParams(CUgraphNode hNode,
     }
     for (size_t i = 0; i < params_out->accessDescCount; ++i)
       lupine_restore_mem_location(
-          route, const_cast<CUmemAccessDesc &>(params_out->accessDescs[i]).location);
+          route,
+          const_cast<CUmemAccessDesc &>(params_out->accessDescs[i]).location);
   }
   return return_value;
 }
@@ -2745,8 +2746,7 @@ CUresult cuGraphExecGetFlags(CUgraphExec hGraphExec, cuuint64_t *flags);
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
  */
-CUresult cuGraphNodeSetParams(CUgraphNode hNode,
-                              CUgraphNodeParams *nodeParams);
+CUresult cuGraphNodeSetParams(CUgraphNode hNode, CUgraphNodeParams *nodeParams);
 /**
  * @guard CUDA_VERSION >= 12020
  * @param hGraphExec SEND_ONLY
@@ -2991,11 +2991,10 @@ CUresult cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
     int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize,
     unsigned int flags);
 /**
- * @disabled
  * @param minGridSize SEND_RECV
  * @param blockSize SEND_RECV
  * @param func SEND_ONLY
- * @param blockSizeToDynamicSMemSize SEND_ONLY
+ * @param blockSizeToDynamicSMemSize NONE
  * @param dynamicSMemSize SEND_ONLY
  * @param blockSizeLimit SEND_ONLY
  */
@@ -3003,13 +3002,19 @@ CUresult
 cuOccupancyMaxPotentialBlockSize(int *minGridSize, int *blockSize,
                                  CUfunction func,
                                  CUoccupancyB2DSize blockSizeToDynamicSMemSize,
-                                 size_t dynamicSMemSize, int blockSizeLimit);
+                                 size_t dynamicSMemSize, int blockSizeLimit) {
+  if (minGridSize == nullptr || blockSize == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (blockSizeToDynamicSMemSize != nullptr)
+    return CUDA_ERROR_NOT_SUPPORTED;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
- * @disabled
  * @param minGridSize SEND_RECV
  * @param blockSize SEND_RECV
  * @param func SEND_ONLY
- * @param blockSizeToDynamicSMemSize SEND_ONLY
+ * @param blockSizeToDynamicSMemSize NONE
  * @param dynamicSMemSize SEND_ONLY
  * @param blockSizeLimit SEND_ONLY
  * @param flags SEND_ONLY
@@ -3017,7 +3022,14 @@ cuOccupancyMaxPotentialBlockSize(int *minGridSize, int *blockSize,
 CUresult cuOccupancyMaxPotentialBlockSizeWithFlags(
     int *minGridSize, int *blockSize, CUfunction func,
     CUoccupancyB2DSize blockSizeToDynamicSMemSize, size_t dynamicSMemSize,
-    int blockSizeLimit, unsigned int flags);
+    int blockSizeLimit, unsigned int flags) {
+  if (minGridSize == nullptr || blockSize == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (blockSizeToDynamicSMemSize != nullptr)
+    return CUDA_ERROR_NOT_SUPPORTED;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @param dynamicSmemSize SEND_RECV
  * @param func SEND_ONLY
