@@ -3909,8 +3909,8 @@ int handle_cuStreamQuery(conn_t *conn) {
   if (return_value == CUDA_SUCCESS) {
     CUcontext context = nullptr;
     if (cuStreamGetCtx(hStream, &context) == CUDA_SUCCESS)
-      pending = lupine_detach_pending_dtoh_copies(
-          conn, hStream, hStream == nullptr, context, dtoh_before);
+      pending = lupine_detach_pending_dtoh_copies(conn, hStream, false, context,
+                                                  dtoh_before);
   }
   return_value = lupine_take_async_error(conn, return_value);
 
@@ -3949,8 +3949,8 @@ int handle_cuStreamSynchronize(conn_t *conn) {
   if (return_value == CUDA_SUCCESS) {
     CUcontext context = nullptr;
     if (cuStreamGetCtx(hStream, &context) == CUDA_SUCCESS)
-      pending = lupine_detach_pending_dtoh_copies(
-          conn, hStream, hStream == nullptr, context, dtoh_before);
+      pending = lupine_detach_pending_dtoh_copies(conn, hStream, false, context,
+                                                  dtoh_before);
   }
   return_value = lupine_take_async_error(conn, return_value);
 
