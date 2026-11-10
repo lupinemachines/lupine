@@ -2827,7 +2827,13 @@ CUresult cuGraphUpload(CUgraphExec hGraphExec, CUstream hStream);
  * @param hStream SEND_ONLY
  * @disabled server
  */
-CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream);
+CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  // The graph may re-record events it does not name here, so no cached
+  // completion can be trusted past the launch.
+  lupine_event_invalidate_all_completions();
+  return return_value;
+}
 /**
  * @param hGraphExec SEND_ONLY
  * @disabled server

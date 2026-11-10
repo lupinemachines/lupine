@@ -56,6 +56,11 @@ void lupine_event_invalidate_completion(lupine_event_table *table,
                                         CUevent event);
 void lupine_event_invalidate_completion(CUevent event);
 
+// Voids every cached completion, for work that records events it does not
+// name, such as a graph launch.
+void lupine_event_invalidate_all_completions(lupine_event_table *table);
+void lupine_event_invalidate_all_completions();
+
 // Drops the event, so a handle the driver reuses cannot inherit its answer.
 void lupine_event_forget(lupine_event_table *table, CUevent event);
 void lupine_event_forget(CUevent event);
