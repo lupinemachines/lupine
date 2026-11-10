@@ -809,7 +809,7 @@ CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
                          size_t ByteCount);
 /**
  * @synchronize
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @crossservercopy dstDevice srcDevice ByteCount
  * @param dstDevice SEND_ONLY
  * @param srcDevice SEND_ONLY
@@ -827,7 +827,7 @@ CUresult cuMemcpyDtoD_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
 CUresult cuMemcpyDtoA_v2(CUarray dstArray, size_t dstOffset,
                          CUdeviceptr srcDevice, size_t ByteCount);
 /**
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @param dstDevice SEND_ONLY
  * @param srcArray SEND_ONLY
  * @param srcOffset SEND_ONLY
@@ -907,7 +907,7 @@ CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
                               size_t ByteCount, CUstream hStream);
 /**
  * @async
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @crossservercopy dstDevice srcDevice ByteCount STREAM:hStream ASYNC
  * @param dstDevice SEND_ONLY
  * @param srcDevice SEND_ONLY
@@ -946,7 +946,7 @@ CUresult cuMemcpy3DAsync_v2(const CUDA_MEMCPY3D *pCopy, CUstream hStream);
 CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy, CUstream hStream);
 /**
  * @synchronize
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @param dstDevice SEND_ONLY
  * @param uc SEND_ONLY
  * @param N SEND_ONLY
@@ -954,7 +954,7 @@ CUresult cuMemcpy3DPeerAsync(const CUDA_MEMCPY3D_PEER *pCopy, CUstream hStream);
 CUresult cuMemsetD8_v2(CUdeviceptr dstDevice, unsigned char uc, size_t N);
 /**
  * @synchronize
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @param dstDevice SEND_ONLY
  * @param us SEND_ONLY
  * @param N SEND_ONLY
@@ -962,7 +962,7 @@ CUresult cuMemsetD8_v2(CUdeviceptr dstDevice, unsigned char uc, size_t N);
 CUresult cuMemsetD16_v2(CUdeviceptr dstDevice, unsigned short us, size_t N);
 /**
  * @synchronize
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @param dstDevice SEND_ONLY
  * @param ui SEND_ONLY
  * @param N SEND_ONLY
@@ -970,7 +970,7 @@ CUresult cuMemsetD16_v2(CUdeviceptr dstDevice, unsigned short us, size_t N);
 CUresult cuMemsetD32_v2(CUdeviceptr dstDevice, unsigned int ui, size_t N);
 /**
  * @synchronize
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @param dstDevice SEND_ONLY
  * @param dstPitch SEND_ONLY
  * @param uc SEND_ONLY
@@ -981,7 +981,7 @@ CUresult cuMemsetD2D8_v2(CUdeviceptr dstDevice, size_t dstPitch,
                          unsigned char uc, size_t Width, size_t Height);
 /**
  * @synchronize
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @param dstDevice SEND_ONLY
  * @param dstPitch SEND_ONLY
  * @param us SEND_ONLY
@@ -992,7 +992,7 @@ CUresult cuMemsetD2D16_v2(CUdeviceptr dstDevice, size_t dstPitch,
                           unsigned short us, size_t Width, size_t Height);
 /**
  * @synchronize
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @param dstDevice SEND_ONLY
  * @param dstPitch SEND_ONLY
  * @param ui SEND_ONLY
@@ -1003,7 +1003,7 @@ CUresult cuMemsetD2D32_v2(CUdeviceptr dstDevice, size_t dstPitch,
                           unsigned int ui, size_t Width, size_t Height);
 /**
  * @async
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @param dstDevice SEND_ONLY
  * @param uc SEND_ONLY
  * @param N SEND_ONLY
@@ -1013,7 +1013,7 @@ CUresult cuMemsetD8Async(CUdeviceptr dstDevice, unsigned char uc, size_t N,
                          CUstream hStream);
 /**
  * @async
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @param dstDevice SEND_ONLY
  * @param us SEND_ONLY
  * @param N SEND_ONLY
@@ -1023,7 +1023,7 @@ CUresult cuMemsetD16Async(CUdeviceptr dstDevice, unsigned short us, size_t N,
                           CUstream hStream);
 /**
  * @async
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @param dstDevice SEND_ONLY
  * @param ui SEND_ONLY
  * @param N SEND_ONLY
@@ -1033,7 +1033,7 @@ CUresult cuMemsetD32Async(CUdeviceptr dstDevice, unsigned int ui, size_t N,
                           CUstream hStream);
 /**
  * @async
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @param dstDevice SEND_ONLY
  * @param dstPitch SEND_ONLY
  * @param uc SEND_ONLY
@@ -1046,7 +1046,7 @@ CUresult cuMemsetD2D8Async(CUdeviceptr dstDevice, size_t dstPitch,
                            CUstream hStream);
 /**
  * @async
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @param dstDevice SEND_ONLY
  * @param dstPitch SEND_ONLY
  * @param us SEND_ONLY
@@ -1059,7 +1059,7 @@ CUresult cuMemsetD2D16Async(CUdeviceptr dstDevice, size_t dstPitch,
                             CUstream hStream);
 /**
  * @async
- * @routingkey DEVICEPTR dstDevice
+ * @routingkey DEVICEPTR_DESTINATION dstDevice
  * @param dstDevice SEND_ONLY
  * @param dstPitch SEND_ONLY
  * @param ui SEND_ONLY
