@@ -980,13 +980,22 @@ struct lupine_kernel_record {
   lupine_attribute_records kernel_attributes;
 };
 
+static constexpr uint32_t LUPINE_PARAM_COUNT_UNKNOWN = UINT32_MAX;
+
 template <typename Query>
 static void lupine_collect_params(lupine_kernel_record &record, Query query) {
   lupine_internal_cuda_query probe;
-  for (lupine_param_record param;
-       query(record.param_count, &param.offset, &param.size) == CUDA_SUCCESS;
-       ++record.param_count) {
-    record.params.push_back(param);
+  for (lupine_param_record param;; ++record.param_count) {
+    CUresult result = query(record.param_count, &param.offset, &param.size);
+    if (result == CUDA_SUCCESS) {
+      record.params.push_back(param);
+      continue;
+    }
+    if (result != CUDA_ERROR_INVALID_VALUE) {
+      record.params.clear();
+      record.param_count = LUPINE_PARAM_COUNT_UNKNOWN;
+    }
+    return;
   }
 }
 
@@ -2448,9 +2457,9 @@ int handle_cuLaunchKernel(conn_t *conn) {
     return -1;
   }
   if (result == CUDA_SUCCESS) {
-    result =
-        cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
-                       blockDimZ, sharedMemBytes, hStream, params, nullptr);
+    result = cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX,
+                            blockDimY, blockDimZ, sharedMemBytes, hStream,
+                            param_count != 0 ? params : nullptr, nullptr);
   }
   lupine_keep_async_error(conn, result);
   std::free(param_sizes);
@@ -2524,7 +2533,8 @@ int handle_cuLaunchKernelEx(conn_t *conn) {
   }
 #if CUDA_VERSION >= 11080
   if (result == CUDA_SUCCESS) {
-    result = cuLaunchKernelEx(&config, f, params, nullptr);
+    result = cuLaunchKernelEx(&config, f, param_count != 0 ? params : nullptr,
+                              nullptr);
   }
 #endif
   lupine_keep_async_error(conn, result);
