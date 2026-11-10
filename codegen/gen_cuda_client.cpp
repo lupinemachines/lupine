@@ -8475,10 +8475,60 @@ CUresult cuGraphExecUpdate(CUgraphExec hGraphExec, CUgraph hGraph,
   return return_value;
 }
 
+#ifdef cuDeviceTotalMem
+#undef cuDeviceTotalMem
+#endif
+extern "C" CUresult cuDeviceTotalMem(size_t *bytes, CUdevice dev) {
+  return cuDeviceTotalMem_v2(bytes, dev);
+}
+
+#ifdef cuDeviceGetUuid
+#undef cuDeviceGetUuid
+#endif
+extern "C" CUresult cuDeviceGetUuid(CUuuid *uuid, CUdevice dev) {
+  return cuDeviceGetUuid_v2(uuid, dev);
+}
+
+#ifdef cuDevicePrimaryCtxRelease
+#undef cuDevicePrimaryCtxRelease
+#endif
+extern "C" CUresult cuDevicePrimaryCtxRelease(CUdevice dev) {
+  return cuDevicePrimaryCtxRelease_v2(dev);
+}
+
+#ifdef cuDevicePrimaryCtxSetFlags
+#undef cuDevicePrimaryCtxSetFlags
+#endif
+extern "C" CUresult cuDevicePrimaryCtxSetFlags(CUdevice dev,
+                                               unsigned int flags) {
+  return cuDevicePrimaryCtxSetFlags_v2(dev, flags);
+}
+
+#ifdef cuDevicePrimaryCtxReset
+#undef cuDevicePrimaryCtxReset
+#endif
+extern "C" CUresult cuDevicePrimaryCtxReset(CUdevice dev) {
+  return cuDevicePrimaryCtxReset_v2(dev);
+}
+
 #ifdef cuCtxDestroy
 #undef cuCtxDestroy
 #endif
 extern "C" CUresult cuCtxDestroy(CUcontext ctx) { return cuCtxDestroy_v2(ctx); }
+
+#ifdef cuCtxPopCurrent
+#undef cuCtxPopCurrent
+#endif
+extern "C" CUresult cuCtxPopCurrent(CUcontext *pctx) {
+  return cuCtxPopCurrent_v2(pctx);
+}
+
+#ifdef cuCtxPushCurrent
+#undef cuCtxPushCurrent
+#endif
+extern "C" CUresult cuCtxPushCurrent(CUcontext ctx) {
+  return cuCtxPushCurrent_v2(ctx);
+}
 
 #ifdef cuModuleGetGlobal
 #undef cuModuleGetGlobal
@@ -8503,6 +8553,39 @@ extern "C" CUresult cuMemAllocPitch(CUdeviceptr *dptr, size_t *pPitch,
                                     unsigned int ElementSizeBytes) {
   return cuMemAllocPitch_v2(dptr, pPitch, WidthInBytes, Height,
                             ElementSizeBytes);
+}
+
+#ifdef cuMemcpyHtoD
+#undef cuMemcpyHtoD
+#endif
+extern "C" CUresult cuMemcpyHtoD(CUdeviceptr dstDevice, const void *srcHost,
+                                 size_t ByteCount) {
+  return cuMemcpyHtoD_v2(dstDevice, srcHost, ByteCount);
+}
+
+#ifdef cuMemcpyHtoDAsync
+#undef cuMemcpyHtoDAsync
+#endif
+extern "C" CUresult cuMemcpyHtoDAsync(CUdeviceptr dstDevice,
+                                      const void *srcHost, size_t ByteCount,
+                                      CUstream hStream) {
+  return cuMemcpyHtoDAsync_v2(dstDevice, srcHost, ByteCount, hStream);
+}
+
+#ifdef cuMemcpyDtoH
+#undef cuMemcpyDtoH
+#endif
+extern "C" CUresult cuMemcpyDtoH(void *dstHost, CUdeviceptr srcDevice,
+                                 size_t ByteCount) {
+  return cuMemcpyDtoH_v2(dstHost, srcDevice, ByteCount);
+}
+
+#ifdef cuMemcpyDtoHAsync
+#undef cuMemcpyDtoHAsync
+#endif
+extern "C" CUresult cuMemcpyDtoHAsync(void *dstHost, CUdeviceptr srcDevice,
+                                      size_t ByteCount, CUstream hStream) {
+  return cuMemcpyDtoHAsync_v2(dstHost, srcDevice, ByteCount, hStream);
 }
 
 #ifdef cuMemcpyDtoD
@@ -8574,6 +8657,366 @@ extern "C" CUresult cuStreamBeginCapture(CUstream hStream,
   return cuStreamBeginCapture_v2(hStream, mode);
 }
 
+#ifdef cuStreamDestroy
+#undef cuStreamDestroy
+#endif
+extern "C" CUresult cuStreamDestroy(CUstream hStream) {
+  return cuStreamDestroy_v2(hStream);
+}
+
+#ifdef cuEventDestroy
+#undef cuEventDestroy
+#endif
+extern "C" CUresult cuEventDestroy(CUevent hEvent) {
+  return cuEventDestroy_v2(hEvent);
+}
+
+#ifdef cuEventElapsedTime
+#undef cuEventElapsedTime
+#endif
+extern "C" CUresult cuEventElapsedTime(float *pMilliseconds, CUevent hStart,
+                                       CUevent hEnd) {
+  return cuEventElapsedTime_v2(pMilliseconds, hStart, hEnd);
+}
+
+#ifdef cuStreamGetDevice_ptsz
+#undef cuStreamGetDevice_ptsz
+#endif
+extern "C" CUresult cuStreamGetDevice_ptsz(CUstream hStream, CUdevice *device) {
+  return cuStreamGetDevice(hStream, device);
+}
+
+#ifdef cuMemGetAddressRange
+#undef cuMemGetAddressRange
+#endif
+extern "C" CUresult cuMemGetAddressRange(CUdeviceptr *pbase, size_t *psize,
+                                         CUdeviceptr dptr) {
+  return cuMemGetAddressRange_v2(pbase, psize, dptr);
+}
+
+#ifdef cuMemGetInfo
+#undef cuMemGetInfo
+#endif
+extern "C" CUresult cuMemGetInfo(size_t *free, size_t *total) {
+  return cuMemGetInfo_v2(free, total);
+}
+
+#ifdef cuLinkCreate
+#undef cuLinkCreate
+#endif
+extern "C" CUresult cuLinkCreate(unsigned int numOptions, CUjit_option *options,
+                                 void **optionValues, CUlinkState *stateOut) {
+  return cuLinkCreate_v2(numOptions, options, optionValues, stateOut);
+}
+
+#ifdef cuLinkAddData
+#undef cuLinkAddData
+#endif
+extern "C" CUresult cuLinkAddData(CUlinkState state, CUjitInputType type,
+                                  void *data, size_t size, const char *name,
+                                  unsigned int numOptions,
+                                  CUjit_option *options, void **optionValues) {
+  return cuLinkAddData_v2(state, type, data, size, name, numOptions, options,
+                          optionValues);
+}
+
+#ifdef cuLinkAddFile
+#undef cuLinkAddFile
+#endif
+extern "C" CUresult cuLinkAddFile(CUlinkState state, CUjitInputType type,
+                                  const char *path, unsigned int numOptions,
+                                  CUjit_option *options, void **optionValues) {
+  return cuLinkAddFile_v2(state, type, path, numOptions, options, optionValues);
+}
+
+#ifdef cuLaunchCooperativeKernel_ptsz
+#undef cuLaunchCooperativeKernel_ptsz
+#endif
+extern "C" CUresult cuLaunchCooperativeKernel_ptsz(
+    CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
+    unsigned int gridDimZ, unsigned int blockDimX, unsigned int blockDimY,
+    unsigned int blockDimZ, unsigned int sharedMemBytes, CUstream hStream,
+    void **kernelParams) {
+  return cuLaunchCooperativeKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX,
+                                   blockDimY, blockDimZ, sharedMemBytes,
+                                   hStream, kernelParams);
+}
+
+#ifdef cuGraphKernelNodeGetParams
+#undef cuGraphKernelNodeGetParams
+#endif
+extern "C" CUresult
+cuGraphKernelNodeGetParams(CUgraphNode hNode,
+                           CUDA_KERNEL_NODE_PARAMS *nodeParams) {
+  return cuGraphKernelNodeGetParams_v2(hNode, nodeParams);
+}
+
+#ifdef cuGraphKernelNodeSetParams
+#undef cuGraphKernelNodeSetParams
+#endif
+extern "C" CUresult
+cuGraphKernelNodeSetParams(CUgraphNode hNode,
+                           const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
+  return cuGraphKernelNodeSetParams_v2(hNode, nodeParams);
+}
+
+#ifdef cuGraphAddKernelNode
+#undef cuGraphAddKernelNode
+#endif
+extern "C" CUresult
+cuGraphAddKernelNode(CUgraphNode *phGraphNode, CUgraph hGraph,
+                     const CUgraphNode *dependencies, size_t numDependencies,
+                     const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
+  return cuGraphAddKernelNode_v2(phGraphNode, hGraph, dependencies,
+                                 numDependencies, nodeParams);
+}
+
+#ifdef cuGraphExecKernelNodeSetParams
+#undef cuGraphExecKernelNodeSetParams
+#endif
+extern "C" CUresult
+cuGraphExecKernelNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
+                               const CUDA_KERNEL_NODE_PARAMS *nodeParams) {
+  return cuGraphExecKernelNodeSetParams_v2(hGraphExec, hNode, nodeParams);
+}
+
+#ifdef cuStreamWaitValue32
+#undef cuStreamWaitValue32
+#endif
+extern "C" CUresult cuStreamWaitValue32(CUstream stream, CUdeviceptr addr,
+                                        cuuint32_t value, unsigned int flags) {
+  return cuStreamWaitValue32_v2(stream, addr, value, flags);
+}
+
+#ifdef cuStreamWaitValue64
+#undef cuStreamWaitValue64
+#endif
+extern "C" CUresult cuStreamWaitValue64(CUstream stream, CUdeviceptr addr,
+                                        cuuint64_t value, unsigned int flags) {
+  return cuStreamWaitValue64_v2(stream, addr, value, flags);
+}
+
+#ifdef cuStreamWriteValue32
+#undef cuStreamWriteValue32
+#endif
+extern "C" CUresult cuStreamWriteValue32(CUstream stream, CUdeviceptr addr,
+                                         cuuint32_t value, unsigned int flags) {
+  return cuStreamWriteValue32_v2(stream, addr, value, flags);
+}
+
+#ifdef cuStreamWriteValue64
+#undef cuStreamWriteValue64
+#endif
+extern "C" CUresult cuStreamWriteValue64(CUstream stream, CUdeviceptr addr,
+                                         cuuint64_t value, unsigned int flags) {
+  return cuStreamWriteValue64_v2(stream, addr, value, flags);
+}
+
+#ifdef cuStreamBatchMemOp
+#undef cuStreamBatchMemOp
+#endif
+extern "C" CUresult cuStreamBatchMemOp(CUstream stream, unsigned int count,
+                                       CUstreamBatchMemOpParams *paramArray,
+                                       unsigned int flags) {
+  return cuStreamBatchMemOp_v2(stream, count, paramArray, flags);
+}
+
+#ifdef cuArrayCreate
+#undef cuArrayCreate
+#endif
+extern "C" CUresult cuArrayCreate(CUarray *pHandle,
+                                  const CUDA_ARRAY_DESCRIPTOR *pAllocateArray) {
+  return cuArrayCreate_v2(pHandle, pAllocateArray);
+}
+
+#ifdef cuArray3DCreate
+#undef cuArray3DCreate
+#endif
+extern "C" CUresult
+cuArray3DCreate(CUarray *pHandle,
+                const CUDA_ARRAY3D_DESCRIPTOR *pAllocateArray) {
+  return cuArray3DCreate_v2(pHandle, pAllocateArray);
+}
+
+#ifdef cuArray3DGetDescriptor
+#undef cuArray3DGetDescriptor
+#endif
+extern "C" CUresult
+cuArray3DGetDescriptor(CUDA_ARRAY3D_DESCRIPTOR *pArrayDescriptor,
+                       CUarray hArray) {
+  return cuArray3DGetDescriptor_v2(pArrayDescriptor, hArray);
+}
+
+#ifdef cuMemAllocHost
+#undef cuMemAllocHost
+#endif
+extern "C" CUresult cuMemAllocHost(void **pp, size_t bytesize) {
+  return cuMemAllocHost_v2(pp, bytesize);
+}
+
+#ifdef cuMemHostGetDevicePointer
+#undef cuMemHostGetDevicePointer
+#endif
+extern "C" CUresult cuMemHostGetDevicePointer(CUdeviceptr *pdptr, void *p,
+                                              unsigned int Flags) {
+  return cuMemHostGetDevicePointer_v2(pdptr, p, Flags);
+}
+
+#ifdef cuMemFree
+#undef cuMemFree
+#endif
+extern "C" CUresult cuMemFree(CUdeviceptr dptr) { return cuMemFree_v2(dptr); }
+
+#ifdef cuMemcpyDtoA
+#undef cuMemcpyDtoA
+#endif
+extern "C" CUresult cuMemcpyDtoA(CUarray dstArray, size_t dstOffset,
+                                 CUdeviceptr srcDevice, size_t ByteCount) {
+  return cuMemcpyDtoA_v2(dstArray, dstOffset, srcDevice, ByteCount);
+}
+
+#ifdef cuMemcpyAtoD
+#undef cuMemcpyAtoD
+#endif
+extern "C" CUresult cuMemcpyAtoD(CUdeviceptr dstDevice, CUarray srcArray,
+                                 size_t srcOffset, size_t ByteCount) {
+  return cuMemcpyAtoD_v2(dstDevice, srcArray, srcOffset, ByteCount);
+}
+
+#ifdef cuMemcpyAtoA
+#undef cuMemcpyAtoA
+#endif
+extern "C" CUresult cuMemcpyAtoA(CUarray dstArray, size_t dstOffset,
+                                 CUarray srcArray, size_t srcOffset,
+                                 size_t ByteCount) {
+  return cuMemcpyAtoA_v2(dstArray, dstOffset, srcArray, srcOffset, ByteCount);
+}
+
+#ifdef cuMemcpyHtoA
+#undef cuMemcpyHtoA
+#endif
+extern "C" CUresult cuMemcpyHtoA(CUarray dstArray, size_t dstOffset,
+                                 const void *srcHost, size_t ByteCount) {
+  return cuMemcpyHtoA_v2(dstArray, dstOffset, srcHost, ByteCount);
+}
+
+#ifdef cuMemcpyHtoA_v2_ptds
+#undef cuMemcpyHtoA_v2_ptds
+#endif
+extern "C" CUresult cuMemcpyHtoA_v2_ptds(CUarray dstArray, size_t dstOffset,
+                                         const void *srcHost,
+                                         size_t ByteCount) {
+  return cuMemcpyHtoA_v2(dstArray, dstOffset, srcHost, ByteCount);
+}
+
+#ifdef cuMemcpyHtoAAsync
+#undef cuMemcpyHtoAAsync
+#endif
+extern "C" CUresult cuMemcpyHtoAAsync(CUarray dstArray, size_t dstOffset,
+                                      const void *srcHost, size_t ByteCount,
+                                      CUstream hStream) {
+  return cuMemcpyHtoAAsync_v2(dstArray, dstOffset, srcHost, ByteCount, hStream);
+}
+
+#ifdef cuMemcpyHtoAAsync_v2_ptsz
+#undef cuMemcpyHtoAAsync_v2_ptsz
+#endif
+extern "C" CUresult cuMemcpyHtoAAsync_v2_ptsz(CUarray dstArray,
+                                              size_t dstOffset,
+                                              const void *srcHost,
+                                              size_t ByteCount,
+                                              CUstream hStream) {
+  return cuMemcpyHtoAAsync_v2(dstArray, dstOffset, srcHost, ByteCount, hStream);
+}
+
+#ifdef cuMemcpyAtoH
+#undef cuMemcpyAtoH
+#endif
+extern "C" CUresult cuMemcpyAtoH(void *dstHost, CUarray srcArray,
+                                 size_t srcOffset, size_t ByteCount) {
+  return cuMemcpyAtoH_v2(dstHost, srcArray, srcOffset, ByteCount);
+}
+
+#ifdef cuMemcpyAtoH_v2_ptds
+#undef cuMemcpyAtoH_v2_ptds
+#endif
+extern "C" CUresult cuMemcpyAtoH_v2_ptds(void *dstHost, CUarray srcArray,
+                                         size_t srcOffset, size_t ByteCount) {
+  return cuMemcpyAtoH_v2(dstHost, srcArray, srcOffset, ByteCount);
+}
+
+#ifdef cuMemcpyAtoHAsync
+#undef cuMemcpyAtoHAsync
+#endif
+extern "C" CUresult cuMemcpyAtoHAsync(void *dstHost, CUarray srcArray,
+                                      size_t srcOffset, size_t ByteCount,
+                                      CUstream hStream) {
+  return cuMemcpyAtoHAsync_v2(dstHost, srcArray, srcOffset, ByteCount, hStream);
+}
+
+#ifdef cuMemcpyAtoHAsync_v2_ptsz
+#undef cuMemcpyAtoHAsync_v2_ptsz
+#endif
+extern "C" CUresult cuMemcpyAtoHAsync_v2_ptsz(void *dstHost, CUarray srcArray,
+                                              size_t srcOffset,
+                                              size_t ByteCount,
+                                              CUstream hStream) {
+  return cuMemcpyAtoHAsync_v2(dstHost, srcArray, srcOffset, ByteCount, hStream);
+}
+
+#ifdef cuMemcpy2D
+#undef cuMemcpy2D
+#endif
+extern "C" CUresult cuMemcpy2D(const CUDA_MEMCPY2D *pCopy) {
+  return cuMemcpy2D_v2(pCopy);
+}
+
+#ifdef cuMemcpy2DUnaligned
+#undef cuMemcpy2DUnaligned
+#endif
+extern "C" CUresult cuMemcpy2DUnaligned(const CUDA_MEMCPY2D *pCopy) {
+  return cuMemcpy2DUnaligned_v2(pCopy);
+}
+
+#ifdef cuMemcpy2DAsync
+#undef cuMemcpy2DAsync
+#endif
+extern "C" CUresult cuMemcpy2DAsync(const CUDA_MEMCPY2D *pCopy,
+                                    CUstream hStream) {
+  return cuMemcpy2DAsync_v2(pCopy, hStream);
+}
+
+#ifdef cuMemcpy2DAsync_ptsz
+#undef cuMemcpy2DAsync_ptsz
+#endif
+extern "C" CUresult cuMemcpy2DAsync_ptsz(const CUDA_MEMCPY2D *pCopy,
+                                         CUstream hStream) {
+  return cuMemcpy2DAsync_v2(pCopy, hStream);
+}
+
+#ifdef cuMemcpy3D
+#undef cuMemcpy3D
+#endif
+extern "C" CUresult cuMemcpy3D(const CUDA_MEMCPY3D *pCopy) {
+  return cuMemcpy3D_v2(pCopy);
+}
+
+#ifdef cuMemcpy3DAsync
+#undef cuMemcpy3DAsync
+#endif
+extern "C" CUresult cuMemcpy3DAsync(const CUDA_MEMCPY3D *pCopy,
+                                    CUstream hStream) {
+  return cuMemcpy3DAsync_v2(pCopy, hStream);
+}
+
+#ifdef cuMemcpy3DAsync_ptsz
+#undef cuMemcpy3DAsync_ptsz
+#endif
+extern "C" CUresult cuMemcpy3DAsync_ptsz(const CUDA_MEMCPY3D *pCopy,
+                                         CUstream hStream) {
+  return cuMemcpy3DAsync_v2(pCopy, hStream);
+}
+
 #ifdef cuMemcpyPeer_ptds
 #undef cuMemcpyPeer_ptds
 #endif
@@ -8594,6 +9037,21 @@ extern "C" CUresult cuMemcpyPeerAsync_ptsz(CUdeviceptr dstDevice,
                                            size_t ByteCount, CUstream hStream) {
   return cuMemcpyPeerAsync(dstDevice, dstContext, srcDevice, srcContext,
                            ByteCount, hStream);
+}
+
+#ifdef cuMemcpy3DPeer_ptds
+#undef cuMemcpy3DPeer_ptds
+#endif
+extern "C" CUresult cuMemcpy3DPeer_ptds(const CUDA_MEMCPY3D_PEER *pCopy) {
+  return cuMemcpy3DPeer(pCopy);
+}
+
+#ifdef cuMemcpy3DPeerAsync_ptsz
+#undef cuMemcpy3DPeerAsync_ptsz
+#endif
+extern "C" CUresult cuMemcpy3DPeerAsync_ptsz(const CUDA_MEMCPY3D_PEER *pCopy,
+                                             CUstream hStream) {
+  return cuMemcpy3DPeerAsync(pCopy, hStream);
 }
 
 #ifdef cuMemsetD8Async_ptsz
@@ -8683,12 +9141,29 @@ extern "C" CUresult cuStreamGetCtx_ptsz(CUstream hStream, CUcontext *pctx) {
   return cuStreamGetCtx(hStream, pctx);
 }
 
+#ifdef cuStreamWaitEvent_ptsz
+#undef cuStreamWaitEvent_ptsz
+#endif
+extern "C" CUresult cuStreamWaitEvent_ptsz(CUstream hStream, CUevent hEvent,
+                                           unsigned int Flags) {
+  return cuStreamWaitEvent(hStream, hEvent, Flags);
+}
+
 #ifdef cuStreamEndCapture_ptsz
 #undef cuStreamEndCapture_ptsz
 #endif
 extern "C" CUresult cuStreamEndCapture_ptsz(CUstream hStream,
                                             CUgraph *phGraph) {
   return cuStreamEndCapture(hStream, phGraph);
+}
+
+#ifdef cuStreamIsCapturing_ptsz
+#undef cuStreamIsCapturing_ptsz
+#endif
+extern "C" CUresult
+cuStreamIsCapturing_ptsz(CUstream hStream,
+                         CUstreamCaptureStatus *captureStatus) {
+  return cuStreamIsCapturing(hStream, captureStatus);
 }
 
 #ifdef cuStreamAddCallback_ptsz
@@ -8722,6 +9197,45 @@ extern "C" CUresult cuStreamQuery_ptsz(CUstream hStream) {
 #endif
 extern "C" CUresult cuStreamSynchronize_ptsz(CUstream hStream) {
   return cuStreamSynchronize(hStream);
+}
+
+#ifdef cuEventRecord_ptsz
+#undef cuEventRecord_ptsz
+#endif
+extern "C" CUresult cuEventRecord_ptsz(CUevent hEvent, CUstream hStream) {
+  return cuEventRecord(hEvent, hStream);
+}
+
+#ifdef cuEventRecordWithFlags_ptsz
+#undef cuEventRecordWithFlags_ptsz
+#endif
+extern "C" CUresult cuEventRecordWithFlags_ptsz(CUevent hEvent,
+                                                CUstream hStream,
+                                                unsigned int flags) {
+  return cuEventRecordWithFlags(hEvent, hStream, flags);
+}
+
+#ifdef cuLaunchKernel_ptsz
+#undef cuLaunchKernel_ptsz
+#endif
+extern "C" CUresult
+cuLaunchKernel_ptsz(CUfunction f, unsigned int gridDimX, unsigned int gridDimY,
+                    unsigned int gridDimZ, unsigned int blockDimX,
+                    unsigned int blockDimY, unsigned int blockDimZ,
+                    unsigned int sharedMemBytes, CUstream hStream,
+                    void **kernelParams, void **extra) {
+  return cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY,
+                        blockDimZ, sharedMemBytes, hStream, kernelParams,
+                        extra);
+}
+
+#ifdef cuLaunchKernelEx_ptsz
+#undef cuLaunchKernelEx_ptsz
+#endif
+extern "C" CUresult cuLaunchKernelEx_ptsz(const CUlaunchConfig *config,
+                                          CUfunction f, void **kernelParams,
+                                          void **extra) {
+  return cuLaunchKernelEx(config, f, kernelParams, extra);
 }
 
 #ifdef cuLaunchHostFunc_ptsz
@@ -9374,10 +9888,21 @@ std::unordered_map<std::string, void *> functionMap = {
 #endif
     {"cuGraphInstantiate_v2", (void *)cuGraphInstantiate_v2},
     {"cuGraphExecUpdate", (void *)cuGraphExecUpdate},
+    {"cuDeviceTotalMem", (void *)cuDeviceTotalMem_v2},
+    {"cuDeviceGetUuid", (void *)cuDeviceGetUuid_v2},
+    {"cuDevicePrimaryCtxRelease", (void *)cuDevicePrimaryCtxRelease_v2},
+    {"cuDevicePrimaryCtxSetFlags", (void *)cuDevicePrimaryCtxSetFlags_v2},
+    {"cuDevicePrimaryCtxReset", (void *)cuDevicePrimaryCtxReset_v2},
     {"cuCtxDestroy", (void *)cuCtxDestroy_v2},
+    {"cuCtxPopCurrent", (void *)cuCtxPopCurrent_v2},
+    {"cuCtxPushCurrent", (void *)cuCtxPushCurrent_v2},
     {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},
     {"cuMemAlloc", (void *)cuMemAlloc_v2},
     {"cuMemAllocPitch", (void *)cuMemAllocPitch_v2},
+    {"cuMemcpyHtoD", (void *)cuMemcpyHtoD_v2},
+    {"cuMemcpyHtoDAsync", (void *)cuMemcpyHtoDAsync_v2},
+    {"cuMemcpyDtoH", (void *)cuMemcpyDtoH_v2},
+    {"cuMemcpyDtoHAsync", (void *)cuMemcpyDtoHAsync_v2},
     {"cuMemcpyDtoD", (void *)cuMemcpyDtoD_v2},
     {"cuMemcpyDtoDAsync", (void *)cuMemcpyDtoDAsync_v2},
     {"cuMemsetD8", (void *)cuMemsetD8_v2},
@@ -9386,8 +9911,54 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuMemsetD2D32", (void *)cuMemsetD2D32_v2},
     {"cuIpcOpenMemHandle", (void *)cuIpcOpenMemHandle_v2},
     {"cuStreamBeginCapture", (void *)cuStreamBeginCapture_v2},
+    {"cuStreamDestroy", (void *)cuStreamDestroy_v2},
+    {"cuEventDestroy", (void *)cuEventDestroy_v2},
+    {"cuEventElapsedTime", (void *)cuEventElapsedTime_v2},
+    {"cuStreamGetDevice_ptsz", (void *)cuStreamGetDevice},
+    {"cuMemGetAddressRange", (void *)cuMemGetAddressRange_v2},
+    {"cuMemGetInfo", (void *)cuMemGetInfo_v2},
+    {"cuLinkCreate", (void *)cuLinkCreate_v2},
+    {"cuLinkAddData", (void *)cuLinkAddData_v2},
+    {"cuLinkAddFile", (void *)cuLinkAddFile_v2},
+    {"cuLaunchCooperativeKernel_ptsz", (void *)cuLaunchCooperativeKernel},
+    {"cuGraphKernelNodeGetParams", (void *)cuGraphKernelNodeGetParams_v2},
+    {"cuGraphKernelNodeSetParams", (void *)cuGraphKernelNodeSetParams_v2},
+    {"cuGraphAddKernelNode", (void *)cuGraphAddKernelNode_v2},
+    {"cuGraphExecKernelNodeSetParams",
+     (void *)cuGraphExecKernelNodeSetParams_v2},
+    {"cuStreamWaitValue32", (void *)cuStreamWaitValue32_v2},
+    {"cuStreamWaitValue64", (void *)cuStreamWaitValue64_v2},
+    {"cuStreamWriteValue32", (void *)cuStreamWriteValue32_v2},
+    {"cuStreamWriteValue64", (void *)cuStreamWriteValue64_v2},
+    {"cuStreamBatchMemOp", (void *)cuStreamBatchMemOp_v2},
+    {"cuArrayCreate", (void *)cuArrayCreate_v2},
+    {"cuArray3DCreate", (void *)cuArray3DCreate_v2},
+    {"cuArray3DGetDescriptor", (void *)cuArray3DGetDescriptor_v2},
+    {"cuMemAllocHost", (void *)cuMemAllocHost_v2},
+    {"cuMemHostGetDevicePointer", (void *)cuMemHostGetDevicePointer_v2},
+    {"cuMemFree", (void *)cuMemFree_v2},
+    {"cuMemcpyDtoA", (void *)cuMemcpyDtoA_v2},
+    {"cuMemcpyAtoD", (void *)cuMemcpyAtoD_v2},
+    {"cuMemcpyAtoA", (void *)cuMemcpyAtoA_v2},
+    {"cuMemcpyHtoA", (void *)cuMemcpyHtoA_v2},
+    {"cuMemcpyHtoA_v2_ptds", (void *)cuMemcpyHtoA_v2},
+    {"cuMemcpyHtoAAsync", (void *)cuMemcpyHtoAAsync_v2},
+    {"cuMemcpyHtoAAsync_v2_ptsz", (void *)cuMemcpyHtoAAsync_v2},
+    {"cuMemcpyAtoH", (void *)cuMemcpyAtoH_v2},
+    {"cuMemcpyAtoH_v2_ptds", (void *)cuMemcpyAtoH_v2},
+    {"cuMemcpyAtoHAsync", (void *)cuMemcpyAtoHAsync_v2},
+    {"cuMemcpyAtoHAsync_v2_ptsz", (void *)cuMemcpyAtoHAsync_v2},
+    {"cuMemcpy2D", (void *)cuMemcpy2D_v2},
+    {"cuMemcpy2DUnaligned", (void *)cuMemcpy2DUnaligned_v2},
+    {"cuMemcpy2DAsync", (void *)cuMemcpy2DAsync_v2},
+    {"cuMemcpy2DAsync_ptsz", (void *)cuMemcpy2DAsync_v2},
+    {"cuMemcpy3D", (void *)cuMemcpy3D_v2},
+    {"cuMemcpy3DAsync", (void *)cuMemcpy3DAsync_v2},
+    {"cuMemcpy3DAsync_ptsz", (void *)cuMemcpy3DAsync_v2},
     {"cuMemcpyPeer_ptds", (void *)cuMemcpyPeer},
     {"cuMemcpyPeerAsync_ptsz", (void *)cuMemcpyPeerAsync},
+    {"cuMemcpy3DPeer_ptds", (void *)cuMemcpy3DPeer},
+    {"cuMemcpy3DPeerAsync_ptsz", (void *)cuMemcpy3DPeerAsync},
     {"cuMemsetD8Async_ptsz", (void *)cuMemsetD8Async},
     {"cuMemsetD16Async_ptsz", (void *)cuMemsetD16Async},
     {"cuMemsetD32Async_ptsz", (void *)cuMemsetD32Async},
@@ -9398,11 +9969,17 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamGetId_ptsz", (void *)cuStreamGetId},
     {"cuStreamGetFlags_ptsz", (void *)cuStreamGetFlags},
     {"cuStreamGetCtx_ptsz", (void *)cuStreamGetCtx},
+    {"cuStreamWaitEvent_ptsz", (void *)cuStreamWaitEvent},
     {"cuStreamEndCapture_ptsz", (void *)cuStreamEndCapture},
+    {"cuStreamIsCapturing_ptsz", (void *)cuStreamIsCapturing},
     {"cuStreamAddCallback_ptsz", (void *)cuStreamAddCallback},
     {"cuStreamAttachMemAsync_ptsz", (void *)cuStreamAttachMemAsync},
     {"cuStreamQuery_ptsz", (void *)cuStreamQuery},
     {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize},
+    {"cuEventRecord_ptsz", (void *)cuEventRecord},
+    {"cuEventRecordWithFlags_ptsz", (void *)cuEventRecordWithFlags},
+    {"cuLaunchKernel_ptsz", (void *)cuLaunchKernel},
+    {"cuLaunchKernelEx_ptsz", (void *)cuLaunchKernelEx},
     {"cuLaunchHostFunc_ptsz", (void *)cuLaunchHostFunc},
     {"cuGraphicsMapResources_ptsz", (void *)cuGraphicsMapResources},
     {"cuGraphicsUnmapResources_ptsz", (void *)cuGraphicsUnmapResources},
