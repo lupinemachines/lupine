@@ -497,12 +497,18 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write(f"  return_value = {entry}({args});\n\n")
     if unawaited:
         # A client that does not wait gets no answer; a failure reaches it from
-        # its next synchronize instead.
-        f.write("  if (!rpc_request_awaited(conn)) {\n")
-        if backend.keep_async_error and name not in HINT_FUNCTIONS:
-            f.write(f"    {backend.keep_async_error}(conn, return_value);\n")
-        write_server_buffer_cleanup(f, owned_buffers, "    ")
-        f.write("    return 0;\n  }\n\n")
+        # its next synchronize instead, except for a hint's.
+        keeps_error = backend.keep_async_error and name not in HINT_FUNCTIONS
+        if owned_buffers:
+            f.write("  if (!rpc_request_awaited(conn)) {\n")
+            if keeps_error:
+                f.write(f"    {backend.keep_async_error}(conn, return_value);\n")
+            write_server_buffer_cleanup(f, owned_buffers, "    ")
+            f.write("    return 0;\n  }\n\n")
+        elif keeps_error:
+            f.write("  if (lupine_unanswered(conn, return_value))\n    return 0;\n\n")
+        else:
+            f.write("  if (!rpc_request_awaited(conn))\n    return 0;\n\n")
 
     if stdout:
         f.write("  lupine_finish_stdout_capture(&capture);\n")

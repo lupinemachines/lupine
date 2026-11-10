@@ -56,10 +56,8 @@ int handle_cuInit(conn_t *conn) {
 
   return_value = cuInit(Flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -335,10 +333,8 @@ int handle_cuDeviceSetMemPool(conn_t *conn) {
 
   return_value = cuDeviceSetMemPool(dev, pool);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -442,10 +438,8 @@ int handle_cuFlushGPUDirectRDMAWrites(conn_t *conn) {
 
   return_value = cuFlushGPUDirectRDMAWrites(target, scope);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -524,10 +518,8 @@ int handle_cuDevicePrimaryCtxSetFlags_v2(conn_t *conn) {
 
   return_value = cuDevicePrimaryCtxSetFlags_v2(dev, flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -579,10 +571,8 @@ int handle_cuCtxPushCurrent_v2(conn_t *conn) {
 
   return_value = cuCtxPushCurrent_v2(ctx);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -630,10 +620,8 @@ int handle_cuCtxSetCurrent(conn_t *conn) {
 
   return_value = cuCtxSetCurrent(ctx);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -866,10 +854,8 @@ int handle_cuCtxSetLimit(conn_t *conn) {
 
   return_value = cuCtxSetLimit(limit, value);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -942,9 +928,8 @@ int handle_cuCtxSetCacheConfig(conn_t *conn) {
 
   return_value = cuCtxSetCacheConfig(config);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -1019,10 +1004,8 @@ int handle_cuCtxResetPersistingL2Cache(conn_t *conn) {
 
   return_value = cuCtxResetPersistingL2Cache();
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -1074,10 +1057,8 @@ int handle_cuCtxRecordEvent(conn_t *conn) {
 
   return_value = cuCtxRecordEvent(hCtx, hEvent);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -1106,10 +1087,8 @@ int handle_cuCtxWaitEvent(conn_t *conn) {
 
   return_value = cuCtxWaitEvent(hCtx, hEvent);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -1159,9 +1138,8 @@ int handle_cuCtxSetSharedMemConfig(conn_t *conn) {
 
   return_value = cuCtxSetSharedMemConfig(config);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -1185,10 +1163,8 @@ int handle_cuModuleUnload(conn_t *conn) {
 
   return_value = cuModuleUnload(hmod);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -1577,10 +1553,8 @@ int handle_cuKernelSetAttribute(conn_t *conn) {
 
   return_value = cuKernelSetAttribute(attrib, val, kernel, dev);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -1608,9 +1582,8 @@ int handle_cuKernelSetCacheConfig(conn_t *conn) {
 
   return_value = cuKernelSetCacheConfig(kernel, config, dev);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2031,10 +2004,8 @@ int handle_cuIpcCloseMemHandle(conn_t *conn) {
 
   return_value = cuIpcCloseMemHandle(dptr);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2062,10 +2033,8 @@ int handle_cuMemcpy(conn_t *conn) {
 
   return_value = cuMemcpy(dst, src, ByteCount);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2098,10 +2067,8 @@ int handle_cuMemcpyPeer(conn_t *conn) {
   return_value =
       cuMemcpyPeer(dstDevice, dstContext, srcDevice, srcContext, ByteCount);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2157,10 +2124,8 @@ int handle_cuMemcpyDtoA_v2(conn_t *conn) {
 
   return_value = cuMemcpyDtoA_v2(dstArray, dstOffset, srcDevice, ByteCount);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2190,10 +2155,8 @@ int handle_cuMemcpyAtoD_v2(conn_t *conn) {
 
   return_value = cuMemcpyAtoD_v2(dstDevice, srcArray, srcOffset, ByteCount);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2226,10 +2189,8 @@ int handle_cuMemcpyAtoA_v2(conn_t *conn) {
   return_value =
       cuMemcpyAtoA_v2(dstArray, dstOffset, srcArray, srcOffset, ByteCount);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2264,10 +2225,8 @@ int handle_cuMemcpyPeerAsync(conn_t *conn) {
   return_value = cuMemcpyPeerAsync(dstDevice, dstContext, srcDevice, srcContext,
                                    ByteCount, hStream);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2297,10 +2256,8 @@ int handle_cuMemcpyDtoDAsync_v2(conn_t *conn) {
 
   return_value = cuMemcpyDtoDAsync_v2(dstDevice, srcDevice, ByteCount, hStream);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2498,10 +2455,8 @@ int handle_cuMemsetD8Async(conn_t *conn) {
 
   return_value = cuMemsetD8Async(dstDevice, uc, N, hStream);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2531,10 +2486,8 @@ int handle_cuMemsetD16Async(conn_t *conn) {
 
   return_value = cuMemsetD16Async(dstDevice, us, N, hStream);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2564,10 +2517,8 @@ int handle_cuMemsetD32Async(conn_t *conn) {
 
   return_value = cuMemsetD32Async(dstDevice, ui, N, hStream);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2602,10 +2553,8 @@ int handle_cuMemsetD2D8Async(conn_t *conn) {
   return_value =
       cuMemsetD2D8Async(dstDevice, dstPitch, uc, Width, Height, hStream);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2640,10 +2589,8 @@ int handle_cuMemsetD2D16Async(conn_t *conn) {
   return_value =
       cuMemsetD2D16Async(dstDevice, dstPitch, us, Width, Height, hStream);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2678,10 +2625,8 @@ int handle_cuMemsetD2D32Async(conn_t *conn) {
   return_value =
       cuMemsetD2D32Async(dstDevice, dstPitch, ui, Width, Height, hStream);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -2898,10 +2843,8 @@ int handle_cuArrayDestroy(conn_t *conn) {
 
   return_value = cuArrayDestroy(hArray);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3033,10 +2976,8 @@ int handle_cuMipmappedArrayDestroy(conn_t *conn) {
 
   return_value = cuMipmappedArrayDestroy(hMipmappedArray);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3129,10 +3070,8 @@ int handle_cuMemAddressFree(conn_t *conn) {
 
   return_value = cuMemAddressFree(ptr, size);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3186,10 +3125,8 @@ int handle_cuMemRelease(conn_t *conn) {
 
   return_value = cuMemRelease(handle);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3221,10 +3158,8 @@ int handle_cuMemMap(conn_t *conn) {
 
   return_value = cuMemMap(ptr, size, offset, handle, flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3293,10 +3228,8 @@ int handle_cuMemUnmap(conn_t *conn) {
 
   return_value = cuMemUnmap(ptr, size);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3472,10 +3405,8 @@ int handle_cuMemFreeAsync(conn_t *conn) {
 
   return_value = cuMemFreeAsync(dptr, hStream);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3528,10 +3459,8 @@ int handle_cuMemPoolTrimTo(conn_t *conn) {
 
   return_value = cuMemPoolTrimTo(pool, minBytesToKeep);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3649,10 +3578,8 @@ int handle_cuMemPoolDestroy(conn_t *conn) {
 
   return_value = cuMemPoolDestroy(pool);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3767,9 +3694,8 @@ int handle_cuMemPrefetchAsync_v2(conn_t *conn) {
 
   return_value = cuMemPrefetchAsync_v2(devPtr, count, location, flags, hStream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -3802,9 +3728,8 @@ int handle_cuMemAdvise_v2(conn_t *conn) {
 
   return_value = cuMemAdvise_v2(devPtr, count, advice, location);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4043,10 +3968,8 @@ int handle_cuThreadExchangeStreamCaptureMode(conn_t *conn) {
 
   return_value = cuThreadExchangeStreamCaptureMode(&mode);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4102,9 +4025,8 @@ int handle_cuStreamAttachMemAsync(conn_t *conn) {
 
   return_value = cuStreamAttachMemAsync(hStream, dptr, length, flags);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4208,10 +4130,8 @@ int handle_cuStreamDestroy_v2(conn_t *conn) {
 
   return_value = cuStreamDestroy_v2(hStream);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4237,10 +4157,8 @@ int handle_cuStreamCopyAttributes(conn_t *conn) {
 
   return_value = cuStreamCopyAttributes(dst, src);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4295,10 +4213,8 @@ int handle_cuStreamSetAttribute(conn_t *conn) {
 
   return_value = cuStreamSetAttribute(hStream, attr, &value);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4498,10 +4414,8 @@ int handle_cuDestroyExternalMemory(conn_t *conn) {
 
   return_value = cuDestroyExternalMemory(extMem);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4675,10 +4589,8 @@ int handle_cuDestroyExternalSemaphore(conn_t *conn) {
 
   return_value = cuDestroyExternalSemaphore(extSem);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4708,10 +4620,8 @@ int handle_cuStreamWaitValue32_v2(conn_t *conn) {
 
   return_value = cuStreamWaitValue32_v2(stream, addr, value, flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4741,10 +4651,8 @@ int handle_cuStreamWaitValue64_v2(conn_t *conn) {
 
   return_value = cuStreamWaitValue64_v2(stream, addr, value, flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4774,10 +4682,8 @@ int handle_cuStreamWriteValue32_v2(conn_t *conn) {
 
   return_value = cuStreamWriteValue32_v2(stream, addr, value, flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4807,10 +4713,8 @@ int handle_cuStreamWriteValue64_v2(conn_t *conn) {
 
   return_value = cuStreamWriteValue64_v2(stream, addr, value, flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4911,10 +4815,8 @@ int handle_cuFuncSetAttribute(conn_t *conn) {
 
   return_value = cuFuncSetAttribute(hfunc, attrib, value);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4940,9 +4842,8 @@ int handle_cuFuncSetCacheConfig(conn_t *conn) {
 
   return_value = cuFuncSetCacheConfig(hfunc, config);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5056,10 +4957,8 @@ int handle_cuFuncSetBlockShape(conn_t *conn) {
 
   return_value = cuFuncSetBlockShape(hfunc, x, y, z);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5085,10 +4984,8 @@ int handle_cuFuncSetSharedSize(conn_t *conn) {
 
   return_value = cuFuncSetSharedSize(hfunc, bytes);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5114,10 +5011,8 @@ int handle_cuParamSetSize(conn_t *conn) {
 
   return_value = cuParamSetSize(hfunc, numbytes);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5145,10 +5040,8 @@ int handle_cuParamSeti(conn_t *conn) {
 
   return_value = cuParamSeti(hfunc, offset, value);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5176,10 +5069,8 @@ int handle_cuParamSetf(conn_t *conn) {
 
   return_value = cuParamSetf(hfunc, offset, value);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5246,10 +5137,8 @@ int handle_cuLaunch(conn_t *conn) {
 
   return_value = cuLaunch(f);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5277,10 +5166,8 @@ int handle_cuLaunchGrid(conn_t *conn) {
 
   return_value = cuLaunchGrid(f, grid_width, grid_height);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5310,10 +5197,8 @@ int handle_cuLaunchGridAsync(conn_t *conn) {
 
   return_value = cuLaunchGridAsync(f, grid_width, grid_height, hStream);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5341,10 +5226,8 @@ int handle_cuParamSetTexRef(conn_t *conn) {
 
   return_value = cuParamSetTexRef(hfunc, texunit, hTexRef);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5370,10 +5253,8 @@ int handle_cuFuncSetSharedMemConfig(conn_t *conn) {
 
   return_value = cuFuncSetSharedMemConfig(hfunc, config);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5449,10 +5330,8 @@ int handle_cuGraphMemcpyNodeSetParams(conn_t *conn) {
 
   return_value = cuGraphMemcpyNodeSetParams(hNode, &nodeParams);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5504,10 +5383,8 @@ int handle_cuGraphMemsetNodeSetParams(conn_t *conn) {
 
   return_value = cuGraphMemsetNodeSetParams(hNode, &nodeParams);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5714,10 +5591,8 @@ int handle_cuGraphEventRecordNodeSetEvent(conn_t *conn) {
 
   return_value = cuGraphEventRecordNodeSetEvent(hNode, event);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5812,10 +5687,8 @@ int handle_cuGraphEventWaitNodeSetEvent(conn_t *conn) {
 
   return_value = cuGraphEventWaitNodeSetEvent(hNode, event);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -5957,10 +5830,8 @@ int handle_cuGraphExternalSemaphoresSignalNodeSetParams(conn_t *conn) {
   return_value =
       cuGraphExternalSemaphoresSignalNodeSetParams(hNode, &nodeParams);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -6100,10 +5971,8 @@ int handle_cuGraphExternalSemaphoresWaitNodeSetParams(conn_t *conn) {
 
   return_value = cuGraphExternalSemaphoresWaitNodeSetParams(hNode, &nodeParams);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -6222,10 +6091,8 @@ int handle_cuGraphBatchMemOpNodeSetParams(conn_t *conn) {
 
   return_value = cuGraphBatchMemOpNodeSetParams(hNode, &nodeParams);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -6266,10 +6133,8 @@ int handle_cuGraphExecBatchMemOpNodeSetParams(conn_t *conn) {
   return_value =
       cuGraphExecBatchMemOpNodeSetParams(hGraphExec, hNode, &nodeParams);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -6445,10 +6310,8 @@ int handle_cuDeviceGraphMemTrim(conn_t *conn) {
 
   return_value = cuDeviceGraphMemTrim(device);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -6971,10 +6834,8 @@ int handle_cuGraphDestroyNode(conn_t *conn) {
 
   return_value = cuGraphDestroyNode(hNode);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7031,10 +6892,8 @@ int handle_cuGraphExecMemcpyNodeSetParams(conn_t *conn) {
   return_value =
       cuGraphExecMemcpyNodeSetParams(hGraphExec, hNode, &copyParams, ctx);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7067,10 +6926,8 @@ int handle_cuGraphExecMemsetNodeSetParams(conn_t *conn) {
   return_value =
       cuGraphExecMemsetNodeSetParams(hGraphExec, hNode, &memsetParams, ctx);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7100,10 +6957,8 @@ int handle_cuGraphExecChildGraphNodeSetParams(conn_t *conn) {
   return_value =
       cuGraphExecChildGraphNodeSetParams(hGraphExec, hNode, childGraph);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7132,10 +6987,8 @@ int handle_cuGraphExecEventRecordNodeSetEvent(conn_t *conn) {
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   return_value = cuGraphExecEventRecordNodeSetEvent(hGraphExec, hNode, event);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7164,10 +7017,8 @@ int handle_cuGraphExecEventWaitNodeSetEvent(conn_t *conn) {
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   return_value = cuGraphExecEventWaitNodeSetEvent(hGraphExec, hNode, event);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7218,10 +7069,8 @@ int handle_cuGraphExecExternalSemaphoresSignalNodeSetParams(conn_t *conn) {
   return_value = cuGraphExecExternalSemaphoresSignalNodeSetParams(
       hGraphExec, hNode, &nodeParams);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7272,10 +7121,8 @@ int handle_cuGraphExecExternalSemaphoresWaitNodeSetParams(conn_t *conn) {
   return_value = cuGraphExecExternalSemaphoresWaitNodeSetParams(
       hGraphExec, hNode, &nodeParams);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7304,10 +7151,8 @@ int handle_cuGraphNodeSetEnabled(conn_t *conn) {
   hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
   return_value = cuGraphNodeSetEnabled(hGraphExec, hNode, isEnabled);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7361,10 +7206,8 @@ int handle_cuGraphUpload(conn_t *conn) {
 
   return_value = cuGraphUpload(hGraphExec, hStream);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7426,10 +7269,8 @@ int handle_cuGraphKernelNodeCopyAttributes(conn_t *conn) {
 
   return_value = cuGraphKernelNodeCopyAttributes(dst, src);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7484,10 +7325,8 @@ int handle_cuGraphKernelNodeSetAttribute(conn_t *conn) {
 
   return_value = cuGraphKernelNodeSetAttribute(hNode, attr, &value);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7552,10 +7391,8 @@ int handle_cuUserObjectRetain(conn_t *conn) {
 
   return_value = cuUserObjectRetain(object, count);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7581,10 +7418,8 @@ int handle_cuUserObjectRelease(conn_t *conn) {
 
   return_value = cuUserObjectRelease(object, count);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7614,10 +7449,8 @@ int handle_cuGraphRetainUserObject(conn_t *conn) {
 
   return_value = cuGraphRetainUserObject(graph, object, count, flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7645,10 +7478,8 @@ int handle_cuGraphReleaseUserObject(conn_t *conn) {
 
   return_value = cuGraphReleaseUserObject(graph, object, count);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7675,10 +7506,8 @@ int handle_cuGraphNodeSetParams(conn_t *conn) {
 
   return_value = cuGraphNodeSetParams(hNode, &nodeParams);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7709,10 +7538,8 @@ int handle_cuGraphExecNodeSetParams(conn_t *conn) {
 
   return_value = cuGraphExecNodeSetParams(hGraphExec, hNode, &nodeParams);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7905,10 +7732,8 @@ int handle_cuTexRefSetArray(conn_t *conn) {
 
   return_value = cuTexRefSetArray(hTexRef, hArray, Flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7936,10 +7761,8 @@ int handle_cuTexRefSetMipmappedArray(conn_t *conn) {
 
   return_value = cuTexRefSetMipmappedArray(hTexRef, hMipmappedArray, Flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -7998,10 +7821,8 @@ int handle_cuTexRefSetAddress2D_v3(conn_t *conn) {
 
   return_value = cuTexRefSetAddress2D_v3(hTexRef, &desc, dptr, Pitch);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8029,10 +7850,8 @@ int handle_cuTexRefSetFormat(conn_t *conn) {
 
   return_value = cuTexRefSetFormat(hTexRef, fmt, NumPackedComponents);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8060,10 +7879,8 @@ int handle_cuTexRefSetAddressMode(conn_t *conn) {
 
   return_value = cuTexRefSetAddressMode(hTexRef, dim, am);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8089,10 +7906,8 @@ int handle_cuTexRefSetFilterMode(conn_t *conn) {
 
   return_value = cuTexRefSetFilterMode(hTexRef, fm);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8118,10 +7933,8 @@ int handle_cuTexRefSetMipmapFilterMode(conn_t *conn) {
 
   return_value = cuTexRefSetMipmapFilterMode(hTexRef, fm);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8147,10 +7960,8 @@ int handle_cuTexRefSetMipmapLevelBias(conn_t *conn) {
 
   return_value = cuTexRefSetMipmapLevelBias(hTexRef, bias);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8179,10 +7990,8 @@ int handle_cuTexRefSetMipmapLevelClamp(conn_t *conn) {
   return_value = cuTexRefSetMipmapLevelClamp(hTexRef, minMipmapLevelClamp,
                                              maxMipmapLevelClamp);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8208,10 +8017,8 @@ int handle_cuTexRefSetMaxAnisotropy(conn_t *conn) {
 
   return_value = cuTexRefSetMaxAnisotropy(hTexRef, maxAniso);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8277,10 +8084,8 @@ int handle_cuTexRefSetFlags(conn_t *conn) {
 
   return_value = cuTexRefSetFlags(hTexRef, Flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8641,10 +8446,8 @@ int handle_cuTexRefDestroy(conn_t *conn) {
 
   return_value = cuTexRefDestroy(hTexRef);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8672,10 +8475,8 @@ int handle_cuSurfRefSetArray(conn_t *conn) {
 
   return_value = cuSurfRefSetArray(hSurfRef, hArray, Flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8763,10 +8564,8 @@ int handle_cuTexObjectDestroy(conn_t *conn) {
 
   return_value = cuTexObjectDestroy(texObject);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8890,10 +8689,8 @@ int handle_cuSurfObjectDestroy(conn_t *conn) {
 
   return_value = cuSurfObjectDestroy(surfObject);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -8999,10 +8796,8 @@ int handle_cuCtxEnablePeerAccess(conn_t *conn) {
 
   return_value = cuCtxEnablePeerAccess(peerContext, Flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -9026,10 +8821,8 @@ int handle_cuCtxDisablePeerAccess(conn_t *conn) {
 
   return_value = cuCtxDisablePeerAccess(peerContext);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -9082,10 +8875,8 @@ int handle_cuGraphicsUnregisterResource(conn_t *conn) {
 
   return_value = cuGraphicsUnregisterResource(resource);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -9196,10 +8987,8 @@ int handle_cuGraphicsResourceSetMapFlags_v2(conn_t *conn) {
 
   return_value = cuGraphicsResourceSetMapFlags_v2(resource, flags);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -9415,10 +9204,8 @@ int handle_cuGreenCtxDestroy(conn_t *conn) {
 
   return_value = cuGreenCtxDestroy(hCtx);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -9734,10 +9521,8 @@ int handle_cuGreenCtxRecordEvent(conn_t *conn) {
 
   return_value = cuGreenCtxRecordEvent(hCtx, hEvent);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -9766,10 +9551,8 @@ int handle_cuGreenCtxWaitEvent(conn_t *conn) {
 
   return_value = cuGreenCtxWaitEvent(hCtx, hEvent);
 
-  if (!rpc_request_awaited(conn)) {
-    lupine_keep_async_error(conn, return_value);
+  if (lupine_unanswered(conn, return_value))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -10048,9 +9831,8 @@ int handle_cuMemPrefetchAsync(conn_t *conn) {
 
   return_value = cuMemPrefetchAsync(devPtr, count, dstDevice, hStream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -10080,9 +9862,8 @@ int handle_cuMemAdvise(conn_t *conn) {
 
   return_value = cuMemAdvise(devPtr, count, advice, device);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||

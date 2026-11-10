@@ -82,9 +82,8 @@ int handle_ncclMemFree(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclMemFree");
   return_value = fn == nullptr ? function_not_found() : fn(ptr);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -322,9 +321,8 @@ int handle_ncclCommFinalize(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclCommFinalize");
   return_value = fn == nullptr ? function_not_found() : fn(comm);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -351,9 +349,8 @@ int handle_ncclCommDestroy(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclCommDestroy");
   return_value = fn == nullptr ? function_not_found() : fn(comm);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -380,9 +377,8 @@ int handle_ncclCommAbort(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclCommAbort");
   return_value = fn == nullptr ? function_not_found() : fn(comm);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -412,9 +408,8 @@ int handle_ncclCommRevoke(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclCommRevoke");
   return_value = fn == nullptr ? function_not_found() : fn(comm, revokeFlags);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -979,9 +974,8 @@ int handle_ncclCommDeregister(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclCommDeregister");
   return_value = fn == nullptr ? function_not_found() : fn(comm, handle);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1013,9 +1007,8 @@ int handle_ncclCommSuspend(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclCommSuspend");
   return_value = fn == nullptr ? function_not_found() : fn(comm, flags);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1045,9 +1038,8 @@ int handle_ncclCommResume(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclCommResume");
   return_value = fn == nullptr ? function_not_found() : fn(comm);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1151,9 +1143,8 @@ int handle_ncclCommWindowDeregister(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclCommWindowDeregister");
   return_value = fn == nullptr ? function_not_found() : fn(comm, win);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1340,9 +1331,8 @@ int handle_ncclRedOpDestroy(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclRedOpDestroy");
   return_value = fn == nullptr ? function_not_found() : fn(op, comm);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1386,9 +1376,8 @@ int handle_ncclReduce(conn_t *conn) {
                                : fn(sendbuff, recvbuff, count, datatype, op,
                                     root, comm, stream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1427,9 +1416,8 @@ int handle_ncclBcast(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(buff, count, datatype, root, comm, stream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1471,9 +1459,8 @@ int handle_ncclBroadcast(conn_t *conn) {
                                : fn(sendbuff, recvbuff, count, datatype, root,
                                     comm, stream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1515,9 +1502,8 @@ int handle_ncclAllReduce(conn_t *conn) {
       fn == nullptr ? function_not_found()
                     : fn(sendbuff, recvbuff, count, datatype, op, comm, stream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1559,9 +1545,8 @@ int handle_ncclReduceScatter(conn_t *conn) {
                                : fn(sendbuff, recvbuff, recvcount, datatype, op,
                                     comm, stream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1601,9 +1586,8 @@ int handle_ncclAllGather(conn_t *conn) {
       fn == nullptr ? function_not_found()
                     : fn(sendbuff, recvbuff, sendcount, datatype, comm, stream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1644,9 +1628,8 @@ int handle_ncclAlltoAll(conn_t *conn) {
                      ? function_not_found()
                      : fn(sendbuff, recvbuff, count, datatype, comm, stream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1691,9 +1674,8 @@ int handle_ncclGather(conn_t *conn) {
                                : fn(sendbuff, recvbuff, count, datatype, root,
                                     comm, stream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1738,9 +1720,8 @@ int handle_ncclScatter(conn_t *conn) {
                                : fn(sendbuff, recvbuff, count, datatype, root,
                                     comm, stream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1811,9 +1792,8 @@ int handle_ncclAllReduceConfig(conn_t *conn) {
                                   offsetof(ncclCollConfig_t, ext),
                               }));
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1885,9 +1865,8 @@ int handle_ncclBroadcastConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -1961,9 +1940,8 @@ int handle_ncclReduceConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -2032,9 +2010,8 @@ int handle_ncclAllGatherConfig(conn_t *conn) {
                                   offsetof(ncclCollConfig_t, ext),
                               }));
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -2106,9 +2083,8 @@ int handle_ncclReduceScatterConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -2177,9 +2153,8 @@ int handle_ncclAlltoAllConfig(conn_t *conn) {
                                   offsetof(ncclCollConfig_t, ext),
                               }));
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -2251,9 +2226,8 @@ int handle_ncclGatherConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -2325,9 +2299,8 @@ int handle_ncclScatterConfig(conn_t *conn) {
                        offsetof(ncclCollConfig_t, ext),
                    }));
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -2369,9 +2342,8 @@ int handle_ncclSend(conn_t *conn) {
                      ? function_not_found()
                      : fn(sendbuff, count, datatype, peer, comm, stream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -2411,9 +2383,8 @@ int handle_ncclRecv(conn_t *conn) {
                      ? function_not_found()
                      : fn(recvbuff, count, datatype, peer, comm, stream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -2466,9 +2437,8 @@ int handle_ncclPutSignal(conn_t *conn) {
                      : fn(localbuff, count, datatype, peer, peerWin,
                           peerWinOffset, sigIdx, ctx, flags, comm, stream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -2510,9 +2480,8 @@ int handle_ncclSignal(conn_t *conn) {
   return_value = fn == nullptr ? function_not_found()
                                : fn(peer, sigIdx, ctx, flags, comm, stream);
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -2595,9 +2564,8 @@ int handle_ncclGroupStart(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclGroupStart");
   return_value = fn == nullptr ? function_not_found() : fn();
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
@@ -2623,9 +2591,8 @@ int handle_ncclGroupEnd(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclGroupEnd");
   return_value = fn == nullptr ? function_not_found() : fn();
 
-  if (!rpc_request_awaited(conn)) {
+  if (!rpc_request_awaited(conn))
     return 0;
-  }
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||

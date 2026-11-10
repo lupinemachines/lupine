@@ -474,6 +474,14 @@ void lupine_keep_async_error(conn_t *conn, CUresult result) {
   }
 }
 
+bool lupine_unanswered(conn_t *conn, CUresult result) {
+  if (rpc_request_awaited(conn)) {
+    return false;
+  }
+  lupine_keep_async_error(conn, result);
+  return true;
+}
+
 CUresult lupine_take_async_error(conn_t *conn, CUresult result) {
   if (__atomic_load_n(&conn->first_async_error, __ATOMIC_RELAXED) == 0) {
     return result;
