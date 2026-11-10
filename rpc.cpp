@@ -369,13 +369,6 @@ int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id) {
     pthread_mutex_destroy(&conn->write_mutex);
     goto fail;
   }
-  if (pthread_mutex_init(&conn->scope_mutex, nullptr) != 0) {
-    pthread_cond_destroy(&conn->async_cond);
-    pthread_mutex_destroy(&conn->async_mutex);
-    pthread_mutex_destroy(&conn->call_mutex);
-    pthread_mutex_destroy(&conn->write_mutex);
-    goto fail;
-  }
   conn->async_sync_initialized = 1;
   return 0;
 
@@ -493,7 +486,6 @@ void rpc_conn_destroy(conn_t *conn) {
   std::vector<rpc_host_allocation_write>().swap(conn->host_allocation_writes);
   conn->async_sync_initialized = 0;
   pthread_cond_destroy(&conn->async_cond);
-  pthread_mutex_destroy(&conn->scope_mutex);
   pthread_mutex_destroy(&conn->async_mutex);
   pthread_mutex_destroy(&conn->write_mutex);
   pthread_mutex_destroy(&conn->call_mutex);
@@ -1002,14 +994,11 @@ int rpc_wait_for_response(conn_t *conn) {
 // request lock from the connection.
 // The last unanswered request on `key`, or the last one on no object.
 static rpc_scope_ticket rpc_scope_snapshot(conn_t *conn, uintptr_t key) {
-  pthread_mutex_lock(&conn->scope_mutex);
-  rpc_scope_ticket last = conn->connection_last;
-  if (key != RPC_SCOPE_NONE) {
-    auto it = conn->scope_last.find(key);
-    last = it == conn->scope_last.end() ? rpc_scope_ticket{} : it->second;
+  if (key == RPC_SCOPE_NONE) {
+    return conn->connection_last;
   }
-  pthread_mutex_unlock(&conn->scope_mutex);
-  return last;
+  auto it = conn->scope_last.find(key);
+  return it == conn->scope_last.end() ? rpc_scope_ticket{} : it->second;
 }
 
 // Waits for `last` unless this lane sent it: a lane's requests arrive in order.
@@ -1074,28 +1063,23 @@ int rpc_request_after(conn_t *conn, uintptr_t key) {
 }
 
 void rpc_scope_forget(conn_t *conn, uintptr_t key) {
-  pthread_mutex_lock(&conn->scope_mutex);
+  pthread_mutex_lock(&conn->write_mutex);
   conn->scope_last.erase(key);
-  pthread_mutex_unlock(&conn->scope_mutex);
+  pthread_mutex_unlock(&conn->write_mutex);
 }
 
 void rpc_scope_retire(conn_t *conn, uintptr_t key) {
-  pthread_mutex_lock(&conn->scope_mutex);
   conn->retired_scopes.push_back(key);
-  pthread_mutex_unlock(&conn->scope_mutex);
 }
 
 int rpc_request_after_retired(conn_t *conn) {
   if (conn == nullptr || rpc_tls_io.write_conn != conn) {
     return -1;
   }
-  pthread_mutex_lock(&conn->scope_mutex);
-  std::vector<uintptr_t> retired = conn->retired_scopes;
-  pthread_mutex_unlock(&conn->scope_mutex);
-  for (uintptr_t key : retired) {
+  for (uintptr_t key : conn->retired_scopes) {
     rpc_request_after(conn, key);
   }
-  conn->write_scope.retired_count = retired.size();
+  conn->write_scope.retired_count = conn->retired_scopes.size();
   return 0;
 }
 
@@ -1425,23 +1409,19 @@ int rpc_write_end(conn_t *conn) {
       // themselves behind this one.
       const rpc_request_scope &scope = conn->write_scope;
       rpc_scope_ticket last{conn->write_ticket, write_stream_id};
-      pthread_mutex_lock(&conn->scope_mutex);
       if (scope.publish_connection) {
         conn->connection_last = last;
       }
       for (int i = 0; i < scope.key_count; ++i) {
         conn->scope_last[scope.keys[i]] = last;
       }
-      // This ticket now stands for the retired scopes it waited for. Retired
-      // scopes are only consumed under the builder lock, so they are still
-      // the first ones listed.
+      // This ticket now stands for the retired scopes it waited for.
       for (size_t i = 0; i < scope.retired_count; ++i) {
         conn->scope_last.erase(conn->retired_scopes[i]);
       }
       conn->retired_scopes.erase(conn->retired_scopes.begin(),
                                  conn->retired_scopes.begin() +
                                      scope.retired_count);
-      pthread_mutex_unlock(&conn->scope_mutex);
     }
     if (result == 0 && client_request) {
       conn->async_prefix = std::max(conn->async_prefix, conn->write_dependency);

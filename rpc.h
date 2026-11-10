@@ -190,7 +190,7 @@ struct conn_t {
   int async_waiters = 0; // lanes in a ticket wait, under async_mutex
   uint64_t published_async_sequence;
   std::set<uint64_t> completed_async_sequences;
-  pthread_mutex_t scope_mutex;
+  // Scope state, under write_mutex.
   std::unordered_map<uintptr_t, rpc_scope_ticket> scope_last;
   std::vector<uintptr_t> retired_scopes;
   rpc_scope_ticket connection_last;
@@ -340,21 +340,22 @@ extern void rpc_async_sequence_end(conn_t *conn);
 // request it does not wait for carries a ticket and gets no answer: its
 // handler keeps a failure for the client's next synchronize instead.
 extern bool rpc_request_awaited(conn_t *conn);
-// Whether something a soft request is ordered behind has not been submitted.
 // Drops what is known about `key`, once nothing sent later can be ordered by
-// it: a destroyed object, or one a later request now stands for.
+// it: a destroyed object, or one a later request now stands for. Called
+// outside a request builder.
 extern void rpc_scope_forget(conn_t *conn, uintptr_t key);
 // A scope nothing will publish on again whose last work later requests still
 // wait for. rpc_request_after_retired orders the request being built after
 // every retired scope; the first one that publishes a ticket then stands for
 // them, and they are dropped. A request that publishes nothing (an answered
-// one, or a query) keeps them for the next.
+// one, or a query) keeps them for the next. Both are called inside a builder.
 extern void rpc_scope_retire(conn_t *conn, uintptr_t key);
 extern int rpc_request_after_retired(conn_t *conn);
 // The last ticket another lane sent on `key`, for a request being built to
 // carry and the server to check with rpc_async_ticket_released; ~0 if none.
 extern uint64_t rpc_request_pending_ticket(conn_t *conn, uintptr_t key);
 extern bool rpc_async_ticket_released(conn_t *conn, uint64_t ticket);
+// Whether something a soft request is ordered behind has not been submitted.
 extern bool rpc_request_unsettled(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // Signals transport readers to stop without releasing connection resources.
