@@ -245,8 +245,9 @@ int handle_hipDeviceGetName(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &len, sizeof(int)) < 0 || len < 0 || false)
     goto ERROR_0;
-  name = (char *)calloc(len * sizeof(char), 1);
-  if ((len * sizeof(char) != 0 && name == nullptr) ||
+  name = (char *)calloc((len * sizeof(char) == 0 ? 1 : len * sizeof(char)), 1);
+  if (((len * sizeof(char) == 0 ? 1 : len * sizeof(char)) != 0 &&
+       name == nullptr) ||
       rpc_read(conn, &deviceId, sizeof(int)) < 0 || false)
     goto ERROR_0;
 
@@ -255,9 +256,7 @@ int handle_hipDeviceGetName(conn_t *conn) {
     goto ERROR_0;
 
   fn = hip_symbol<fn_t>("hipDeviceGetName");
-  return_value = fn == nullptr ? function_not_found()
-                               : fn((len * sizeof(char) == 0 ? nullptr : name),
-                                    len, deviceId);
+  return_value = fn == nullptr ? function_not_found() : fn(name, len, deviceId);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, name, len * sizeof(char)) < 0 ||
@@ -486,8 +485,10 @@ int handle_hipDeviceGetPCIBusId(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &len, sizeof(int)) < 0 || len < 0 || false)
     goto ERROR_0;
-  pciBusId = (char *)calloc(len * sizeof(char), 1);
-  if ((len * sizeof(char) != 0 && pciBusId == nullptr) ||
+  pciBusId =
+      (char *)calloc((len * sizeof(char) == 0 ? 1 : len * sizeof(char)), 1);
+  if (((len * sizeof(char) == 0 ? 1 : len * sizeof(char)) != 0 &&
+       pciBusId == nullptr) ||
       rpc_read(conn, &device, sizeof(int)) < 0 || false)
     goto ERROR_0;
 
@@ -497,9 +498,7 @@ int handle_hipDeviceGetPCIBusId(conn_t *conn) {
 
   fn = hip_symbol<fn_t>("hipDeviceGetPCIBusId");
   return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn((len * sizeof(char) == 0 ? nullptr : pciBusId), len, device);
+      fn == nullptr ? function_not_found() : fn(pciBusId, len, device);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, pciBusId, len * sizeof(char)) < 0 ||

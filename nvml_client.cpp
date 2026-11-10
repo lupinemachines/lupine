@@ -281,6 +281,12 @@ conn_t *connection_for_device(nvmlDevice_t *device) {
 
 nvmlReturn_t call_device_string(int op, nvmlDevice_t device, char *value,
                                 unsigned int length) {
+  if (!nvml_initialized()) {
+    return NVML_ERROR_UNINITIALIZED;
+  }
+  if (device == nullptr || value == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
   conn_t *c = connection_for_device(&device);
   nvmlReturn_t result = rpc_error();
   if (c == nullptr || rpc_write_start_request(c, op) < 0 ||
@@ -295,6 +301,12 @@ nvmlReturn_t call_device_string(int op, nvmlDevice_t device, char *value,
 }
 
 nvmlReturn_t call_event_set_create(nvmlEventSet_t *set) {
+  if (!nvml_initialized()) {
+    return NVML_ERROR_UNINITIALIZED;
+  }
+  if (set == nullptr) {
+    return NVML_ERROR_INVALID_ARGUMENT;
+  }
   conn_t *c = connection();
   nvmlReturn_t result = rpc_error();
   nvmlEventSet_t temp = nullptr;
