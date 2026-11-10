@@ -1068,14 +1068,13 @@ void rpc_scope_forget(conn_t *conn, uintptr_t key) {
   pthread_mutex_unlock(&conn->write_mutex);
 }
 
-void rpc_scope_retire(conn_t *conn, uintptr_t key) {
-  conn->retired_scopes.push_back(key);
-}
-
-int rpc_request_after_retired(conn_t *conn) {
+int rpc_request_after_retired(conn_t *conn,
+                              const std::vector<uintptr_t> &retired) {
   if (conn == nullptr || rpc_tls_io.write_conn != conn) {
     return -1;
   }
+  conn->retired_scopes.insert(conn->retired_scopes.end(), retired.begin(),
+                              retired.end());
   for (uintptr_t key : conn->retired_scopes) {
     rpc_request_after(conn, key);
   }

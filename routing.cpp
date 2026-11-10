@@ -798,26 +798,21 @@ extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op,
       std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
       blocking = lupine_blocking_streams();
       auto &streams = lupine_retired_streams();
-      auto gone = std::remove_if(
-          streams.begin(), streams.end(),
-          [&](const lupine_retired_stream &stream) {
-            if (stream.conn != conn) {
-              return false;
-            }
-            retired.push_back(stream.key);
-            return true;
-          });
-      streams.erase(gone, streams.end());
+      for (auto it = streams.begin(); it != streams.end();) {
+        if (it->conn == conn) {
+          retired.push_back(it->key);
+          it = streams.erase(it);
+        } else {
+          ++it;
+        }
+      }
     }
     for (uintptr_t key : blocking) {
       rpc_request_after(conn, key);
     }
     // The connection keeps the retired streams until a legacy request that
     // publishes a ticket has waited for them.
-    for (uintptr_t key : retired) {
-      rpc_scope_retire(conn, key);
-    }
-    return rpc_request_after_retired(conn);
+    return rpc_request_after_retired(conn, retired);
   }
   bool blocking = stream == CU_STREAM_PER_THREAD;
   uintptr_t key = reinterpret_cast<uintptr_t>(stream);

@@ -344,13 +344,13 @@ extern bool rpc_request_awaited(conn_t *conn);
 // it: a destroyed object, or one a later request now stands for. Called
 // outside a request builder.
 extern void rpc_scope_forget(conn_t *conn, uintptr_t key);
-// A scope nothing will publish on again whose last work later requests still
-// wait for. rpc_request_after_retired orders the request being built after
-// every retired scope; the first one that publishes a ticket then stands for
-// them, and they are dropped. A request that publishes nothing (an answered
-// one, or a query) keeps them for the next. Both are called inside a builder.
-extern void rpc_scope_retire(conn_t *conn, uintptr_t key);
-extern int rpc_request_after_retired(conn_t *conn);
+// Retires `retired`, scopes nothing will publish on again whose last work
+// later requests still wait for, and orders the request being built after
+// every retired scope. The first request that publishes a ticket then stands
+// for them, and they are dropped. A request that publishes nothing (an
+// answered one, or a query) keeps them for the next.
+extern int rpc_request_after_retired(conn_t *conn,
+                                     const std::vector<uintptr_t> &retired);
 // The last ticket another lane sent on `key`, for a request being built to
 // carry and the server to check with rpc_async_ticket_released; ~0 if none.
 extern uint64_t rpc_request_pending_ticket(conn_t *conn, uintptr_t key);
