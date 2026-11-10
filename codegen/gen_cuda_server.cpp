@@ -3747,6 +3747,79 @@ ERROR_0:
   return -1;
 }
 
+int handle_cuMemPoolSetAttribute(conn_t *conn) {
+  CUmemoryPool pool;
+  CUmemPool_attribute attr;
+  void *value = nullptr;
+  uint8_t value_null = 0;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
+      rpc_read(conn, &attr, sizeof(CUmemPool_attribute)) < 0 ||
+      rpc_read(conn, &value_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!value_null) {
+    value = (void *)calloc(8 == 0 ? 1 : 8, 1);
+    if (value == nullptr)
+      goto ERROR_0;
+  }
+  if ((!value_null && 8 != 0 && rpc_read(conn, value, 8) < 0) || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuMemPoolSetAttribute(pool, attr, value);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)value);
+  return 0;
+ERROR_0:
+  free((void *)value);
+  return -1;
+}
+
+int handle_cuMemPoolGetAttribute(conn_t *conn) {
+  CUmemoryPool pool;
+  CUmemPool_attribute attr;
+  void *value = nullptr;
+  uint8_t value_null = 0;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &pool, sizeof(CUmemoryPool)) < 0 ||
+      rpc_read(conn, &attr, sizeof(CUmemPool_attribute)) < 0 ||
+      rpc_read(conn, &value_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!value_null) {
+    value = (void *)calloc(8 == 0 ? 1 : 8, 1);
+    if (value == nullptr)
+      goto ERROR_0;
+  }
+  if (false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuMemPoolGetAttribute(pool, attr, value);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (!value_null && 8 != 0 && rpc_write(conn, value, 8) < 0) ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)value);
+  return 0;
+ERROR_0:
+  free((void *)value);
+  return -1;
+}
+
 int handle_cuMemPoolSetAccess(conn_t *conn) {
   CUmemoryPool pool;
   size_t count;
@@ -3977,6 +4050,43 @@ ERROR_0:
   return -1;
 }
 
+int handle_cuPointerGetAttribute(conn_t *conn) {
+  void *data = nullptr;
+  uint8_t data_null = 0;
+  CUpointer_attribute attribute;
+  CUdeviceptr ptr;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &data_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!data_null) {
+    data = (void *)calloc(16 == 0 ? 1 : 16, 1);
+    if (data == nullptr)
+      goto ERROR_0;
+  }
+  if ((!data_null && 16 != 0 && rpc_read(conn, data, 16) < 0) ||
+      rpc_read(conn, &attribute, sizeof(CUpointer_attribute)) < 0 ||
+      rpc_read(conn, &ptr, sizeof(CUdeviceptr)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuPointerGetAttribute(data, attribute, ptr);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (!data_null && 16 != 0 && rpc_write(conn, data, 16) < 0) ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)data);
+  return 0;
+ERROR_0:
+  free((void *)data);
+  return -1;
+}
+
 #if CUDA_VERSION >= 12020
 int handle_cuMemPrefetchAsync_v2(conn_t *conn) {
   CUdeviceptr devPtr;
@@ -4079,6 +4189,42 @@ int handle_cuMemRangeGetAttribute(conn_t *conn) {
   return 0;
 ERROR_0:
   free((void *)data);
+  return -1;
+}
+
+int handle_cuPointerSetAttribute(conn_t *conn) {
+  void *value = nullptr;
+  uint8_t value_null = 0;
+  CUpointer_attribute attribute;
+  CUdeviceptr ptr;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &value_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!value_null) {
+    value = (void *)calloc(8 == 0 ? 1 : 8, 1);
+    if (value == nullptr)
+      goto ERROR_0;
+  }
+  if ((!value_null && 8 != 0 && rpc_read(conn, value, 8) < 0) ||
+      rpc_read(conn, &attribute, sizeof(CUpointer_attribute)) < 0 ||
+      rpc_read(conn, &ptr, sizeof(CUdeviceptr)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuPointerSetAttribute(value, attribute, ptr);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)value);
+  return 0;
+ERROR_0:
+  free((void *)value);
   return -1;
 }
 
@@ -9444,6 +9590,277 @@ int handle_cuSurfObjectGetResourceDesc(conn_t *conn) {
 ERROR_0:
   return -1;
 }
+
+#if CUDA_VERSION >= 12000
+int handle_cuTensorMapEncodeTiled(conn_t *conn) {
+  uint8_t tensorMap_present = 0;
+  CUtensorMap tensorMap{};
+  CUtensorMapDataType tensorDataType;
+  cuuint32_t tensorRank;
+  void *globalAddress;
+  cuuint64_t *globalDim = nullptr;
+  uint8_t globalDim_null = 0;
+  cuuint64_t *globalStrides = nullptr;
+  uint8_t globalStrides_null = 0;
+  cuuint32_t *boxDim = nullptr;
+  uint8_t boxDim_null = 0;
+  cuuint32_t *elementStrides = nullptr;
+  uint8_t elementStrides_null = 0;
+  CUtensorMapInterleave interleave;
+  CUtensorMapSwizzle swizzle;
+  CUtensorMapL2promotion l2Promotion;
+  CUtensorMapFloatOOBfill oobFill;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &tensorMap_present, sizeof(uint8_t)) < 0 ||
+      (tensorMap_present &&
+       rpc_read(conn, &tensorMap, sizeof(CUtensorMap)) < 0) ||
+      rpc_read(conn, &tensorDataType, sizeof(CUtensorMapDataType)) < 0 ||
+      rpc_read(conn, &tensorRank, sizeof(cuuint32_t)) < 0 ||
+      rpc_read(conn, &globalAddress, sizeof(void *)) < 0 ||
+      rpc_read(conn, &globalDim_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!globalDim_null) {
+    globalDim =
+        (cuuint64_t *)calloc(tensorRank * sizeof(const cuuint64_t) == 0
+                                 ? 1
+                                 : tensorRank * sizeof(const cuuint64_t),
+                             1);
+    if (globalDim == nullptr)
+      goto ERROR_0;
+  }
+  if ((!globalDim_null && tensorRank * sizeof(const cuuint64_t) != 0 &&
+       rpc_read(conn, globalDim, tensorRank * sizeof(const cuuint64_t)) < 0) ||
+      rpc_read(conn, &globalStrides_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!globalStrides_null) {
+    globalStrides = (cuuint64_t *)calloc(
+        (tensorRank <= 1 ? 0 : (tensorRank - 1) * sizeof(const cuuint64_t)) == 0
+            ? 1
+            : (tensorRank <= 1 ? 0
+                               : (tensorRank - 1) * sizeof(const cuuint64_t)),
+        1);
+    if (globalStrides == nullptr)
+      goto ERROR_0;
+  }
+  if ((!globalStrides_null &&
+       (tensorRank <= 1 ? 0 : (tensorRank - 1) * sizeof(const cuuint64_t)) !=
+           0 &&
+       rpc_read(conn, globalStrides,
+                (tensorRank <= 1
+                     ? 0
+                     : (tensorRank - 1) * sizeof(const cuuint64_t))) < 0) ||
+      rpc_read(conn, &boxDim_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!boxDim_null) {
+    boxDim = (cuuint32_t *)calloc(tensorRank * sizeof(const cuuint32_t) == 0
+                                      ? 1
+                                      : tensorRank * sizeof(const cuuint32_t),
+                                  1);
+    if (boxDim == nullptr)
+      goto ERROR_0;
+  }
+  if ((!boxDim_null && tensorRank * sizeof(const cuuint32_t) != 0 &&
+       rpc_read(conn, boxDim, tensorRank * sizeof(const cuuint32_t)) < 0) ||
+      rpc_read(conn, &elementStrides_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!elementStrides_null) {
+    elementStrides =
+        (cuuint32_t *)calloc(tensorRank * sizeof(const cuuint32_t) == 0
+                                 ? 1
+                                 : tensorRank * sizeof(const cuuint32_t),
+                             1);
+    if (elementStrides == nullptr)
+      goto ERROR_0;
+  }
+  if ((!elementStrides_null && tensorRank * sizeof(const cuuint32_t) != 0 &&
+       rpc_read(conn, elementStrides, tensorRank * sizeof(const cuuint32_t)) <
+           0) ||
+      rpc_read(conn, &interleave, sizeof(CUtensorMapInterleave)) < 0 ||
+      rpc_read(conn, &swizzle, sizeof(CUtensorMapSwizzle)) < 0 ||
+      rpc_read(conn, &l2Promotion, sizeof(CUtensorMapL2promotion)) < 0 ||
+      rpc_read(conn, &oobFill, sizeof(CUtensorMapFloatOOBfill)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuTensorMapEncodeTiled(
+      tensorMap_present ? &tensorMap : nullptr, tensorDataType, tensorRank,
+      globalAddress, globalDim, globalStrides, boxDim, elementStrides,
+      interleave, swizzle, l2Promotion, oobFill);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (tensorMap_present &&
+       rpc_write(conn, &tensorMap, sizeof(CUtensorMap)) < 0) ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)elementStrides);
+  free((void *)boxDim);
+  free((void *)globalStrides);
+  free((void *)globalDim);
+  return 0;
+ERROR_0:
+  free((void *)elementStrides);
+  free((void *)boxDim);
+  free((void *)globalStrides);
+  free((void *)globalDim);
+  return -1;
+}
+
+#endif
+
+#if CUDA_VERSION >= 12000
+int handle_cuTensorMapEncodeIm2col(conn_t *conn) {
+  uint8_t tensorMap_present = 0;
+  CUtensorMap tensorMap{};
+  CUtensorMapDataType tensorDataType;
+  cuuint32_t tensorRank;
+  void *globalAddress;
+  cuuint64_t *globalDim = nullptr;
+  uint8_t globalDim_null = 0;
+  cuuint64_t *globalStrides = nullptr;
+  uint8_t globalStrides_null = 0;
+  int *pixelBoxLowerCorner = nullptr;
+  uint8_t pixelBoxLowerCorner_null = 0;
+  int *pixelBoxUpperCorner = nullptr;
+  uint8_t pixelBoxUpperCorner_null = 0;
+  cuuint32_t channelsPerPixel;
+  cuuint32_t pixelsPerColumn;
+  cuuint32_t *elementStrides = nullptr;
+  uint8_t elementStrides_null = 0;
+  CUtensorMapInterleave interleave;
+  CUtensorMapSwizzle swizzle;
+  CUtensorMapL2promotion l2Promotion;
+  CUtensorMapFloatOOBfill oobFill;
+  int request_id;
+  CUresult return_value;
+  if (rpc_read(conn, &tensorMap_present, sizeof(uint8_t)) < 0 ||
+      (tensorMap_present &&
+       rpc_read(conn, &tensorMap, sizeof(CUtensorMap)) < 0) ||
+      rpc_read(conn, &tensorDataType, sizeof(CUtensorMapDataType)) < 0 ||
+      rpc_read(conn, &tensorRank, sizeof(cuuint32_t)) < 0 ||
+      rpc_read(conn, &globalAddress, sizeof(void *)) < 0 ||
+      rpc_read(conn, &globalDim_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!globalDim_null) {
+    globalDim =
+        (cuuint64_t *)calloc(tensorRank * sizeof(const cuuint64_t) == 0
+                                 ? 1
+                                 : tensorRank * sizeof(const cuuint64_t),
+                             1);
+    if (globalDim == nullptr)
+      goto ERROR_0;
+  }
+  if ((!globalDim_null && tensorRank * sizeof(const cuuint64_t) != 0 &&
+       rpc_read(conn, globalDim, tensorRank * sizeof(const cuuint64_t)) < 0) ||
+      rpc_read(conn, &globalStrides_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!globalStrides_null) {
+    globalStrides = (cuuint64_t *)calloc(
+        (tensorRank <= 1 ? 0 : (tensorRank - 1) * sizeof(const cuuint64_t)) == 0
+            ? 1
+            : (tensorRank <= 1 ? 0
+                               : (tensorRank - 1) * sizeof(const cuuint64_t)),
+        1);
+    if (globalStrides == nullptr)
+      goto ERROR_0;
+  }
+  if ((!globalStrides_null &&
+       (tensorRank <= 1 ? 0 : (tensorRank - 1) * sizeof(const cuuint64_t)) !=
+           0 &&
+       rpc_read(conn, globalStrides,
+                (tensorRank <= 1
+                     ? 0
+                     : (tensorRank - 1) * sizeof(const cuuint64_t))) < 0) ||
+      rpc_read(conn, &pixelBoxLowerCorner_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!pixelBoxLowerCorner_null) {
+    pixelBoxLowerCorner = (int *)calloc(
+        (tensorRank <= 2 ? 0 : (tensorRank - 2) * sizeof(const int)) == 0
+            ? 1
+            : (tensorRank <= 2 ? 0 : (tensorRank - 2) * sizeof(const int)),
+        1);
+    if (pixelBoxLowerCorner == nullptr)
+      goto ERROR_0;
+  }
+  if ((!pixelBoxLowerCorner_null &&
+       (tensorRank <= 2 ? 0 : (tensorRank - 2) * sizeof(const int)) != 0 &&
+       rpc_read(conn, pixelBoxLowerCorner,
+                (tensorRank <= 2 ? 0 : (tensorRank - 2) * sizeof(const int))) <
+           0) ||
+      rpc_read(conn, &pixelBoxUpperCorner_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!pixelBoxUpperCorner_null) {
+    pixelBoxUpperCorner = (int *)calloc(
+        (tensorRank <= 2 ? 0 : (tensorRank - 2) * sizeof(const int)) == 0
+            ? 1
+            : (tensorRank <= 2 ? 0 : (tensorRank - 2) * sizeof(const int)),
+        1);
+    if (pixelBoxUpperCorner == nullptr)
+      goto ERROR_0;
+  }
+  if ((!pixelBoxUpperCorner_null &&
+       (tensorRank <= 2 ? 0 : (tensorRank - 2) * sizeof(const int)) != 0 &&
+       rpc_read(conn, pixelBoxUpperCorner,
+                (tensorRank <= 2 ? 0 : (tensorRank - 2) * sizeof(const int))) <
+           0) ||
+      rpc_read(conn, &channelsPerPixel, sizeof(cuuint32_t)) < 0 ||
+      rpc_read(conn, &pixelsPerColumn, sizeof(cuuint32_t)) < 0 ||
+      rpc_read(conn, &elementStrides_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!elementStrides_null) {
+    elementStrides =
+        (cuuint32_t *)calloc(tensorRank * sizeof(const cuuint32_t) == 0
+                                 ? 1
+                                 : tensorRank * sizeof(const cuuint32_t),
+                             1);
+    if (elementStrides == nullptr)
+      goto ERROR_0;
+  }
+  if ((!elementStrides_null && tensorRank * sizeof(const cuuint32_t) != 0 &&
+       rpc_read(conn, elementStrides, tensorRank * sizeof(const cuuint32_t)) <
+           0) ||
+      rpc_read(conn, &interleave, sizeof(CUtensorMapInterleave)) < 0 ||
+      rpc_read(conn, &swizzle, sizeof(CUtensorMapSwizzle)) < 0 ||
+      rpc_read(conn, &l2Promotion, sizeof(CUtensorMapL2promotion)) < 0 ||
+      rpc_read(conn, &oobFill, sizeof(CUtensorMapFloatOOBfill)) < 0 || false)
+    goto ERROR_0;
+
+  request_id = rpc_read_end(conn);
+  if (request_id < 0)
+    goto ERROR_0;
+
+  return_value = cuTensorMapEncodeIm2col(
+      tensorMap_present ? &tensorMap : nullptr, tensorDataType, tensorRank,
+      globalAddress, globalDim, globalStrides, pixelBoxLowerCorner,
+      pixelBoxUpperCorner, channelsPerPixel, pixelsPerColumn, elementStrides,
+      interleave, swizzle, l2Promotion, oobFill);
+
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (tensorMap_present &&
+       rpc_write(conn, &tensorMap, sizeof(CUtensorMap)) < 0) ||
+      rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_write_end(conn) < 0)
+    goto ERROR_0;
+  free((void *)elementStrides);
+  free((void *)pixelBoxUpperCorner);
+  free((void *)pixelBoxLowerCorner);
+  free((void *)globalStrides);
+  free((void *)globalDim);
+  return 0;
+ERROR_0:
+  free((void *)elementStrides);
+  free((void *)pixelBoxUpperCorner);
+  free((void *)pixelBoxLowerCorner);
+  free((void *)globalStrides);
+  free((void *)globalDim);
+  return -1;
+}
+
+#endif
 
 #if CUDA_VERSION >= 12000
 int handle_cuTensorMapReplaceAddress(conn_t *conn) {

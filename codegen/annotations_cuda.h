@@ -1395,17 +1395,37 @@ CUresult cuMemPoolTrimTo(CUmemoryPool pool, size_t minBytesToKeep);
 /**
  * @param pool SEND_ONLY
  * @param attr SEND_ONLY
- * @disabled
+ * @param value SEND_ONLY SIZE:8
  */
 CUresult cuMemPoolSetAttribute(CUmemoryPool pool, CUmemPool_attribute attr,
-                               void *value);
+                               void *value) {
+  size_t value_size = 0;
+  if (value == nullptr || !lupine_mem_pool_attribute_size(attr, &value_size))
+    return CUDA_ERROR_INVALID_VALUE;
+  cuuint64_t staged = 0;
+  memcpy(&staged, value, value_size);
+  value = &staged;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @param pool SEND_ONLY
  * @param attr SEND_ONLY
- * @disabled
+ * @param value RECV_ONLY SIZE:8
  */
 CUresult cuMemPoolGetAttribute(CUmemoryPool pool, CUmemPool_attribute attr,
-                               void *value);
+                               void *value) {
+  size_t value_size = 0;
+  if (value == nullptr || !lupine_mem_pool_attribute_size(attr, &value_size))
+    return CUDA_ERROR_INVALID_VALUE;
+  void *caller_value = value;
+  cuuint64_t staged = 0;
+  value = &staged;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    memcpy(caller_value, &staged, value_size);
+  return return_value;
+}
 /**
  * @param pool SEND_ONLY
  * @param map SEND_ONLY LENGTH:count
@@ -1510,12 +1530,35 @@ CUresult cuMemPoolExportPointer(CUmemPoolPtrExportData *shareData_out,
 CUresult cuMemPoolImportPointer(CUdeviceptr *ptr_out, CUmemoryPool pool,
                                 CUmemPoolPtrExportData *shareData);
 /**
+ * @routingkey DEVICEPTR ptr
+ * @param data SEND_RECV SIZE:16
  * @param attribute SEND_ONLY
  * @param ptr SEND_ONLY
- * @disabled
  */
 CUresult cuPointerGetAttribute(void *data, CUpointer_attribute attribute,
-                               CUdeviceptr ptr);
+                               CUdeviceptr ptr) {
+  size_t value_size = 0;
+  if (data == nullptr || !lupine_pointer_attribute_size(attribute, &value_size))
+    return CUDA_ERROR_INVALID_VALUE;
+  lupine_pointer_query_context query = lupine_resolve_pointer_query(ptr);
+  ptr = query.query_ptr;
+  route = lupine_route_for_deviceptr(ptr);
+  if (!lupine_route_is_local(route) && query.managed_alias &&
+      attribute == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
+    void *host = reinterpret_cast<void *>(query.orig_ptr);
+    memcpy(data, &host, sizeof(host));
+    return CUDA_SUCCESS;
+  }
+  void *caller_data = data;
+  unsigned char staged[16] = {};
+  memcpy(staged, caller_data, value_size);
+  data = staged;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && !lupine_route_is_local(route))
+    lupine_fixup_pointer_attribute_value(query, attribute, staged);
+  memcpy(caller_data, staged, value_size);
+  return return_value;
+}
 #ifdef cuMemPrefetchAsync
 #undef cuMemPrefetchAsync
 #endif
@@ -1658,13 +1701,25 @@ CUresult cuMemRangeGetAttributes(void **data, size_t *dataSizes,
                                  size_t numAttributes, CUdeviceptr devPtr,
                                  size_t count);
 /**
- * @disabled - manual client sends the attribute value, not the caller's pointer
- * @param value SEND_ONLY
+ * @routingkey DEVICEPTR ptr
+ * @param value SEND_ONLY SIZE:8
  * @param attribute SEND_ONLY
  * @param ptr SEND_ONLY
  */
 CUresult cuPointerSetAttribute(const void *value, CUpointer_attribute attribute,
-                               CUdeviceptr ptr);
+                               CUdeviceptr ptr) {
+  size_t value_size = 0;
+  if (value == nullptr ||
+      !lupine_settable_pointer_attribute_size(attribute, &value_size))
+    return CUDA_ERROR_INVALID_VALUE;
+  cuuint64_t staged = 0;
+  memcpy(&staged, value, value_size);
+  value = &staged;
+  ptr = lupine_resolve_pointer_attribute_target(ptr);
+  route = lupine_route_for_deviceptr(ptr);
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @disabled - manual client handles managed host aliases
  * @param numAttributes SEND_ONLY
@@ -3449,15 +3504,15 @@ CUresult cuSurfObjectDestroy(CUsurfObject surfObject);
 CUresult cuSurfObjectGetResourceDesc(CUDA_RESOURCE_DESC *pResDesc,
                                      CUsurfObject surfObject);
 /**
- * @disabled
- * @param tensorMap SEND_RECV
+ * @routingkey DEVICEPTR globalAddress
+ * @param tensorMap RECV_ONLY
  * @param tensorDataType SEND_ONLY
  * @param tensorRank SEND_ONLY
  * @param globalAddress SEND_ONLY
- * @param globalDim SEND_RECV
- * @param globalStrides SEND_RECV
- * @param boxDim SEND_RECV
- * @param elementStrides SEND_RECV
+ * @param globalDim SEND_ONLY LENGTH:tensorRank
+ * @param globalStrides SEND_ONLY LENGTH:tensorRank-1
+ * @param boxDim SEND_ONLY LENGTH:tensorRank
+ * @param elementStrides SEND_ONLY LENGTH:tensorRank
  * @param interleave SEND_ONLY
  * @param swizzle SEND_ONLY
  * @param l2Promotion SEND_ONLY
@@ -3470,20 +3525,38 @@ CUresult cuTensorMapEncodeTiled(
     const cuuint64_t *globalStrides, const cuuint32_t *boxDim,
     const cuuint32_t *elementStrides, CUtensorMapInterleave interleave,
     CUtensorMapSwizzle swizzle, CUtensorMapL2promotion l2Promotion,
-    CUtensorMapFloatOOBfill oobFill);
+    CUtensorMapFloatOOBfill oobFill) {
+  if (tensorMap == nullptr || tensorRank == 0 || tensorRank > 5 ||
+      globalAddress == nullptr || globalDim == nullptr ||
+      globalStrides == nullptr || boxDim == nullptr ||
+      elementStrides == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  std::string key;
+  uint64_t generation = 0;
+  if (!lupine_route_is_local(route) &&
+      lupine_tensor_map_cache_lookup(
+          route, tensorDataType, tensorRank, globalAddress, globalDim,
+          globalStrides, boxDim, elementStrides, interleave, swizzle,
+          l2Promotion, oobFill, &key, &generation, tensorMap))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS && !lupine_route_is_local(route))
+    lupine_tensor_map_cache_insert(std::move(key), generation, *tensorMap);
+  return return_value;
+}
 /**
- * @disabled
- * @param tensorMap SEND_RECV
+ * @routingkey DEVICEPTR globalAddress
+ * @param tensorMap RECV_ONLY
  * @param tensorDataType SEND_ONLY
  * @param tensorRank SEND_ONLY
  * @param globalAddress SEND_ONLY
- * @param globalDim SEND_RECV
- * @param globalStrides SEND_RECV
- * @param pixelBoxLowerCorner SEND_RECV
- * @param pixelBoxUpperCorner SEND_RECV
+ * @param globalDim SEND_ONLY LENGTH:tensorRank
+ * @param globalStrides SEND_ONLY LENGTH:tensorRank-1
+ * @param pixelBoxLowerCorner SEND_ONLY LENGTH:tensorRank-2
+ * @param pixelBoxUpperCorner SEND_ONLY LENGTH:tensorRank-2
  * @param channelsPerPixel SEND_ONLY
  * @param pixelsPerColumn SEND_ONLY
- * @param elementStrides SEND_RECV
+ * @param elementStrides SEND_ONLY LENGTH:tensorRank
  * @param interleave SEND_ONLY
  * @param swizzle SEND_ONLY
  * @param l2Promotion SEND_ONLY
@@ -3497,7 +3570,15 @@ CUresult cuTensorMapEncodeIm2col(
     const int *pixelBoxUpperCorner, cuuint32_t channelsPerPixel,
     cuuint32_t pixelsPerColumn, const cuuint32_t *elementStrides,
     CUtensorMapInterleave interleave, CUtensorMapSwizzle swizzle,
-    CUtensorMapL2promotion l2Promotion, CUtensorMapFloatOOBfill oobFill);
+    CUtensorMapL2promotion l2Promotion, CUtensorMapFloatOOBfill oobFill) {
+  if (tensorMap == nullptr || tensorRank < 3 || tensorRank > 5 ||
+      globalAddress == nullptr || globalDim == nullptr ||
+      globalStrides == nullptr || pixelBoxLowerCorner == nullptr ||
+      pixelBoxUpperCorner == nullptr || elementStrides == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @routingkey DEVICEPTR globalAddress
  * @param tensorMap SEND_RECV

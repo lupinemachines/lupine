@@ -1262,11 +1262,8 @@ lupine_rpc_hipExtStreamCreateWithCUMask(conn_t *conn, hipStream_t *stream,
       (stream_present && rpc_write(conn, stream, sizeof(hipStream_t)) < 0) ||
       rpc_write(conn, &cuMaskSize, sizeof(uint32_t)) < 0 ||
       rpc_write(conn, &cuMask_null, sizeof(uint8_t)) < 0 ||
-      (!cuMask_null &&
-       (cuMaskSize <= 0 ? 0 : cuMaskSize * sizeof(const uint32_t)) != 0 &&
-       rpc_write(conn, cuMask,
-                 (cuMaskSize <= 0 ? 0 : cuMaskSize * sizeof(const uint32_t))) <
-           0) ||
+      (!cuMask_null && cuMaskSize * sizeof(const uint32_t) != 0 &&
+       rpc_write(conn, cuMask, cuMaskSize * sizeof(const uint32_t)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
       (stream_present && rpc_read(conn, stream, sizeof(hipStream_t)) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
@@ -1296,10 +1293,8 @@ static hipError_t lupine_rpc_hipExtStreamGetCUMask(conn_t *conn,
       rpc_write(conn, &cuMaskSize, sizeof(uint32_t)) < 0 ||
       rpc_write(conn, &cuMask_null, sizeof(uint8_t)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      (!cuMask_null &&
-       (cuMaskSize <= 0 ? 0 : cuMaskSize * sizeof(uint32_t)) != 0 &&
-       rpc_read(conn, cuMask,
-                (cuMaskSize <= 0 ? 0 : cuMaskSize * sizeof(uint32_t))) < 0) ||
+      (!cuMask_null && cuMaskSize * sizeof(uint32_t) != 0 &&
+       rpc_read(conn, cuMask, cuMaskSize * sizeof(uint32_t)) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return rpc_error();

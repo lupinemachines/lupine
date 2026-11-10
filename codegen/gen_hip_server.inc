@@ -1717,19 +1717,15 @@ int handle_hipExtStreamCreateWithCUMask(conn_t *conn) {
       rpc_read(conn, &cuMask_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!cuMask_null) {
-    cuMask = (uint32_t *)calloc(
-        (cuMaskSize <= 0 ? 0 : cuMaskSize * sizeof(const uint32_t)) == 0
-            ? 1
-            : (cuMaskSize <= 0 ? 0 : cuMaskSize * sizeof(const uint32_t)),
-        1);
+    cuMask = (uint32_t *)calloc(cuMaskSize * sizeof(const uint32_t) == 0
+                                    ? 1
+                                    : cuMaskSize * sizeof(const uint32_t),
+                                1);
     if (cuMask == nullptr)
       goto ERROR_0;
   }
-  if ((!cuMask_null &&
-       (cuMaskSize <= 0 ? 0 : cuMaskSize * sizeof(const uint32_t)) != 0 &&
-       rpc_read(conn, cuMask,
-                (cuMaskSize <= 0 ? 0 : cuMaskSize * sizeof(const uint32_t))) <
-           0) ||
+  if ((!cuMask_null && cuMaskSize * sizeof(const uint32_t) != 0 &&
+       rpc_read(conn, cuMask, cuMaskSize * sizeof(const uint32_t)) < 0) ||
       false)
     goto ERROR_0;
 
@@ -1769,9 +1765,7 @@ int handle_hipExtStreamGetCUMask(conn_t *conn) {
     goto ERROR_0;
   if (!cuMask_null) {
     cuMask = (uint32_t *)calloc(
-        (cuMaskSize <= 0 ? 0 : cuMaskSize * sizeof(uint32_t)) == 0
-            ? 1
-            : (cuMaskSize <= 0 ? 0 : cuMaskSize * sizeof(uint32_t)),
+        cuMaskSize * sizeof(uint32_t) == 0 ? 1 : cuMaskSize * sizeof(uint32_t),
         1);
     if (cuMask == nullptr)
       goto ERROR_0;
@@ -1788,10 +1782,8 @@ int handle_hipExtStreamGetCUMask(conn_t *conn) {
       fn == nullptr ? function_not_found() : fn(stream, cuMaskSize, cuMask);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (!cuMask_null &&
-       (cuMaskSize <= 0 ? 0 : cuMaskSize * sizeof(uint32_t)) != 0 &&
-       rpc_write(conn, cuMask,
-                 (cuMaskSize <= 0 ? 0 : cuMaskSize * sizeof(uint32_t))) < 0) ||
+      (!cuMask_null && cuMaskSize * sizeof(uint32_t) != 0 &&
+       rpc_write(conn, cuMask, cuMaskSize * sizeof(uint32_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;

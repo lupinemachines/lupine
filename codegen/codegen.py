@@ -845,7 +845,13 @@ def parse_annotation(
                     )
                 elif length_arg:
                     # if it has a length, it's an array operation with variable length
-                    length_name = length_arg.split(":", 1)[1]
+                    length_spec = length_arg.split(":", 1)[1]
+                    if "-" in length_spec:
+                        length_name, offset_str = length_spec.split("-", 1)
+                        length_offset = -int(offset_str)
+                    else:
+                        length_name = length_spec
+                        length_offset = 0
                     length_param = next(
                         (p for p in params if p.name == length_name), None
                     )
@@ -868,6 +874,7 @@ def parse_annotation(
                                 ptr=param.type,
                                 length=length_param,
                                 nullable=True,
+                                length_offset=length_offset,
                             )
                         )
                     elif nullable:
@@ -895,6 +902,7 @@ def parse_annotation(
                                 ptr=param.type,
                                 length=length_param,
                                 nullable=deref_nullable,
+                                length_offset=length_offset,
                             )
                         )
                 elif size_arg:

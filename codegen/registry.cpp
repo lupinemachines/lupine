@@ -49,12 +49,8 @@
   HANDLER(RPC_cuMemcpy3DPeerAsync, handle_cuMemcpy3DPeerAsync, rpc_backend::cuda) \
   HANDLER(RPC_cuMemExportToShareableHandle, handle_cuMemExportToShareableHandle, rpc_backend::cuda) \
   HANDLER(RPC_cuMemImportFromShareableHandle, handle_cuMemImportFromShareableHandle, rpc_backend::cuda) \
-  HANDLER(RPC_cuMemPoolSetAttribute, handle_cuMemPoolSetAttribute, rpc_backend::cuda) \
-  HANDLER(RPC_cuMemPoolGetAttribute, handle_cuMemPoolGetAttribute, rpc_backend::cuda) \
   HANDLER(RPC_cuMemPoolExportToShareableHandle, handle_cuMemPoolExportToShareableHandle, rpc_backend::cuda) \
   HANDLER(RPC_cuMemPoolImportFromShareableHandle, handle_cuMemPoolImportFromShareableHandle, rpc_backend::cuda) \
-  HANDLER(RPC_cuPointerGetAttribute, handle_cuPointerGetAttribute, rpc_backend::cuda) \
-  HANDLER(RPC_cuPointerSetAttribute, handle_cuPointerSetAttribute, rpc_backend::cuda) \
   HANDLER(RPC_cuPointerGetAttributes, handle_cuPointerGetAttributes, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamWaitEvent, handle_cuStreamWaitEvent, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamAddCallback, handle_cuStreamAddCallback, rpc_backend::cuda) \
@@ -222,6 +218,8 @@
   HANDLER(RPC_cuMemFreeAsync, handle_cuMemFreeAsync, rpc_backend::cuda) \
   HANDLER(RPC_cuMemAllocAsync, handle_cuMemAllocAsync, rpc_backend::cuda) \
   HANDLER(RPC_cuMemPoolTrimTo, handle_cuMemPoolTrimTo, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemPoolSetAttribute, handle_cuMemPoolSetAttribute, rpc_backend::cuda) \
+  HANDLER(RPC_cuMemPoolGetAttribute, handle_cuMemPoolGetAttribute, rpc_backend::cuda) \
   HANDLER(RPC_cuMemPoolSetAccess, handle_cuMemPoolSetAccess, rpc_backend::cuda) \
   HANDLER(RPC_cuMemPoolGetAccess, handle_cuMemPoolGetAccess, rpc_backend::cuda) \
   HANDLER(RPC_cuMemPoolCreate, handle_cuMemPoolCreate, rpc_backend::cuda) \
@@ -229,7 +227,9 @@
   HANDLER(RPC_cuMemAllocFromPoolAsync, handle_cuMemAllocFromPoolAsync, rpc_backend::cuda) \
   HANDLER(RPC_cuMemPoolExportPointer, handle_cuMemPoolExportPointer, rpc_backend::cuda) \
   HANDLER(RPC_cuMemPoolImportPointer, handle_cuMemPoolImportPointer, rpc_backend::cuda) \
+  HANDLER(RPC_cuPointerGetAttribute, handle_cuPointerGetAttribute, rpc_backend::cuda) \
   HANDLER(RPC_cuMemRangeGetAttribute, handle_cuMemRangeGetAttribute, rpc_backend::cuda) \
+  HANDLER(RPC_cuPointerSetAttribute, handle_cuPointerSetAttribute, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamCreate, handle_cuStreamCreate, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamCreateWithPriority, handle_cuStreamCreateWithPriority, rpc_backend::cuda) \
   HANDLER(RPC_cuStreamGetPriority, handle_cuStreamGetPriority, rpc_backend::cuda) \
@@ -767,14 +767,6 @@
   int handler(conn_t *conn);
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 LUPINE_CUDA_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
-#if CUDA_VERSION >= 12000
-LUPINE_DECLARE_HANDLER(RPC_cuTensorMapEncodeTiled,
-                       handle_cuTensorMapEncodeTiled, rpc_backend::cuda)
-#endif
-#if CUDA_VERSION >= 12000
-LUPINE_DECLARE_HANDLER(RPC_cuTensorMapEncodeIm2col,
-                       handle_cuTensorMapEncodeIm2col, rpc_backend::cuda)
-#endif
 #if CUDA_VERSION >= 12090
 LUPINE_DECLARE_HANDLER(RPC_cuLogsRegisterCallback,
                        handle_cuLogsRegisterCallback, rpc_backend::cuda)
@@ -845,6 +837,14 @@ LUPINE_DECLARE_HANDLER(RPC_cuGraphNodeSetParams, handle_cuGraphNodeSetParams,
 #if CUDA_VERSION >= 12020
 LUPINE_DECLARE_HANDLER(RPC_cuGraphExecNodeSetParams,
                        handle_cuGraphExecNodeSetParams, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cuTensorMapEncodeTiled,
+                       handle_cuTensorMapEncodeTiled, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12000
+LUPINE_DECLARE_HANDLER(RPC_cuTensorMapEncodeIm2col,
+                       handle_cuTensorMapEncodeIm2col, rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12000
 LUPINE_DECLARE_HANDLER(RPC_cuTensorMapReplaceAddress,
@@ -1138,12 +1138,6 @@ const rpc_handler_registry &lupine_rpc_handlers() {
   static const rpc_handler_registry handlers = {
 #ifdef LUPINE_BUILD_CUDA_BACKEND
       LUPINE_CUDA_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
-#if CUDA_VERSION >= 12000
-      LUPINE_REGISTER_HANDLER(RPC_cuTensorMapEncodeTiled, handle_cuTensorMapEncodeTiled, rpc_backend::cuda)
-#endif
-#if CUDA_VERSION >= 12000
-      LUPINE_REGISTER_HANDLER(RPC_cuTensorMapEncodeIm2col, handle_cuTensorMapEncodeIm2col, rpc_backend::cuda)
-#endif
 #if CUDA_VERSION >= 12090
       LUPINE_REGISTER_HANDLER(RPC_cuLogsRegisterCallback, handle_cuLogsRegisterCallback, rpc_backend::cuda)
 #endif
@@ -1197,6 +1191,12 @@ const rpc_handler_registry &lupine_rpc_handlers() {
 #endif
 #if CUDA_VERSION >= 12020
       LUPINE_REGISTER_HANDLER(RPC_cuGraphExecNodeSetParams, handle_cuGraphExecNodeSetParams, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cuTensorMapEncodeTiled, handle_cuTensorMapEncodeTiled, rpc_backend::cuda)
+#endif
+#if CUDA_VERSION >= 12000
+      LUPINE_REGISTER_HANDLER(RPC_cuTensorMapEncodeIm2col, handle_cuTensorMapEncodeIm2col, rpc_backend::cuda)
 #endif
 #if CUDA_VERSION >= 12000
       LUPINE_REGISTER_HANDLER(RPC_cuTensorMapReplaceAddress, handle_cuTensorMapReplaceAddress, rpc_backend::cuda)

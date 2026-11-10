@@ -5,7 +5,12 @@
 #include "cuda_compat.h"
 #undef LUPINE_CUDA_COMPAT_TYPES_ONLY
 
+#include <cstdint>
+#include <string>
+
 #include "cache.h"
+#include "client_routing.h"
+#include "lupine_attr_sizes.h"
 
 bool lupine_cuda_is_initialized();
 
@@ -46,8 +51,6 @@ void lupine_attribute_set(
     const lupine_kernel_attribute_key &key, int value,
     lupine_attribute_source source = lupine_attribute_source::query);
 
-struct lupine_route;
-
 bool lupine_try_cached_module_function(CUmodule module, const char *name,
                                        lupine_route route,
                                        CUfunction *function);
@@ -74,5 +77,18 @@ void lupine_store_cached_occupancy(lupine_route route, CUfunction func,
                                    int numBlocks);
 bool lupine_try_cached_stream_is_capturing(
     CUstream hStream, CUstreamCaptureStatus *captureStatus);
+
+#if CUDA_VERSION >= 12000
+bool lupine_tensor_map_cache_lookup(
+    lupine_route route, CUtensorMapDataType tensorDataType,
+    cuuint32_t tensorRank, void *globalAddress, const cuuint64_t *globalDim,
+    const cuuint64_t *globalStrides, const cuuint32_t *boxDim,
+    const cuuint32_t *elementStrides, CUtensorMapInterleave interleave,
+    CUtensorMapSwizzle swizzle, CUtensorMapL2promotion l2Promotion,
+    CUtensorMapFloatOOBfill oobFill, std::string *key, uint64_t *generation,
+    CUtensorMap *tensorMap);
+void lupine_tensor_map_cache_insert(std::string key, uint64_t generation,
+                                    const CUtensorMap &tensorMap);
+#endif
 
 #endif
