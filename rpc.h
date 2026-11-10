@@ -162,17 +162,20 @@ struct rpc_scope_ticket {
 // each of its objects, and for the last one that touched no object: its own
 // lane's requests are already in order. A soft request checks those instead
 // of waiting for them, so a query can say they are not done yet.
+// A client request leads with wait markers: {0, 0, n} waits for every ticket
+// below n, {0, 1, t} for ticket t, and {0, 2, t} only checks it.
+struct rpc_wait_marker {
+  int zero;
+  int kind;
+  uint64_t value;
+};
+
 struct rpc_request_scope {
-  static constexpr int kMaxWaits = 8;
-  static constexpr int kMaxKeys = 4;
   bool scoped = false;
   bool publish_connection = false;
   bool soft = false;
-  bool wait_all = false;
-  int key_count = 0;
-  uintptr_t keys[kMaxKeys] = {};
-  int wait_count = 0;
-  uint64_t waits[kMaxWaits] = {};
+  std::vector<uintptr_t> keys; // objects later requests order behind it on
+  std::vector<rpc_wait_marker> waits;
   // Retired scopes this request waits for, dropped once it publishes.
   size_t retired_count = 0;
 };
