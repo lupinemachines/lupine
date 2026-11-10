@@ -61,36 +61,29 @@ std::pair<const char *, size_t> text(const char *string) {
   return {string, string == nullptr ? 0 : std::strlen(string)};
 }
 
+template <typename Arg>
+int handle_single_string(conn_t *conn, const char *symbol) {
+  Arg arg;
+  if (rpc_read(conn, &arg, sizeof(arg)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  auto fn = nccl_symbol<const char *(*)(Arg)>(symbol);
+  return write_strings(conn, request_id, ncclSuccess,
+                       {text(fn == nullptr ? nullptr : fn(arg))});
+}
+
 } // namespace
 
 int handle_ncclGetErrorString(conn_t *conn) {
-  ncclResult_t result;
-  if (rpc_read(conn, &result, sizeof(result)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  using fn_t = const char *(*)(ncclResult_t);
-  fn_t fn = nccl_symbol<fn_t>("ncclGetErrorString");
-  const char *string = fn == nullptr ? nullptr : fn(result);
-  return write_strings(conn, request_id, ncclSuccess, {text(string)});
+  return handle_single_string<ncclResult_t>(conn, "ncclGetErrorString");
 }
 
 int handle_ncclGetLastError(conn_t *conn) {
-  ncclComm_t comm;
-  if (rpc_read(conn, &comm, sizeof(comm)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  using fn_t = const char *(*)(ncclComm_t);
-  fn_t fn = nccl_symbol<fn_t>("ncclGetLastError");
-  const char *string = fn == nullptr ? nullptr : fn(comm);
-  return write_strings(conn, request_id, ncclSuccess, {text(string)});
+  return handle_single_string<ncclComm_t>(conn, "ncclGetLastError");
 }
 
 #if NCCL_VERSION_CODE >= 23007

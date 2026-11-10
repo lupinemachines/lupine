@@ -475,64 +475,6 @@ extern "C" CUdevice lupine_local_device_for_remote(conn_t *conn,
                                          remote_device);
 }
 
-template <typename Handle>
-static void lupine_note_owner(Handle handle, conn_t *conn) {
-  int index = lupine_conn_index(conn);
-  if (handle == Handle{} || index < 0) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  auto &owner = lupine_owners<Handle>()[handle];
-  owner.route_id = index;
-  if constexpr (std::is_same_v<Handle, CUdeviceptr>) {
-    owner.pointer_context = lupine_current_context_hint();
-  }
-}
-
-extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn) {
-  lupine_note_owner(ctx, conn);
-}
-
-extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn) {
-  lupine_note_owner(module, conn);
-}
-
-extern "C" void lupine_note_library_owner(CUlibrary library, conn_t *conn) {
-  lupine_note_owner(library, conn);
-}
-
-extern "C" void lupine_note_function_owner(CUfunction function, conn_t *conn) {
-  lupine_note_owner(function, conn);
-}
-
-extern "C" void lupine_note_stream_owner(CUstream stream, conn_t *conn) {
-  lupine_note_owner(stream, conn);
-}
-
-extern "C" void lupine_note_event_owner(CUevent event, conn_t *conn) {
-  lupine_note_owner(event, conn);
-}
-
-extern "C" void lupine_note_memory_pool_owner(CUmemoryPool pool, conn_t *conn) {
-  lupine_note_owner(pool, conn);
-}
-
-extern "C" void lupine_note_graph_owner(CUgraph graph, conn_t *conn) {
-  lupine_note_owner(graph, conn);
-}
-
-extern "C" void lupine_note_graph_node_owner(CUgraphNode node, conn_t *conn) {
-  lupine_note_owner(node, conn);
-}
-
-extern "C" void lupine_note_graph_exec_owner(CUgraphExec exec, conn_t *conn) {
-  lupine_note_owner(exec, conn);
-}
-
-extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn) {
-  lupine_note_owner(ptr, conn);
-}
-
 static void lupine_note_deviceptr_allocation_owner_locked(CUdeviceptr ptr,
                                                           size_t size,
                                                           int route_id,
@@ -541,17 +483,6 @@ static void lupine_note_deviceptr_allocation_owner_locked(CUdeviceptr ptr,
   owner.route_id = route_id;
   owner.pointer_context = context;
   lupine_deviceptr_allocation_cache_insert(ptr, size, route_id, context);
-}
-
-extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
-                                                 conn_t *conn) {
-  int index = lupine_conn_index(conn);
-  if (ptr == 0 || index < 0) {
-    return;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_note_deviceptr_allocation_owner_locked(ptr, size, index,
-                                                lupine_current_context_hint());
 }
 
 template <typename Handle>
@@ -566,6 +497,18 @@ static void lupine_note_owner_route(Handle handle, lupine_route route) {
   if constexpr (std::is_same_v<Handle, CUdeviceptr>) {
     owner.pointer_context = lupine_current_context_hint();
   }
+}
+
+extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn) {
+  lupine_note_owner_route(ctx, lupine_remote_route_for_conn(conn));
+}
+
+extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn) {
+  lupine_note_owner_route(module, lupine_remote_route_for_conn(conn));
+}
+
+extern "C" void lupine_note_library_owner(CUlibrary library, conn_t *conn) {
+  lupine_note_owner_route(library, lupine_remote_route_for_conn(conn));
 }
 
 extern "C" void lupine_note_context_owner_route(CUcontext ctx,
@@ -626,16 +569,19 @@ extern "C" void lupine_note_deviceptr_owner_route(CUdeviceptr ptr,
 extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
                                                        size_t size,
                                                        lupine_route route) {
-  if (ptr == 0 || route.kind == LUPINE_ROUTE_INVALID) {
-    return;
-  }
-  if (route.kind == LUPINE_ROUTE_REMOTE) {
-    lupine_note_deviceptr_allocation(ptr, size, route.conn);
+  int route_id = lupine_route_identity(route);
+  if (ptr == 0 || route_id < -1) {
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_note_deviceptr_allocation_owner_locked(ptr, size, -1,
+  lupine_note_deviceptr_allocation_owner_locked(ptr, size, route_id,
                                                 lupine_current_context_hint());
+}
+
+extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
+                                                 conn_t *conn) {
+  lupine_note_deviceptr_allocation_route(ptr, size,
+                                         lupine_remote_route_for_conn(conn));
 }
 
 static bool lupine_note_disjoint_deviceptr_allocation(CUdeviceptr ptr,
@@ -890,23 +836,10 @@ static lupine_route lupine_route_for_default_context_hint(CUcontext ctx) {
 }
 
 extern "C" lupine_route lupine_route_for_default() {
-  CUcontext current_hint = lupine_current_context_hint();
-  if (current_hint != nullptr) {
-    lupine_route route = lupine_route_for_default_context_hint(current_hint);
-    if (route.kind != LUPINE_ROUTE_INVALID) {
-      return route;
-    }
-  }
-  CUcontext default_hint = lupine_default_context_hint_value();
-  if (default_hint != nullptr) {
-    lupine_route route = lupine_route_for_default_context_hint(default_hint);
-    if (route.kind != LUPINE_ROUTE_INVALID) {
-      return route;
-    }
-  }
-  CUcontext global_hint = lupine_global_default_context_hint_value();
-  if (global_hint != nullptr) {
-    lupine_route route = lupine_route_for_default_context_hint(global_hint);
+  for (CUcontext hint : {lupine_current_context_hint(),
+                         lupine_default_context_hint_value(),
+                         lupine_global_default_context_hint_value()}) {
+    lupine_route route = lupine_route_for_default_context_hint(hint);
     if (route.kind != LUPINE_ROUTE_INVALID) {
       return route;
     }
@@ -922,22 +855,6 @@ extern "C" lupine_route lupine_route_for_default() {
 
 extern "C" conn_t *lupine_rpc_conn_for_current_context() {
   return lupine_route_remote_conn(lupine_route_for_current_context());
-}
-
-extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx) {
-  return lupine_route_remote_conn(lupine_route_for_context(ctx));
-}
-
-extern "C" conn_t *lupine_rpc_conn_for_module(CUmodule module) {
-  return lupine_route_remote_conn(lupine_route_for_module(module));
-}
-
-extern "C" conn_t *lupine_rpc_conn_for_function(CUfunction function) {
-  return lupine_route_remote_conn(lupine_route_for_function(function));
-}
-
-extern "C" conn_t *lupine_rpc_conn_for_stream(CUstream stream) {
-  return lupine_route_remote_conn(lupine_route_for_stream(stream));
 }
 
 extern "C" conn_t *lupine_rpc_conn_for_event(CUevent event) {

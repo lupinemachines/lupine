@@ -64,10 +64,6 @@ extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr);
 
 extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);
 extern "C" conn_t *lupine_rpc_conn_for_current_context();
-extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx);
-extern "C" conn_t *lupine_rpc_conn_for_module(CUmodule module);
-extern "C" conn_t *lupine_rpc_conn_for_function(CUfunction function);
-extern "C" conn_t *lupine_rpc_conn_for_stream(CUstream stream);
 extern "C" conn_t *lupine_rpc_conn_for_event(CUevent event);
 extern "C" conn_t *lupine_rpc_conn_for_deviceptr(CUdeviceptr ptr);
 // Flushes work that must precede the caller's next CUDA RPC without starting
@@ -147,14 +143,6 @@ extern "C" void *lupine_real_cuda_symbol(const char *name);
 extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn);
 extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn);
 extern "C" void lupine_note_library_owner(CUlibrary library, conn_t *conn);
-extern "C" void lupine_note_function_owner(CUfunction function, conn_t *conn);
-extern "C" void lupine_note_stream_owner(CUstream stream, conn_t *conn);
-extern "C" void lupine_note_event_owner(CUevent event, conn_t *conn);
-extern "C" void lupine_note_memory_pool_owner(CUmemoryPool pool, conn_t *conn);
-extern "C" void lupine_note_graph_owner(CUgraph graph, conn_t *conn);
-extern "C" void lupine_note_graph_node_owner(CUgraphNode node, conn_t *conn);
-extern "C" void lupine_note_graph_exec_owner(CUgraphExec exec, conn_t *conn);
-extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn);
 extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
                                                  conn_t *conn);
 extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);
