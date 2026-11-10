@@ -1132,10 +1132,7 @@ int rpc_write_start_request_on(conn_t *conn, const int op, uintptr_t key,
   // written. Taken earlier, two overlapping requests could both wait on the
   // same old ticket, and a later one waiting on the newest would not cover the
   // other. Every request waits only on requests written before it.
-  conn->write_dependency =
-      client && !scoped
-          ? __atomic_load_n(&conn->published_async_sequence, __ATOMIC_ACQUIRE)
-          : 0;
+  conn->write_dependency = client && !scoped ? conn->issued_async_sequence : 0;
   conn->write_awaited = false;
   conn->write_stream_id = rpc_http2_lane_stream(
       conn, host_writes ? ~uint64_t{0} : rpc_tls_lane.id);
@@ -1366,16 +1363,10 @@ int rpc_write_end(conn_t *conn) {
     }
     if (result == 0 && client_request) {
       conn->async_prefix = std::max(conn->async_prefix, conn->write_dependency);
-      uint64_t published = conn->issued_async_sequence;
-      if (published !=
-          __atomic_load_n(&conn->published_async_sequence, __ATOMIC_RELAXED)) {
-        // Own-lane FIFO extends a contiguous prefix by one. A gap may belong
-        // to an overlapping producer and must still be fenced on the next call.
-        if (published == conn->async_prefix + 1) {
-          conn->async_prefix = published;
-        }
-        __atomic_store_n(&conn->published_async_sequence, published,
-                         __ATOMIC_RELEASE);
+      // Own-lane FIFO extends a contiguous prefix by one. A gap may belong
+      // to an overlapping producer and must still be fenced on the next call.
+      if (ticketed && conn->issued_async_sequence == conn->async_prefix + 1) {
+        conn->async_prefix = conn->issued_async_sequence;
       }
     }
   }

@@ -197,10 +197,9 @@ struct conn_t {
   pthread_t read_thread;
   pthread_mutex_t write_mutex, call_mutex, async_mutex;
   pthread_cond_t async_cond;
-  uint64_t issued_async_sequence;
+  uint64_t issued_async_sequence; // tickets sent, under write_mutex
   uint64_t serving_async_sequence;
   int async_waiters = 0; // lanes in a ticket wait, under async_mutex
-  uint64_t published_async_sequence;
   std::set<uint64_t> completed_async_sequences;
   // Scope state, under write_mutex.
   std::unordered_map<uintptr_t, rpc_scope_ticket> scope_last;

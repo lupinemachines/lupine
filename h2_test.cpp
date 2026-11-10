@@ -2662,8 +2662,6 @@ void test_async_prefix_builder_wait_orders_overlap() {
   }
   // Simulate another producer publishing sequence 0 during the overlap.
   pair.client.issued_async_sequence = 1;
-  __atomic_store_n(&pair.client.published_async_sequence, uint64_t{1},
-                   __ATOMIC_RELEASE);
   pthread_mutex_unlock(&pair.client.write_mutex);
   caller.join();
   int32_t lane = rpc_http2_accept_stream(&pair.server);
