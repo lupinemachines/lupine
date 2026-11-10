@@ -57,8 +57,9 @@ extern "C" lupine_route lupine_route_for_graph(CUgraph graph);
 extern "C" lupine_route lupine_route_for_graph_node(CUgraphNode node);
 extern "C" lupine_route lupine_route_for_graph_exec(CUgraphExec exec);
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr);
-// Routes a device-side write, exposing the host allocation it may name.
-extern "C" lupine_route lupine_route_for_deviceptr_destination(CUdeviceptr ptr);
+// Notes a device-side write to `ptr`: when it names a mapped host allocation,
+// the next synchronize refreshes the client's view of it.
+extern "C" void lupine_note_device_write(CUdeviceptr ptr);
 extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr);
 
 extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);

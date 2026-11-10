@@ -570,6 +570,11 @@ def parse_annotation(
             continue
         if line.strip().startswith("@synchronize"):
             parts = line.split()
+            if parts[1:2] == ["DEVICEPTR"]:
+                if len(parts) != 3:
+                    raise RuntimeError("@synchronize DEVICEPTR requires a parameter")
+                metadata.device_writes.append(annotation_param(params, parts[2]))
+                continue
             options = set(parts[1:])
             unknown = options - {"DEFERRED_DTOH", "STDOUT"}
             if unknown:
@@ -1407,6 +1412,8 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 route_expr = client_routing_key_expr(
                     metadata.routing_kind, metadata.routing_parameter, metadata
                 )
+                for written in metadata.device_writes:
+                    f.write(f"    lupine_note_device_write({written.name});\n")
                 f.write(f"    lupine_route route = {route_expr};\n")
                 if metadata.routing_kind == "DEVICE":
                     f.write("    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)\n")
