@@ -727,26 +727,23 @@ lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
             ++it;
             continue;
           }
+          // Take the items this call covers: its own queue's, a blocking
+          // stream's when it is the legacy stream, or ones its graph
+          // inherited. Markers are dropped, copies returned.
+          lupine_pending_dtoh_items kept;
+          for (auto &item : it->second) {
+            bool covered = own ||
+                           (stream == nullptr && item.legacy_ordered) ||
+                           (inherited != nullptr &&
+                            item.graph_resources == inherited);
+            if (!covered || (context != nullptr && item.context != context)) {
+              kept.push_back(item);
+            } else if (item.event == nullptr) {
+              copies.push_back(item);
+            }
+          }
           auto &items = it->second;
-          items.erase(
-              std::remove_if(
-                  items.begin(), items.end(),
-                  [&](const auto &item) {
-                    bool covered =
-                        own || (stream == nullptr && item.legacy_ordered);
-                    if (!covered && (inherited == nullptr ||
-                                     item.graph_resources != inherited)) {
-                      return false;
-                    }
-                    if (context != nullptr && item.context != context) {
-                      return false;
-                    }
-                    if (item.event == nullptr) {
-                      copies.push_back(item);
-                    }
-                    return true;
-                  }),
-              items.end());
+          items.swap(kept);
           if (items.empty()) {
             it = streams.erase(it);
           } else {
@@ -777,6 +774,18 @@ lupine_remove_event_dtoh_markers(lupine_pending_dtoh_streams *streams,
   }
 }
 
+// Whether a queue holds copies the legacy stream waits for. One holding only
+// markers, or only a non-blocking stream's copies, needs no legacy marker.
+static bool
+lupine_owes_legacy_ordered_copies(const lupine_pending_dtoh_items &items) {
+  for (const auto &item : items) {
+    if (item.event == nullptr && item.legacy_ordered) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream) {
   CUcontext context = nullptr;
   (void)cuStreamGetCtx(stream, &context);
@@ -798,18 +807,12 @@ void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream) {
         // The legacy default stream orders this event after every blocking
         // stream's prior work. The null queue is its sentinel.
         streams.try_emplace(nullptr);
-        // A queue holding only markers owes no copies, so it needs none.
         for (auto &entry : streams) {
-          if (entry.first != nullptr &&
-              (entry.first == CU_STREAM_PER_THREAD ||
-               std::none_of(entry.second.begin(), entry.second.end(),
-                            [](const auto &item) {
-                              return item.event == nullptr &&
-                                     item.legacy_ordered;
-                            }))) {
-            continue;
+          if (entry.first == nullptr ||
+              (entry.first != CU_STREAM_PER_THREAD &&
+               lupine_owes_legacy_ordered_copies(entry.second))) {
+            entry.second.push_back(marker);
           }
-          entry.second.push_back(marker);
         }
       },
       std::move(initial));
