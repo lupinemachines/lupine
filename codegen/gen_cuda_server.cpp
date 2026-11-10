@@ -741,6 +741,7 @@ ERROR_0:
 
 int handle_cuCtxSynchronize(conn_t *conn) {
   lupine_pending_dtoh_items pending;
+  uint64_t dtoh_before = 0;
   lupine_captured_stdout capture;
   int request_id;
   CUresult return_value;
@@ -751,6 +752,7 @@ int handle_cuCtxSynchronize(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
+  dtoh_before = lupine_dtoh_sequence_now();
   lupine_start_stdout_capture(&capture);
   return_value = cuCtxSynchronize();
 
@@ -758,7 +760,8 @@ int handle_cuCtxSynchronize(conn_t *conn) {
   if (return_value == CUDA_SUCCESS) {
     CUcontext context = nullptr;
     if (cuCtxGetCurrent(&context) == CUDA_SUCCESS)
-      pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, context);
+      pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, context,
+                                                  dtoh_before);
   }
   return_value = lupine_take_async_error(conn, return_value);
 
@@ -780,6 +783,7 @@ ERROR_0:
 int handle_cuCtxSynchronize_v2(conn_t *conn) {
   CUcontext ctx;
   lupine_pending_dtoh_items pending;
+  uint64_t dtoh_before = 0;
   lupine_captured_stdout capture;
   int request_id;
   CUresult return_value;
@@ -790,12 +794,14 @@ int handle_cuCtxSynchronize_v2(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
+  dtoh_before = lupine_dtoh_sequence_now();
   lupine_start_stdout_capture(&capture);
   return_value = cuCtxSynchronize_v2(ctx);
 
   lupine_finish_stdout_capture(&capture);
   if (return_value == CUDA_SUCCESS) {
-    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, ctx);
+    pending = lupine_detach_pending_dtoh_copies(conn, nullptr, true, ctx,
+                                                dtoh_before);
   }
   return_value = lupine_take_async_error(conn, return_value);
 
@@ -3887,6 +3893,7 @@ ERROR_0:
 int handle_cuStreamQuery(conn_t *conn) {
   CUstream hStream;
   lupine_pending_dtoh_items pending;
+  uint64_t dtoh_before = 0;
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 || false)
@@ -3896,13 +3903,14 @@ int handle_cuStreamQuery(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
+  dtoh_before = lupine_dtoh_sequence_now();
   return_value = cuStreamQuery(hStream);
 
   if (return_value == CUDA_SUCCESS) {
     CUcontext context = nullptr;
     if (cuStreamGetCtx(hStream, &context) == CUDA_SUCCESS)
-      pending =
-          lupine_detach_pending_dtoh_copies(conn, hStream, false, context);
+      pending = lupine_detach_pending_dtoh_copies(conn, hStream, false, context,
+                                                  dtoh_before);
   }
   return_value = lupine_take_async_error(conn, return_value);
 
@@ -3922,6 +3930,7 @@ ERROR_0:
 int handle_cuStreamSynchronize(conn_t *conn) {
   CUstream hStream;
   lupine_pending_dtoh_items pending;
+  uint64_t dtoh_before = 0;
   lupine_captured_stdout capture;
   int request_id;
   CUresult return_value;
@@ -3932,6 +3941,7 @@ int handle_cuStreamSynchronize(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
+  dtoh_before = lupine_dtoh_sequence_now();
   lupine_start_stdout_capture(&capture);
   return_value = cuStreamSynchronize(hStream);
 
@@ -3939,8 +3949,8 @@ int handle_cuStreamSynchronize(conn_t *conn) {
   if (return_value == CUDA_SUCCESS) {
     CUcontext context = nullptr;
     if (cuStreamGetCtx(hStream, &context) == CUDA_SUCCESS)
-      pending =
-          lupine_detach_pending_dtoh_copies(conn, hStream, false, context);
+      pending = lupine_detach_pending_dtoh_copies(conn, hStream, false, context,
+                                                  dtoh_before);
   }
   return_value = lupine_take_async_error(conn, return_value);
 
@@ -4085,6 +4095,7 @@ ERROR_0:
 int handle_cuEventSynchronize(conn_t *conn) {
   CUevent hEvent;
   lupine_pending_dtoh_items pending;
+  uint64_t dtoh_before = 0;
   lupine_captured_stdout capture;
   int request_id;
   CUresult return_value;
@@ -4095,6 +4106,7 @@ int handle_cuEventSynchronize(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
+  dtoh_before = lupine_dtoh_sequence_now();
   lupine_start_stdout_capture(&capture);
   return_value = cuEventSynchronize(hEvent);
 
