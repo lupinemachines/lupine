@@ -218,12 +218,28 @@ CUresult cuCtxGetCurrent(CUcontext *pctx);
 CUresult cuCtxGetDevice(CUdevice *device);
 /**
  * @guard CUDA_VERSION >= 13000
- * @disabled client - manual client resolves the device of the supplied context
  * @routingkey CONTEXT ctx
  * @param device RECV_ONLY
  * @param ctx SEND_ONLY
  */
-CUresult cuCtxGetDevice_v2(CUdevice *device, CUcontext ctx);
+CUresult cuCtxGetDevice_v2(CUdevice *device, CUcontext ctx) {
+  if (device == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (!lupine_cuda_is_initialized())
+    return CUDA_ERROR_NOT_INITIALIZED;
+  if (ctx == nullptr)
+    return cuCtxGetDevice(device);
+  if (!lupine_route_is_local(route) &&
+      lupine_current_context_device_cache_lookup(ctx, device))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (!lupine_route_is_local(route) && return_value == CUDA_SUCCESS) {
+    *device = lupine_local_device_for_remote(lupine_route_remote_conn(route),
+                                             *device);
+    lupine_current_context_device_cache_insert(ctx, *device);
+  }
+  return return_value;
+}
 /**
  * @param flags RECV_ONLY
  */
@@ -1504,17 +1520,30 @@ CUresult cuPointerGetAttribute(void *data, CUpointer_attribute attribute,
 #undef cuMemPrefetchAsync
 #endif
 /**
- * @disabled client - manual client handles managed-pointer and target routing
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param dstDevice SEND_ONLY
  * @param hStream SEND_ONLY
  */
 CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
-                            CUdevice dstDevice, CUstream hStream);
+                            CUdevice dstDevice, CUstream hStream) {
+  if (dstDevice != CU_DEVICE_CPU) {
+    route = lupine_route_for_device(&dstDevice);
+    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+      return CUDA_ERROR_INVALID_DEVICE;
+  } else if (hStream != nullptr) {
+    route = lupine_route_for_stream(hStream);
+  }
+  if (hStream != nullptr &&
+      !lupine_routes_share_server(route, lupine_route_for_stream(hStream)))
+    return CUDA_ERROR_INVALID_VALUE;
+  if (!lupine_route_is_local(route) && lupine_is_managed_host_alias(devPtr))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @guard CUDA_VERSION >= 12020
- * @disabled client - manual client handles managed-pointer and target routing
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param location SEND_ONLY
@@ -1523,29 +1552,73 @@ CUresult cuMemPrefetchAsync(CUdeviceptr devPtr, size_t count,
  */
 CUresult cuMemPrefetchAsync_v2(CUdeviceptr devPtr, size_t count,
                                CUmemLocation location, unsigned int flags,
-                               CUstream hStream);
+                               CUstream hStream) {
+  if (location.type == CU_MEM_LOCATION_TYPE_DEVICE) {
+    CUdevice route_device = location.id;
+    route = lupine_route_for_device(&route_device);
+    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+      return CUDA_ERROR_INVALID_DEVICE;
+    location.id = route_device;
+  } else if (hStream != nullptr) {
+    route = lupine_route_for_stream(hStream);
+  }
+  if (hStream != nullptr &&
+      !lupine_routes_share_server(route, lupine_route_for_stream(hStream)))
+    return CUDA_ERROR_INVALID_VALUE;
+  if (!lupine_route_is_local(route) && lupine_is_managed_host_alias(devPtr))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 #ifdef cuMemAdvise
 #undef cuMemAdvise
 #endif
 /**
- * @disabled client - manual client handles managed-pointer and target routing
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param advice SEND_ONLY
  * @param device SEND_ONLY
  */
 CUresult cuMemAdvise(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
-                     CUdevice device);
+                     CUdevice device) {
+  CUdevice virtual_device = device;
+  if (device != CU_DEVICE_CPU) {
+    route = lupine_route_for_device(&device);
+    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+      return CUDA_ERROR_INVALID_DEVICE;
+  }
+  if (!lupine_route_is_local(route) && lupine_is_managed_host_alias(devPtr))
+    return lupine_managed_mem_advise(devPtr, count, advice, virtual_device);
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @guard CUDA_VERSION >= 12020
- * @disabled client - manual client handles managed-pointer and target routing
  * @param devPtr SEND_ONLY
  * @param count SEND_ONLY
  * @param advice SEND_ONLY
  * @param location SEND_ONLY
  */
 CUresult cuMemAdvise_v2(CUdeviceptr devPtr, size_t count, CUmem_advise advice,
-                        CUmemLocation location);
+                        CUmemLocation location) {
+  CUdevice virtual_device = location.id;
+  if (location.type == CU_MEM_LOCATION_TYPE_DEVICE) {
+    CUdevice route_device = location.id;
+    route = lupine_route_for_device(&route_device);
+    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+      return CUDA_ERROR_INVALID_DEVICE;
+    location.id = route_device;
+  }
+  if (!lupine_route_is_local(route) && lupine_is_managed_host_alias(devPtr)) {
+    if (location.type == CU_MEM_LOCATION_TYPE_DEVICE)
+      return lupine_managed_mem_advise(devPtr, count, advice, virtual_device);
+    if (location.type == CU_MEM_LOCATION_TYPE_HOST)
+      return lupine_managed_mem_advise(devPtr, count, advice, CU_DEVICE_CPU);
+    return CUDA_SUCCESS;
+  }
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @routingkey DEVICEPTR devPtr
  * @param dataSize SEND_ONLY
@@ -1645,12 +1718,21 @@ CUresult cuStreamGetId(CUstream hStream, unsigned long long *streamId);
  */
 CUresult cuStreamGetCtx(CUstream hStream, CUcontext *pctx);
 /**
- * @disabled client - manual client resolves the device of the stream's server
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param device RECV_ONLY
  */
-CUresult cuStreamGetDevice(CUstream hStream, CUdevice *device);
+CUresult cuStreamGetDevice(CUstream hStream, CUdevice *device) {
+  if (device == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (!lupine_cuda_is_initialized())
+    return CUDA_ERROR_NOT_INITIALIZED;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (!lupine_route_is_local(route) && return_value == CUDA_SUCCESS)
+    *device = lupine_local_device_for_remote(lupine_route_remote_conn(route),
+                                             *device);
+  return return_value;
+}
 /**
  * @guard CUDA_VERSION >= 13010
  * @routingkey STREAM hStream
@@ -3424,33 +3506,78 @@ CUresult cuTensorMapEncodeIm2col(
  */
 CUresult cuTensorMapReplaceAddress(CUtensorMap *tensorMap, void *globalAddress);
 /**
- * @disabled client - manual client handles cross-route peer devices
+ * @routingkey DEFAULT
  * @param canAccessPeer SEND_RECV
  * @param dev SEND_ONLY
  * @param peerDev SEND_ONLY
  */
 CUresult cuDeviceCanAccessPeer(int *canAccessPeer, CUdevice dev,
-                               CUdevice peerDev);
+                               CUdevice peerDev) {
+  if (canAccessPeer == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  lupine_route peer_route = lupine_route_for_device(&peerDev);
+  route = lupine_route_for_device(&dev);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE ||
+      peer_route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
+  if (!lupine_routes_share_server(route, peer_route)) {
+    *canAccessPeer = 0;
+    return CUDA_SUCCESS;
+  }
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
- * @disabled client - manual client validates the peer context route
+ * @routingkey CURRENT_CONTEXT
  * @param peerContext SEND_ONLY
  * @param Flags SEND_ONLY
  */
-CUresult cuCtxEnablePeerAccess(CUcontext peerContext, unsigned int Flags);
+CUresult cuCtxEnablePeerAccess(CUcontext peerContext, unsigned int Flags) {
+  if (lupine_route_identity(route) !=
+      lupine_route_identity(lupine_route_for_context(peerContext)))
+    return CUDA_ERROR_PEER_ACCESS_UNSUPPORTED;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
- * @disabled client - manual client validates the peer context route
+ * @routingkey CURRENT_CONTEXT
  * @param peerContext SEND_ONLY
  */
-CUresult cuCtxDisablePeerAccess(CUcontext peerContext);
+CUresult cuCtxDisablePeerAccess(CUcontext peerContext) {
+  if (lupine_route_identity(route) !=
+      lupine_route_identity(lupine_route_for_context(peerContext)))
+    return CUDA_ERROR_PEER_ACCESS_NOT_ENABLED;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
- * @disabled client - manual client translates both devices to one backend
+ * @routingkey DEFAULT
  * @param value SEND_RECV
  * @param attrib SEND_ONLY
  * @param srcDevice SEND_ONLY
  * @param dstDevice SEND_ONLY
  */
 CUresult cuDeviceGetP2PAttribute(int *value, CUdevice_P2PAttribute attrib,
-                                 CUdevice srcDevice, CUdevice dstDevice);
+                                 CUdevice srcDevice, CUdevice dstDevice) {
+  if (value == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (srcDevice == dstDevice)
+    return CUDA_ERROR_INVALID_DEVICE;
+  lupine_route dst_route = lupine_route_for_device(&dstDevice);
+  route = lupine_route_for_device(&srcDevice);
+  if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE ||
+      dst_route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
+    return CUDA_ERROR_INVALID_DEVICE;
+  if (route.kind == LUPINE_ROUTE_INVALID ||
+      dst_route.kind == LUPINE_ROUTE_INVALID)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (!lupine_routes_share_server(route, dst_route)) {
+    *value = 0;
+    return CUDA_SUCCESS;
+  }
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @param resource SEND_ONLY
  */

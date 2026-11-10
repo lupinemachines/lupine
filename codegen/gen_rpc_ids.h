@@ -404,6 +404,8 @@
 #define RPC_cuLogsCurrent 1759869652
 #define RPC_cuLogsDumpToFile 995845771
 #define RPC_cuLogsDumpToMemory 330498516
+#define RPC_cuMemPrefetchAsync 596440383
+#define RPC_cuMemAdvise 2001260778
 #define RPC_cuGraphInstantiate_v2 1599532620
 #define RPC_cuGraphExecUpdate 882549126
 #define RPC_cuCtxCreate_v2 804269166
@@ -411,8 +413,6 @@
 #define RPC_cuGraphAddDependencies_v2 1733357590
 #define RPC_cuGraphAddNode_v2 1958016248
 #define RPC_cuGraphRemoveDependencies_v2 1606074400
-#define RPC_cuMemAdvise 2001260778
-#define RPC_cuMemPrefetchAsync 596440383
 #define RPC_cuStreamUpdateCaptureDependencies_v2 434730116
 #define RPC_nvmlInit_v2 2103095296
 #define RPC_nvmlInitWithFlags 1768977338
