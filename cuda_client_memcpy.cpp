@@ -1477,6 +1477,89 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
   return CUDA_SUCCESS;
 }
 
+// A registration without dirty tracking is client-authoritative: a flush
+// sends its whole window, and a refresh reads its server backing back over it.
+// A synchronous readback that lands in one therefore sends the rows it wrote
+// to that backing before refreshing, or the refresh would restore the old
+// bytes.
+static CUresult lupine_publish_untracked_readback(void *dstHost, size_t width,
+                                                  size_t height, size_t pitch,
+                                                  size_t depth,
+                                                  size_t slice_pitch) {
+  if (dstHost == nullptr || width == 0 || height == 0 || depth == 0) {
+    return CUDA_SUCCESS;
+  }
+  uintptr_t start = reinterpret_cast<uintptr_t>(dstHost);
+  size_t span = (depth - 1) * slice_pitch + (height - 1) * pitch + width;
+  lupine_host_allocation *allocation = nullptr;
+  CUdeviceptr backing = 0;
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    auto it = lupine_find_host_allocation_locked(dstHost);
+    if (it == lupine_mutable_host_allocations_locked().end()) {
+      return CUDA_SUCCESS;
+    }
+    auto &candidate = it->second;
+    if (candidate.tracking_enabled || !candidate.device_pointer_exposed ||
+        candidate.managed || candidate.local_cuda ||
+        __atomic_load_n(&candidate.retiring, __ATOMIC_ACQUIRE) != 0 ||
+        start < candidate.user_base ||
+        span > candidate.user_base + candidate.user_size - start) {
+      return CUDA_SUCCESS;
+    }
+    backing = lupine_host_backing_for_route(candidate, candidate.route_id);
+    if (backing == 0) {
+      return CUDA_SUCCESS;
+    }
+    // Keeps the allocation mapped until the rows are sent.
+    __atomic_add_fetch(&candidate.pending_dirty_ranges, 1, __ATOMIC_ACQ_REL);
+    allocation = &candidate;
+  }
+  conn_t *conn = lupine_route_remote_conn(
+      lupine_route_from_identity(allocation->route_id));
+  CUresult result =
+      conn == nullptr ? CUDA_ERROR_DEVICE_UNAVAILABLE : CUDA_SUCCESS;
+  std::vector<std::array<unsigned char, LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES>>
+      headers;
+  std::vector<rpc_write_cursor> cursors;
+  size_t rows = height * depth;
+  for (size_t row = 0; result == CUDA_SUCCESS && row < rows; ++row) {
+    uintptr_t row_start =
+        start + (row / height) * slice_pitch + (row % height) * pitch;
+    size_t offset = row_start - allocation->host_base;
+    CUdeviceptr dst = backing + offset;
+    const void *source = reinterpret_cast<const void *>(row_start);
+    if (allocation->io_alias != nullptr) {
+      source = static_cast<unsigned char *>(allocation->io_alias) + offset;
+    }
+    headers.emplace_back();
+    memcpy(headers.back().data(), &dst, sizeof(dst));
+    memcpy(headers.back().data() + sizeof(dst), &width, sizeof(width));
+    cursors.push_back(rpc_write_cursor(source, width));
+    uint32_t count = static_cast<uint32_t>(headers.size());
+    if (count < LUPINE_MANAGED_HOST_FLUSH_BATCH_RANGES && row + 1 < rows) {
+      continue;
+    }
+    std::vector<rpc_write_cursor> batch;
+    batch.reserve(count * 2);
+    for (uint32_t i = 0; i < count; ++i) {
+      batch.push_back(rpc_write_cursor(headers[i].data(),
+                                       LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES));
+      batch.push_back(cursors[i]);
+    }
+    if (rpc_write_start_request(conn, LUPINE_RPC_lupineManagedHostFlush) < 0 ||
+        rpc_write(conn, &count, sizeof(count)) < 0 ||
+        rpc_write_cursors(conn, batch.data(), count * 2) < 0 ||
+        rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
+      result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    headers.clear();
+    cursors.clear();
+  }
+  __atomic_sub_fetch(&allocation->pending_dirty_ranges, 1, __ATOMIC_RELEASE);
+  return result;
+}
+
 static CUresult lupine_flush_dirty_host_pages_to_server() {
   std::lock_guard<std::mutex> flush_lock(lupine_host_flush_mutex);
   uint64_t flush_epoch =
@@ -4036,6 +4119,10 @@ static CUresult lupine_memcpy_dtoh(void *dstHost, CUdeviceptr srcDevice,
 extern "C" CUresult cuMemcpyDtoH_v2(void *dstHost, CUdeviceptr srcDevice,
                                     size_t ByteCount) {
   CUresult return_value = lupine_memcpy_dtoh(dstHost, srcDevice, ByteCount);
+  if (return_value == CUDA_SUCCESS) {
+    return_value = lupine_publish_untracked_readback(dstHost, ByteCount, 1,
+                                                     ByteCount, 1, ByteCount);
+  }
   // The copy waited for the legacy stream, and with it for the blocking and
   // per-thread streams, so the mapped memory their work wrote is current.
   if (return_value == CUDA_SUCCESS) {
@@ -4691,6 +4778,11 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
                         copy.dstPitch, copy.Depth, dst_slice_pitch) < 0) ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  if (direction == LUPINE_COPY_DIRECTION_DTOH && return_value == CUDA_SUCCESS) {
+    return_value = lupine_publish_untracked_readback(
+        dst_base, copy.WidthInBytes, copy.Height, copy.dstPitch, copy.Depth,
+        dst_slice_pitch);
   }
   // A synchronous readback is a synchronization point like any other copy.
   if ((direction != LUPINE_COPY_DIRECTION_DTOH || !api.async) &&
