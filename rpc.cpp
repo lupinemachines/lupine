@@ -1019,19 +1019,8 @@ static void rpc_scope_wait_for(conn_t *conn, const rpc_scope_ticket &last) {
   }
 }
 
-static int rpc_write_start(conn_t *conn, const int op, bool scoped,
-                           uintptr_t key);
-
 void rpc_begin_callback_reply(conn_t *conn) { rpc_tls_callback_reply = conn; }
 void rpc_end_callback_reply() { rpc_tls_callback_reply = nullptr; }
-
-int rpc_write_start_request(conn_t *conn, const int op) {
-  return rpc_write_start(conn, op, false, RPC_SCOPE_NONE);
-}
-
-int rpc_write_start_request_on(conn_t *conn, const int op, uintptr_t key) {
-  return rpc_write_start(conn, op, true, key);
-}
 
 static int rpc_request_key(conn_t *conn, uintptr_t key, bool publish) {
   if (conn == nullptr || rpc_tls_io.write_conn != conn) {
@@ -1090,24 +1079,8 @@ uint64_t rpc_request_pending_ticket(conn_t *conn, uintptr_t key) {
   return last.lane == conn->write_stream_id ? kNoAsyncSequence : last.ticket;
 }
 
-int rpc_request_publish_connection(conn_t *conn) {
-  if (conn == nullptr || rpc_tls_io.write_conn != conn) {
-    return -1;
-  }
-  conn->write_scope.publish_connection = true;
-  return 0;
-}
-
-int rpc_request_soft(conn_t *conn) {
-  if (conn == nullptr || rpc_tls_io.write_conn != conn) {
-    return -1;
-  }
-  conn->write_scope.soft = true;
-  return 0;
-}
-
-static int rpc_write_start(conn_t *conn, const int op, bool scoped,
-                           uintptr_t key) {
+int rpc_write_start_request_on(conn_t *conn, const int op, uintptr_t key,
+                               unsigned flags) {
   if (conn == nullptr || conn->closed) {
     return -1;
   }
@@ -1118,7 +1091,7 @@ static int rpc_write_start(conn_t *conn, const int op, bool scoped,
     return -1;
   }
   bool client = conn->local_request_parity == 0;
-  scoped = scoped && client;
+  bool scoped = client && key != RPC_SCOPE_ALL;
   bool host_writes = scoped && key == RPC_SCOPE_HOST_WRITES;
   bool keyed = scoped && key != RPC_SCOPE_NONE && key != RPC_SCOPE_LANE &&
                !host_writes;
@@ -1180,7 +1153,9 @@ static int rpc_write_start(conn_t *conn, const int op, bool scoped,
     return -1;
   }
   conn->write_scope.publish_connection =
-      !scoped || key == RPC_SCOPE_NONE || host_writes;
+      !scoped || key == RPC_SCOPE_NONE || host_writes ||
+      (flags & RPC_REQUEST_PUBLISH_CONNECTION) != 0;
+  conn->write_scope.soft = (flags & RPC_REQUEST_SOFT) != 0;
   if (scoped) {
     conn->write_scope.scoped = true;
     if (keyed) {

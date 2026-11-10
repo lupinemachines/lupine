@@ -4826,18 +4826,17 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
   // another thread sent that has not been submitted answers not ready. Each
   // event that rides along carries its own record's ticket, so one still
   // being submitted does not make the others not ready.
-  auto check_records = [&] {
-    for (uint32_t i = 1; i <= count; ++i) {
-      tickets[i] = rpc_request_pending_ticket(
-          conn, reinterpret_cast<uintptr_t>(events[i]));
-    }
-    return rpc_request_soft(conn);
-  };
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuEventQuery,
-                                 reinterpret_cast<uintptr_t>(hEvent)) < 0 ||
-      check_records() < 0 ||
-      rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
+                                 reinterpret_cast<uintptr_t>(hEvent),
+                                 RPC_REQUEST_SOFT) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  for (uint32_t i = 1; i <= count; ++i) {
+    tickets[i] =
+        rpc_request_pending_ticket(conn, reinterpret_cast<uintptr_t>(events[i]));
+  }
+  if (rpc_write(conn, &hEvent, sizeof(hEvent)) < 0 ||
       rpc_write(conn, &count, sizeof(count)) < 0 ||
       rpc_write(conn, events + 1, count * sizeof(*events)) < 0 ||
       rpc_write(conn, tickets + 1, count * sizeof(*tickets)) < 0 ||

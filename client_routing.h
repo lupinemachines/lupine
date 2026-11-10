@@ -202,9 +202,10 @@ lupine_record_disjoint_allocation(CUdeviceptr *ptr, size_t size,
 // Starts a request on `stream`, ordered as CUDA orders that stream's work: a
 // non-blocking stream only by itself; a blocking stream, or the thread's
 // per-thread default stream, also behind the legacy stream; the legacy stream
-// behind every blocking stream.
+// behind every blocking stream. `flags` are rpc.h's RPC_REQUEST_* options.
 extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op,
-                                          CUstream stream);
+                                          CUstream stream,
+                                          unsigned flags = 0);
 // Orders the request being built by each of `count` handles too, as
 // rpc_request_on does for one.
 extern "C" int lupine_rpc_request_on_each(conn_t *conn,

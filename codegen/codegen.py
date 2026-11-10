@@ -1242,8 +1242,12 @@ def client_request_start(function: Function) -> str:
     if name in DEVICE_WIDE_FUNCTIONS:
         # Waits for everything already; an event it records is published too.
         return f"rpc_write_start_request(conn, {op})" + also_on(events)
+    # A graph records events and signals semaphores it does not name here.
+    flags = ", RPC_REQUEST_PUBLISH_CONNECTION" if name == "cuGraphLaunch" else ""
+    if name in UNSETTLED_NOT_READY:
+        flags = ", RPC_REQUEST_SOFT"
     if streams:
-        start = f"lupine_rpc_start_on_stream(conn, {op}, {streams[0]})"
+        start = f"lupine_rpc_start_on_stream(conn, {op}, {streams[0]}{flags})"
         rest = streams[1:] + events
     elif re.match(r"cuMem(cpy|set)", name) and "Async" not in name:
         start = f"lupine_rpc_start_on_stream(conn, {op}, nullptr)"
@@ -1260,9 +1264,6 @@ def client_request_start(function: Function) -> str:
     # A graph executable runs one launch at a time, and is updated or
     # destroyed only after the launches its caller made before.
     start += also_on(rest + execs)
-    # A graph records events and signals semaphores it does not name here.
-    if name == "cuGraphLaunch":
-        start += " < 0 ||\n        rpc_request_publish_connection(conn)"
     # A semaphore's wait is submitted after the signals sent before it.
     for parameter in function.parameters:
         if (
@@ -1277,8 +1278,6 @@ def client_request_start(function: Function) -> str:
                 f"            reinterpret_cast<const void *const *>({parameter.name}),\n"
                 "            numExtSems)"
             )
-    if name in UNSETTLED_NOT_READY:
-        start += " < 0 ||\n        rpc_request_soft(conn)"
     return start
 
 

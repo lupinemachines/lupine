@@ -129,17 +129,26 @@ typedef struct conn_t conn_t;
 
 // Requests are ordered against earlier unanswered ones either connection-wide
 // or by the objects they touch. A scope key is an object's handle (a stream or
-// an event); these two values are not handles. RPC_SCOPE_NONE orders a request
+// an event); these values are not handles. RPC_SCOPE_ALL orders a request
+// behind every earlier unanswered one. RPC_SCOPE_NONE orders a request
 // touching no object only behind earlier ones that touched none, and makes an
 // unanswered one an object every later request waits for; RPC_SCOPE_LANE also
 // publishes nothing, so only the sender's own lane follows it.
 static constexpr uintptr_t RPC_SCOPE_NONE = 0;
 static constexpr uintptr_t RPC_SCOPE_LANE = ~uintptr_t{0};
+static constexpr uintptr_t RPC_SCOPE_ALL = ~uintptr_t{2};
 // Host memory a client sends to the server's copy goes in order on a lane of
 // its own and waits for nothing, so it never queues behind a handler that is
 // blocked, possibly on a callback that is waiting to send it; every later
 // request waits for it.
 static constexpr uintptr_t RPC_SCOPE_HOST_WRITES = ~uintptr_t{1};
+
+// A soft request checks what it is ordered behind instead of waiting for it,
+// so a query can say that work is not submitted yet; its handler asks
+// rpc_request_unsettled. Every later scoped request waits for one that
+// publishes the connection: for work that touches objects the request does
+// not name, such as events a graph records.
+enum : unsigned { RPC_REQUEST_SOFT = 1, RPC_REQUEST_PUBLISH_CONNECTION = 2 };
 
 // The last unanswered request on an object, and the lane that sent it.
 struct rpc_scope_ticket {
@@ -278,28 +287,24 @@ extern void rpc_expect_answer(conn_t *conn);
 
 // Owns connection validation for the request chain: a null conn (route with no
 // remote server) or a closed conn fails here, so callers surface their
-// unavailable-server result without per-call-site null checks.
-extern int rpc_write_start_request(conn_t *conn, const int op);
-// Starts a request ordered only by the object `key` names, not by every
-// earlier unanswered request.
+// unavailable-server result without per-call-site null checks. The request
+// is ordered by the object `key` names, with RPC_REQUEST_* `flags`;
+// rpc_write_start_request orders it behind every earlier unanswered request.
 extern int rpc_write_start_request_on(conn_t *conn, const int op,
-                                      uintptr_t key);
+                                      uintptr_t key, unsigned flags = 0);
+static inline int rpc_write_start_request(conn_t *conn, const int op) {
+  return rpc_write_start_request_on(conn, op, RPC_SCOPE_ALL);
+}
 // Adds a second object the request being built is ordered by.
 extern int rpc_request_on(conn_t *conn, uintptr_t key);
 // Orders the request being built behind an object's earlier requests without
 // later requests on that object ordering behind it.
 extern int rpc_request_after(conn_t *conn, uintptr_t key);
-// Makes the request being built check what it is ordered behind instead of
-// waiting for it; the handler asks rpc_request_unsettled.
 // Brackets the requests a client sends while answering a server callback,
 // after it has read the callback's request: they belong to the callback, so a
 // handoff that pauses new requests lets them through.
 extern void rpc_begin_callback_reply(conn_t *conn);
 extern void rpc_end_callback_reply();
-// Every later scoped request waits for this one too: for work that touches
-// objects the request does not name, such as events a graph records.
-extern int rpc_request_publish_connection(conn_t *conn);
-extern int rpc_request_soft(conn_t *conn);
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 // A zero-size write is a successful no-op, including when data is null.
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);

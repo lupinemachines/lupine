@@ -2865,8 +2865,8 @@ CUresult cuStreamQuery(CUstream hStream) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      lupine_rpc_start_on_stream(conn, RPC_cuStreamQuery, hStream) < 0 ||
-      rpc_request_soft(conn) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuStreamQuery, hStream,
+                                 RPC_REQUEST_SOFT) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       lupine_read_deferred_dtoh_copies(conn) < 0 ||
@@ -5557,9 +5557,9 @@ CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
-      lupine_rpc_start_on_stream(conn, RPC_cuGraphLaunch, hStream) < 0 ||
+      lupine_rpc_start_on_stream(conn, RPC_cuGraphLaunch, hStream,
+                                 RPC_REQUEST_PUBLISH_CONNECTION) < 0 ||
       rpc_request_on(conn, reinterpret_cast<uintptr_t>(hGraphExec)) < 0 ||
-      rpc_request_publish_connection(conn) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_write_end(conn) < 0) {

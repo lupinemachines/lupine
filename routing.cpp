@@ -787,9 +787,9 @@ extern "C" void lupine_note_stream_blocking(CUstream stream, bool blocking) {
 }
 
 extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op,
-                                          CUstream stream) {
+                                          CUstream stream, unsigned flags) {
   if (stream == nullptr || stream == CU_STREAM_LEGACY) {
-    if (rpc_write_start_request_on(conn, op, kLegacyStreamScope) < 0) {
+    if (rpc_write_start_request_on(conn, op, kLegacyStreamScope, flags) < 0) {
       return -1;
     }
     std::vector<uintptr_t> blocking;
@@ -828,7 +828,7 @@ extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op,
     auto &streams = lupine_blocking_streams();
     blocking = std::find(streams.begin(), streams.end(), key) != streams.end();
   }
-  if (rpc_write_start_request_on(conn, op, key) < 0) {
+  if (rpc_write_start_request_on(conn, op, key, flags) < 0) {
     return -1;
   }
   return blocking ? rpc_request_after(conn, kLegacyStreamScope) : 0;
