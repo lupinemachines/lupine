@@ -102,6 +102,7 @@ struct lupine_host_allocation {
   bool owned_mmap = false;
   void *io_alias = nullptr;
   bool managed = false;
+  bool managed_global = false;
   lupine_managed_advice advice;
   bool local_cuda = false;
   bool client_to_server_only = false;
@@ -1552,7 +1553,7 @@ extern "C" bool lupine_is_managed_host_alias(CUdeviceptr ptr) {
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   auto it = lupine_find_host_allocation_locked(host);
   return it != lupine_mutable_host_allocations_locked().end() &&
-         it->second.managed;
+         (it->second.managed || it->second.managed_global);
 }
 
 extern "C" CUresult lupine_managed_mem_advise(CUdeviceptr ptr, size_t count,
@@ -1674,8 +1675,9 @@ static bool lupine_pinned_dtoh_destination(conn_t *conn, void *destination,
   if (!is_page_locked || bytes == 0 || conn == nullptr) {
     return false;
   }
-  if (allocation.managed || allocation.local_cuda ||
-      allocation.io_alias == nullptr || allocation.server_host_ptr == 0 ||
+  if (allocation.managed || allocation.managed_global ||
+      allocation.local_cuda || allocation.io_alias == nullptr ||
+      allocation.server_host_ptr == 0 ||
       allocation.route_id !=
           lupine_route_identity(lupine_remote_route_for_conn(conn)) ||
       __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0 ||
@@ -1732,7 +1734,7 @@ static bool lupine_managed_host_alias_base(CUdeviceptr ptr,
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
   auto it = lupine_find_host_allocation_locked(host);
   if (it == lupine_mutable_host_allocations_locked().end() ||
-      !it->second.managed) {
+      (!it->second.managed && !it->second.managed_global)) {
     return false;
   }
   *alias_base = it->second.device_ptr;
@@ -2445,6 +2447,7 @@ extern "C" void lupine_adopt_managed_global(lupine_route route,
   {
     std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
     auto &allocation = lupine_mutable_host_allocations_locked().at(host);
+    allocation.managed_global = true;
     if (!lupine_enable_dirty_tracking_locked(host, &allocation) ||
         !allocation.tracking_enabled) {
       return;
