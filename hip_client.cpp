@@ -18,6 +18,10 @@
 #include "rpc.h"
 #include "transport.h"
 
+static hipError_t lupine_rpc_hipGetDeviceCount(conn_t *conn, int *count);
+static hipError_t lupine_rpc_hipDeviceGet(conn_t *conn, int *device,
+                                          int ordinal);
+
 namespace {
 
 struct lupine_hip_remote_device {
@@ -91,37 +95,6 @@ int open_connections() {
   return lupine_client_transport_open(hip_transport_config());
 }
 
-hipError_t call_int_out_on(conn_t *conn, int op, int *value) {
-  hipError_t result = rpc_error();
-  int remote_value = 0;
-  if (conn == nullptr || rpc_write_start_request(conn, op) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &remote_value, sizeof(remote_value)) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  if (value != nullptr) {
-    *value = remote_value;
-  }
-  return result;
-}
-
-hipError_t call_device_get_on(conn_t *conn, int ordinal, int *device) {
-  hipError_t result = rpc_error();
-  int remote_device = 0;
-  if (conn == nullptr || rpc_write_start_request(conn, RPC_hipDeviceGet) < 0 ||
-      rpc_write(conn, &ordinal, sizeof(ordinal)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &remote_device, sizeof(remote_device)) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
-  if (device != nullptr) {
-    *device = remote_device;
-  }
-  return result;
-}
-
 // devices_mutex must be held by the caller. Keeping discovery under this lock
 // makes the virtual ordinal table immutable while another thread is routing a
 // device-scoped request.
@@ -139,7 +112,7 @@ hipError_t ensure_devices_locked() {
   for (unsigned int i = 0; i < connection_count; ++i) {
     conn_t *conn = lupine_client_transport_connection(i);
     int count = 0;
-    hipError_t result = call_int_out_on(conn, RPC_hipGetDeviceCount, &count);
+    hipError_t result = lupine_rpc_hipGetDeviceCount(conn, &count);
     if (result != hipSuccess) {
       return result;
     }
@@ -148,7 +121,7 @@ hipError_t ensure_devices_locked() {
     }
     for (int ordinal = 0; ordinal < count; ++ordinal) {
       int remote_device = 0;
-      result = call_device_get_on(conn, ordinal, &remote_device);
+      result = lupine_rpc_hipDeviceGet(conn, &remote_device, ordinal);
       if (result != hipSuccess) {
         return result;
       }
@@ -205,14 +178,8 @@ extern "C" hipError_t hipInit(unsigned int flags) {
   hipError_t first_error = hipSuccess;
   unsigned int connection_count = lupine_client_transport_size();
   for (unsigned int i = 0; i < connection_count; ++i) {
-    conn_t *conn = lupine_client_transport_connection(i);
-    hipError_t result = rpc_error();
-    if (rpc_write_start_request(conn, RPC_hipInit) < 0 ||
-        rpc_write(conn, &flags, sizeof(flags)) < 0 ||
-        rpc_wait_for_response(conn) < 0 ||
-        rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-      result = rpc_error();
-    }
+    hipError_t result =
+        lupine_rpc_hipInit(lupine_client_transport_connection(i), flags);
     if (result != hipSuccess && first_error == hipSuccess) {
       first_error = result;
     }
@@ -258,13 +225,7 @@ extern "C" hipError_t hipSetDevice(int deviceId) {
   if (conn == nullptr) {
     return hipErrorInvalidDevice;
   }
-  hipError_t result = rpc_error();
-  if (rpc_write_start_request(conn, RPC_hipSetDevice) < 0 ||
-      rpc_write(conn, &remote_device, sizeof(remote_device)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
+  hipError_t result = lupine_rpc_hipSetDevice(conn, remote_device);
   if (result == hipSuccess) {
     current_device = deviceId;
   }
@@ -280,13 +241,7 @@ extern "C" hipError_t hipGetDevice(int *deviceId) {
 }
 
 extern "C" hipError_t hipDeviceReset() {
-  conn_t *conn = connection();
-  hipError_t result = rpc_error();
-  if (rpc_write_start_request(conn, RPC_hipDeviceReset) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-    return rpc_error();
-  }
+  hipError_t result = lupine_rpc_hipDeviceReset(connection());
   if (result == hipSuccess) {
     connection_generation.fetch_add(1, std::memory_order_acq_rel);
   }

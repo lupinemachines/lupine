@@ -34,6 +34,12 @@ typedef struct {
 } lupine_nvmlTemperature_t;
 #endif
 
+static nvmlReturn_t lupine_rpc_nvmlDeviceGetCount_v2(conn_t *conn,
+                                                     unsigned int *deviceCount);
+static nvmlReturn_t
+lupine_rpc_nvmlDeviceGetHandleByIndex_v2(conn_t *conn, unsigned int index,
+                                         nvmlDevice_t *device);
+
 namespace {
 
 struct lupine_nvml_remote_device {
@@ -141,46 +147,6 @@ lupine_nvml_remote_device *mapped_device(nvmlDevice_t device) {
   return &devices[(value - begin) / sizeof(lupine_nvml_remote_device)];
 }
 
-nvmlReturn_t call_no_args_on(conn_t *c, int op) {
-  nvmlReturn_t result = rpc_error();
-  if (c == nullptr || rpc_write_start_request(c, op) < 0 ||
-      rpc_wait_for_response(c) < 0 ||
-      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
-    return rpc_error();
-  }
-  return result;
-}
-
-nvmlReturn_t call_uint_out_on(conn_t *c, int op, unsigned int *value) {
-  nvmlReturn_t result = rpc_error();
-  unsigned int temp = 0;
-  if (c == nullptr || rpc_write_start_request(c, op) < 0 ||
-      rpc_wait_for_response(c) < 0 || rpc_read(c, &temp, sizeof(temp)) < 0 ||
-      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
-    return rpc_error();
-  }
-  if (value != nullptr) {
-    *value = temp;
-  }
-  return result;
-}
-
-nvmlReturn_t call_device_from_index_on(conn_t *c, int op, unsigned int index,
-                                       nvmlDevice_t *device) {
-  nvmlReturn_t result = rpc_error();
-  nvmlDevice_t temp = nullptr;
-  if (c == nullptr || rpc_write_start_request(c, op) < 0 ||
-      rpc_write(c, &index, sizeof(index)) < 0 || rpc_wait_for_response(c) < 0 ||
-      rpc_read(c, &temp, sizeof(temp)) < 0 ||
-      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
-    return rpc_error();
-  }
-  if (device != nullptr) {
-    *device = temp;
-  }
-  return result;
-}
-
 nvmlReturn_t ensure_devices() {
   if (!nvml_initialized() || open_connection() < 0) {
     return rpc_error();
@@ -195,16 +161,14 @@ nvmlReturn_t ensure_devices() {
   for (unsigned int i = 0; i < connection_count; ++i) {
     conn_t *conn = lupine_client_transport_connection(i);
     unsigned int count = 0;
-    nvmlReturn_t result =
-        call_uint_out_on(conn, RPC_nvmlDeviceGetCount_v2, &count);
+    nvmlReturn_t result = lupine_rpc_nvmlDeviceGetCount_v2(conn, &count);
     if (result != NVML_SUCCESS) {
       devices.clear();
       return result;
     }
     for (unsigned int ordinal = 0; ordinal < count; ++ordinal) {
       nvmlDevice_t remote = nullptr;
-      result = call_device_from_index_on(
-          conn, RPC_nvmlDeviceGetHandleByIndex_v2, ordinal, &remote);
+      result = lupine_rpc_nvmlDeviceGetHandleByIndex_v2(conn, ordinal, &remote);
       if (result != NVML_SUCCESS) {
         devices.clear();
         return result;
@@ -279,93 +243,6 @@ conn_t *connection_for_device(nvmlDevice_t *device) {
   return connection(mapped->conn_index);
 }
 
-nvmlReturn_t call_device_string(int op, nvmlDevice_t device, char *value,
-                                unsigned int length) {
-  if (!nvml_initialized()) {
-    return NVML_ERROR_UNINITIALIZED;
-  }
-  if (device == nullptr || value == nullptr) {
-    return NVML_ERROR_INVALID_ARGUMENT;
-  }
-  conn_t *c = connection_for_device(&device);
-  nvmlReturn_t result = rpc_error();
-  if (c == nullptr || rpc_write_start_request(c, op) < 0 ||
-      rpc_write(c, &device, sizeof(device)) < 0 ||
-      rpc_write(c, &length, sizeof(length)) < 0 ||
-      rpc_wait_for_response(c) < 0 ||
-      (length != 0 && rpc_read(c, value, length) < 0) ||
-      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
-    return rpc_error();
-  }
-  return result;
-}
-
-nvmlReturn_t call_event_set_create(nvmlEventSet_t *set) {
-  if (!nvml_initialized()) {
-    return NVML_ERROR_UNINITIALIZED;
-  }
-  if (set == nullptr) {
-    return NVML_ERROR_INVALID_ARGUMENT;
-  }
-  conn_t *c = connection();
-  nvmlReturn_t result = rpc_error();
-  nvmlEventSet_t temp = nullptr;
-  if (c == nullptr || rpc_write_start_request(c, RPC_nvmlEventSetCreate) < 0 ||
-      rpc_wait_for_response(c) < 0 || rpc_read(c, &temp, sizeof(temp)) < 0 ||
-      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
-    return rpc_error();
-  }
-  if (set != nullptr) {
-    *set = temp;
-  }
-  return result;
-}
-
-nvmlReturn_t call_event_set_free(nvmlEventSet_t set) {
-  conn_t *c = connection();
-  nvmlReturn_t result = rpc_error();
-  if (c == nullptr || rpc_write_start_request(c, RPC_nvmlEventSetFree) < 0 ||
-      rpc_write(c, &set, sizeof(set)) < 0 || rpc_wait_for_response(c) < 0 ||
-      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
-    return rpc_error();
-  }
-  return result;
-}
-
-nvmlReturn_t call_event_set_wait(nvmlEventSet_t set, nvmlEventData_t *data,
-                                 unsigned int timeoutms) {
-  conn_t *c = connection();
-  nvmlReturn_t result = rpc_error();
-  nvmlEventData_t temp = {};
-  if (c == nullptr || rpc_write_start_request(c, RPC_nvmlEventSetWait_v2) < 0 ||
-      rpc_write(c, &set, sizeof(set)) < 0 ||
-      rpc_write(c, &timeoutms, sizeof(timeoutms)) < 0 ||
-      rpc_wait_for_response(c) < 0 || rpc_read(c, &temp, sizeof(temp)) < 0 ||
-      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
-    return rpc_error();
-  }
-  if (data != nullptr) {
-    *data = temp;
-  }
-  return result;
-}
-
-nvmlReturn_t call_device_register_events(nvmlDevice_t device,
-                                         unsigned long long eventTypes,
-                                         nvmlEventSet_t set) {
-  conn_t *c = connection_for_device(&device);
-  nvmlReturn_t result = rpc_error();
-  if (c == nullptr ||
-      rpc_write_start_request(c, RPC_nvmlDeviceRegisterEvents) < 0 ||
-      rpc_write(c, &device, sizeof(device)) < 0 ||
-      rpc_write(c, &eventTypes, sizeof(eventTypes)) < 0 ||
-      rpc_write(c, &set, sizeof(set)) < 0 || rpc_wait_for_response(c) < 0 ||
-      rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
-    return rpc_error();
-  }
-  return result;
-}
-
 } // namespace
 
 #ifdef nvmlInit
@@ -420,7 +297,7 @@ extern "C" nvmlReturn_t nvmlInit_v2(void) {
   unsigned int connection_count = lupine_client_transport_size();
   for (unsigned int i = 0; i < connection_count; ++i) {
     nvmlReturn_t result =
-        call_no_args_on(lupine_client_transport_connection(i), RPC_nvmlInit_v2);
+        lupine_rpc_nvmlInit_v2(lupine_client_transport_connection(i));
     if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
       first_error = result;
     }
@@ -439,14 +316,8 @@ extern "C" nvmlReturn_t nvmlInitWithFlags(unsigned int flags) {
   nvmlReturn_t first_error = NVML_SUCCESS;
   unsigned int connection_count = lupine_client_transport_size();
   for (unsigned int i = 0; i < connection_count; ++i) {
-    conn_t *c = lupine_client_transport_connection(i);
-    nvmlReturn_t result = rpc_error();
-    if (rpc_write_start_request(c, RPC_nvmlInitWithFlags) < 0 ||
-        rpc_write(c, &flags, sizeof(flags)) < 0 ||
-        rpc_wait_for_response(c) < 0 ||
-        rpc_read(c, &result, sizeof(result)) < 0 || rpc_read_end(c) < 0) {
-      result = rpc_error();
-    }
+    nvmlReturn_t result = lupine_rpc_nvmlInitWithFlags(
+        lupine_client_transport_connection(i), flags);
     if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
       first_error = result;
     }
@@ -475,8 +346,8 @@ extern "C" nvmlReturn_t nvmlShutdown(void) {
   // The server refcounts too, so forward every shutdown, not just the last.
   nvmlReturn_t first_error = NVML_SUCCESS;
   for (unsigned int i = 0; i < count; ++i) {
-    nvmlReturn_t result = call_no_args_on(lupine_client_transport_connection(i),
-                                          RPC_nvmlShutdown);
+    nvmlReturn_t result =
+        lupine_rpc_nvmlShutdown(lupine_client_transport_connection(i));
     if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
       first_error = result;
     }
@@ -562,30 +433,10 @@ extern "C" nvmlReturn_t nvmlInternalGetExportTable(const void **ppExportTable,
   return NVML_SUCCESS;
 }
 
-extern "C" nvmlReturn_t nvmlEventSetCreate(nvmlEventSet_t *set) {
-  return call_event_set_create(set);
-}
-
-extern "C" nvmlReturn_t nvmlEventSetFree(nvmlEventSet_t set) {
-  return call_event_set_free(set);
-}
-
-extern "C" nvmlReturn_t nvmlEventSetWait_v2(nvmlEventSet_t set,
-                                            nvmlEventData_t *data,
-                                            unsigned int timeoutms) {
-  return call_event_set_wait(set, data, timeoutms);
-}
-
 extern "C" nvmlReturn_t nvmlEventSetWait(nvmlEventSet_t set,
                                          nvmlEventData_t *data,
                                          unsigned int timeoutms) {
   return nvmlEventSetWait_v2(set, data, timeoutms);
-}
-
-extern "C" nvmlReturn_t nvmlDeviceRegisterEvents(nvmlDevice_t device,
-                                                 unsigned long long eventTypes,
-                                                 nvmlEventSet_t set) {
-  return call_device_register_events(device, eventTypes, set);
 }
 
 extern "C" nvmlReturn_t nvmlDeviceGetCount_v2(unsigned int *deviceCount) {
@@ -632,8 +483,10 @@ extern "C" nvmlReturn_t nvmlDeviceGetHandleByPciBusId(const char *pciBusId,
 
 extern "C" nvmlReturn_t nvmlDeviceGetName(nvmlDevice_t device, char *name,
                                           unsigned int length) {
+  nvmlDevice_t remote_device = device;
+  conn_t *conn = connection_for_device(&remote_device);
   nvmlReturn_t result =
-      call_device_string(RPC_nvmlDeviceGetName, device, name, length);
+      lupine_rpc_nvmlDeviceGetName(conn, remote_device, name, length);
   if (result != NVML_SUCCESS || name == nullptr || length == 0) {
     return result;
   }

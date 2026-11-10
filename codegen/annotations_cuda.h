@@ -295,7 +295,6 @@ CUresult cuCtxSetSharedMemConfig(CUsharedconfig config);
  */
 CUresult cuCtxGetApiVersion(CUcontext ctx, unsigned int *version);
 /**
- * @disabled client - manual client handles nullable output pointers
  * @param leastPriority RECV_ONLY
  * @param greatestPriority RECV_ONLY
  */
@@ -2521,8 +2520,6 @@ CUresult cuGraphAddMemAllocNode(CUgraphNode *phGraphNode, CUgraph hGraph,
  */
 CUresult cuGraphMemAllocNodeGetParams(CUgraphNode hNode,
                                       CUDA_MEM_ALLOC_NODE_PARAMS *params_out) {
-  if (params_out == nullptr)
-    return CUDA_ERROR_INVALID_VALUE;
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (return_value == CUDA_SUCCESS) {
     lupine_restore_mem_location(route, params_out->poolProps.location);
@@ -3413,12 +3410,7 @@ CUresult cuLogsCurrent(CUlogIterator *iterator_out, unsigned int flags);
  * @param flags SEND_ONLY
  */
 CUresult cuLogsDumpToFile(CUlogIterator *iterator, const char *pathToFile,
-                          unsigned int flags) {
-  if (pathToFile == nullptr)
-    return CUDA_ERROR_INVALID_VALUE;
-  CUresult return_value = LUPINE_GENERATED_CALL();
-  return return_value;
-}
+                          unsigned int flags);
 /**
  * @guard CUDA_VERSION >= 12090
  * @param iterator SEND_RECV NULLABLE
@@ -3428,11 +3420,9 @@ CUresult cuLogsDumpToFile(CUlogIterator *iterator, const char *pathToFile,
  */
 CUresult cuLogsDumpToMemory(CUlogIterator *iterator, char *buffer, size_t *size,
                             unsigned int flags) {
-  if (size == nullptr)
-    return CUDA_ERROR_INVALID_VALUE;
-  size_t buffer_capacity = *size;
+  size_t buffer_capacity = size != nullptr ? *size : 0;
   CUresult return_value = LUPINE_GENERATED_CALL();
-  if (return_value == CUDA_SUCCESS && buffer != nullptr &&
+  if (return_value == CUDA_SUCCESS && buffer != nullptr && size != nullptr &&
       buffer_capacity > *size)
     buffer[*size] = '\0';
   return return_value;

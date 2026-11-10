@@ -36,14 +36,16 @@ static T *lupine_versioned_struct(
 
 #if NCCL_VERSION_CODE >= 21903
 int handle_ncclMemAlloc(conn_t *conn) {
+  uint8_t ptr_present = 0;
   void *ptr{};
-  ptr = {};
   size_t size;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(void **, size_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &size, sizeof(size_t)) < 0 || false)
+  if (rpc_read(conn, &ptr_present, sizeof(uint8_t)) < 0 ||
+      (ptr_present && rpc_read(conn, &ptr, sizeof(void *)) < 0) ||
+      rpc_read(conn, &size, sizeof(size_t)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -51,10 +53,11 @@ int handle_ncclMemAlloc(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclMemAlloc");
-  return_value = fn == nullptr ? function_not_found() : fn(&ptr, size);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(ptr_present ? &ptr : nullptr, size);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &ptr, sizeof(void *)) < 0 ||
+      (ptr_present && rpc_write(conn, &ptr, sizeof(void *)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -94,13 +97,14 @@ ERROR_0:
 #endif
 
 int handle_ncclGetVersion(conn_t *conn) {
+  uint8_t version_present = 0;
   int version{};
-  version = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(int *);
   fn_t fn = nullptr;
-  if (false)
+  if (rpc_read(conn, &version_present, sizeof(uint8_t)) < 0 ||
+      (version_present && rpc_read(conn, &version, sizeof(int)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -108,10 +112,11 @@ int handle_ncclGetVersion(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclGetVersion");
-  return_value = fn == nullptr ? function_not_found() : fn(&version);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(version_present ? &version : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &version, sizeof(int)) < 0 ||
+      (version_present && rpc_write(conn, &version, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -121,13 +126,16 @@ ERROR_0:
 }
 
 int handle_ncclGetUniqueId(conn_t *conn) {
+  uint8_t uniqueId_present = 0;
   ncclUniqueId uniqueId{};
-  uniqueId = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclUniqueId *);
   fn_t fn = nullptr;
-  if (false)
+  if (rpc_read(conn, &uniqueId_present, sizeof(uint8_t)) < 0 ||
+      (uniqueId_present &&
+       rpc_read(conn, &uniqueId, sizeof(ncclUniqueId)) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -135,10 +143,12 @@ int handle_ncclGetUniqueId(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclGetUniqueId");
-  return_value = fn == nullptr ? function_not_found() : fn(&uniqueId);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(uniqueId_present ? &uniqueId : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &uniqueId, sizeof(ncclUniqueId)) < 0 ||
+      (uniqueId_present &&
+       rpc_write(conn, &uniqueId, sizeof(ncclUniqueId)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -148,8 +158,8 @@ ERROR_0:
 }
 
 int handle_ncclCommInitRankConfig(conn_t *conn) {
+  uint8_t comm_present = 0;
   ncclComm_t comm{};
-  comm = {};
   int nranks;
   ncclUniqueId commId;
   int rank;
@@ -164,7 +174,9 @@ int handle_ncclCommInitRankConfig(conn_t *conn) {
   using fn_t =
       ncclResult_t (*)(ncclComm_t *, int, ncclUniqueId, int, ncclConfig_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &nranks, sizeof(int)) < 0 ||
+  if (rpc_read(conn, &comm_present, sizeof(uint8_t)) < 0 ||
+      (comm_present && rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0) ||
+      rpc_read(conn, &nranks, sizeof(int)) < 0 ||
       rpc_read(conn, &commId, sizeof(ncclUniqueId)) < 0 ||
       rpc_read(conn, &rank, sizeof(int)) < 0 ||
       rpc_read(conn, &config_size, sizeof(config_size)) < 0 ||
@@ -191,7 +203,7 @@ int handle_ncclCommInitRankConfig(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(&comm, nranks, commId, rank,
+          : fn(comm_present ? &comm : nullptr, nranks, commId, rank,
                lupine_versioned_struct<ncclConfig_t>(
                    config_bytes, config_size,
                    {
@@ -209,7 +221,7 @@ int handle_ncclCommInitRankConfig(conn_t *conn) {
                    {}));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &comm, sizeof(ncclComm_t)) < 0 ||
+      (comm_present && rpc_write(conn, &comm, sizeof(ncclComm_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -219,8 +231,8 @@ ERROR_0:
 }
 
 int handle_ncclCommInitRank(conn_t *conn) {
+  uint8_t comm_present = 0;
   ncclComm_t comm{};
-  comm = {};
   int nranks;
   ncclUniqueId commId;
   int rank;
@@ -228,7 +240,9 @@ int handle_ncclCommInitRank(conn_t *conn) {
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclComm_t *, int, ncclUniqueId, int);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &nranks, sizeof(int)) < 0 ||
+  if (rpc_read(conn, &comm_present, sizeof(uint8_t)) < 0 ||
+      (comm_present && rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0) ||
+      rpc_read(conn, &nranks, sizeof(int)) < 0 ||
       rpc_read(conn, &commId, sizeof(ncclUniqueId)) < 0 ||
       rpc_read(conn, &rank, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -238,11 +252,12 @@ int handle_ncclCommInitRank(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclCommInitRank");
-  return_value =
-      fn == nullptr ? function_not_found() : fn(&comm, nranks, commId, rank);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(comm_present ? &comm : nullptr, nranks, commId, rank);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &comm, sizeof(ncclComm_t)) < 0 ||
+      (comm_present && rpc_write(conn, &comm, sizeof(ncclComm_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -254,27 +269,38 @@ ERROR_0:
 int handle_ncclCommInitAll(conn_t *conn) {
   int ndev;
   ncclComm_t *comm = nullptr;
+  uint8_t comm_null = 0;
   int *devlist = nullptr;
-  size_t devlist_size;
   uint8_t devlist_null = 0;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclComm_t *, int, const int *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &ndev, sizeof(int)) < 0 || ndev < 0 || false)
+  if (rpc_read(conn, &ndev, sizeof(int)) < 0 ||
+      rpc_read(conn, &comm_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
-  comm = (ncclComm_t *)calloc(ndev * sizeof(ncclComm_t), 1);
-  if ((ndev * sizeof(ncclComm_t) != 0 && comm == nullptr) || ndev < 0 ||
-      rpc_read(conn, &devlist_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  devlist_size = ndev * sizeof(const int);
-  if (!devlist_null) {
-    devlist = (int *)malloc(devlist_size);
-    if (devlist_size != 0 && devlist == nullptr)
+  if (!comm_null) {
+    comm =
+        (ncclComm_t *)calloc((ndev <= 0 ? 0 : ndev * sizeof(ncclComm_t)) == 0
+                                 ? 1
+                                 : (ndev <= 0 ? 0 : ndev * sizeof(ncclComm_t)),
+                             1);
+    if (comm == nullptr)
       goto ERROR_0;
   }
-  if ((!devlist_null && devlist_size != 0 &&
-       rpc_read(conn, devlist, devlist_size) < 0) ||
+  if (rpc_read(conn, &devlist_null, sizeof(uint8_t)) < 0 || false)
+    goto ERROR_0;
+  if (!devlist_null) {
+    devlist = (int *)calloc((ndev <= 0 ? 0 : ndev * sizeof(const int)) == 0
+                                ? 1
+                                : (ndev <= 0 ? 0 : ndev * sizeof(const int)),
+                            1);
+    if (devlist == nullptr)
+      goto ERROR_0;
+  }
+  if ((!devlist_null && (ndev <= 0 ? 0 : ndev * sizeof(const int)) != 0 &&
+       rpc_read(conn, devlist, (ndev <= 0 ? 0 : ndev * sizeof(const int))) <
+           0) ||
       false)
     goto ERROR_0;
 
@@ -283,13 +309,12 @@ int handle_ncclCommInitAll(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclCommInitAll");
-  return_value = fn == nullptr
-                     ? function_not_found()
-                     : fn((ndev * sizeof(ncclComm_t) == 0 ? nullptr : comm),
-                          ndev, (devlist_null ? nullptr : devlist));
+  return_value = fn == nullptr ? function_not_found() : fn(comm, ndev, devlist);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, comm, ndev * sizeof(ncclComm_t)) < 0 ||
+      (!comm_null && (ndev <= 0 ? 0 : ndev * sizeof(ncclComm_t)) != 0 &&
+       rpc_write(conn, comm, (ndev <= 0 ? 0 : ndev * sizeof(ncclComm_t))) <
+           0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -412,8 +437,8 @@ int handle_ncclCommSplit(conn_t *conn) {
   ncclComm_t comm;
   int color;
   int key;
+  uint8_t newcomm_present = 0;
   ncclComm_t newcomm{};
-  newcomm = {};
   uint64_t config_size = 0;
   std::vector<unsigned char> config_bytes;
   uint32_t config_netName_len = 0;
@@ -428,6 +453,8 @@ int handle_ncclCommSplit(conn_t *conn) {
   if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 ||
       rpc_read(conn, &color, sizeof(int)) < 0 ||
       rpc_read(conn, &key, sizeof(int)) < 0 ||
+      rpc_read(conn, &newcomm_present, sizeof(uint8_t)) < 0 ||
+      (newcomm_present && rpc_read(conn, &newcomm, sizeof(ncclComm_t)) < 0) ||
       rpc_read(conn, &config_size, sizeof(config_size)) < 0 ||
       (config_bytes.assign(
            std::max<uint64_t>(config_size, sizeof(ncclConfig_t)), 0),
@@ -452,7 +479,7 @@ int handle_ncclCommSplit(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(comm, color, key, &newcomm,
+          : fn(comm, color, key, newcomm_present ? &newcomm : nullptr,
                lupine_versioned_struct<ncclConfig_t>(
                    config_bytes, config_size,
                    {
@@ -470,7 +497,7 @@ int handle_ncclCommSplit(conn_t *conn) {
                    {}));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &newcomm, sizeof(ncclComm_t)) < 0 ||
+      (newcomm_present && rpc_write(conn, &newcomm, sizeof(ncclComm_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -486,9 +513,9 @@ int handle_ncclCommShrink(conn_t *conn) {
   ncclComm_t comm;
   int excludeRanksCount;
   int *excludeRanksList = nullptr;
-  size_t excludeRanksList_size;
+  uint8_t excludeRanksList_null = 0;
+  uint8_t newcomm_present = 0;
   ncclComm_t newcomm{};
-  newcomm = {};
   uint64_t config_size = 0;
   std::vector<unsigned char> config_bytes;
   uint32_t config_netName_len = 0;
@@ -503,14 +530,25 @@ int handle_ncclCommShrink(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 ||
       rpc_read(conn, &excludeRanksCount, sizeof(int)) < 0 ||
-      excludeRanksCount < 0 || false)
+      rpc_read(conn, &excludeRanksList_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
-  excludeRanksList_size = excludeRanksCount * sizeof(int);
-  excludeRanksList = (int *)malloc(excludeRanksList_size);
-  if (excludeRanksList_size != 0 && excludeRanksList == nullptr)
-    goto ERROR_0;
-  if ((excludeRanksList_size != 0 &&
-       rpc_read(conn, excludeRanksList, excludeRanksList_size) < 0) ||
+  if (!excludeRanksList_null) {
+    excludeRanksList = (int *)calloc(
+        (excludeRanksCount <= 0 ? 0 : excludeRanksCount * sizeof(int)) == 0
+            ? 1
+            : (excludeRanksCount <= 0 ? 0 : excludeRanksCount * sizeof(int)),
+        1);
+    if (excludeRanksList == nullptr)
+      goto ERROR_0;
+  }
+  if ((!excludeRanksList_null &&
+       (excludeRanksCount <= 0 ? 0 : excludeRanksCount * sizeof(int)) != 0 &&
+       rpc_read(
+           conn, excludeRanksList,
+           (excludeRanksCount <= 0 ? 0 : excludeRanksCount * sizeof(int))) <
+           0) ||
+      rpc_read(conn, &newcomm_present, sizeof(uint8_t)) < 0 ||
+      (newcomm_present && rpc_read(conn, &newcomm, sizeof(ncclComm_t)) < 0) ||
       rpc_read(conn, &config_size, sizeof(config_size)) < 0 ||
       (config_bytes.assign(
            std::max<uint64_t>(config_size, sizeof(ncclConfig_t)), 0),
@@ -535,10 +573,8 @@ int handle_ncclCommShrink(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(comm,
-               (excludeRanksCount * sizeof(int) == 0 ? nullptr
-                                                     : excludeRanksList),
-               excludeRanksCount, &newcomm,
+          : fn(comm, excludeRanksList, excludeRanksCount,
+               newcomm_present ? &newcomm : nullptr,
                lupine_versioned_struct<ncclConfig_t>(
                    config_bytes, config_size,
                    {
@@ -557,7 +593,7 @@ int handle_ncclCommShrink(conn_t *conn) {
                shrinkFlags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &newcomm, sizeof(ncclComm_t)) < 0 ||
+      (newcomm_present && rpc_write(conn, &newcomm, sizeof(ncclComm_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -573,13 +609,17 @@ ERROR_0:
 #if NCCL_VERSION_CODE >= 22902
 int handle_ncclCommGetUniqueId(conn_t *conn) {
   ncclComm_t comm;
+  uint8_t uniqueId_present = 0;
   ncclUniqueId uniqueId{};
-  uniqueId = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclComm_t, ncclUniqueId *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 || false)
+  if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 ||
+      rpc_read(conn, &uniqueId_present, sizeof(uint8_t)) < 0 ||
+      (uniqueId_present &&
+       rpc_read(conn, &uniqueId, sizeof(ncclUniqueId)) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -587,10 +627,13 @@ int handle_ncclCommGetUniqueId(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclCommGetUniqueId");
-  return_value = fn == nullptr ? function_not_found() : fn(comm, &uniqueId);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(comm, uniqueId_present ? &uniqueId : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &uniqueId, sizeof(ncclUniqueId)) < 0 ||
+      (uniqueId_present &&
+       rpc_write(conn, &uniqueId, sizeof(ncclUniqueId)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -606,10 +649,10 @@ int handle_ncclCommGrow(conn_t *conn) {
   ncclComm_t comm;
   int nRanks;
   uint8_t uniqueId_present = 0;
-  ncclUniqueId uniqueId;
+  ncclUniqueId uniqueId{};
   int rank;
+  uint8_t newcomm_present = 0;
   ncclComm_t newcomm{};
-  newcomm = {};
   uint64_t config_size = 0;
   std::vector<unsigned char> config_bytes;
   uint32_t config_netName_len = 0;
@@ -627,6 +670,8 @@ int handle_ncclCommGrow(conn_t *conn) {
       (uniqueId_present &&
        rpc_read(conn, &uniqueId, sizeof(const ncclUniqueId)) < 0) ||
       rpc_read(conn, &rank, sizeof(int)) < 0 ||
+      rpc_read(conn, &newcomm_present, sizeof(uint8_t)) < 0 ||
+      (newcomm_present && rpc_read(conn, &newcomm, sizeof(ncclComm_t)) < 0) ||
       rpc_read(conn, &config_size, sizeof(config_size)) < 0 ||
       (config_bytes.assign(
            std::max<uint64_t>(config_size, sizeof(ncclConfig_t)), 0),
@@ -652,7 +697,7 @@ int handle_ncclCommGrow(conn_t *conn) {
       fn == nullptr
           ? function_not_found()
           : fn(comm, nRanks, uniqueId_present ? &uniqueId : nullptr, rank,
-               &newcomm,
+               newcomm_present ? &newcomm : nullptr,
                lupine_versioned_struct<ncclConfig_t>(
                    config_bytes, config_size,
                    {
@@ -670,7 +715,7 @@ int handle_ncclCommGrow(conn_t *conn) {
                    {}));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &newcomm, sizeof(ncclComm_t)) < 0 ||
+      (newcomm_present && rpc_write(conn, &newcomm, sizeof(ncclComm_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -683,13 +728,13 @@ ERROR_0:
 
 #if NCCL_VERSION_CODE >= 22304
 int handle_ncclCommInitRankScalable(conn_t *conn) {
+  uint8_t newcomm_present = 0;
   ncclComm_t newcomm{};
-  newcomm = {};
   int nranks;
   int myrank;
   int nId;
   ncclUniqueId *commIds = nullptr;
-  size_t commIds_size;
+  uint8_t commIds_null = 0;
   uint64_t config_size = 0;
   std::vector<unsigned char> config_bytes;
   uint32_t config_netName_len = 0;
@@ -701,15 +746,25 @@ int handle_ncclCommInitRankScalable(conn_t *conn) {
   using fn_t = ncclResult_t (*)(ncclComm_t *, int, int, int, ncclUniqueId *,
                                 ncclConfig_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &nranks, sizeof(int)) < 0 ||
+  if (rpc_read(conn, &newcomm_present, sizeof(uint8_t)) < 0 ||
+      (newcomm_present && rpc_read(conn, &newcomm, sizeof(ncclComm_t)) < 0) ||
+      rpc_read(conn, &nranks, sizeof(int)) < 0 ||
       rpc_read(conn, &myrank, sizeof(int)) < 0 ||
-      rpc_read(conn, &nId, sizeof(int)) < 0 || nId < 0 || false)
+      rpc_read(conn, &nId, sizeof(int)) < 0 ||
+      rpc_read(conn, &commIds_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
-  commIds_size = nId * sizeof(ncclUniqueId);
-  commIds = (ncclUniqueId *)malloc(commIds_size);
-  if (commIds_size != 0 && commIds == nullptr)
-    goto ERROR_0;
-  if ((commIds_size != 0 && rpc_read(conn, commIds, commIds_size) < 0) ||
+  if (!commIds_null) {
+    commIds = (ncclUniqueId *)calloc(
+        (nId <= 0 ? 0 : nId * sizeof(ncclUniqueId)) == 0
+            ? 1
+            : (nId <= 0 ? 0 : nId * sizeof(ncclUniqueId)),
+        1);
+    if (commIds == nullptr)
+      goto ERROR_0;
+  }
+  if ((!commIds_null && (nId <= 0 ? 0 : nId * sizeof(ncclUniqueId)) != 0 &&
+       rpc_read(conn, commIds, (nId <= 0 ? 0 : nId * sizeof(ncclUniqueId))) <
+           0) ||
       rpc_read(conn, &config_size, sizeof(config_size)) < 0 ||
       (config_bytes.assign(
            std::max<uint64_t>(config_size, sizeof(ncclConfig_t)), 0),
@@ -734,8 +789,8 @@ int handle_ncclCommInitRankScalable(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(&newcomm, nranks, myrank, nId,
-               (nId * sizeof(ncclUniqueId) == 0 ? nullptr : commIds),
+          : fn(newcomm_present ? &newcomm : nullptr, nranks, myrank, nId,
+               commIds,
                lupine_versioned_struct<ncclConfig_t>(
                    config_bytes, config_size,
                    {
@@ -753,7 +808,7 @@ int handle_ncclCommInitRankScalable(conn_t *conn) {
                    {}));
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &newcomm, sizeof(ncclComm_t)) < 0 ||
+      (newcomm_present && rpc_write(conn, &newcomm, sizeof(ncclComm_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -794,13 +849,17 @@ ERROR_0:
 
 int handle_ncclCommGetAsyncError(conn_t *conn) {
   ncclComm_t comm;
+  uint8_t asyncError_present = 0;
   ncclResult_t asyncError{};
-  asyncError = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclComm_t, ncclResult_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 || false)
+  if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 ||
+      rpc_read(conn, &asyncError_present, sizeof(uint8_t)) < 0 ||
+      (asyncError_present &&
+       rpc_read(conn, &asyncError, sizeof(ncclResult_t)) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -808,10 +867,13 @@ int handle_ncclCommGetAsyncError(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclCommGetAsyncError");
-  return_value = fn == nullptr ? function_not_found() : fn(comm, &asyncError);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(comm, asyncError_present ? &asyncError : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &asyncError, sizeof(ncclResult_t)) < 0 ||
+      (asyncError_present &&
+       rpc_write(conn, &asyncError, sizeof(ncclResult_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -822,13 +884,15 @@ ERROR_0:
 
 int handle_ncclCommCount(conn_t *conn) {
   ncclComm_t comm;
+  uint8_t count_present = 0;
   int count{};
-  count = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const ncclComm_t, int *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &comm, sizeof(const ncclComm_t)) < 0 || false)
+  if (rpc_read(conn, &comm, sizeof(const ncclComm_t)) < 0 ||
+      rpc_read(conn, &count_present, sizeof(uint8_t)) < 0 ||
+      (count_present && rpc_read(conn, &count, sizeof(int)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -836,10 +900,11 @@ int handle_ncclCommCount(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclCommCount");
-  return_value = fn == nullptr ? function_not_found() : fn(comm, &count);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(comm, count_present ? &count : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &count, sizeof(int)) < 0 ||
+      (count_present && rpc_write(conn, &count, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -850,13 +915,15 @@ ERROR_0:
 
 int handle_ncclCommCuDevice(conn_t *conn) {
   ncclComm_t comm;
+  uint8_t device_present = 0;
   int device{};
-  device = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const ncclComm_t, int *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &comm, sizeof(const ncclComm_t)) < 0 || false)
+  if (rpc_read(conn, &comm, sizeof(const ncclComm_t)) < 0 ||
+      rpc_read(conn, &device_present, sizeof(uint8_t)) < 0 ||
+      (device_present && rpc_read(conn, &device, sizeof(int)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -864,10 +931,11 @@ int handle_ncclCommCuDevice(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclCommCuDevice");
-  return_value = fn == nullptr ? function_not_found() : fn(comm, &device);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(comm, device_present ? &device : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &device, sizeof(int)) < 0 ||
+      (device_present && rpc_write(conn, &device, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -878,13 +946,15 @@ ERROR_0:
 
 int handle_ncclCommUserRank(conn_t *conn) {
   ncclComm_t comm;
+  uint8_t rank_present = 0;
   int rank{};
-  rank = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const ncclComm_t, int *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &comm, sizeof(const ncclComm_t)) < 0 || false)
+  if (rpc_read(conn, &comm, sizeof(const ncclComm_t)) < 0 ||
+      rpc_read(conn, &rank_present, sizeof(uint8_t)) < 0 ||
+      (rank_present && rpc_read(conn, &rank, sizeof(int)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -892,10 +962,11 @@ int handle_ncclCommUserRank(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclCommUserRank");
-  return_value = fn == nullptr ? function_not_found() : fn(comm, &rank);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(comm, rank_present ? &rank : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &rank, sizeof(int)) < 0 ||
+      (rank_present && rpc_write(conn, &rank, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -909,15 +980,17 @@ int handle_ncclCommRegister(conn_t *conn) {
   ncclComm_t comm;
   void *buff;
   size_t size;
+  uint8_t handle_present = 0;
   void *handle{};
-  handle = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(const ncclComm_t, void *, size_t, void **);
   fn_t fn = nullptr;
   if (rpc_read(conn, &comm, sizeof(const ncclComm_t)) < 0 ||
       rpc_read(conn, &buff, sizeof(void *)) < 0 ||
-      rpc_read(conn, &size, sizeof(size_t)) < 0 || false)
+      rpc_read(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &handle_present, sizeof(uint8_t)) < 0 ||
+      (handle_present && rpc_read(conn, &handle, sizeof(void *)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -925,11 +998,12 @@ int handle_ncclCommRegister(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclCommRegister");
-  return_value =
-      fn == nullptr ? function_not_found() : fn(comm, buff, size, &handle);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(comm, buff, size, handle_present ? &handle : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &handle, sizeof(void *)) < 0 ||
+      (handle_present && rpc_write(conn, &handle, sizeof(void *)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1032,14 +1106,16 @@ ERROR_0:
 int handle_ncclCommMemStats(conn_t *conn) {
   ncclComm_t comm;
   ncclCommMemStat_t stat;
+  uint8_t value_present = 0;
   uint64_t value{};
-  value = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclComm_t, ncclCommMemStat_t, uint64_t *);
   fn_t fn = nullptr;
   if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 ||
-      rpc_read(conn, &stat, sizeof(ncclCommMemStat_t)) < 0 || false)
+      rpc_read(conn, &stat, sizeof(ncclCommMemStat_t)) < 0 ||
+      rpc_read(conn, &value_present, sizeof(uint8_t)) < 0 ||
+      (value_present && rpc_read(conn, &value, sizeof(uint64_t)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -1047,10 +1123,12 @@ int handle_ncclCommMemStats(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclCommMemStats");
-  return_value = fn == nullptr ? function_not_found() : fn(comm, stat, &value);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(comm, stat, value_present ? &value : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &value, sizeof(uint64_t)) < 0 ||
+      (value_present && rpc_write(conn, &value, sizeof(uint64_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1066,8 +1144,8 @@ int handle_ncclCommWindowRegister(conn_t *conn) {
   ncclComm_t comm;
   void *buff;
   size_t size;
+  uint8_t win_present = 0;
   ncclWindow_t win{};
-  win = {};
   int winFlags;
   int request_id;
   ncclResult_t return_value;
@@ -1077,6 +1155,8 @@ int handle_ncclCommWindowRegister(conn_t *conn) {
   if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 ||
       rpc_read(conn, &buff, sizeof(void *)) < 0 ||
       rpc_read(conn, &size, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &win_present, sizeof(uint8_t)) < 0 ||
+      (win_present && rpc_read(conn, &win, sizeof(ncclWindow_t)) < 0) ||
       rpc_read(conn, &winFlags, sizeof(int)) < 0 || false)
     goto ERROR_0;
 
@@ -1086,10 +1166,11 @@ int handle_ncclCommWindowRegister(conn_t *conn) {
 
   fn = nccl_symbol<fn_t>("ncclCommWindowRegister");
   return_value = fn == nullptr ? function_not_found()
-                               : fn(comm, buff, size, &win, winFlags);
+                               : fn(comm, buff, size,
+                                    win_present ? &win : nullptr, winFlags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &win, sizeof(ncclWindow_t)) < 0 ||
+      (win_present && rpc_write(conn, &win, sizeof(ncclWindow_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1134,14 +1215,17 @@ ERROR_0:
 int handle_ncclWinGetUserPtr(conn_t *conn) {
   ncclComm_t comm;
   ncclWindow_t win;
+  uint8_t outUserPtr_present = 0;
   void *outUserPtr{};
-  outUserPtr = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclComm_t, ncclWindow_t, void **);
   fn_t fn = nullptr;
   if (rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 ||
-      rpc_read(conn, &win, sizeof(ncclWindow_t)) < 0 || false)
+      rpc_read(conn, &win, sizeof(ncclWindow_t)) < 0 ||
+      rpc_read(conn, &outUserPtr_present, sizeof(uint8_t)) < 0 ||
+      (outUserPtr_present && rpc_read(conn, &outUserPtr, sizeof(void *)) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -1150,10 +1234,12 @@ int handle_ncclWinGetUserPtr(conn_t *conn) {
 
   fn = nccl_symbol<fn_t>("ncclWinGetUserPtr");
   return_value =
-      fn == nullptr ? function_not_found() : fn(comm, win, &outUserPtr);
+      fn == nullptr ? function_not_found()
+                    : fn(comm, win, outUserPtr_present ? &outUserPtr : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &outUserPtr, sizeof(void *)) < 0 ||
+      (outUserPtr_present &&
+       rpc_write(conn, &outUserPtr, sizeof(void *)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1168,14 +1254,16 @@ ERROR_0:
 int handle_ncclGetLsaMultimemDevicePointer(conn_t *conn) {
   ncclWindow_t window;
   size_t offset;
+  uint8_t outPtr_present = 0;
   void *outPtr{};
-  outPtr = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclWindow_t, size_t, void **);
   fn_t fn = nullptr;
   if (rpc_read(conn, &window, sizeof(ncclWindow_t)) < 0 ||
-      rpc_read(conn, &offset, sizeof(size_t)) < 0 || false)
+      rpc_read(conn, &offset, sizeof(size_t)) < 0 ||
+      rpc_read(conn, &outPtr_present, sizeof(uint8_t)) < 0 ||
+      (outPtr_present && rpc_read(conn, &outPtr, sizeof(void *)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -1183,11 +1271,12 @@ int handle_ncclGetLsaMultimemDevicePointer(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclGetLsaMultimemDevicePointer");
-  return_value =
-      fn == nullptr ? function_not_found() : fn(window, offset, &outPtr);
+  return_value = fn == nullptr
+                     ? function_not_found()
+                     : fn(window, offset, outPtr_present ? &outPtr : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &outPtr, sizeof(void *)) < 0 ||
+      (outPtr_present && rpc_write(conn, &outPtr, sizeof(void *)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1203,15 +1292,17 @@ int handle_ncclGetPeerDevicePointer(conn_t *conn) {
   ncclWindow_t window;
   size_t offset;
   int peer;
+  uint8_t outPtr_present = 0;
   void *outPtr{};
-  outPtr = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclWindow_t, size_t, int, void **);
   fn_t fn = nullptr;
   if (rpc_read(conn, &window, sizeof(ncclWindow_t)) < 0 ||
       rpc_read(conn, &offset, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &peer, sizeof(int)) < 0 || false)
+      rpc_read(conn, &peer, sizeof(int)) < 0 ||
+      rpc_read(conn, &outPtr_present, sizeof(uint8_t)) < 0 ||
+      (outPtr_present && rpc_read(conn, &outPtr, sizeof(void *)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -1219,11 +1310,12 @@ int handle_ncclGetPeerDevicePointer(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclGetPeerDevicePointer");
-  return_value =
-      fn == nullptr ? function_not_found() : fn(window, offset, peer, &outPtr);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(window, offset, peer,
+                                    outPtr_present ? &outPtr : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &outPtr, sizeof(void *)) < 0 ||
+      (outPtr_present && rpc_write(conn, &outPtr, sizeof(void *)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1235,8 +1327,8 @@ ERROR_0:
 #endif
 
 int handle_ncclRedOpCreatePreMulSum(conn_t *conn) {
+  uint8_t op_present = 0;
   ncclRedOp_t op{};
-  op = {};
   uint32_t scalar_width;
   alignas(16) unsigned char scalar_value[64];
   std::vector<unsigned char> scalar_heap;
@@ -1249,7 +1341,9 @@ int handle_ncclRedOpCreatePreMulSum(conn_t *conn) {
   using fn_t = ncclResult_t (*)(ncclRedOp_t *, void *, ncclDataType_t,
                                 ncclScalarResidence_t, ncclComm_t);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &scalar_width, sizeof(scalar_width)) < 0 ||
+  if (rpc_read(conn, &op_present, sizeof(uint8_t)) < 0 ||
+      (op_present && rpc_read(conn, &op, sizeof(ncclRedOp_t)) < 0) ||
+      rpc_read(conn, &scalar_width, sizeof(scalar_width)) < 0 ||
       (scalar_width == 0 && rpc_read(conn, &scalar, sizeof(scalar)) < 0) ||
       (scalar_width != 0 &&
        rpc_read(conn,
@@ -1269,7 +1363,7 @@ int handle_ncclRedOpCreatePreMulSum(conn_t *conn) {
   return_value =
       fn == nullptr
           ? function_not_found()
-          : fn(&op,
+          : fn(op_present ? &op : nullptr,
                scalar_width != 0 ? reinterpret_cast<void *>(lupine_scalar_slot(
                                        scalar_heap, scalar_value,
                                        sizeof(scalar_value), scalar_width))
@@ -1277,7 +1371,7 @@ int handle_ncclRedOpCreatePreMulSum(conn_t *conn) {
                datatype, residence, comm);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &op, sizeof(ncclRedOp_t)) < 0 ||
+      (op_present && rpc_write(conn, &op, sizeof(ncclRedOp_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -2615,7 +2709,7 @@ ERROR_0:
 int handle_ncclWaitSignal(conn_t *conn) {
   int nDesc;
   ncclWaitSignalDesc_t *signalDescs = nullptr;
-  size_t signalDescs_size;
+  uint8_t signalDescs_null = 0;
   ncclComm_t comm;
   cudaStream_t stream;
   uint64_t async_sequence = 0;
@@ -2625,14 +2719,22 @@ int handle_ncclWaitSignal(conn_t *conn) {
       ncclResult_t (*)(int, ncclWaitSignalDesc_t *, ncclComm_t, cudaStream_t);
   fn_t fn = nullptr;
   if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &nDesc, sizeof(int)) < 0 || nDesc < 0 || false)
+      rpc_read(conn, &nDesc, sizeof(int)) < 0 ||
+      rpc_read(conn, &signalDescs_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
-  signalDescs_size = nDesc * sizeof(ncclWaitSignalDesc_t);
-  signalDescs = (ncclWaitSignalDesc_t *)malloc(signalDescs_size);
-  if (signalDescs_size != 0 && signalDescs == nullptr)
-    goto ERROR_0;
-  if ((signalDescs_size != 0 &&
-       rpc_read(conn, signalDescs, signalDescs_size) < 0) ||
+  if (!signalDescs_null) {
+    signalDescs = (ncclWaitSignalDesc_t *)calloc(
+        (nDesc <= 0 ? 0 : nDesc * sizeof(ncclWaitSignalDesc_t)) == 0
+            ? 1
+            : (nDesc <= 0 ? 0 : nDesc * sizeof(ncclWaitSignalDesc_t)),
+        1);
+    if (signalDescs == nullptr)
+      goto ERROR_0;
+  }
+  if ((!signalDescs_null &&
+       (nDesc <= 0 ? 0 : nDesc * sizeof(ncclWaitSignalDesc_t)) != 0 &&
+       rpc_read(conn, signalDescs,
+                (nDesc <= 0 ? 0 : nDesc * sizeof(ncclWaitSignalDesc_t))) < 0) ||
       rpc_read(conn, &comm, sizeof(ncclComm_t)) < 0 ||
       rpc_read(conn, &stream, sizeof(cudaStream_t)) < 0 || false)
     goto ERROR_0;
@@ -2646,13 +2748,8 @@ int handle_ncclWaitSignal(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclWaitSignal");
-  return_value =
-      fn == nullptr
-          ? function_not_found()
-          : fn(nDesc,
-               (nDesc * sizeof(ncclWaitSignalDesc_t) == 0 ? nullptr
-                                                          : signalDescs),
-               comm, stream);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(nDesc, signalDescs, comm, stream);
 
   if (async_sequence != ~uint64_t{0}) {
     free((void *)signalDescs);
@@ -2731,12 +2828,16 @@ ERROR_0:
 
 #if NCCL_VERSION_CODE >= 22203
 int handle_ncclGroupSimulateEnd(conn_t *conn) {
+  uint8_t simInfo_present = 0;
   ncclSimInfo_t simInfo{};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclSimInfo_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &simInfo, sizeof(ncclSimInfo_t)) < 0 || false)
+  if (rpc_read(conn, &simInfo_present, sizeof(uint8_t)) < 0 ||
+      (simInfo_present &&
+       rpc_read(conn, &simInfo, sizeof(ncclSimInfo_t)) < 0) ||
+      false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -2744,10 +2845,12 @@ int handle_ncclGroupSimulateEnd(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclGroupSimulateEnd");
-  return_value = fn == nullptr ? function_not_found() : fn(&simInfo);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(simInfo_present ? &simInfo : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &simInfo, sizeof(ncclSimInfo_t)) < 0 ||
+      (simInfo_present &&
+       rpc_write(conn, &simInfo, sizeof(ncclSimInfo_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -2760,19 +2863,24 @@ ERROR_0:
 
 #if NCCL_VERSION_CODE >= 23007
 int handle_ncclParamBind(conn_t *conn) {
+  uint8_t out_present = 0;
   ncclParamHandle_t out{};
-  out = {};
   const char *key = nullptr;
   std::size_t key_len;
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclParamHandle_t *, const char *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &key_len, sizeof(std::size_t)) < 0)
+  if (rpc_read(conn, &out_present, sizeof(uint8_t)) < 0 ||
+      (out_present && rpc_read(conn, &out, sizeof(ncclParamHandle_t)) < 0) ||
+      rpc_read(conn, &key_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
-  key = (const char *)malloc(key_len);
-  if ((key_len != 0 && key == nullptr) ||
-      rpc_read(conn, (void *)key, key_len) < 0 || false)
+  if (key_len != 0) {
+    key = (const char *)malloc(key_len);
+    if (key == nullptr)
+      goto ERROR_0;
+  }
+  if ((key_len != 0 && rpc_read(conn, (void *)key, key_len) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -2780,10 +2888,11 @@ int handle_ncclParamBind(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclParamBind");
-  return_value = fn == nullptr ? function_not_found() : fn(&out, key);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(out_present ? &out : nullptr, key);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &out, sizeof(ncclParamHandle_t)) < 0 ||
+      (out_present && rpc_write(conn, &out, sizeof(ncclParamHandle_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -2799,13 +2908,15 @@ ERROR_0:
 #if NCCL_VERSION_CODE >= 23007
 int handle_ncclParamGetI8(conn_t *conn) {
   ncclParamHandle_t h;
+  uint8_t out_present = 0;
   int8_t out{};
-  out = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclParamHandle_t, int8_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 || false)
+  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 ||
+      rpc_read(conn, &out_present, sizeof(uint8_t)) < 0 ||
+      (out_present && rpc_read(conn, &out, sizeof(int8_t)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -2813,10 +2924,11 @@ int handle_ncclParamGetI8(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclParamGetI8");
-  return_value = fn == nullptr ? function_not_found() : fn(h, &out);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(h, out_present ? &out : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &out, sizeof(int8_t)) < 0 ||
+      (out_present && rpc_write(conn, &out, sizeof(int8_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -2830,13 +2942,15 @@ ERROR_0:
 #if NCCL_VERSION_CODE >= 23007
 int handle_ncclParamGetI16(conn_t *conn) {
   ncclParamHandle_t h;
+  uint8_t out_present = 0;
   int16_t out{};
-  out = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclParamHandle_t, int16_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 || false)
+  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 ||
+      rpc_read(conn, &out_present, sizeof(uint8_t)) < 0 ||
+      (out_present && rpc_read(conn, &out, sizeof(int16_t)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -2844,10 +2958,11 @@ int handle_ncclParamGetI16(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclParamGetI16");
-  return_value = fn == nullptr ? function_not_found() : fn(h, &out);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(h, out_present ? &out : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &out, sizeof(int16_t)) < 0 ||
+      (out_present && rpc_write(conn, &out, sizeof(int16_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -2861,13 +2976,15 @@ ERROR_0:
 #if NCCL_VERSION_CODE >= 23007
 int handle_ncclParamGetI32(conn_t *conn) {
   ncclParamHandle_t h;
+  uint8_t out_present = 0;
   int32_t out{};
-  out = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclParamHandle_t, int32_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 || false)
+  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 ||
+      rpc_read(conn, &out_present, sizeof(uint8_t)) < 0 ||
+      (out_present && rpc_read(conn, &out, sizeof(int32_t)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -2875,10 +2992,11 @@ int handle_ncclParamGetI32(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclParamGetI32");
-  return_value = fn == nullptr ? function_not_found() : fn(h, &out);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(h, out_present ? &out : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &out, sizeof(int32_t)) < 0 ||
+      (out_present && rpc_write(conn, &out, sizeof(int32_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -2892,13 +3010,15 @@ ERROR_0:
 #if NCCL_VERSION_CODE >= 23007
 int handle_ncclParamGetI64(conn_t *conn) {
   ncclParamHandle_t h;
+  uint8_t out_present = 0;
   int64_t out{};
-  out = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclParamHandle_t, int64_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 || false)
+  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 ||
+      rpc_read(conn, &out_present, sizeof(uint8_t)) < 0 ||
+      (out_present && rpc_read(conn, &out, sizeof(int64_t)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -2906,10 +3026,11 @@ int handle_ncclParamGetI64(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclParamGetI64");
-  return_value = fn == nullptr ? function_not_found() : fn(h, &out);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(h, out_present ? &out : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &out, sizeof(int64_t)) < 0 ||
+      (out_present && rpc_write(conn, &out, sizeof(int64_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -2923,13 +3044,15 @@ ERROR_0:
 #if NCCL_VERSION_CODE >= 23007
 int handle_ncclParamGetU8(conn_t *conn) {
   ncclParamHandle_t h;
+  uint8_t out_present = 0;
   uint8_t out{};
-  out = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclParamHandle_t, uint8_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 || false)
+  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 ||
+      rpc_read(conn, &out_present, sizeof(uint8_t)) < 0 ||
+      (out_present && rpc_read(conn, &out, sizeof(uint8_t)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -2937,10 +3060,11 @@ int handle_ncclParamGetU8(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclParamGetU8");
-  return_value = fn == nullptr ? function_not_found() : fn(h, &out);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(h, out_present ? &out : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &out, sizeof(uint8_t)) < 0 ||
+      (out_present && rpc_write(conn, &out, sizeof(uint8_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -2954,13 +3078,15 @@ ERROR_0:
 #if NCCL_VERSION_CODE >= 23007
 int handle_ncclParamGetU16(conn_t *conn) {
   ncclParamHandle_t h;
+  uint8_t out_present = 0;
   uint16_t out{};
-  out = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclParamHandle_t, uint16_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 || false)
+  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 ||
+      rpc_read(conn, &out_present, sizeof(uint8_t)) < 0 ||
+      (out_present && rpc_read(conn, &out, sizeof(uint16_t)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -2968,10 +3094,11 @@ int handle_ncclParamGetU16(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclParamGetU16");
-  return_value = fn == nullptr ? function_not_found() : fn(h, &out);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(h, out_present ? &out : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &out, sizeof(uint16_t)) < 0 ||
+      (out_present && rpc_write(conn, &out, sizeof(uint16_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -2985,13 +3112,15 @@ ERROR_0:
 #if NCCL_VERSION_CODE >= 23007
 int handle_ncclParamGetU32(conn_t *conn) {
   ncclParamHandle_t h;
+  uint8_t out_present = 0;
   uint32_t out{};
-  out = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclParamHandle_t, uint32_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 || false)
+  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 ||
+      rpc_read(conn, &out_present, sizeof(uint8_t)) < 0 ||
+      (out_present && rpc_read(conn, &out, sizeof(uint32_t)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -2999,10 +3128,11 @@ int handle_ncclParamGetU32(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclParamGetU32");
-  return_value = fn == nullptr ? function_not_found() : fn(h, &out);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(h, out_present ? &out : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &out, sizeof(uint32_t)) < 0 ||
+      (out_present && rpc_write(conn, &out, sizeof(uint32_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -3016,13 +3146,15 @@ ERROR_0:
 #if NCCL_VERSION_CODE >= 23007
 int handle_ncclParamGetU64(conn_t *conn) {
   ncclParamHandle_t h;
+  uint8_t out_present = 0;
   uint64_t out{};
-  out = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclParamHandle_t, uint64_t *);
   fn_t fn = nullptr;
-  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 || false)
+  if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 ||
+      rpc_read(conn, &out_present, sizeof(uint8_t)) < 0 ||
+      (out_present && rpc_read(conn, &out, sizeof(uint64_t)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -3030,10 +3162,11 @@ int handle_ncclParamGetU64(conn_t *conn) {
     goto ERROR_0;
 
   fn = nccl_symbol<fn_t>("ncclParamGetU64");
-  return_value = fn == nullptr ? function_not_found() : fn(h, &out);
+  return_value = fn == nullptr ? function_not_found()
+                               : fn(h, out_present ? &out : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &out, sizeof(uint64_t)) < 0 ||
+      (out_present && rpc_write(conn, &out, sizeof(uint64_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -3049,21 +3182,27 @@ int handle_ncclParamGet(conn_t *conn) {
   ncclParamHandle_t h;
   int maxLen;
   void *out = nullptr;
-  size_t out_size;
+  uint8_t out_null = 0;
+  uint8_t len_present = 0;
   int len{};
-  len = {};
   int request_id;
   ncclResult_t return_value;
   using fn_t = ncclResult_t (*)(ncclParamHandle_t, void *, int, int *);
   fn_t fn = nullptr;
   if (rpc_read(conn, &h, sizeof(ncclParamHandle_t)) < 0 ||
-      rpc_read(conn, &maxLen, sizeof(int)) < 0 || maxLen < 0 || false)
+      rpc_read(conn, &maxLen, sizeof(int)) < 0 ||
+      rpc_read(conn, &out_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
-  out_size = maxLen;
-  out = (void *)malloc(out_size);
-  if (out_size != 0 && out == nullptr)
-    goto ERROR_0;
-  if ((out_size != 0 && rpc_read(conn, out, out_size) < 0) || false)
+  if (!out_null) {
+    out = (void *)calloc(
+        (maxLen <= 0 ? 0 : maxLen) == 0 ? 1 : (maxLen <= 0 ? 0 : maxLen), 1);
+    if (out == nullptr)
+      goto ERROR_0;
+  }
+  if ((!out_null && (maxLen <= 0 ? 0 : maxLen) != 0 &&
+       rpc_read(conn, out, (maxLen <= 0 ? 0 : maxLen)) < 0) ||
+      rpc_read(conn, &len_present, sizeof(uint8_t)) < 0 ||
+      (len_present && rpc_read(conn, &len, sizeof(int)) < 0) || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
@@ -3073,11 +3212,12 @@ int handle_ncclParamGet(conn_t *conn) {
   fn = nccl_symbol<fn_t>("ncclParamGet");
   return_value = fn == nullptr
                      ? function_not_found()
-                     : fn(h, (maxLen == 0 ? nullptr : out), maxLen, &len);
+                     : fn(h, out, maxLen, len_present ? &len : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, out, maxLen) < 0 ||
-      rpc_write(conn, &len, sizeof(int)) < 0 ||
+      (!out_null && (maxLen <= 0 ? 0 : maxLen) != 0 &&
+       rpc_write(conn, out, (maxLen <= 0 ? 0 : maxLen)) < 0) ||
+      (len_present && rpc_write(conn, &len, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(ncclResult_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
