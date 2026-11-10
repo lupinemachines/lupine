@@ -196,7 +196,7 @@ extern "C" ncclResult_t ncclGroupStart() {
   return ncclSuccess;
 }
 
-extern "C" ncclResult_t ncclGroupEnd() {
+template <typename Finish> static ncclResult_t finish_group(Finish &&finish) {
   if (group.depth == 0) {
     return ncclInvalidUsage;
   }
@@ -208,26 +208,19 @@ extern "C" ncclResult_t ncclGroupEnd() {
   if (ended.conn == nullptr) {
     return ended.error;
   }
-  const ncclResult_t result = lupine_rpc_ncclGroupEnd(ended.conn);
+  const ncclResult_t result = finish(ended.conn);
   return ended.error != ncclSuccess ? ended.error : result;
+}
+
+extern "C" ncclResult_t ncclGroupEnd() {
+  return finish_group(lupine_rpc_ncclGroupEnd);
 }
 
 #if NCCL_VERSION_CODE >= 22203
 extern "C" ncclResult_t ncclGroupSimulateEnd(ncclSimInfo_t *simInfo) {
-  if (group.depth == 0) {
-    return ncclInvalidUsage;
-  }
-  if (--group.depth != 0) {
-    return ncclSuccess;
-  }
-  const group_state ended = group;
-  group = group_state{};
-  if (ended.conn == nullptr) {
-    return ended.error;
-  }
-  const ncclResult_t result =
-      lupine_rpc_ncclGroupSimulateEnd(ended.conn, simInfo);
-  return ended.error != ncclSuccess ? ended.error : result;
+  return finish_group([simInfo](conn_t *conn) {
+    return lupine_rpc_ncclGroupSimulateEnd(conn, simInfo);
+  });
 }
 #endif
 
@@ -302,6 +295,25 @@ ncclResult_t read_strings(conn_t *conn, std::vector<std::string> *out) {
   return rpc_read_end(conn) < 0 ? rpc_error() : status;
 }
 
+template <typename Arg>
+ncclResult_t read_single_string(conn_t *conn, int op, const Arg &arg,
+                                std::string *out) {
+  std::vector<std::string> strings;
+  if (conn == nullptr || rpc_write_start_request(conn, op) < 0 ||
+      rpc_write(conn, &arg, sizeof(arg)) < 0) {
+    return rpc_error();
+  }
+  const ncclResult_t status = read_strings(conn, &strings);
+  if (status != ncclSuccess) {
+    return status;
+  }
+  if (strings.size() != 1) {
+    return rpc_error();
+  }
+  *out = std::move(strings[0]);
+  return ncclSuccess;
+}
+
 } // namespace
 
 // The server's library owns the strings, so each is fetched once and kept for
@@ -316,16 +328,13 @@ extern "C" const char *ncclGetErrorString(ncclResult_t result) {
       return it->second.c_str();
     }
   }
-  conn_t *conn = device_connection();
-  std::vector<std::string> strings;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_ncclGetErrorString) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
-      read_strings(conn, &strings) != ncclSuccess || strings.size() != 1) {
+  std::string text;
+  if (read_single_string(device_connection(), RPC_ncclGetErrorString, result,
+                         &text) != ncclSuccess) {
     return "unknown result code";
   }
   std::lock_guard<std::mutex> lock(mutex);
-  return texts.emplace(result, std::move(strings[0])).first->second.c_str();
+  return texts.emplace(result, std::move(text)).first->second.c_str();
 }
 
 // Valid until the thread's next call, which outlives the library's own
@@ -340,15 +349,8 @@ extern "C" const char *ncclGetLastError(ncclComm_t comm) {
     auto it = handles.find(comm);
     conn = it == handles.end() ? nullptr : it->second;
   }
-  std::vector<std::string> strings;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_ncclGetLastError) < 0 ||
-      rpc_write(conn, &comm, sizeof(comm)) < 0 ||
-      read_strings(conn, &strings) != ncclSuccess || strings.size() != 1) {
-    text.clear();
-  } else {
-    text = std::move(strings[0]);
-  }
+  text.clear();
+  (void)read_single_string(conn, RPC_ncclGetLastError, comm, &text);
   return text.c_str();
 }
 
@@ -357,16 +359,9 @@ extern "C" const char *ncclGetLastError(ncclComm_t comm) {
 // of the same kind; so does the client.
 extern "C" ncclResult_t ncclParamGetStr(ncclParamHandle_t h, const char **out) {
   thread_local std::string text;
-  conn_t *conn = connection_for_handle(h);
-  std::vector<std::string> strings;
-  if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_ncclParamGetStr) < 0 ||
-      rpc_write(conn, &h, sizeof(h)) < 0) {
-    return rpc_error();
-  }
-  const ncclResult_t status = read_strings(conn, &strings);
-  if (status == ncclSuccess && strings.size() == 1) {
-    text = std::move(strings[0]);
+  const ncclResult_t status = read_single_string(
+      connection_for_handle(h), RPC_ncclParamGetStr, h, &text);
+  if (status == ncclSuccess) {
     *out = text.c_str();
   }
   return status;

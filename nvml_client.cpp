@@ -287,7 +287,8 @@ extern "C" nvmlReturn_t nvmlSystemGetNVMLVersion(char *version,
   return lupine_nvmlSystemGetNVMLVersion_gated(version, length);
 }
 
-extern "C" nvmlReturn_t nvmlInit_v2(void) {
+template <typename Init>
+static nvmlReturn_t nvml_init_all_connections(Init &&init_conn) {
   init_refcount.fetch_add(1, std::memory_order_acq_rel);
   if (open_connection() < 0) {
     init_refcount.fetch_sub(1, std::memory_order_acq_rel);
@@ -296,8 +297,7 @@ extern "C" nvmlReturn_t nvmlInit_v2(void) {
   nvmlReturn_t first_error = NVML_SUCCESS;
   unsigned int connection_count = lupine_client_transport_size();
   for (unsigned int i = 0; i < connection_count; ++i) {
-    nvmlReturn_t result =
-        lupine_rpc_nvmlInit_v2(lupine_client_transport_connection(i));
+    nvmlReturn_t result = init_conn(lupine_client_transport_connection(i));
     if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
       first_error = result;
     }
@@ -305,24 +305,15 @@ extern "C" nvmlReturn_t nvmlInit_v2(void) {
   return first_error;
 }
 
+extern "C" nvmlReturn_t nvmlInit_v2(void) {
+  return nvml_init_all_connections(lupine_rpc_nvmlInit_v2);
+}
+
 extern "C" nvmlReturn_t nvmlInit(void) { return nvmlInit_v2(); }
 
 extern "C" nvmlReturn_t nvmlInitWithFlags(unsigned int flags) {
-  init_refcount.fetch_add(1, std::memory_order_acq_rel);
-  if (open_connection() < 0) {
-    init_refcount.fetch_sub(1, std::memory_order_acq_rel);
-    return NVML_ERROR_UNKNOWN;
-  }
-  nvmlReturn_t first_error = NVML_SUCCESS;
-  unsigned int connection_count = lupine_client_transport_size();
-  for (unsigned int i = 0; i < connection_count; ++i) {
-    nvmlReturn_t result = lupine_rpc_nvmlInitWithFlags(
-        lupine_client_transport_connection(i), flags);
-    if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
-      first_error = result;
-    }
-  }
-  return first_error;
+  return nvml_init_all_connections(
+      [flags](conn_t *conn) { return lupine_rpc_nvmlInitWithFlags(conn, flags); });
 }
 
 extern "C" nvmlReturn_t nvmlShutdown(void) {

@@ -472,29 +472,45 @@ int client_handler(lupine_socket_t connfd) {
   return checkpoint_result;
 }
 
-#ifdef __linux__
-int lupine_server_serve_connection_v1(int fd) {
+#ifndef _WIN32
+static bool lupine_start_connection_child(lupine_socket_t connfd,
+                                          bool use_checkpoint_provider = true) {
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+  return lupine_server_checkpoint_child_start(connfd, use_checkpoint_provider);
+#else
+  (void)use_checkpoint_provider;
+  return lupine_install_child_signal_handler(connfd);
+#endif
+}
+
+static bool lupine_is_stream_socket(int fd) {
   int type = 0;
   socklen_t length = sizeof(type);
+  return getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &length) == 0 &&
+         type == SOCK_STREAM;
+}
+
+static int lupine_serve_inherited_connection(int connfd,
+                                             bool use_checkpoint_provider) {
+  lupine_socket_apply_transport_options(connfd);
+  if (!lupine_start_connection_child(connfd, use_checkpoint_provider)) {
+    lupine_socket_close(connfd);
+    return EXIT_FAILURE;
+  }
+  return client_handler(connfd) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+#endif
+
+#ifdef __linux__
+int lupine_server_serve_connection_v1(int fd) {
   if (!rpc_server_validate(lupine_rpc_handlers()) || lupine_socket_init() < 0 ||
-      getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &length) != 0 ||
-      type != SOCK_STREAM) {
+      !lupine_is_stream_socket(fd)) {
     LUPINE_LOG_ERROR("Server connection requires a valid stream socket.");
     lupine_socket_close(fd);
     return EXIT_FAILURE;
   }
-  lupine_socket_apply_transport_options(fd);
-#ifdef LUPINE_BUILD_CUDA_BACKEND
   // The embedding application owns checkpoint publication and restore.
-  bool started = lupine_server_checkpoint_child_start(fd, false);
-#else
-  bool started = lupine_install_child_signal_handler(fd);
-#endif
-  if (!started) {
-    lupine_socket_close(fd);
-    return EXIT_FAILURE;
-  }
-  return client_handler(fd) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+  return lupine_serve_inherited_connection(fd, false);
 }
 #endif
 
@@ -514,28 +530,13 @@ int lupine_server_main() {
   if (const char *inherited = getenv("LUPINE_CONNECTION_FD")) {
     char *end = nullptr;
     long fd = strtol(inherited, &end, 10);
-    int type = 0;
-    socklen_t length = sizeof(type);
     if (end == inherited || *end != '\0' || fd < 0 || fd > INT_MAX ||
-        getsockopt(static_cast<int>(fd), SOL_SOCKET, SO_TYPE, &type, &length) !=
-            0 ||
-        type != SOCK_STREAM) {
+        !lupine_is_stream_socket(static_cast<int>(fd))) {
       LUPINE_LOG_ERROR(
           "LUPINE_CONNECTION_FD must name an inherited stream socket");
       return EXIT_FAILURE;
     }
-    int connfd = static_cast<int>(fd);
-    lupine_socket_apply_transport_options(connfd);
-#ifdef LUPINE_BUILD_CUDA_BACKEND
-    bool started = lupine_server_checkpoint_child_start(connfd);
-#else
-    bool started = lupine_install_child_signal_handler(connfd);
-#endif
-    if (!started) {
-      lupine_socket_close(connfd);
-      return EXIT_FAILURE;
-    }
-    return client_handler(connfd) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    return lupine_serve_inherited_connection(static_cast<int>(fd), true);
   }
 #endif
 
@@ -682,12 +683,7 @@ int lupine_server_main() {
       lupine_child_bulk_fd = bulk_pair[1];
       lupine_child_bulk_token =
           lupine_hex(bulk_token.bytes, sizeof(bulk_token.bytes));
-#ifdef LUPINE_BUILD_CUDA_BACKEND
-      bool child_started = lupine_server_checkpoint_child_start(connfd);
-#else
-      bool child_started = lupine_install_child_signal_handler(connfd);
-#endif
-      if (!child_started) {
+      if (!lupine_start_connection_child(connfd)) {
         LUPINE_LOG_ERROR("Failed to initialize graceful child shutdown.");
         lupine_socket_close(connfd);
         exit(EXIT_FAILURE);
