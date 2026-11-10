@@ -466,17 +466,13 @@ void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
     if (!copies.empty()) {
       CUcontext context = nullptr;
       (void)cuStreamGetCtx(stream, &context);
-      lupine_pending_dtoh_copies().upsert(
-          conn,
-          [&](lupine_pending_dtoh_streams &streams, libcuckoo::UpsertContext) {
-            for (const auto &copy : copies) {
-              lupine_retain_graph_resources(resources);
-              streams[stream].push_back({nullptr, copy.client, copy.server_src,
-                                         lupine_dtoh_storage::borrowed, context,
-                                         resources});
-            }
-          },
-          lupine_pending_dtoh_streams{});
+      lupine_pending_dtoh_items pending;
+      for (const auto &copy : copies) {
+        lupine_retain_graph_resources(resources);
+        pending.push_back({nullptr, copy.client, copy.server_src,
+                           lupine_dtoh_storage::borrowed, context, resources});
+      }
+      lupine_queue_pending_dtoh_copies(conn, stream, std::move(pending));
     }
     lupine_stream_capture_resource_map().insert_or_assign(stream, resources);
   }
@@ -3040,13 +3036,7 @@ static void lupine_defer_dtoh(conn_t *conn, CUstream stream,
                                           ? lupine_dtoh_storage::pinned
                                           : lupine_dtoh_storage::heap};
         (void)cuStreamGetCtx(stream, &copy.context);
-        lupine_pending_dtoh_copies().upsert(
-            conn,
-            [stream, &copy](lupine_pending_dtoh_streams &streams,
-                            libcuckoo::UpsertContext) {
-              streams[stream].push_back(copy);
-            },
-            lupine_pending_dtoh_streams{});
+        lupine_queue_pending_dtoh_copies(conn, stream, {copy});
         lupine_note_dtoh_undelivered(conn, stream, client, host, false);
         host = nullptr;
       }
@@ -3171,13 +3161,7 @@ int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
                                     server_host,
                                     lupine_dtoh_storage::borrowed};
       (void)cuStreamGetCtx(stream, &copy.context);
-      lupine_pending_dtoh_copies().upsert(
-          conn,
-          [stream, &copy](lupine_pending_dtoh_streams &streams,
-                          libcuckoo::UpsertContext) {
-            streams[stream].push_back(copy);
-          },
-          lupine_pending_dtoh_streams{});
+      lupine_queue_pending_dtoh_copies(conn, stream, {copy});
       // A later HtoD from this memory reads the client's bytes, which this
       // copy only reaches at delivery, so it overlays the mirror instead.
       lupine_note_dtoh_undelivered(conn, stream, {dstHost, byteCount},
