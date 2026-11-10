@@ -870,11 +870,40 @@ extern "C" CUresult cuModuleGetLoadingMode(CUmoduleLoadingMode *mode) {
   return return_value;
 }
 
+static std::mutex &lupine_local_cuinit_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
 extern "C" CUresult cuInit(unsigned int flags) {
   CUresult first_error = CUDA_SUCCESS;
   bool initialized_any = false;
   if (lupine_local_cuda_available()) {
-    CUresult result = lupine_call_real_cuda_fn("cuInit", flags);
+    // lupine_apply_visible_devices filters the combined local + remote device
+    // table once. Hide CUDA_VISIBLE_DEVICES while initializing the local
+    // driver so it does not pre-filter or reject local devices beforehand.
+    CUresult result = CUDA_ERROR_UNKNOWN;
+    {
+      std::lock_guard<std::mutex> lock(lupine_local_cuinit_mutex());
+      const char *raw_visible = getenv("CUDA_VISIBLE_DEVICES");
+      const bool had_visible = raw_visible != nullptr;
+      std::string saved_visible = had_visible ? raw_visible : "";
+      if (had_visible) {
+#ifdef _WIN32
+        _putenv_s("CUDA_VISIBLE_DEVICES", "");
+#else
+        unsetenv("CUDA_VISIBLE_DEVICES");
+#endif
+      }
+      result = lupine_call_real_cuda_fn("cuInit", flags);
+      if (had_visible) {
+#ifdef _WIN32
+        _putenv_s("CUDA_VISIBLE_DEVICES", saved_visible.c_str());
+#else
+        setenv("CUDA_VISIBLE_DEVICES", saved_visible.c_str(), 1);
+#endif
+      }
+    }
     if (result != CUDA_SUCCESS && first_error == CUDA_SUCCESS) {
       first_error = result;
     } else if (result == CUDA_SUCCESS) {
