@@ -1649,8 +1649,7 @@ CUresult cuDevSmResourceSplitByCount(CUdevResource *result,
                                      unsigned int *nbGroups,
                                      const CUdevResource *input,
                                      CUdevResource *remainder,
-                                     unsigned int flags,
-                                     unsigned int minCount);
+                                     unsigned int flags, unsigned int minCount);
 /**
  * @guard CUDA_VERSION >= 13010
  * @routingkey CURRENT_CONTEXT
@@ -1661,10 +1660,10 @@ CUresult cuDevSmResourceSplitByCount(CUdevResource *result,
  * @param flags SEND_ONLY
  * @param groupParams SEND_RECV LENGTH:nbGroups
  */
-CUresult cuDevSmResourceSplit(
-    CUdevResource *result, unsigned int nbGroups,
-    const CUdevResource *input, CUdevResource *remainder, unsigned int flags,
-    CU_DEV_SM_RESOURCE_GROUP_PARAMS *groupParams);
+CUresult cuDevSmResourceSplit(CUdevResource *result, unsigned int nbGroups,
+                              const CUdevResource *input,
+                              CUdevResource *remainder, unsigned int flags,
+                              CU_DEV_SM_RESOURCE_GROUP_PARAMS *groupParams);
 /**
  * @guard CUDA_VERSION >= 12040
  * @routingkey CURRENT_CONTEXT
@@ -1750,11 +1749,12 @@ CUresult cuGreenCtxWaitEvent(CUgreenCtx hCtx, CUevent hEvent);
 CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
                            unsigned int Flags);
 /**
+ * @disabled server - manual stream callback forwarding
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param callback SEND_ONLY
+ * @param userData SEND_ONLY
  * @param flags SEND_ONLY
- * @disabled
  */
 CUresult cuStreamAddCallback(CUstream hStream, CUstreamCallback callback,
                              void *userData, unsigned int flags);
@@ -2141,9 +2141,11 @@ cuLaunchCooperativeKernelMultiDevice(CUDA_LAUNCH_PARAMS *launchParamsList,
                                      unsigned int numDevices,
                                      unsigned int flags);
 /**
- * @disabled - manual host callback forwarding
+ * @disabled server - manual host callback forwarding
+ * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param fn SEND_ONLY
+ * @param userData SEND_ONLY
  */
 CUresult cuLaunchHostFunc(CUstream hStream, CUhostFn fn, void *userData);
 /**
@@ -2292,28 +2294,29 @@ CUresult cuGraphMemsetNodeGetParams(CUgraphNode hNode,
 CUresult cuGraphMemsetNodeSetParams(CUgraphNode hNode,
                                     const CUDA_MEMSET_NODE_PARAMS *nodeParams);
 /**
- * @disabled - manual callback forwarding
+ * @disabled server - manual callback forwarding
+ * @recordowner GRAPH_NODE phGraphNode
  * @param phGraphNode SEND_RECV
  * @param hGraph SEND_ONLY
- * @param dependencies SEND_RECV
  * @param numDependencies SEND_ONLY
- * @param nodeParams SEND_RECV
+ * @param dependencies SEND_ONLY LENGTH:numDependencies
+ * @param nodeParams SEND_ONLY DEREF
  */
 CUresult cuGraphAddHostNode(CUgraphNode *phGraphNode, CUgraph hGraph,
                             const CUgraphNode *dependencies,
                             size_t numDependencies,
                             const CUDA_HOST_NODE_PARAMS *nodeParams);
 /**
- * @disabled - manual host callback trampoline (see cuGraphAddHostNode)
+ * @disabled server - manual host callback trampoline (see cuGraphAddHostNode)
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_RECV
  */
 CUresult cuGraphHostNodeGetParams(CUgraphNode hNode,
                                   CUDA_HOST_NODE_PARAMS *nodeParams);
 /**
- * @disabled - manual host callback trampoline (see cuGraphAddHostNode)
+ * @disabled server - manual host callback trampoline (see cuGraphAddHostNode)
  * @param hNode SEND_ONLY
- * @param nodeParams SEND_RECV
+ * @param nodeParams SEND_ONLY DEREF
  */
 CUresult cuGraphHostNodeSetParams(CUgraphNode hNode,
                                   const CUDA_HOST_NODE_PARAMS *nodeParams);
@@ -2503,8 +2506,10 @@ CUresult cuGraphAddMemAllocNode(CUgraphNode *phGraphNode, CUgraph hGraph,
       lupine_translate_mem_location(route, route_params.poolProps.location);
   if (status != CUDA_SUCCESS)
     return status;
-  if (route_params.accessDescCount > SIZE_MAX / sizeof(*route_params.accessDescs) ||
-      (route_params.accessDescCount != 0 && route_params.accessDescs == nullptr))
+  if (route_params.accessDescCount >
+          SIZE_MAX / sizeof(*route_params.accessDescs) ||
+      (route_params.accessDescCount != 0 &&
+       route_params.accessDescs == nullptr))
     return CUDA_ERROR_INVALID_VALUE;
   std::vector<CUmemAccessDesc> route_descriptors;
   if (route_params.accessDescCount != 0)
@@ -2546,7 +2551,8 @@ CUresult cuGraphMemAllocNodeGetParams(CUgraphNode hNode,
     }
     for (size_t i = 0; i < params_out->accessDescCount; ++i)
       lupine_restore_mem_location(
-          route, const_cast<CUmemAccessDesc &>(params_out->accessDescs[i]).location);
+          route,
+          const_cast<CUmemAccessDesc &>(params_out->accessDescs[i]).location);
   }
   return return_value;
 }
@@ -2745,8 +2751,7 @@ CUresult cuGraphExecGetFlags(CUgraphExec hGraphExec, cuuint64_t *flags);
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
  */
-CUresult cuGraphNodeSetParams(CUgraphNode hNode,
-                              CUgraphNodeParams *nodeParams);
+CUresult cuGraphNodeSetParams(CUgraphNode hNode, CUgraphNodeParams *nodeParams);
 /**
  * @guard CUDA_VERSION >= 12020
  * @param hGraphExec SEND_ONLY
@@ -2788,7 +2793,7 @@ cuGraphExecMemsetNodeSetParams(CUgraphExec hGraphExec, CUgraphNode hNode,
                                const CUDA_MEMSET_NODE_PARAMS *memsetParams,
                                CUcontext ctx);
 /**
- * @disabled - manual host callback trampoline (see cuGraphAddHostNode)
+ * @disabled server - manual host callback trampoline (see cuGraphAddHostNode)
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF

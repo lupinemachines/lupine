@@ -64,10 +64,18 @@ int main() {
   CUgraphNode depA[] = {A};
   DRV(cuGraphAddEmptyNode(&B, graph, depA, 1));
 
+  CUgraphNode depB[] = {B};
+  CUDA_HOST_NODE_PARAMS null_hp = {};
+  CUgraphNode untouched_node = reinterpret_cast<CUgraphNode>(0x1234);
+  CHECK(cuGraphAddHostNode(&untouched_node, graph, depB, 1, &null_hp) ==
+            CUDA_ERROR_INVALID_VALUE,
+        "cuGraphAddHostNode rejects null fn");
+  CHECK(untouched_node == reinterpret_cast<CUgraphNode>(0x1234),
+        "cuGraphAddHostNode preserves output on null fn");
+
   CUDA_HOST_NODE_PARAMS hp = {};
   hp.fn = host_cb;
   hp.userData = (void *)0xCAFEF00D;
-  CUgraphNode depB[] = {B};
   DRV(cuGraphAddHostNode(&C, graph, depB, 1, &hp));
 
   CUgraphNode depBC[] = {B, C};
@@ -220,6 +228,8 @@ int main() {
   DRV(cuGraphHostNodeGetParams(C, &got));
   CHECK(got.fn == host_cb && got.userData == (void *)0xCAFEF00D,
         "cuGraphHostNodeGetParams returns original fn/userData");
+  CHECK(cuGraphHostNodeSetParams(C, &null_hp) == CUDA_ERROR_INVALID_VALUE,
+        "cuGraphHostNodeSetParams rejects null fn");
   CUDA_HOST_NODE_PARAMS np = {};
   np.fn = host_cb;
   np.userData = (void *)0xBEEF;
@@ -231,8 +241,16 @@ int main() {
 
   CUgraphExec exec;
   DRV(cuGraphInstantiateWithFlags(&exec, graph, 0));
+  CHECK(cuGraphExecHostNodeSetParams(exec, C, &null_hp) ==
+            CUDA_ERROR_INVALID_VALUE,
+        "cuGraphExecHostNodeSetParams rejects null fn");
   CUstream stream;
   DRV(cuStreamCreate(&stream, 0));
+  CHECK(cuLaunchHostFunc(stream, nullptr, nullptr) == CUDA_ERROR_INVALID_VALUE,
+        "cuLaunchHostFunc rejects null fn");
+  CHECK(cuStreamAddCallback(stream, nullptr, nullptr, 0) ==
+            CUDA_ERROR_INVALID_VALUE,
+        "cuStreamAddCallback rejects null callback");
   DRV(cuGraphLaunch(exec, stream));
   DRV(cuStreamSynchronize(stream));
   CHECK(g_host_calls >= 1 && g_host_user == (void *)0xBEEF,
