@@ -1136,7 +1136,9 @@ static int rpc_write_start(conn_t *conn, const int op, bool scoped,
   }
   bool client = conn->local_request_parity == 0;
   scoped = scoped && client;
-  bool keyed = scoped && key != RPC_SCOPE_NONE && key != RPC_SCOPE_LANE;
+  bool host_writes = scoped && key == RPC_SCOPE_HOST_WRITES;
+  bool keyed = scoped && key != RPC_SCOPE_NONE && key != RPC_SCOPE_LANE &&
+               !host_writes;
   int call_lock_result = 0;
   if (request_nested_in_response) {
     // Never wait for a call that may itself be waiting for this response's
@@ -1187,18 +1189,22 @@ static int rpc_write_start(conn_t *conn, const int op, bool scoped,
           : 0;
   conn->write_awaited = false;
   conn->write_scope = {};
-  conn->write_stream_id = rpc_http2_lane_stream(conn, rpc_tls_lane.id);
+  conn->write_stream_id = rpc_http2_lane_stream(
+      conn, host_writes ? ~uint64_t{0} : rpc_tls_lane.id);
   if (conn->write_stream_id < 0) {
     rpc_release_write_builder(conn, request_nested_in_response);
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
   }
-  conn->write_scope.publish_connection = !scoped || key == RPC_SCOPE_NONE;
+  conn->write_scope.publish_connection =
+      !scoped || key == RPC_SCOPE_NONE || host_writes;
   if (scoped) {
     conn->write_scope.scoped = true;
     if (keyed) {
       conn->write_scope.keys[conn->write_scope.key_count++] = key;
     }
+  }
+  if (scoped && !host_writes) {
     rpc_scope_wait_for(conn, rpc_scope_snapshot(conn, RPC_SCOPE_NONE));
     if (keyed) {
       rpc_scope_wait_for(conn, rpc_scope_snapshot(conn, key));

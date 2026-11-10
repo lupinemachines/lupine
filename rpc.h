@@ -135,6 +135,11 @@ typedef struct conn_t conn_t;
 // publishes nothing, so only the sender's own lane follows it.
 static constexpr uintptr_t RPC_SCOPE_NONE = 0;
 static constexpr uintptr_t RPC_SCOPE_LANE = ~uintptr_t{0};
+// Host memory a client sends to the server's copy goes in order on a lane of
+// its own and waits for nothing, so it never queues behind a handler that is
+// blocked, possibly on a callback that is waiting to send it; every later
+// request waits for it.
+static constexpr uintptr_t RPC_SCOPE_HOST_WRITES = ~uintptr_t{1};
 
 // The last unanswered request on an object, and the lane that sent it.
 struct rpc_scope_ticket {

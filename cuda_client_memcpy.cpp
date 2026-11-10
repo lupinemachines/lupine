@@ -283,7 +283,7 @@ int lupine_settle_host_flushes(conn_t *conn) {
   // its answer says they are applied.
   uint32_t count = 0;
   if (rpc_write_start_request_on(conn, LUPINE_RPC_lupineManagedHostFlush,
-                                 RPC_SCOPE_NONE) < 0 ||
+                                 RPC_SCOPE_HOST_WRITES) < 0 ||
       rpc_write(conn, &count, sizeof(count)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
     return -1;
@@ -1438,7 +1438,7 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
     // the bytes before releasing this request's ticket, and every later
     // request from any lane, such as a server-authoritative HtoD, waits for
     // it.
-    if (rpc_write_start_request_on(conn, LUPINE_RPC_lupineManagedHostFlush, RPC_SCOPE_NONE) < 0 ||
+    if (rpc_write_start_request_on(conn, LUPINE_RPC_lupineManagedHostFlush, RPC_SCOPE_HOST_WRITES) < 0 ||
         rpc_write(conn, &count, sizeof(count)) < 0 ||
         rpc_write_cursors(conn, cursors.data(), count * 2) < 0 ||
         rpc_write_end(conn) < 0) {
@@ -4176,7 +4176,10 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
   uint8_t host = to_host ? 1 : 0;
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (!queued ||
-      lupine_rpc_start_on_stream(conn, LUPINE_RPC_lupineMemcpyHtoDBulk, nullptr) < 0 ||
+      (to_host ? rpc_write_start_request_on(conn, LUPINE_RPC_lupineMemcpyHtoDBulk,
+                                            RPC_SCOPE_HOST_WRITES)
+               : lupine_rpc_start_on_stream(conn, LUPINE_RPC_lupineMemcpyHtoDBulk,
+                                            nullptr)) < 0 ||
       rpc_write(conn, &copy_id, sizeof(copy_id)) < 0 ||
       rpc_write(conn, &destination, sizeof(destination)) < 0 ||
       rpc_write(conn, &bytes, sizeof(bytes)) < 0 ||

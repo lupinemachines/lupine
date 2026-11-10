@@ -2239,14 +2239,17 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   if (pushed_bytes != 0 && pushed_bytes != bytes) {
     return -1;
   }
-  // An unanswered copy is pushed, and lands before its ticket is released,
-  // so later work on any stream sees it as the synchronous call promises.
+  // An unanswered copy is pushed. A synchronous copy from pageable memory
+  // waits for the legacy stream's earlier work and returns once its bytes are
+  // staged, not landed, so queueing it on the legacy stream keeps that
+  // promise; waiting for the stream here instead would hold this lane, and
+  // every later ticket on it, behind work that may wait on this client.
   if (fire_and_forget && pushed_bytes != bytes) {
     return -1;
   }
   if (pushed_bytes != 0) {
     result = lupine_copy_pushed_host_to_device(
-        conn, CU_STREAM_LEGACY, true,
+        conn, CU_STREAM_LEGACY, !fire_and_forget,
         lupine_make_linear_htod_copy(destination, source, bytes));
   }
   int request_id = rpc_read_end(conn);
