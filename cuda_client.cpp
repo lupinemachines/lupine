@@ -4484,13 +4484,14 @@ static int lupine_read_jit_outputs(conn_t *conn, unsigned int numOptions,
     const bool is_log = is_info_log || options[i] == CU_JIT_ERROR_LOG_BUFFER;
     size_t length = 0;
     if (rpc_read(conn, &length, sizeof(length)) < 0 ||
-        rpc_read(conn, is_log ? optionValues[i] : &optionValues[i], length) <
-            0) {
+        (length != 0 &&
+         rpc_read(conn, is_log ? optionValues[i] : &optionValues[i], length) <
+             0)) {
       return -1;
     }
     if (is_log) {
       size_t log_size = log_sizes[is_info_log ? 0 : 1];
-      if (log_size != 0) {
+      if (log_size != 0 && optionValues[i] != nullptr) {
         auto *log = static_cast<char *>(optionValues[i]);
         log[length < log_size ? length : log_size - 1] = '\0';
       }
@@ -4502,7 +4503,8 @@ static int lupine_read_jit_outputs(conn_t *conn, unsigned int numOptions,
 extern "C" CUresult cuLinkCreate_v2(unsigned int numOptions,
                                     CUjit_option *options, void **optionValues,
                                     CUlinkState *stateOut) {
-  if (stateOut == nullptr) {
+  if (stateOut == nullptr ||
+      (numOptions != 0 && (options == nullptr || optionValues == nullptr))) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   lupine_route route = lupine_route_for_default();
@@ -4538,6 +4540,10 @@ extern "C" CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type,
                                      unsigned int numOptions,
                                      CUjit_option *options,
                                      void **optionValues) {
+  if ((size != 0 && data == nullptr) ||
+      (numOptions != 0 && (options == nullptr || optionValues == nullptr))) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
   lupine_route route = lupine_route_for_default();
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuLinkAddData_v2", state, type, data, size,
@@ -4574,6 +4580,10 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
                                      const char *path, unsigned int numOptions,
                                      CUjit_option *options,
                                      void **optionValues) {
+  if (path == nullptr ||
+      (numOptions != 0 && (options == nullptr || optionValues == nullptr))) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
   lupine_route route = lupine_route_for_default();
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuLinkAddFile_v2", state, type, path,
@@ -5235,7 +5245,8 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
                                        unsigned int numOptions,
                                        CUjit_option *options,
                                        void **optionValues) {
-  if (module == nullptr || image == nullptr) {
+  if (module == nullptr || image == nullptr ||
+      (numOptions != 0 && (options == nullptr || optionValues == nullptr))) {
     return CUDA_ERROR_INVALID_VALUE;
   }
 
