@@ -1255,6 +1255,8 @@ static void lupine_prefetch_function_param_layout(CUfunction function,
 // of the three costs a round trip. A response that carries no functions (a
 // failed load, or a server whose driver cannot enumerate a module) leaves the
 // caches alone and every lookup falls back to its own request.
+static constexpr uint32_t LUPINE_PARAM_COUNT_UNKNOWN = UINT32_MAX;
+
 static int lupine_read_module_functions(conn_t *conn, CUmodule module,
                                         lupine_route route) {
   uint32_t count = 0;
@@ -1272,13 +1274,17 @@ static int lupine_read_module_functions(conn_t *conn, CUmodule module,
     uint32_t param_count = 0;
     if (rpc_read(conn, name.data(), name_length) < 0 || name.back() != '\0' ||
         rpc_read(conn, &function, sizeof(function)) < 0 ||
-        rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
-        param_count > 64 * 1024) {
+        rpc_read(conn, &param_count, sizeof(param_count)) < 0) {
+      return -1;
+    }
+    const bool params_known = param_count != LUPINE_PARAM_COUNT_UNKNOWN;
+    const uint32_t wire_params = params_known ? param_count : 0;
+    if (wire_params > 64 * 1024) {
       return -1;
     }
     name.resize(name_length - 1);
     uintptr_t handle = reinterpret_cast<uintptr_t>(function);
-    for (uint32_t index = 0; index < param_count; ++index) {
+    for (uint32_t index = 0; index < wire_params; ++index) {
       lupine_param_info_value param = {};
       if (rpc_read(conn, &param.offset, sizeof(param.offset)) < 0 ||
           rpc_read(conn, &param.size, sizeof(param.size)) < 0) {
@@ -1292,8 +1298,10 @@ static int lupine_read_module_functions(conn_t *conn, CUmodule module,
                                                 function, 0}) < 0) {
       return -1;
     }
-    lupine_param_layout_count_cache().insert_or_assign(
-        lupine_param_layout_key{handle, false}, param_count);
+    if (params_known) {
+      lupine_param_layout_count_cache().insert_or_assign(
+          lupine_param_layout_key{handle, false}, param_count);
+    }
     lupine_note_function_owner_route(function, route);
     lupine_module_function_names().insert_or_assign(
         lupine_module_function_name_key{module, std::move(name)}, function);
@@ -2196,6 +2204,13 @@ static CUresult lupine_cuGetParamInfo_cached(uintptr_t handle,
           lupine_param_layout_key{handle, kernel}, param_count) &&
       param_index >= param_count) {
     return CUDA_ERROR_INVALID_VALUE;
+  }
+
+  CUcontext current_ctx = lupine_current_context_hint();
+  if (kernel && current_ctx != nullptr &&
+      lupine_routes_share_server(lupine_route_for_context(current_ctx),
+                                 route)) {
+    (void)lupine_set_current_context_on_route(route, current_ctx);
   }
 
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -5302,13 +5317,17 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
     if (rpc_read(conn, name.data(), name_length) < 0 || name.back() != '\0' ||
         rpc_read(conn, &kernel, sizeof(kernel)) < 0 || kernel == nullptr ||
         rpc_read(conn, &function, sizeof(function)) < 0 ||
-        rpc_read(conn, &param_count, sizeof(param_count)) < 0 ||
-        param_count > 64 * 1024) {
+        rpc_read(conn, &param_count, sizeof(param_count)) < 0) {
+      return -1;
+    }
+    const bool params_known = param_count != LUPINE_PARAM_COUNT_UNKNOWN;
+    const uint32_t wire_params = params_known ? param_count : 0;
+    if (wire_params > 64 * 1024) {
       return -1;
     }
     enumeration.kernels.push_back(kernel);
     name.resize(name_length - 1);
-    for (uint32_t index = 0; index < param_count; ++index) {
+    for (uint32_t index = 0; index < wire_params; ++index) {
       lupine_param_info_value param = {};
       if (rpc_read(conn, &param.offset, sizeof(param.offset)) < 0 ||
           rpc_read(conn, &param.size, sizeof(param.size)) < 0) {
@@ -5339,14 +5358,19 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
                                         LUPINE_FUNC_ATTRIBUTE_DEVICE},
           device);
     }
-    lupine_param_layout_count_cache().insert_or_assign(
-        lupine_param_layout_key{reinterpret_cast<uintptr_t>(kernel), true},
-        param_count);
+    if (params_known) {
+      lupine_param_layout_count_cache().insert_or_assign(
+          lupine_param_layout_key{reinterpret_cast<uintptr_t>(kernel), true},
+          param_count);
+    }
     if (function != nullptr) {
       lupine_note_function_owner_route(function, route);
-      lupine_param_layout_count_cache().insert_or_assign(
-          lupine_param_layout_key{reinterpret_cast<uintptr_t>(function), false},
-          param_count);
+      if (params_known) {
+        lupine_param_layout_count_cache().insert_or_assign(
+            lupine_param_layout_key{reinterpret_cast<uintptr_t>(function),
+                                    false},
+            param_count);
+      }
       lupine_kernel_function_cache().insert_or_assign(
           lupine_kernel_function_key{lupine_route_identity(route), context,
                                      kernel},
