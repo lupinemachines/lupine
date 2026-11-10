@@ -691,9 +691,13 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
       return;
     }
 
-    lupine_queue_dirty_host_range(allocation, page, page + page_size);
-
+    // Writable first, then published. The faulting store runs after this
+    // returns, so a flush that takes the page has to re-protect it, and the
+    // store faults again; one that runs before it is published never touches
+    // the page, and a later flush sends the store. Published first, a flush in
+    // between would send the old bytes and the page would turn writable after.
     mprotect(reinterpret_cast<void *>(page), page_size, PROT_READ | PROT_WRITE);
+    lupine_queue_dirty_host_range(allocation, page, page + page_size);
     __atomic_sub_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_RELEASE);
     return;
   }
