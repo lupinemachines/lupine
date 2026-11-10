@@ -679,6 +679,15 @@ static void *lupine_alloc_process_host_buffer(size_t bytes) {
   return ptr;
 }
 
+// The legacy default stream waits for blocking streams' earlier work but not
+// for non-blocking streams, whose copies may not have run when it finishes.
+static bool lupine_legacy_stream_waits_for(CUstream stream) {
+  unsigned int flags = 0;
+  return stream == nullptr ||
+         (cuStreamGetFlags(stream, &flags) == CUDA_SUCCESS &&
+          (flags & CU_STREAM_NON_BLOCKING) == 0);
+}
+
 std::vector<lupine_pending_dtoh_item>
 lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
                                   bool all_streams, CUcontext context) {
@@ -687,11 +696,16 @@ lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
   lupine_pending_dtoh_copies().erase_fn(
       conn, [&](lupine_pending_dtoh_streams &streams) {
         for (auto it = streams.begin(); it != streams.end();) {
+          // Copies on a stream this call covers go, and so do copies on
+          // another stream that one covered here waited for through an event.
+          bool covered =
+              all_streams || it->first == stream ||
+              (stream == nullptr && lupine_legacy_stream_waits_for(it->first));
           auto &items = it->second;
           items.erase(std::remove_if(
                           items.begin(), items.end(),
                           [&](const auto &item) {
-                            if (!all_streams && it->first != stream &&
+                            if (!covered &&
                                 (inherited == nullptr ||
                                  item.graph_resources != inherited) &&
                                 std::find(item.waiting_streams.begin(),

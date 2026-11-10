@@ -334,7 +334,7 @@ def deferred_dtoh_detach(metadata) -> str:
         return (
             "    CUcontext context = nullptr;\n"
             f"    if (cuStreamGetCtx({target}, &context) == CUDA_SUCCESS)\n"
-            f"      pending = lupine_detach_pending_dtoh_copies(conn, {target}, {target} == nullptr, context);\n"
+            f"      pending = lupine_detach_pending_dtoh_copies(conn, {target}, false, context);\n"
         )
     if kind == "EVENT":
         return f"    pending = lupine_detach_event_dtoh_copies(conn, {target});\n"
