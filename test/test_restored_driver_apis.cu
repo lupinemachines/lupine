@@ -37,6 +37,12 @@ extern "C" CUresult cuGetProcAddress(const char *, void **, int, cuuint64_t);
 
 __global__ void store(int *out, int value) { *out = value; }
 
+__global__ void spin(long long cycles) {
+  long long start = clock64();
+  while (clock64() - start < cycles) {
+  }
+}
+
 static int resolve(void *library, const char *proc_name,
                    const char *symbol_name, void **function) {
   void *symbol = dlsym(library, symbol_name);
@@ -90,9 +96,14 @@ int main() {
   descriptor.NumChannels = 1;
   CUarray array = nullptr;
   CHECK_DRIVER(cuArrayCreate(&array, &descriptor));
+  // cuMemcpyDtoA is asynchronous to the host and runs on the legacy stream, so
+  // only a blocking stream orders the read after it. The kernel queues the copy
+  // behind a backlog, as a busy GPU would.
+  spin<<<1, 1>>>(100000000LL);
+  CHECK_CUDA(cudaGetLastError());
   CHECK_DRIVER(cuMemcpyDtoA(array, 0, staging, count));
   CUstream stream = nullptr;
-  CHECK_DRIVER(cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING));
+  CHECK_DRIVER(cuStreamCreate(&stream, CU_STREAM_DEFAULT));
   std::vector<unsigned char> actual(count, 0);
   CHECK_DRIVER(reinterpret_cast<AtoHAsync>(atoh_async)(actual.data(), array, 16,
                                                       count - 16, stream));
