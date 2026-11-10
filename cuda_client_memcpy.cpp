@@ -4257,23 +4257,13 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
     lanes = lupine_client_transport_bulk_lanes(conn);
   }
   // A striped copy still waits: its chunks travel on the bulk connections.
-  if (lanes == nullptr &&
-      lupine_htod_fire_and_forget(route, dstDevice, ByteCount, pushed_bytes)) {
-    // The ticket keeps this copy in submission order against work issued on
-    // other lanes, which is the ordering the reply used to provide.
-    if (lupine_prepare_rpc(conn) < 0 ||
-        lupine_rpc_start_on_stream(conn, RPC_cuMemcpyHtoD_v2, nullptr) < 0 ||
-        rpc_write(conn, &is_server_authoritative,
-                  sizeof(is_server_authoritative)) < 0 ||
-        rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
-        rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
-        rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
-        rpc_write(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0 ||
-        rpc_write(conn, srcHost, pushed_bytes) < 0 || rpc_write_end(conn) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    return lupine_sync_mapped_device_to_host();
-  }
+  // Otherwise the ticket of a copy sent without waiting keeps it in
+  // submission order against work issued on other lanes, which is the
+  // ordering the reply used to provide.
+  bool fire_and_forget =
+      lanes == nullptr &&
+      lupine_htod_fire_and_forget(route, dstDevice, ByteCount, pushed_bytes);
+  return_value = CUDA_SUCCESS;
   if (lanes != nullptr) {
     return_value = lupine_prepare_rpc(conn) < 0
                        ? CUDA_ERROR_DEVICE_UNAVAILABLE
@@ -4287,11 +4277,13 @@ extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
              rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
              rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
              rpc_write(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0 ||
-             (pushed_bytes != 0 &&
-              rpc_write(conn, srcHost, pushed_bytes) < 0) ||
-             rpc_wait_for_response(conn) < 0 ||
-             rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-             rpc_read_end(conn) < 0) {
+             rpc_write(conn, srcHost, pushed_bytes) < 0 ||
+             (fire_and_forget
+                  ? rpc_write_end(conn) < 0
+                  : rpc_wait_for_response(conn) < 0 ||
+                        rpc_read(conn, &return_value, sizeof(return_value)) <
+                            0 ||
+                        rpc_read_end(conn) < 0)) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
@@ -4378,25 +4370,10 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
                                 : srcHost;
   uint64_t pushed_bytes =
       lupine_htod_pushed_bytes(is_server_authoritative, srcHost, ByteCount);
-  if (lupine_htod_async_fire_and_forget(route, dstDevice, srcHost, ByteCount,
-                                        is_server_authoritative,
-                                        pushed_bytes)) {
-    if (lupine_prepare_rpc(conn) < 0 ||
-        lupine_rpc_start_on_stream(conn, RPC_cuMemcpyHtoDAsync_v2, hStream) < 0 ||
-        rpc_write(conn, &is_server_authoritative,
-                  sizeof(is_server_authoritative)) < 0 ||
-        rpc_write(conn, &dstDevice, sizeof(dstDevice)) < 0 ||
-        rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
-        rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
-        rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
-        rpc_write(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0 ||
-        rpc_write(conn, srcHost, pushed_bytes) < 0 ||
-        rpc_write_end(conn) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    return CUDA_SUCCESS;
-  }
-  CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  bool fire_and_forget = lupine_htod_async_fire_and_forget(
+      route, dstDevice, srcHost, ByteCount, is_server_authoritative,
+      pushed_bytes);
+  CUresult return_value = CUDA_SUCCESS;
   if (lupine_prepare_rpc(conn) < 0 ||
       lupine_rpc_start_on_stream(conn, RPC_cuMemcpyHtoDAsync_v2, hStream) < 0 ||
       rpc_write(conn, &is_server_authoritative,
@@ -4406,10 +4383,12 @@ extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write(conn, &wire_source, sizeof(wire_source)) < 0 ||
       rpc_write(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0 ||
-      (pushed_bytes != 0 && rpc_write(conn, srcHost, pushed_bytes) < 0) ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_write(conn, srcHost, pushed_bytes) < 0 ||
+      (fire_and_forget
+           ? rpc_write_end(conn) < 0
+           : rpc_wait_for_response(conn) < 0 ||
+                 rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+                 rpc_read_end(conn) < 0)) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return return_value;

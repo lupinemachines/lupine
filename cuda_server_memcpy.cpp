@@ -2267,8 +2267,7 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   }
   // An unanswered copy's failure reaches the client from its next
   // synchronize, as a launch's does.
-  if (fire_and_forget) {
-    lupine_keep_async_error(conn, result);
+  if (lupine_unanswered(conn, result)) {
     return 0;
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2976,34 +2975,9 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   // Only a page-locked source or a small pushed one is sent fire-and-forget.
   // It holds its ticket until the copy is queued, not until the stream reaches
   // it, and a failure reaches the client from its next synchronize.
-  if (fire_and_forget && pushed_bytes != 0) {
-    if (pushed_bytes > LUPINE_INLINE_HTOD_BYTES) {
-      return -1;
-    }
-    result = lupine_copy_pushed_host_to_device(
-        conn, stream, false,
-        lupine_make_linear_htod_copy(dstDevice, srcHost, byteCount));
-    if (rpc_read_end(conn) < 0) {
-      return -1;
-    }
-    lupine_keep_async_error(conn, result);
-    return 0;
-  }
-  if (fire_and_forget) {
-    if (byteCount == 0 || rpc_read_end(conn) < 0) {
-      return -1;
-    }
-    lupine_keep_async_error(
-        conn, is_server_authoritative
-                  ? cuMemcpyAsync(dstDevice,
-                                  reinterpret_cast<CUdeviceptr>(srcHost),
-                                  byteCount, stream)
-                  : lupine_copy_client_host_to_device(
-                        conn, stream, false,
-                        lupine_make_linear_htod_copy(dstDevice, srcHost,
-                                                     byteCount),
-                        false));
-    return 0;
+  if (fire_and_forget &&
+      (byteCount == 0 || pushed_bytes > LUPINE_INLINE_HTOD_BYTES)) {
+    return -1;
   }
   if (pushed_bytes != 0) {
     result = lupine_copy_pushed_host_to_device(
@@ -3021,7 +2995,11 @@ int handle_cuMemcpyHtoDAsync_v2(conn_t *conn) {
   } else if (byteCount != 0 && pushed_bytes == 0) {
     result = lupine_copy_client_host_to_device(
         conn, stream, false,
-        lupine_make_linear_htod_copy(dstDevice, srcHost, byteCount));
+        lupine_make_linear_htod_copy(dstDevice, srcHost, byteCount),
+        !fire_and_forget);
+  }
+  if (lupine_unanswered(conn, result)) {
+    return 0;
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
