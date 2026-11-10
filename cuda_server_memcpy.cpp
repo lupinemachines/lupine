@@ -145,13 +145,14 @@ struct lupine_graph_host_copy_node {
   // Zero for heap staging. A pinned buffer is freed only while its buffer id
   // still matches: destroying its context frees it and the address can return.
   unsigned long long buffer_id = 0;
+  bool borrowed = false;
   lupine_graph_host_copy_node *next = nullptr;
 };
 
 struct lupine_graph_resources {
-  void add_dtoh_copy(lupine_graph_host_copy copy,
-                     unsigned long long buffer_id) {
-    auto *node = new lupine_graph_host_copy_node{copy, buffer_id};
+  void add_dtoh_copy(lupine_graph_host_copy copy, unsigned long long buffer_id,
+                     bool borrowed) {
+    auto *node = new lupine_graph_host_copy_node{copy, buffer_id, borrowed};
     node->next = dtoh_copies.load(std::memory_order_relaxed);
     while (!dtoh_copies.compare_exchange_weak(node->next, node,
                                               std::memory_order_release,
@@ -165,6 +166,16 @@ struct lupine_graph_resources {
     size_t first = copies.size();
     for (auto *node = dtoh_copies.load(std::memory_order_acquire);
          node != nullptr; node = node->next) {
+      if (node->borrowed && node->buffer_id != 0) {
+        unsigned long long current_id = 0;
+        if (cuPointerGetAttribute(
+                &current_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
+                reinterpret_cast<CUdeviceptr>(node->copy.server_src)) !=
+                CUDA_SUCCESS ||
+            current_id != node->buffer_id) {
+          continue;
+        }
+      }
       copies.push_back(node->copy);
     }
     std::reverse(copies.begin() + first, copies.end());
@@ -230,14 +241,16 @@ static void lupine_free_retired_graph_staging() {
     void *host = node->copy.server_src;
     if (host != nullptr) {
       lupine_forget_undelivered_dtoh(host);
-      unsigned long long buffer_id = 0;
-      if (node->buffer_id == 0) {
-        std::free(host);
-      } else if (cuPointerGetAttribute(
-                     &buffer_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
-                     reinterpret_cast<CUdeviceptr>(host)) == CUDA_SUCCESS &&
-                 buffer_id == node->buffer_id) {
-        (void)cuMemFreeHost(host);
+      if (!node->borrowed) {
+        unsigned long long buffer_id = 0;
+        if (node->buffer_id == 0) {
+          std::free(host);
+        } else if (cuPointerGetAttribute(
+                       &buffer_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
+                       reinterpret_cast<CUdeviceptr>(host)) == CUDA_SUCCESS &&
+                   buffer_id == node->buffer_id) {
+          (void)cuMemFreeHost(host);
+        }
       }
     }
     delete std::exchange(node, node->next);
@@ -505,7 +518,7 @@ void *lupine_alloc_capture_scratch(size_t bytes) {
 
 void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
                                  const lupine_host_rows &client,
-                                 void *server_src) {
+                                 void *server_src, bool borrowed) {
   unsigned long long buffer_id = 0;
   if (server_src != nullptr &&
       cuPointerGetAttribute(&buffer_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
@@ -513,7 +526,7 @@ void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
           CUDA_SUCCESS) {
     buffer_id = 0;
   }
-  resources->add_dtoh_copy({client, server_src}, buffer_id);
+  resources->add_dtoh_copy({client, server_src}, buffer_id, borrowed);
 }
 
 // A DtoH the stream has executed whose bytes have not been delivered to the
@@ -3222,17 +3235,14 @@ int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
   }
 
   if (capture_status != CU_STREAM_CAPTURE_STATUS_NONE) {
-    // Graph replay owns its staging storage and uses the application pointer.
     auto *resources = lupine_get_stream_resources(stream);
-    void *host = lupine_alloc_capture_scratch(byteCount);
-    if (host != nullptr || byteCount == 0) {
-      CUresult result =
-          cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
-      if (result == CUDA_SUCCESS) {
-        lupine_graph_note_dtoh_copy(resources, {dstHost, byteCount}, host);
-        lupine_note_dtoh_undelivered(conn, stream, {dstHost, byteCount}, host,
-                                     true);
-      }
+    CUresult result =
+        cuMemcpyDtoHAsync_v2(server_host, srcDevice, byteCount, stream);
+    if (result == CUDA_SUCCESS && byteCount != 0) {
+      lupine_graph_note_dtoh_copy(resources, {client_alias, byteCount},
+                                  server_host, true);
+      lupine_note_dtoh_undelivered(conn, stream, {dstHost, byteCount},
+                                   server_host, true);
     }
   } else {
     // Copy into the owning server's existing pinned allocation. Returning the
