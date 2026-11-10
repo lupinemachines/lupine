@@ -684,6 +684,19 @@ static CUstream lupine_pending_dtoh_queue(CUstream stream) {
   return stream == CU_STREAM_LEGACY ? nullptr : stream;
 }
 
+static std::atomic<uint64_t> &lupine_dtoh_sequence() {
+  static std::atomic<uint64_t> sequence{0};
+  return sequence;
+}
+
+uint64_t lupine_next_dtoh_sequence() {
+  return lupine_dtoh_sequence().fetch_add(1, std::memory_order_relaxed);
+}
+
+uint64_t lupine_dtoh_sequence_now() {
+  return lupine_dtoh_sequence().load(std::memory_order_relaxed);
+}
+
 // The legacy default stream waits for blocking streams' earlier work but not
 // for non-blocking streams, whose copies may not have run when it finishes.
 static bool lupine_legacy_stream_waits_for(CUstream stream) {
@@ -713,9 +726,10 @@ void lupine_queue_pending_dtoh_copies(conn_t *conn, CUstream stream,
       lupine_pending_dtoh_streams{});
 }
 
-std::vector<lupine_pending_dtoh_item>
+lupine_pending_dtoh_items
 lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
-                                  bool all_streams, CUcontext context) {
+                                  bool all_streams, CUcontext context,
+                                  uint64_t before) {
   std::vector<lupine_pending_dtoh_item> copies;
   stream = lupine_pending_dtoh_queue(stream);
   auto *inherited = lupine_find_stream_resources(stream);
@@ -736,7 +750,8 @@ lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
                            (stream == nullptr && item.legacy_ordered) ||
                            (inherited != nullptr &&
                             item.graph_resources == inherited);
-            if (!covered || (context != nullptr && item.context != context)) {
+            if (!covered || (context != nullptr && item.context != context) ||
+                item.sequence >= before) {
               kept.push_back(item);
             } else if (item.event == nullptr) {
               copies.push_back(item);
@@ -2610,7 +2625,8 @@ void CUDA_CB lupine_graph_host_callback(void *userData) {
   conn_t *conn = callback->conn;
   auto pending =
       callback->stream.has_value()
-          ? lupine_detach_pending_dtoh_copies(conn, *callback->stream, false)
+          ? lupine_detach_pending_dtoh_copies(conn, *callback->stream, false,
+                                              nullptr, callback->dtoh_before)
           : lupine_pending_dtoh_items{};
   int transfer_count = static_cast<int>(copies.size() + pending.size());
   bool failed =
@@ -2652,7 +2668,8 @@ void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
   void *fn = reinterpret_cast<void *>(callback->callback);
   void *client_user_data = callback->userData;
   void *response = nullptr;
-  auto pending = lupine_detach_pending_dtoh_copies(conn, stream, false);
+  auto pending = lupine_detach_pending_dtoh_copies(conn, stream, false, nullptr,
+                                                   callback->dtoh_before);
   if (rpc_write_start_request(conn, LUPINE_SIDE_EFFECT_STREAM_CALLBACK) >= 0 &&
       rpc_copy_alloc(conn, sizeof(uint32_t)) >= 0 &&
       lupine_write_pending_dtoh_copies(conn, pending, true) >= 0 &&
@@ -3307,6 +3324,11 @@ int handle_cuLaunchHostFunc(conn_t *conn) {
   auto *callback = new lupine_host_callback_data{
       conn,      fn,     userData,
       resources, stream, capture_status == CU_STREAM_CAPTURE_STATUS_NONE};
+  // A captured callback runs at each replay, behind copies queued since; only
+  // a one-shot callback knows which copies are ahead of it.
+  if (callback->one_shot) {
+    callback->dtoh_before = lupine_dtoh_sequence_now();
+  }
   result = cuLaunchHostFunc(stream, lupine_graph_host_callback, callback);
   if (result != CUDA_SUCCESS) {
     delete callback;
@@ -3337,7 +3359,8 @@ int handle_cuStreamAddCallback(conn_t *conn) {
     return -1;
   }
 
-  auto *data = new lupine_stream_callback_data{conn, callback, userData};
+  auto *data = new lupine_stream_callback_data{conn, callback, userData,
+                                               lupine_dtoh_sequence_now()};
   result = cuStreamAddCallback(stream, lupine_stream_callback, data, flags);
   if (result != CUDA_SUCCESS) {
     delete data;
