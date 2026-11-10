@@ -47,8 +47,8 @@ static int resolve(void *library, const char *proc_name,
                    const char *symbol_name, void **function) {
   void *symbol = dlsym(library, symbol_name);
   *function = nullptr;
-  CUresult result = cuGetProcAddress(proc_name, function,
-                                   CUDA_VERSION < 12000 ? CUDA_VERSION : 12000, 0);
+  CUresult result = cuGetProcAddress(
+      proc_name, function, CUDA_VERSION < 12000 ? CUDA_VERSION : 12000, 0);
   if (symbol == nullptr || result != CUDA_SUCCESS || *function == nullptr) {
     fprintf(stderr, "%s: dlsym %p, cuGetProcAddress %d\n", proc_name, symbol,
             result);
@@ -106,7 +106,7 @@ int main() {
   CHECK_DRIVER(cuStreamCreate(&stream, CU_STREAM_DEFAULT));
   std::vector<unsigned char> actual(count, 0);
   CHECK_DRIVER(reinterpret_cast<AtoHAsync>(atoh_async)(actual.data(), array, 16,
-                                                      count - 16, stream));
+                                                       count - 16, stream));
   CHECK_DRIVER(cuStreamSynchronize(stream));
   if (std::memcmp(actual.data(), expected.data() + 16, count - 16) != 0) {
     fprintf(stderr, "cuMemcpyAtoHAsync returned the wrong bytes\n");
@@ -116,7 +116,8 @@ int main() {
   int fd = -1;
   CUresult range_result = reinterpret_cast<HandleForRange>(handle_for_range)(
       &fd, staging, 2 << 20, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
-  if (range_result != CUDA_SUCCESS && range_result != CUDA_ERROR_NOT_SUPPORTED &&
+  if (range_result != CUDA_SUCCESS &&
+      range_result != CUDA_ERROR_NOT_SUPPORTED &&
       range_result != CUDA_ERROR_INVALID_VALUE) {
     fprintf(stderr, "cuMemGetHandleForAddressRange returned %d\n",
             range_result);
@@ -125,13 +126,13 @@ int main() {
   printf("cuMemGetHandleForAddressRange: %d\n", range_result);
 
   CUfunction store_function = nullptr;
-  CHECK_CUDA(cudaGetFuncBySymbol(reinterpret_cast<cudaFunction_t *>(
-                                     &store_function),
-                                 (const void *)store));
+  CHECK_CUDA(
+      cudaGetFuncBySymbol(reinterpret_cast<cudaFunction_t *>(&store_function),
+                          (const void *)store));
   int *out = reinterpret_cast<int *>(staging);
   CHECK_DRIVER(cuParamSetSize(store_function, sizeof(out) + sizeof(int)));
   CHECK_DRIVER(reinterpret_cast<ParamSetv>(param_setv)(store_function, 0, &out,
-                                                      sizeof(out)));
+                                                       sizeof(out)));
   CHECK_DRIVER(cuParamSeti(store_function, sizeof(out), 1234));
   CHECK_DRIVER(cuFuncSetBlockShape(store_function, 1, 1, 1));
   CHECK_DRIVER(cuLaunchGrid(store_function, 1, 1));
@@ -144,18 +145,54 @@ int main() {
   }
 
 #if CUDA_VERSION >= 12000
+  using EncodeTiled = CUresult (*)(
+      CUtensorMap *, CUtensorMapDataType, cuuint32_t, void *,
+      const cuuint64_t *, const cuuint64_t *, const cuuint32_t *,
+      const cuuint32_t *, CUtensorMapInterleave, CUtensorMapSwizzle,
+      CUtensorMapL2promotion, CUtensorMapFloatOOBfill);
   using EncodeIm2col = CUresult (*)(
       CUtensorMap *, CUtensorMapDataType, cuuint32_t, void *,
       const cuuint64_t *, const cuuint64_t *, const int *, const int *,
       cuuint32_t, cuuint32_t, const cuuint32_t *, CUtensorMapInterleave,
       CUtensorMapSwizzle, CUtensorMapL2promotion, CUtensorMapFloatOOBfill);
   using ReplaceAddress = CUresult (*)(CUtensorMap *, void *);
+  void *encode_tiled = nullptr;
   void *encode_im2col = nullptr;
   void *replace_address = nullptr;
-  if (resolve(library, "cuTensorMapEncodeIm2col", "cuTensorMapEncodeIm2col",
+  if (resolve(library, "cuTensorMapEncodeTiled", "cuTensorMapEncodeTiled",
+              &encode_tiled) ||
+      resolve(library, "cuTensorMapEncodeIm2col", "cuTensorMapEncodeIm2col",
               &encode_im2col) ||
-      resolve(library, "cuTensorMapReplaceAddress",
-              "cuTensorMapReplaceAddress", &replace_address)) {
+      resolve(library, "cuTensorMapReplaceAddress", "cuTensorMapReplaceAddress",
+              &replace_address)) {
+    return 1;
+  }
+
+  const cuuint64_t rank1_dim[1] = {64};
+  const cuuint64_t rank1_stride[1] = {16};
+  const cuuint32_t rank1_box[1] = {16};
+  const cuuint32_t rank1_elem_stride[1] = {1};
+  CUtensorMap tiled_rank1{};
+  CUresult rank1_null_stride = reinterpret_cast<EncodeTiled>(encode_tiled)(
+      &tiled_rank1, CU_TENSOR_MAP_DATA_TYPE_FLOAT32, 1,
+      reinterpret_cast<void *>(staging), rank1_dim, nullptr, rank1_box,
+      rank1_elem_stride, CU_TENSOR_MAP_INTERLEAVE_NONE,
+      CU_TENSOR_MAP_SWIZZLE_NONE, CU_TENSOR_MAP_L2_PROMOTION_NONE,
+      CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
+  if (rank1_null_stride != CUDA_ERROR_INVALID_VALUE) {
+    fprintf(stderr, "rank-1 cuTensorMapEncodeTiled(nullptr stride) = %d\n",
+            rank1_null_stride);
+    return 1;
+  }
+  CUresult rank1_result = reinterpret_cast<EncodeTiled>(encode_tiled)(
+      &tiled_rank1, CU_TENSOR_MAP_DATA_TYPE_FLOAT32, 1,
+      reinterpret_cast<void *>(staging), rank1_dim, rank1_stride, rank1_box,
+      rank1_elem_stride, CU_TENSOR_MAP_INTERLEAVE_NONE,
+      CU_TENSOR_MAP_SWIZZLE_NONE, CU_TENSOR_MAP_L2_PROMOTION_NONE,
+      CU_TENSOR_MAP_FLOAT_OOB_FILL_NONE);
+  if (rank1_result != CUDA_SUCCESS &&
+      rank1_result != CUDA_ERROR_NOT_SUPPORTED) {
+    fprintf(stderr, "rank-1 cuTensorMapEncodeTiled = %d\n", rank1_result);
     return 1;
   }
 

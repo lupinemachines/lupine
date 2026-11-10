@@ -130,6 +130,7 @@ class ArrayOperation:
     # if int, it's a constant length, if Parameter, it's a variable length
     length: Union[int, Parameter]
     nullable: bool = True
+    length_offset: int = 0
 
     @property
     def is_void_bytes(self) -> bool:
@@ -145,14 +146,26 @@ class ArrayOperation:
             else self.length.type
         )
         fmt = t.format()
-        return "unsigned" not in fmt and fmt != "size_t"
+        return (
+            "unsigned" not in fmt
+            and fmt != "size_t"
+            and not fmt.startswith(("uint", "cuuint"))
+        )
 
-    def count_expr(self) -> str:
+    def _base_count_expr(self) -> str:
         if isinstance(self.length, int):
             return str(self.length)
         if isinstance(self.length.type, Pointer):
             return f"({self.length.name} != nullptr ? *{self.length.name} : 0)"
         return self.length.name
+
+    def count_expr(self) -> str:
+        base = self._base_count_expr()
+        if self.length_offset < 0:
+            return f"({base} - {-self.length_offset})"
+        if self.length_offset > 0:
+            return f"({base} + {self.length_offset})"
+        return base
 
     def transfer_size_expr(self) -> str:
         # SIZE:<bytes> is a byte count whatever the pointee type.
@@ -160,6 +173,8 @@ class ArrayOperation:
             raw = self.count_expr()
         else:
             raw = f"{self.count_expr()} * sizeof({self.ptr.ptr_to.format()})"
+        if self.length_offset < 0:
+            return f"({self._base_count_expr()} <= {-self.length_offset} ? 0 : {raw})"
         if self.has_signed_length:
             return f"({self.count_expr()} <= 0 ? 0 : {raw})"
         return raw
@@ -168,6 +183,10 @@ class ArrayOperation:
         if isinstance(self.length, int):
             return str(self.length)
         # Pointer length parameters are unmarshalled into scalar server locals.
+        if self.length_offset < 0:
+            return f"({self.length.name} - {-self.length_offset})"
+        if self.length_offset > 0:
+            return f"({self.length.name} + {self.length_offset})"
         return self.length.name
 
     def server_transfer_size_expr(self) -> str:
@@ -178,6 +197,8 @@ class ArrayOperation:
                 f"{self.server_element_count_expr()} * "
                 f"sizeof({self.ptr.ptr_to.format()})"
             )
+        if self.length_offset < 0:
+            return f"({self.length.name} <= {-self.length_offset} ? 0 : {raw})"
         if self.has_signed_length:
             return f"({self.server_element_count_expr()} <= 0 ? 0 : {raw})"
         return raw

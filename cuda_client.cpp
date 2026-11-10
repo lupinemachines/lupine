@@ -3301,38 +3301,6 @@ CUresult cuStreamSynchronize(CUstream hStream);
 // a stream capture open, where a pageable copy must stay a graph node.
 extern std::atomic<int> lupine_active_stream_captures;
 
-extern "C" CUresult cuMemPoolSetAttribute(CUmemoryPool pool,
-                                          CUmemPool_attribute attr,
-                                          void *value) {
-  if (value == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  size_t value_size = 0;
-  if (!lupine_mem_pool_attribute_size(attr, &value_size)) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-
-  lupine_route route = lupine_route_for_memory_pool(pool);
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn("cuMemPoolSetAttribute", pool, attr, value);
-  }
-
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemPoolSetAttribute) < 0 ||
-      rpc_write(conn, &pool, sizeof(pool)) < 0 ||
-      rpc_write(conn, &attr, sizeof(attr)) < 0 ||
-      rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
-      rpc_write(conn, value, value_size) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return return_value;
-}
-
 static thread_local CUcontext lupine_current_context = nullptr;
 static thread_local CUcontext lupine_default_context_hint = nullptr;
 static std::atomic<CUcontext> lupine_global_default_context_hint{nullptr};
@@ -3682,42 +3650,6 @@ extern "C" CUresult cuCtxGetDevice(CUdevice *device) {
   if (return_value == CUDA_SUCCESS) {
     *device = lupine_local_device_for_remote(conn, remote_device);
     lupine_current_context_device_cache_insert(lupine_current_context, *device);
-  }
-  return return_value;
-}
-
-extern "C" CUresult cuMemPoolGetAttribute(CUmemoryPool pool,
-                                          CUmemPool_attribute attr,
-                                          void *value) {
-  if (value == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  size_t value_size = 0;
-  if (!lupine_mem_pool_attribute_size(attr, &value_size)) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-
-  lupine_route route = lupine_route_for_memory_pool(pool);
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn("cuMemPoolGetAttribute", pool, attr, value);
-  }
-
-  conn_t *conn = lupine_route_remote_conn(route);
-  unsigned char staged[64] = {};
-  CUresult return_value;
-  if (value_size > sizeof(staged) || lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuMemPoolGetAttribute) < 0 ||
-      rpc_write(conn, &pool, sizeof(pool)) < 0 ||
-      rpc_write(conn, &attr, sizeof(attr)) < 0 ||
-      rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, staged, value_size) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (return_value == CUDA_SUCCESS) {
-    memcpy(value, staged, value_size);
   }
   return return_value;
 }
@@ -7991,149 +7923,53 @@ conn_t *rpc_client_get_connection(unsigned int index) {
 int rpc_size() { return static_cast<int>(lupine_client_transport_size()); }
 
 #if CUDA_VERSION >= 12000
-extern "C" CUresult cuTensorMapEncodeTiled(
-    CUtensorMap *tensorMap, CUtensorMapDataType tensorDataType,
+bool lupine_tensor_map_cache_lookup(
+    lupine_route route, CUtensorMapDataType tensorDataType,
     cuuint32_t tensorRank, void *globalAddress, const cuuint64_t *globalDim,
     const cuuint64_t *globalStrides, const cuuint32_t *boxDim,
     const cuuint32_t *elementStrides, CUtensorMapInterleave interleave,
     CUtensorMapSwizzle swizzle, CUtensorMapL2promotion l2Promotion,
-    CUtensorMapFloatOOBfill oobFill) {
-  if (tensorMap == nullptr || tensorRank == 0 || tensorRank > 5 ||
-      globalAddress == nullptr || globalDim == nullptr || boxDim == nullptr ||
-      elementStrides == nullptr ||
-      (tensorRank > 1 && globalStrides == nullptr)) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-
-  CUdeviceptr address_rpc = reinterpret_cast<CUdeviceptr>(globalAddress);
-  lupine_route route = lupine_route_for_deviceptr(address_rpc);
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn(
-        "cuTensorMapEncodeTiled", tensorMap, tensorDataType, tensorRank,
-        globalAddress, globalDim, globalStrides, boxDim, elementStrides,
-        interleave, swizzle, l2Promotion, oobFill);
-  }
-
-  conn_t *conn = lupine_route_remote_conn(route);
-  void *remote_address =
-      reinterpret_cast<void *>(static_cast<uintptr_t>(address_rpc));
+    CUtensorMapFloatOOBfill oobFill, std::string *key, uint64_t *generation,
+    CUtensorMap *tensorMap) {
   const size_t rank_bytes_u64 = tensorRank * sizeof(cuuint64_t);
   const size_t stride_bytes = (tensorRank - 1) * sizeof(cuuint64_t);
   const size_t rank_bytes_u32 = tensorRank * sizeof(cuuint32_t);
-
-  std::string key;
-  auto append = [&key](const auto &value) {
-    key.append(reinterpret_cast<const char *>(&value), sizeof(value));
+  auto append = [key](const auto &value) {
+    key->append(reinterpret_cast<const char *>(&value), sizeof(value));
   };
   append(lupine_route_identity(route));
   append(tensorDataType);
   append(tensorRank);
-  append(remote_address);
-  key.append(reinterpret_cast<const char *>(globalDim), rank_bytes_u64);
+  append(globalAddress);
+  key->append(reinterpret_cast<const char *>(globalDim), rank_bytes_u64);
   if (stride_bytes != 0)
-    key.append(reinterpret_cast<const char *>(globalStrides), stride_bytes);
-  key.append(reinterpret_cast<const char *>(boxDim), rank_bytes_u32);
-  key.append(reinterpret_cast<const char *>(elementStrides), rank_bytes_u32);
+    key->append(reinterpret_cast<const char *>(globalStrides), stride_bytes);
+  key->append(reinterpret_cast<const char *>(boxDim), rank_bytes_u32);
+  key->append(reinterpret_cast<const char *>(elementStrides), rank_bytes_u32);
   append(interleave);
   append(swizzle);
   append(l2Promotion);
   append(oobFill);
-  uint64_t generation;
-  {
-    std::lock_guard<std::mutex> lock(lupine_tensor_map_mutex);
-    auto cached = lupine_tensor_maps.find(key);
-    if (cached != lupine_tensor_maps.end()) {
-      *tensorMap = cached->second;
-      return CUDA_SUCCESS;
-    }
-    generation = lupine_tensor_map_generation;
-  }
 
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTensorMapEncodeTiled) < 0 ||
-      rpc_write(conn, &tensorDataType, sizeof(tensorDataType)) < 0 ||
-      rpc_write(conn, &tensorRank, sizeof(tensorRank)) < 0 ||
-      rpc_write(conn, &remote_address, sizeof(remote_address)) < 0 ||
-      rpc_write(conn, globalDim, rank_bytes_u64) < 0 ||
-      (stride_bytes != 0 && rpc_write(conn, globalStrides, stride_bytes) < 0) ||
-      rpc_write(conn, boxDim, rank_bytes_u32) < 0 ||
-      rpc_write(conn, elementStrides, rank_bytes_u32) < 0 ||
-      rpc_write(conn, &interleave, sizeof(interleave)) < 0 ||
-      rpc_write(conn, &swizzle, sizeof(swizzle)) < 0 ||
-      rpc_write(conn, &l2Promotion, sizeof(l2Promotion)) < 0 ||
-      rpc_write(conn, &oobFill, sizeof(oobFill)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, tensorMap, sizeof(*tensorMap)) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  std::lock_guard<std::mutex> lock(lupine_tensor_map_mutex);
+  auto cached = lupine_tensor_maps.find(*key);
+  if (cached != lupine_tensor_maps.end()) {
+    *tensorMap = cached->second;
+    return true;
   }
-  if (result == CUDA_SUCCESS) {
-    std::lock_guard<std::mutex> lock(lupine_tensor_map_mutex);
-    // Do not repopulate a cache cleared while this RPC was in flight.
-    if (generation != lupine_tensor_map_generation)
-      return result;
-    if (lupine_tensor_maps.size() >= kLupineTensorMapCacheLimit)
-      lupine_tensor_maps.clear();
-    lupine_tensor_maps.insert_or_assign(std::move(key), *tensorMap);
-  }
-  return result;
+  *generation = lupine_tensor_map_generation;
+  return false;
 }
 
-extern "C" CUresult cuTensorMapEncodeIm2col(
-    CUtensorMap *tensorMap, CUtensorMapDataType tensorDataType,
-    cuuint32_t tensorRank, void *globalAddress, const cuuint64_t *globalDim,
-    const cuuint64_t *globalStrides, const int *pixelBoxLowerCorner,
-    const int *pixelBoxUpperCorner, cuuint32_t channelsPerPixel,
-    cuuint32_t pixelsPerColumn, const cuuint32_t *elementStrides,
-    CUtensorMapInterleave interleave, CUtensorMapSwizzle swizzle,
-    CUtensorMapL2promotion l2Promotion, CUtensorMapFloatOOBfill oobFill) {
-  if (tensorMap == nullptr || tensorRank < 3 || tensorRank > 5 ||
-      globalAddress == nullptr || globalDim == nullptr ||
-      globalStrides == nullptr || pixelBoxLowerCorner == nullptr ||
-      pixelBoxUpperCorner == nullptr || elementStrides == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-
-  CUdeviceptr address_rpc = reinterpret_cast<CUdeviceptr>(globalAddress);
-  lupine_route route = lupine_route_for_deviceptr(address_rpc);
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn(
-        "cuTensorMapEncodeIm2col", tensorMap, tensorDataType, tensorRank,
-        globalAddress, globalDim, globalStrides, pixelBoxLowerCorner,
-        pixelBoxUpperCorner, channelsPerPixel, pixelsPerColumn, elementStrides,
-        interleave, swizzle, l2Promotion, oobFill);
-  }
-
-  conn_t *conn = lupine_route_remote_conn(route);
-  const size_t rank_bytes_u64 = tensorRank * sizeof(cuuint64_t);
-  const size_t stride_bytes = (tensorRank - 1) * sizeof(cuuint64_t);
-  const size_t corner_bytes = (tensorRank - 2) * sizeof(int);
-  const size_t rank_bytes_u32 = tensorRank * sizeof(cuuint32_t);
-
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuTensorMapEncodeIm2col) < 0 ||
-      rpc_write(conn, &tensorDataType, sizeof(tensorDataType)) < 0 ||
-      rpc_write(conn, &tensorRank, sizeof(tensorRank)) < 0 ||
-      rpc_write(conn, &globalAddress, sizeof(globalAddress)) < 0 ||
-      rpc_write(conn, globalDim, rank_bytes_u64) < 0 ||
-      rpc_write(conn, globalStrides, stride_bytes) < 0 ||
-      rpc_write(conn, pixelBoxLowerCorner, corner_bytes) < 0 ||
-      rpc_write(conn, pixelBoxUpperCorner, corner_bytes) < 0 ||
-      rpc_write(conn, &channelsPerPixel, sizeof(channelsPerPixel)) < 0 ||
-      rpc_write(conn, &pixelsPerColumn, sizeof(pixelsPerColumn)) < 0 ||
-      rpc_write(conn, elementStrides, rank_bytes_u32) < 0 ||
-      rpc_write(conn, &interleave, sizeof(interleave)) < 0 ||
-      rpc_write(conn, &swizzle, sizeof(swizzle)) < 0 ||
-      rpc_write(conn, &l2Promotion, sizeof(l2Promotion)) < 0 ||
-      rpc_write(conn, &oobFill, sizeof(oobFill)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, tensorMap, sizeof(*tensorMap)) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return result;
+void lupine_tensor_map_cache_insert(std::string key, uint64_t generation,
+                                    const CUtensorMap &tensorMap) {
+  std::lock_guard<std::mutex> lock(lupine_tensor_map_mutex);
+  // Do not repopulate a cache cleared while this RPC was in flight.
+  if (generation != lupine_tensor_map_generation)
+    return;
+  if (lupine_tensor_maps.size() >= kLupineTensorMapCacheLimit)
+    lupine_tensor_maps.clear();
+  lupine_tensor_maps.insert_or_assign(std::move(key), tensorMap);
 }
 #endif
 

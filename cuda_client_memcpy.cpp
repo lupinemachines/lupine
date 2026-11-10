@@ -3540,128 +3540,57 @@ static bool lupine_client_host_allocation_range(CUdeviceptr ptr,
   return true;
 }
 
-extern "C" CUresult cuPointerGetAttribute(void *data,
-                                          CUpointer_attribute attribute,
-                                          CUdeviceptr ptr) {
-  if (data == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
+lupine_pointer_query_context lupine_resolve_pointer_query(CUdeviceptr ptr) {
+  lupine_pointer_query_context ctx;
+  ctx.orig_ptr = ptr;
+  ctx.query_ptr = ptr;
+  ctx.managed_alias = lupine_is_managed_host_alias(ptr);
+  if (!ctx.managed_alias) {
+    ctx.remote_host_alias = lupine_translate_client_host_ptr_to_server(
+        ptr, &ctx.query_ptr, &ctx.remote_host_base, &ctx.remote_device_base);
   }
-  size_t value_size = 0;
-  if (!lupine_pointer_attribute_size(attribute, &value_size)) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-
-  if (value_size > 64) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
-
-  CUdeviceptr query_ptr = ptr;
-  bool managed_alias = lupine_is_managed_host_alias(ptr);
-  CUdeviceptr remote_host_base = 0;
-  CUdeviceptr remote_device_base = 0;
-  bool remote_host_alias = false;
-  if (!managed_alias) {
-    remote_host_alias = lupine_translate_client_host_ptr_to_server(
-        ptr, &query_ptr, &remote_host_base, &remote_device_base);
-  }
-  CUdeviceptr client_range_start = 0;
-  size_t client_range_size = 0;
-  bool has_client_range = (managed_alias || remote_host_alias) &&
-                          lupine_client_host_allocation_range(
-                              ptr, &client_range_start, &client_range_size);
-  lupine_route route = lupine_route_for_deviceptr(query_ptr);
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn("cuPointerGetAttribute", data, attribute,
-                                    query_ptr);
-  }
-  // Identity-VA managed allocations use device VMM on the server, so the
-  // server has no host alias to report. Return the client allocation instead.
-  if (managed_alias && attribute == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
-    void *host = reinterpret_cast<void *>(ptr);
-    memcpy(data, &host, sizeof(host));
-    return CUDA_SUCCESS;
-  }
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuPointerGetAttribute) < 0 ||
-      rpc_write(conn, &attribute, sizeof(attribute)) < 0 ||
-      rpc_write(conn, &query_ptr, sizeof(query_ptr)) < 0 ||
-      rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
-      rpc_write(conn, data, value_size) < 0 ||
-      rpc_wait_for_response(conn) < 0 || rpc_read(conn, data, value_size) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (return_value == CUDA_SUCCESS) {
-    if ((managed_alias || remote_host_alias) &&
-        attribute == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
-      void *host = reinterpret_cast<void *>(ptr);
-      memcpy(data, &host, sizeof(host));
-    } else if (remote_host_alias &&
-               attribute == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
-      CUdeviceptr device_alias =
-          remote_device_base + (query_ptr - remote_host_base);
-      memcpy(data, &device_alias, sizeof(device_alias));
-    } else if (managed_alias && attribute == CU_POINTER_ATTRIBUTE_IS_MANAGED) {
-      int is_managed = 1;
-      memcpy(data, &is_managed, sizeof(is_managed));
-    } else if (has_client_range &&
-               attribute == CU_POINTER_ATTRIBUTE_RANGE_START_ADDR) {
-      memcpy(data, &client_range_start, sizeof(client_range_start));
-    } else if (has_client_range &&
-               attribute == CU_POINTER_ATTRIBUTE_RANGE_SIZE) {
-      memcpy(data, &client_range_size, sizeof(client_range_size));
-    }
-  }
-  return return_value;
+  ctx.has_client_range =
+      (ctx.managed_alias || ctx.remote_host_alias) &&
+      lupine_client_host_allocation_range(ptr, &ctx.client_range_start,
+                                          &ctx.client_range_size);
+  return ctx;
 }
 
-// `value` points at the attribute payload, so the wire must carry the bytes it
-// points to. Sending the pointer itself would make the server dereference an
-// address from this process's address space.
-extern "C" CUresult cuPointerSetAttribute(const void *value,
-                                          CUpointer_attribute attribute,
-                                          CUdeviceptr ptr) {
-  if (value == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
+void lupine_fixup_pointer_attribute_value(
+    const lupine_pointer_query_context &ctx, CUpointer_attribute attribute,
+    void *data) {
+  if ((ctx.managed_alias || ctx.remote_host_alias) &&
+      attribute == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
+    void *host = reinterpret_cast<void *>(ctx.orig_ptr);
+    memcpy(data, &host, sizeof(host));
+  } else if (ctx.managed_alias &&
+             attribute == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
+    memcpy(data, &ctx.query_ptr, sizeof(ctx.query_ptr));
+  } else if (ctx.remote_host_alias &&
+             attribute == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
+    CUdeviceptr device_alias =
+        ctx.remote_device_base + (ctx.query_ptr - ctx.remote_host_base);
+    memcpy(data, &device_alias, sizeof(device_alias));
+  } else if (ctx.managed_alias &&
+             attribute == CU_POINTER_ATTRIBUTE_IS_MANAGED) {
+    int is_managed = 1;
+    memcpy(data, &is_managed, sizeof(is_managed));
+  } else if (ctx.has_client_range &&
+             attribute == CU_POINTER_ATTRIBUTE_RANGE_START_ADDR) {
+    memcpy(data, &ctx.client_range_start, sizeof(ctx.client_range_start));
+  } else if (ctx.has_client_range &&
+             attribute == CU_POINTER_ATTRIBUTE_RANGE_SIZE) {
+    memcpy(data, &ctx.client_range_size, sizeof(ctx.client_range_size));
   }
+}
 
+extern "C" CUdeviceptr
+lupine_resolve_pointer_attribute_target(CUdeviceptr ptr) {
   CUdeviceptr target_ptr = ptr;
   if (!lupine_is_managed_host_alias(ptr)) {
     lupine_translate_client_host_ptr_to_server(ptr, &target_ptr);
   }
-  lupine_route route = lupine_route_for_deviceptr(target_ptr);
-  if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn("cuPointerSetAttribute", value, attribute,
-                                    target_ptr);
-  }
-
-  size_t value_size = 0;
-  if (!lupine_settable_pointer_attribute_size(attribute, &value_size)) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  unsigned char payload[64] = {};
-  if (value_size > sizeof(payload)) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
-  memcpy(payload, value, value_size);
-
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuPointerSetAttribute) < 0 ||
-      rpc_write(conn, &attribute, sizeof(attribute)) < 0 ||
-      rpc_write(conn, &target_ptr, sizeof(target_ptr)) < 0 ||
-      rpc_write(conn, &value_size, sizeof(value_size)) < 0 ||
-      rpc_write(conn, payload, value_size) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return return_value;
+  return target_ptr;
 }
 
 // Attribute values of a live mapped-host allocation are immutable, and
@@ -3718,24 +3647,11 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
     }
   }
 
-  CUdeviceptr query_ptr = ptr;
-  bool managed_alias = lupine_is_managed_host_alias(ptr);
-  CUdeviceptr remote_host_base = 0;
-  CUdeviceptr remote_device_base = 0;
-  bool remote_host_alias = false;
-  if (!managed_alias) {
-    remote_host_alias = lupine_translate_client_host_ptr_to_server(
-        ptr, &query_ptr, &remote_host_base, &remote_device_base);
-  }
-  CUdeviceptr client_range_start = 0;
-  size_t client_range_size = 0;
-  bool has_client_range = (managed_alias || remote_host_alias) &&
-                          lupine_client_host_allocation_range(
-                              ptr, &client_range_start, &client_range_size);
-  lupine_route route = lupine_route_for_deviceptr(query_ptr);
+  lupine_pointer_query_context query = lupine_resolve_pointer_query(ptr);
+  lupine_route route = lupine_route_for_deviceptr(query.query_ptr);
   if (lupine_route_is_local(route)) {
     return lupine_call_real_cuda_fn("cuPointerGetAttributes", numAttributes,
-                                    attributes, data, query_ptr);
+                                    attributes, data, query.query_ptr);
   }
 
   // A pointer in neither the host-allocation registry nor the device-pointer
@@ -3746,7 +3662,7 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   // PyTorch's pin_memory path asks this about every unpinned source tensor,
   // so answering locally removes a per-batch round trip. Attributes outside
   // the probed set fall through to the server.
-  if (!managed_alias && !lupine_host_ptr_is_tracked(ptr) &&
+  if (!query.managed_alias && !lupine_host_ptr_is_tracked(ptr) &&
       !lupine_deviceptr_is_tracked(ptr)) {
     bool replicable = true;
     for (unsigned int i = 0; replicable && i < numAttributes; ++i) {
@@ -3799,10 +3715,10 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   lupine_pointer_attribute_cache_key cache_key;
   std::vector<std::vector<unsigned char>> cached_values;
   bool cacheable = false;
-  if (managed_alias) {
+  if (query.managed_alias) {
     cacheable = lupine_managed_host_alias_base(ptr, &cache_key.ptr);
-  } else if (remote_host_alias) {
-    cache_key.ptr = remote_host_base;
+  } else if (query.remote_host_alias) {
+    cache_key.ptr = query.remote_host_base;
     cacheable = true;
   }
   if (cacheable) {
@@ -3815,29 +3731,7 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
       }
       for (unsigned int i = 0; i < numAttributes; ++i) {
         memcpy(data[i], cached_values[i].data(), cached_values[i].size());
-        if ((managed_alias || remote_host_alias) &&
-            attributes[i] == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
-          void *host = reinterpret_cast<void *>(ptr);
-          memcpy(data[i], &host, sizeof(host));
-        } else if (managed_alias &&
-                   attributes[i] == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
-          memcpy(data[i], &query_ptr, sizeof(query_ptr));
-        } else if (remote_host_alias &&
-                   attributes[i] == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
-          CUdeviceptr device_alias =
-              remote_device_base + (query_ptr - remote_host_base);
-          memcpy(data[i], &device_alias, sizeof(device_alias));
-        } else if (managed_alias &&
-                   attributes[i] == CU_POINTER_ATTRIBUTE_IS_MANAGED) {
-          int is_managed = 1;
-          memcpy(data[i], &is_managed, sizeof(is_managed));
-        } else if (has_client_range &&
-                   attributes[i] == CU_POINTER_ATTRIBUTE_RANGE_START_ADDR) {
-          memcpy(data[i], &client_range_start, sizeof(client_range_start));
-        } else if (has_client_range &&
-                   attributes[i] == CU_POINTER_ATTRIBUTE_RANGE_SIZE) {
-          memcpy(data[i], &client_range_size, sizeof(client_range_size));
-        }
+        lupine_fixup_pointer_attribute_value(query, attributes[i], data[i]);
       }
       return CUDA_SUCCESS;
     }
@@ -3845,7 +3739,7 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
 
   std::vector<CUpointer_attribute> request_attributes;
   const CUpointer_attribute *rpc_attributes = attributes;
-  if (managed_alias) {
+  if (query.managed_alias) {
     request_attributes.assign(attributes, attributes + numAttributes);
     for (auto &attribute : request_attributes) {
       if (attribute == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
@@ -3861,7 +3755,7 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
       rpc_write(conn, &numAttributes, sizeof(numAttributes)) < 0 ||
       rpc_write(conn, rpc_attributes,
                 numAttributes * sizeof(CUpointer_attribute)) < 0 ||
-      rpc_write(conn, &query_ptr, sizeof(query_ptr)) < 0 ||
+      rpc_write(conn, &query.query_ptr, sizeof(query.query_ptr)) < 0 ||
       rpc_wait_for_response(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -3893,26 +3787,7 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
     }
     for (unsigned int i = 0; i < numAttributes; ++i) {
       memcpy(data[i], values[i].data(), values[i].size());
-      if ((managed_alias || remote_host_alias) &&
-          attributes[i] == CU_POINTER_ATTRIBUTE_HOST_POINTER) {
-        void *host = reinterpret_cast<void *>(ptr);
-        memcpy(data[i], &host, sizeof(host));
-      } else if (remote_host_alias &&
-                 attributes[i] == CU_POINTER_ATTRIBUTE_DEVICE_POINTER) {
-        CUdeviceptr device_alias =
-            remote_device_base + (query_ptr - remote_host_base);
-        memcpy(data[i], &device_alias, sizeof(device_alias));
-      } else if (managed_alias &&
-                 attributes[i] == CU_POINTER_ATTRIBUTE_IS_MANAGED) {
-        int is_managed = 1;
-        memcpy(data[i], &is_managed, sizeof(is_managed));
-      } else if (has_client_range &&
-                 attributes[i] == CU_POINTER_ATTRIBUTE_RANGE_START_ADDR) {
-        memcpy(data[i], &client_range_start, sizeof(client_range_start));
-      } else if (has_client_range &&
-                 attributes[i] == CU_POINTER_ATTRIBUTE_RANGE_SIZE) {
-        memcpy(data[i], &client_range_size, sizeof(client_range_size));
-      }
+      lupine_fixup_pointer_attribute_value(query, attributes[i], data[i]);
     }
     if (cacheable) {
       lupine_pointer_attribute_cache().insert_or_assign(cache_key,

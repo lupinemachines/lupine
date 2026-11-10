@@ -36,6 +36,22 @@ lupine_device_attribute_is_virtualized(conn_t *conn, CUdevice_attribute attrib);
 extern "C" bool lupine_host_ptr_is_page_locked(const void *host);
 bool lupine_host_range_is_protected(uintptr_t start, size_t size);
 extern "C" bool lupine_is_managed_host_alias(CUdeviceptr ptr);
+struct lupine_pointer_query_context {
+  CUdeviceptr orig_ptr = 0;
+  CUdeviceptr query_ptr = 0;
+  CUdeviceptr remote_host_base = 0;
+  CUdeviceptr remote_device_base = 0;
+  CUdeviceptr client_range_start = 0;
+  size_t client_range_size = 0;
+  bool managed_alias = false;
+  bool remote_host_alias = false;
+  bool has_client_range = false;
+};
+lupine_pointer_query_context lupine_resolve_pointer_query(CUdeviceptr ptr);
+void lupine_fixup_pointer_attribute_value(
+    const lupine_pointer_query_context &ctx, CUpointer_attribute attribute,
+    void *data);
+extern "C" CUdeviceptr lupine_resolve_pointer_attribute_target(CUdeviceptr ptr);
 extern "C" CUresult lupine_managed_mem_advise(CUdeviceptr ptr, size_t count,
                                               CUmem_advise advice,
                                               CUdevice device);
