@@ -4,6 +4,17 @@
 #include <cuda.h>
 #include <string.h>
 
+// cudaGL.h's types, without the GL/gl.h it includes, which a build may lack.
+typedef unsigned int GLuint;
+typedef unsigned int GLenum;
+#ifndef CUDAGL_H
+typedef enum CUGLDeviceList_enum {
+  CU_GL_DEVICE_LIST_ALL = 0x01,
+  CU_GL_DEVICE_LIST_CURRENT_FRAME = 0x02,
+  CU_GL_DEVICE_LIST_NEXT_FRAME = 0x03,
+} CUGLDeviceList;
+#endif
+
 #ifndef LUPINE_CUDA_COMPAT_TYPES_ONLY
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN

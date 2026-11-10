@@ -64,6 +64,16 @@ LEGACY_ABI_FUNCTIONS = {
     "cuGraphInstantiate_v2",
 }
 
+# cudaGL.h declares these, but it includes GL/gl.h, which neither the codegen
+# image nor every client build has. Their declarations come from the
+# annotations instead, like the legacy ABI entry points above.
+CUDA_GL_FUNCTIONS = {
+    "cuGLGetDevices_v2",
+    "cuGraphicsGLRegisterBuffer",
+    "cuGraphicsGLRegisterImage",
+}
+ANNOTATION_DECLARED_FUNCTIONS = LEGACY_ABI_FUNCTIONS | CUDA_GL_FUNCTIONS
+
 # this table is manually generated from the cuda.h headers
 MANUAL_REMAPPINGS = [
     ("cuDeviceTotalMem", "cuDeviceTotalMem_v2"),
@@ -119,6 +129,9 @@ MANUAL_REMAPPINGS = [
     ("cuLaunchKernel_ptsz", "cuLaunchKernel"),
     ("cuLaunchKernelEx_ptsz", "cuLaunchKernelEx"),
     ("cuLaunchHostFunc_ptsz", "cuLaunchHostFunc"),
+    ("cuGLGetDevices", "cuGLGetDevices_v2"),
+    ("cuGraphicsResourceGetMappedPointer", "cuGraphicsResourceGetMappedPointer_v2"),
+    ("cuGraphicsResourceSetMapFlags", "cuGraphicsResourceSetMapFlags_v2"),
     ("cuGraphicsMapResources_ptsz", "cuGraphicsMapResources"),
     ("cuGraphicsUnmapResources_ptsz", "cuGraphicsUnmapResources"),
     ("cuSignalExternalSemaphoresAsync_ptsz", "cuSignalExternalSemaphoresAsync"),
@@ -568,6 +581,12 @@ def parse_annotation(
         if line.strip().startswith("@async"):
             metadata.async_fire_forget = True
             continue
+        if line.strip().startswith("@remoteclient"):
+            parts = line.split()
+            if len(parts) != 2 or metadata.remote_client is not None:
+                raise RuntimeError("@remoteclient requires one client helper")
+            metadata.remote_client = parts[1]
+            continue
         if line.strip().startswith("@synchronize"):
             parts = line.split()
             options = set(parts[1:])
@@ -998,6 +1017,21 @@ def parse_annotation(
                 "@retain currently requires a RECV_ONLY NULL_TERMINATED parameter"
             )
 
+    if metadata.remote_client is not None:
+        # The client serves remote routes itself, so nothing reaches a server.
+        if (
+            operations
+            or metadata.disabled_client
+            or metadata.disabled_server
+            or metadata.async_fire_forget
+            or metadata.routing_kind == "ALL"
+        ):
+            raise RuntimeError(
+                "@remoteclient cannot be combined with @param, @disabled, "
+                "@async or ALL routing"
+            )
+        metadata.disabled_server = True
+
     return metadata
 
 
@@ -1204,6 +1238,10 @@ def attach_client_call_template(
             f"{name}: client call template returns "
             f"{template.return_type}, but the API returns {return_type}"
         )
+    if metadata.remote_client is not None:
+        raise RuntimeError(
+            f"{name}: @remoteclient functions cannot have a client call template"
+        )
     metadata.client_call_template = template
 
 
@@ -1238,9 +1276,9 @@ def write_rpc_ids(
                 line = f"#define {macro_name}".ljust(79) + f"\\\n  {value}"
             f.write(line + "\n")
 
-        for function, _, _, _ in functions_with_annotations:
+        for function, _, _, metadata in functions_with_annotations:
             name = function.name.format()
-            if name in PRIVATE_RPC_FUNCTIONS:
+            if name in PRIVATE_RPC_FUNCTIONS or metadata.remote_client is not None:
                 continue
             write_rpc_define(f"RPC_{name}", name)
         for name in annotated_names:
@@ -1282,6 +1320,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             '#include "gen_rpc_ids.h"\n\n'
             '#include "client_routing.h"\n'
             '#include "cuda_client.h"\n'
+            '#include "cuda_client_graphics.h"\n'
             '#include "cuda_client_memcpy.h"\n'
             '#include "rpc.h"\n\n'
             "extern int rpc_size();\n"
@@ -1438,7 +1477,6 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 f.write(
                     textwrap.indent(metadata.client_call_template.before_call, "    ")
                 )
-            f.write(f"    {function.return_type.format()} return_value;\n")
             call_args = ", ".join(
                 param.name for param in function.parameters if param.name
             )
@@ -1446,6 +1484,8 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             local_call = f'lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("{function.name.format()}"){helper_args})'
             local_post_call = io.StringIO()
             write_client_post_call(local_post_call, metadata)
+            if metadata.remote_client is None or local_post_call.getvalue():
+                f.write(f"    {function.return_type.format()} return_value;\n")
             if local_post_call.getvalue():
                 f.write("    if (lupine_route_is_local(route)) {\n")
                 f.write(f"        return_value = {local_call};\n")
@@ -1455,6 +1495,12 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             else:
                 f.write("    if (lupine_route_is_local(route))\n")
                 f.write(f"        return {local_call};\n")
+            if metadata.remote_client is not None:
+                f.write(f"    return {metadata.remote_client}({call_args});\n")
+                f.write("}\n\n")
+                if metadata.guard is not None:
+                    f.write("#endif\n\n")
+                continue
             f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
 
             for operation in operations:
@@ -1668,7 +1714,9 @@ def write_cuda_server(
         annotation_only_functions = (
             legacy_abi_functions + annotation_only_server_functions
         )
-        for function, _, _, _ in annotation_only_functions:
+        for function, _, _, metadata in annotation_only_functions:
+            if metadata.remote_client is not None:
+                continue
             name = function.name.format()
             f.write(f"#ifdef {name}\n#undef {name}\n#endif\n")
             params = ", ".join(format_function_params(function))
@@ -1827,7 +1875,7 @@ def main():
         if name in server_function_names:
             continue
         directives = annotation_directives(annotation.doxygen)
-        legacy_abi = name in LEGACY_ABI_FUNCTIONS
+        legacy_abi = name in ANNOTATION_DECLARED_FUNCTIONS
         client_disabled = any(
             directive.startswith("@disabled client")
             for directive in directives
@@ -1879,11 +1927,11 @@ def main():
         function.name.format() for function, _, _, _ in legacy_abi_functions
     }
     missing_legacy_abi_functions = (
-        LEGACY_ABI_FUNCTIONS - found_legacy_abi_functions
+        ANNOTATION_DECLARED_FUNCTIONS - found_legacy_abi_functions
     )
     if missing_legacy_abi_functions:
         raise RuntimeError(
-            "Legacy ABI annotations not found: "
+            "Annotation-declared functions not found: "
             + ", ".join(sorted(missing_legacy_abi_functions))
         )
 
@@ -1903,8 +1951,16 @@ def main():
         annotations_by_target["nccl"],
         client_call_templates=client_call_templates_by_target["nccl"],
     )
+    # A remote-client function is served on the client and has no RPC.
     annotated_names = sorted(
-        {function.name.format() for function in cuda_annotations.namespace.functions}
+        {
+            function.name.format()
+            for function in cuda_annotations.namespace.functions
+            if not any(
+                directive.startswith("@remoteclient")
+                for directive in annotation_directives(function.doxygen)
+            )
+        }
         | {
             name
             for name, binding in server_bindings.items()

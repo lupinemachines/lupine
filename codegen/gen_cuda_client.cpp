@@ -16,6 +16,7 @@
 
 #include "client_routing.h"
 #include "cuda_client.h"
+#include "cuda_client_graphics.h"
 #include "cuda_client_memcpy.h"
 #include "rpc.h"
 
@@ -110,6 +111,27 @@ extern "C" CUresult CUDAAPI cuGraphInstantiate_v2(CUgraphExec *phGraphExec,
 extern "C" CUresult CUDAAPI cuGraphExecUpdate(
     CUgraphExec hGraphExec, CUgraph hGraph, CUgraphNode *hErrorNode_out,
     CUgraphExecUpdateResult *updateResult_out);
+
+#ifdef cuGraphicsGLRegisterBuffer
+#undef cuGraphicsGLRegisterBuffer
+#endif
+extern "C" CUresult CUDAAPI cuGraphicsGLRegisterBuffer(
+    CUgraphicsResource *pCudaResource, GLuint buffer, unsigned int Flags);
+
+#ifdef cuGraphicsGLRegisterImage
+#undef cuGraphicsGLRegisterImage
+#endif
+extern "C" CUresult CUDAAPI
+cuGraphicsGLRegisterImage(CUgraphicsResource *pCudaResource, GLuint image,
+                          GLenum target, unsigned int Flags);
+
+#ifdef cuGLGetDevices_v2
+#undef cuGLGetDevices_v2
+#endif
+extern "C" CUresult CUDAAPI cuGLGetDevices_v2(unsigned int *pCudaDeviceCount,
+                                              CUdevice *pCudaDevices,
+                                              unsigned int cudaDeviceCount,
+                                              CUGLDeviceList deviceList);
 
 CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
                          CUdevice dev) {
@@ -6594,19 +6616,10 @@ CUresult cuTensorMapReplaceAddress(CUtensorMap *tensorMap,
 
 CUresult cuGraphicsUnregisterResource(CUgraphicsResource resource) {
   lupine_route route = lupine_route_for_default();
-  CUresult return_value;
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuGraphicsUnregisterResource"), resource);
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphicsUnregisterResource) < 0 ||
-      rpc_write(conn, &resource, sizeof(CUgraphicsResource)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  return lupine_staged_cuGraphicsUnregisterResource(resource);
 }
 
 CUresult cuGraphicsSubResourceGetMappedArray(CUarray *pArray,
@@ -6614,93 +6627,46 @@ CUresult cuGraphicsSubResourceGetMappedArray(CUarray *pArray,
                                              unsigned int arrayIndex,
                                              unsigned int mipLevel) {
   lupine_route route = lupine_route_for_default();
-  CUresult return_value;
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuGraphicsSubResourceGetMappedArray"), pArray,
         resource, arrayIndex, mipLevel);
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphicsSubResourceGetMappedArray) <
-          0 ||
-      rpc_write(conn, pArray, sizeof(CUarray)) < 0 ||
-      rpc_write(conn, &resource, sizeof(CUgraphicsResource)) < 0 ||
-      rpc_write(conn, &arrayIndex, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, &mipLevel, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pArray, sizeof(CUarray)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  return lupine_staged_cuGraphicsSubResourceGetMappedArray(
+      pArray, resource, arrayIndex, mipLevel);
 }
 
 CUresult
 cuGraphicsResourceGetMappedMipmappedArray(CUmipmappedArray *pMipmappedArray,
                                           CUgraphicsResource resource) {
   lupine_route route = lupine_route_for_default();
-  CUresult return_value;
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuGraphicsResourceGetMappedMipmappedArray"),
         pMipmappedArray, resource);
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(
-          conn, RPC_cuGraphicsResourceGetMappedMipmappedArray) < 0 ||
-      rpc_write(conn, pMipmappedArray, sizeof(CUmipmappedArray)) < 0 ||
-      rpc_write(conn, &resource, sizeof(CUgraphicsResource)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pMipmappedArray, sizeof(CUmipmappedArray)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  return lupine_staged_cuGraphicsResourceGetMappedMipmappedArray(
+      pMipmappedArray, resource);
 }
 
 CUresult cuGraphicsResourceGetMappedPointer_v2(CUdeviceptr *pDevPtr,
                                                size_t *pSize,
                                                CUgraphicsResource resource) {
   lupine_route route = lupine_route_for_default();
-  CUresult return_value;
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuGraphicsResourceGetMappedPointer_v2"),
         pDevPtr, pSize, resource);
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphicsResourceGetMappedPointer_v2) <
-          0 ||
-      rpc_write(conn, pDevPtr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_write(conn, pSize, sizeof(size_t)) < 0 ||
-      rpc_write(conn, &resource, sizeof(CUgraphicsResource)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, pDevPtr, sizeof(CUdeviceptr)) < 0 ||
-      rpc_read(conn, pSize, sizeof(size_t)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  return lupine_staged_cuGraphicsResourceGetMappedPointer_v2(pDevPtr, pSize,
+                                                             resource);
 }
 
 CUresult cuGraphicsResourceSetMapFlags_v2(CUgraphicsResource resource,
                                           unsigned int flags) {
   lupine_route route = lupine_route_for_default();
-  CUresult return_value;
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuGraphicsResourceSetMapFlags_v2"), resource,
         flags);
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphicsResourceSetMapFlags_v2) < 0 ||
-      rpc_write(conn, &resource, sizeof(CUgraphicsResource)) < 0 ||
-      rpc_write(conn, &flags, sizeof(unsigned int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  return lupine_staged_cuGraphicsResourceSetMapFlags_v2(resource, flags);
 }
 
 CUresult cuGraphicsMapResources(unsigned int count,
@@ -6708,24 +6674,11 @@ CUresult cuGraphicsMapResources(unsigned int count,
                                 CUstream hStream) {
   lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
                                            : lupine_route_for_default());
-  CUresult return_value;
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuGraphicsMapResources"), count, resources,
         hStream);
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (count * sizeof(CUgraphicsResource) != 0 && resources == nullptr)
-    return CUDA_ERROR_INVALID_VALUE;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphicsMapResources) < 0 ||
-      rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, resources, count * sizeof(CUgraphicsResource)) < 0 ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  return lupine_staged_cuGraphicsMapResources(count, resources, hStream);
 }
 
 CUresult cuGraphicsUnmapResources(unsigned int count,
@@ -6733,24 +6686,11 @@ CUresult cuGraphicsUnmapResources(unsigned int count,
                                   CUstream hStream) {
   lupine_route route = (hStream != nullptr ? lupine_route_for_stream(hStream)
                                            : lupine_route_for_default());
-  CUresult return_value;
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuGraphicsUnmapResources"), count, resources,
         hStream);
-  conn_t *conn = lupine_route_remote_conn(route);
-  if (count * sizeof(CUgraphicsResource) != 0 && resources == nullptr)
-    return CUDA_ERROR_INVALID_VALUE;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuGraphicsUnmapResources) < 0 ||
-      rpc_write(conn, &count, sizeof(unsigned int)) < 0 ||
-      rpc_write(conn, resources, count * sizeof(CUgraphicsResource)) < 0 ||
-      rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
+  return lupine_staged_cuGraphicsUnmapResources(count, resources, hStream);
 }
 
 #if CUDA_VERSION >= 12010
@@ -7409,6 +7349,40 @@ CUresult cuGraphExecUpdate(CUgraphExec hGraphExec, CUgraph hGraph,
   return return_value;
 }
 
+CUresult cuGraphicsGLRegisterBuffer(CUgraphicsResource *pCudaResource,
+                                    GLuint buffer, unsigned int Flags) {
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuGraphicsGLRegisterBuffer"), pCudaResource,
+        buffer, Flags);
+  return lupine_staged_cuGraphicsGLRegisterBuffer(pCudaResource, buffer, Flags);
+}
+
+CUresult cuGraphicsGLRegisterImage(CUgraphicsResource *pCudaResource,
+                                   GLuint image, GLenum target,
+                                   unsigned int Flags) {
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuGraphicsGLRegisterImage"), pCudaResource,
+        image, target, Flags);
+  return lupine_staged_cuGraphicsGLRegisterImage(pCudaResource, image, target,
+                                                 Flags);
+}
+
+CUresult cuGLGetDevices_v2(unsigned int *pCudaDeviceCount,
+                           CUdevice *pCudaDevices, unsigned int cudaDeviceCount,
+                           CUGLDeviceList deviceList) {
+  lupine_route route = lupine_route_for_default();
+  if (lupine_route_is_local(route))
+    return lupine_call_real_cuda_fn(
+        LUPINE_REAL_CUDA_SYMBOL("cuGLGetDevices_v2"), pCudaDeviceCount,
+        pCudaDevices, cudaDeviceCount, deviceList);
+  return lupine_staged_cuGLGetDevices_v2(pCudaDeviceCount, pCudaDevices,
+                                         cudaDeviceCount, deviceList);
+}
+
 #ifdef cuCtxDestroy
 #undef cuCtxDestroy
 #endif
@@ -7630,6 +7604,34 @@ extern "C" CUresult cuStreamQuery_ptsz(CUstream hStream) {
 #endif
 extern "C" CUresult cuStreamSynchronize_ptsz(CUstream hStream) {
   return cuStreamSynchronize(hStream);
+}
+
+#ifdef cuGLGetDevices
+#undef cuGLGetDevices
+#endif
+extern "C" CUresult cuGLGetDevices(unsigned int *pCudaDeviceCount,
+                                   CUdevice *pCudaDevices,
+                                   unsigned int cudaDeviceCount,
+                                   CUGLDeviceList deviceList) {
+  return cuGLGetDevices_v2(pCudaDeviceCount, pCudaDevices, cudaDeviceCount,
+                           deviceList);
+}
+
+#ifdef cuGraphicsResourceGetMappedPointer
+#undef cuGraphicsResourceGetMappedPointer
+#endif
+extern "C" CUresult
+cuGraphicsResourceGetMappedPointer(CUdeviceptr *pDevPtr, size_t *pSize,
+                                   CUgraphicsResource resource) {
+  return cuGraphicsResourceGetMappedPointer_v2(pDevPtr, pSize, resource);
+}
+
+#ifdef cuGraphicsResourceSetMapFlags
+#undef cuGraphicsResourceSetMapFlags
+#endif
+extern "C" CUresult cuGraphicsResourceSetMapFlags(CUgraphicsResource resource,
+                                                  unsigned int flags) {
+  return cuGraphicsResourceSetMapFlags_v2(resource, flags);
 }
 
 #ifdef cuGraphicsMapResources_ptsz
@@ -8272,6 +8274,9 @@ std::unordered_map<std::string, void *> functionMap = {
 #endif
     {"cuGraphInstantiate_v2", (void *)cuGraphInstantiate_v2},
     {"cuGraphExecUpdate", (void *)cuGraphExecUpdate},
+    {"cuGraphicsGLRegisterBuffer", (void *)cuGraphicsGLRegisterBuffer},
+    {"cuGraphicsGLRegisterImage", (void *)cuGraphicsGLRegisterImage},
+    {"cuGLGetDevices_v2", (void *)cuGLGetDevices_v2},
     {"cuCtxDestroy", (void *)cuCtxDestroy_v2},
     {"cuModuleGetGlobal", (void *)cuModuleGetGlobal_v2},
     {"cuMemAlloc", (void *)cuMemAlloc_v2},
@@ -8298,6 +8303,10 @@ std::unordered_map<std::string, void *> functionMap = {
     {"cuStreamAttachMemAsync_ptsz", (void *)cuStreamAttachMemAsync},
     {"cuStreamQuery_ptsz", (void *)cuStreamQuery},
     {"cuStreamSynchronize_ptsz", (void *)cuStreamSynchronize},
+    {"cuGLGetDevices", (void *)cuGLGetDevices_v2},
+    {"cuGraphicsResourceGetMappedPointer",
+     (void *)cuGraphicsResourceGetMappedPointer_v2},
+    {"cuGraphicsResourceSetMapFlags", (void *)cuGraphicsResourceSetMapFlags_v2},
     {"cuGraphicsMapResources_ptsz", (void *)cuGraphicsMapResources},
     {"cuGraphicsUnmapResources_ptsz", (void *)cuGraphicsUnmapResources},
     {"cuSignalExternalSemaphoresAsync_ptsz",
