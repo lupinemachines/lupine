@@ -93,6 +93,19 @@ void require(bool condition, const char *message) {
   }
 }
 
+template <typename Container>
+void fill_lcg(Container &data, uint32_t seed, size_t offset = 0) {
+  for (size_t i = offset; i < data.size(); ++i) {
+    seed = seed * 1664525u + 1013904223u;
+    data[i] = static_cast<typename Container::value_type>(seed >> 24);
+  }
+}
+
+void bind_accepted_stream(conn_t *server, const char *message) {
+  int32_t stream_id = rpc_http2_accept_stream(server);
+  require(rpc_bind_http2_stream(server, stream_id) == 0, message);
+}
+
 // Feed observed arrival times directly: these policy tests must not depend on
 // OS scheduling or wall-clock sleeps.
 void test_writer_poll_learns_short_arrivals() {
@@ -654,6 +667,17 @@ void init_raw_server_peer(h2_pair *pair) {
       "client HTTP/2 preface missing");
 }
 
+void write_process_control_frame(lupine_socket_t socket, char command,
+                                 const std::string &checkpoint) {
+  std::vector<unsigned char> frame(9, 0);
+  frame[2] = static_cast<unsigned char>(checkpoint.size() + 1);
+  frame[3] = LUPINE_HANDOFF_CONTROL_FRAME;
+  frame.push_back(static_cast<unsigned char>(command));
+  frame.insert(frame.end(), checkpoint.begin(), checkpoint.end());
+  require(raw_write_all(socket, frame.data(), frame.size()),
+          "process control write failed");
+}
+
 void test_process_control_preserves_queued_output() {
   h2_pair pair;
   init_raw_server_peer(&pair);
@@ -663,13 +687,7 @@ void test_process_control_preserves_queued_output() {
   const std::string checkpoint = "session.1";
   int32_t stream = rpc_http2_dispatch_stream(&pair.client);
   auto notify = [&](char command) {
-    std::vector<unsigned char> frame(9, 0);
-    frame[2] = static_cast<unsigned char>(checkpoint.size() + 1);
-    frame[3] = LUPINE_HANDOFF_CONTROL_FRAME;
-    frame.push_back(static_cast<unsigned char>(command));
-    frame.insert(frame.end(), checkpoint.begin(), checkpoint.end());
-    require(raw_write_all(pair.server.connfd, frame.data(), frame.size()),
-            "process control write failed");
+    write_process_control_frame(pair.server.connfd, command, checkpoint);
     char received;
     std::string key;
     require(lupine_handoff_receive_control(&pair.client, &received, &key) ==
@@ -740,13 +758,7 @@ void test_destroy_releases_a_parked_session() {
           "server SETTINGS write failed");
   const std::string checkpoint = "session.1";
   for (char command : {'P', 'C'}) {
-    std::vector<unsigned char> frame(9, 0);
-    frame[2] = static_cast<unsigned char>(checkpoint.size() + 1);
-    frame[3] = LUPINE_HANDOFF_CONTROL_FRAME;
-    frame.push_back(static_cast<unsigned char>(command));
-    frame.insert(frame.end(), checkpoint.begin(), checkpoint.end());
-    require(raw_write_all(pair.server.connfd, frame.data(), frame.size()),
-            "process control write failed");
+    write_process_control_frame(pair.server.connfd, command, checkpoint);
   }
   require(lupine_handoff_park_socket(&pair.client) == 0, "socket park failed");
   lupine_socket_close(pair.client.connfd);
@@ -822,11 +834,7 @@ void test_data_provider_frame_sizing() {
   }
 
   std::vector<unsigned char> payload(256 * 1024);
-  uint32_t seed = 43;
-  for (unsigned char &byte : payload) {
-    seed = seed * 1664525u + 1013904223u;
-    byte = static_cast<unsigned char>(seed >> 24);
-  }
+  fill_lcg(payload, 43);
 
   std::atomic<int> write_result{-1};
   std::thread writer([&] {
@@ -1130,9 +1138,7 @@ void test_client_metadata_report(bool old_receiver = false,
 
   require(rpc_http2_server_init_with_metadata(&pair.server, nullptr) == 0,
           "server h2 init failed");
-  int32_t stream_id = rpc_http2_accept_stream(&pair.server);
-  require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
-          "metadata stream bind failed");
+  bind_accepted_stream(&pair.server, "metadata stream bind failed");
 
   int op = rpc_dispatch(&pair.server, 0);
   require(op == LUPINE_RPC_CLIENT_METADATA, "metadata RPC was not sent");
@@ -1437,11 +1443,7 @@ void test_destroy_drains_pending_output() {
   exchange_settings(&pair);
 
   std::string payload(256 * 1024 + 17, '\0');
-  uint32_t seed = 37;
-  for (char &byte : payload) {
-    seed = seed * 1664525u + 1013904223u;
-    byte = static_cast<char>(seed >> 24);
-  }
+  fill_lcg(payload, 37);
   write_all(&pair.server, {payload});
   // Destroy the transport while its socket remains open. Cancelling Windows
   // receives must not discard the writer's queued frames or encoder tail.
@@ -1619,11 +1621,7 @@ void test_closed_lanes_release_buffers() {
   exchange_settings(&pair);
 
   std::vector<unsigned char> payload(4 * 1024 * 1024);
-  uint32_t seed = 29;
-  for (unsigned char &byte : payload) {
-    seed = seed * 1664525u + 1013904223u;
-    byte = static_cast<unsigned char>(seed >> 24);
-  }
+  fill_lcg(payload, 29);
   std::vector<unsigned char> received(payload.size());
   size_t baseline = 0;
   for (uint64_t lane_id = 1; lane_id <= 50; ++lane_id) {
@@ -1670,11 +1668,7 @@ void test_flow_controlled_backlog_stays_bounded() {
   server.receive_headers(2);
 
   std::vector<unsigned char> payload(128 * 1024 * 1024);
-  uint32_t seed = 31;
-  for (unsigned char &byte : payload) {
-    seed = seed * 1664525u + 1013904223u;
-    byte = static_cast<unsigned char>(seed >> 24);
-  }
+  fill_lcg(payload, 31);
   std::thread peer([&] {
     std::array<unsigned char, 65536> data;
     for (;;) {
@@ -1792,11 +1786,7 @@ void test_payload_larger_than_flow_control_window() {
   constexpr size_t payload_size =
       LUPINE_FF_STAGING_WINDOW_BYTES + 64 * 1024 + 1;
   std::vector<unsigned char> payload(payload_size);
-  uint32_t seed = 53;
-  for (unsigned char &byte : payload) {
-    seed = seed * 1664525u + 1013904223u;
-    byte = static_cast<unsigned char>(seed >> 24);
-  }
+  fill_lcg(payload, 53);
 
   std::atomic<bool> read_failed{false};
   size_t received = 0;
@@ -1895,11 +1885,7 @@ void test_reset_wakes_flow_controlled_writer() {
   });
 
   std::string payload(12 * 1024 * 1024, '\0');
-  uint32_t seed = 29;
-  for (char &byte : payload) {
-    seed = seed * 1664525u + 1013904223u;
-    byte = static_cast<char>(seed >> 24);
-  }
+  fill_lcg(payload, 29);
   int write_result = write_bytes(&pair.client, payload.data(), payload.size());
   shutdown(pair.client.connfd, LUPINE_TEST_SHUT_RDWR);
   shutdown(pair.server.connfd, LUPINE_TEST_SHUT_RDWR);
@@ -1921,11 +1907,8 @@ void test_zstd_lane_round_trip() {
   require(stream > 0 && rpc_http2_accept_stream(&pair.server) == stream,
           "zstd lane missing");
   std::vector<unsigned char> payload(3 * 256 * 1024 + 17);
-  uint32_t seed = 913;
-  for (size_t i = 0; i < payload.size(); ++i) {
-    seed = seed * 1664525u + 1013904223u;
-    payload[i] = i < 256 * 1024 ? 0 : static_cast<unsigned char>(seed >> 24);
-  }
+  fill_lcg(payload, 913);
+  std::fill_n(payload.begin(), 256 * 1024, 0);
   std::vector<unsigned char> received(payload.size());
   std::thread server([&] {
     require(rpc_http2_read_stream(&pair.server, stream, received.data(),
@@ -1963,14 +1946,10 @@ void test_zstd_content_encoding_round_trip() {
   std::string prefix = "head";
   std::string suffix = "tail";
   std::vector<char> payload(2 * LUPINE_RPC_TRANSFER_CHUNK_BYTES + 123457);
-  unsigned int seed = 42;
   for (size_t i = 0; i < payload.size() / 2; ++i) {
     payload[i] = static_cast<char>(i % 7);
   }
-  for (size_t i = payload.size() / 2; i < payload.size(); ++i) {
-    seed = seed * 1664525u + 1013904223u;
-    payload[i] = static_cast<char>(seed >> 24);
-  }
+  fill_lcg(payload, 42, payload.size() / 2);
 
   std::string received_prefix;
   std::string received_suffix;
@@ -2155,9 +2134,7 @@ void test_rpc_write_queue_grows() {
 
   std::vector<int> received(kCount, -1);
   std::thread reader([&] {
-    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
-    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
-            "large queue stream bind failed");
+    bind_accepted_stream(&pair.server, "large queue stream bind failed");
     require(rpc_dispatch(&pair.server, 0) == kOp,
             "large queue dispatch failed");
     for (int i = 0; i < kCount; ++i) {
@@ -2286,9 +2263,7 @@ void test_rpc_small_payload_round_trip() {
   std::string received_suffix(suffix.size(), '\0');
   std::vector<char> received(payload.size());
   std::thread reader([&] {
-    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
-    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
-            "payload stream bind failed");
+    bind_accepted_stream(&pair.server, "payload stream bind failed");
     require(rpc_dispatch(&pair.server, 0) == kOp, "payload dispatch failed");
     require(rpc_read(&pair.server, received_prefix.data(),
                      received_prefix.size()) == 0,
@@ -2335,9 +2310,7 @@ void test_rpc_repeated_responses_on_lane() {
   }
 
   std::thread server([&] {
-    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
-    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
-            "repeated response stream bind failed");
+    bind_accepted_stream(&pair.server, "repeated response stream bind failed");
     require(rpc_dispatch(&pair.server, 0) == kOp,
             "repeated response dispatch failed");
     int request_id = rpc_read_end(&pair.server);
@@ -2421,9 +2394,7 @@ void test_rpc_request_nested_in_response_builder() {
   });
 
   std::thread server([&] {
-    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
-    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
-            "outer response stream bind failed");
+    bind_accepted_stream(&pair.server, "outer response stream bind failed");
     require(rpc_dispatch(&pair.server, 0) == kOuterOp,
             "outer request dispatch failed");
     int outer_id = rpc_read_end(&pair.server);
@@ -2493,9 +2464,7 @@ void test_rpc_response_completed_hook() {
   constexpr int kResponse = 1234;
 
   std::thread server([&] {
-    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
-    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
-            "response-hook stream bind failed");
+    bind_accepted_stream(&pair.server, "response-hook stream bind failed");
     require(rpc_dispatch(&pair.server, 0) == kOp,
             "response-hook dispatch failed");
     int request_id = rpc_read_end(&pair.server);
@@ -2694,11 +2663,7 @@ void test_async_prefix_wait_preserves_flow_control() {
           "producer dispatch");
   // Twice the window: the sender finishes only if the server keeps crediting.
   std::vector<unsigned char> payload(2 * LUPINE_FF_STAGING_WINDOW_BYTES);
-  uint32_t seed = 53;
-  for (auto &byte : payload) {
-    seed = seed * 1664525u + 1013904223u;
-    byte = static_cast<unsigned char>(seed >> 24);
-  }
+  fill_lcg(payload, 53);
   std::atomic<bool> sent{false};
   std::thread sender([&] {
     rpc_write_cursor cursor(payload.data(), payload.size());
@@ -2808,9 +2773,7 @@ void test_rpc_read_uses_w_offset() {
   constexpr int kOp = 83;
   const std::array<unsigned char, 8> expected = {3, 1, 4, 1, 5, 9, 2, 6};
   std::thread server([&] {
-    int32_t stream_id = rpc_http2_accept_stream(&pair.server);
-    require(rpc_bind_http2_stream(&pair.server, stream_id) == 0,
-            "alias response stream bind failed");
+    bind_accepted_stream(&pair.server, "alias response stream bind failed");
     require(rpc_dispatch(&pair.server, 0) == kOp,
             "alias response dispatch failed");
     int request_id = rpc_read_end(&pair.server);
@@ -2904,7 +2867,6 @@ int main() {
   RUN_CASE(test_client_await_ready_reports_bulk_token(false));
   RUN_CASE(test_client_metadata_report());
   RUN_CASE(test_client_metadata_report(true, "job:old-server"));
-  RUN_CASE(test_client_metadata_report(false));
   RUN_CASE(test_client_metadata_report(false, "job:worker-1"));
   RUN_CASE(test_client_metadata_report(false, std::string(256, 'x')));
   RUN_CASE(test_client_metadata_report(false, std::string(257, 'x')));
