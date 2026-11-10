@@ -1746,7 +1746,7 @@ extern "C" CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib,
 }
 
 extern "C" CUresult cuDeviceGetName(char *name, int len, CUdevice dev) {
-  if (name == nullptr) {
+  if (name == nullptr || len < 0) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   CUdevice remote_dev = dev;
@@ -1907,6 +1907,9 @@ static CUresult lupine_remote_primary_ctx_release(conn_t *conn,
 }
 
 extern "C" CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev) {
+  if (pctx == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
   CUdevice remote_dev = dev;
   lupine_route route = lupine_route_for_device(&remote_dev);
   if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
@@ -2029,6 +2032,9 @@ cuDevicePrimaryCtxGetState(CUdevice dev, unsigned int *flags, int *active) {
   lupine_route route = lupine_route_for_device(&remote_dev);
   if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE) {
     return CUDA_ERROR_INVALID_DEVICE;
+  }
+  if (flags == nullptr || active == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
   }
   CUresult return_value;
   if (lupine_route_is_local(route)) {
@@ -3373,6 +3379,9 @@ static void lupine_stream_pool_discard(int route_id, CUdevice dev,
 static CUresult lupine_stream_create_remote(lupine_route route,
                                             CUstream *phStream,
                                             unsigned int flags, int priority) {
+  if (phStream == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
   CUcontext ctx = lupine_current_context_hint();
   if (ctx != nullptr) {
     std::lock_guard<std::mutex> lock(lupine_stream_pool_mutex());
