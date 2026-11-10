@@ -964,11 +964,9 @@ bool lupine_prepare_mapped_host_pointer(CUdeviceptr argument, bool *portable) {
 // A copy or memset into a host allocation's device address writes it from the
 // device, as a kernel given that address would, so it exposes the allocation
 // the same way: the next synchronize then refreshes the client's view.
-extern "C" lupine_route
-lupine_route_for_deviceptr_destination(CUdeviceptr ptr) {
+extern "C" void lupine_note_device_write(CUdeviceptr ptr) {
   bool portable = false;
   lupine_prepare_mapped_host_pointer(ptr, &portable);
-  return lupine_route_for_deviceptr(ptr);
 }
 
 CUresult lupine_prepare_portable_host_allocations(lupine_route route,
@@ -4168,7 +4166,8 @@ static bool lupine_htod_fire_and_forget(lupine_route route,
 
 extern "C" CUresult cuMemcpyHtoD_v2(CUdeviceptr dstDevice, const void *srcHost,
                                     size_t ByteCount) {
-  lupine_route route = lupine_route_for_deviceptr_destination(dstDevice);
+  lupine_note_device_write(dstDevice);
+  lupine_route route = lupine_route_for_deviceptr(dstDevice);
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn("cuMemcpyHtoD_v2", dstDevice,
@@ -4260,7 +4259,8 @@ extern "C" CUresult cuMemcpyHtoD(CUdeviceptr dstDevice, const void *srcHost,
 extern "C" CUresult cuMemcpyHtoDAsync_v2(CUdeviceptr dstDevice,
                                          const void *srcHost, size_t ByteCount,
                                          CUstream hStream) {
-  lupine_route route = lupine_route_for_deviceptr_destination(dstDevice);
+  lupine_note_device_write(dstDevice);
+  lupine_route route = lupine_route_for_deviceptr(dstDevice);
   if (lupine_stream_crosses_route(hStream, route)) {
     return cuMemcpyHtoD_v2(dstDevice, srcHost, ByteCount);
   }
@@ -4585,7 +4585,8 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
     }
     // A device pointer picks the route; array-only copies follow the stream.
     if (direction != LUPINE_COPY_DIRECTION_DTOH && !dst_array) {
-      route = lupine_route_for_deviceptr_destination(copy.dstDevice);
+      lupine_note_device_write(copy.dstDevice);
+      route = lupine_route_for_deviceptr(copy.dstDevice);
     } else if (direction != LUPINE_COPY_DIRECTION_HTOD && !src_array) {
       route = lupine_route_for_deviceptr(copy.srcDevice);
     } else {
