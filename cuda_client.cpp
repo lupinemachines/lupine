@@ -9081,6 +9081,24 @@ __attribute__((destructor)) static void lupine_rpc_destructor() {
 }
 #endif
 
+// Acknowledging a callback lets queued device work resume, so the host writes
+// it made are applied on the server first, even when no application CUDA call
+// follows. The requests that sends belong to the callback.
+static int lupine_answer_callback(conn_t *conn, int request_id) {
+  rpc_begin_callback_reply(conn);
+  int flushed = lupine_prepare_rpc(conn) < 0 ||
+                        lupine_settle_host_flushes(conn) < 0
+                    ? -1
+                    : 0;
+  rpc_end_callback_reply();
+  void *res = nullptr;
+  return flushed < 0 || rpc_write_start_response(conn, request_id) < 0 ||
+                 rpc_write(conn, &res, sizeof(void *)) < 0 ||
+                 rpc_write_end(conn) < 0
+             ? -1
+             : 0;
+}
+
 void *rpc_client_dispatch_thread(void *arg) {
   conn_t *conn = (conn_t *)arg;
   int op;
@@ -9125,24 +9143,8 @@ void *rpc_client_dispatch_thread(void *arg) {
       callback(user_data);
       lupine_in_host_callback = false;
 
-      // Acknowledging the callback lets queued device work resume. Publish its
-      // mapped-memory writes first, even when no application CUDA call follows.
-      rpc_begin_callback_reply(conn);
-      int flushed = lupine_prepare_rpc(conn) < 0 ||
-                            lupine_settle_host_flushes(conn) < 0
-                        ? -1
-                        : 0;
-      rpc_end_callback_reply();
-      if (flushed < 0) {
-        LUPINE_LOG_ERROR("Failed to flush host writes from host callback.");
-        goto close_connection;
-      }
-
-      void *res = nullptr;
-      if (rpc_write_start_response(conn, request_id) < 0 ||
-          rpc_write(conn, &res, sizeof(void *)) < 0 ||
-          rpc_write_end(conn) < 0) {
-        LUPINE_LOG_ERROR("rpc_write failed. Closing connection.");
+      if (lupine_answer_callback(conn, request_id) < 0) {
+        LUPINE_LOG_ERROR("Failed to answer host callback.");
         goto close_connection;
       }
     } else if (op == LUPINE_SIDE_EFFECT_STREAM_CALLBACK) {
@@ -9170,22 +9172,8 @@ void *rpc_client_dispatch_thread(void *arg) {
         lupine_in_host_callback = false;
       }
 
-      rpc_begin_callback_reply(conn);
-      int flushed = lupine_prepare_rpc(conn) < 0 ||
-                            lupine_settle_host_flushes(conn) < 0
-                        ? -1
-                        : 0;
-      rpc_end_callback_reply();
-      if (flushed < 0) {
-        LUPINE_LOG_ERROR("Failed to flush host writes from stream callback.");
-        break;
-      }
-
-      void *res = nullptr;
-      if (rpc_write_start_response(conn, request_id) < 0 ||
-          rpc_write(conn, &res, sizeof(void *)) < 0 ||
-          rpc_write_end(conn) < 0) {
-        LUPINE_LOG_ERROR("rpc_write failed. Closing connection.");
+      if (lupine_answer_callback(conn, request_id) < 0) {
+        LUPINE_LOG_ERROR("Failed to answer stream callback.");
         break;
       }
     } else if (op == LUPINE_SIDE_EFFECT_LOG_CALLBACK) {

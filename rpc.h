@@ -211,6 +211,9 @@ struct conn_t {
   std::vector<rpc_write_cursor> write_queue;
   std::vector<rpc_host_allocation_write> host_allocation_writes;
   int host_allocation_writes_pending;
+  // Whether a host-memory flush was sent unanswered since a callback's
+  // acknowledgement last waited for the flushes.
+  int host_flushes_unsettled;
   unsigned char *write_copy_buffer;
   size_t write_copy_capacity;
   size_t write_copy_offset;

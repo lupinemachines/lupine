@@ -10,7 +10,6 @@
 #include <map>
 #include <mutex>
 #include <thread>
-#include <unordered_map>
 #ifndef _WIN32
 #include <fcntl.h>
 #include <sched.h>
@@ -254,44 +253,21 @@ static lupine_dirty_host_range_queue
 static uint64_t lupine_dirty_host_epoch = 0;
 static volatile sig_atomic_t lupine_device_work_pending = 0;
 thread_local bool lupine_in_host_callback = false;
-// Per connection: unanswered flushes sent, and how many a barrier covered.
-struct lupine_host_flush_count {
-  uint64_t sent = 0;
-  uint64_t settled = 0;
-};
-static std::mutex lupine_host_flush_count_mutex;
-static std::unordered_map<conn_t *, lupine_host_flush_count>
-    lupine_host_flush_counts;
-
-static void lupine_note_host_flush_sent(conn_t *conn) {
-  std::lock_guard<std::mutex> lock(lupine_host_flush_count_mutex);
-  ++lupine_host_flush_counts[conn].sent;
-}
 
 int lupine_settle_host_flushes(conn_t *conn) {
-  uint64_t sent = 0;
-  {
-    std::lock_guard<std::mutex> lock(lupine_host_flush_count_mutex);
-    auto it = lupine_host_flush_counts.find(conn);
-    if (it == lupine_host_flush_counts.end() ||
-        it->second.settled >= it->second.sent) {
-      return 0;
-    }
-    sent = it->second.sent;
+  if (!__atomic_exchange_n(&conn->host_flushes_unsettled, 0,
+                           __ATOMIC_ACQ_REL)) {
+    return 0;
   }
-  // An empty flush waits on the server for every flush sent before it, and
-  // its answer says they are applied.
+  // Flushes go in order on their own lane, so an empty one is answered only
+  // once every flush sent before it is applied.
   uint32_t count = 0;
-  if (rpc_write_start_request_on(conn, LUPINE_RPC_lupineManagedHostFlush,
-                                 RPC_SCOPE_HOST_WRITES) < 0 ||
-      rpc_write(conn, &count, sizeof(count)) < 0 ||
-      rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0) {
-    return -1;
-  }
-  std::lock_guard<std::mutex> lock(lupine_host_flush_count_mutex);
-  auto &counts = lupine_host_flush_counts[conn];
-  counts.settled = std::max(counts.settled, sent);
-  return 0;
+  return rpc_write_start_request_on(conn, LUPINE_RPC_lupineManagedHostFlush,
+                                    RPC_SCOPE_HOST_WRITES) < 0 ||
+                 rpc_write(conn, &count, sizeof(count)) < 0 ||
+                 rpc_wait_for_response(conn) < 0 || rpc_read_end(conn) < 0
+             ? -1
+             : 0;
 }
 static std::atomic<uint64_t> lupine_flushed_host_epoch{0};
 static std::mutex lupine_host_flush_mutex;
@@ -1444,7 +1420,7 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
         rpc_write_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
-    lupine_note_host_flush_sent(conn);
+    __atomic_store_n(&conn->host_flushes_unsettled, 1, __ATOMIC_RELEASE);
     return CUDA_SUCCESS;
   };
 

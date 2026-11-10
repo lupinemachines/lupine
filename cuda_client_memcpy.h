@@ -60,7 +60,8 @@ extern "C" void lupine_adopt_managed_global(lupine_route route,
 extern thread_local bool lupine_in_host_callback;
 // Before a host callback's acknowledgement, which resumes its stream as soon as
 // it arrives: waits until the host writes flushed so far, by this thread or
-// another one that picked up its pages, are applied on the server.
+// another one that picked up its pages, are applied on the server. Only the
+// connection's dispatch thread settles it.
 int lupine_settle_host_flushes(conn_t *conn);
 // Reads one deferred device-to-host copy: its lupine_host_rows, then the rows.
 int lupine_read_deferred_rows(conn_t *conn);
