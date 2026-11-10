@@ -1282,13 +1282,16 @@ ERROR_0:
 }
 
 int handle_cuModuleGetFunction(conn_t *conn) {
+  uint8_t hfunc_present = 0;
   CUfunction hfunc{};
   CUmodule hmod;
   const char *name = nullptr;
   std::size_t name_len;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &hmod, sizeof(CUmodule)) < 0 ||
+  if (rpc_read(conn, &hfunc_present, sizeof(uint8_t)) < 0 ||
+      (hfunc_present && rpc_read(conn, &hfunc, sizeof(CUfunction)) < 0) ||
+      rpc_read(conn, &hmod, sizeof(CUmodule)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
   if (name_len != 0) {
@@ -1303,10 +1306,11 @@ int handle_cuModuleGetFunction(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuModuleGetFunction(&hfunc, hmod, name);
+  return_value =
+      cuModuleGetFunction(hfunc_present ? &hfunc : nullptr, hmod, name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &hfunc, sizeof(CUfunction)) < 0 ||
+      (hfunc_present && rpc_write(conn, &hfunc, sizeof(CUfunction)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1444,13 +1448,16 @@ ERROR_0:
 }
 
 int handle_cuLibraryGetKernel(conn_t *conn) {
+  uint8_t pKernel_present = 0;
   CUkernel pKernel{};
   CUlibrary library;
   const char *name = nullptr;
   std::size_t name_len;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &library, sizeof(CUlibrary)) < 0 ||
+  if (rpc_read(conn, &pKernel_present, sizeof(uint8_t)) < 0 ||
+      (pKernel_present && rpc_read(conn, &pKernel, sizeof(CUkernel)) < 0) ||
+      rpc_read(conn, &library, sizeof(CUlibrary)) < 0 ||
       rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
     goto ERROR_0;
   if (name_len != 0) {
@@ -1465,10 +1472,11 @@ int handle_cuLibraryGetKernel(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuLibraryGetKernel(&pKernel, library, name);
+  return_value =
+      cuLibraryGetKernel(pKernel_present ? &pKernel : nullptr, library, name);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pKernel, sizeof(CUkernel)) < 0 ||
+      (pKernel_present && rpc_write(conn, &pKernel, sizeof(CUkernel)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1507,21 +1515,24 @@ ERROR_0:
 }
 
 int handle_cuKernelGetFunction(conn_t *conn) {
+  uint8_t pFunc_present = 0;
   CUfunction pFunc{};
   CUkernel kernel;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &kernel, sizeof(CUkernel)) < 0 || false)
+  if (rpc_read(conn, &pFunc_present, sizeof(uint8_t)) < 0 ||
+      (pFunc_present && rpc_read(conn, &pFunc, sizeof(CUfunction)) < 0) ||
+      rpc_read(conn, &kernel, sizeof(CUkernel)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuKernelGetFunction(&pFunc, kernel);
+  return_value = cuKernelGetFunction(pFunc_present ? &pFunc : nullptr, kernel);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pFunc, sizeof(CUfunction)) < 0 ||
+      (pFunc_present && rpc_write(conn, &pFunc, sizeof(CUfunction)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1531,21 +1542,24 @@ ERROR_0:
 }
 
 int handle_cuKernelGetLibrary(conn_t *conn) {
+  uint8_t pLib_present = 0;
   CUlibrary pLib{};
   CUkernel kernel;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &kernel, sizeof(CUkernel)) < 0 || false)
+  if (rpc_read(conn, &pLib_present, sizeof(uint8_t)) < 0 ||
+      (pLib_present && rpc_read(conn, &pLib, sizeof(CUlibrary)) < 0) ||
+      rpc_read(conn, &kernel, sizeof(CUkernel)) < 0 || false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuKernelGetLibrary(&pLib, kernel);
+  return_value = cuKernelGetLibrary(pLib_present ? &pLib : nullptr, kernel);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pLib, sizeof(CUlibrary)) < 0 ||
+      (pLib_present && rpc_write(conn, &pLib, sizeof(CUlibrary)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -1688,13 +1702,15 @@ ERROR_0:
 }
 
 int handle_cuKernelGetAttribute(conn_t *conn) {
+  uint8_t pi_present = 0;
   int pi{};
   CUfunction_attribute attrib;
   CUkernel kernel;
   CUdevice dev;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &pi, sizeof(int)) < 0 ||
+  if (rpc_read(conn, &pi_present, sizeof(uint8_t)) < 0 ||
+      (pi_present && rpc_read(conn, &pi, sizeof(int)) < 0) ||
       rpc_read(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
       rpc_read(conn, &kernel, sizeof(CUkernel)) < 0 ||
       rpc_read(conn, &dev, sizeof(CUdevice)) < 0 || false)
@@ -1704,10 +1720,11 @@ int handle_cuKernelGetAttribute(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuKernelGetAttribute(&pi, attrib, kernel, dev);
+  return_value =
+      cuKernelGetAttribute(pi_present ? &pi : nullptr, attrib, kernel, dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pi, sizeof(int)) < 0 ||
+      (pi_present && rpc_write(conn, &pi, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -4275,11 +4292,14 @@ ERROR_0:
 
 int handle_cuStreamIsCapturing(conn_t *conn) {
   CUstream hStream;
+  uint8_t captureStatus_present = 0;
   CUstreamCaptureStatus captureStatus{};
   int request_id;
   CUresult return_value;
   if (rpc_read(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_read(conn, &captureStatus, sizeof(CUstreamCaptureStatus)) < 0 ||
+      rpc_read(conn, &captureStatus_present, sizeof(uint8_t)) < 0 ||
+      (captureStatus_present &&
+       rpc_read(conn, &captureStatus, sizeof(CUstreamCaptureStatus)) < 0) ||
       false)
     goto ERROR_0;
 
@@ -4287,10 +4307,12 @@ int handle_cuStreamIsCapturing(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  return_value = cuStreamIsCapturing(hStream, &captureStatus);
+  return_value = cuStreamIsCapturing(
+      hStream, captureStatus_present ? &captureStatus : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &captureStatus, sizeof(CUstreamCaptureStatus)) < 0 ||
+      (captureStatus_present &&
+       rpc_write(conn, &captureStatus, sizeof(CUstreamCaptureStatus)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -8091,13 +8113,15 @@ ERROR_0:
 #endif
 
 int handle_cuOccupancyMaxActiveBlocksPerMultiprocessor(conn_t *conn) {
+  uint8_t numBlocks_present = 0;
   int numBlocks{};
   CUfunction func;
   int blockSize;
   size_t dynamicSMemSize;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &numBlocks, sizeof(int)) < 0 ||
+  if (rpc_read(conn, &numBlocks_present, sizeof(uint8_t)) < 0 ||
+      (numBlocks_present && rpc_read(conn, &numBlocks, sizeof(int)) < 0) ||
       rpc_read(conn, &func, sizeof(CUfunction)) < 0 ||
       rpc_read(conn, &blockSize, sizeof(int)) < 0 ||
       rpc_read(conn, &dynamicSMemSize, sizeof(size_t)) < 0 || false)
@@ -8108,10 +8132,11 @@ int handle_cuOccupancyMaxActiveBlocksPerMultiprocessor(conn_t *conn) {
     goto ERROR_0;
 
   return_value = cuOccupancyMaxActiveBlocksPerMultiprocessor(
-      &numBlocks, func, blockSize, dynamicSMemSize);
+      numBlocks_present ? &numBlocks : nullptr, func, blockSize,
+      dynamicSMemSize);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &numBlocks, sizeof(int)) < 0 ||
+      (numBlocks_present && rpc_write(conn, &numBlocks, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
@@ -8121,6 +8146,7 @@ ERROR_0:
 }
 
 int handle_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(conn_t *conn) {
+  uint8_t numBlocks_present = 0;
   int numBlocks{};
   CUfunction func;
   int blockSize;
@@ -8128,7 +8154,8 @@ int handle_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(conn_t *conn) {
   unsigned int flags;
   int request_id;
   CUresult return_value;
-  if (rpc_read(conn, &numBlocks, sizeof(int)) < 0 ||
+  if (rpc_read(conn, &numBlocks_present, sizeof(uint8_t)) < 0 ||
+      (numBlocks_present && rpc_read(conn, &numBlocks, sizeof(int)) < 0) ||
       rpc_read(conn, &func, sizeof(CUfunction)) < 0 ||
       rpc_read(conn, &blockSize, sizeof(int)) < 0 ||
       rpc_read(conn, &dynamicSMemSize, sizeof(size_t)) < 0 ||
@@ -8140,10 +8167,11 @@ int handle_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(conn_t *conn) {
     goto ERROR_0;
 
   return_value = cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
-      &numBlocks, func, blockSize, dynamicSMemSize, flags);
+      numBlocks_present ? &numBlocks : nullptr, func, blockSize,
+      dynamicSMemSize, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &numBlocks, sizeof(int)) < 0 ||
+      (numBlocks_present && rpc_write(conn, &numBlocks, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
