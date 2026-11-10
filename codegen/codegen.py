@@ -370,6 +370,8 @@ def parse_server_binding(
             if handler is not None:
                 raise RuntimeError(f"Duplicate @disabled for {name}")
             rest = parts[2:] if parts[1:2] == ["server"] else parts[1:]
+            if rest and rest[0] == "none":
+                return None
             handler = rest[0] if rest and rest[0] != "-" else "handle_" + name
         elif parts[0] == "@guard":
             if guard is not None or len(parts) < 2:

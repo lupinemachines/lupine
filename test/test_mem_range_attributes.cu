@@ -142,6 +142,54 @@ int main() {
     }
   }
 
+  // Verify null/invalid argument handling and output preservation on error.
+  int sentinel = 0x13572468;
+  if (cuMemRangeGetAttribute(nullptr, sizeof(int),
+                             CU_MEM_RANGE_ATTRIBUTE_READ_MOSTLY, allocation,
+                             allocation_size) != CUDA_ERROR_INVALID_VALUE ||
+      cuMemRangeGetAttribute(&sentinel, 0, CU_MEM_RANGE_ATTRIBUTE_READ_MOSTLY,
+                             allocation,
+                             allocation_size) != CUDA_ERROR_INVALID_VALUE ||
+      cuMemRangeGetAttribute(
+          &sentinel, sizeof(int), static_cast<CUmem_range_attribute>(999),
+          allocation, allocation_size) != CUDA_ERROR_INVALID_VALUE ||
+      sentinel != 0x13572468) {
+    std::fprintf(stderr, "cuMemRangeGetAttribute invalid-arg check failed\n");
+    cuMemFree(allocation);
+    cuDevicePrimaryCtxRelease(device);
+    return 9;
+  }
+
+  int first_out = 0x24681357;
+  int second_out = 0x13572468;
+  void *pair_data_null[] = {&first_out, nullptr};
+  void *pair_data[] = {&first_out, &second_out};
+  size_t pair_sizes[] = {sizeof(int), sizeof(int)};
+  size_t bad_sizes[] = {sizeof(int), 1};
+  CUmem_range_attribute pair_attrs[] = {
+      CU_MEM_RANGE_ATTRIBUTE_READ_MOSTLY,
+      CU_MEM_RANGE_ATTRIBUTE_PREFERRED_LOCATION,
+  };
+  if (cuMemRangeGetAttributes(nullptr, pair_sizes, pair_attrs, 2, allocation,
+                              allocation_size) != CUDA_ERROR_INVALID_VALUE ||
+      cuMemRangeGetAttributes(pair_data, nullptr, pair_attrs, 2, allocation,
+                              allocation_size) != CUDA_ERROR_INVALID_VALUE ||
+      cuMemRangeGetAttributes(pair_data, pair_sizes, nullptr, 2, allocation,
+                              allocation_size) != CUDA_ERROR_INVALID_VALUE ||
+      cuMemRangeGetAttributes(pair_data, pair_sizes, pair_attrs, 0, allocation,
+                              allocation_size) != CUDA_ERROR_INVALID_VALUE ||
+      cuMemRangeGetAttributes(pair_data_null, pair_sizes, pair_attrs, 2,
+                              allocation,
+                              allocation_size) != CUDA_ERROR_INVALID_VALUE ||
+      cuMemRangeGetAttributes(pair_data, bad_sizes, pair_attrs, 2, allocation,
+                              allocation_size) != CUDA_ERROR_INVALID_VALUE ||
+      first_out != 0x24681357 || second_out != 0x13572468) {
+    std::fprintf(stderr, "cuMemRangeGetAttributes invalid-arg check failed\n");
+    cuMemFree(allocation);
+    cuDevicePrimaryCtxRelease(device);
+    return 10;
+  }
+
   if (check(cuMemFree(allocation), "cuMemFree") != 0 ||
       check(cuDevicePrimaryCtxRelease(device), "cuDevicePrimaryCtxRelease") !=
           0) {

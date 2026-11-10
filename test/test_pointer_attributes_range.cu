@@ -169,6 +169,40 @@ int test_device(int ordinal) {
   failures += check_range_queries("managed_base", uptr, uptr, kSize);
   failures += check_range_queries("managed_off", uptr + 64, uptr, kSize);
 
+  // 3. cuPointerGetAttributes rejects numAttributes == 0 and leaves earlier
+  // output slots untouched when a later data[i] slot is nullptr.
+  CUpointer_attribute zero_attr = CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
+  unsigned int mem_type = 0x55aa55aaU;
+  void *zero_data[1] = {&mem_type};
+  const CUdeviceptr queries[] = {reinterpret_cast<CUdeviceptr>(unreg),
+                                 pinned_base, uptr, dptr};
+  for (CUdeviceptr query : queries) {
+    failures += !expect_status(
+        cuPointerGetAttributes(0, &zero_attr, zero_data, query),
+        CUDA_ERROR_INVALID_VALUE, "cuPointerGetAttributes(numAttributes=0)");
+    failures +=
+        !expect_status(cuPointerGetAttributes(0, nullptr, nullptr, query),
+                       CUDA_ERROR_INVALID_VALUE,
+                       "cuPointerGetAttributes(numAttributes=0, null)");
+
+    CUpointer_attribute pair_attrs[2] = {
+        CU_POINTER_ATTRIBUTE_MEMORY_TYPE,
+        CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL,
+    };
+    mem_type = 0x55aa55aaU;
+    void *bad_data[2] = {&mem_type, nullptr};
+    failures += !expect_status(
+        cuPointerGetAttributes(2, pair_attrs, bad_data, query),
+        CUDA_ERROR_INVALID_VALUE, "cuPointerGetAttributes(data[1]=nullptr)");
+    if (mem_type != 0x55aa55aaU) {
+      std::fprintf(stderr,
+                   "FAIL: cuPointerGetAttributes(data[1]=nullptr) clobbered "
+                   "data[0]: 0x%x\n",
+                   mem_type);
+      ++failures;
+    }
+  }
+
   (void)cuMemFree_v2(uptr);
   (void)cuMemHostUnregister(reg);
   std::free(reg);
