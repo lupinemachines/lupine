@@ -2911,6 +2911,8 @@ lupine_private_export_slot_called(int slot, const char *table_name,
       lupine_private_node_map()[reinterpret_cast<CUfunction>(client_node)] =
           server_node;
     }
+    lupine_note_function_owner_route(reinterpret_cast<CUfunction>(client_node),
+                                     lupine_route_for_function(server_node));
     LUPINE_TRACE_LOG("LUPINE private 6e16[7] mapped client_node="
                      << static_cast<void *>(client_node)
                      << " server_node=" << server_node << " server_owner="
@@ -3278,10 +3280,10 @@ static CUresult lupine_error_string_lookup(int rpc_op, const char *symbol,
   }
 
   // A length past any real driver string means a desynced stream.
-  constexpr uint32_t kMaxLength = 4096;
+  constexpr std::size_t kMaxLength = 4096;
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  uint32_t length = 0;
+  std::size_t length = 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, rpc_op) < 0 ||
       rpc_write(conn, &error, sizeof(error)) < 0 ||
@@ -4949,70 +4951,6 @@ extern "C" CUresult cuCtxCreate_v4(CUcontext *pctx,
   return cuCtxCreate_v2(pctx, flags, dev);
 }
 #endif
-
-static CUresult lupine_occupancy_max_potential_block_size(
-    int *minGridSize, int *blockSize, CUfunction func,
-    CUoccupancyB2DSize blockSizeToDynamicSMemSize, size_t dynamicSMemSize,
-    int blockSizeLimit, unsigned int flags, bool with_flags) {
-  if (minGridSize == nullptr || blockSize == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  if (blockSizeToDynamicSMemSize != nullptr) {
-    return CUDA_ERROR_NOT_SUPPORTED;
-  }
-
-  CUfunction translated = lupine_translate_private_function(func);
-  lupine_route route = lupine_route_for_function(translated);
-  const char *symbol = with_flags ? "cuOccupancyMaxPotentialBlockSizeWithFlags"
-                                  : "cuOccupancyMaxPotentialBlockSize";
-  if (lupine_route_is_local(route)) {
-    if (with_flags) {
-      return lupine_call_real_cuda_fn(symbol, minGridSize, blockSize,
-                                      translated, blockSizeToDynamicSMemSize,
-                                      dynamicSMemSize, blockSizeLimit, flags);
-    }
-    return lupine_call_real_cuda_fn(symbol, minGridSize, blockSize, translated,
-                                    blockSizeToDynamicSMemSize, dynamicSMemSize,
-                                    blockSizeLimit);
-  }
-
-  conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  int op = with_flags ? RPC_cuOccupancyMaxPotentialBlockSizeWithFlags
-                      : RPC_cuOccupancyMaxPotentialBlockSize;
-  if (lupine_prepare_rpc(conn) < 0 || rpc_write_start_request(conn, op) < 0 ||
-      rpc_write(conn, &translated, sizeof(translated)) < 0 ||
-      rpc_write(conn, &dynamicSMemSize, sizeof(dynamicSMemSize)) < 0 ||
-      rpc_write(conn, &blockSizeLimit, sizeof(blockSizeLimit)) < 0 ||
-      (with_flags && rpc_write(conn, &flags, sizeof(flags)) < 0) ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, minGridSize, sizeof(int)) < 0 ||
-      rpc_read(conn, blockSize, sizeof(int)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return return_value;
-}
-
-extern "C" CUresult
-cuOccupancyMaxPotentialBlockSize(int *minGridSize, int *blockSize,
-                                 CUfunction func,
-                                 CUoccupancyB2DSize blockSizeToDynamicSMemSize,
-                                 size_t dynamicSMemSize, int blockSizeLimit) {
-  return lupine_occupancy_max_potential_block_size(
-      minGridSize, blockSize, func, blockSizeToDynamicSMemSize, dynamicSMemSize,
-      blockSizeLimit, 0, false);
-}
-
-extern "C" CUresult cuOccupancyMaxPotentialBlockSizeWithFlags(
-    int *minGridSize, int *blockSize, CUfunction func,
-    CUoccupancyB2DSize blockSizeToDynamicSMemSize, size_t dynamicSMemSize,
-    int blockSizeLimit, unsigned int flags) {
-  return lupine_occupancy_max_potential_block_size(
-      minGridSize, blockSize, func, blockSizeToDynamicSMemSize, dynamicSMemSize,
-      blockSizeLimit, flags, true);
-}
 
 // Bounded prefix scan, so a binary image cannot walk off the caller's buffer.
 static bool lupine_image_looks_like_text(const char *image) {
@@ -9604,10 +9542,6 @@ lupine_manual_function_map() {
       {"cuCtxCreate_v2", (void *)cuCtxCreate_v2},
       {"cuCtxPushCurrent", (void *)cuCtxPushCurrent_v2},
       {"cuCtxPopCurrent", (void *)cuCtxPopCurrent_v2},
-      {"cuOccupancyMaxPotentialBlockSize",
-       (void *)cuOccupancyMaxPotentialBlockSize},
-      {"cuOccupancyMaxPotentialBlockSizeWithFlags",
-       (void *)cuOccupancyMaxPotentialBlockSizeWithFlags},
       {"cuMemExportToShareableHandle", (void *)cuMemExportToShareableHandle},
       {"cuMemImportFromShareableHandle",
        (void *)cuMemImportFromShareableHandle},

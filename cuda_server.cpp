@@ -430,12 +430,6 @@ struct lupine_private_module_node_capture {
   uint64_t count = 0;
 };
 
-static libcuckoo::cuckoohash_map<CUmodule, CUlibrary> &
-lupine_module_libraries() {
-  static auto *libraries = new libcuckoo::cuckoohash_map<CUmodule, CUlibrary>();
-  return *libraries;
-}
-
 #if CUDA_VERSION >= 12090
 struct lupine_logs_callback_data {
   std::atomic<conn_t *> conn;
@@ -2241,33 +2235,6 @@ int handle_cuLinkDestroy(conn_t *conn) {
   return 0;
 }
 
-int handle_cuLibraryGetModule(conn_t *conn) {
-  CUlibrary library = nullptr;
-  CUmodule module = nullptr;
-  int request_id;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &library, sizeof(library)) < 0) {
-    return -1;
-  }
-  request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  result = cuLibraryGetModule(&module, library);
-  if (result == CUDA_SUCCESS) {
-    lupine_module_libraries().insert_or_assign(module, library);
-  }
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &module, sizeof(module)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
 // The library stays loaded: the client mirrors libraries onto other routes and
 // caches the CUkernel handles this one owns, but it only ever sends the unload
 // to the route that loaded it, so freeing here would dangle those handles.
@@ -2283,63 +2250,6 @@ int handle_cuLibraryUnload(conn_t *conn) {
     return -1;
   }
   if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-int handle_cuModuleGetGlobal_v2(conn_t *conn) {
-  uint8_t dptr_present = 0;
-  uint8_t bytes_present = 0;
-  CUdeviceptr dptr = 0;
-  size_t bytes = 0;
-  CUmodule module = nullptr;
-  std::size_t name_len = 0;
-  int request_id;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &dptr_present, sizeof(dptr_present)) < 0 ||
-      (dptr_present && rpc_read(conn, &dptr, sizeof(dptr)) < 0) ||
-      rpc_read(conn, &bytes_present, sizeof(bytes_present)) < 0 ||
-      (bytes_present && rpc_read(conn, &bytes, sizeof(bytes)) < 0) ||
-      rpc_read(conn, &module, sizeof(module)) < 0 ||
-      rpc_read(conn, &name_len, sizeof(name_len)) < 0) {
-    return -1;
-  }
-  std::vector<char> name(name_len);
-  if (name_len == 0 || rpc_read(conn, name.data(), name_len) < 0) {
-    return -1;
-  }
-  request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  result = cuModuleGetGlobal_v2(dptr_present ? &dptr : nullptr,
-                                bytes_present ? &bytes : nullptr, module,
-                                name.data());
-  if (result != CUDA_SUCCESS) {
-    CUlibrary library = nullptr;
-    if (lupine_module_libraries().find(module, library)) {
-      CUdeviceptr library_dptr = 0;
-      size_t library_bytes = 0;
-      CUresult library_result = cuLibraryGetGlobal(
-          &library_dptr, &library_bytes, library, name.data());
-      if (library_result == CUDA_SUCCESS) {
-        dptr = library_dptr;
-        bytes = library_bytes;
-        result = library_result;
-      }
-    }
-  }
-  LUPINE_TRACE_LOG("LUPINE cuModuleGetGlobal name=" << name.data() << " result="
-                                                    << static_cast<int>(result)
-                                                    << " bytes=" << bytes);
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      (dptr_present && rpc_write(conn, &dptr, sizeof(dptr)) < 0) ||
-      (bytes_present && rpc_write(conn, &bytes, sizeof(bytes)) < 0) ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;
@@ -4527,93 +4437,6 @@ int handle_cuGraphLaunch(conn_t *conn) {
   lupine_note_graph_launch(conn, exec, stream, result);
   lupine_keep_async_error(conn, result);
   return 0;
-}
-
-static int handle_cuOccupancyMaxPotentialBlockSizeCommon(conn_t *conn,
-                                                         bool with_flags) {
-  CUfunction func = nullptr;
-  size_t dynamicSMemSize = 0;
-  int blockSizeLimit = 0;
-  unsigned int flags = 0;
-  int request_id;
-  int minGridSize = 0;
-  int blockSize = 0;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &func, sizeof(func)) < 0 ||
-      rpc_read(conn, &dynamicSMemSize, sizeof(dynamicSMemSize)) < 0 ||
-      rpc_read(conn, &blockSizeLimit, sizeof(blockSizeLimit)) < 0 ||
-      (with_flags && rpc_read(conn, &flags, sizeof(flags)) < 0)) {
-    return -1;
-  }
-  request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  if (with_flags) {
-    result = cuOccupancyMaxPotentialBlockSizeWithFlags(
-        &minGridSize, &blockSize, func, nullptr, dynamicSMemSize,
-        blockSizeLimit, flags);
-  } else {
-    result = cuOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, func,
-                                              nullptr, dynamicSMemSize,
-                                              blockSizeLimit);
-  }
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &minGridSize, sizeof(minGridSize)) < 0 ||
-      rpc_write(conn, &blockSize, sizeof(blockSize)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-int handle_cuOccupancyMaxPotentialBlockSize(conn_t *conn) {
-  return handle_cuOccupancyMaxPotentialBlockSizeCommon(conn, false);
-}
-
-int handle_cuOccupancyMaxPotentialBlockSizeWithFlags(conn_t *conn) {
-  return handle_cuOccupancyMaxPotentialBlockSizeCommon(conn, true);
-}
-
-// The generated marshaller cannot receive a string of unknown length, and the
-// driver hands back a static pointer rather than filling a caller buffer, so
-// these two forward the answer as an explicit length plus bytes.
-static int lupine_handle_error_string(conn_t *conn,
-                                      CUresult (*lookup)(CUresult,
-                                                         const char **)) {
-  CUresult error;
-  if (rpc_read(conn, &error, sizeof(error)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  const char *text = nullptr;
-  CUresult result = lookup(error, &text);
-  uint32_t length = (result == CUDA_SUCCESS && text != nullptr)
-                        ? static_cast<uint32_t>(strlen(text))
-                        : 0;
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &length, sizeof(length)) < 0 ||
-      rpc_write(conn, text, length) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-int handle_cuGetErrorName(conn_t *conn) {
-  return lupine_handle_error_string(conn, cuGetErrorName);
-}
-
-int handle_cuGetErrorString(conn_t *conn) {
-  return lupine_handle_error_string(conn, cuGetErrorString);
 }
 
 #if CUDA_VERSION >= 12000

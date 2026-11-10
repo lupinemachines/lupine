@@ -1,17 +1,16 @@
 #include <cuda.h>
 
 /**
- * @disabled - the driver returns a static string of unknown length, which the
- * generated marshaller cannot receive; manual client caches, manual server
- * forwards length-prefixed bytes
+ * @disabled client - manual client caches error strings and handles
+ * disconnected fallback
  * @param error SEND_ONLY
- * @param pStr SEND_RECV
+ * @param pStr RECV_ONLY NULL_TERMINATED
  */
 CUresult cuGetErrorString(CUresult error, const char **pStr);
 /**
- * @disabled - see cuGetErrorString
+ * @disabled client - see cuGetErrorString
  * @param error SEND_ONLY
- * @param pStr SEND_RECV
+ * @param pStr RECV_ONLY NULL_TERMINATED
  */
 CUresult cuGetErrorName(CUresult error, const char **pStr);
 /**
@@ -375,7 +374,6 @@ CUresult cuModuleGetFunction(CUfunction *hfunc, CUmodule hmod,
  * @param bytes RECV_ONLY NULLABLE
  * @param hmod SEND_ONLY
  * @param name SEND_ONLY NULL_TERMINATED
- * @disabled server
  */
 CUresult cuModuleGetGlobal_v2(CUdeviceptr *dptr, size_t *bytes, CUmodule hmod,
                               const char *name) {
@@ -490,9 +488,10 @@ CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
  * @recordparent LIBRARY pMod library
  * @param pMod RECV_ONLY
  * @param library SEND_ONLY
- * @disabled server
  */
 CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
+  if (pMod == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
   CUresult resolved = lupine_resolve_library_for_route(&library, route);
   if (resolved != CUDA_SUCCESS)
     return resolved;
@@ -2996,11 +2995,10 @@ CUresult cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
     int *numBlocks, CUfunction func, int blockSize, size_t dynamicSMemSize,
     unsigned int flags);
 /**
- * @disabled
  * @param minGridSize SEND_RECV
  * @param blockSize SEND_RECV
  * @param func SEND_ONLY
- * @param blockSizeToDynamicSMemSize SEND_ONLY
+ * @param blockSizeToDynamicSMemSize NONE
  * @param dynamicSMemSize SEND_ONLY
  * @param blockSizeLimit SEND_ONLY
  */
@@ -3008,13 +3006,19 @@ CUresult
 cuOccupancyMaxPotentialBlockSize(int *minGridSize, int *blockSize,
                                  CUfunction func,
                                  CUoccupancyB2DSize blockSizeToDynamicSMemSize,
-                                 size_t dynamicSMemSize, int blockSizeLimit);
+                                 size_t dynamicSMemSize, int blockSizeLimit) {
+  if (minGridSize == nullptr || blockSize == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (blockSizeToDynamicSMemSize != nullptr)
+    return CUDA_ERROR_NOT_SUPPORTED;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
- * @disabled
  * @param minGridSize SEND_RECV
  * @param blockSize SEND_RECV
  * @param func SEND_ONLY
- * @param blockSizeToDynamicSMemSize SEND_ONLY
+ * @param blockSizeToDynamicSMemSize NONE
  * @param dynamicSMemSize SEND_ONLY
  * @param blockSizeLimit SEND_ONLY
  * @param flags SEND_ONLY
@@ -3022,7 +3026,14 @@ cuOccupancyMaxPotentialBlockSize(int *minGridSize, int *blockSize,
 CUresult cuOccupancyMaxPotentialBlockSizeWithFlags(
     int *minGridSize, int *blockSize, CUfunction func,
     CUoccupancyB2DSize blockSizeToDynamicSMemSize, size_t dynamicSMemSize,
-    int blockSizeLimit, unsigned int flags);
+    int blockSizeLimit, unsigned int flags) {
+  if (minGridSize == nullptr || blockSize == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (blockSizeToDynamicSMemSize != nullptr)
+    return CUDA_ERROR_NOT_SUPPORTED;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @param dynamicSmemSize SEND_RECV
  * @param func SEND_ONLY

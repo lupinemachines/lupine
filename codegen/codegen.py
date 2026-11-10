@@ -883,6 +883,7 @@ def parse_annotation(
                             recv=recv,
                             parameter=param,
                             ptr=param.type,
+                            nullable=deref_nullable,
                         )
                     )
                 elif nullable:
