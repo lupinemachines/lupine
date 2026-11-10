@@ -1886,7 +1886,9 @@ int handle_cuPointerGetAttribute(conn_t *conn) {
 
   if (rpc_read(conn, &attribute, sizeof(attribute)) < 0 ||
       rpc_read(conn, &ptr, sizeof(ptr)) < 0 ||
-      rpc_read(conn, &value_size, sizeof(value_size)) < 0) {
+      rpc_read(conn, &value_size, sizeof(value_size)) < 0 ||
+      value_size > sizeof(value) ||
+      (value_size != 0 && rpc_read(conn, value, value_size) < 0)) {
     return -1;
   }
   request_id = rpc_read_end(conn);
@@ -1898,9 +1900,6 @@ int handle_cuPointerGetAttribute(conn_t *conn) {
   if (!lupine_pointer_attribute_size(attribute, &expected_size) ||
       value_size != expected_size) {
     result = CUDA_ERROR_INVALID_VALUE;
-    value_size = 0;
-  } else if (value_size > sizeof(value)) {
-    result = CUDA_ERROR_NOT_SUPPORTED;
     value_size = 0;
   } else {
     result = cuPointerGetAttribute(value, attribute, ptr);
