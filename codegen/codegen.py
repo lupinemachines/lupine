@@ -24,6 +24,7 @@ from emit import (
     format_call_args,
     format_function_params,
     write_client_rpc,
+    write_client_validation,
     write_client_wrapper,
     write_server_handler,
     unsupported,
@@ -1413,8 +1414,6 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 route_expr = client_routing_key_expr(
                     metadata.routing_kind, metadata.routing_parameter, metadata
                 )
-                for written in metadata.device_writes:
-                    f.write(f"    lupine_note_device_write({written.name});\n")
                 f.write(f"    lupine_route route = {route_expr};\n")
                 if metadata.routing_kind == "DEVICE":
                     f.write("    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)\n")
@@ -1422,6 +1421,9 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                         function.return_type.format(), "invalid_device"
                     )
                     f.write(f"        return {invalid};\n")
+                write_client_validation(f, CUDA, function, operations)
+                for written in metadata.device_writes:
+                    f.write(f"    lupine_note_device_write({written.name});\n")
             if metadata.cross_server_copy is not None:
                 copy = metadata.cross_server_copy
                 stream_arg = (
