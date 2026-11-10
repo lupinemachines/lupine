@@ -6113,13 +6113,21 @@ lupine_params_from_param_buffer(void **extra,
 static CUresult
 lupine_prepare_kernel_params(lupine_route route, void *const *kernel_params,
                              const std::vector<size_t> &sizes,
-                             std::vector<CUdeviceptr> *managed) {
+                             std::vector<CUdeviceptr> *managed = nullptr) {
   bool portable = false;
   for (size_t i = 0; i < sizes.size(); ++i) {
-    if (sizes[i] == sizeof(CUdeviceptr)) {
-      CUdeviceptr value;
-      memcpy(&value, kernel_params[i], sizeof(value));
-      if (lupine_prepare_mapped_host_pointer(value, &portable)) {
+    if (kernel_params == nullptr || kernel_params[i] == nullptr) {
+      return CUDA_ERROR_INVALID_VALUE;
+    }
+    // Pointers also travel inside by-value structs (spans, iterators, tensor
+    // descriptors), at pointer-aligned offsets within the parameter's bytes.
+    const auto *bytes = static_cast<const unsigned char *>(kernel_params[i]);
+    for (size_t offset = 0; offset + sizeof(CUdeviceptr) <= sizes[i];
+         offset += alignof(CUdeviceptr)) {
+      CUdeviceptr value = 0;
+      memcpy(&value, bytes + offset, sizeof(value));
+      if (lupine_prepare_mapped_host_pointer(value, &portable) &&
+          managed != nullptr) {
         managed->push_back(value);
       }
     }
@@ -6931,6 +6939,10 @@ cuGraphKernelNodeSetParams_v2(CUgraphNode hNode,
   std::vector<size_t> param_sizes;
   CUresult return_value =
       lupine_kernel_node_param_sizes(*nodeParams, &param_sizes);
+  if (return_value == CUDA_SUCCESS) {
+    return_value = lupine_prepare_kernel_params(route, nodeParams->kernelParams,
+                                                param_sizes);
+  }
   if (return_value != CUDA_SUCCESS) {
     return return_value;
   }
@@ -6995,6 +7007,10 @@ cuGraphAddKernelNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
   std::vector<size_t> param_sizes;
   CUresult return_value =
       lupine_kernel_node_param_sizes(*nodeParams, &param_sizes);
+  if (return_value == CUDA_SUCCESS) {
+    return_value = lupine_prepare_kernel_params(route, nodeParams->kernelParams,
+                                                param_sizes);
+  }
   if (return_value != CUDA_SUCCESS) {
     return return_value;
   }
@@ -7111,6 +7127,10 @@ cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
   std::vector<size_t> param_sizes;
   CUresult return_value =
       lupine_kernel_node_param_sizes(*nodeParams, &param_sizes);
+  if (return_value == CUDA_SUCCESS) {
+    return_value = lupine_prepare_kernel_params(route, nodeParams->kernelParams,
+                                                param_sizes);
+  }
   if (return_value != CUDA_SUCCESS) {
     return return_value;
   }
@@ -7345,6 +7365,10 @@ extern "C" CUresult cuGraphAddNode_v2(CUgraphNode *phGraphNode, CUgraph hGraph,
   CUresult return_value =
       kernel ? lupine_kernel_node_param_sizes(nodeParams->kernel, &param_sizes)
              : CUDA_SUCCESS;
+  if (kernel && return_value == CUDA_SUCCESS) {
+    return_value = lupine_prepare_kernel_params(
+        route, nodeParams->kernel.kernelParams, param_sizes);
+  }
   if (return_value != CUDA_SUCCESS) {
     return return_value;
   }
