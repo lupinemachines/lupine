@@ -3497,33 +3497,20 @@ lupine_resolve_pointer_attribute_target(CUdeviceptr ptr) {
 // so the server's answers are cached per (pointer, attribute list). The cache
 // is cleared whenever any mapped allocation retires, since a later allocation
 // may reuse the address.
-struct lupine_pointer_attribute_cache_key {
-  CUdeviceptr ptr = 0;
-  std::vector<CUpointer_attribute> attributes;
-
-  bool operator==(const lupine_pointer_attribute_cache_key &other) const {
-    return ptr == other.ptr && attributes == other.attributes;
+static uint64_t lupine_pointer_attribute_cache_key(
+    CUdeviceptr ptr, const CUpointer_attribute *attributes,
+    unsigned int count) {
+  uint64_t key = static_cast<uint64_t>(ptr);
+  for (unsigned int i = 0; i < count; ++i) {
+    key = (key ^ static_cast<uint64_t>(attributes[i])) * 1099511628211ULL;
   }
-};
+  return key ^ count;
+}
 
-struct lupine_pointer_attribute_cache_key_hash {
-  size_t operator()(const lupine_pointer_attribute_cache_key &key) const {
-    size_t hash = std::hash<CUdeviceptr>()(key.ptr);
-    for (CUpointer_attribute attribute : key.attributes) {
-      hash = hash * 31 + static_cast<size_t>(attribute);
-    }
-    return hash;
-  }
-};
-
-static libcuckoo::cuckoohash_map<lupine_pointer_attribute_cache_key,
-                                 std::vector<std::vector<unsigned char>>,
-                                 lupine_pointer_attribute_cache_key_hash> &
+static libcuckoo::cuckoohash_map<uint64_t, std::vector<unsigned char>> &
 lupine_pointer_attribute_cache() {
   static auto *cache =
-      new libcuckoo::cuckoohash_map<lupine_pointer_attribute_cache_key,
-                                    std::vector<std::vector<unsigned char>>,
-                                    lupine_pointer_attribute_cache_key_hash>();
+      new libcuckoo::cuckoohash_map<uint64_t, std::vector<unsigned char>>();
   return *cache;
 }
 
@@ -3538,12 +3525,14 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
     return CUDA_ERROR_INVALID_VALUE;
   }
 
-  std::vector<size_t> value_sizes(numAttributes, 0);
+  size_t total_size = 0;
   for (unsigned int i = 0; i < numAttributes; ++i) {
+    size_t value_size = 0;
     if (data[i] == nullptr ||
-        !lupine_pointer_attribute_size(attributes[i], &value_sizes[i])) {
+        !lupine_pointer_attribute_size(attributes[i], &value_size)) {
       return CUDA_ERROR_INVALID_VALUE;
     }
+    total_size += value_size;
   }
 
   lupine_pointer_query_context query = lupine_resolve_pointer_query(ptr);
@@ -3584,22 +3573,24 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
     }
     if (replicable) {
       for (unsigned int i = 0; i < numAttributes; ++i) {
+        size_t value_size = 0;
+        lupine_pointer_attribute_size(attributes[i], &value_size);
         switch (attributes[i]) {
         case CU_POINTER_ATTRIBUTE_DEVICE_POINTER:
         case CU_POINTER_ATTRIBUTE_HOST_POINTER: {
-          memcpy(data[i], &ptr, value_sizes[i]);
+          memcpy(data[i], &ptr, value_size);
           break;
         }
         case CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL: {
           int ordinal = -1;
-          memcpy(data[i], &ordinal, value_sizes[i]);
+          memcpy(data[i], &ordinal, value_size);
           break;
         }
         case CU_POINTER_ATTRIBUTE_RANGE_START_ADDR:
         case CU_POINTER_ATTRIBUTE_RANGE_SIZE:
           break;
         default:
-          memset(data[i], 0, value_sizes[i]);
+          memset(data[i], 0, value_size);
           break;
         }
       }
@@ -3611,27 +3602,33 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   // pool hands out tensors at varying offsets inside a few allocations, and
   // every attribute except the pointer aliases is offset-independent. The
   // aliases are recomputed for the queried pointer on a hit.
-  lupine_pointer_attribute_cache_key cache_key;
-  std::vector<std::vector<unsigned char>> cached_values;
-  bool cacheable = false;
-  if (query.managed_alias) {
-    cacheable = lupine_managed_host_alias_base(ptr, &cache_key.ptr);
-  } else if (query.remote_host_alias) {
-    cache_key.ptr = query.remote_host_base;
-    cacheable = true;
-  }
+  CUdeviceptr cache_ptr = 0;
+  bool cacheable = query.managed_alias
+                       ? lupine_managed_host_alias_base(ptr, &cache_ptr)
+                       : query.remote_host_alias &&
+                             ((cache_ptr = query.remote_host_base), true);
+  uint64_t cache_key =
+      cacheable ? lupine_pointer_attribute_cache_key(cache_ptr, attributes,
+                                                     numAttributes)
+                : 0;
+  bool cache_hit = false;
   if (cacheable) {
-    cache_key.attributes.assign(attributes, attributes + numAttributes);
-    if (lupine_pointer_attribute_cache().find(cache_key, cached_values)) {
-      for (unsigned int i = 0; i < numAttributes; ++i) {
-        if (cached_values[i].size() != value_sizes[i]) {
-          return CUDA_ERROR_INVALID_VALUE;
-        }
-      }
-      for (unsigned int i = 0; i < numAttributes; ++i) {
-        memcpy(data[i], cached_values[i].data(), cached_values[i].size());
-        lupine_fixup_pointer_attribute_value(query, attributes[i], data[i]);
-      }
+    lupine_pointer_attribute_cache().find_fn(
+        cache_key, [&](const std::vector<unsigned char> &cached) {
+          if (cached.size() != total_size) {
+            return;
+          }
+          size_t offset = 0;
+          for (unsigned int i = 0; i < numAttributes; ++i) {
+            size_t value_size = 0;
+            lupine_pointer_attribute_size(attributes[i], &value_size);
+            memcpy(data[i], cached.data() + offset, value_size);
+            lupine_fixup_pointer_attribute_value(query, attributes[i], data[i]);
+            offset += value_size;
+          }
+          cache_hit = true;
+        });
+    if (cache_hit) {
       return CUDA_SUCCESS;
     }
   }
@@ -3649,49 +3646,43 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
+  CUresult return_value;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuPointerGetAttributes) < 0 ||
       rpc_write(conn, &numAttributes, sizeof(numAttributes)) < 0 ||
       rpc_write(conn, rpc_attributes,
                 numAttributes * sizeof(CUpointer_attribute)) < 0 ||
       rpc_write(conn, &query.query_ptr, sizeof(query.query_ptr)) < 0 ||
-      rpc_wait_for_response(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-
-  std::vector<std::vector<unsigned char>> values(numAttributes);
-  for (unsigned int i = 0; i < numAttributes; ++i) {
-    size_t remote_size = 0;
-    if (rpc_read(conn, &remote_size, sizeof(remote_size)) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-    values[i].resize(remote_size);
-    if (remote_size != 0 && rpc_read(conn, values[i].data(), remote_size) < 0) {
-      return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
-  }
-
-  CUresult return_value;
-  if (rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
 
   if (return_value == CUDA_SUCCESS) {
-    for (unsigned int i = 0; i < numAttributes; ++i) {
-      // Version skew: the server's width does not fit the caller's buffer.
-      if (values[i].size() != value_sizes[i]) {
-        return CUDA_ERROR_INVALID_VALUE;
-      }
+    std::vector<unsigned char> cached;
+    if (cacheable) {
+      cached.resize(total_size);
     }
+    size_t offset = 0;
     for (unsigned int i = 0; i < numAttributes; ++i) {
-      memcpy(data[i], values[i].data(), values[i].size());
+      size_t value_size = 0;
+      lupine_pointer_attribute_size(attributes[i], &value_size);
+      if (rpc_read(conn, data[i], value_size) < 0) {
+        return CUDA_ERROR_DEVICE_UNAVAILABLE;
+      }
+      if (cacheable) {
+        memcpy(cached.data() + offset, data[i], value_size);
+      }
       lupine_fixup_pointer_attribute_value(query, attributes[i], data[i]);
+      offset += value_size;
     }
     if (cacheable) {
       lupine_pointer_attribute_cache().insert_or_assign(cache_key,
-                                                        std::move(values));
+                                                        std::move(cached));
     }
+  }
+  if (rpc_read_end(conn) < 0) {
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return return_value;
 }
@@ -3987,6 +3978,7 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
   std::atomic<bool> queued{true};
   auto feed = [&](unsigned int lane) {
     const auto *data = static_cast<const unsigned char *>(source);
+    std::vector<rpc_write_cursor> cursors(2);
     for (size_t chunk = next_chunk.fetch_add(1); chunk < chunks && queued;
          chunk = next_chunk.fetch_add(1)) {
       size_t offset = chunk * LUPINE_RPC_TRANSFER_CHUNK_BYTES;
@@ -3994,9 +3986,8 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
           static_cast<size_t>(LUPINE_RPC_TRANSFER_CHUNK_BYTES), bytes - offset);
       lupine_bulk_chunk_header header = {
           2, LUPINE_RPC_lupineBulkChunk, copy_id, bytes, offset, chunk_bytes};
-      std::vector<rpc_write_cursor> cursors = {
-          rpc_write_cursor(&header, sizeof(header)),
-          rpc_write_cursor(data + offset, chunk_bytes)};
+      cursors[0] = rpc_write_cursor(&header, sizeof(header));
+      cursors[1] = rpc_write_cursor(data + offset, chunk_bytes);
       if (rpc_http2_write_stream(lanes->conn[lane], lanes->stream[lane],
                                  cursors) < 0) {
         queued = false;

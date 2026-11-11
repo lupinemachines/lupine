@@ -926,16 +926,19 @@ extern "C" CUresult cuDeviceGet(CUdevice *device, int ordinal) {
 
 static void lupine_record_library_image(CUlibrary library, lupine_route route,
                                         uint32_t kind,
-                                        std::vector<unsigned char> &&image,
-                                        const void *code) {
+                                        const unsigned char *image,
+                                        size_t image_size, const void *code) {
   int route_id = lupine_route_identity(route);
-  if (library == nullptr || image.empty() || route_id == -2 ||
-      !lupine_devices_span_routes()) {
+  if (library == nullptr || image == nullptr || image_size == 0 ||
+      route_id == -2 || !lupine_devices_span_routes()) {
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
   lupine_library_images()[library] = {
-      kind, code, std::move(image), {{route_id, library}}};
+      kind,
+      code,
+      std::vector<unsigned char>(image, image + image_size),
+      {{route_id, library}}};
 }
 
 static void lupine_cache_library_kernel(CUkernel kernel, CUlibrary library,
@@ -1169,6 +1172,28 @@ static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
                                                       lupine_route route,
                                                       CUlibrary *library);
 
+static CUresult lupine_mmap_readonly_file(const char *path, void **mapping,
+                                          size_t *size) {
+  int fd = open(path, O_RDONLY | O_BINARY);
+  if (fd < 0) {
+    return CUDA_ERROR_FILE_NOT_FOUND;
+  }
+  // FILE_NOT_FOUND is reserved for open() failing.
+  lupine_file_stat st = {};
+  if (fstat(fd, &st) < 0) {
+    close(fd);
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  if (st.st_size <= 0) {
+    close(fd);
+    return CUDA_ERROR_INVALID_IMAGE;
+  }
+  *size = static_cast<size_t>(st.st_size);
+  *mapping = mmap(nullptr, *size, PROT_READ, MAP_PRIVATE, fd, 0);
+  close(fd);
+  return *mapping == MAP_FAILED ? CUDA_ERROR_OUT_OF_MEMORY : CUDA_SUCCESS;
+}
+
 extern "C" CUresult cuModuleLoad(CUmodule *module, const char *fname) {
   if (module == nullptr || fname == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
@@ -1184,28 +1209,11 @@ extern "C" CUresult cuModuleLoad(CUmodule *module, const char *fname) {
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   void *mapping = MAP_FAILED;
   size_t mapped_size = 0;
-  int fd = open(fname, O_RDONLY | O_BINARY);
-  if (fd < 0) {
-    return CUDA_ERROR_FILE_NOT_FOUND;
-  }
-  // FILE_NOT_FOUND is reserved for open() failing.
-  lupine_file_stat st = {};
-  if (fstat(fd, &st) < 0) {
-    close(fd);
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
-  if (st.st_size <= 0) {
-    close(fd);
-    return CUDA_ERROR_INVALID_IMAGE;
-  }
-  mapped_size = static_cast<size_t>(st.st_size);
-  mapping = mmap(nullptr, mapped_size, PROT_READ, MAP_PRIVATE, fd, 0);
-  close(fd);
-  if (mapping == MAP_FAILED) {
-    return CUDA_ERROR_OUT_OF_MEMORY;
+  CUresult result = lupine_mmap_readonly_file(fname, &mapping, &mapped_size);
+  if (result != CUDA_SUCCESS) {
+    return result;
   }
 
   bool failed = lupine_prepare_rpc(conn) < 0 ||
@@ -3467,23 +3475,19 @@ extern "C" CUresult cuMemRangeGetAttributes(void **data, size_t *dataSizes,
                                     attributes, numAttributes, devPtr, count);
   }
 
-  if (!data || !dataSizes || !attributes || !numAttributes)
+  if (!data || !dataSizes || !attributes || !numAttributes || !count)
     return CUDA_ERROR_INVALID_VALUE;
   for (size_t i = 0; i < numAttributes; ++i) {
-    if (!data[i] || dataSizes[i] == 0)
+    if (!data[i] ||
+        !lupine_mem_range_attribute_size_valid(attributes[i], dataSizes[i]))
       return CUDA_ERROR_INVALID_VALUE;
   }
 
-  std::vector<std::vector<unsigned char>> staged(numAttributes);
   for (size_t i = 0; i < numAttributes; ++i) {
-    staged[i].resize(dataSizes[i]);
-    CUresult result = cuMemRangeGetAttribute(staged[i].data(), dataSizes[i],
+    CUresult result = cuMemRangeGetAttribute(data[i], dataSizes[i],
                                              attributes[i], devPtr, count);
     if (result != CUDA_SUCCESS)
       return result;
-  }
-  for (size_t i = 0; i < numAttributes; ++i) {
-    memcpy(data[i], staged[i].data(), dataSizes[i]);
   }
   return CUDA_SUCCESS;
 }
@@ -3642,37 +3646,16 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
                                     numOptions, options, optionValues);
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  CUresult return_value;
-  size_t path_len = path == nullptr ? 0 : strlen(path) + 1;
+  size_t path_len = strlen(path) + 1;
   void *file_mapping = MAP_FAILED;
-  const void *file_payload = nullptr;
   size_t mapped_file_size = 0;
-  uint64_t file_size = 0;
-  uint8_t has_file_data = 0;
-  int file_fd = open(path, O_RDONLY | O_BINARY);
-  if (file_fd < 0) {
-    return CUDA_ERROR_FILE_NOT_FOUND;
+  CUresult return_value =
+      lupine_mmap_readonly_file(path, &file_mapping, &mapped_file_size);
+  if (return_value != CUDA_SUCCESS) {
+    return return_value;
   }
-  // FILE_NOT_FOUND is reserved for open() failing.
-  lupine_file_stat st = {};
-  if (fstat(file_fd, &st) < 0) {
-    close(file_fd);
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
-  if (st.st_size <= 0) {
-    close(file_fd);
-    return CUDA_ERROR_INVALID_IMAGE;
-  }
-  mapped_file_size = static_cast<size_t>(st.st_size);
-  file_mapping =
-      mmap(nullptr, mapped_file_size, PROT_READ, MAP_PRIVATE, file_fd, 0);
-  close(file_fd);
-  if (file_mapping == MAP_FAILED) {
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
-  file_payload = file_mapping;
-  file_size = mapped_file_size;
-  has_file_data = 1;
+  uint64_t file_size = mapped_file_size;
+  uint8_t has_file_data = 1;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuLinkAddFile_v2) < 0 ||
       rpc_write(conn, &state, sizeof(state)) < 0 ||
@@ -3681,7 +3664,7 @@ extern "C" CUresult cuLinkAddFile_v2(CUlinkState state, CUjitInputType type,
       rpc_write(conn, path, path_len) < 0 ||
       rpc_write(conn, &has_file_data, sizeof(has_file_data)) < 0 ||
       rpc_write(conn, &file_size, sizeof(file_size)) < 0 ||
-      rpc_write(conn, file_payload, mapped_file_size) < 0 ||
+      rpc_write(conn, file_mapping, mapped_file_size) < 0 ||
       lupine_write_jit_options(conn, numOptions, options, optionValues) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       lupine_read_jit_outputs(conn, numOptions, options, optionValues) < 0 ||
@@ -3890,9 +3873,11 @@ static bool lupine_image_looks_like_text(const char *image) {
   return true;
 }
 
-static bool lupine_pack_module_image(const void *image, uint32_t *kind,
-                                     std::vector<unsigned char> *bytes) {
-  if (image == nullptr || kind == nullptr || bytes == nullptr) {
+static bool lupine_locate_module_image(const void *image, uint32_t *kind,
+                                       const unsigned char **data,
+                                       size_t *size) {
+  if (image == nullptr || kind == nullptr || data == nullptr ||
+      size == nullptr) {
     return false;
   }
 
@@ -3943,7 +3928,8 @@ static bool lupine_pack_module_image(const void *image, uint32_t *kind,
         }
       }
       *kind = LUPINE_MODULE_IMAGE_FATBIN_RAW;
-      bytes->assign(elf, elf + image_size);
+      *data = elf;
+      *size = image_size;
       return true;
     }
 
@@ -3954,15 +3940,13 @@ static bool lupine_pack_module_image(const void *image, uint32_t *kind,
       return false;
     }
     *kind = LUPINE_MODULE_IMAGE_FATBIN_RAW;
-    bytes->assign(reinterpret_cast<const unsigned char *>(ptx),
-                  reinterpret_cast<const unsigned char *>(ptx) +
-                      std::strlen(ptx) + 1);
+    *data = reinterpret_cast<const unsigned char *>(ptx);
+    *size = std::strlen(ptx) + 1;
     return true;
   }
-  size_t image_size = static_cast<size_t>(header->header_size) +
-                      static_cast<size_t>(header->files_size);
-  const auto *raw = static_cast<const unsigned char *>(fatbin);
-  bytes->assign(raw, raw + image_size);
+  *data = static_cast<const unsigned char *>(fatbin);
+  *size = static_cast<size_t>(header->header_size) +
+          static_cast<size_t>(header->files_size);
   return true;
 }
 
@@ -4049,8 +4033,9 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
   }
 
   uint32_t kind = 0;
-  std::vector<unsigned char> image_bytes;
-  if (!lupine_pack_module_image(image, &kind, &image_bytes)) {
+  const unsigned char *image_data = nullptr;
+  size_t image_size = 0;
+  if (!lupine_locate_module_image(image, &kind, &image_data, &image_size)) {
     return CUDA_ERROR_INVALID_IMAGE;
   }
 
@@ -4065,18 +4050,16 @@ extern "C" CUresult cuModuleLoadData(CUmodule *module, const void *image) {
   }
   unsigned device_cc = 0;
   if (lupine_current_device_compute_capability(&device_cc) &&
-      !lupine_fatbin_may_serve_device(image_bytes.data(), image_bytes.size(),
-                                      device_cc)) {
+      !lupine_fatbin_may_serve_device(image_data, image_size, device_cc)) {
     return CUDA_ERROR_NO_BINARY_FOR_GPU;
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  size_t image_size = image_bytes.size();
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuModuleLoadData) < 0 ||
       rpc_write(conn, &kind, sizeof(kind)) < 0 ||
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
+      rpc_write(conn, image_data, image_size) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, module, sizeof(CUmodule)) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
@@ -4108,8 +4091,9 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
   }
 
   uint32_t kind = 0;
-  std::vector<unsigned char> image_bytes;
-  if (!lupine_pack_module_image(image, &kind, &image_bytes)) {
+  const unsigned char *image_data = nullptr;
+  size_t image_size = 0;
+  if (!lupine_locate_module_image(image, &kind, &image_data, &image_size)) {
     return CUDA_ERROR_INVALID_IMAGE;
   }
 
@@ -4124,12 +4108,11 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  size_t image_size = image_bytes.size();
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuModuleLoadDataEx) < 0 ||
       rpc_write(conn, &kind, sizeof(kind)) < 0 ||
       rpc_write(conn, &image_size, sizeof(image_size)) < 0 ||
-      rpc_write(conn, image_bytes.data(), image_size) < 0 ||
+      rpc_write(conn, image_data, image_size) < 0 ||
       lupine_write_jit_options(conn, numOptions, options, optionValues) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       lupine_read_jit_outputs(conn, numOptions, options, optionValues) < 0 ||
@@ -4703,8 +4686,9 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   }
 
   uint32_t kind = 0;
-  std::vector<unsigned char> image_bytes;
-  if (!lupine_pack_module_image(code, &kind, &image_bytes)) {
+  const unsigned char *image_data = nullptr;
+  size_t image_size = 0;
+  if (!lupine_locate_module_image(code, &kind, &image_data, &image_size)) {
     const auto *wrapper = reinterpret_cast<const lupine_fatbin_wrapper *>(code);
     LUPINE_TRACE_LOG("LUPINE cuLibraryLoadData could not pack image"
                      << " magic=0x" << std::hex << wrapper->magic
@@ -4719,7 +4703,7 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
         numJitOptions, libraryOptions, libraryOptionValues, numLibraryOptions);
     if (result == CUDA_SUCCESS) {
       lupine_note_library_owner_route(*library, route);
-      lupine_record_library_image(*library, route, kind, std::move(image_bytes),
+      lupine_record_library_image(*library, route, kind, image_data, image_size,
                                   code);
     }
     return result;
@@ -4730,16 +4714,12 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   conn_t *conn = lupine_route_remote_conn(route);
   lupine_library_reference ref;
   ref.kind = kind;
-  ref.size = image_bytes.size();
-  const void *fatbin =
-      kind == LUPINE_MODULE_IMAGE_FATBIN_RAW
-          ? code
-          : reinterpret_cast<const lupine_fatbin_wrapper *>(code)->data;
+  ref.size = image_size;
   bool profiled =
       numJitOptions == 0 && ref.size >= sizeof(lupine_fatbin_header) &&
-      reinterpret_cast<const lupine_fatbin_header *>(fatbin)->magic ==
+      reinterpret_cast<const lupine_fatbin_header *>(image_data)->magic ==
           LUPINE_FATBIN_MAGIC &&
-      lupine_locate_fatbin(fatbin, &ref);
+      lupine_locate_fatbin(image_data, &ref);
   lupine_library_reference_record(&ref, libraryOptions, libraryOptionValues,
                                   numLibraryOptions);
   lupine_library_batch_start(route);
@@ -4748,7 +4728,7 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
       profiled && lupine_library_batch_claim(route, ref, library);
   // JIT options can request a target other than a server device, so preserve
   // those images verbatim. Profiles and cross-route replays retain originals.
-  auto wire = lupine_prepare_library_image(conn, ref, image_bytes.data(),
+  auto wire = lupine_prepare_library_image(conn, ref, image_data,
                                            !claimed && numJitOptions == 0);
   if (!claimed &&
       (lupine_prepare_rpc(conn) < 0 ||
@@ -4767,7 +4747,7 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
   if (return_value == CUDA_SUCCESS) {
     lupine_note_library_owner(*library, conn);
     lupine_record_library_image(*library, lupine_remote_route_for_conn(conn),
-                                kind, std::move(image_bytes), code);
+                                kind, image_data, image_size, code);
     if (profiled) {
       lupine_library_profile_record(route, ref);
     }

@@ -478,7 +478,8 @@ void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
         pending.push_back({nullptr, copy.client, copy.server_src,
                            lupine_dtoh_storage::borrowed, context, resources});
       }
-      lupine_queue_pending_dtoh_copies(conn, stream, std::move(pending));
+      lupine_queue_pending_dtoh_copies(conn, stream, pending.data(),
+                                       pending.size());
     }
     lupine_stream_capture_resource_map().insert_or_assign(stream, resources);
   }
@@ -1554,7 +1555,7 @@ CUresult lupine_release_graph_exec_resources(CUgraphExec exec) {
 static CUresult lupine_enqueue_htod_callback(
     const std::shared_ptr<lupine_htod_graph_state> &graph_state,
     const std::shared_ptr<lupine_htod_side_effect_ring> &ring,
-    lupine_htod_copy copy, const lupine_htod_fragment &fragment,
+    const lupine_htod_copy &copy, const lupine_htod_fragment &fragment,
     const std::shared_ptr<lupine_htod_capture_events> &capture_events,
     CUstream stream) {
   if (graph_state != nullptr) {
@@ -1562,7 +1563,7 @@ static CUresult lupine_enqueue_htod_callback(
     std::shared_ptr<lupine_htod_callback_data> callback;
     try {
       callback = std::make_shared<lupine_htod_callback_data>(
-          lupine_htod_callback_data{ring, std::move(copy), fragment,
+          lupine_htod_callback_data{ring, copy, fragment,
                                     graph_state->execution, capture_events});
     } catch (...) {
       return CUDA_ERROR_OUT_OF_MEMORY;
@@ -1579,8 +1580,8 @@ static CUresult lupine_enqueue_htod_callback(
   }
 
   auto callback = std::unique_ptr<lupine_htod_callback_data>(
-      new (std::nothrow) lupine_htod_callback_data{ring, std::move(copy),
-                                                   fragment, nullptr, nullptr});
+      new (std::nothrow)
+          lupine_htod_callback_data{ring, copy, fragment, nullptr, nullptr});
   if (callback == nullptr) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -1683,7 +1684,7 @@ static CUresult lupine_prepare_htod_copy(
 }
 
 static CUresult lupine_enqueue_client_htod_copy(lupine_staging_state &state,
-                                                lupine_htod_copy copy,
+                                                const lupine_htod_copy &copy,
                                                 CUcontext context,
                                                 CUstream stream,
                                                 bool blocking) {
@@ -1783,9 +1784,9 @@ static CUresult lupine_enqueue_client_htod_copy(lupine_staging_state &state,
   return blocking ? cuStreamSynchronize(stream) : CUDA_SUCCESS;
 }
 
-static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
-                                                  bool blocking,
-                                                  lupine_htod_copy copy) {
+static CUresult lupine_copy_client_host_to_device(
+    conn_t *conn, CUstream stream, bool blocking,
+    const lupine_htod_copy &copy) {
   // CUDA allows the copy stream to belong to a different context from the
   // caller's current one. The staging stream and its ordering events must be
   // created in that stream's context, then leave the caller's binding intact.
@@ -1810,8 +1811,8 @@ static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
   }
 
   if (result == CUDA_SUCCESS) {
-    result = lupine_enqueue_client_htod_copy(*state, std::move(copy), context,
-                                             stream, blocking);
+    result =
+        lupine_enqueue_client_htod_copy(*state, copy, context, stream, blocking);
   }
   CUcontext popped = nullptr;
   CUresult restore = cuCtxPopCurrent_v2(&popped);
@@ -1824,9 +1825,9 @@ static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
 // queued ahead of the copy could need. Page-locked sources still arrive by
 // pull, read when the stream reaches the copy, because queued work may write
 // them first.
-static CUresult lupine_copy_pushed_host_to_device(conn_t *conn, CUstream stream,
-                                                  bool blocking,
-                                                  lupine_htod_copy copy) {
+static CUresult lupine_copy_pushed_host_to_device(
+    conn_t *conn, CUstream stream, bool blocking,
+    const lupine_htod_copy &copy) {
   // A captured copy is replayed by the graph without the client, so it keeps
   // pulling at launch and the pushed bytes are dropped.
   if (lupine_captured_stream_resources(stream) != nullptr) {
@@ -3050,7 +3051,7 @@ static void lupine_defer_dtoh(conn_t *conn, CUstream stream,
                                           ? lupine_dtoh_storage::pinned
                                           : lupine_dtoh_storage::heap};
         (void)cuStreamGetCtx(stream, &copy.context);
-        lupine_queue_pending_dtoh_copies(conn, stream, {copy});
+        lupine_queue_pending_dtoh_copies(conn, stream, &copy, 1);
         lupine_note_dtoh_undelivered(conn, stream, client, host, false);
         host = nullptr;
       }
@@ -3172,7 +3173,7 @@ int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
                                     server_host,
                                     lupine_dtoh_storage::borrowed};
       (void)cuStreamGetCtx(stream, &copy.context);
-      lupine_queue_pending_dtoh_copies(conn, stream, {copy});
+      lupine_queue_pending_dtoh_copies(conn, stream, &copy, 1);
       // A later HtoD from this memory reads the client's bytes, which this
       // copy only reaches at delivery, so it overlays the mirror instead.
       lupine_note_dtoh_undelivered(conn, stream, {dstHost, byteCount},
