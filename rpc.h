@@ -5,6 +5,7 @@
 #include <chrono>
 #include <set>
 #include <stdint.h>
+#include <unordered_map>
 #include <vector>
 
 // Chunk size shared by the client and server for transfers split across
@@ -24,6 +25,14 @@ static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOH = 0;
 static constexpr uint8_t LUPINE_COPY_DIRECTION_HTOD = 1;
 static constexpr uint8_t LUPINE_COPY_DIRECTION_DTOH = 2;
 static constexpr uint8_t LUPINE_COPY_DIRECTION_DTOD = 3;
+
+// Wire CUstream sentinels for RPC_cuMemcpyDtoH_v2 demand fetches, above
+// CU_STREAM_LEGACY (0x1) and CU_STREAM_PER_THREAD (0x2) and below aligned
+// stream pointers. READY copies on a private non-blocking stream once prior
+// device work is already synchronized; SYNC_ALL synchronizes the context
+// first when multiple streams may have written the allocation.
+static constexpr uintptr_t LUPINE_STREAM_FETCH_READY_BITS = 0x3;
+static constexpr uintptr_t LUPINE_STREAM_FETCH_SYNC_ALL_BITS = 0x4;
 
 // Where the dense bytes of a deferred device-to-host copy land in client
 // memory: depth slices of height rows of width bytes. A linear copy is one row.
@@ -120,7 +129,68 @@ struct rpc_host_allocation_write {
 // stay uncredited until the staging buffer they landed in retires.
 #define LUPINE_FF_STAGING_WINDOW_BYTES (64ull * 1024 * 1024)
 
+// The largest pageable async host-to-device copy the driver stages before
+// returning without waiting for the stream (measured on driver 580.95: a
+// 64 KiB copy returns in microseconds behind a busy stream, one byte more
+// waits for it). Up to this size the server hands pushed bytes to the driver
+// directly, so the client need not wait for the reply.
+#define LUPINE_INLINE_HTOD_BYTES (64ull * 1024)
+
 typedef struct conn_t conn_t;
+
+// Requests are ordered against earlier unanswered ones either connection-wide
+// or by the objects they touch. A scope key is an object's handle (a stream or
+// an event); these values are not handles. RPC_SCOPE_ALL orders a request
+// behind every earlier unanswered one. RPC_SCOPE_NONE orders a request
+// touching no object only behind earlier ones that touched none, and makes an
+// unanswered one an object every later request waits for; RPC_SCOPE_LANE also
+// publishes nothing, so only the sender's own lane follows it.
+static constexpr uintptr_t RPC_SCOPE_NONE = 0;
+static constexpr uintptr_t RPC_SCOPE_LANE = ~uintptr_t{0};
+static constexpr uintptr_t RPC_SCOPE_ALL = ~uintptr_t{2};
+// Host memory a client sends to the server's copy goes in order on a lane of
+// its own and waits for nothing, so it never queues behind a handler that is
+// blocked, possibly on a callback that is waiting to send it; every later
+// request waits for it.
+static constexpr uintptr_t RPC_SCOPE_HOST_WRITES = ~uintptr_t{1};
+
+// A soft request checks what it is ordered behind instead of waiting for it,
+// so a query can say that work is not submitted yet; its handler asks
+// rpc_request_unsettled. Every later scoped request waits for one that
+// publishes the connection: for work that touches objects the request does
+// not name, such as events a graph records.
+enum : unsigned { RPC_REQUEST_SOFT = 1, RPC_REQUEST_PUBLISH_CONNECTION = 2 };
+
+// The last unanswered request on an object, and the lane that sent it.
+struct rpc_scope_ticket {
+  uint64_t ticket = ~uint64_t{0};
+  int32_t lane = -1;
+};
+
+// What the request being built is ordered against. A connection-wide request
+// waits for every unanswered request published before it was started. A
+// scoped one waits only for the last unanswered request another lane sent on
+// each of its objects, and for the last one that touched no object: its own
+// lane's requests are already in order. A soft request checks those instead
+// of waiting for them, so a query can say they are not done yet.
+// A client request leads with wait markers: {0, 0, n} waits for every ticket
+// below n, {0, 1, t} for ticket t, and {0, 2, t} only checks it.
+struct rpc_wait_marker {
+  int zero;
+  int kind;
+  uint64_t value;
+};
+
+struct rpc_request_scope {
+  bool scoped = false;
+  bool publish_connection = false;
+  bool publish_host_writes = false;
+  bool soft = false;
+  std::vector<uintptr_t> keys; // objects later requests order behind it on
+  std::vector<rpc_wait_marker> waits;
+  // Retired scopes this request waits for, dropped once it publishes.
+  size_t retired_count = 0;
+};
 
 struct conn_t {
   lupine_socket_t connfd;
@@ -130,22 +200,31 @@ struct conn_t {
   int write_op;
   int32_t write_stream_id;
   uint64_t write_dependency;
-  int32_t async_prefix_stream;
-  uint64_t async_prefix;
+  uint64_t write_ticket;
+  bool write_awaited;
+  rpc_request_scope write_scope;
 
   pthread_t read_thread;
   pthread_mutex_t write_mutex, call_mutex, async_mutex;
   pthread_cond_t async_cond;
-  uint64_t issued_async_sequence;
+  uint64_t issued_async_sequence; // tickets sent, under write_mutex
   uint64_t serving_async_sequence;
-  uint64_t published_async_sequence;
+  int async_waiters = 0; // lanes in a ticket wait, under async_mutex
   std::set<uint64_t> completed_async_sequences;
+  // Scope state, under write_mutex.
+  std::unordered_map<uintptr_t, rpc_scope_ticket> scope_last;
+  std::vector<rpc_scope_ticket> retired_scopes;
+  rpc_scope_ticket connection_last;
+  rpc_scope_ticket host_writes_last;
   bool async_cancelled;
   int async_sync_initialized;
   int first_async_error;
   std::vector<rpc_write_cursor> write_queue;
   std::vector<rpc_host_allocation_write> host_allocation_writes;
   int host_allocation_writes_pending;
+  // Whether a host-memory flush was sent unanswered since a callback's
+  // acknowledgement last waited for the flushes.
+  int host_flushes_unsettled;
   unsigned char *write_copy_buffer;
   size_t write_copy_capacity;
   size_t write_copy_offset;
@@ -216,17 +295,32 @@ static inline int rpc_read_buffer(conn_t *conn, void *data, size_t size) {
 extern int rpc_drain(conn_t *conn, size_t size);
 extern int rpc_read_end(conn_t *conn);
 
+// Sends the request being built and waits for its answer.
 extern int rpc_wait_for_response(conn_t *conn);
+// Marks the request being built as one whose answer the caller reads itself,
+// after rpc_write_end, with rpc_read_start.
+extern void rpc_expect_answer(conn_t *conn);
 
 // Owns connection validation for the request chain: a null conn (route with no
 // remote server) or a closed conn fails here, so callers surface their
-// unavailable-server result without per-call-site null checks.
-extern int rpc_write_start_request(conn_t *conn, const int op);
-// Starts a request and allocates its async-submission ticket while the normal
-// request lock is held. The caller writes the ticket into the request payload;
-// this adds no server acknowledgement or round trip.
-extern int rpc_write_start_async_request(conn_t *conn, const int op,
-                                         uint64_t *sequence);
+// unavailable-server result without per-call-site null checks. The request
+// is ordered by the object `key` names, with RPC_REQUEST_* `flags`;
+// rpc_write_start_request orders it behind every earlier unanswered request.
+extern int rpc_write_start_request_on(conn_t *conn, const int op, uintptr_t key,
+                                      unsigned flags = 0);
+static inline int rpc_write_start_request(conn_t *conn, const int op) {
+  return rpc_write_start_request_on(conn, op, RPC_SCOPE_ALL);
+}
+// Adds a second object the request being built is ordered by.
+extern int rpc_request_on(conn_t *conn, uintptr_t key);
+// Orders the request being built behind an object's earlier requests without
+// later requests on that object ordering behind it.
+extern int rpc_request_after(conn_t *conn, uintptr_t key);
+// Brackets the requests a client sends while answering a server callback,
+// after it has read the callback's request: they belong to the callback, so a
+// handoff that pauses new requests lets them through.
+extern void rpc_begin_callback_reply(conn_t *conn);
+extern void rpc_end_callback_reply();
 extern int rpc_write_start_response(conn_t *conn, const int read_id);
 // A zero-size write is a successful no-op, including when data is null.
 extern int rpc_write(conn_t *conn, const void *data, const size_t size);
@@ -256,12 +350,32 @@ extern int rpc_write_end(conn_t *conn);
 // free to execute and complete in either order.
 extern int rpc_async_sequence_wait(conn_t *conn, uint64_t published);
 extern void rpc_cancel_async_waits(conn_t *conn);
-// A fire-and-forget handler claims its request's sequence before native
-// submission. The lane loop ends it once the handler returns, so every handler
-// exit completes the claimed ticket; end is a no-op when nothing was claimed.
-// No execution lock is held between begin and end.
+// Dispatch claims a request's ticket before its handler runs, and the lane loop
+// releases it once the handler returns, so later requests wait for the call's
+// submission. A handler may release it earlier, once its work is queued, with
+// rpc_async_sequence_end, which is a no-op when nothing is claimed. No
+// execution lock is held meanwhile.
 extern int rpc_async_sequence_begin(conn_t *conn, uint64_t sequence);
 extern void rpc_async_sequence_end(conn_t *conn);
+// Whether the client waits for the answer to the request being handled. A
+// request it does not wait for carries a ticket and gets no answer: its
+// handler keeps a failure for the client's next synchronize instead.
+extern bool rpc_request_awaited(conn_t *conn);
+// Drops what is known about `key`, once nothing sent later can be ordered by
+// it: a destroyed object, or one a later request now stands for. Called
+// outside a request builder.
+extern void rpc_scope_forget(conn_t *conn, uintptr_t key);
+// Moves `key`'s last ticket into `conn`'s retired set and drops `key`, so a
+// recycled handle starts clean while later legacy requests still wait for
+// `key`'s final work until a ticketed legacy request covers it.
+extern void rpc_scope_retire(conn_t *conn, uintptr_t key);
+extern int rpc_request_after_retired(conn_t *conn);
+// The last ticket another lane sent on `key`, for a request being built to
+// carry and the server to check with rpc_async_ticket_released; ~0 if none.
+extern uint64_t rpc_request_pending_ticket(conn_t *conn, uintptr_t key);
+extern bool rpc_async_ticket_released(conn_t *conn, uint64_t ticket);
+// Whether something a soft request is ordered behind has not been submitted.
+extern bool rpc_request_unsettled(conn_t *conn);
 extern int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id);
 // Signals transport readers to stop without releasing connection resources.
 // Owners use this before joining workers that may be blocked on the transport.

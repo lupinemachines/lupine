@@ -468,13 +468,28 @@ lupine_logs_callbacks() {
 #endif
 
 // A fire-and-forget failure is reported by the next synchronizing response.
-static void lupine_keep_async_error(conn_t *conn, CUresult result) {
+bool lupine_stream_query_unsettled(conn_t *conn, CUstream stream) {
+  CUstreamCaptureStatus capture = CU_STREAM_CAPTURE_STATUS_NONE;
+  return rpc_request_unsettled(conn) &&
+         cuStreamIsCapturing(stream, &capture) == CUDA_SUCCESS &&
+         capture == CU_STREAM_CAPTURE_STATUS_NONE;
+}
+
+void lupine_keep_async_error(conn_t *conn, CUresult result) {
   int none = CUDA_SUCCESS;
   if (result != CUDA_SUCCESS) {
     __atomic_compare_exchange_n(&conn->first_async_error, &none,
                                 static_cast<int>(result), false,
                                 __ATOMIC_RELAXED, __ATOMIC_RELAXED);
   }
+}
+
+bool lupine_unanswered(conn_t *conn, CUresult result) {
+  if (rpc_request_awaited(conn)) {
+    return false;
+  }
+  lupine_keep_async_error(conn, result);
+  return true;
 }
 
 CUresult lupine_take_async_error(conn_t *conn, CUresult result) {
@@ -1952,17 +1967,12 @@ int handle_cuLinkDestroy(conn_t *conn) {
 // caches the CUkernel handles this one owns, but it only ever sends the unload
 // to the route that loaded it, so freeing here would dangle those handles.
 int handle_cuLibraryUnload(conn_t *conn) {
-  uint64_t async_sequence = 0;
   CUlibrary library = nullptr;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &library, sizeof(library)) < 0) {
+  if (rpc_read(conn, &library, sizeof(library)) < 0) {
     return -1;
   }
   if (rpc_read_end(conn) < 0) {
-    return -1;
-  }
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
     return -1;
   }
   return 0;
@@ -2035,7 +2045,6 @@ struct lupine_server_launch_params {
 };
 
 static int handle_cuLaunchKernelCommon(conn_t *conn, bool cooperative) {
-  uint64_t async_sequence = 0;
   CUfunction f = nullptr;
   unsigned int gridDimX = 0;
   unsigned int gridDimY = 0;
@@ -2047,8 +2056,7 @@ static int handle_cuLaunchKernelCommon(conn_t *conn, bool cooperative) {
   CUstream hStream = nullptr;
   lupine_server_launch_params launch_params;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &f, sizeof(f)) < 0 ||
+  if (rpc_read(conn, &f, sizeof(f)) < 0 ||
       rpc_read(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
       rpc_read(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
       rpc_read(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
@@ -2057,8 +2065,7 @@ static int handle_cuLaunchKernelCommon(conn_t *conn, bool cooperative) {
       rpc_read(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
       rpc_read(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
       rpc_read(conn, &hStream, sizeof(hStream)) < 0 ||
-      launch_params.read(conn) < 0 || rpc_read_end(conn) < 0 ||
-      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+      launch_params.read(conn) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
 
@@ -2070,9 +2077,7 @@ static int handle_cuLaunchKernelCommon(conn_t *conn, bool cooperative) {
                   : cuLaunchKernel(f, gridDimX, gridDimY, gridDimZ, blockDimX,
                                    blockDimY, blockDimZ, sharedMemBytes,
                                    hStream, launch_params.data(), nullptr);
-  if (!cooperative) {
-    lupine_keep_async_error(conn, result);
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
@@ -2081,21 +2086,18 @@ int handle_cuLaunchKernel(conn_t *conn) {
 }
 
 int handle_cuLaunchKernelEx(conn_t *conn) {
-  uint64_t async_sequence = 0;
   CUlaunchConfig config = {};
   CUfunction f = nullptr;
   lupine_server_launch_params launch_params;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &config, sizeof(config)) < 0) {
+  if (rpc_read(conn, &config, sizeof(config)) < 0) {
     return -1;
   }
   std::vector<CUlaunchAttribute> attributes(config.numAttrs);
   if (rpc_read(conn, attributes.data(),
                config.numAttrs * sizeof(*attributes.data())) < 0 ||
       rpc_read(conn, &f, sizeof(f)) < 0 || launch_params.read(conn) < 0 ||
-      rpc_read_end(conn) < 0 ||
-      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+      rpc_read_end(conn) < 0) {
     return -1;
   }
   config.attrs = attributes.data();
@@ -2594,6 +2596,7 @@ int handle_cuGraphHostNodeGetParams(conn_t *conn) {
 }
 
 int handle_cuLaunchHostFunc(conn_t *conn) {
+  // Unanswered: a failure reaches the client from its next synchronize.
   CUstream stream = nullptr;
   CUhostFn fn = nullptr;
   void *userData = nullptr;
@@ -2629,14 +2632,12 @@ int handle_cuLaunchHostFunc(conn_t *conn) {
     }
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
 int handle_cuStreamAddCallback(conn_t *conn) {
+  // Unanswered: a failure reaches the client from its next synchronize.
   CUstream stream = nullptr;
   CUstreamCallback callback = nullptr;
   void *userData = nullptr;
@@ -2663,10 +2664,7 @@ int handle_cuStreamAddCallback(conn_t *conn) {
     }
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
@@ -2772,13 +2770,11 @@ void lupine_server_cleanup_log_callbacks(conn_t *conn) {
 }
 
 static int handle_cuEventRecordCommon(conn_t *conn, bool with_flags) {
-  uint64_t async_sequence = 0;
   CUevent event = nullptr;
   CUstream stream = nullptr;
   unsigned int flags = 0;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &event, sizeof(event)) < 0 ||
+  if (rpc_read(conn, &event, sizeof(event)) < 0 ||
       rpc_read(conn, &stream, sizeof(stream)) < 0 ||
       (with_flags && rpc_read(conn, &flags, sizeof(flags)) < 0)) {
     return -1;
@@ -2787,9 +2783,6 @@ static int handle_cuEventRecordCommon(conn_t *conn, bool with_flags) {
     return -1;
   }
 
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
-    return -1;
-  }
   CUresult result = with_flags ? cuEventRecordWithFlags(event, stream, flags)
                                : cuEventRecord(event, stream);
   if (result == CUDA_SUCCESS) {
@@ -2809,6 +2802,7 @@ int handle_cuEventRecordWithFlags(conn_t *conn) {
 }
 
 int handle_cuEventDestroy_v2(conn_t *conn) {
+  // Unanswered: a failure reaches the client from its next synchronize.
   CUevent event = nullptr;
   if (rpc_read(conn, &event, sizeof(event)) < 0) {
     return -1;
@@ -2823,19 +2817,19 @@ int handle_cuEventDestroy_v2(conn_t *conn) {
     lupine_forget_event_capture_resources(event);
     lupine_forget_event_dtoh_marker(conn, event);
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
 int handle_cuEventQuery(conn_t *conn) {
   CUevent events[kLupineEventQueryBatch + 1] = {};
+  uint64_t tickets[kLupineEventQueryBatch + 1] = {};
   uint32_t count = 0;
   if (rpc_read(conn, &events[0], sizeof(events[0])) < 0 ||
       rpc_read(conn, &count, sizeof(count)) < 0 ||
-      rpc_read(conn, events + 1, count * sizeof(*events)) < 0) {
+      count > kLupineEventQueryBatch ||
+      rpc_read(conn, events + 1, count * sizeof(*events)) < 0 ||
+      rpc_read(conn, tickets + 1, count * sizeof(*tickets)) < 0) {
     return -1;
   }
   int request_id = rpc_read_end(conn);
@@ -2843,9 +2837,13 @@ int handle_cuEventQuery(conn_t *conn) {
     return -1;
   }
 
+  // A record the client sent that is not submitted yet makes the answer not
+  // ready; the driver would still report the event's previous record.
   CUresult results[kLupineEventQueryBatch + 1];
   for (uint32_t i = 0; i <= count; ++i) {
-    results[i] = cuEventQuery(events[i]);
+    bool unsettled = i == 0 ? rpc_request_unsettled(conn)
+                            : !rpc_async_ticket_released(conn, tickets[i]);
+    results[i] = unsettled ? CUDA_ERROR_NOT_READY : cuEventQuery(events[i]);
   }
   // Copies ride back only for events[0]; a cached success would skip them.
   for (uint32_t i = 1; i <= count; ++i) {
@@ -2872,21 +2870,18 @@ int handle_cuEventQuery(conn_t *conn) {
 }
 
 int handle_cuStreamWaitEvent(conn_t *conn) {
-  uint64_t async_sequence = 0;
   CUstream stream = nullptr;
   CUevent event = nullptr;
   unsigned int flags = 0;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
       rpc_read(conn, &event, sizeof(event)) < 0 ||
-      rpc_read(conn, &flags, sizeof(flags)) < 0 || rpc_read_end(conn) < 0 ||
-      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+      rpc_read(conn, &flags, sizeof(flags)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
   lupine_wait_event_capture_resources(stream, event);
   // Fire-and-forget like cuEventRecord: a failure surfaces at the next sync.
-  cuStreamWaitEvent(stream, event, flags);
+  lupine_keep_async_error(conn, cuStreamWaitEvent(stream, event, flags));
   return 0;
 }
 
@@ -3188,42 +3183,42 @@ int handle_cuGraphInstantiateWithParams(conn_t *conn) {
 
 int handle_cuGraphExecDestroy(conn_t *conn) {
   CUgraphExec exec = nullptr;
-  if (rpc_read(conn, &exec, sizeof(exec)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  int request_id = -1;
+  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
   CUresult result = cuGraphExecDestroy(exec);
+  rpc_async_sequence_end(conn);
   if (result == CUDA_SUCCESS) {
     result = lupine_release_graph_exec_resources(exec);
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
+  if (!rpc_request_awaited(conn)) {
+    lupine_keep_async_error(conn, result);
+    return 0;
   }
-  return 0;
+  return rpc_write_start_response(conn, request_id) < 0 ||
+                 rpc_write(conn, &result, sizeof(result)) < 0 ||
+                 rpc_write_end(conn) < 0
+             ? -1
+             : 0;
 }
 
+// Unanswered, as the generated client sends it: a failure reaches the client
+// from its next synchronize.
 int handle_cuGraphDestroy(conn_t *conn) {
   CUgraph graph = nullptr;
-  if (rpc_read(conn, &graph, sizeof(graph)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  if (rpc_read(conn, &graph, sizeof(graph)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
   CUresult result = cuGraphDestroy(graph);
   lupine_erase_graph_resources(graph);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
+  lupine_keep_async_error(conn, result);
   return 0;
 }
 
+// Unanswered: the bytes land before the ticket is released, so later
+// requests from every lane see them.
 int handle_lupineManagedHostFlush(conn_t *conn) {
   uint32_t count = 0;
 
@@ -3245,8 +3240,13 @@ int handle_lupineManagedHostFlush(conn_t *conn) {
   }
 
   int request_id = rpc_read_end(conn);
-  if (request_id < 0 || rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write_end(conn) < 0) {
+  if (request_id < 0) {
+    return -1;
+  }
+  // A host callback's acknowledgement waits for its writes to land.
+  if (rpc_request_awaited(conn) &&
+      (rpc_write_start_response(conn, request_id) < 0 ||
+       rpc_write_end(conn) < 0)) {
     return -1;
   }
   return 0;
@@ -3806,13 +3806,10 @@ void lupine_server_cleanup_identity_allocations(conn_t *conn) {
 }
 
 int handle_cuGraphLaunch(conn_t *conn) {
-  uint64_t async_sequence = 0;
   CUgraphExec exec = nullptr;
   CUstream stream = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &exec, sizeof(exec)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0 ||
-      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
   CUresult result = cuGraphLaunch(exec, stream);

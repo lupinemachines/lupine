@@ -49,8 +49,13 @@ ncclResult_t rpc_error() {
 int rpc_write_start_request(conn_t *conn, int op) {
   return lupine_rpc_write_start_request(conn, op);
 }
-int rpc_write_start_async_request(conn_t *conn, int op, uint64_t *sequence) {
-  return lupine_rpc_write_start_async_request(conn, op, sequence);
+// rpc.h's scope for a request on no object.
+constexpr uintptr_t RPC_SCOPE_NONE = 0;
+int rpc_write_start_request_on(conn_t *conn, int op, uintptr_t key) {
+  return lupine_rpc_write_start_request_on(conn, op, key);
+}
+int rpc_write_start_request_on_stream(conn_t *conn, int op, void *stream) {
+  return lupine_rpc_write_start_request_on_stream(conn, op, stream);
 }
 int rpc_write(conn_t *conn, const void *data, size_t size) {
   return lupine_rpc_write(conn, data, size);
@@ -299,7 +304,8 @@ template <typename Arg>
 ncclResult_t read_single_string(conn_t *conn, int op, const Arg &arg,
                                 std::string *out) {
   std::vector<std::string> strings;
-  if (conn == nullptr || rpc_write_start_request(conn, op) < 0 ||
+  if (conn == nullptr ||
+      rpc_write_start_request_on(conn, op, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &arg, sizeof(arg)) < 0) {
     return rpc_error();
   }
@@ -374,7 +380,8 @@ ncclParamGetParameter(const char *key, const char **value, int *valueLen) {
   const uint32_t key_length = static_cast<uint32_t>(std::strlen(key) + 1);
   std::vector<std::string> strings;
   if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_ncclParamGetParameter) < 0 ||
+      rpc_write_start_request_on(conn, RPC_ncclParamGetParameter,
+                                 RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &key_length, sizeof(key_length)) < 0 ||
       rpc_write(conn, key, key_length) < 0) {
     return rpc_error();
@@ -395,7 +402,8 @@ extern "C" ncclResult_t ncclParamGetAllParameterKeys(const char ***table,
   conn_t *conn = connection();
   std::vector<std::string> strings;
   if (conn == nullptr ||
-      rpc_write_start_request(conn, RPC_ncclParamGetAllParameterKeys) < 0) {
+      rpc_write_start_request_on(conn, RPC_ncclParamGetAllParameterKeys,
+                                 RPC_SCOPE_NONE) < 0) {
     return rpc_error();
   }
   const ncclResult_t status = read_strings(conn, &strings);

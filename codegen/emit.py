@@ -11,6 +11,8 @@ import textwrap
 from cxxheaderparser.types import Function, FunctionType, Parameter, Pointer
 
 from ops import (
+    status_only,
+    unanswered,
     ArrayOperation,
     InOutCountOperation,
     NullableArrayOperation,
@@ -44,10 +46,89 @@ class Backend:
     # Status codes for conditional output arrays.
     success: str = ""
     invalid_result: str = ""
+    # Calls on no stream wait only for earlier calls on no stream, except
+    # REQUEST_ORDER's "all" ones. Unset, every call on no stream waits for
+    # everything.
+    stream_less_scoped: bool = False
+    # Keeps an unanswered call's failure for the next synchronize to report.
+    keep_async_error: str = ""
 
 
-def optional_async(backend: "Backend", metadata) -> bool:
-    return bool(metadata.async_fire_forget and backend.async_success)
+# How a call's request is ordered where its arguments do not say. "all": it
+# waits for the device natively, so it waits for every earlier unanswered
+# request, not only those on its stream or events. "soft": a query that answers
+# CUDA_ERROR_NOT_READY while work it is ordered behind has not been submitted,
+# instead of waiting for it. "publish": every later request waits for it, as it
+# records events and signals semaphores it does not name.
+REQUEST_ORDER = {
+    "cuArrayDestroy": "all",
+    "cuCtxDestroy_v2": "all",
+    "cuCtxDetach": "all",
+    "cuCtxDisablePeerAccess": "all",
+    "cuCtxEnablePeerAccess": "all",
+    "cuCtxResetPersistingL2Cache": "all",
+    "cuCtxSetLimit": "all",
+    "cuCtxSynchronize": "all",
+    "cuCtxSynchronize_v2": "all",
+    "cuCtxRecordEvent": "all",
+    "cuCtxWaitEvent": "all",
+    "cuDestroyExternalMemory": "all",
+    "cuDestroyExternalSemaphore": "all",
+    "cuDevicePrimaryCtxRelease_v2": "all",
+    "cuDevicePrimaryCtxReset_v2": "all",
+    "cuGraphicsUnregisterResource": "all",
+    "cuGreenCtxDestroy": "all",
+    "cuGreenCtxRecordEvent": "all",
+    "cuGreenCtxWaitEvent": "all",
+    "cuIpcCloseMemHandle": "all",
+    "cuMemFreeHost": "all",
+    "cuMemHostUnregister": "all",
+    "cuMipmappedArrayDestroy": "all",
+    "cuModuleUnload": "all",
+    "cuStreamBeginCapture_v2": "all",
+    # Releasing what queued collectives may still use waits for them.
+    "ncclCommAbort": "all",
+    "ncclCommDeregister": "all",
+    "ncclCommDestroy": "all",
+    "ncclCommFinalize": "all",
+    "ncclCommWindowDeregister": "all",
+    "ncclMemFree": "all",
+    "ncclRedOpDestroy": "all",
+    "cuGraphLaunch": "publish",
+    "cuStreamQuery": "soft",
+}
+
+# Hints whose failure only means the hint did not take: an unanswered one drops
+# it rather than failing the client's next synchronize.
+HINT_FUNCTIONS = {
+    "cuCtxSetCacheConfig",
+    "cuCtxSetSharedMemConfig",
+    "cuFuncSetCacheConfig",
+    "cuKernelSetCacheConfig",
+    "cuMemAdvise",
+    "cuMemAdvise_v2",
+    "cuMemPrefetchAsync",
+    "cuMemPrefetchAsync_v2",
+    "cuStreamAttachMemAsync",
+}
+
+
+def optional_async(backend: "Backend", function, metadata) -> bool:
+    """Whether the call skips its answer only when submit_async says so."""
+    return bool(backend.async_success) and unanswered(
+        function, metadata, backend.result
+    )
+
+
+def may_go_unanswered(backend: "Backend", function, metadata) -> bool:
+    """Whether the server must check that its client waits before answering.
+
+    Keyed on the status alone, not @blocking: a client that waits always gets
+    its answer, whatever the annotation says.
+    """
+    return bool(backend.keep_async_error or backend.async_success) and status_only(
+        function, metadata, backend.result
+    )
 
 
 def unsupported(function, metadata) -> bool:
@@ -107,7 +188,7 @@ def conditional_output_arrays(backend, function, operations, metadata):
     ]
     if arrays and (
         function.return_type.format() != backend.result
-        or not backend.success or metadata.async_fire_forget
+        or not backend.success or unanswered(function, metadata, backend.result)
     ):
         raise RuntimeError(
             "Conditional output requires a synchronous status-returning backend "
@@ -125,12 +206,7 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
     result = function.return_type.format()
     params = ", ".join(format_function_params(function))
     conditional_output_arrays(backend, function, operations, metadata)
-    submit = optional_async(backend, metadata)
-    if submit and (
-        result != backend.result
-        or any(getattr(operation, "recv", False) for operation in operations)
-    ):
-        raise RuntimeError(f"{name}: @async needs a status result and SEND_ONLY parameters")
+    submit = optional_async(backend, function, metadata)
     maybe_unused = "[[maybe_unused]] " if metadata.disabled_client else ""
     f.write(f"{maybe_unused}static {result} lupine_rpc_{name}(conn_t *conn")
     if submit:
@@ -146,15 +222,18 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
 
     opening = "  if (conn == nullptr ||\n      " if backend.guard_null_conn else "  if ("
     start = f"rpc_write_start_request(conn, RPC_{name})"
+    if backend.stream_less_scoped and REQUEST_ORDER.get(name) != "all":
+        start = f"rpc_write_start_request_on(conn, RPC_{name}, RPC_SCOPE_NONE)"
+    # A call on a stream is ordered as CUDA orders that stream's work.
+    stream = next(
+        (p.name for p in function.parameters if p.type.format() == "cudaStream_t"),
+        None,
+    )
+    if stream is not None:
+        start = f"rpc_write_start_request_on_stream(conn, RPC_{name}, {stream})"
     wait, returned = "rpc_wait_for_response(conn) < 0 ||", "return_value"
     if submit:
-        # The ticket leads the request; a request that expects its answer
-        # carries the all-ones ticket instead of one.
-        f.write("  uint64_t async_sequence = ~uint64_t{0};\n")
-        start = (
-            f"(submit_async ? rpc_write_start_async_request(conn, RPC_{name}, &async_sequence) : {start}) < 0 ||\n"
-            "      rpc_write(conn, &async_sequence, sizeof(async_sequence))"
-        )
+        # A request sent without waiting gets no answer.
         wait = "(submit_async ? rpc_write_end(conn) : rpc_wait_for_response(conn)) < 0 ||\n      (!submit_async && ("
         returned = f"submit_async ? {backend.async_success} : return_value"
     f.write(f"{opening}{start} < 0 ||\n")
@@ -190,7 +269,7 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
     f.write(f'extern "C" {result} {name}({params}) {{\n')
 
     call_args = format_call_args(function)
-    if optional_async(backend, metadata):
+    if optional_async(backend, function, metadata):
         call_args = ["submit_async(conn)"] + call_args
     suffix = f", {', '.join(call_args)}" if call_args else ""
     call = f"lupine_rpc_{name}(conn{suffix})"
@@ -314,8 +393,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
             argument = operation.parameter.name
             # Zeroed whole so the cleared fields read as unset, not padding.
             f.write(f"  std::memset(&{argument}, 0, sizeof({argument}));\n")
-    submit = optional_async(backend, metadata)
-    always_async = metadata.async_fire_forget and not submit
+    unawaited = may_go_unanswered(backend, function, metadata)
     sync = metadata.synchronize
     deferred = sync is not None and sync.deferred_dtoh
     stdout = deferred and sync.stdout
@@ -324,12 +402,10 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write("  uint64_t dtoh_before = 0;\n")
     if stdout:
         f.write("  lupine_captured_stdout capture;\n")
-    if metadata.async_fire_forget:
-        f.write("  uint64_t async_sequence = 0;\n")
     if metadata.graph_exec_update is not None:
         f.write("  lupine_htod_graph_binding update_binding;\n")
     f.write("  int request_id;\n")
-    if not always_async and result != "void":
+    if result != "void":
         f.write(f"  {result} return_value;\n")
     if backend.symbol_lookup:
         fn_params = ", ".join(
@@ -338,10 +414,6 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write(f"  using fn_t = {result} (*)({fn_params});\n")
         f.write("  fn_t fn = nullptr;\n")
     f.write("  if (\n")
-    if metadata.async_fire_forget:
-        f.write(
-            "      rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||\n"
-        )
     for operation in operations:
         if owned_buffer := operation.server_rpc_read(f):
             owned_buffers.append(owned_buffer)
@@ -355,15 +427,6 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         graph_exec = metadata.graph_exec_node.graph_exec.name
         node = metadata.graph_exec_node.node.name
         f.write(f"  {node} = lupine_htod_graph_exec_node({graph_exec}, {node});\n")
-    if always_async:
-        f.write("  if (rpc_async_sequence_begin(conn, async_sequence) < 0)\n")
-        f.write("    goto ERROR_0;\n\n")
-    elif submit:
-        f.write(
-            "  if (async_sequence != ~uint64_t{0} &&\n"
-            "      rpc_async_sequence_begin(conn, async_sequence) < 0)\n"
-            "    goto ERROR_0;\n\n"
-        )
 
     if deferred:
         # Only copies queued before the synchronize are complete after it.
@@ -395,7 +458,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write("  if (return_value == CUDA_SUCCESS)\n  ")
     if backend.symbol_lookup:
         f.write(f'  fn = {backend.symbol_lookup}<fn_t>("{name}");\n')
-        if result == backend.result and not always_async:
+        if result == backend.result:
             f.write(
                 "  return_value = fn == nullptr ? function_not_found()\n"
                 f"                               : fn({args});\n\n"
@@ -403,18 +466,34 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         else:
             f.write("  if (fn == nullptr)\n")
             f.write("    goto ERROR_0;\n")
-            if result == "void" or always_async:
+            if result == "void":
                 f.write(f"  fn({args});\n\n")
             else:
                 f.write(f"  return_value = fn({args});\n\n")
-    elif always_async or result == "void":
+    elif result == "void":
         f.write(f"  {entry}({args});\n\n")
+    elif REQUEST_ORDER.get(name) == "soft":
+        f.write(
+            "  return_value = lupine_stream_query_unsettled(conn, hStream)\n"
+            "                     ? CUDA_ERROR_NOT_READY\n"
+            f"                     : {entry}({args});\n\n"
+        )
     else:
         f.write(f"  return_value = {entry}({args});\n\n")
-    if submit and not always_async:
-        f.write("  if (async_sequence != ~uint64_t{0}) {\n")
-        write_server_buffer_cleanup(f, owned_buffers, "    ")
-        f.write("    return 0;\n  }\n\n")
+    if unawaited:
+        # A client that does not wait gets no answer; a failure reaches it from
+        # its next synchronize instead, except for a hint's.
+        keeps_error = backend.keep_async_error and name not in HINT_FUNCTIONS
+        if owned_buffers:
+            f.write("  if (!rpc_request_awaited(conn)) {\n")
+            if keeps_error:
+                f.write(f"    {backend.keep_async_error}(conn, return_value);\n")
+            write_server_buffer_cleanup(f, owned_buffers, "    ")
+            f.write("    return 0;\n  }\n\n")
+        elif keeps_error:
+            f.write("  if (lupine_unanswered(conn, return_value))\n    return 0;\n\n")
+        else:
+            f.write("  if (!rpc_request_awaited(conn))\n    return 0;\n\n")
 
     if stdout:
         f.write("  lupine_finish_stdout_capture(&capture);\n")
@@ -442,24 +521,23 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write(f"  if (return_value == {backend.success} && (\n      "
                 + " ||\n      ".join(invalid_counts) + ")) {\n")
         f.write(f"    return_value = {backend.invalid_result};\n  }}\n")
-    if not always_async:
-        f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
-        if deferred:
-            # The copy count, then the stdout length, live in the copy buffer.
-            size = "2 * sizeof(uint64_t)" if stdout else "sizeof(uint32_t)"
-            f.write(f"      rpc_copy_alloc(conn, {size}) < 0 ||\n")
-            f.write("      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||\n")
-        if stdout:
-            f.write("      lupine_write_captured_stdout(conn, capture) < 0 ||\n")
-        for operation in operations:
-            if isinstance(operation, NullableArrayOperation):
-                operation.server_rpc_write(f, success=backend.success)
-            else:
-                operation.server_rpc_write(f)
-        if result != "void":
-            f.write(f"      rpc_write(conn, &return_value, sizeof({result})) < 0 ||\n")
-        f.write("      rpc_write_end(conn) < 0)\n")
-        f.write("    goto ERROR_0;\n")
+    f.write("  if (rpc_write_start_response(conn, request_id) < 0 ||\n")
+    if deferred:
+        # The copy count, then the stdout length, live in the copy buffer.
+        size = "2 * sizeof(uint64_t)" if stdout else "sizeof(uint32_t)"
+        f.write(f"      rpc_copy_alloc(conn, {size}) < 0 ||\n")
+        f.write("      lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||\n")
+    if stdout:
+        f.write("      lupine_write_captured_stdout(conn, capture) < 0 ||\n")
+    for operation in operations:
+        if isinstance(operation, NullableArrayOperation):
+            operation.server_rpc_write(f, success=backend.success)
+        else:
+            operation.server_rpc_write(f)
+    if result != "void":
+        f.write(f"      rpc_write(conn, &return_value, sizeof({result})) < 0 ||\n")
+    f.write("      rpc_write_end(conn) < 0)\n")
+    f.write("    goto ERROR_0;\n")
     write_server_buffer_cleanup(f, owned_buffers, "  ")
     if deferred:
         f.write("  lupine_cleanup_pending_dtoh_copies(&pending);\n")

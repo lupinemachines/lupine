@@ -34,6 +34,20 @@ extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *context,
 
 class lupine_htod_side_effect_ring;
 
+struct lupine_fetch_stream {
+  CUcontext context = nullptr;
+  CUstream stream = nullptr;
+
+  ~lupine_fetch_stream() {
+    if (stream != nullptr && context != nullptr &&
+        cuCtxPushCurrent_v2(context) == CUDA_SUCCESS) {
+      (void)cuStreamDestroy_v2(stream);
+      CUcontext popped = nullptr;
+      (void)cuCtxPopCurrent_v2(&popped);
+    }
+  }
+};
+
 struct lupine_staging_state {
   conn_t *conn = nullptr;
   std::mutex lifecycle_mutex;
@@ -46,6 +60,8 @@ struct lupine_staging_state {
   std::unordered_set<CUdevice> teardown_devices;
   std::unordered_map<CUcontext, std::shared_ptr<lupine_htod_side_effect_ring>>
       htod_rings;
+  std::unordered_map<CUcontext, std::shared_ptr<lupine_fetch_stream>>
+      fetch_streams;
 };
 
 using lupine_staging_registry =
@@ -1683,11 +1699,9 @@ static CUresult lupine_prepare_htod_copy(
   return CUDA_SUCCESS;
 }
 
-static CUresult lupine_enqueue_client_htod_copy(lupine_staging_state &state,
-                                                const lupine_htod_copy &copy,
-                                                CUcontext context,
-                                                CUstream stream,
-                                                bool blocking) {
+static CUresult lupine_enqueue_client_htod_copy(
+    conn_t *conn, lupine_staging_state &state, const lupine_htod_copy &copy,
+    CUcontext context, CUstream stream, bool blocking, bool wait_for_source) {
   if (copy.bytes == 0) {
     return CUDA_SUCCESS;
   }
@@ -1772,21 +1786,30 @@ static CUresult lupine_enqueue_client_htod_copy(lupine_staging_state &state,
     }
     return result;
   }
+  // The copy is queued. Tickets order submission, so a ticket the handler
+  // claimed ends here rather than once the stream reaches the copy: a later
+  // request from another lane must not wait behind work queued ahead of it.
+  rpc_async_sequence_end(conn);
 
   // CUDA may stage pageable HtoD input before an asynchronous API returns.
   // Preserve that source-lifetime guarantee: outside capture, the callback
-  // must finish pulling the client buffer before the caller can reuse it.
+  // must finish pulling the client buffer before the caller can reuse it. A
+  // page-locked source has no such guarantee natively, so its unanswered copy
+  // returns once queued: blocking here would hold up every later request on
+  // this lane, whose tickets other lanes wait for. The transfer stream keeps
+  // the ring's slot in order; a writer from the CPU drains it first.
   if (resources == nullptr) {
-    result = ring->synchronize();
+    result = wait_for_source ? ring->synchronize() : CUDA_SUCCESS;
     ring->release_execution();
     return result;
   }
   return blocking ? cuStreamSynchronize(stream) : CUDA_SUCCESS;
 }
 
-static CUresult lupine_copy_client_host_to_device(
-    conn_t *conn, CUstream stream, bool blocking,
-    const lupine_htod_copy &copy) {
+static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
+                                                  bool blocking,
+                                                  const lupine_htod_copy &copy,
+                                                  bool wait_for_source = true) {
   // CUDA allows the copy stream to belong to a different context from the
   // caller's current one. The staging stream and its ordering events must be
   // created in that stream's context, then leave the caller's binding intact.
@@ -1811,8 +1834,8 @@ static CUresult lupine_copy_client_host_to_device(
   }
 
   if (result == CUDA_SUCCESS) {
-    result =
-        lupine_enqueue_client_htod_copy(*state, copy, context, stream, blocking);
+    result = lupine_enqueue_client_htod_copy(conn, *state, copy, context,
+                                             stream, blocking, wait_for_source);
   }
   CUcontext popped = nullptr;
   CUresult restore = cuCtxPopCurrent_v2(&popped);
@@ -1847,6 +1870,23 @@ static CUresult lupine_copy_pushed_host_to_device(
                                            : result;
   }
 
+  // The driver stages a small pageable source before an async copy returns,
+  // without waiting for the stream, so a small linear copy goes to it
+  // directly and this handler never waits on the stream.
+  if (!blocking && copy.bytes <= LUPINE_INLINE_HTOD_BYTES &&
+      copy.use_cuda_memcpy && copy.destination_array == nullptr &&
+      copy.slices == 1 && copy.smemcpy.rows == 1) {
+    thread_local std::vector<unsigned char> source;
+    source.resize(copy.bytes);
+    result = rpc_read(conn, source.data(), copy.bytes) < 0
+                 ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                 : cuMemcpyHtoDAsync_v2(copy.smemcpy.destination, source.data(),
+                                        copy.bytes, stream);
+    CUcontext popped = nullptr;
+    CUresult restore = cuCtxPopCurrent_v2(&popped);
+    return result == CUDA_SUCCESS ? restore : result;
+  }
+
   lupine_staging_state *state = nullptr;
   CUcontext context = nullptr;
   CUdevice device = 0;
@@ -1867,6 +1907,11 @@ static CUresult lupine_copy_pushed_host_to_device(
   if (result == CUDA_SUCCESS) {
     ring->acquire_execution();
     executing = true;
+    // This copy writes the ring's slot from the CPU, so an unanswered pull
+    // still queued on the transfer stream must leave it first.
+    result = ring->synchronize();
+  }
+  if (result == CUDA_SUCCESS) {
     result = cuEventRecord(ring->ordering_event(), stream);
     if (result == CUDA_SUCCESS) {
       result =
@@ -1981,6 +2026,7 @@ static void lupine_server_forget_context_metadata(lupine_staging_state &state,
                                                   CUcontext context) {
   state.created_contexts.erase(context);
   state.htod_rings.erase(context);
+  state.fetch_streams.erase(context);
   for (auto it = state.primary_contexts.begin();
        it != state.primary_contexts.end();) {
     if (it->second == context) {
@@ -2072,6 +2118,7 @@ void lupine_server_prepare_primary_context(conn_t *conn, CUdevice device) {
     return;
   }
   std::shared_ptr<lupine_htod_side_effect_ring> ring;
+  std::shared_ptr<lupine_fetch_stream> fetch_stream;
   {
     std::unique_lock<std::mutex> lock(state->mutex);
     state->teardown_devices.insert(device);
@@ -2085,9 +2132,15 @@ void lupine_server_prepare_primary_context(conn_t *conn, CUdevice device) {
         ring = std::move(existing->second);
         state->htod_rings.erase(existing);
       }
+      auto existing_fetch = state->fetch_streams.find(context->second);
+      if (existing_fetch != state->fetch_streams.end()) {
+        fetch_stream = std::move(existing_fetch->second);
+        state->fetch_streams.erase(existing_fetch);
+      }
     }
   }
   ring.reset();
+  fetch_stream.reset();
 }
 
 void lupine_server_finish_primary_context(conn_t *conn, CUdevice device,
@@ -2127,6 +2180,7 @@ void lupine_server_prepare_context_destroy(conn_t *conn, CUcontext context) {
     return;
   }
   std::shared_ptr<lupine_htod_side_effect_ring> ring;
+  std::shared_ptr<lupine_fetch_stream> fetch_stream;
   {
     std::unique_lock<std::mutex> lock(state->mutex);
     state->teardown_contexts.insert(context);
@@ -2137,10 +2191,16 @@ void lupine_server_prepare_context_destroy(conn_t *conn, CUcontext context) {
       ring = std::move(it->second);
       state->htod_rings.erase(it);
     }
+    auto fetch_it = state->fetch_streams.find(context);
+    if (fetch_it != state->fetch_streams.end()) {
+      fetch_stream = std::move(fetch_it->second);
+      state->fetch_streams.erase(fetch_it);
+    }
   }
   // Streams, modules, and mapped registrations belong to the live context.
   // Drop the registry's ownership while the caller still has it current.
   ring.reset();
+  fetch_stream.reset();
 }
 
 void lupine_server_finish_context_destroy(conn_t *conn, CUcontext context,
@@ -2199,18 +2259,15 @@ int lupine_write_lifecycle_response(conn_t *conn, int request_id,
 static int lupine_serve_memcpy_htod(conn_t *conn, bool async) {
   CUdeviceptr destination = 0;
   const void *source = nullptr;
-  uint8_t fire_and_forget = 0;
-  uint64_t async_sequence = 0;
+  // The client waits for no answer to a copy it sends fire-and-forget.
+  bool fire_and_forget = !rpc_request_awaited(conn);
   bool is_server_authoritative = false;
   uint64_t pushed_bytes = 0;
   size_t bytes = 0;
   CUstream stream = CU_STREAM_LEGACY;
   CUresult result = CUDA_SUCCESS;
 
-  if ((!async &&
-       (rpc_read(conn, &fire_and_forget, sizeof(fire_and_forget)) < 0 ||
-        rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0)) ||
-      rpc_read(conn, &is_server_authoritative,
+  if (rpc_read(conn, &is_server_authoritative,
                sizeof(is_server_authoritative)) < 0 ||
       rpc_read(conn, &destination, sizeof(destination)) < 0 ||
       rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
@@ -2222,13 +2279,18 @@ static int lupine_serve_memcpy_htod(conn_t *conn, bool async) {
   if (pushed_bytes != 0 && pushed_bytes != bytes) {
     return -1;
   }
-  // Labels the copy's submission; a later request from any lane waits for it.
-  if (fire_and_forget && rpc_async_sequence_begin(conn, async_sequence) < 0) {
+  // Only a synchronous pageable copy, a page-locked async source, or a small
+  // pushed async copy is sent fire-and-forget. It holds its ticket until the
+  // copy is queued, not until the stream reaches it, and a failure reaches the
+  // client from its next synchronize.
+  if (fire_and_forget &&
+      (!async ? pushed_bytes != bytes
+              : (bytes == 0 || pushed_bytes > LUPINE_INLINE_HTOD_BYTES))) {
     return -1;
   }
   if (pushed_bytes != 0) {
     result = lupine_copy_pushed_host_to_device(
-        conn, stream, !async,
+        conn, stream, !async && !fire_and_forget,
         lupine_make_linear_htod_copy(destination, source, bytes));
   }
   int request_id = rpc_read_end(conn);
@@ -2237,23 +2299,24 @@ static int lupine_serve_memcpy_htod(conn_t *conn, bool async) {
   }
 
   if (bytes != 0 && is_server_authoritative) {
-    result = async ? cuMemcpyAsync(destination,
-                                   reinterpret_cast<CUdeviceptr>(source), bytes,
-                                   stream)
-                   : cuMemcpy(destination,
-                              reinterpret_cast<CUdeviceptr>(source), bytes);
+    result =
+        (async || fire_and_forget)
+            ? cuMemcpyAsync(destination, reinterpret_cast<CUdeviceptr>(source),
+                            bytes, stream)
+            : cuMemcpy(destination, reinterpret_cast<CUdeviceptr>(source),
+                       bytes);
   } else if (bytes != 0 && pushed_bytes == 0) {
     result = lupine_copy_client_host_to_device(
         conn, stream, !async,
-        lupine_make_linear_htod_copy(destination, source, bytes));
+        lupine_make_linear_htod_copy(destination, source, bytes),
+        !fire_and_forget);
   }
-  // A fire-and-forget copy drops its result, matching launch semantics: the
-  // client checked the arguments it could check before sending, and an
-  // execution failure poisons the context and reaches the client from its next
-  // synchronize.
-  return fire_and_forget
-             ? 0
-             : lupine_write_lifecycle_response(conn, request_id, result);
+  // An unanswered copy's failure reaches the client from its next
+  // synchronize, as a launch's does.
+  if (lupine_unanswered(conn, result)) {
+    return 0;
+  }
+  return lupine_write_lifecycle_response(conn, request_id, result);
 }
 
 int handle_cuMemcpyHtoD_v2(conn_t *conn) {
@@ -2754,6 +2817,60 @@ static int lupine_copy_dtoh_pipelined(conn_t *conn, int request_id,
   return 0;
 }
 
+static std::shared_ptr<lupine_fetch_stream>
+lupine_prepare_fetch_stream(conn_t *conn, CUresult *out_result) {
+  lupine_staging_state *state = nullptr;
+  CUcontext context = nullptr;
+  CUdevice device = 0;
+  CUresult result =
+      lupine_current_htod_context(conn, &state, &context, &device);
+  if (result != CUDA_SUCCESS) {
+    *out_result = result;
+    return nullptr;
+  }
+  {
+    std::lock_guard<std::mutex> lock(state->mutex);
+    if (state->teardown_contexts.count(context) != 0 ||
+        state->teardown_devices.count(device) != 0) {
+      *out_result = CUDA_ERROR_INVALID_CONTEXT;
+      return nullptr;
+    }
+    lupine_note_inferred_primary_context(*state, context, device);
+    auto existing = state->fetch_streams.find(context);
+    if (existing != state->fetch_streams.end()) {
+      *out_result = CUDA_SUCCESS;
+      return existing->second;
+    }
+  }
+
+  CUstream raw_stream = nullptr;
+  result = cuStreamCreate(&raw_stream, CU_STREAM_NON_BLOCKING);
+  if (result != CUDA_SUCCESS) {
+    *out_result = result;
+    return nullptr;
+  }
+  std::shared_ptr<lupine_fetch_stream> created(
+      new (std::nothrow) lupine_fetch_stream{context, raw_stream});
+  if (created == nullptr) {
+    (void)cuStreamDestroy_v2(raw_stream);
+    *out_result = CUDA_ERROR_OUT_OF_MEMORY;
+    return nullptr;
+  }
+
+  std::lock_guard<std::mutex> lock(state->mutex);
+  if (state->teardown_contexts.count(context) != 0 ||
+      state->teardown_devices.count(device) != 0) {
+    *out_result = CUDA_ERROR_INVALID_CONTEXT;
+    return nullptr;
+  }
+  auto &slot = state->fetch_streams[context];
+  if (slot == nullptr) {
+    slot = created;
+  }
+  *out_result = CUDA_SUCCESS;
+  return slot;
+}
+
 int handle_cuMemcpyDtoH_v2(conn_t *conn) {
   CUdeviceptr source = 0;
   size_t bytes = 0;
@@ -2769,6 +2886,42 @@ int handle_cuMemcpyDtoH_v2(conn_t *conn) {
   int request_id = rpc_read_end(conn);
   if (request_id < 0) {
     return -1;
+  }
+
+  uintptr_t stream_bits = reinterpret_cast<uintptr_t>(stream);
+  bool fetch_sentinel = stream_bits == LUPINE_STREAM_FETCH_READY_BITS ||
+                        stream_bits == LUPINE_STREAM_FETCH_SYNC_ALL_BITS;
+  struct relaxed_capture_guard {
+    bool active = false;
+    CUstreamCaptureMode previous = CU_STREAM_CAPTURE_MODE_RELAXED;
+    explicit relaxed_capture_guard(bool enable) : active(enable) {
+      if (active) {
+        (void)cuThreadExchangeStreamCaptureMode(&previous);
+      }
+    }
+    ~relaxed_capture_guard() {
+      if (active) {
+        (void)cuThreadExchangeStreamCaptureMode(&previous);
+      }
+    }
+  } capture_guard(fetch_sentinel);
+
+  std::shared_ptr<lupine_fetch_stream> fetch_stream;
+  if (fetch_sentinel) {
+    if (stream_bits == LUPINE_STREAM_FETCH_SYNC_ALL_BITS) {
+      CUresult sync_result = cuCtxSynchronize();
+      if (sync_result != CUDA_SUCCESS) {
+        return lupine_write_dtoh_chunk_response(conn, request_id, sync_result,
+                                                nullptr, 0);
+      }
+    }
+    CUresult stream_result = CUDA_SUCCESS;
+    fetch_stream = lupine_prepare_fetch_stream(conn, &stream_result);
+    if (fetch_stream == nullptr) {
+      return lupine_write_dtoh_chunk_response(conn, request_id, stream_result,
+                                              nullptr, 0);
+    }
+    stream = fetch_stream->stream;
   }
 
   size_t fallback_offset = 0;
@@ -3066,18 +3219,15 @@ static void lupine_defer_dtoh(conn_t *conn, CUstream stream,
 }
 
 int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
-  uint64_t async_sequence = 0;
   void *dstHost = nullptr;
   CUdeviceptr srcDevice = 0;
   size_t byteCount = 0;
   CUstream stream = nullptr;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
+  if (rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
       rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0 ||
-      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
   lupine_defer_dtoh(conn, stream, {dstHost, byteCount}, srcDevice);
@@ -3089,13 +3239,10 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
 // rows back to its own pitch.
 static int lupine_defer_pitched_dtoh(conn_t *conn,
                                      lupine_native_memcpy3d native) {
-  uint64_t async_sequence = 0;
   CUDA_MEMCPY3D copy = {};
   CUstream stream = nullptr;
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &copy, sizeof(copy)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0 ||
-      rpc_async_sequence_begin(conn, async_sequence) < 0) {
+  if (rpc_read(conn, &copy, sizeof(copy)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
   size_t slice = copy.dstHeight * copy.dstPitch;
@@ -3121,7 +3268,6 @@ static int lupine_defer_pitched_dtoh(conn_t *conn,
 }
 
 int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
-  uint64_t async_sequence = 0;
   void *dstHost = nullptr;
   void *client_alias = nullptr;
   void *server_host = nullptr;
@@ -3129,8 +3275,7 @@ int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
   size_t byteCount = 0;
   CUstream stream = nullptr;
 
-  if (rpc_read(conn, &async_sequence, sizeof(async_sequence)) < 0 ||
-      rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
+  if (rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
       rpc_read(conn, &client_alias, sizeof(client_alias)) < 0 ||
       rpc_read(conn, &server_host, sizeof(server_host)) < 0 ||
       rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
@@ -3140,10 +3285,6 @@ int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
   }
 
   if (rpc_read_end(conn) < 0) {
-    return -1;
-  }
-
-  if (rpc_async_sequence_begin(conn, async_sequence) < 0) {
     return -1;
   }
 

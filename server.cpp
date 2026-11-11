@@ -196,10 +196,12 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
                         int op) {
   LUPINE_TRACE_LOG("LUPINE server handling op " << op);
   if (op == LUPINE_HANDOFF_DRAIN_REQUEST) {
+    // Read first: the request's ticket must not be held while the drain waits
+    // for calls that may themselves wait on other lanes.
+    int request = rpc_read_end(conn);
 #ifdef LUPINE_BUILD_CUDA_BACKEND
     lupine_checkpoint_drain_cuda_calls();
 #endif
-    int request = rpc_read_end(conn);
     int result = 0;
     return request < 0 || rpc_write_start_response(conn, request) < 0 ||
                    rpc_write(conn, &result, sizeof(result)) < 0 ||

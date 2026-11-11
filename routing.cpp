@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -125,7 +126,8 @@ lupine_route lupine_route_from_identity(int route_id) {
 static CUresult lupine_remote_cuDeviceGetCount(conn_t *conn, int *count) {
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (count == nullptr || lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetCount) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceGetCount, RPC_SCOPE_NONE) <
+          0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, count, sizeof(*count)) < 0 ||
       rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
@@ -138,7 +140,7 @@ static CUresult lupine_remote_cuDeviceGet(conn_t *conn, CUdevice *device,
                                           int ordinal) {
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (device == nullptr || lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceGet) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceGet, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &ordinal, sizeof(ordinal)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, device, sizeof(*device)) < 0 ||
@@ -152,7 +154,8 @@ static CUresult lupine_remote_cuDeviceGetUuid(conn_t *conn, CUuuid *uuid,
                                               CUdevice device) {
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (uuid == nullptr || lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request(conn, RPC_cuDeviceGetUuid_v2) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceGetUuid_v2, RPC_SCOPE_NONE) <
+          0 ||
       rpc_write(conn, &device, sizeof(device)) < 0 ||
       rpc_wait_for_response(conn) < 0 || rpc_read(conn, uuid, 16) < 0 ||
       rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
@@ -650,17 +653,190 @@ extern "C" bool lupine_context_is_green(CUcontext ctx) {
   return owner != owners.end() && owner->second.is_green_context;
 }
 
+namespace {
+
+// Streams the legacy stream waits for: blocking streams this client created,
+// and each live thread's per-thread default stream.
+std::mutex &lupine_blocking_streams_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+std::vector<uintptr_t> &lupine_blocking_streams() {
+  static auto *streams = new std::vector<uintptr_t>();
+  return *streams;
+}
+
+void lupine_set_stream_blocking(uintptr_t key, bool blocking) {
+  std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
+  auto &streams = lupine_blocking_streams();
+  auto it = std::find(streams.begin(), streams.end(), key);
+  if (blocking && it == streams.end()) {
+    streams.push_back(key);
+  } else if (!blocking && it != streams.end()) {
+    streams.erase(it);
+  }
+}
+
+// Stops treating `key` as blocking, keeping the legacy stream behind what it
+// already sent on `conns`. Retires `key`'s ticket on each connection before
+// removing `key` from `lupine_blocking_streams` so no legacy request can miss
+// it, and `key` is erased from `scope_last` immediately so a recycled handle
+// starts clean. Returns whether it was blocking.
+bool lupine_retire_blocking_stream(uintptr_t key, conn_t *const *conns,
+                                   size_t count) {
+  {
+    std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
+    auto &streams = lupine_blocking_streams();
+    if (std::find(streams.begin(), streams.end(), key) == streams.end()) {
+      return false;
+    }
+  }
+  for (size_t i = 0; i < count; ++i) {
+    rpc_scope_retire(conns[i], key);
+  }
+  std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
+  auto &streams = lupine_blocking_streams();
+  auto it = std::find(streams.begin(), streams.end(), key);
+  if (it != streams.end()) {
+    streams.erase(it);
+  }
+  return true;
+}
+
+// The per-thread default stream's scope: one per thread, blocking while the
+// thread lives.
+struct lupine_thread_stream {
+  std::vector<conn_t *> conns; // connections this thread's stream was used on
+  lupine_thread_stream() { lupine_set_stream_blocking(key(), true); }
+  ~lupine_thread_stream() {
+    lupine_retire_blocking_stream(key(), conns.data(), conns.size());
+  }
+  // Unique per thread: a later thread can reuse this one's TLS address while
+  // its key is still retired. The top bit keeps it apart from any handle.
+  const uintptr_t id = (uintptr_t{1} << (sizeof(uintptr_t) * 8 - 1)) |
+                       next_id.fetch_add(1, std::memory_order_relaxed);
+  uintptr_t key() const { return id; }
+  static std::atomic<uintptr_t> next_id;
+};
+std::atomic<uintptr_t> lupine_thread_stream::next_id{1};
+
+const uintptr_t kLegacyStreamScope =
+    reinterpret_cast<uintptr_t>(CU_STREAM_LEGACY);
+
+lupine_thread_stream &lupine_this_thread_stream() {
+  static thread_local lupine_thread_stream thread_stream;
+  return thread_stream;
+}
+
+} // namespace
+
+extern "C" uintptr_t lupine_stream_scope(CUstream stream) {
+  uintptr_t bits = reinterpret_cast<uintptr_t>(stream);
+  if (bits == LUPINE_STREAM_FETCH_READY_BITS) {
+    return RPC_SCOPE_LANE;
+  }
+  if (bits == LUPINE_STREAM_FETCH_SYNC_ALL_BITS) {
+    return RPC_SCOPE_ALL;
+  }
+  if (stream == nullptr || stream == CU_STREAM_LEGACY) {
+    return kLegacyStreamScope;
+  }
+  return stream == CU_STREAM_PER_THREAD ? lupine_this_thread_stream().key()
+                                        : bits;
+}
+
+extern "C" void lupine_note_stream_blocking(CUstream stream, bool blocking) {
+  lupine_set_stream_blocking(reinterpret_cast<uintptr_t>(stream), blocking);
+}
+
+extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op, CUstream stream,
+                                          unsigned flags) {
+  uintptr_t bits = reinterpret_cast<uintptr_t>(stream);
+  if (bits == LUPINE_STREAM_FETCH_READY_BITS) {
+    return rpc_write_start_request_on(conn, op, RPC_SCOPE_LANE, flags);
+  }
+  if (bits == LUPINE_STREAM_FETCH_SYNC_ALL_BITS) {
+    return rpc_write_start_request(conn, op);
+  }
+  if (stream == nullptr || stream == CU_STREAM_LEGACY) {
+    if (rpc_write_start_request_on(conn, op, kLegacyStreamScope, flags) < 0) {
+      return -1;
+    }
+    {
+      std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
+      for (uintptr_t key : lupine_blocking_streams()) {
+        if (rpc_request_after(conn, key) < 0) {
+          return -1;
+        }
+      }
+    }
+    // The connection keeps the retired stream tickets until a legacy request
+    // that publishes a ticket has waited for them.
+    return rpc_request_after_retired(conn);
+  }
+  bool blocking = stream == CU_STREAM_PER_THREAD;
+  uintptr_t key = lupine_stream_scope(stream);
+  if (blocking) {
+    auto &thread_stream = lupine_this_thread_stream();
+    if (std::find(thread_stream.conns.begin(), thread_stream.conns.end(),
+                  conn) == thread_stream.conns.end()) {
+      thread_stream.conns.push_back(conn);
+    }
+  } else {
+    std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
+    auto &streams = lupine_blocking_streams();
+    blocking = std::find(streams.begin(), streams.end(), key) != streams.end();
+  }
+  if (rpc_write_start_request_on(conn, op, key, flags) < 0) {
+    return -1;
+  }
+  return blocking ? rpc_request_after(conn, kLegacyStreamScope) : 0;
+}
+
+extern "C" int lupine_rpc_request_on_each(conn_t *conn,
+                                          const void *const *handles,
+                                          unsigned int count) {
+  for (unsigned int i = 0; handles != nullptr && i < count; ++i) {
+    if (rpc_request_on(conn, reinterpret_cast<uintptr_t>(handles[i])) < 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
 extern "C" void lupine_forget_stream_owner(CUstream stream) {
+  lupine_retire_stale_fetch_stream(stream);
+  conn_t *conn = lupine_route_remote_conn(lupine_route_for_stream(stream));
+  uintptr_t key = reinterpret_cast<uintptr_t>(stream);
+  // A destroyed stream's scope only matters while the legacy stream still
+  // waits for it.
+  if (!lupine_retire_blocking_stream(key, &conn, conn != nullptr) &&
+      conn != nullptr) {
+    rpc_scope_forget(conn, key);
+  }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   lupine_owners<CUstream>().erase(stream);
 }
 
 extern "C" void lupine_forget_event_owner(CUevent event) {
+  if (conn_t *conn = lupine_route_remote_conn(lupine_route_for_event(event))) {
+    rpc_scope_forget(conn, reinterpret_cast<uintptr_t>(event));
+  }
   {
     std::lock_guard<std::mutex> lock(lupine_routing_mutex());
     lupine_owners<CUevent>().erase(event);
   }
   lupine_event_forget(event);
+}
+
+extern "C" void lupine_forget_graph_exec_owner(CUgraphExec exec) {
+  if (conn_t *conn =
+          lupine_route_remote_conn(lupine_route_for_graph_exec(exec))) {
+    rpc_scope_forget(conn, reinterpret_cast<uintptr_t>(exec));
+  }
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  lupine_owners<CUgraphExec>().erase(exec);
 }
 
 template <typename Handle>
@@ -791,10 +967,24 @@ CUresult lupine_set_current_context_on_route(lupine_route route,
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (lupine_route_is_local(route)) {
     result = lupine_call_real_cuda_fn("cuCtxSetCurrent", ctx);
+  } else if (ctx != nullptr && lupine_routes_share_server(
+                                   lupine_route_for_known_owner(ctx), route)) {
+    // A live context this client created on this route cannot be refused, so
+    // the lane needs no answer: its later requests run after the switch. An
+    // unknown or destroyed one still waits, so its error is returned here.
+    conn_t *conn = lupine_route_remote_conn(route);
+    result = lupine_prepare_rpc(conn) < 0 ||
+                     rpc_write_start_request_on(conn, RPC_cuCtxSetCurrent,
+                                                RPC_SCOPE_LANE) < 0 ||
+                     rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
+                     rpc_write_end(conn) < 0
+                 ? CUDA_ERROR_DEVICE_UNAVAILABLE
+                 : CUDA_SUCCESS;
   } else {
     conn_t *conn = lupine_route_remote_conn(route);
     if (lupine_prepare_rpc(conn) < 0 ||
-        rpc_write_start_request(conn, RPC_cuCtxSetCurrent) < 0 ||
+        rpc_write_start_request_on(conn, RPC_cuCtxSetCurrent, RPC_SCOPE_LANE) <
+            0 ||
         rpc_write(conn, &ctx, sizeof(ctx)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
