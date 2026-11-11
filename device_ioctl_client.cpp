@@ -88,7 +88,7 @@ int lupine_device_ioctl(int fd, uint32_t command, void *argument) {
     errno = ENOTTY;
     return -1;
   }
-  std::array<unsigned char, lupine_uvm::map_size> buffer{};
+  std::array<unsigned char, lupine_uvm::map_size> buffer;
   if (!copy_argument(buffer.data(), argument, layout.size, false))
     return -1;
   uint64_t rm_token = 0;

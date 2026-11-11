@@ -7,7 +7,6 @@
 #include <initializer_list>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include <dlfcn.h>
 
@@ -70,7 +69,7 @@ int write_string(conn_t *conn, int request_id, ncclResult_t status,
 }
 
 template <typename Arg>
-int handle_single_string(conn_t *conn, const char *symbol) {
+int handle_single_string(conn_t *conn, const char *(*fn)(Arg)) {
   Arg arg;
   if (rpc_read(conn, &arg, sizeof(arg)) < 0) {
     return -1;
@@ -79,7 +78,6 @@ int handle_single_string(conn_t *conn, const char *symbol) {
   if (request_id < 0) {
     return -1;
   }
-  auto fn = nccl_symbol<const char *(*)(Arg)>(symbol);
   return write_string(conn, request_id, ncclSuccess,
                       text(fn == nullptr ? nullptr : fn(arg)));
 }
@@ -87,11 +85,15 @@ int handle_single_string(conn_t *conn, const char *symbol) {
 } // namespace
 
 int handle_ncclGetErrorString(conn_t *conn) {
-  return handle_single_string<ncclResult_t>(conn, "ncclGetErrorString");
+  static const auto fn =
+      nccl_symbol<const char *(*)(ncclResult_t)>("ncclGetErrorString");
+  return handle_single_string<ncclResult_t>(conn, fn);
 }
 
 int handle_ncclGetLastError(conn_t *conn) {
-  return handle_single_string<ncclComm_t>(conn, "ncclGetLastError");
+  static const auto fn =
+      nccl_symbol<const char *(*)(ncclComm_t)>("ncclGetLastError");
+  return handle_single_string<ncclComm_t>(conn, fn);
 }
 
 #if NCCL_VERSION_CODE >= 23007
@@ -105,7 +107,7 @@ int handle_ncclParamGetStr(conn_t *conn) {
     return -1;
   }
   using fn_t = ncclResult_t (*)(ncclParamHandle_t, const char **);
-  fn_t fn = nccl_symbol<fn_t>("ncclParamGetStr");
+  static const fn_t fn = nccl_symbol<fn_t>("ncclParamGetStr");
   const char *string = nullptr;
   const ncclResult_t status =
       fn == nullptr ? function_not_found() : fn(h, &string);
@@ -114,17 +116,13 @@ int handle_ncclParamGetStr(conn_t *conn) {
 
 int handle_ncclParamGetParameter(conn_t *conn) {
   uint32_t key_length = 0;
-  if (rpc_read(conn, &key_length, sizeof(key_length)) < 0 || key_length == 0) {
+  if (rpc_read(conn, &key_length, sizeof(key_length)) < 0 || key_length == 0 ||
+      key_length > (1U << 20)) {
     return -1;
   }
-  char stack_key[256];
-  std::string heap_key;
-  char *key_buf = stack_key;
-  if (key_length > sizeof(stack_key)) {
-    heap_key.resize(key_length);
-    key_buf = &heap_key[0];
-  }
-  if (rpc_read(conn, key_buf, key_length) < 0) {
+  lupine_scratch_buffer<256> key_storage;
+  char *key_buf = static_cast<char *>(key_storage.alloc_uninit(key_length));
+  if (key_buf == nullptr || rpc_read(conn, key_buf, key_length) < 0) {
     return -1;
   }
   key_buf[key_length - 1] = '\0';
@@ -133,7 +131,7 @@ int handle_ncclParamGetParameter(conn_t *conn) {
     return -1;
   }
   using fn_t = ncclResult_t (*)(const char *, const char **, int *);
-  fn_t fn = nccl_symbol<fn_t>("ncclParamGetParameter");
+  static const fn_t fn = nccl_symbol<fn_t>("ncclParamGetParameter");
   const char *value = nullptr;
   int length = 0;
   const ncclResult_t status =
@@ -149,20 +147,26 @@ int handle_ncclParamGetAllParameterKeys(conn_t *conn) {
     return -1;
   }
   using fn_t = ncclResult_t (*)(const char ***, int *);
-  fn_t fn = nccl_symbol<fn_t>("ncclParamGetAllParameterKeys");
+  static const fn_t fn = nccl_symbol<fn_t>("ncclParamGetAllParameterKeys");
   const char **table = nullptr;
   int count = 0;
   const ncclResult_t status =
       fn == nullptr ? function_not_found() : fn(&table, &count);
-  std::vector<wire_string> keys;
+  lupine_scratch_buffer<64 * sizeof(wire_string)> key_storage;
+  wire_string *keys = nullptr;
+  uint32_t key_count = 0;
   if (status == ncclSuccess && count > 0) {
-    keys.reserve(static_cast<size_t>(count));
+    keys = static_cast<wire_string *>(key_storage.alloc_array_uninit(
+        static_cast<size_t>(count), sizeof(wire_string)));
+    if (keys == nullptr) {
+      return -1;
+    }
+    key_count = static_cast<uint32_t>(count);
     for (int i = 0; i < count; ++i) {
-      keys.push_back(text(table[i]));
+      keys[i] = text(table[i]);
     }
   }
-  return write_strings(conn, request_id, status, keys.data(),
-                       static_cast<uint32_t>(keys.size()));
+  return write_strings(conn, request_id, status, keys, key_count);
 }
 #endif
 

@@ -13,7 +13,10 @@ int handle_hipInit(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipInit");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipInit");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -40,7 +43,10 @@ int handle_hipGetDeviceCount(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGetDeviceCount");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGetDeviceCount");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(count_present ? &count : nullptr);
 
@@ -71,7 +77,10 @@ int handle_hipDeviceGet(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGet");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceGet");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device_present ? &device : nullptr, ordinal);
@@ -99,7 +108,10 @@ int handle_hipSetDevice(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipSetDevice");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipSetDevice");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(deviceId);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -126,7 +138,10 @@ int handle_hipGetDevice(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGetDevice");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGetDevice");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(deviceId_present ? &deviceId : nullptr);
 
@@ -152,7 +167,10 @@ int handle_hipGetLastError(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGetLastError");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGetLastError");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -176,7 +194,10 @@ int handle_hipExtGetLastError(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipExtGetLastError");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipExtGetLastError");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -200,7 +221,10 @@ int handle_hipPeekAtLastError(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipPeekAtLastError");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipPeekAtLastError");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -231,7 +255,10 @@ int handle_hipGetDevicePropertiesR0600(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGetDevicePropertiesR0600");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGetDevicePropertiesR0600");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(prop_present ? &prop : nullptr, deviceId);
 
@@ -251,7 +278,9 @@ ERROR_0:
 
 int handle_hipDeviceGetName(conn_t *conn) {
   int len;
+  lupine_scratch_buffer<256> lupine_name_buf;
   char *name = nullptr;
+  size_t lupine_name_bytes = 0;
   uint8_t name_null = 0;
   int deviceId;
   int request_id;
@@ -262,12 +291,13 @@ int handle_hipDeviceGetName(conn_t *conn) {
       rpc_read(conn, &name_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!name_null) {
-    name = (char *)calloc((len <= 0 ? 0 : len * sizeof(char)) == 0
-                              ? 1
-                              : (len <= 0 ? 0 : len * sizeof(char)),
-                          1);
+    size_t lupine_name_count =
+        (len <= 0 ? size_t{0} : static_cast<size_t>(len));
+    name = (char *)lupine_name_buf.alloc_array_zeroed(lupine_name_count,
+                                                      sizeof(char));
     if (name == nullptr)
       goto ERROR_0;
+    lupine_name_bytes = lupine_name_count * sizeof(char);
   }
   if (rpc_read(conn, &deviceId, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -276,19 +306,20 @@ int handle_hipDeviceGetName(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGetName");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceGetName");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(name, len, deviceId);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (!name_null && (len <= 0 ? 0 : len * sizeof(char)) != 0 &&
-       rpc_write(conn, name, (len <= 0 ? 0 : len * sizeof(char))) < 0) ||
+      (!name_null && lupine_name_bytes != 0 &&
+       rpc_write(conn, name, lupine_name_bytes) < 0) ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)name);
   return 0;
 ERROR_0:
-  free((void *)name);
   return -1;
 }
 
@@ -309,7 +340,10 @@ int handle_hipDeviceTotalMem(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceTotalMem");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceTotalMem");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(bytes_present ? &bytes : nullptr, deviceId);
 
@@ -342,7 +376,10 @@ int handle_hipDeviceGetAttribute(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGetAttribute");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceGetAttribute");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(pi_present ? &pi : nullptr, attr, deviceId);
 
@@ -373,7 +410,10 @@ int handle_hipDriverGetVersion(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDriverGetVersion");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDriverGetVersion");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(driverVersion_present ? &driverVersion : nullptr);
@@ -406,7 +446,10 @@ int handle_hipRuntimeGetVersion(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipRuntimeGetVersion");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipRuntimeGetVersion");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(runtimeVersion_present ? &runtimeVersion : nullptr);
@@ -443,7 +486,10 @@ int handle_hipDeviceComputeCapability(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceComputeCapability");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceComputeCapability");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(major_present ? &major : nullptr,
                                     minor_present ? &minor : nullptr, device);
@@ -476,7 +522,10 @@ int handle_hipDeviceGetUuid(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGetUuid");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceGetUuid");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(uuid_present ? &uuid : nullptr, device);
 
@@ -511,7 +560,10 @@ int handle_hipDeviceGetP2PAttribute(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGetP2PAttribute");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceGetP2PAttribute");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(value_present ? &value : nullptr, attr,
                                     srcDevice, dstDevice);
@@ -528,7 +580,9 @@ ERROR_0:
 
 int handle_hipDeviceGetPCIBusId(conn_t *conn) {
   int len;
+  lupine_scratch_buffer<256> lupine_pciBusId_buf;
   char *pciBusId = nullptr;
+  size_t lupine_pciBusId_bytes = 0;
   uint8_t pciBusId_null = 0;
   int device;
   int request_id;
@@ -539,12 +593,13 @@ int handle_hipDeviceGetPCIBusId(conn_t *conn) {
       rpc_read(conn, &pciBusId_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pciBusId_null) {
-    pciBusId = (char *)calloc((len <= 0 ? 0 : len * sizeof(char)) == 0
-                                  ? 1
-                                  : (len <= 0 ? 0 : len * sizeof(char)),
-                              1);
+    size_t lupine_pciBusId_count =
+        (len <= 0 ? size_t{0} : static_cast<size_t>(len));
+    pciBusId = (char *)lupine_pciBusId_buf.alloc_array_zeroed(
+        lupine_pciBusId_count, sizeof(char));
     if (pciBusId == nullptr)
       goto ERROR_0;
+    lupine_pciBusId_bytes = lupine_pciBusId_count * sizeof(char);
   }
   if (rpc_read(conn, &device, sizeof(int)) < 0 || false)
     goto ERROR_0;
@@ -553,26 +608,28 @@ int handle_hipDeviceGetPCIBusId(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGetPCIBusId");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceGetPCIBusId");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(pciBusId, len, device);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (!pciBusId_null && (len <= 0 ? 0 : len * sizeof(char)) != 0 &&
-       rpc_write(conn, pciBusId, (len <= 0 ? 0 : len * sizeof(char))) < 0) ||
+      (!pciBusId_null && lupine_pciBusId_bytes != 0 &&
+       rpc_write(conn, pciBusId, lupine_pciBusId_bytes) < 0) ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)pciBusId);
   return 0;
 ERROR_0:
-  free((void *)pciBusId);
   return -1;
 }
 
 int handle_hipDeviceGetByPCIBusId(conn_t *conn) {
   uint8_t device_present = 0;
   int device{};
+  lupine_scratch_buffer<256> lupine_pciBusId_buf;
   const char *pciBusId = nullptr;
   std::size_t pciBusId_len;
   int request_id;
@@ -581,23 +638,29 @@ int handle_hipDeviceGetByPCIBusId(conn_t *conn) {
   fn_t fn = nullptr;
   if (rpc_read(conn, &device_present, sizeof(uint8_t)) < 0 ||
       (device_present && rpc_read(conn, &device, sizeof(int)) < 0) ||
-      rpc_read(conn, &pciBusId_len, sizeof(std::size_t)) < 0)
+      rpc_read(conn, &pciBusId_len, sizeof(std::size_t)) < 0 ||
+      pciBusId_len > (1U << 20))
     goto ERROR_0;
   if (pciBusId_len != 0) {
-    pciBusId = (const char *)malloc(pciBusId_len);
-    if (pciBusId == nullptr)
+    char *lupine_pciBusId_mut =
+        static_cast<char *>(lupine_pciBusId_buf.alloc_uninit(pciBusId_len));
+    if (lupine_pciBusId_mut == nullptr ||
+        rpc_read(conn, lupine_pciBusId_mut, pciBusId_len) < 0)
       goto ERROR_0;
+    lupine_pciBusId_mut[pciBusId_len - 1] = '\0';
+    pciBusId = (const char *)lupine_pciBusId_mut;
   }
-  if ((pciBusId_len != 0 &&
-       rpc_read(conn, (void *)pciBusId, pciBusId_len) < 0) ||
-      false)
+  if (false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGetByPCIBusId");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceGetByPCIBusId");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device_present ? &device : nullptr, pciBusId);
@@ -607,10 +670,8 @@ int handle_hipDeviceGetByPCIBusId(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)pciBusId);
   return 0;
 ERROR_0:
-  free((void *)pciBusId);
   return -1;
 }
 
@@ -626,7 +687,10 @@ int handle_hipDeviceSynchronize(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceSynchronize");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceSynchronize");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -650,7 +714,10 @@ int handle_hipDeviceReset(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceReset");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceReset");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -680,7 +747,10 @@ int handle_hipDeviceGetDefaultMemPool(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGetDefaultMemPool");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceGetDefaultMemPool");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(mem_pool_present ? &mem_pool : nullptr, device);
@@ -711,7 +781,10 @@ int handle_hipDeviceSetMemPool(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceSetMemPool");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceSetMemPool");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(device, mem_pool);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -741,7 +814,10 @@ int handle_hipDeviceGetMemPool(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGetMemPool");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceGetMemPool");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(mem_pool_present ? &mem_pool : nullptr, device);
@@ -779,7 +855,11 @@ int handle_hipDeviceGetTexture1DLinearMaxWidth(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGetTexture1DLinearMaxWidth");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipDeviceGetTexture1DLinearMaxWidth");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(max_width_present ? &max_width : nullptr,
                                     desc_present ? &desc : nullptr, device);
@@ -807,7 +887,10 @@ int handle_hipDeviceSetCacheConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceSetCacheConfig");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceSetCacheConfig");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(cacheConfig);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -836,7 +919,10 @@ int handle_hipDeviceGetCacheConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGetCacheConfig");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceGetCacheConfig");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(cacheConfig_present ? &cacheConfig : nullptr);
@@ -869,7 +955,10 @@ int handle_hipDeviceGetLimit(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGetLimit");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceGetLimit");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(pValue_present ? &pValue : nullptr, limit);
 
@@ -898,7 +987,10 @@ int handle_hipDeviceSetLimit(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceSetLimit");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceSetLimit");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(limit, value);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -927,7 +1019,10 @@ int handle_hipDeviceGetSharedMemConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGetSharedMemConfig");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceGetSharedMemConfig");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(pConfig_present ? &pConfig : nullptr);
 
@@ -958,7 +1053,10 @@ int handle_hipGetDeviceFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGetDeviceFlags");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGetDeviceFlags");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(flags_present ? &flags : nullptr);
 
@@ -985,7 +1083,10 @@ int handle_hipDeviceSetSharedMemConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceSetSharedMemConfig");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceSetSharedMemConfig");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(config);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1010,7 +1111,10 @@ int handle_hipSetDeviceFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipSetDeviceFlags");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipSetDeviceFlags");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1043,7 +1147,10 @@ int handle_hipChooseDeviceR0600(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipChooseDeviceR0600");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipChooseDeviceR0600");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(device_present ? &device : nullptr,
                                     prop_present ? &prop : nullptr);
@@ -1082,7 +1189,10 @@ int handle_hipExtGetLinkTypeAndHopCount(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipExtGetLinkTypeAndHopCount");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipExtGetLinkTypeAndHopCount");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(device1, device2,
                                     linktype_present ? &linktype : nullptr,
@@ -1121,7 +1231,11 @@ int handle_hipDeviceGetStreamPriorityRange(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGetStreamPriorityRange");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipDeviceGetStreamPriorityRange");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -1154,7 +1268,10 @@ int handle_hipDeviceGraphMemTrim(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceGraphMemTrim");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceGraphMemTrim");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(device);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1178,7 +1295,10 @@ int handle_hipProfilerStart(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipProfilerStart");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipProfilerStart");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1202,7 +1322,10 @@ int handle_hipProfilerStop(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipProfilerStop");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipProfilerStop");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1232,7 +1355,10 @@ int handle_hipIpcGetMemHandle(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipIpcGetMemHandle");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipIpcGetMemHandle");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle_present ? &handle : nullptr, devPtr);
 
@@ -1266,7 +1392,10 @@ int handle_hipIpcOpenMemHandle(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipIpcOpenMemHandle");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipIpcOpenMemHandle");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(devPtr_present ? &devPtr : nullptr, handle, flags);
@@ -1294,7 +1423,10 @@ int handle_hipIpcCloseMemHandle(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipIpcCloseMemHandle");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipIpcCloseMemHandle");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(devPtr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1324,7 +1456,10 @@ int handle_hipIpcGetEventHandle(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipIpcGetEventHandle");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipIpcGetEventHandle");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle_present ? &handle : nullptr, event);
 
@@ -1356,7 +1491,10 @@ int handle_hipIpcOpenEventHandle(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipIpcOpenEventHandle");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipIpcOpenEventHandle");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(event_present ? &event : nullptr, handle);
 
@@ -1386,7 +1524,10 @@ int handle_hipStreamCreate(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamCreate");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamCreate");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(stream_present ? &stream : nullptr);
 
@@ -1417,7 +1558,10 @@ int handle_hipStreamCreateWithFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamCreateWithFlags");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamCreateWithFlags");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(stream_present ? &stream : nullptr, flags);
 
@@ -1450,7 +1594,10 @@ int handle_hipStreamCreateWithPriority(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamCreateWithPriority");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamCreateWithPriority");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(stream_present ? &stream : nullptr, flags, priority);
@@ -1478,7 +1625,10 @@ int handle_hipStreamDestroy(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamDestroy");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamDestroy");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1503,7 +1653,10 @@ int handle_hipStreamQuery(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamQuery");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamQuery");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1528,7 +1681,10 @@ int handle_hipStreamSynchronize(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamSynchronize");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamSynchronize");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1557,7 +1713,10 @@ int handle_hipStreamWaitEvent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamWaitEvent");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamWaitEvent");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(stream, event, flags);
 
@@ -1588,7 +1747,10 @@ int handle_hipStreamGetFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamGetFlags");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamGetFlags");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(stream, flags_present ? &flags : nullptr);
 
@@ -1621,7 +1783,10 @@ int handle_hipStreamGetId(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamGetId");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamGetId");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(stream, streamId_present ? &streamId : nullptr);
@@ -1654,7 +1819,10 @@ int handle_hipStreamGetPriority(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamGetPriority");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamGetPriority");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(stream, priority_present ? &priority : nullptr);
@@ -1687,7 +1855,10 @@ int handle_hipStreamGetDevice(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamGetDevice");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamGetDevice");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(stream, device_present ? &device : nullptr);
 
@@ -1705,7 +1876,9 @@ int handle_hipExtStreamCreateWithCUMask(conn_t *conn) {
   uint8_t stream_present = 0;
   hipStream_t stream{};
   uint32_t cuMaskSize;
+  lupine_scratch_buffer<256> lupine_cuMask_buf;
   uint32_t *cuMask = nullptr;
+  size_t lupine_cuMask_bytes = 0;
   uint8_t cuMask_null = 0;
   int request_id;
   hipError_t return_value;
@@ -1717,15 +1890,15 @@ int handle_hipExtStreamCreateWithCUMask(conn_t *conn) {
       rpc_read(conn, &cuMask_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!cuMask_null) {
-    cuMask = (uint32_t *)calloc(cuMaskSize * sizeof(const uint32_t) == 0
-                                    ? 1
-                                    : cuMaskSize * sizeof(const uint32_t),
-                                1);
+    size_t lupine_cuMask_count = static_cast<size_t>(cuMaskSize);
+    cuMask = (uint32_t *)lupine_cuMask_buf.alloc_array_uninit(
+        lupine_cuMask_count, sizeof(const uint32_t));
     if (cuMask == nullptr)
       goto ERROR_0;
+    lupine_cuMask_bytes = lupine_cuMask_count * sizeof(const uint32_t);
   }
-  if ((!cuMask_null && cuMaskSize * sizeof(const uint32_t) != 0 &&
-       rpc_read(conn, cuMask, cuMaskSize * sizeof(const uint32_t)) < 0) ||
+  if ((!cuMask_null && lupine_cuMask_bytes != 0 &&
+       rpc_read(conn, cuMask, lupine_cuMask_bytes) < 0) ||
       false)
     goto ERROR_0;
 
@@ -1733,7 +1906,10 @@ int handle_hipExtStreamCreateWithCUMask(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipExtStreamCreateWithCUMask");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipExtStreamCreateWithCUMask");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(stream_present ? &stream : nullptr,
                                     cuMaskSize, cuMask);
@@ -1743,17 +1919,17 @@ int handle_hipExtStreamCreateWithCUMask(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)cuMask);
   return 0;
 ERROR_0:
-  free((void *)cuMask);
   return -1;
 }
 
 int handle_hipExtStreamGetCUMask(conn_t *conn) {
   hipStream_t stream;
   uint32_t cuMaskSize;
+  lupine_scratch_buffer<256> lupine_cuMask_buf;
   uint32_t *cuMask = nullptr;
+  size_t lupine_cuMask_bytes = 0;
   uint8_t cuMask_null = 0;
   int request_id;
   hipError_t return_value;
@@ -1764,11 +1940,12 @@ int handle_hipExtStreamGetCUMask(conn_t *conn) {
       rpc_read(conn, &cuMask_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!cuMask_null) {
-    cuMask = (uint32_t *)calloc(
-        cuMaskSize * sizeof(uint32_t) == 0 ? 1 : cuMaskSize * sizeof(uint32_t),
-        1);
+    size_t lupine_cuMask_count = static_cast<size_t>(cuMaskSize);
+    cuMask = (uint32_t *)lupine_cuMask_buf.alloc_array_zeroed(
+        lupine_cuMask_count, sizeof(uint32_t));
     if (cuMask == nullptr)
       goto ERROR_0;
+    lupine_cuMask_bytes = lupine_cuMask_count * sizeof(uint32_t);
   }
   if (false)
     goto ERROR_0;
@@ -1777,20 +1954,21 @@ int handle_hipExtStreamGetCUMask(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipExtStreamGetCUMask");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipExtStreamGetCUMask");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(stream, cuMaskSize, cuMask);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (!cuMask_null && cuMaskSize * sizeof(uint32_t) != 0 &&
-       rpc_write(conn, cuMask, cuMaskSize * sizeof(uint32_t)) < 0) ||
+      (!cuMask_null && lupine_cuMask_bytes != 0 &&
+       rpc_write(conn, cuMask, lupine_cuMask_bytes) < 0) ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)cuMask);
   return 0;
 ERROR_0:
-  free((void *)cuMask);
   return -1;
 }
 
@@ -1816,7 +1994,10 @@ int handle_hipStreamSetAttribute(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamSetAttribute");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamSetAttribute");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(stream, attr, value_present ? &value : nullptr);
@@ -1852,7 +2033,10 @@ int handle_hipStreamGetAttribute(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamGetAttribute");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamGetAttribute");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(stream, attr,
                                     value_out_present ? &value_out : nullptr);
@@ -1883,7 +2067,10 @@ int handle_hipStreamCopyAttributes(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamCopyAttributes");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamCopyAttributes");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(dst, src);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -1917,7 +2104,10 @@ int handle_hipStreamWaitValue32(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamWaitValue32");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamWaitValue32");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(stream, ptr, value, flags, mask);
 
@@ -1952,7 +2142,10 @@ int handle_hipStreamWaitValue64(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamWaitValue64");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamWaitValue64");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(stream, ptr, value, flags, mask);
 
@@ -1984,7 +2177,10 @@ int handle_hipStreamWriteValue32(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamWriteValue32");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamWriteValue32");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(stream, ptr, value, flags);
 
@@ -2016,7 +2212,10 @@ int handle_hipStreamWriteValue64(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamWriteValue64");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamWriteValue64");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(stream, ptr, value, flags);
 
@@ -2032,7 +2231,9 @@ ERROR_0:
 int handle_hipStreamBatchMemOp(conn_t *conn) {
   hipStream_t stream;
   unsigned int count;
+  lupine_scratch_buffer<256> lupine_paramArray_buf;
   hipStreamBatchMemOpParams *paramArray = nullptr;
+  size_t lupine_paramArray_bytes = 0;
   uint8_t paramArray_null = 0;
   unsigned int flags;
   int request_id;
@@ -2045,17 +2246,17 @@ int handle_hipStreamBatchMemOp(conn_t *conn) {
       rpc_read(conn, &paramArray_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!paramArray_null) {
-    paramArray = (hipStreamBatchMemOpParams *)calloc(
-        count * sizeof(hipStreamBatchMemOpParams) == 0
-            ? 1
-            : count * sizeof(hipStreamBatchMemOpParams),
-        1);
+    size_t lupine_paramArray_count = static_cast<size_t>(count);
+    paramArray =
+        (hipStreamBatchMemOpParams *)lupine_paramArray_buf.alloc_array_uninit(
+            lupine_paramArray_count, sizeof(hipStreamBatchMemOpParams));
     if (paramArray == nullptr)
       goto ERROR_0;
+    lupine_paramArray_bytes =
+        lupine_paramArray_count * sizeof(hipStreamBatchMemOpParams);
   }
-  if ((!paramArray_null && count * sizeof(hipStreamBatchMemOpParams) != 0 &&
-       rpc_read(conn, paramArray, count * sizeof(hipStreamBatchMemOpParams)) <
-           0) ||
+  if ((!paramArray_null && lupine_paramArray_bytes != 0 &&
+       rpc_read(conn, paramArray, lupine_paramArray_bytes) < 0) ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
 
@@ -2063,7 +2264,10 @@ int handle_hipStreamBatchMemOp(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamBatchMemOp");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamBatchMemOp");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(stream, count, paramArray, flags);
 
@@ -2071,10 +2275,8 @@ int handle_hipStreamBatchMemOp(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)paramArray);
   return 0;
 ERROR_0:
-  free((void *)paramArray);
   return -1;
 }
 
@@ -2083,10 +2285,12 @@ int handle_hipGraphAddBatchMemOpNode(conn_t *conn) {
   hipGraphNode_t phGraphNode{};
   hipGraph_t hGraph;
   size_t numDependencies;
+  lupine_scratch_buffer<256> lupine_dependencies_buf;
   hipGraphNode_t *dependencies = nullptr;
+  size_t lupine_dependencies_bytes = 0;
   uint8_t dependencies_null = 0;
   hipBatchMemOpNodeParams nodeParams = {};
-  std::vector<unsigned char> nodeParams_paramArray_buf;
+  lupine_scratch_buffer<256> lupine_nodeParams_paramArray_buf;
   int request_id;
   hipError_t return_value;
   using fn_t =
@@ -2101,28 +2305,27 @@ int handle_hipGraphAddBatchMemOpNode(conn_t *conn) {
       rpc_read(conn, &dependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!dependencies_null) {
-    dependencies = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_dependencies_count = static_cast<size_t>(numDependencies);
+    dependencies = (hipGraphNode_t *)lupine_dependencies_buf.alloc_array_uninit(
+        lupine_dependencies_count, sizeof(const hipGraphNode_t));
     if (dependencies == nullptr)
       goto ERROR_0;
+    lupine_dependencies_bytes =
+        lupine_dependencies_count * sizeof(const hipGraphNode_t);
   }
-  if ((!dependencies_null &&
-       numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, dependencies,
-                numDependencies * sizeof(const hipGraphNode_t)) < 0) ||
+  if ((!dependencies_null && lupine_dependencies_bytes != 0 &&
+       rpc_read(conn, dependencies, lupine_dependencies_bytes) < 0) ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
-      ((nodeParams_paramArray_buf.resize(nodeParams.count *
-                                         sizeof(*nodeParams.paramArray)),
-        false)) ||
-      (nodeParams.count != 0 &&
-       rpc_read(conn, nodeParams_paramArray_buf.data(),
-                nodeParams_paramArray_buf.size()) < 0) ||
-      ((nodeParams.paramArray =
-            (decltype(nodeParams.paramArray))nodeParams_paramArray_buf.data()),
-       false) ||
+      (nodeParams.count == 0
+           ? ((nodeParams.paramArray = nullptr), false)
+           : ((nodeParams.paramArray =
+                   (decltype(nodeParams.paramArray))
+                       lupine_nodeParams_paramArray_buf.alloc_array_uninit(
+                           static_cast<size_t>(nodeParams.count),
+                           sizeof(*nodeParams.paramArray))) == nullptr ||
+              rpc_read(conn, (void *)nodeParams.paramArray,
+                       static_cast<size_t>(nodeParams.count) *
+                           sizeof(*nodeParams.paramArray)) < 0)) ||
       false)
     goto ERROR_0;
 
@@ -2130,7 +2333,10 @@ int handle_hipGraphAddBatchMemOpNode(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphAddBatchMemOpNode");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphAddBatchMemOpNode");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(phGraphNode_present ? &phGraphNode : nullptr, hGraph,
@@ -2142,32 +2348,31 @@ int handle_hipGraphAddBatchMemOpNode(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)dependencies);
   return 0;
 ERROR_0:
-  free((void *)dependencies);
   return -1;
 }
 
 int handle_hipGraphBatchMemOpNodeSetParams(conn_t *conn) {
   hipGraphNode_t hNode;
   hipBatchMemOpNodeParams nodeParams = {};
-  std::vector<unsigned char> nodeParams_paramArray_buf;
+  lupine_scratch_buffer<256> lupine_nodeParams_paramArray_buf;
   int request_id;
   hipError_t return_value;
   using fn_t = hipError_t (*)(hipGraphNode_t, hipBatchMemOpNodeParams *);
   fn_t fn = nullptr;
   if (rpc_read(conn, &hNode, sizeof(hipGraphNode_t)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
-      ((nodeParams_paramArray_buf.resize(nodeParams.count *
-                                         sizeof(*nodeParams.paramArray)),
-        false)) ||
-      (nodeParams.count != 0 &&
-       rpc_read(conn, nodeParams_paramArray_buf.data(),
-                nodeParams_paramArray_buf.size()) < 0) ||
-      ((nodeParams.paramArray =
-            (decltype(nodeParams.paramArray))nodeParams_paramArray_buf.data()),
-       false) ||
+      (nodeParams.count == 0
+           ? ((nodeParams.paramArray = nullptr), false)
+           : ((nodeParams.paramArray =
+                   (decltype(nodeParams.paramArray))
+                       lupine_nodeParams_paramArray_buf.alloc_array_uninit(
+                           static_cast<size_t>(nodeParams.count),
+                           sizeof(*nodeParams.paramArray))) == nullptr ||
+              rpc_read(conn, (void *)nodeParams.paramArray,
+                       static_cast<size_t>(nodeParams.count) *
+                           sizeof(*nodeParams.paramArray)) < 0)) ||
       false)
     goto ERROR_0;
 
@@ -2175,7 +2380,11 @@ int handle_hipGraphBatchMemOpNodeSetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphBatchMemOpNodeSetParams");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphBatchMemOpNodeSetParams");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(hNode, &nodeParams);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2191,7 +2400,7 @@ int handle_hipGraphExecBatchMemOpNodeSetParams(conn_t *conn) {
   hipGraphExec_t hGraphExec;
   hipGraphNode_t hNode;
   hipBatchMemOpNodeParams nodeParams = {};
-  std::vector<unsigned char> nodeParams_paramArray_buf;
+  lupine_scratch_buffer<256> lupine_nodeParams_paramArray_buf;
   int request_id;
   hipError_t return_value;
   using fn_t = hipError_t (*)(hipGraphExec_t, hipGraphNode_t,
@@ -2200,15 +2409,16 @@ int handle_hipGraphExecBatchMemOpNodeSetParams(conn_t *conn) {
   if (rpc_read(conn, &hGraphExec, sizeof(hipGraphExec_t)) < 0 ||
       rpc_read(conn, &hNode, sizeof(hipGraphNode_t)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
-      ((nodeParams_paramArray_buf.resize(nodeParams.count *
-                                         sizeof(*nodeParams.paramArray)),
-        false)) ||
-      (nodeParams.count != 0 &&
-       rpc_read(conn, nodeParams_paramArray_buf.data(),
-                nodeParams_paramArray_buf.size()) < 0) ||
-      ((nodeParams.paramArray =
-            (decltype(nodeParams.paramArray))nodeParams_paramArray_buf.data()),
-       false) ||
+      (nodeParams.count == 0
+           ? ((nodeParams.paramArray = nullptr), false)
+           : ((nodeParams.paramArray =
+                   (decltype(nodeParams.paramArray))
+                       lupine_nodeParams_paramArray_buf.alloc_array_uninit(
+                           static_cast<size_t>(nodeParams.count),
+                           sizeof(*nodeParams.paramArray))) == nullptr ||
+              rpc_read(conn, (void *)nodeParams.paramArray,
+                       static_cast<size_t>(nodeParams.count) *
+                           sizeof(*nodeParams.paramArray)) < 0)) ||
       false)
     goto ERROR_0;
 
@@ -2216,7 +2426,11 @@ int handle_hipGraphExecBatchMemOpNodeSetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphExecBatchMemOpNodeSetParams");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphExecBatchMemOpNodeSetParams");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(hGraphExec, hNode, &nodeParams);
 
@@ -2246,7 +2460,10 @@ int handle_hipEventCreateWithFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipEventCreateWithFlags");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipEventCreateWithFlags");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(event_present ? &event : nullptr, flags);
 
@@ -2276,7 +2493,10 @@ int handle_hipEventCreate(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipEventCreate");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipEventCreate");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(event_present ? &event : nullptr);
 
@@ -2307,7 +2527,10 @@ int handle_hipEventRecordWithFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipEventRecordWithFlags");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipEventRecordWithFlags");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(event, stream, flags);
 
@@ -2335,7 +2558,10 @@ int handle_hipEventRecord(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipEventRecord");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipEventRecord");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(event, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2360,7 +2586,10 @@ int handle_hipEventDestroy(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipEventDestroy");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipEventDestroy");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2385,7 +2614,10 @@ int handle_hipEventSynchronize(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipEventSynchronize");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipEventSynchronize");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2416,7 +2648,10 @@ int handle_hipEventElapsedTime(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipEventElapsedTime");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipEventElapsedTime");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(ms_present ? &ms : nullptr, start, stop);
 
@@ -2443,7 +2678,10 @@ int handle_hipEventQuery(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipEventQuery");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipEventQuery");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2473,7 +2711,10 @@ int handle_hipPointerGetAttributes(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipPointerGetAttributes");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipPointerGetAttributes");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(attributes_present ? &attributes : nullptr, ptr);
@@ -2506,7 +2747,10 @@ int handle_hipMalloc(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMalloc");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMalloc");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(ptr_present ? &ptr : nullptr, size);
 
@@ -2539,7 +2783,10 @@ int handle_hipExtMallocWithFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipExtMallocWithFlags");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipExtMallocWithFlags");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(ptr_present ? &ptr : nullptr, sizeBytes, flags);
@@ -2573,7 +2820,10 @@ int handle_hipMallocManaged(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMallocManaged");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMallocManaged");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(dev_ptr_present ? &dev_ptr : nullptr, size, flags);
@@ -2607,7 +2857,10 @@ int handle_hipMemPrefetchAsync(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemPrefetchAsync");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemPrefetchAsync");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(dev_ptr, count, device, stream);
 
@@ -2642,7 +2895,10 @@ int handle_hipMemPrefetchAsync_v2(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemPrefetchAsync_v2");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemPrefetchAsync_v2");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dev_ptr, count, location, flags, stream);
 
@@ -2674,7 +2930,10 @@ int handle_hipMemAdvise(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemAdvise");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemAdvise");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(dev_ptr, count, advice, device);
 
@@ -2707,7 +2966,10 @@ int handle_hipMemAdvise_v2(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemAdvise_v2");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemAdvise_v2");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dev_ptr, count, advice, location);
 
@@ -2722,7 +2984,9 @@ ERROR_0:
 
 int handle_hipMemRangeGetAttribute(conn_t *conn) {
   size_t data_size;
+  lupine_scratch_buffer<256> lupine_data_buf;
   void *data = nullptr;
+  size_t lupine_data_bytes = 0;
   uint8_t data_null = 0;
   hipMemRangeAttribute attribute;
   const void *dev_ptr;
@@ -2736,9 +3000,12 @@ int handle_hipMemRangeGetAttribute(conn_t *conn) {
       rpc_read(conn, &data_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!data_null) {
-    data = (void *)calloc(data_size == 0 ? 1 : data_size, 1);
+    size_t lupine_data_count = static_cast<size_t>(data_size);
+    data = (void *)lupine_data_buf.alloc_array_zeroed(lupine_data_count,
+                                                      size_t{1});
     if (data == nullptr)
       goto ERROR_0;
+    lupine_data_bytes = lupine_data_count * size_t{1};
   }
   if (rpc_read(conn, &attribute, sizeof(hipMemRangeAttribute)) < 0 ||
       rpc_read(conn, &dev_ptr, sizeof(const void *)) < 0 ||
@@ -2749,19 +3016,21 @@ int handle_hipMemRangeGetAttribute(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemRangeGetAttribute");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemRangeGetAttribute");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(data, data_size, attribute, dev_ptr, count);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (!data_null && data_size != 0 && rpc_write(conn, data, data_size) < 0) ||
+      (!data_null && lupine_data_bytes != 0 &&
+       rpc_write(conn, data, lupine_data_bytes) < 0) ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)data);
   return 0;
 ERROR_0:
-  free((void *)data);
   return -1;
 }
 
@@ -2784,7 +3053,10 @@ int handle_hipStreamAttachMemAsync(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamAttachMemAsync");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamAttachMemAsync");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(stream, dev_ptr, length, flags);
 
@@ -2816,7 +3088,10 @@ int handle_hipMallocAsync(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMallocAsync");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMallocAsync");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(dev_ptr_present ? &dev_ptr : nullptr, size, stream);
@@ -2846,7 +3121,10 @@ int handle_hipFreeAsync(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipFreeAsync");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipFreeAsync");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(dev_ptr, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2873,7 +3151,10 @@ int handle_hipMemPoolTrimTo(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemPoolTrimTo");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemPoolTrimTo");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(mem_pool, min_bytes_to_hold);
 
@@ -2889,7 +3170,9 @@ ERROR_0:
 int handle_hipMemPoolSetAccess(conn_t *conn) {
   hipMemPool_t mem_pool;
   size_t count;
+  lupine_scratch_buffer<256> lupine_desc_list_buf;
   hipMemAccessDesc *desc_list = nullptr;
+  size_t lupine_desc_list_bytes = 0;
   uint8_t desc_list_null = 0;
   int request_id;
   hipError_t return_value;
@@ -2900,16 +3183,16 @@ int handle_hipMemPoolSetAccess(conn_t *conn) {
       rpc_read(conn, &desc_list_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!desc_list_null) {
-    desc_list =
-        (hipMemAccessDesc *)calloc(count * sizeof(const hipMemAccessDesc) == 0
-                                       ? 1
-                                       : count * sizeof(const hipMemAccessDesc),
-                                   1);
+    size_t lupine_desc_list_count = static_cast<size_t>(count);
+    desc_list = (hipMemAccessDesc *)lupine_desc_list_buf.alloc_array_uninit(
+        lupine_desc_list_count, sizeof(const hipMemAccessDesc));
     if (desc_list == nullptr)
       goto ERROR_0;
+    lupine_desc_list_bytes =
+        lupine_desc_list_count * sizeof(const hipMemAccessDesc);
   }
-  if ((!desc_list_null && count * sizeof(const hipMemAccessDesc) != 0 &&
-       rpc_read(conn, desc_list, count * sizeof(const hipMemAccessDesc)) < 0) ||
+  if ((!desc_list_null && lupine_desc_list_bytes != 0 &&
+       rpc_read(conn, desc_list, lupine_desc_list_bytes) < 0) ||
       false)
     goto ERROR_0;
 
@@ -2917,7 +3200,10 @@ int handle_hipMemPoolSetAccess(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemPoolSetAccess");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemPoolSetAccess");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(mem_pool, desc_list, count);
 
@@ -2925,10 +3211,8 @@ int handle_hipMemPoolSetAccess(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)desc_list);
   return 0;
 ERROR_0:
-  free((void *)desc_list);
   return -1;
 }
 
@@ -2957,7 +3241,10 @@ int handle_hipMemPoolGetAccess(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemPoolGetAccess");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemPoolGetAccess");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(flags_present ? &flags : nullptr, mem_pool,
                                     location_present ? &location : nullptr);
@@ -2995,7 +3282,10 @@ int handle_hipMemPoolCreate(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemPoolCreate");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemPoolCreate");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(mem_pool_present ? &mem_pool : nullptr,
                                     pool_props_present ? &pool_props : nullptr);
@@ -3024,7 +3314,10 @@ int handle_hipMemPoolDestroy(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemPoolDestroy");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemPoolDestroy");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(mem_pool);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3057,7 +3350,10 @@ int handle_hipMallocFromPoolAsync(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMallocFromPoolAsync");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMallocFromPoolAsync");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dev_ptr_present ? &dev_ptr : nullptr, size,
                                     mem_pool, stream);
@@ -3090,7 +3386,10 @@ int handle_hipMemPoolExportPointer(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemPoolExportPointer");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemPoolExportPointer");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found()
                     : fn(export_data_present ? &export_data : nullptr, dev_ptr);
@@ -3129,7 +3428,10 @@ int handle_hipMemPoolImportPointer(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemPoolImportPointer");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemPoolImportPointer");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(dev_ptr_present ? &dev_ptr : nullptr, mem_pool,
@@ -3168,7 +3470,10 @@ int handle_hipMallocPitch(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMallocPitch");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMallocPitch");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(ptr_present ? &ptr : nullptr,
@@ -3211,7 +3516,10 @@ int handle_hipMemAllocPitch(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemAllocPitch");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemAllocPitch");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dptr_present ? &dptr : nullptr,
                                     pitch_present ? &pitch : nullptr,
@@ -3241,7 +3549,10 @@ int handle_hipFree(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipFree");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipFree");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(ptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3256,7 +3567,9 @@ ERROR_0:
 int handle_hipMemcpyHtoD(conn_t *conn) {
   hipDeviceptr_t dst;
   size_t sizeBytes;
+  lupine_scratch_buffer<256> lupine_src_buf;
   void *src = nullptr;
+  size_t lupine_src_bytes = 0;
   uint8_t src_null = 0;
   int request_id;
   hipError_t return_value;
@@ -3267,11 +3580,15 @@ int handle_hipMemcpyHtoD(conn_t *conn) {
       rpc_read(conn, &src_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!src_null) {
-    src = (void *)calloc(sizeBytes == 0 ? 1 : sizeBytes, 1);
+    size_t lupine_src_count = static_cast<size_t>(sizeBytes);
+    src =
+        (void *)lupine_src_buf.alloc_array_uninit(lupine_src_count, size_t{1});
     if (src == nullptr)
       goto ERROR_0;
+    lupine_src_bytes = lupine_src_count * size_t{1};
   }
-  if ((!src_null && sizeBytes != 0 && rpc_read(conn, src, sizeBytes) < 0) ||
+  if ((!src_null && lupine_src_bytes != 0 &&
+       rpc_read(conn, src, lupine_src_bytes) < 0) ||
       false)
     goto ERROR_0;
 
@@ -3279,24 +3596,27 @@ int handle_hipMemcpyHtoD(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemcpyHtoD");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemcpyHtoD");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(dst, src, sizeBytes);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)src);
   return 0;
 ERROR_0:
-  free((void *)src);
   return -1;
 }
 
 int handle_hipMemcpyDtoH(conn_t *conn) {
   hipDeviceptr_t src;
   size_t sizeBytes;
+  lupine_scratch_buffer<256> lupine_dst_buf;
   void *dst = nullptr;
+  size_t lupine_dst_bytes = 0;
   uint8_t dst_null = 0;
   int request_id;
   hipError_t return_value;
@@ -3307,9 +3627,12 @@ int handle_hipMemcpyDtoH(conn_t *conn) {
       rpc_read(conn, &dst_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!dst_null) {
-    dst = (void *)calloc(sizeBytes == 0 ? 1 : sizeBytes, 1);
+    size_t lupine_dst_count = static_cast<size_t>(sizeBytes);
+    dst =
+        (void *)lupine_dst_buf.alloc_array_zeroed(lupine_dst_count, size_t{1});
     if (dst == nullptr)
       goto ERROR_0;
+    lupine_dst_bytes = lupine_dst_count * size_t{1};
   }
   if (false)
     goto ERROR_0;
@@ -3318,18 +3641,20 @@ int handle_hipMemcpyDtoH(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemcpyDtoH");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemcpyDtoH");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(dst, src, sizeBytes);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (!dst_null && sizeBytes != 0 && rpc_write(conn, dst, sizeBytes) < 0) ||
+      (!dst_null && lupine_dst_bytes != 0 &&
+       rpc_write(conn, dst, lupine_dst_bytes) < 0) ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)dst);
   return 0;
 ERROR_0:
-  free((void *)dst);
   return -1;
 }
 
@@ -3350,7 +3675,10 @@ int handle_hipMemcpyDtoD(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemcpyDtoD");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemcpyDtoD");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(dst, src, sizeBytes);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3381,7 +3709,10 @@ int handle_hipMemcpyAtoD(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemcpyAtoD");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemcpyAtoD");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dstDevice, srcArray, srcOffset, ByteCount);
 
@@ -3413,7 +3744,10 @@ int handle_hipMemcpyDtoA(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemcpyDtoA");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemcpyDtoA");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dstArray, dstOffset, srcDevice, ByteCount);
 
@@ -3447,7 +3781,10 @@ int handle_hipMemcpyAtoA(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemcpyAtoA");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemcpyAtoA");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(dstArray, dstOffset, srcArray, srcOffset, ByteCount);
@@ -3481,7 +3818,10 @@ int handle_hipMemcpyDtoDAsync(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemcpyDtoDAsync");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemcpyDtoDAsync");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(dst, src, sizeBytes, stream);
 
@@ -3498,7 +3838,9 @@ int handle_hipMemcpyAtoH(conn_t *conn) {
   hipArray_t srcArray;
   size_t srcOffset;
   size_t count;
+  lupine_scratch_buffer<256> lupine_dst_buf;
   void *dst = nullptr;
+  size_t lupine_dst_bytes = 0;
   uint8_t dst_null = 0;
   int request_id;
   hipError_t return_value;
@@ -3510,9 +3852,12 @@ int handle_hipMemcpyAtoH(conn_t *conn) {
       rpc_read(conn, &dst_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!dst_null) {
-    dst = (void *)calloc(count == 0 ? 1 : count, 1);
+    size_t lupine_dst_count = static_cast<size_t>(count);
+    dst =
+        (void *)lupine_dst_buf.alloc_array_zeroed(lupine_dst_count, size_t{1});
     if (dst == nullptr)
       goto ERROR_0;
+    lupine_dst_bytes = lupine_dst_count * size_t{1};
   }
   if (false)
     goto ERROR_0;
@@ -3521,19 +3866,21 @@ int handle_hipMemcpyAtoH(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemcpyAtoH");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemcpyAtoH");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dst, srcArray, srcOffset, count);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (!dst_null && count != 0 && rpc_write(conn, dst, count) < 0) ||
+      (!dst_null && lupine_dst_bytes != 0 &&
+       rpc_write(conn, dst, lupine_dst_bytes) < 0) ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)dst);
   return 0;
 ERROR_0:
-  free((void *)dst);
   return -1;
 }
 
@@ -3541,7 +3888,9 @@ int handle_hipMemcpyHtoA(conn_t *conn) {
   hipArray_t dstArray;
   size_t dstOffset;
   size_t count;
+  lupine_scratch_buffer<256> lupine_srcHost_buf;
   void *srcHost = nullptr;
+  size_t lupine_srcHost_bytes = 0;
   uint8_t srcHost_null = 0;
   int request_id;
   hipError_t return_value;
@@ -3553,11 +3902,15 @@ int handle_hipMemcpyHtoA(conn_t *conn) {
       rpc_read(conn, &srcHost_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!srcHost_null) {
-    srcHost = (void *)calloc(count == 0 ? 1 : count, 1);
+    size_t lupine_srcHost_count = static_cast<size_t>(count);
+    srcHost = (void *)lupine_srcHost_buf.alloc_array_uninit(
+        lupine_srcHost_count, size_t{1});
     if (srcHost == nullptr)
       goto ERROR_0;
+    lupine_srcHost_bytes = lupine_srcHost_count * size_t{1};
   }
-  if ((!srcHost_null && count != 0 && rpc_read(conn, srcHost, count) < 0) ||
+  if ((!srcHost_null && lupine_srcHost_bytes != 0 &&
+       rpc_read(conn, srcHost, lupine_srcHost_bytes) < 0) ||
       false)
     goto ERROR_0;
 
@@ -3565,7 +3918,10 @@ int handle_hipMemcpyHtoA(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemcpyHtoA");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemcpyHtoA");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dstArray, dstOffset, srcHost, count);
 
@@ -3573,10 +3929,8 @@ int handle_hipMemcpyHtoA(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)srcHost);
   return 0;
 ERROR_0:
-  free((void *)srcHost);
   return -1;
 }
 
@@ -3610,7 +3964,10 @@ int handle_hipMemcpy2DArrayToArray(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemcpy2DArrayToArray");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemcpy2DArrayToArray");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(dst, wOffsetDst, hOffsetDst, src, wOffsetSrc,
@@ -3646,7 +4003,10 @@ int handle_hipMemcpyPeer(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemcpyPeer");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemcpyPeer");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(dst, dstDeviceId, src, srcDeviceId, sizeBytes);
@@ -3684,7 +4044,10 @@ int handle_hipMemcpyPeerAsync(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemcpyPeerAsync");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemcpyPeerAsync");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(dst, dstDeviceId, src, srcDevice, sizeBytes, stream);
@@ -3704,6 +4067,7 @@ int handle_hipModuleGetGlobal(conn_t *conn) {
   uint8_t bytes_present = 0;
   size_t bytes{};
   hipModule_t hmod;
+  lupine_scratch_buffer<256> lupine_name_buf;
   const char *name = nullptr;
   std::size_t name_len;
   int request_id;
@@ -3716,21 +4080,29 @@ int handle_hipModuleGetGlobal(conn_t *conn) {
       rpc_read(conn, &bytes_present, sizeof(uint8_t)) < 0 ||
       (bytes_present && rpc_read(conn, &bytes, sizeof(size_t)) < 0) ||
       rpc_read(conn, &hmod, sizeof(hipModule_t)) < 0 ||
-      rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
+      rpc_read(conn, &name_len, sizeof(std::size_t)) < 0 ||
+      name_len > (1U << 20))
     goto ERROR_0;
   if (name_len != 0) {
-    name = (const char *)malloc(name_len);
-    if (name == nullptr)
+    char *lupine_name_mut =
+        static_cast<char *>(lupine_name_buf.alloc_uninit(name_len));
+    if (lupine_name_mut == nullptr ||
+        rpc_read(conn, lupine_name_mut, name_len) < 0)
       goto ERROR_0;
+    lupine_name_mut[name_len - 1] = '\0';
+    name = (const char *)lupine_name_mut;
   }
-  if ((name_len != 0 && rpc_read(conn, (void *)name, name_len) < 0) || false)
+  if (false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipModuleGetGlobal");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipModuleGetGlobal");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(dptr_present ? &dptr : nullptr,
@@ -3742,10 +4114,8 @@ int handle_hipModuleGetGlobal(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)name);
   return 0;
 ERROR_0:
-  free((void *)name);
   return -1;
 }
 
@@ -3766,7 +4136,10 @@ int handle_hipMemset(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemset");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemset");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(dst, value, sizeBytes);
 
@@ -3796,7 +4169,10 @@ int handle_hipMemsetD8(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemsetD8");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemsetD8");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(dest, value, count);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3828,7 +4204,10 @@ int handle_hipMemsetD8Async(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemsetD8Async");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemsetD8Async");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(dest, value, count, stream);
 
@@ -3858,7 +4237,10 @@ int handle_hipMemsetD16(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemsetD16");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemsetD16");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(dest, value, count);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3890,7 +4272,10 @@ int handle_hipMemsetD16Async(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemsetD16Async");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemsetD16Async");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(dest, value, count, stream);
 
@@ -3920,7 +4305,10 @@ int handle_hipMemsetD32(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemsetD32");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemsetD32");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(dest, value, count);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -3951,7 +4339,10 @@ int handle_hipMemsetAsync(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemsetAsync");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemsetAsync");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(dst, value, sizeBytes, stream);
 
@@ -3983,7 +4374,10 @@ int handle_hipMemsetD32Async(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemsetD32Async");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemsetD32Async");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(dst, value, count, stream);
 
@@ -4017,7 +4411,10 @@ int handle_hipMemset2D(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemset2D");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemset2D");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dst, pitch, value, width, height);
 
@@ -4053,7 +4450,10 @@ int handle_hipMemset2DAsync(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemset2DAsync");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemset2DAsync");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dst, pitch, value, width, height, stream);
 
@@ -4083,7 +4483,10 @@ int handle_hipMemset3D(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemset3D");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemset3D");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(pitchedDevPtr, value, extent);
 
@@ -4115,7 +4518,10 @@ int handle_hipMemset3DAsync(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemset3DAsync");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemset3DAsync");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(pitchedDevPtr, value, extent, stream);
 
@@ -4150,7 +4556,10 @@ int handle_hipMemsetD2D8(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemsetD2D8");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemsetD2D8");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dst, dstPitch, value, width, height);
 
@@ -4187,7 +4596,10 @@ int handle_hipMemsetD2D8Async(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemsetD2D8Async");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemsetD2D8Async");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(dst, dstPitch, value, width, height, stream);
@@ -4223,7 +4635,10 @@ int handle_hipMemsetD2D16(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemsetD2D16");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemsetD2D16");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dst, dstPitch, value, width, height);
 
@@ -4260,7 +4675,10 @@ int handle_hipMemsetD2D16Async(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemsetD2D16Async");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemsetD2D16Async");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(dst, dstPitch, value, width, height, stream);
@@ -4296,7 +4714,10 @@ int handle_hipMemsetD2D32(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemsetD2D32");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemsetD2D32");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dst, dstPitch, value, width, height);
 
@@ -4333,7 +4754,10 @@ int handle_hipMemsetD2D32Async(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemsetD2D32Async");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemsetD2D32Async");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(dst, dstPitch, value, width, height, stream);
@@ -4366,7 +4790,10 @@ int handle_hipMemGetInfo(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemGetInfo");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemGetInfo");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(free_present ? &free : nullptr,
                                     total_present ? &total : nullptr);
@@ -4399,7 +4826,10 @@ int handle_hipMemPtrGetInfo(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemPtrGetInfo");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemPtrGetInfo");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(ptr, size_present ? &size : nullptr);
 
@@ -4434,7 +4864,10 @@ int handle_hipMemGetAddressRange(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemGetAddressRange");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemGetAddressRange");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(pbase_present ? &pbase : nullptr,
                                     psize_present ? &psize : nullptr, dptr);
@@ -4477,7 +4910,10 @@ int handle_hipMallocArray(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMallocArray");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMallocArray");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(array_present ? &array : nullptr,
@@ -4515,7 +4951,10 @@ int handle_hipArrayCreate(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipArrayCreate");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipArrayCreate");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pHandle_present ? &pHandle : nullptr,
@@ -4544,7 +4983,10 @@ int handle_hipArrayDestroy(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipArrayDestroy");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipArrayDestroy");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(array);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4578,7 +5020,10 @@ int handle_hipArray3DCreate(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipArray3DCreate");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipArray3DCreate");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(array_present ? &array : nullptr,
@@ -4612,7 +5057,10 @@ int handle_hipMalloc3D(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMalloc3D");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMalloc3D");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -4642,7 +5090,10 @@ int handle_hipFreeArray(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipFreeArray");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipFreeArray");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(array);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4679,7 +5130,10 @@ int handle_hipMalloc3DArray(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMalloc3DArray");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMalloc3DArray");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(array_present ? &array : nullptr,
@@ -4722,7 +5176,10 @@ int handle_hipArrayGetInfo(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipArrayGetInfo");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipArrayGetInfo");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(desc_present ? &desc : nullptr,
                                     extent_present ? &extent : nullptr,
@@ -4759,7 +5216,10 @@ int handle_hipArrayGetDescriptor(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipArrayGetDescriptor");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipArrayGetDescriptor");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -4794,7 +5254,10 @@ int handle_hipArray3DGetDescriptor(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipArray3DGetDescriptor");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipArray3DGetDescriptor");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -4841,7 +5304,10 @@ int handle_hipMallocMipmappedArray(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMallocMipmappedArray");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMallocMipmappedArray");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -4872,7 +5338,10 @@ int handle_hipFreeMipmappedArray(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipFreeMipmappedArray");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipFreeMipmappedArray");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(mipmappedArray);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -4905,7 +5374,10 @@ int handle_hipGetMipmappedArrayLevel(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGetMipmappedArrayLevel");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGetMipmappedArrayLevel");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(levelArray_present ? &levelArray : nullptr,
                                     mipmappedArray, level);
@@ -4946,7 +5418,10 @@ int handle_hipMipmappedArrayCreate(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMipmappedArrayCreate");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMipmappedArrayCreate");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -4979,7 +5454,10 @@ int handle_hipMipmappedArrayDestroy(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMipmappedArrayDestroy");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMipmappedArrayDestroy");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(hMipmappedArray);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5011,7 +5489,10 @@ int handle_hipMipmappedArrayGetLevel(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMipmappedArrayGetLevel");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMipmappedArrayGetLevel");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pLevelArray_present ? &pLevelArray : nullptr,
@@ -5048,7 +5529,10 @@ int handle_hipDeviceCanAccessPeer(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceCanAccessPeer");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceCanAccessPeer");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(canAccessPeer_present ? &canAccessPeer : nullptr,
@@ -5080,7 +5564,10 @@ int handle_hipDeviceEnablePeerAccess(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceEnablePeerAccess");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceEnablePeerAccess");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(peerDeviceId, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5105,7 +5592,10 @@ int handle_hipDeviceDisablePeerAccess(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDeviceDisablePeerAccess");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDeviceDisablePeerAccess");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(peerDeviceId);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5136,7 +5626,10 @@ int handle_hipCtxCreate(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxCreate");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxCreate");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(ctx_present ? &ctx : nullptr, flags, device);
@@ -5164,7 +5657,10 @@ int handle_hipCtxDestroy(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxDestroy");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxDestroy");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(ctx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5191,7 +5687,10 @@ int handle_hipCtxPopCurrent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxPopCurrent");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxPopCurrent");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(ctx_present ? &ctx : nullptr);
 
@@ -5218,7 +5717,10 @@ int handle_hipCtxPushCurrent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxPushCurrent");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxPushCurrent");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(ctx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5243,7 +5745,10 @@ int handle_hipCtxSetCurrent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxSetCurrent");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxSetCurrent");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(ctx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5270,7 +5775,10 @@ int handle_hipCtxGetCurrent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxGetCurrent");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxGetCurrent");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(ctx_present ? &ctx : nullptr);
 
@@ -5300,7 +5808,10 @@ int handle_hipCtxGetDevice(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxGetDevice");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxGetDevice");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(device_present ? &device : nullptr);
 
@@ -5333,7 +5844,10 @@ int handle_hipCtxGetApiVersion(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxGetApiVersion");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxGetApiVersion");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(ctx, apiVersion_present ? &apiVersion : nullptr);
@@ -5366,7 +5880,10 @@ int handle_hipCtxGetCacheConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxGetCacheConfig");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxGetCacheConfig");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(cacheConfig_present ? &cacheConfig : nullptr);
@@ -5395,7 +5912,10 @@ int handle_hipCtxSetCacheConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxSetCacheConfig");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxSetCacheConfig");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(cacheConfig);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5420,7 +5940,10 @@ int handle_hipCtxSetSharedMemConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxSetSharedMemConfig");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxSetSharedMemConfig");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(config);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5449,7 +5972,10 @@ int handle_hipCtxGetSharedMemConfig(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxGetSharedMemConfig");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxGetSharedMemConfig");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(pConfig_present ? &pConfig : nullptr);
 
@@ -5476,7 +6002,10 @@ int handle_hipCtxSynchronize(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxSynchronize");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxSynchronize");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5504,7 +6033,10 @@ int handle_hipCtxGetFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxGetFlags");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxGetFlags");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(flags_present ? &flags : nullptr);
 
@@ -5533,7 +6065,10 @@ int handle_hipCtxEnablePeerAccess(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxEnablePeerAccess");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxEnablePeerAccess");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(peerCtx, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5558,7 +6093,10 @@ int handle_hipCtxDisablePeerAccess(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCtxDisablePeerAccess");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCtxDisablePeerAccess");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(peerCtx);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5591,7 +6129,10 @@ int handle_hipDevicePrimaryCtxGetState(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDevicePrimaryCtxGetState");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDevicePrimaryCtxGetState");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(dev, flags_present ? &flags : nullptr,
                                     active_present ? &active : nullptr);
@@ -5620,7 +6161,10 @@ int handle_hipDevicePrimaryCtxRelease(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDevicePrimaryCtxRelease");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDevicePrimaryCtxRelease");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5649,7 +6193,10 @@ int handle_hipDevicePrimaryCtxRetain(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDevicePrimaryCtxRetain");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDevicePrimaryCtxRetain");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(pctx_present ? &pctx : nullptr, dev);
 
@@ -5676,7 +6223,10 @@ int handle_hipDevicePrimaryCtxReset(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDevicePrimaryCtxReset");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDevicePrimaryCtxReset");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(dev);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5703,7 +6253,10 @@ int handle_hipDevicePrimaryCtxSetFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDevicePrimaryCtxSetFlags");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDevicePrimaryCtxSetFlags");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(dev, flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5719,6 +6272,7 @@ int handle_hipModuleGetFunction(conn_t *conn) {
   uint8_t function_present = 0;
   hipFunction_t function{};
   hipModule_t module;
+  lupine_scratch_buffer<256> lupine_kname_buf;
   const char *kname = nullptr;
   std::size_t kname_len;
   int request_id;
@@ -5729,21 +6283,29 @@ int handle_hipModuleGetFunction(conn_t *conn) {
       (function_present &&
        rpc_read(conn, &function, sizeof(hipFunction_t)) < 0) ||
       rpc_read(conn, &module, sizeof(hipModule_t)) < 0 ||
-      rpc_read(conn, &kname_len, sizeof(std::size_t)) < 0)
+      rpc_read(conn, &kname_len, sizeof(std::size_t)) < 0 ||
+      kname_len > (1U << 20))
     goto ERROR_0;
   if (kname_len != 0) {
-    kname = (const char *)malloc(kname_len);
-    if (kname == nullptr)
+    char *lupine_kname_mut =
+        static_cast<char *>(lupine_kname_buf.alloc_uninit(kname_len));
+    if (lupine_kname_mut == nullptr ||
+        rpc_read(conn, lupine_kname_mut, kname_len) < 0)
       goto ERROR_0;
+    lupine_kname_mut[kname_len - 1] = '\0';
+    kname = (const char *)lupine_kname_mut;
   }
-  if ((kname_len != 0 && rpc_read(conn, (void *)kname, kname_len) < 0) || false)
+  if (false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipModuleGetFunction");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipModuleGetFunction");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found()
                     : fn(function_present ? &function : nullptr, module, kname);
@@ -5754,10 +6316,8 @@ int handle_hipModuleGetFunction(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)kname);
   return 0;
 ERROR_0:
-  free((void *)kname);
   return -1;
 }
 
@@ -5778,7 +6338,10 @@ int handle_hipModuleGetFunctionCount(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipModuleGetFunctionCount");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipModuleGetFunctionCount");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(count_present ? &count : nullptr, mod);
 
@@ -5805,7 +6368,10 @@ int handle_hipLibraryUnload(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipLibraryUnload");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipLibraryUnload");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(library);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -5821,6 +6387,7 @@ int handle_hipLibraryGetKernel(conn_t *conn) {
   uint8_t pKernel_present = 0;
   hipKernel_t pKernel{};
   hipLibrary_t library;
+  lupine_scratch_buffer<256> lupine_name_buf;
   const char *name = nullptr;
   std::size_t name_len;
   int request_id;
@@ -5830,21 +6397,29 @@ int handle_hipLibraryGetKernel(conn_t *conn) {
   if (rpc_read(conn, &pKernel_present, sizeof(uint8_t)) < 0 ||
       (pKernel_present && rpc_read(conn, &pKernel, sizeof(hipKernel_t)) < 0) ||
       rpc_read(conn, &library, sizeof(hipLibrary_t)) < 0 ||
-      rpc_read(conn, &name_len, sizeof(std::size_t)) < 0)
+      rpc_read(conn, &name_len, sizeof(std::size_t)) < 0 ||
+      name_len > (1U << 20))
     goto ERROR_0;
   if (name_len != 0) {
-    name = (const char *)malloc(name_len);
-    if (name == nullptr)
+    char *lupine_name_mut =
+        static_cast<char *>(lupine_name_buf.alloc_uninit(name_len));
+    if (lupine_name_mut == nullptr ||
+        rpc_read(conn, lupine_name_mut, name_len) < 0)
       goto ERROR_0;
+    lupine_name_mut[name_len - 1] = '\0';
+    name = (const char *)lupine_name_mut;
   }
-  if ((name_len != 0 && rpc_read(conn, (void *)name, name_len) < 0) || false)
+  if (false)
     goto ERROR_0;
 
   request_id = rpc_read_end(conn);
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipLibraryGetKernel");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipLibraryGetKernel");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pKernel_present ? &pKernel : nullptr, library, name);
@@ -5854,10 +6429,8 @@ int handle_hipLibraryGetKernel(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)name);
   return 0;
 ERROR_0:
-  free((void *)name);
   return -1;
 }
 
@@ -5878,7 +6451,10 @@ int handle_hipLibraryGetKernelCount(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipLibraryGetKernelCount");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipLibraryGetKernelCount");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(count_present ? &count : nullptr, library);
 
@@ -5894,7 +6470,9 @@ ERROR_0:
 
 int handle_hipLibraryEnumerateKernels(conn_t *conn) {
   unsigned int numKernels;
+  lupine_scratch_buffer<256> lupine_kernels_buf;
   hipKernel_t *kernels = nullptr;
+  size_t lupine_kernels_bytes = 0;
   uint8_t kernels_null = 0;
   hipLibrary_t library;
   int request_id;
@@ -5905,12 +6483,12 @@ int handle_hipLibraryEnumerateKernels(conn_t *conn) {
       rpc_read(conn, &kernels_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!kernels_null) {
-    kernels = (hipKernel_t *)calloc(numKernels * sizeof(hipKernel_t) == 0
-                                        ? 1
-                                        : numKernels * sizeof(hipKernel_t),
-                                    1);
+    size_t lupine_kernels_count = static_cast<size_t>(numKernels);
+    kernels = (hipKernel_t *)lupine_kernels_buf.alloc_array_zeroed(
+        lupine_kernels_count, sizeof(hipKernel_t));
     if (kernels == nullptr)
       goto ERROR_0;
+    lupine_kernels_bytes = lupine_kernels_count * sizeof(hipKernel_t);
   }
   if (rpc_read(conn, &library, sizeof(hipLibrary_t)) < 0 || false)
     goto ERROR_0;
@@ -5919,20 +6497,21 @@ int handle_hipLibraryEnumerateKernels(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipLibraryEnumerateKernels");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipLibraryEnumerateKernels");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(kernels, numKernels, library);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
-      (!kernels_null && numKernels * sizeof(hipKernel_t) != 0 &&
-       rpc_write(conn, kernels, numKernels * sizeof(hipKernel_t)) < 0) ||
+      (!kernels_null && lupine_kernels_bytes != 0 &&
+       rpc_write(conn, kernels, lupine_kernels_bytes) < 0) ||
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)kernels);
   return 0;
 ERROR_0:
-  free((void *)kernels);
   return -1;
 }
 
@@ -5953,7 +6532,10 @@ int handle_hipKernelGetLibrary(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipKernelGetLibrary");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipKernelGetLibrary");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(library_present ? &library : nullptr, kernel);
@@ -5988,7 +6570,10 @@ int handle_hipFuncGetAttribute(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipFuncGetAttribute");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipFuncGetAttribute");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(value_present ? &value : nullptr, attrib, hfunc);
@@ -6028,7 +6613,11 @@ int handle_hipModuleOccupancyMaxPotentialBlockSize(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipModuleOccupancyMaxPotentialBlockSize");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipModuleOccupancyMaxPotentialBlockSize");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(gridSize_present ? &gridSize : nullptr,
                                     blockSize_present ? &blockSize : nullptr, f,
@@ -6073,7 +6662,11 @@ int handle_hipModuleOccupancyMaxPotentialBlockSizeWithFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipModuleOccupancyMaxPotentialBlockSizeWithFlags");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipModuleOccupancyMaxPotentialBlockSizeWithFlags");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(gridSize_present ? &gridSize : nullptr,
                                     blockSize_present ? &blockSize : nullptr, f,
@@ -6111,7 +6704,11 @@ int handle_hipModuleOccupancyMaxActiveBlocksPerMultiprocessor(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipModuleOccupancyMaxActiveBlocksPerMultiprocessor");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipModuleOccupancyMaxActiveBlocksPerMultiprocessor");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(numBlocks_present ? &numBlocks : nullptr, f,
                                     blockSize, dynSharedMemPerBlk);
@@ -6150,8 +6747,11 @@ int handle_hipModuleOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>(
-      "hipModuleOccupancyMaxActiveBlocksPerMultiprocessorWithFlags");
+  {
+    static const fn_t cached = hip_symbol<fn_t>(
+        "hipModuleOccupancyMaxActiveBlocksPerMultiprocessorWithFlags");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(numBlocks_present ? &numBlocks : nullptr, f,
                                     blockSize, dynSharedMemPerBlk, flags);
@@ -6201,7 +6801,10 @@ int handle_hipCreateTextureObject(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCreateTextureObject");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCreateTextureObject");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pTexObject_present ? &pTexObject : nullptr,
@@ -6233,7 +6836,10 @@ int handle_hipDestroyTextureObject(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDestroyTextureObject");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDestroyTextureObject");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(textureObject);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6263,7 +6869,10 @@ int handle_hipGetChannelDesc(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGetChannelDesc");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGetChannelDesc");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(desc_present ? &desc : nullptr, array);
 
@@ -6296,7 +6905,11 @@ int handle_hipGetTextureObjectResourceDesc(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGetTextureObjectResourceDesc");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGetTextureObjectResourceDesc");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found()
                     : fn(pResDesc_present ? &pResDesc : nullptr, textureObject);
@@ -6330,7 +6943,11 @@ int handle_hipGetTextureObjectResourceViewDesc(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGetTextureObjectResourceViewDesc");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGetTextureObjectResourceViewDesc");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -6366,7 +6983,11 @@ int handle_hipGetTextureObjectTextureDesc(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGetTextureObjectTextureDesc");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGetTextureObjectTextureDesc");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found()
                     : fn(pTexDesc_present ? &pTexDesc : nullptr, textureObject);
@@ -6417,7 +7038,10 @@ int handle_hipTexObjectCreate(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipTexObjectCreate");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipTexObjectCreate");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pTexObject_present ? &pTexObject : nullptr,
@@ -6449,7 +7073,10 @@ int handle_hipTexObjectDestroy(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipTexObjectDestroy");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipTexObjectDestroy");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(texObject);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6479,7 +7106,10 @@ int handle_hipTexObjectGetResourceDesc(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipTexObjectGetResourceDesc");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipTexObjectGetResourceDesc");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pResDesc_present ? &pResDesc : nullptr, texObject);
@@ -6513,7 +7143,11 @@ int handle_hipTexObjectGetResourceViewDesc(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipTexObjectGetResourceViewDesc");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipTexObjectGetResourceViewDesc");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -6548,7 +7182,10 @@ int handle_hipTexObjectGetTextureDesc(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipTexObjectGetTextureDesc");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipTexObjectGetTextureDesc");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pTexDesc_present ? &pTexDesc : nullptr, texObject);
@@ -6586,7 +7223,10 @@ int handle_hipCreateSurfaceObject(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipCreateSurfaceObject");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipCreateSurfaceObject");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pSurfObject_present ? &pSurfObject : nullptr,
@@ -6616,7 +7256,10 @@ int handle_hipDestroySurfaceObject(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDestroySurfaceObject");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDestroySurfaceObject");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(surfaceObject);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6643,7 +7286,10 @@ int handle_hipStreamBeginCapture(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamBeginCapture");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamBeginCapture");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(stream, mode);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6659,9 +7305,13 @@ int handle_hipStreamBeginCaptureToGraph(conn_t *conn) {
   hipStream_t stream;
   hipGraph_t graph;
   size_t numDependencies;
+  lupine_scratch_buffer<256> lupine_dependencies_buf;
   hipGraphNode_t *dependencies = nullptr;
+  size_t lupine_dependencies_bytes = 0;
   uint8_t dependencies_null = 0;
+  lupine_scratch_buffer<256> lupine_dependencyData_buf;
   hipGraphEdgeData *dependencyData = nullptr;
+  size_t lupine_dependencyData_bytes = 0;
   uint8_t dependencyData_null = 0;
   hipStreamCaptureMode mode;
   int request_id;
@@ -6676,33 +7326,30 @@ int handle_hipStreamBeginCaptureToGraph(conn_t *conn) {
       rpc_read(conn, &dependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!dependencies_null) {
-    dependencies = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_dependencies_count = static_cast<size_t>(numDependencies);
+    dependencies = (hipGraphNode_t *)lupine_dependencies_buf.alloc_array_uninit(
+        lupine_dependencies_count, sizeof(const hipGraphNode_t));
     if (dependencies == nullptr)
       goto ERROR_0;
+    lupine_dependencies_bytes =
+        lupine_dependencies_count * sizeof(const hipGraphNode_t);
   }
-  if ((!dependencies_null &&
-       numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, dependencies,
-                numDependencies * sizeof(const hipGraphNode_t)) < 0) ||
+  if ((!dependencies_null && lupine_dependencies_bytes != 0 &&
+       rpc_read(conn, dependencies, lupine_dependencies_bytes) < 0) ||
       rpc_read(conn, &dependencyData_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!dependencyData_null) {
-    dependencyData = (hipGraphEdgeData *)calloc(
-        numDependencies * sizeof(const hipGraphEdgeData) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphEdgeData),
-        1);
+    size_t lupine_dependencyData_count = static_cast<size_t>(numDependencies);
+    dependencyData =
+        (hipGraphEdgeData *)lupine_dependencyData_buf.alloc_array_uninit(
+            lupine_dependencyData_count, sizeof(const hipGraphEdgeData));
     if (dependencyData == nullptr)
       goto ERROR_0;
+    lupine_dependencyData_bytes =
+        lupine_dependencyData_count * sizeof(const hipGraphEdgeData);
   }
-  if ((!dependencyData_null &&
-       numDependencies * sizeof(const hipGraphEdgeData) != 0 &&
-       rpc_read(conn, dependencyData,
-                numDependencies * sizeof(const hipGraphEdgeData)) < 0) ||
+  if ((!dependencyData_null && lupine_dependencyData_bytes != 0 &&
+       rpc_read(conn, dependencyData, lupine_dependencyData_bytes) < 0) ||
       rpc_read(conn, &mode, sizeof(hipStreamCaptureMode)) < 0 || false)
     goto ERROR_0;
 
@@ -6710,7 +7357,10 @@ int handle_hipStreamBeginCaptureToGraph(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamBeginCaptureToGraph");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamBeginCaptureToGraph");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(stream, graph, dependencies, dependencyData,
                                     numDependencies, mode);
@@ -6719,12 +7369,8 @@ int handle_hipStreamBeginCaptureToGraph(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)dependencyData);
-  free((void *)dependencies);
   return 0;
 ERROR_0:
-  free((void *)dependencyData);
-  free((void *)dependencies);
   return -1;
 }
 
@@ -6746,7 +7392,10 @@ int handle_hipStreamEndCapture(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamEndCapture");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamEndCapture");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(stream, pGraph_present ? &pGraph : nullptr);
 
@@ -6784,7 +7433,10 @@ int handle_hipStreamGetCaptureInfo(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamGetCaptureInfo");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamGetCaptureInfo");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -6822,7 +7474,10 @@ int handle_hipStreamIsCapturing(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamIsCapturing");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipStreamIsCapturing");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -6842,7 +7497,9 @@ ERROR_0:
 int handle_hipStreamUpdateCaptureDependencies(conn_t *conn) {
   hipStream_t stream;
   size_t numDependencies;
+  lupine_scratch_buffer<256> lupine_dependencies_buf;
   hipGraphNode_t *dependencies = nullptr;
+  size_t lupine_dependencies_bytes = 0;
   uint8_t dependencies_null = 0;
   unsigned int flags;
   int request_id;
@@ -6855,17 +7512,16 @@ int handle_hipStreamUpdateCaptureDependencies(conn_t *conn) {
       rpc_read(conn, &dependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!dependencies_null) {
-    dependencies =
-        (hipGraphNode_t *)calloc(numDependencies * sizeof(hipGraphNode_t) == 0
-                                     ? 1
-                                     : numDependencies * sizeof(hipGraphNode_t),
-                                 1);
+    size_t lupine_dependencies_count = static_cast<size_t>(numDependencies);
+    dependencies = (hipGraphNode_t *)lupine_dependencies_buf.alloc_array_uninit(
+        lupine_dependencies_count, sizeof(hipGraphNode_t));
     if (dependencies == nullptr)
       goto ERROR_0;
+    lupine_dependencies_bytes =
+        lupine_dependencies_count * sizeof(hipGraphNode_t);
   }
-  if ((!dependencies_null && numDependencies * sizeof(hipGraphNode_t) != 0 &&
-       rpc_read(conn, dependencies, numDependencies * sizeof(hipGraphNode_t)) <
-           0) ||
+  if ((!dependencies_null && lupine_dependencies_bytes != 0 &&
+       rpc_read(conn, dependencies, lupine_dependencies_bytes) < 0) ||
       rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
     goto ERROR_0;
 
@@ -6873,7 +7529,11 @@ int handle_hipStreamUpdateCaptureDependencies(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipStreamUpdateCaptureDependencies");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipStreamUpdateCaptureDependencies");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(stream, dependencies, numDependencies, flags);
@@ -6882,10 +7542,8 @@ int handle_hipStreamUpdateCaptureDependencies(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)dependencies);
   return 0;
 ERROR_0:
-  free((void *)dependencies);
   return -1;
 }
 
@@ -6906,7 +7564,11 @@ int handle_hipThreadExchangeStreamCaptureMode(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipThreadExchangeStreamCaptureMode");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipThreadExchangeStreamCaptureMode");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(mode_present ? &mode : nullptr);
 
@@ -6938,7 +7600,10 @@ int handle_hipGraphCreate(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphCreate");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphCreate");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(pGraph_present ? &pGraph : nullptr, flags);
 
@@ -6965,7 +7630,10 @@ int handle_hipGraphDestroy(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphDestroy");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphDestroy");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(graph);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -6980,9 +7648,13 @@ ERROR_0:
 int handle_hipGraphAddDependencies(conn_t *conn) {
   hipGraph_t graph;
   size_t numDependencies;
+  lupine_scratch_buffer<256> lupine_from_buf;
   hipGraphNode_t *from = nullptr;
+  size_t lupine_from_bytes = 0;
   uint8_t from_null = 0;
+  lupine_scratch_buffer<256> lupine_to_buf;
   hipGraphNode_t *to = nullptr;
+  size_t lupine_to_bytes = 0;
   uint8_t to_null = 0;
   int request_id;
   hipError_t return_value;
@@ -6994,31 +7666,27 @@ int handle_hipGraphAddDependencies(conn_t *conn) {
       rpc_read(conn, &from_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!from_null) {
-    from = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_from_count = static_cast<size_t>(numDependencies);
+    from = (hipGraphNode_t *)lupine_from_buf.alloc_array_uninit(
+        lupine_from_count, sizeof(const hipGraphNode_t));
     if (from == nullptr)
       goto ERROR_0;
+    lupine_from_bytes = lupine_from_count * sizeof(const hipGraphNode_t);
   }
-  if ((!from_null && numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, from, numDependencies * sizeof(const hipGraphNode_t)) <
-           0) ||
+  if ((!from_null && lupine_from_bytes != 0 &&
+       rpc_read(conn, from, lupine_from_bytes) < 0) ||
       rpc_read(conn, &to_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!to_null) {
-    to = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_to_count = static_cast<size_t>(numDependencies);
+    to = (hipGraphNode_t *)lupine_to_buf.alloc_array_uninit(
+        lupine_to_count, sizeof(const hipGraphNode_t));
     if (to == nullptr)
       goto ERROR_0;
+    lupine_to_bytes = lupine_to_count * sizeof(const hipGraphNode_t);
   }
-  if ((!to_null && numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, to, numDependencies * sizeof(const hipGraphNode_t)) <
-           0) ||
+  if ((!to_null && lupine_to_bytes != 0 &&
+       rpc_read(conn, to, lupine_to_bytes) < 0) ||
       false)
     goto ERROR_0;
 
@@ -7026,7 +7694,10 @@ int handle_hipGraphAddDependencies(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphAddDependencies");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphAddDependencies");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(graph, from, to, numDependencies);
 
@@ -7034,21 +7705,21 @@ int handle_hipGraphAddDependencies(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)to);
-  free((void *)from);
   return 0;
 ERROR_0:
-  free((void *)to);
-  free((void *)from);
   return -1;
 }
 
 int handle_hipGraphRemoveDependencies(conn_t *conn) {
   hipGraph_t graph;
   size_t numDependencies;
+  lupine_scratch_buffer<256> lupine_from_buf;
   hipGraphNode_t *from = nullptr;
+  size_t lupine_from_bytes = 0;
   uint8_t from_null = 0;
+  lupine_scratch_buffer<256> lupine_to_buf;
   hipGraphNode_t *to = nullptr;
+  size_t lupine_to_bytes = 0;
   uint8_t to_null = 0;
   int request_id;
   hipError_t return_value;
@@ -7060,31 +7731,27 @@ int handle_hipGraphRemoveDependencies(conn_t *conn) {
       rpc_read(conn, &from_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!from_null) {
-    from = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_from_count = static_cast<size_t>(numDependencies);
+    from = (hipGraphNode_t *)lupine_from_buf.alloc_array_uninit(
+        lupine_from_count, sizeof(const hipGraphNode_t));
     if (from == nullptr)
       goto ERROR_0;
+    lupine_from_bytes = lupine_from_count * sizeof(const hipGraphNode_t);
   }
-  if ((!from_null && numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, from, numDependencies * sizeof(const hipGraphNode_t)) <
-           0) ||
+  if ((!from_null && lupine_from_bytes != 0 &&
+       rpc_read(conn, from, lupine_from_bytes) < 0) ||
       rpc_read(conn, &to_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!to_null) {
-    to = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_to_count = static_cast<size_t>(numDependencies);
+    to = (hipGraphNode_t *)lupine_to_buf.alloc_array_uninit(
+        lupine_to_count, sizeof(const hipGraphNode_t));
     if (to == nullptr)
       goto ERROR_0;
+    lupine_to_bytes = lupine_to_count * sizeof(const hipGraphNode_t);
   }
-  if ((!to_null && numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, to, numDependencies * sizeof(const hipGraphNode_t)) <
-           0) ||
+  if ((!to_null && lupine_to_bytes != 0 &&
+       rpc_read(conn, to, lupine_to_bytes) < 0) ||
       false)
     goto ERROR_0;
 
@@ -7092,7 +7759,10 @@ int handle_hipGraphRemoveDependencies(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphRemoveDependencies");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphRemoveDependencies");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(graph, from, to, numDependencies);
 
@@ -7100,12 +7770,8 @@ int handle_hipGraphRemoveDependencies(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)to);
-  free((void *)from);
   return 0;
 ERROR_0:
-  free((void *)to);
-  free((void *)from);
   return -1;
 }
 
@@ -7114,8 +7780,10 @@ int handle_hipGraphGetEdges(conn_t *conn) {
   uint8_t numEdges_present = 0;
   size_t numEdges = 0;
   size_t numEdges_requested = 0;
+  lupine_scratch_buffer<256> lupine_from_buf;
   hipGraphNode_t *from = nullptr;
   uint8_t from_null = 0;
+  lupine_scratch_buffer<256> lupine_to_buf;
   hipGraphNode_t *to = nullptr;
   uint8_t to_null = 0;
   int request_id;
@@ -7130,18 +7798,16 @@ int handle_hipGraphGetEdges(conn_t *conn) {
       rpc_read(conn, &from_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!from_null) {
-    from = (hipGraphNode_t *)calloc(
-        (numEdges_requested != 0 ? numEdges_requested : 1),
-        sizeof(hipGraphNode_t));
+    from = (hipGraphNode_t *)lupine_from_buf.alloc_array_zeroed(
+        static_cast<size_t>(numEdges_requested), sizeof(hipGraphNode_t));
     if (from == nullptr)
       goto ERROR_0;
   }
   if (rpc_read(conn, &to_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!to_null) {
-    to = (hipGraphNode_t *)calloc(
-        (numEdges_requested != 0 ? numEdges_requested : 1),
-        sizeof(hipGraphNode_t));
+    to = (hipGraphNode_t *)lupine_to_buf.alloc_array_zeroed(
+        static_cast<size_t>(numEdges_requested), sizeof(hipGraphNode_t));
     if (to == nullptr)
       goto ERROR_0;
   }
@@ -7152,7 +7818,10 @@ int handle_hipGraphGetEdges(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphGetEdges");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphGetEdges");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(graph, from, to,
                                     numEdges_present ? &numEdges : nullptr);
@@ -7172,12 +7841,8 @@ int handle_hipGraphGetEdges(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)to);
-  free((void *)from);
   return 0;
 ERROR_0:
-  free((void *)to);
-  free((void *)from);
   return -1;
 }
 
@@ -7186,6 +7851,7 @@ int handle_hipGraphGetNodes(conn_t *conn) {
   uint8_t numNodes_present = 0;
   size_t numNodes = 0;
   size_t numNodes_requested = 0;
+  lupine_scratch_buffer<256> lupine_nodes_buf;
   hipGraphNode_t *nodes = nullptr;
   uint8_t nodes_null = 0;
   int request_id;
@@ -7199,9 +7865,8 @@ int handle_hipGraphGetNodes(conn_t *conn) {
       rpc_read(conn, &nodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!nodes_null) {
-    nodes = (hipGraphNode_t *)calloc(
-        (numNodes_requested != 0 ? numNodes_requested : 1),
-        sizeof(hipGraphNode_t));
+    nodes = (hipGraphNode_t *)lupine_nodes_buf.alloc_array_zeroed(
+        static_cast<size_t>(numNodes_requested), sizeof(hipGraphNode_t));
     if (nodes == nullptr)
       goto ERROR_0;
   }
@@ -7212,7 +7877,10 @@ int handle_hipGraphGetNodes(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphGetNodes");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphGetNodes");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(graph, nodes, numNodes_present ? &numNodes : nullptr);
@@ -7227,10 +7895,8 @@ int handle_hipGraphGetNodes(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)nodes);
   return 0;
 ERROR_0:
-  free((void *)nodes);
   return -1;
 }
 
@@ -7239,6 +7905,7 @@ int handle_hipGraphGetRootNodes(conn_t *conn) {
   uint8_t pNumRootNodes_present = 0;
   size_t pNumRootNodes = 0;
   size_t pNumRootNodes_requested = 0;
+  lupine_scratch_buffer<256> lupine_pRootNodes_buf;
   hipGraphNode_t *pRootNodes = nullptr;
   uint8_t pRootNodes_null = 0;
   int request_id;
@@ -7252,9 +7919,8 @@ int handle_hipGraphGetRootNodes(conn_t *conn) {
       rpc_read(conn, &pRootNodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pRootNodes_null) {
-    pRootNodes = (hipGraphNode_t *)calloc(
-        (pNumRootNodes_requested != 0 ? pNumRootNodes_requested : 1),
-        sizeof(hipGraphNode_t));
+    pRootNodes = (hipGraphNode_t *)lupine_pRootNodes_buf.alloc_array_zeroed(
+        static_cast<size_t>(pNumRootNodes_requested), sizeof(hipGraphNode_t));
     if (pRootNodes == nullptr)
       goto ERROR_0;
   }
@@ -7265,7 +7931,10 @@ int handle_hipGraphGetRootNodes(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphGetRootNodes");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphGetRootNodes");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(graph, pRootNodes,
@@ -7282,10 +7951,8 @@ int handle_hipGraphGetRootNodes(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)pRootNodes);
   return 0;
 ERROR_0:
-  free((void *)pRootNodes);
   return -1;
 }
 
@@ -7294,6 +7961,7 @@ int handle_hipGraphNodeGetDependencies(conn_t *conn) {
   uint8_t pNumDependencies_present = 0;
   size_t pNumDependencies = 0;
   size_t pNumDependencies_requested = 0;
+  lupine_scratch_buffer<256> lupine_pDependencies_buf;
   hipGraphNode_t *pDependencies = nullptr;
   uint8_t pDependencies_null = 0;
   int request_id;
@@ -7307,9 +7975,10 @@ int handle_hipGraphNodeGetDependencies(conn_t *conn) {
       rpc_read(conn, &pDependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependencies_null) {
-    pDependencies = (hipGraphNode_t *)calloc(
-        (pNumDependencies_requested != 0 ? pNumDependencies_requested : 1),
-        sizeof(hipGraphNode_t));
+    pDependencies =
+        (hipGraphNode_t *)lupine_pDependencies_buf.alloc_array_zeroed(
+            static_cast<size_t>(pNumDependencies_requested),
+            sizeof(hipGraphNode_t));
     if (pDependencies == nullptr)
       goto ERROR_0;
   }
@@ -7320,7 +7989,10 @@ int handle_hipGraphNodeGetDependencies(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphNodeGetDependencies");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphNodeGetDependencies");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(node, pDependencies,
                                     pNumDependencies_present ? &pNumDependencies
@@ -7338,10 +8010,8 @@ int handle_hipGraphNodeGetDependencies(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)pDependencies);
   return 0;
 ERROR_0:
-  free((void *)pDependencies);
   return -1;
 }
 
@@ -7350,6 +8020,7 @@ int handle_hipGraphNodeGetDependentNodes(conn_t *conn) {
   uint8_t pNumDependentNodes_present = 0;
   size_t pNumDependentNodes = 0;
   size_t pNumDependentNodes_requested = 0;
+  lupine_scratch_buffer<256> lupine_pDependentNodes_buf;
   hipGraphNode_t *pDependentNodes = nullptr;
   uint8_t pDependentNodes_null = 0;
   int request_id;
@@ -7363,9 +8034,10 @@ int handle_hipGraphNodeGetDependentNodes(conn_t *conn) {
       rpc_read(conn, &pDependentNodes_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependentNodes_null) {
-    pDependentNodes = (hipGraphNode_t *)calloc(
-        (pNumDependentNodes_requested != 0 ? pNumDependentNodes_requested : 1),
-        sizeof(hipGraphNode_t));
+    pDependentNodes =
+        (hipGraphNode_t *)lupine_pDependentNodes_buf.alloc_array_zeroed(
+            static_cast<size_t>(pNumDependentNodes_requested),
+            sizeof(hipGraphNode_t));
     if (pDependentNodes == nullptr)
       goto ERROR_0;
   }
@@ -7376,7 +8048,11 @@ int handle_hipGraphNodeGetDependentNodes(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphNodeGetDependentNodes");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphNodeGetDependentNodes");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -7395,10 +8071,8 @@ int handle_hipGraphNodeGetDependentNodes(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)pDependentNodes);
   return 0;
 ERROR_0:
-  free((void *)pDependentNodes);
   return -1;
 }
 
@@ -7420,7 +8094,10 @@ int handle_hipGraphNodeGetType(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphNodeGetType");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphNodeGetType");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(node, pType_present ? &pType : nullptr);
 
@@ -7448,7 +8125,10 @@ int handle_hipGraphDestroyNode(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphDestroyNode");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphDestroyNode");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(node);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -7478,7 +8158,10 @@ int handle_hipGraphClone(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphClone");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphClone");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -7514,7 +8197,10 @@ int handle_hipGraphNodeFindInClone(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphNodeFindInClone");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphNodeFindInClone");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(pNode_present ? &pNode : nullptr,
                                     originalNode, clonedGraph);
@@ -7536,6 +8222,7 @@ int handle_hipGraphInstantiate(conn_t *conn) {
   uint8_t pErrorNode_present = 0;
   hipGraphNode_t pErrorNode{};
   size_t bufferSize;
+  lupine_scratch_buffer<256> lupine_pLogBuffer_buf;
   char *pLogBuffer = nullptr;
   uint8_t pLogBuffer_null = 0;
   int request_id;
@@ -7554,8 +8241,8 @@ int handle_hipGraphInstantiate(conn_t *conn) {
       rpc_read(conn, &pLogBuffer_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pLogBuffer_null) {
-    pLogBuffer =
-        (char *)calloc((bufferSize != 0 ? bufferSize : 1), sizeof(char));
+    pLogBuffer = (char *)lupine_pLogBuffer_buf.alloc_array_zeroed(
+        static_cast<size_t>(bufferSize), sizeof(char));
     if (pLogBuffer == nullptr)
       goto ERROR_0;
   }
@@ -7566,7 +8253,10 @@ int handle_hipGraphInstantiate(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphInstantiate");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphInstantiate");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pGraphExec_present ? &pGraphExec : nullptr, graph,
@@ -7583,10 +8273,8 @@ int handle_hipGraphInstantiate(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)pLogBuffer);
   return 0;
 ERROR_0:
-  free((void *)pLogBuffer);
   return -1;
 }
 
@@ -7610,7 +8298,10 @@ int handle_hipGraphInstantiateWithFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphInstantiateWithFlags");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphInstantiateWithFlags");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(pGraphExec_present ? &pGraphExec : nullptr,
                                     graph, flags);
@@ -7652,7 +8343,11 @@ int handle_hipGraphInstantiateWithParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphInstantiateWithParams");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphInstantiateWithParams");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -7688,7 +8383,10 @@ int handle_hipGraphLaunch(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphLaunch");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphLaunch");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(graphExec, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -7715,7 +8413,10 @@ int handle_hipGraphUpload(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphUpload");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphUpload");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(graphExec, stream);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -7746,7 +8447,10 @@ int handle_hipGraphExecGetFlags(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphExecGetFlags");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphExecGetFlags");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(graphExec, flags_present ? &flags : nullptr);
@@ -7775,7 +8479,10 @@ int handle_hipGraphExecDestroy(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphExecDestroy");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphExecDestroy");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(graphExec);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -7815,7 +8522,10 @@ int handle_hipGraphExecUpdate(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphExecUpdate");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphExecUpdate");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -7842,7 +8552,9 @@ int handle_hipGraphAddMemsetNode(conn_t *conn) {
   hipGraphNode_t pGraphNode{};
   hipGraph_t graph;
   size_t numDependencies;
+  lupine_scratch_buffer<256> lupine_pDependencies_buf;
   hipGraphNode_t *pDependencies = nullptr;
+  size_t lupine_pDependencies_bytes = 0;
   uint8_t pDependencies_null = 0;
   uint8_t pMemsetParams_present = 0;
   hipMemsetParams pMemsetParams{};
@@ -7860,18 +8572,17 @@ int handle_hipGraphAddMemsetNode(conn_t *conn) {
       rpc_read(conn, &pDependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependencies_null) {
-    pDependencies = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_pDependencies_count = static_cast<size_t>(numDependencies);
+    pDependencies =
+        (hipGraphNode_t *)lupine_pDependencies_buf.alloc_array_uninit(
+            lupine_pDependencies_count, sizeof(const hipGraphNode_t));
     if (pDependencies == nullptr)
       goto ERROR_0;
+    lupine_pDependencies_bytes =
+        lupine_pDependencies_count * sizeof(const hipGraphNode_t);
   }
-  if ((!pDependencies_null &&
-       numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, pDependencies,
-                numDependencies * sizeof(const hipGraphNode_t)) < 0) ||
+  if ((!pDependencies_null && lupine_pDependencies_bytes != 0 &&
+       rpc_read(conn, pDependencies, lupine_pDependencies_bytes) < 0) ||
       rpc_read(conn, &pMemsetParams_present, sizeof(uint8_t)) < 0 ||
       (pMemsetParams_present &&
        rpc_read(conn, &pMemsetParams, sizeof(const hipMemsetParams)) < 0) ||
@@ -7882,7 +8593,10 @@ int handle_hipGraphAddMemsetNode(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphAddMemsetNode");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphAddMemsetNode");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pGraphNode_present ? &pGraphNode : nullptr, graph,
@@ -7895,10 +8609,8 @@ int handle_hipGraphAddMemsetNode(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)pDependencies);
   return 0;
 ERROR_0:
-  free((void *)pDependencies);
   return -1;
 }
 
@@ -7921,7 +8633,10 @@ int handle_hipGraphMemsetNodeGetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphMemsetNodeGetParams");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphMemsetNodeGetParams");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(node, pNodeParams_present ? &pNodeParams : nullptr);
@@ -7956,7 +8671,10 @@ int handle_hipGraphMemsetNodeSetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphMemsetNodeSetParams");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphMemsetNodeSetParams");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(node, pNodeParams_present ? &pNodeParams : nullptr);
@@ -7992,7 +8710,11 @@ int handle_hipGraphExecMemsetNodeSetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphExecMemsetNodeSetParams");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphExecMemsetNodeSetParams");
+    fn = cached;
+  }
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -8012,7 +8734,9 @@ int handle_hipGraphAddChildGraphNode(conn_t *conn) {
   hipGraphNode_t pGraphNode{};
   hipGraph_t graph;
   size_t numDependencies;
+  lupine_scratch_buffer<256> lupine_pDependencies_buf;
   hipGraphNode_t *pDependencies = nullptr;
+  size_t lupine_pDependencies_bytes = 0;
   uint8_t pDependencies_null = 0;
   hipGraph_t childGraph;
   int request_id;
@@ -8028,18 +8752,17 @@ int handle_hipGraphAddChildGraphNode(conn_t *conn) {
       rpc_read(conn, &pDependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependencies_null) {
-    pDependencies = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_pDependencies_count = static_cast<size_t>(numDependencies);
+    pDependencies =
+        (hipGraphNode_t *)lupine_pDependencies_buf.alloc_array_uninit(
+            lupine_pDependencies_count, sizeof(const hipGraphNode_t));
     if (pDependencies == nullptr)
       goto ERROR_0;
+    lupine_pDependencies_bytes =
+        lupine_pDependencies_count * sizeof(const hipGraphNode_t);
   }
-  if ((!pDependencies_null &&
-       numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, pDependencies,
-                numDependencies * sizeof(const hipGraphNode_t)) < 0) ||
+  if ((!pDependencies_null && lupine_pDependencies_bytes != 0 &&
+       rpc_read(conn, pDependencies, lupine_pDependencies_bytes) < 0) ||
       rpc_read(conn, &childGraph, sizeof(hipGraph_t)) < 0 || false)
     goto ERROR_0;
 
@@ -8047,7 +8770,10 @@ int handle_hipGraphAddChildGraphNode(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphAddChildGraphNode");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphAddChildGraphNode");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pGraphNode_present ? &pGraphNode : nullptr, graph,
@@ -8059,10 +8785,8 @@ int handle_hipGraphAddChildGraphNode(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)pDependencies);
   return 0;
 ERROR_0:
-  free((void *)pDependencies);
   return -1;
 }
 
@@ -8084,7 +8808,11 @@ int handle_hipGraphChildGraphNodeGetGraph(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphChildGraphNodeGetGraph");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphChildGraphNodeGetGraph");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(node, pGraph_present ? &pGraph : nullptr);
 
@@ -8115,7 +8843,11 @@ int handle_hipGraphExecChildGraphNodeSetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphExecChildGraphNodeSetParams");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphExecChildGraphNodeSetParams");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(hGraphExec, node, childGraph);
 
@@ -8133,7 +8865,9 @@ int handle_hipGraphAddEmptyNode(conn_t *conn) {
   hipGraphNode_t pGraphNode{};
   hipGraph_t graph;
   size_t numDependencies;
+  lupine_scratch_buffer<256> lupine_pDependencies_buf;
   hipGraphNode_t *pDependencies = nullptr;
+  size_t lupine_pDependencies_bytes = 0;
   uint8_t pDependencies_null = 0;
   int request_id;
   hipError_t return_value;
@@ -8148,18 +8882,17 @@ int handle_hipGraphAddEmptyNode(conn_t *conn) {
       rpc_read(conn, &pDependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependencies_null) {
-    pDependencies = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_pDependencies_count = static_cast<size_t>(numDependencies);
+    pDependencies =
+        (hipGraphNode_t *)lupine_pDependencies_buf.alloc_array_uninit(
+            lupine_pDependencies_count, sizeof(const hipGraphNode_t));
     if (pDependencies == nullptr)
       goto ERROR_0;
+    lupine_pDependencies_bytes =
+        lupine_pDependencies_count * sizeof(const hipGraphNode_t);
   }
-  if ((!pDependencies_null &&
-       numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, pDependencies,
-                numDependencies * sizeof(const hipGraphNode_t)) < 0) ||
+  if ((!pDependencies_null && lupine_pDependencies_bytes != 0 &&
+       rpc_read(conn, pDependencies, lupine_pDependencies_bytes) < 0) ||
       false)
     goto ERROR_0;
 
@@ -8167,7 +8900,10 @@ int handle_hipGraphAddEmptyNode(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphAddEmptyNode");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphAddEmptyNode");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(pGraphNode_present ? &pGraphNode : nullptr,
                                     graph, pDependencies, numDependencies);
@@ -8178,10 +8914,8 @@ int handle_hipGraphAddEmptyNode(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)pDependencies);
   return 0;
 ERROR_0:
-  free((void *)pDependencies);
   return -1;
 }
 
@@ -8190,7 +8924,9 @@ int handle_hipGraphAddEventRecordNode(conn_t *conn) {
   hipGraphNode_t pGraphNode{};
   hipGraph_t graph;
   size_t numDependencies;
+  lupine_scratch_buffer<256> lupine_pDependencies_buf;
   hipGraphNode_t *pDependencies = nullptr;
+  size_t lupine_pDependencies_bytes = 0;
   uint8_t pDependencies_null = 0;
   hipEvent_t event;
   int request_id;
@@ -8206,18 +8942,17 @@ int handle_hipGraphAddEventRecordNode(conn_t *conn) {
       rpc_read(conn, &pDependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependencies_null) {
-    pDependencies = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_pDependencies_count = static_cast<size_t>(numDependencies);
+    pDependencies =
+        (hipGraphNode_t *)lupine_pDependencies_buf.alloc_array_uninit(
+            lupine_pDependencies_count, sizeof(const hipGraphNode_t));
     if (pDependencies == nullptr)
       goto ERROR_0;
+    lupine_pDependencies_bytes =
+        lupine_pDependencies_count * sizeof(const hipGraphNode_t);
   }
-  if ((!pDependencies_null &&
-       numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, pDependencies,
-                numDependencies * sizeof(const hipGraphNode_t)) < 0) ||
+  if ((!pDependencies_null && lupine_pDependencies_bytes != 0 &&
+       rpc_read(conn, pDependencies, lupine_pDependencies_bytes) < 0) ||
       rpc_read(conn, &event, sizeof(hipEvent_t)) < 0 || false)
     goto ERROR_0;
 
@@ -8225,7 +8960,10 @@ int handle_hipGraphAddEventRecordNode(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphAddEventRecordNode");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphAddEventRecordNode");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pGraphNode_present ? &pGraphNode : nullptr, graph,
@@ -8237,10 +8975,8 @@ int handle_hipGraphAddEventRecordNode(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)pDependencies);
   return 0;
 ERROR_0:
-  free((void *)pDependencies);
   return -1;
 }
 
@@ -8263,7 +8999,11 @@ int handle_hipGraphEventRecordNodeGetEvent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphEventRecordNodeGetEvent");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphEventRecordNodeGetEvent");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(node, event_out_present ? &event_out : nullptr);
@@ -8294,7 +9034,11 @@ int handle_hipGraphEventRecordNodeSetEvent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphEventRecordNodeSetEvent");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphEventRecordNodeSetEvent");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(node, event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8323,7 +9067,11 @@ int handle_hipGraphExecEventRecordNodeSetEvent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphExecEventRecordNodeSetEvent");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphExecEventRecordNodeSetEvent");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(hGraphExec, hNode, event);
 
@@ -8341,7 +9089,9 @@ int handle_hipGraphAddEventWaitNode(conn_t *conn) {
   hipGraphNode_t pGraphNode{};
   hipGraph_t graph;
   size_t numDependencies;
+  lupine_scratch_buffer<256> lupine_pDependencies_buf;
   hipGraphNode_t *pDependencies = nullptr;
+  size_t lupine_pDependencies_bytes = 0;
   uint8_t pDependencies_null = 0;
   hipEvent_t event;
   int request_id;
@@ -8357,18 +9107,17 @@ int handle_hipGraphAddEventWaitNode(conn_t *conn) {
       rpc_read(conn, &pDependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependencies_null) {
-    pDependencies = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_pDependencies_count = static_cast<size_t>(numDependencies);
+    pDependencies =
+        (hipGraphNode_t *)lupine_pDependencies_buf.alloc_array_uninit(
+            lupine_pDependencies_count, sizeof(const hipGraphNode_t));
     if (pDependencies == nullptr)
       goto ERROR_0;
+    lupine_pDependencies_bytes =
+        lupine_pDependencies_count * sizeof(const hipGraphNode_t);
   }
-  if ((!pDependencies_null &&
-       numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, pDependencies,
-                numDependencies * sizeof(const hipGraphNode_t)) < 0) ||
+  if ((!pDependencies_null && lupine_pDependencies_bytes != 0 &&
+       rpc_read(conn, pDependencies, lupine_pDependencies_bytes) < 0) ||
       rpc_read(conn, &event, sizeof(hipEvent_t)) < 0 || false)
     goto ERROR_0;
 
@@ -8376,7 +9125,10 @@ int handle_hipGraphAddEventWaitNode(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphAddEventWaitNode");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphAddEventWaitNode");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pGraphNode_present ? &pGraphNode : nullptr, graph,
@@ -8388,10 +9140,8 @@ int handle_hipGraphAddEventWaitNode(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)pDependencies);
   return 0;
 ERROR_0:
-  free((void *)pDependencies);
   return -1;
 }
 
@@ -8414,7 +9164,11 @@ int handle_hipGraphEventWaitNodeGetEvent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphEventWaitNodeGetEvent");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphEventWaitNodeGetEvent");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(node, event_out_present ? &event_out : nullptr);
@@ -8445,7 +9199,11 @@ int handle_hipGraphEventWaitNodeSetEvent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphEventWaitNodeSetEvent");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphEventWaitNodeSetEvent");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(node, event);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8474,7 +9232,11 @@ int handle_hipGraphExecEventWaitNodeSetEvent(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphExecEventWaitNodeSetEvent");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphExecEventWaitNodeSetEvent");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(hGraphExec, hNode, event);
 
@@ -8492,7 +9254,9 @@ int handle_hipGraphAddMemFreeNode(conn_t *conn) {
   hipGraphNode_t pGraphNode{};
   hipGraph_t graph;
   size_t numDependencies;
+  lupine_scratch_buffer<256> lupine_pDependencies_buf;
   hipGraphNode_t *pDependencies = nullptr;
+  size_t lupine_pDependencies_bytes = 0;
   uint8_t pDependencies_null = 0;
   void *dev_ptr;
   int request_id;
@@ -8508,18 +9272,17 @@ int handle_hipGraphAddMemFreeNode(conn_t *conn) {
       rpc_read(conn, &pDependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!pDependencies_null) {
-    pDependencies = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_pDependencies_count = static_cast<size_t>(numDependencies);
+    pDependencies =
+        (hipGraphNode_t *)lupine_pDependencies_buf.alloc_array_uninit(
+            lupine_pDependencies_count, sizeof(const hipGraphNode_t));
     if (pDependencies == nullptr)
       goto ERROR_0;
+    lupine_pDependencies_bytes =
+        lupine_pDependencies_count * sizeof(const hipGraphNode_t);
   }
-  if ((!pDependencies_null &&
-       numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, pDependencies,
-                numDependencies * sizeof(const hipGraphNode_t)) < 0) ||
+  if ((!pDependencies_null && lupine_pDependencies_bytes != 0 &&
+       rpc_read(conn, pDependencies, lupine_pDependencies_bytes) < 0) ||
       rpc_read(conn, &dev_ptr, sizeof(void *)) < 0 || false)
     goto ERROR_0;
 
@@ -8527,7 +9290,10 @@ int handle_hipGraphAddMemFreeNode(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphAddMemFreeNode");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphAddMemFreeNode");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pGraphNode_present ? &pGraphNode : nullptr, graph,
@@ -8539,15 +9305,14 @@ int handle_hipGraphAddMemFreeNode(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)pDependencies);
   return 0;
 ERROR_0:
-  free((void *)pDependencies);
   return -1;
 }
 
 int handle_hipGraphMemFreeNodeGetParams(conn_t *conn) {
   hipGraphNode_t node;
+  lupine_scratch_buffer<256> lupine_dev_ptr_buf;
   void *dev_ptr = nullptr;
   uint8_t dev_ptr_null = 0;
   int request_id;
@@ -8558,7 +9323,7 @@ int handle_hipGraphMemFreeNodeGetParams(conn_t *conn) {
       rpc_read(conn, &dev_ptr_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!dev_ptr_null) {
-    dev_ptr = (void *)calloc(8 == 0 ? 1 : 8, 1);
+    dev_ptr = (void *)lupine_dev_ptr_buf.alloc_zeroed(8);
     if (dev_ptr == nullptr)
       goto ERROR_0;
   }
@@ -8569,7 +9334,10 @@ int handle_hipGraphMemFreeNodeGetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphMemFreeNodeGetParams");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphMemFreeNodeGetParams");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(node, dev_ptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8577,10 +9345,8 @@ int handle_hipGraphMemFreeNodeGetParams(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)dev_ptr);
   return 0;
 ERROR_0:
-  free((void *)dev_ptr);
   return -1;
 }
 
@@ -8599,7 +9365,11 @@ int handle_hipGraphKernelNodeCopyAttributes(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphKernelNodeCopyAttributes");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipGraphKernelNodeCopyAttributes");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(hSrc, hDst);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8628,7 +9398,10 @@ int handle_hipGraphNodeSetEnabled(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphNodeSetEnabled");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphNodeSetEnabled");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(hGraphExec, hNode, isEnabled);
 
@@ -8662,7 +9435,10 @@ int handle_hipGraphNodeGetEnabled(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipGraphNodeGetEnabled");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipGraphNodeGetEnabled");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(hGraphExec, hNode,
                                     isEnabled_present ? &isEnabled : nullptr);
@@ -8683,7 +9459,9 @@ int handle_hipDrvGraphAddMemsetNode(conn_t *conn) {
   hipGraphNode_t phGraphNode{};
   hipGraph_t hGraph;
   size_t numDependencies;
+  lupine_scratch_buffer<256> lupine_dependencies_buf;
   hipGraphNode_t *dependencies = nullptr;
+  size_t lupine_dependencies_bytes = 0;
   uint8_t dependencies_null = 0;
   uint8_t memsetParams_present = 0;
   hipMemsetParams memsetParams{};
@@ -8702,18 +9480,16 @@ int handle_hipDrvGraphAddMemsetNode(conn_t *conn) {
       rpc_read(conn, &dependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!dependencies_null) {
-    dependencies = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_dependencies_count = static_cast<size_t>(numDependencies);
+    dependencies = (hipGraphNode_t *)lupine_dependencies_buf.alloc_array_uninit(
+        lupine_dependencies_count, sizeof(const hipGraphNode_t));
     if (dependencies == nullptr)
       goto ERROR_0;
+    lupine_dependencies_bytes =
+        lupine_dependencies_count * sizeof(const hipGraphNode_t);
   }
-  if ((!dependencies_null &&
-       numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, dependencies,
-                numDependencies * sizeof(const hipGraphNode_t)) < 0) ||
+  if ((!dependencies_null && lupine_dependencies_bytes != 0 &&
+       rpc_read(conn, dependencies, lupine_dependencies_bytes) < 0) ||
       rpc_read(conn, &memsetParams_present, sizeof(uint8_t)) < 0 ||
       (memsetParams_present &&
        rpc_read(conn, &memsetParams, sizeof(const hipMemsetParams)) < 0) ||
@@ -8724,7 +9500,10 @@ int handle_hipDrvGraphAddMemsetNode(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDrvGraphAddMemsetNode");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDrvGraphAddMemsetNode");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(phGraphNode_present ? &phGraphNode : nullptr, hGraph,
@@ -8737,10 +9516,8 @@ int handle_hipDrvGraphAddMemsetNode(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)dependencies);
   return 0;
 ERROR_0:
-  free((void *)dependencies);
   return -1;
 }
 
@@ -8749,7 +9526,9 @@ int handle_hipDrvGraphAddMemFreeNode(conn_t *conn) {
   hipGraphNode_t phGraphNode{};
   hipGraph_t hGraph;
   size_t numDependencies;
+  lupine_scratch_buffer<256> lupine_dependencies_buf;
   hipGraphNode_t *dependencies = nullptr;
+  size_t lupine_dependencies_bytes = 0;
   uint8_t dependencies_null = 0;
   hipDeviceptr_t dptr;
   int request_id;
@@ -8765,18 +9544,16 @@ int handle_hipDrvGraphAddMemFreeNode(conn_t *conn) {
       rpc_read(conn, &dependencies_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!dependencies_null) {
-    dependencies = (hipGraphNode_t *)calloc(
-        numDependencies * sizeof(const hipGraphNode_t) == 0
-            ? 1
-            : numDependencies * sizeof(const hipGraphNode_t),
-        1);
+    size_t lupine_dependencies_count = static_cast<size_t>(numDependencies);
+    dependencies = (hipGraphNode_t *)lupine_dependencies_buf.alloc_array_uninit(
+        lupine_dependencies_count, sizeof(const hipGraphNode_t));
     if (dependencies == nullptr)
       goto ERROR_0;
+    lupine_dependencies_bytes =
+        lupine_dependencies_count * sizeof(const hipGraphNode_t);
   }
-  if ((!dependencies_null &&
-       numDependencies * sizeof(const hipGraphNode_t) != 0 &&
-       rpc_read(conn, dependencies,
-                numDependencies * sizeof(const hipGraphNode_t)) < 0) ||
+  if ((!dependencies_null && lupine_dependencies_bytes != 0 &&
+       rpc_read(conn, dependencies, lupine_dependencies_bytes) < 0) ||
       rpc_read(conn, &dptr, sizeof(hipDeviceptr_t)) < 0 || false)
     goto ERROR_0;
 
@@ -8784,7 +9561,10 @@ int handle_hipDrvGraphAddMemFreeNode(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDrvGraphAddMemFreeNode");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipDrvGraphAddMemFreeNode");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(phGraphNode_present ? &phGraphNode : nullptr, hGraph,
@@ -8796,10 +9576,8 @@ int handle_hipDrvGraphAddMemFreeNode(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)dependencies);
   return 0;
 ERROR_0:
-  free((void *)dependencies);
   return -1;
 }
 
@@ -8826,7 +9604,11 @@ int handle_hipDrvGraphExecMemsetNodeSetParams(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipDrvGraphExecMemsetNodeSetParams");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipDrvGraphExecMemsetNodeSetParams");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(hGraphExec, hNode,
@@ -8856,7 +9638,10 @@ int handle_hipMemAddressFree(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemAddressFree");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemAddressFree");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(devPtr, size);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -8892,7 +9677,10 @@ int handle_hipMemAddressReserve(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemAddressReserve");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemAddressReserve");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(ptr_present ? &ptr : nullptr, size,
                                     alignment, addr, flags);
@@ -8933,7 +9721,10 @@ int handle_hipMemCreate(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemCreate");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemCreate");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle_present ? &handle : nullptr, size,
                                     prop_present ? &prop : nullptr, flags);
@@ -8973,7 +9764,10 @@ int handle_hipMemGetAccess(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemGetAccess");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemGetAccess");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(flags_present ? &flags : nullptr,
@@ -9015,7 +9809,11 @@ int handle_hipMemGetAllocationGranularity(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemGetAllocationGranularity");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipMemGetAllocationGranularity");
+    fn = cached;
+  }
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(granularity_present ? &granularity : nullptr,
@@ -9052,7 +9850,11 @@ int handle_hipMemGetAllocationPropertiesFromHandle(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemGetAllocationPropertiesFromHandle");
+  {
+    static const fn_t cached =
+        hip_symbol<fn_t>("hipMemGetAllocationPropertiesFromHandle");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(prop_present ? &prop : nullptr, handle);
 
@@ -9090,7 +9892,10 @@ int handle_hipMemMap(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemMap");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemMap");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(ptr, size, offset, handle, flags);
 
@@ -9105,7 +9910,9 @@ ERROR_0:
 
 int handle_hipMemMapArrayAsync(conn_t *conn) {
   unsigned int count;
+  lupine_scratch_buffer<256> lupine_mapInfoList_buf;
   hipArrayMapInfo *mapInfoList = nullptr;
+  size_t lupine_mapInfoList_bytes = 0;
   uint8_t mapInfoList_null = 0;
   hipStream_t stream;
   int request_id;
@@ -9116,15 +9923,16 @@ int handle_hipMemMapArrayAsync(conn_t *conn) {
       rpc_read(conn, &mapInfoList_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!mapInfoList_null) {
-    mapInfoList = (hipArrayMapInfo *)calloc(
-        count * sizeof(hipArrayMapInfo) == 0 ? 1
-                                             : count * sizeof(hipArrayMapInfo),
-        1);
+    size_t lupine_mapInfoList_count = static_cast<size_t>(count);
+    mapInfoList = (hipArrayMapInfo *)lupine_mapInfoList_buf.alloc_array_uninit(
+        lupine_mapInfoList_count, sizeof(hipArrayMapInfo));
     if (mapInfoList == nullptr)
       goto ERROR_0;
+    lupine_mapInfoList_bytes =
+        lupine_mapInfoList_count * sizeof(hipArrayMapInfo);
   }
-  if ((!mapInfoList_null && count * sizeof(hipArrayMapInfo) != 0 &&
-       rpc_read(conn, mapInfoList, count * sizeof(hipArrayMapInfo)) < 0) ||
+  if ((!mapInfoList_null && lupine_mapInfoList_bytes != 0 &&
+       rpc_read(conn, mapInfoList, lupine_mapInfoList_bytes) < 0) ||
       rpc_read(conn, &stream, sizeof(hipStream_t)) < 0 || false)
     goto ERROR_0;
 
@@ -9132,7 +9940,10 @@ int handle_hipMemMapArrayAsync(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemMapArrayAsync");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemMapArrayAsync");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(mapInfoList, count, stream);
 
@@ -9140,10 +9951,8 @@ int handle_hipMemMapArrayAsync(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)mapInfoList);
   return 0;
 ERROR_0:
-  free((void *)mapInfoList);
   return -1;
 }
 
@@ -9161,7 +9970,10 @@ int handle_hipMemRelease(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemRelease");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemRelease");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(handle);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -9191,7 +10003,10 @@ int handle_hipMemRetainAllocationHandle(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemRetainAllocationHandle");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemRetainAllocationHandle");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found()
                                : fn(handle_present ? &handle : nullptr, addr);
 
@@ -9210,7 +10025,9 @@ int handle_hipMemSetAccess(conn_t *conn) {
   void *ptr;
   size_t size;
   size_t count;
+  lupine_scratch_buffer<256> lupine_desc_buf;
   hipMemAccessDesc *desc = nullptr;
+  size_t lupine_desc_bytes = 0;
   uint8_t desc_null = 0;
   int request_id;
   hipError_t return_value;
@@ -9222,16 +10039,15 @@ int handle_hipMemSetAccess(conn_t *conn) {
       rpc_read(conn, &desc_null, sizeof(uint8_t)) < 0 || false)
     goto ERROR_0;
   if (!desc_null) {
-    desc =
-        (hipMemAccessDesc *)calloc(count * sizeof(const hipMemAccessDesc) == 0
-                                       ? 1
-                                       : count * sizeof(const hipMemAccessDesc),
-                                   1);
+    size_t lupine_desc_count = static_cast<size_t>(count);
+    desc = (hipMemAccessDesc *)lupine_desc_buf.alloc_array_uninit(
+        lupine_desc_count, sizeof(const hipMemAccessDesc));
     if (desc == nullptr)
       goto ERROR_0;
+    lupine_desc_bytes = lupine_desc_count * sizeof(const hipMemAccessDesc);
   }
-  if ((!desc_null && count * sizeof(const hipMemAccessDesc) != 0 &&
-       rpc_read(conn, desc, count * sizeof(const hipMemAccessDesc)) < 0) ||
+  if ((!desc_null && lupine_desc_bytes != 0 &&
+       rpc_read(conn, desc, lupine_desc_bytes) < 0) ||
       false)
     goto ERROR_0;
 
@@ -9239,7 +10055,10 @@ int handle_hipMemSetAccess(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemSetAccess");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemSetAccess");
+    fn = cached;
+  }
   return_value =
       fn == nullptr ? function_not_found() : fn(ptr, size, desc, count);
 
@@ -9247,10 +10066,8 @@ int handle_hipMemSetAccess(conn_t *conn) {
       rpc_write(conn, &return_value, sizeof(hipError_t)) < 0 ||
       rpc_write_end(conn) < 0)
     goto ERROR_0;
-  free((void *)desc);
   return 0;
 ERROR_0:
-  free((void *)desc);
   return -1;
 }
 
@@ -9269,7 +10086,10 @@ int handle_hipMemUnmap(conn_t *conn) {
   if (request_id < 0)
     goto ERROR_0;
 
-  fn = hip_symbol<fn_t>("hipMemUnmap");
+  {
+    static const fn_t cached = hip_symbol<fn_t>("hipMemUnmap");
+    fn = cached;
+  }
   return_value = fn == nullptr ? function_not_found() : fn(ptr, size);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||

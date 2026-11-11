@@ -57,7 +57,7 @@ uint64_t pid_namespace_inode() {
 }
 
 template <size_t N> void fill_process_name(char (&destination)[N]) {
-  char executable[4096] = {};
+  char executable[4096];
   ssize_t length =
       readlink("/proc/self/exe", executable, sizeof(executable) - 1);
   if (length <= 0) {
@@ -72,7 +72,7 @@ template <size_t N> void fill_process_name(char (&destination)[N]) {
 #elif defined(_WIN32)
 
 template <size_t N> void fill_process_name(char (&destination)[N]) {
-  char executable[MAX_PATH] = {};
+  char executable[MAX_PATH];
   DWORD length = GetModuleFileNameA(nullptr, executable, MAX_PATH);
   if (length == 0 || length >= MAX_PATH) {
     destination[0] = '\0';
@@ -97,36 +97,39 @@ template <size_t N> void fill_process_name(char (&destination)[N]) {
 int lupine_report_client_metadata(conn_t *conn, const char *connection_kind) {
   lupine_client_metadata_header header = {
       LUPINE_CLIENT_METADATA_VERSION,
-      static_cast<uint32_t>(sizeof(lupine_client_metadata)),
+      0,
   };
-  lupine_client_metadata metadata = {};
-  metadata.client_pid = process_id();
+  lupine_client_metadata_extended extended;
+  std::memset(&extended.client, 0, sizeof(extended.client));
+  extended.workload_id_size = 0;
+  extended.client.client_pid = process_id();
 #ifdef __linux__
-  metadata.client_pid_namespace_inode = pid_namespace_inode();
+  extended.client.client_pid_namespace_inode = pid_namespace_inode();
 #endif
-  copy_value(metadata.connection_kind, connection_kind);
-  fill_process_name(metadata.client_process_name);
-  fill_hostname(metadata.client_hostname, sizeof(metadata.client_hostname));
+  copy_value(extended.client.connection_kind, connection_kind);
+  fill_process_name(extended.client.client_process_name);
+  fill_hostname(extended.client.client_hostname,
+                sizeof(extended.client.client_hostname));
 
-  lupine_client_metadata_extended extended = {};
-  extended.client = metadata;
   const char *id = getenv("LUPINE_WORKLOAD_ID");
-  size_t size = id == nullptr ? 0 : strnlen(id, LUPINE_WORKLOAD_ID_MAX_BYTES + 1);
+  size_t size =
+      id == nullptr ? 0 : strnlen(id, LUPINE_WORKLOAD_ID_MAX_BYTES + 1);
   if (lupine_valid_workload_id(id, size)) {
     extended.workload_id_size = static_cast<uint32_t>(size);
     if (size)
       memcpy(extended.workload_id, id, size);
   } else {
-    LUPINE_LOG_ERROR("Ignoring invalid LUPINE_WORKLOAD_ID (UTF-8, max 256 bytes)");
+    LUPINE_LOG_ERROR(
+        "Ignoring invalid LUPINE_WORKLOAD_ID (UTF-8, max 256 bytes)");
   }
   header.payload_size = static_cast<uint32_t>(
-      offsetof(lupine_client_metadata_extended, workload_id) + extended.workload_id_size);
-  const void *payload = &extended;
+      offsetof(lupine_client_metadata_extended, workload_id) +
+      extended.workload_id_size);
 
   // Fire-and-forget: the server sends no response.
   if (rpc_write_start_request(conn, LUPINE_RPC_CLIENT_METADATA) < 0 ||
       rpc_write(conn, &header, sizeof(header)) < 0 ||
-      rpc_write(conn, payload, header.payload_size) < 0 ||
+      rpc_write(conn, &extended, header.payload_size) < 0 ||
       rpc_write_end(conn) < 0) {
     LUPINE_LOG_ERROR("Failed to send client metadata");
     return -1;

@@ -192,26 +192,7 @@ struct lupine_lane {
   std::thread worker;
 };
 
-static bool rpc_server_validate(const rpc_handler_registry &handlers) {
-  for (const auto &entry : handlers) {
-    if (entry.second.handler == nullptr) {
-      return false;
-    }
-    switch (entry.second.backend) {
-    case rpc_backend::cuda:
-    case rpc_backend::nccl:
-    case rpc_backend::nvml:
-    case rpc_backend::hip:
-      break;
-    default:
-      return false;
-    }
-  }
-  return true;
-}
-
-static int rpc_server_dispatch(const rpc_handler_registry &handlers,
-                               conn_t *conn, int op) {
+static int rpc_server_dispatch(conn_t *conn, int op) {
   LUPINE_TRACE_LOG("LUPINE server handling op " << op);
   if (op == LUPINE_HANDOFF_DRAIN_REQUEST) {
     // Read first: the request's ticket must not be held while the drain waits
@@ -231,13 +212,13 @@ static int rpc_server_dispatch(const rpc_handler_registry &handlers,
   if (op == LUPINE_RPC_CLIENT_METADATA) {
     return handle_lupine_client_metadata(conn);
   }
-  auto it = handlers.find(op);
-  if (it == handlers.end()) {
+  const rpc_handler *found = lupine_rpc_handler_lookup(op);
+  if (found == nullptr) {
     LUPINE_LOG_ERROR("No RPC handler for op " << op << "; closing client.");
     return -1;
   }
 
-  const rpc_handler &handler = it->second;
+  const rpc_handler &handler = *found;
   const char *backend_name = nullptr;
   int result = -1;
   switch (handler.backend) {
@@ -299,8 +280,7 @@ static int rpc_server_dispatch(const rpc_handler_registry &handlers,
   return -1;
 }
 
-static void lupine_serve_lanes(conn_t &conn,
-                               const rpc_handler_registry &handlers) {
+static void lupine_serve_lanes(conn_t &conn) {
   std::unordered_map<int32_t, std::shared_ptr<lupine_lane>> lanes;
   while (!conn.closed) {
     for (auto it = lanes.begin(); it != lanes.end();) {
@@ -325,14 +305,14 @@ static void lupine_serve_lanes(conn_t &conn,
 
     auto lane = std::make_shared<lupine_lane>();
     lane->id = stream_id;
-    lane->worker = std::thread([&conn, &handlers, lane]() {
+    lane->worker = std::thread([&conn, lane]() {
       if (rpc_bind_http2_stream(&conn, lane->id) == 0) {
         while (!conn.closed) {
           int op = rpc_dispatch(&conn, 0);
           if (op < 0) {
             break;
           }
-          if (rpc_server_dispatch(handlers, &conn, op) < 0) {
+          if (rpc_server_dispatch(&conn, op) < 0) {
             // A failed async handler cannot satisfy another lane's prefix.
             rpc_shutdown_transport_socket(&conn);
             break;
@@ -365,7 +345,6 @@ static void lupine_serve_lanes(conn_t &conn,
 
 #ifndef _WIN32
 static void lupine_serve_bulk_connection(int fd,
-                                         const rpc_handler_registry *handlers,
                                          rpc_http2_server_metadata metadata) {
   unsigned char preamble[LUPINE_BULK_PREAMBLE_BYTES];
   size_t consumed = 0;
@@ -386,7 +365,7 @@ static void lupine_serve_bulk_connection(int fd,
     return;
   }
   if (rpc_http2_server_init_with_metadata(&conn, &metadata) == 0) {
-    lupine_serve_lanes(conn, *handlers);
+    lupine_serve_lanes(conn);
   }
 #ifdef LUPINE_BUILD_CUDA_BACKEND
   lupine_server_bulk_connection_lost();
@@ -405,7 +384,6 @@ static int lupine_client_handler_exit() {
 }
 
 int client_handler(lupine_socket_t connfd) {
-  const rpc_handler_registry &handlers = lupine_rpc_handlers();
   const rpc_http2_server_metadata metadata = {
 #ifdef LUPINE_BACKEND_VERSION
       LUPINE_BACKEND_VERSION,
@@ -473,20 +451,19 @@ int client_handler(lupine_socket_t connfd) {
 
 #ifndef _WIN32
   if (lupine_child_bulk_fd >= 0) {
-    std::thread([&handlers, metadata]() {
+    std::thread([metadata]() {
       for (;;) {
         int fd = lupine_ipc_recv_fd(lupine_child_bulk_fd);
         if (fd < 0) {
           return;
         }
-        std::thread(lupine_serve_bulk_connection, fd, &handlers, metadata)
-            .detach();
+        std::thread(lupine_serve_bulk_connection, fd, metadata).detach();
       }
     }).detach();
   }
 #endif
 
-  lupine_serve_lanes(conn, handlers);
+  lupine_serve_lanes(conn);
 
   int checkpoint_result = 0;
 #ifdef LUPINE_BUILD_CUDA_BACKEND
@@ -530,8 +507,7 @@ static int lupine_serve_inherited_connection(int connfd,
 
 #ifdef __linux__
 int lupine_server_serve_connection_v1(int fd) {
-  if (!rpc_server_validate(lupine_rpc_handlers()) || lupine_socket_init() < 0 ||
-      !lupine_is_stream_socket(fd)) {
+  if (lupine_socket_init() < 0 || !lupine_is_stream_socket(fd)) {
     LUPINE_LOG_ERROR("Server connection requires a valid stream socket.");
     lupine_socket_close(fd);
     return EXIT_FAILURE;
@@ -542,10 +518,6 @@ int lupine_server_serve_connection_v1(int fd) {
 #endif
 
 int lupine_server_main() {
-  if (!rpc_server_validate(lupine_rpc_handlers())) {
-    LUPINE_LOG_ERROR("Invalid RPC handler registry.");
-    return EXIT_FAILURE;
-  }
   int port = DEFAULT_PORT;
   struct sockaddr_in servaddr, cli;
   if (lupine_socket_init() < 0) {

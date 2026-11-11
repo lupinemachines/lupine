@@ -28,7 +28,6 @@ extern "C" int lupine_ipc_recv_fd(int) { return -1; }
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
-#include <string>
 #include <unordered_map>
 
 #include <fcntl.h>
@@ -68,11 +67,23 @@ struct lupine_ipc_broker_msg {
 int lupine_ipc_broker_fd = -1;
 std::mutex lupine_ipc_broker_mutex;
 
-std::string lupine_ipc_key(uint32_t kind, const lupine_ipc_token &token) {
-  std::string key(reinterpret_cast<const char *>(&kind), sizeof(kind));
-  key.append(reinterpret_cast<const char *>(token.bytes), sizeof(token.bytes));
-  return key;
-}
+struct lupine_ipc_key {
+  uint32_t kind;
+  lupine_ipc_token token;
+
+  bool operator==(const lupine_ipc_key &other) const {
+    return kind == other.kind && std::memcmp(token.bytes, other.token.bytes,
+                                             sizeof(token.bytes)) == 0;
+  }
+};
+
+struct lupine_ipc_key_hash {
+  size_t operator()(const lupine_ipc_key &key) const noexcept {
+    size_t h = 0;
+    std::memcpy(&h, key.token.bytes, sizeof(h));
+    return h ^ (static_cast<size_t>(key.kind) * 0x9e3779b9U);
+  }
+};
 
 int lupine_random_bytes(unsigned char *bytes, size_t size) {
 #if !defined(__APPLE__) && defined(SYS_getrandom)
@@ -306,14 +317,14 @@ extern "C" int lupine_ipc_recv_fd(int sock) {
 extern "C" int lupine_ipc_broker_parent_handle(int fd) {
   // Shared across every child's broker socket so fds registered on one
   // connection can be fetched from another.
-  static std::unordered_map<std::string, int> fds;
+  static std::unordered_map<lupine_ipc_key, int, lupine_ipc_key_hash> fds;
 
-  lupine_ipc_broker_msg msg;
+  lupine_ipc_broker_msg msg = {};
   int received_fd = lupine_recv_broker_msg(fd, &msg);
   lupine_ipc_broker_msg reply = {};
   reply.kind = msg.kind;
   reply.token = msg.token;
-  std::string key = lupine_ipc_key(msg.kind, msg.token);
+  lupine_ipc_key key{msg.kind, msg.token};
 
   if (msg.cmd == LUPINE_IPC_BROKER_REGISTER) {
     if (received_fd < 0) {

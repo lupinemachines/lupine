@@ -99,8 +99,10 @@ struct h2_stream {
   bool provider_deferred = false;
   bool flush_queued = false;
   // Compressed output nghttp2 has not framed yet: valid up to encoded_size,
-  // consumed up to encoded_offset. Capacity is retained across bursts.
-  std::vector<unsigned char> encoded;
+  // consumed up to encoded_offset. Capacity is retained across bursts without
+  // zero-filling newly reserved capacity.
+  std::unique_ptr<unsigned char[]> encoded;
+  size_t encoded_capacity = 0;
   size_t encoded_size = 0;
   size_t encoded_offset = 0;
   ZSTD_CCtx *encoder = nullptr;
@@ -401,7 +403,7 @@ int h2_send_data_callback(nghttp2_session *, nghttp2_frame *frame,
 
   std::array<struct iovec, 2> iov = {{
       {const_cast<uint8_t *>(framehd), kH2FrameHeaderLen},
-      {stream.encoded.data() + stream.encoded_offset, length},
+      {stream.encoded.get() + stream.encoded_offset, length},
   }};
   h2_queue_output(transport, iov.data(), static_cast<int>(iov.size()));
 
@@ -778,7 +780,10 @@ int h2_on_stream_close_callback(nghttp2_session *, int32_t stream_id, uint32_t,
   h2_release_codecs(stream);
   // The entry stays: lookup recreates missing streams, so a late reader would
   // wait on a fresh stream forever instead of seeing it closed.
-  std::vector<unsigned char>().swap(stream.encoded);
+  stream.encoded.reset();
+  stream.encoded_capacity = 0;
+  stream.encoded_size = 0;
+  stream.encoded_offset = 0;
   stream.local_out.clear();
   stream.closed = true;
   pthread_cond_broadcast(&stream.read_ready);
@@ -905,18 +910,32 @@ unsigned char *h2_reserve_encoded(h2_stream &stream, size_t capacity) {
   // draining to empty, so reclaim the framed prefix (frames copy the bytes out)
   // once it is at least as long as the unframed suffix that has to move.
   size_t backlog = stream.encoded_size - stream.encoded_offset;
-  if (stream.encoded.size() < required && stream.encoded_offset != 0 &&
+  if (stream.encoded_capacity < required && stream.encoded_offset != 0 &&
       stream.encoded_offset >= backlog) {
-    memmove(stream.encoded.data(),
-            stream.encoded.data() + stream.encoded_offset, backlog);
+    if (backlog != 0) {
+      memmove(stream.encoded.get(),
+              stream.encoded.get() + stream.encoded_offset, backlog);
+    }
     stream.encoded_size = backlog;
     stream.encoded_offset = 0;
     required = backlog + capacity;
   }
-  if (stream.encoded.size() < required) {
-    stream.encoded.resize(required);
+  if (stream.encoded_capacity < required) {
+    size_t grown =
+        stream.encoded_capacity == 0 ? required : stream.encoded_capacity * 2;
+    if (grown < required) {
+      grown = required;
+    }
+    std::unique_ptr<unsigned char[]> next(new unsigned char[grown]);
+    if (backlog != 0) {
+      memcpy(next.get(), stream.encoded.get() + stream.encoded_offset, backlog);
+    }
+    stream.encoded = std::move(next);
+    stream.encoded_capacity = grown;
+    stream.encoded_size = backlog;
+    stream.encoded_offset = 0;
   }
-  return stream.encoded.data() + stream.encoded_size;
+  return stream.encoded.get() + stream.encoded_size;
 }
 
 int h2_start_encoder_locked(h2_stream &stream) {

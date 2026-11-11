@@ -18,7 +18,6 @@ from ops import (
     NullableArrayOperation,
     NullableOperation,
     NullTerminatedOperation,
-    ScalarOperation,
     VersionedStructOperation,
 )
 
@@ -343,11 +342,6 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
     f.write("}\n\n")
 
 
-def write_server_buffer_cleanup(f, owned_buffers, indent):
-    for buffer_name in reversed(owned_buffers):
-        f.write(f"{indent}free((void *){buffer_name});\n")
-
-
 def write_server_handler(f, backend: Backend, function, operations, metadata):
     name = function.name.format()
     result = function.return_type.format()
@@ -358,7 +352,6 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     if metadata.guard is not None:
         f.write(f"#if {metadata.guard}\n")
     f.write(f"int handle_{name}(conn_t *conn) {{\n")
-    owned_buffers = []
     for operation in operations:
         f.write(operation.server_declaration)
         if (
@@ -390,8 +383,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write("  fn_t fn = nullptr;\n")
     f.write("  if (\n")
     for operation in operations:
-        if owned_buffer := operation.server_rpc_read(f):
-            owned_buffers.append(owned_buffer)
+        operation.server_rpc_read(f)
     f.write("      false)\n")
     f.write("    goto ERROR_0;\n\n")
     f.write("  request_id = rpc_read_end(conn);\n")
@@ -443,7 +435,9 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         )
         f.write("  if (return_value == CUDA_SUCCESS)\n  ")
     if backend.symbol_lookup:
-        f.write(f'  fn = {backend.symbol_lookup}<fn_t>("{name}");\n')
+        f.write(
+            f'  {{ static const fn_t cached = {backend.symbol_lookup}<fn_t>("{name}"); fn = cached; }}\n'
+        )
         if result == backend.result:
             f.write(
                 "  return_value = fn == nullptr ? function_not_found()\n"
@@ -470,13 +464,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         # A client that does not wait gets no answer; a failure reaches it from
         # its next synchronize instead, except for a hint's.
         keeps_error = backend.keep_async_error and name not in HINT_FUNCTIONS
-        if owned_buffers:
-            f.write("  if (!rpc_request_awaited(conn)) {\n")
-            if keeps_error:
-                f.write(f"    {backend.keep_async_error}(conn, return_value);\n")
-            write_server_buffer_cleanup(f, owned_buffers, "    ")
-            f.write("    return 0;\n  }\n\n")
-        elif keeps_error:
+        if keeps_error:
             f.write("  if (lupine_unanswered(conn, return_value))\n    return 0;\n\n")
         else:
             f.write("  if (!rpc_request_awaited(conn))\n    return 0;\n\n")
@@ -491,7 +479,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         )
     if sync is not None:
         # Device-to-host copies the call waited for have numbered their pushed
-        # deliveries by now; the client applies them before it returns.
+        # delivery by now; the client applies them before it returns.
         f.write("  delivered = lupine_dtoh_watermark(conn);\n")
         f.write("  return_value = lupine_take_async_error(conn, return_value);\n\n")
     if metadata.clear_fields:
@@ -521,37 +509,12 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         f.write(f"      rpc_write(conn, &return_value, sizeof({result})) < 0 ||\n")
     f.write("      rpc_write_end(conn) < 0)\n")
     f.write("    goto ERROR_0;\n")
-    write_server_buffer_cleanup(f, owned_buffers, "  ")
     f.write("  return 0;\n")
     f.write("ERROR_0:\n")
-    write_server_buffer_cleanup(f, owned_buffers, "  ")
     f.write("  return -1;\n")
     f.write("}\n\n")
     if metadata.guard is not None:
         f.write("#endif\n\n")
-
-
-def write_scalar_slot(f, functions_with_annotations):
-    """The server-side slot a pointer-mode scalar's value lands in."""
-    if not any(
-        isinstance(operation, ScalarOperation)
-        for _, _, operations, _ in functions_with_annotations
-        for operation in operations
-    ):
-        return
-    f.write(
-        "// A pointer-mode scalar's value lands in the handler's inline slot,\n"
-        "// or on the heap when it is wider.\n"
-        "static unsigned char *lupine_scalar_slot(std::vector<unsigned char> &heap,\n"
-        "                                         unsigned char *slot, size_t size,\n"
-        "                                         uint32_t width) {\n"
-        "  if (width <= size) {\n"
-        "    return slot;\n"
-        "  }\n"
-        "  heap.resize(width);\n"
-        "  return heap.data();\n"
-        "}\n\n"
-    )
 
 
 def write_versioned_struct_helper(f, functions_with_annotations):
@@ -565,25 +528,25 @@ def write_versioned_struct_helper(f, functions_with_annotations):
     f.write(
         "template <typename T>\n"
         "static T *lupine_versioned_struct(\n"
-        "    std::vector<unsigned char> &bytes, uint64_t size,\n"
+        "    unsigned char *bytes, uint64_t size,\n"
         "    std::initializer_list<std::pair<size_t, const char *>> strings,\n"
         "    std::initializer_list<size_t> cleared) {\n"
-        "  if (size == 0) {\n"
+        "  if (size == 0 || bytes == nullptr) {\n"
         "    return nullptr;\n"
         "  }\n"
         "  for (const auto &string : strings) {\n"
         "    if (string.first + sizeof(char *) <= size) {\n"
-        "      std::memcpy(bytes.data() + string.first, &string.second,\n"
+        "      std::memcpy(bytes + string.first, &string.second,\n"
         "                  sizeof(char *));\n"
         "    }\n"
         "  }\n"
         "  const void *null = nullptr;\n"
         "  for (size_t offset : cleared) {\n"
         "    if (offset + sizeof(void *) <= size) {\n"
-        "      std::memcpy(bytes.data() + offset, &null, sizeof(void *));\n"
+        "      std::memcpy(bytes + offset, &null, sizeof(void *));\n"
         "    }\n"
         "  }\n"
-        "  return reinterpret_cast<T *>(bytes.data());\n"
+        "  return reinterpret_cast<T *>(bytes);\n"
         "}\n\n"
     )
 

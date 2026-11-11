@@ -1,5 +1,6 @@
 #include "device_ioctl_proxy.h"
 
+#include <atomic>
 #include <cerrno>
 #include <fcntl.h>
 #include <mutex>
@@ -9,6 +10,8 @@
 #include <unordered_map>
 
 namespace {
+std::atomic<size_t> active_proxies{0};
+
 struct registry {
   pid_t process = getpid();
   std::mutex mutex;
@@ -48,11 +51,14 @@ int lupine_device_proxy_create(int route, uint64_t token, bool uvm) {
       });
   auto &state = proxies();
   std::lock_guard<std::mutex> lock(state.mutex);
-  state.descriptors.emplace(fd, std::move(proxy));
+  state.descriptors[fd] = std::move(proxy);
+  active_proxies.store(state.descriptors.size(), std::memory_order_release);
   return fd;
 }
 
 std::shared_ptr<lupine_device_proxy> lupine_device_proxy_get(int fd) {
+  if (fd < 0 || active_proxies.load(std::memory_order_acquire) == 0)
+    return nullptr;
   auto &state = proxies();
   // A fork child cannot use the parent's RPC threads or inherited mutex.
   // Treat inherited proxies as ordinary fds so pre-exec close/dup stay safe.
@@ -63,32 +69,43 @@ std::shared_ptr<lupine_device_proxy> lupine_device_proxy_get(int fd) {
   return found == state.descriptors.end() ? nullptr : found->second;
 }
 
-int lupine_device_proxy_close(int fd) {
-  if (proxies().process != getpid())
-    return static_cast<int>(syscall(SYS_close, fd));
+bool lupine_device_proxy_try_close(int fd, int *result) {
+  if (fd < 0 || active_proxies.load(std::memory_order_acquire) == 0)
+    return false;
+  auto &state = proxies();
+  if (state.process != getpid())
+    return false;
   std::shared_ptr<lupine_device_proxy> removed;
-  int result;
   {
-    auto &state = proxies();
     std::lock_guard<std::mutex> lock(state.mutex);
     auto found = state.descriptors.find(fd);
-    result = static_cast<int>(syscall(SYS_close, fd));
+    if (found == state.descriptors.end())
+      return false;
     // Linux releases the descriptor even when close reports EINTR/EIO.
-    if (found != state.descriptors.end()) {
-      removed = std::move(found->second);
-      state.descriptors.erase(found);
-    }
+    *result = static_cast<int>(syscall(SYS_close, fd));
+    removed = std::move(found->second);
+    state.descriptors.erase(found);
+    active_proxies.store(state.descriptors.size(), std::memory_order_release);
   }
-  return result;
+  return true;
+}
+
+int lupine_device_proxy_close(int fd) {
+  int result;
+  if (lupine_device_proxy_try_close(fd, &result))
+    return result;
+  return static_cast<int>(syscall(SYS_close, fd));
 }
 
 int lupine_device_proxy_dup(int fd, int destination, int flags, bool fixed) {
-  if (proxies().process != getpid())
+  if (active_proxies.load(std::memory_order_acquire) == 0)
+    return raw_dup(fd, destination, flags, fixed);
+  auto &state = proxies();
+  if (state.process != getpid())
     return raw_dup(fd, destination, flags, fixed);
   std::shared_ptr<lupine_device_proxy> replaced;
   int result;
   {
-    auto &state = proxies();
     std::lock_guard<std::mutex> lock(state.mutex);
     result = raw_dup(fd, destination, flags, fixed);
     if (result < 0 || result == fd)
@@ -102,11 +119,14 @@ int lupine_device_proxy_dup(int fd, int destination, int flags, bool fixed) {
     }
     if (owner)
       state.descriptors.emplace(result, std::move(owner));
+    active_proxies.store(state.descriptors.size(), std::memory_order_release);
   }
   return result;
 }
 
 int lupine_device_proxy_fcntl(int fd, int command, uintptr_t argument) {
+  if (fd < 0 || active_proxies.load(std::memory_order_acquire) == 0)
+    return static_cast<int>(syscall(SYS_fcntl, fd, command, argument));
   auto &state = proxies();
   if (state.process != getpid())
     return static_cast<int>(syscall(SYS_fcntl, fd, command, argument));
@@ -114,8 +134,10 @@ int lupine_device_proxy_fcntl(int fd, int command, uintptr_t argument) {
   int result = static_cast<int>(syscall(SYS_fcntl, fd, command, argument));
   if (result >= 0 && (command == F_DUPFD || command == F_DUPFD_CLOEXEC)) {
     auto found = state.descriptors.find(fd);
-    if (found != state.descriptors.end())
+    if (found != state.descriptors.end()) {
       state.descriptors.emplace(result, found->second);
+      active_proxies.store(state.descriptors.size(), std::memory_order_release);
+    }
   }
   return result;
 }
