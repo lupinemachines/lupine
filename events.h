@@ -3,12 +3,12 @@
 // Client-side cache of event completion, and the policy for when cuEventQuery
 // may be answered from it instead of costing a round trip.
 //
-// Two things are tracked. Per event: the stamp of its current record, and
-// whether that record is known complete. Completion is monotonic between
-// records, so once the server reports an event complete the client can answer
-// later queries for that same record itself. Process-wide: how many deferred
-// device-to-host copies the server still owes, because those ride back on
-// responses and a locally answered query never collects one.
+// Per event: the stamp of its current record, and whether that record is known
+// complete. Completion is monotonic between records, so once the server
+// reports an event complete the client can answer later queries for that same
+// record itself. A completion is cached only after the device-to-host
+// deliveries its answer covered have been applied, so a cache hit needs no
+// further wait.
 //
 // Every operation has a form taking an explicit table so the policy is
 // testable without routing; the short forms bind the process-wide table.
@@ -40,12 +40,6 @@ struct lupine_event_table {
   std::mutex mutex;
   lupine_event_slot slots[kLupineEventQueryBatch] = {};
   std::atomic<uint64_t> record_seq{0};
-  // Held by every deferred device-to-host copy the server has not handed back
-  // yet. While it is nonzero every cached completion is unusable, because a
-  // query answered locally is a query that never collects those copies. It
-  // counts rather than flags: a response carries only the copies for the
-  // stream it synchronized, so "some arrived" never means "none are left".
-  std::atomic<uint64_t> stale_semaphore{0};
 };
 
 typedef conn_t *(*lupine_event_conn_resolver)(CUevent event);
@@ -88,10 +82,6 @@ void lupine_event_cache_completions(lupine_event_table *table,
 void lupine_event_cache_completions(const CUevent *events,
                                     const uint64_t *records,
                                     const CUresult *results, uint32_t count);
-
-// delta is +1 when a copy is deferred and -N when N of them arrive.
-void lupine_event_stale_semaphore_add(lupine_event_table *table, int64_t delta);
-void lupine_event_stale_semaphore_add(int64_t delta);
 
 // Held shared across a query and exclusively across a destroy, so an event
 // cannot be destroyed out from under a query in flight.

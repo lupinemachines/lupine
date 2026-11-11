@@ -34,7 +34,7 @@ static constexpr uint8_t LUPINE_COPY_DIRECTION_DTOD = 3;
 static constexpr uintptr_t LUPINE_STREAM_FETCH_READY_BITS = 0x3;
 static constexpr uintptr_t LUPINE_STREAM_FETCH_SYNC_ALL_BITS = 0x4;
 
-// Where the dense bytes of a deferred device-to-host copy land in client
+// Where the dense bytes of a pushed device-to-host copy land in client
 // memory: depth slices of height rows of width bytes. A linear copy is one row.
 // Sent as-is ahead of the bytes.
 struct lupine_host_rows {
@@ -233,11 +233,33 @@ struct conn_t {
   int closed;
   void *http2;
   void *tls_session; // SSL* for https:// client connections; otherwise null.
+  // The backend's pushed device-to-host delivery state, created on first use.
+  void *dtoh_push;
   uintptr_t va_base;
   size_t va_size;
   uintptr_t va_next;
   intptr_t w_offset;
 };
+
+// The backend's device-to-host delivery state for `conn` (conn->dtoh_push),
+// created by whichever thread needs it first and never freed. `init` runs on a
+// new state before it is published.
+template <typename T>
+T *rpc_dtoh_state(conn_t *conn, void (*init)(T *, conn_t *) = nullptr) {
+  void *state = __atomic_load_n(&conn->dtoh_push, __ATOMIC_ACQUIRE);
+  if (state == nullptr) {
+    T *created = new T();
+    if (init != nullptr) {
+      init(created, conn);
+    }
+    if (__atomic_compare_exchange_n(&conn->dtoh_push, &state, created, false,
+                                    __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+      return created;
+    }
+    delete created;
+  }
+  return static_cast<T *>(state);
+}
 
 static inline bool lupine_va_contains(const conn_t *conn, uintptr_t address,
                                       size_t size) {

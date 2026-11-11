@@ -321,13 +321,13 @@ CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent) {
  */
 CUresult cuCtxWaitEvent(CUcontext hCtx, CUevent hEvent);
 /**
- * @synchronize DEFERRED_DTOH STDOUT
+ * @synchronize STDOUT
  * @routingkey CURRENT_CONTEXT
  */
 CUresult cuCtxSynchronize();
 /**
  * @guard CUDA_VERSION >= 13000
- * @synchronize DEFERRED_DTOH STDOUT
+ * @synchronize STDOUT
  * @routingkey CONTEXT ctx
  * @param ctx SEND_ONLY
  */
@@ -2105,13 +2105,13 @@ CUresult cuStreamUpdateCaptureDependencies(
 CUresult cuStreamAttachMemAsync(CUstream hStream, CUdeviceptr dptr,
                                 size_t length, unsigned int flags);
 /**
- * @synchronize DEFERRED_DTOH
+ * @synchronize
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  */
 CUresult cuStreamQuery(CUstream hStream);
 /**
- * @synchronize DEFERRED_DTOH STDOUT
+ * @synchronize STDOUT
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  */
@@ -2186,13 +2186,13 @@ CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
 }
 /**
  * @disabled - manual client caches completions and separately prefetches events
- * @synchronize DEFERRED_DTOH
+ * @synchronize
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
  */
 CUresult cuEventQuery(CUevent hEvent);
 /**
- * @synchronize DEFERRED_DTOH STDOUT
+ * @synchronize STDOUT
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
  */
@@ -2572,6 +2572,7 @@ CUresult cuGraphAddMemcpyNode(CUgraphNode *phGraphNode, CUgraph hGraph,
 CUresult cuGraphMemcpyNodeGetParams(CUgraphNode hNode,
                                     CUDA_MEMCPY3D *nodeParams);
 /**
+ * @disabled server
  * @param hNode SEND_ONLY
  * @param nodeParams SEND_ONLY DEREF
  * @blocking - callers act on a rejected node update
@@ -3108,6 +3109,7 @@ CUresult
 cuGraphExecKernelNodeSetParams_v2(CUgraphExec hGraphExec, CUgraphNode hNode,
                                   const CUDA_KERNEL_NODE_PARAMS *nodeParams);
 /**
+ * @disabled server
  * @param hGraphExec SEND_ONLY
  * @param hNode SEND_ONLY
  * @param copyParams SEND_ONLY DEREF
@@ -3951,8 +3953,6 @@ void cuStreamGetCaptureInfo_v3();
 /** @disabled */
 void lupineManagedHostFlush();
 /** @disabled */
-void lupineMemcpyDtoHAsyncPinned();
-/** @disabled */
 void lupineDeviceSnapshot();
 /** @disabled */
 void lupineBulkChunk();
@@ -3962,4 +3962,6 @@ void lupineMemcpyHtoDBulk();
 void lupineBulkRead();
 /** @disabled */
 void lupineMemcpyDtoHBulk();
+/** @disabled */
+void lupineDtohPush();
 #endif

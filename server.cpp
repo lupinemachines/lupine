@@ -201,6 +201,7 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
     int request = rpc_read_end(conn);
 #ifdef LUPINE_BUILD_CUDA_BACKEND
     lupine_checkpoint_drain_cuda_calls();
+    lupine_dtoh_drain(conn);
 #endif
     int result = 0;
     return request < 0 || rpc_write_start_response(conn, request) < 0 ||
@@ -229,8 +230,10 @@ int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
     // Bulk sub-requests run under the gate entry of the copy RPC that waits on
     // them: chunks touch no CUDA state, and readers copy only between that RPC
     // publishing the copy and it seeing them finish. A gate entry of their own
-    // could block a drain on a caller that never comes.
-    if (op == LUPINE_RPC_lupineBulkChunk || op == LUPINE_RPC_lupineBulkRead) {
+    // could block a drain on a caller that never comes. The device-to-host
+    // push lane touches no CUDA state either, and never returns.
+    if (op == LUPINE_RPC_lupineBulkChunk || op == LUPINE_RPC_lupineBulkRead ||
+        op == LUPINE_RPC_lupineDtohPush) {
       result = handler.handler(conn);
       break;
     }
@@ -330,6 +333,10 @@ static void lupine_serve_lanes(conn_t &conn,
   }
 
   rpc_shutdown_transport_socket(&conn);
+#ifdef LUPINE_BUILD_CUDA_BACKEND
+  // The push lane waits for deliveries, not for the transport.
+  lupine_dtoh_wake(&conn);
+#endif
   for (auto &entry : lanes) {
     auto &lane = entry.second;
     if (lane->worker.joinable()) {

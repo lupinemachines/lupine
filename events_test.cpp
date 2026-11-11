@@ -188,59 +188,6 @@ bool test_destroyed_event_is_removed_from_prefetch() {
   return true;
 }
 
-bool test_pending_dtoh_suppresses_local_answer() {
-  lupine_event_table table;
-  CUevent event = fake_event(0);
-  uint64_t recorded = 0;
-  lupine_event_invalidate_completion(&table, event);
-  if (!lupine_event_query_needed(&table, event, &recorded)) {
-    std::cerr << "FAIL: first record did not require a query\n";
-    return false;
-  }
-  CUresult result = CUDA_SUCCESS;
-  lupine_event_cache_completions(&table, &event, &recorded, &result, 1);
-  lupine_event_stale_semaphore_add(&table, 1);
-  if (!lupine_event_query_needed(&table, event, &recorded)) {
-    std::cerr << "FAIL: pending async copy was answered locally\n";
-    return false;
-  }
-  lupine_event_stale_semaphore_add(&table, -1);
-  if (lupine_event_query_needed(&table, event, &recorded)) {
-    std::cerr << "FAIL: drained copy still forced a round trip\n";
-    return false;
-  }
-  return true;
-}
-
-// The reason the state is a total and not a flag: a response delivers only the
-// copies for the stream it synchronized, so clearing on any delivery would
-// hand back a stale local answer while another stream's copy is still owed.
-bool test_partially_drained_dtoh_stays_pending() {
-  lupine_event_table table;
-  CUevent event = fake_event(0);
-  uint64_t recorded = 0;
-  CUresult result = CUDA_SUCCESS;
-  lupine_event_invalidate_completion(&table, event);
-  if (!lupine_event_query_needed(&table, event, &recorded)) {
-    std::cerr << "FAIL: first record did not require a query\n";
-    return false;
-  }
-  lupine_event_cache_completions(&table, &event, &recorded, &result, 1);
-  lupine_event_stale_semaphore_add(&table, 1);
-  lupine_event_stale_semaphore_add(&table, 1);
-  lupine_event_stale_semaphore_add(&table, -1);
-  if (!lupine_event_query_needed(&table, event, &recorded)) {
-    std::cerr << "FAIL: partially drained copies were treated as complete\n";
-    return false;
-  }
-  lupine_event_stale_semaphore_add(&table, -1);
-  if (lupine_event_query_needed(&table, event, &recorded)) {
-    std::cerr << "FAIL: fully drained copies still forced a round trip\n";
-    return false;
-  }
-  return true;
-}
-
 } // namespace
 
 int main() {
@@ -249,9 +196,7 @@ int main() {
       !test_eviction_is_oldest_recorded() ||
       !test_prefetch_batch_excludes_and_filters() ||
       !test_query_results_cache_only_successes() ||
-      !test_destroyed_event_is_removed_from_prefetch() ||
-      !test_pending_dtoh_suppresses_local_answer() ||
-      !test_partially_drained_dtoh_stays_pending()) {
+      !test_destroyed_event_is_removed_from_prefetch()) {
     return 1;
   }
   std::cout << "event completion tracking tests passed\n";

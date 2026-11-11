@@ -7,7 +7,6 @@
 #include <cstdint>
 
 #include <memory>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -17,29 +16,18 @@
 
 struct lupine_graph_resources;
 
-// Pending device-to-host copies are numbered as they are queued. A stream's
-// copies are queued in stream order, so a callback takes only those numbered
-// before it: the ones after it in the stream have not run yet.
-uint64_t lupine_next_dtoh_sequence();
-uint64_t lupine_dtoh_sequence_now();
-
 struct lupine_host_callback_data {
   conn_t *conn = nullptr;
   CUhostFn fn = nullptr;
   void *userData = nullptr;
-  lupine_graph_resources *resources = nullptr;
-  std::optional<CUstream> stream;
   // Uncaptured launches run once; a captured one is replayed by its graph.
   bool one_shot = false;
-  // Pending copies numbered from here on were queued after the callback.
-  uint64_t dtoh_before = UINT64_MAX;
 };
 
 struct lupine_stream_callback_data {
   conn_t *conn = nullptr;
   CUstreamCallback callback = nullptr;
   void *userData = nullptr;
-  uint64_t dtoh_before = UINT64_MAX;
 };
 
 void CUDA_CB lupine_graph_host_callback(void *userData);
@@ -67,47 +55,17 @@ CUresult
 lupine_server_free_device_allocation(CUdeviceptr pointer,
                                      CUresult (*native_free)(CUdeviceptr));
 
-struct lupine_graph_host_copy {
-  lupine_host_rows client;
-  void *server_src = nullptr;
-};
-
-enum class lupine_dtoh_storage { borrowed, heap, pinned };
-
-// A device-to-host copy the server holds until a synchronize collects it. The
-// copy handlers and graph launches produce these; stream, event and context
-// handlers in cuda_server.cpp drain them, so the registry is shared rather than
-// duplicated.
-struct lupine_pending_dtoh_item {
-  CUevent event = nullptr;
-  lupine_host_rows client;
-  void *server_src = nullptr;
-  lupine_dtoh_storage storage = lupine_dtoh_storage::borrowed;
-  CUcontext context = nullptr;
-  // Preserve graph dependencies inherited through cuStreamWaitEvent.
-  lupine_graph_resources *graph_resources = nullptr;
-  // Whether a legacy-stream synchronize waits for this item's stream, settled
-  // when it is queued: the stream can be destroyed before it is collected.
-  bool legacy_ordered = false;
-  uint64_t sequence = lupine_next_dtoh_sequence();
-};
-
-using lupine_pending_dtoh_items = std::vector<lupine_pending_dtoh_item>;
+// Device-to-host copies into client memory are pushed to the client as their
+// stream runs them. A host function queued behind each copy snapshots its
+// bytes and numbers it; the connection's push lane sends deliveries in that
+// order. Every answer and server callback carries the last number assigned
+// when it was produced, and the client applies deliveries up to that number
+// before acting on it, so nothing has to guess which copies an answer covers.
+uint64_t lupine_dtoh_watermark(conn_t *conn);
+void lupine_dtoh_sync_contexts(conn_t *conn);
+int handle_lupineDtohPush(conn_t *conn);
 void lupine_note_device_stdout_image(const unsigned char *image,
                                      size_t image_size);
-lupine_pending_dtoh_items
-lupine_detach_pending_dtoh_copies(conn_t *conn, CUstream stream,
-                                  bool all_streams,
-                                  CUcontext context = nullptr,
-                                  uint64_t before = UINT64_MAX);
-lupine_pending_dtoh_items lupine_detach_event_dtoh_copies(conn_t *conn,
-                                                          CUevent event);
-int lupine_write_dtoh_rows(conn_t *conn, const lupine_host_rows &client,
-                           const void *server_src);
-int lupine_write_pending_dtoh_copies(conn_t *conn,
-                                     const lupine_pending_dtoh_items &pending,
-                                     bool include_count);
-void lupine_cleanup_pending_dtoh_copies(lupine_pending_dtoh_items *pending);
 void lupine_keep_async_error(conn_t *conn, CUresult result);
 // True when the client does not wait for this request's answer, which then
 // gets none: a failure is kept for its next synchronize.
@@ -118,21 +76,6 @@ bool lupine_unanswered(conn_t *conn, CUresult result);
 // an error, and invalidates the capture.
 bool lupine_stream_query_unsettled(conn_t *conn, CUstream stream);
 CUresult lupine_take_async_error(conn_t *conn, CUresult result);
-void lupine_forget_undelivered_dtoh(const void *server_src);
-void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream);
-void lupine_forget_event_dtoh_marker(conn_t *conn, CUevent event);
-
-using lupine_pending_dtoh_streams =
-    std::unordered_map<CUstream, lupine_pending_dtoh_items>;
-
-libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
-lupine_pending_dtoh_copies();
-void lupine_queue_pending_dtoh_copies(conn_t *conn, CUstream stream,
-                                      const lupine_pending_dtoh_item *copies,
-                                      size_t count);
-lupine_graph_resources *lupine_get_graph_resources(CUgraph graph);
-lupine_graph_resources *lupine_get_stream_resources(CUstream stream);
-lupine_graph_resources *lupine_find_stream_resources(CUstream stream);
 lupine_graph_resources *lupine_captured_stream_resources(CUstream stream);
 lupine_graph_resources *lupine_begin_stream_capture_resources(CUstream stream);
 void lupine_discard_stream_capture_resources(lupine_graph_resources *resources);
@@ -143,11 +86,16 @@ void lupine_forget_event_capture_resources(CUevent event);
 void lupine_wait_event_capture_resources(CUstream stream, CUevent event);
 void lupine_clone_graph_resources(CUgraph clone, CUgraph original);
 void lupine_erase_graph_resources(CUgraph graph);
-void lupine_release_graph_resources(lupine_graph_resources *resources);
-void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
-                              CUresult result);
-std::vector<lupine_graph_host_copy>
-lupine_graph_dtoh_copy_snapshot(lupine_graph_resources *resources);
+// Applies backpressure to a handler about to queue device-to-host work.
+void lupine_dtoh_wait_for_room(conn_t *conn);
+// Queues a device-to-host copy into client memory (cuda_server_memcpy.cpp).
+CUresult lupine_push_dtoh(conn_t *conn, CUstream stream,
+                          const lupine_host_rows &client, CUdeviceptr source,
+                          void *mirror, bool refresh);
+// Replaces each dependency on a graph device-to-host copy with the node that
+// pushes its bytes, so later nodes see them. Every handler that takes graph
+// dependencies, generated or not, passes them through this.
+void lupine_graph_push_dependencies(CUgraphNode *deps, size_t count);
 struct lupine_htod_graph_binding {
   CUgraph original = nullptr;
   CUgraph prepared = nullptr;
@@ -176,10 +124,24 @@ void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
                                      lupine_htod_graph_binding *binding,
                                      CUresult result,
                                      CUgraphExecUpdateResultInfo *info);
-void *lupine_alloc_capture_scratch(size_t bytes);
-void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
-                                 const lupine_host_rows &client,
-                                 void *server_src, bool borrowed = false);
+// Adds a node pushing an explicit graph copy's bytes after `copy`.
+CUresult lupine_graph_add_dtoh_push(conn_t *conn, CUgraph graph,
+                                    CUgraphNode copy,
+                                    const lupine_host_rows &client,
+                                    void *server_src);
+
+// Where a copy's host destination rows sit in client memory.
+inline lupine_host_rows
+lupine_host_destination_rows(const CUDA_MEMCPY3D &copy) {
+  size_t slice = copy.dstHeight * copy.dstPitch;
+  return {static_cast<unsigned char *>(copy.dstHost) + copy.dstZ * slice +
+              copy.dstY * copy.dstPitch + copy.dstXInBytes,
+          copy.WidthInBytes,
+          copy.Height,
+          copy.dstPitch,
+          copy.Depth,
+          slice};
+}
 
 // A host side staged on the server is dense: the client sends and receives
 // only the copied rows and keeps its own pitch and offsets.

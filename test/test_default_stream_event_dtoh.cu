@@ -1,6 +1,8 @@
-// Verify that an event recorded in the legacy default stream returns deferred
-// DtoH copies from every implicitly ordered blocking stream, but not from a
-// non-blocking stream or from work submitted after the event.
+// Verify that an event recorded in the legacy default stream covers DtoH copies
+// from every implicitly ordered blocking stream. Copies on a non-blocking
+// stream or submitted after the event are not ordered by it; natively they
+// usually land anyway, so the test only checks they land by their own
+// synchronize.
 #include <cuda_runtime.h>
 
 #include <algorithm>
@@ -89,18 +91,11 @@ int main() {
                  "DtoH data\n");
     return 1;
   }
-  if (!all_equal(later_host, kUntouched) ||
-      !all_equal(nonblocking_host, kUntouched)) {
-    std::fprintf(stderr,
-                 "FAIL: default-stream event delivered unordered DtoH data\n");
-    return 1;
-  }
-
   if (!check(cudaStreamSynchronize(first_stream), "synchronize first stream") ||
       !check(cudaStreamSynchronize(nonblocking_stream),
              "synchronize non-blocking stream") ||
       !all_equal(later_host, 13) || !all_equal(nonblocking_host, 17)) {
-    std::fprintf(stderr, "FAIL: deferred DtoH data was not delivered later\n");
+    std::fprintf(stderr, "FAIL: later DtoH data was not delivered\n");
     return 1;
   }
 

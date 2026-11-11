@@ -3767,20 +3767,6 @@ extern "C" int lupine_forward_remote_stdout(conn_t *conn) {
   return lupine_read_captured_stdout(conn);
 }
 
-extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn) {
-  uint32_t copy_count = 0;
-  if (rpc_read_buffer(conn, &copy_count, sizeof(copy_count)) < 0) {
-    return -1;
-  }
-  for (uint32_t i = 0; i < copy_count; ++i) {
-    if (lupine_read_deferred_rows(conn) < 0) {
-      return -1;
-    }
-  }
-  lupine_event_stale_semaphore_add(-static_cast<int64_t>(copy_count));
-  return 0;
-}
-
 extern "C" CUresult cuEventQuery(CUevent hEvent) {
   lupine_route route = lupine_route_for_event(hEvent);
   if (lupine_route_is_local(route)) {
@@ -3822,8 +3808,7 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
       rpc_write(conn, &count, sizeof(count)) < 0 ||
       rpc_write(conn, events + 1, count * sizeof(*events)) < 0 ||
       rpc_write(conn, tickets + 1, count * sizeof(*tickets)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      lupine_read_deferred_dtoh_copies(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       rpc_read(conn, results, (count + 1) * sizeof(*results)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -7273,22 +7258,15 @@ void *rpc_client_dispatch_thread(void *arg) {
   conn_t *conn = (conn_t *)arg;
   int op;
 
+  lupine_start_dtoh_receiver(conn);
   while (true) {
     op = rpc_dispatch(conn, 1);
 
     if (op == LUPINE_SIDE_EFFECT_HOST_FUNCTION) {
-      int found = 0;
-
-      if (rpc_read(conn, &found, sizeof(found)) < 0) {
-        LUPINE_LOG_ERROR("Failed to read transfer count.");
+      // Device-to-host copies the callback follows land first.
+      if (lupine_read_dtoh_watermark(conn) < 0) {
+        LUPINE_LOG_ERROR("Failed to apply device data before a host callback.");
         goto close_connection;
-      }
-
-      for (int i = 0; i < found; ++i) {
-        if (lupine_read_deferred_rows(conn) < 0) {
-          LUPINE_LOG_ERROR("Failed to read device data from server.");
-          goto close_connection;
-        }
       }
 
       CUhostFn callback = nullptr;
@@ -7323,7 +7301,7 @@ void *rpc_client_dispatch_thread(void *arg) {
       CUresult status = CUDA_ERROR_UNKNOWN;
       CUstreamCallback callback = nullptr;
       void *user_data = nullptr;
-      if (lupine_read_deferred_dtoh_copies(conn) < 0 ||
+      if (lupine_read_dtoh_watermark(conn) < 0 ||
           rpc_read(conn, &stream, sizeof(stream)) < 0 ||
           rpc_read(conn, &status, sizeof(status)) < 0 ||
           rpc_read(conn, &callback, sizeof(callback)) < 0 ||
@@ -7427,7 +7405,9 @@ void *rpc_client_dispatch_thread(void *arg) {
       };
       host_read read;
       const void *data = nullptr;
-      if (rpc_read(conn, &data, sizeof(data)) < 0 ||
+      // Device-to-host copies the stream ran before this read land first.
+      if (lupine_read_dtoh_watermark(conn) < 0 ||
+          rpc_read(conn, &data, sizeof(data)) < 0 ||
           rpc_read(conn, &read.width, sizeof(read.width)) < 0 ||
           rpc_read(conn, &read.rows, sizeof(read.rows)) < 0 ||
           rpc_read(conn, &read.row_stride, sizeof(read.row_stride)) < 0 ||
@@ -7502,6 +7482,10 @@ void *rpc_client_dispatch_thread(void *arg) {
   }
 close_connection:
   rpc_close(conn);
+  lupine_client_transport_shutdown_bulk(conn);
+  // The receiver's reads fail with the transport; the connection is not torn
+  // down until this thread is joined.
+  lupine_join_dtoh_receiver(conn);
   return nullptr;
 }
 

@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <system_error>
 #include <thread>
 #ifndef _WIN32
 #include <fcntl.h>
@@ -133,6 +135,9 @@ struct lupine_host_allocation {
   // synchronize, which already waited for the writes.
   uintptr_t stale_fetch_scope = RPC_SCOPE_LANE;
   pid_t stale_fetch_ptds_tid = 0;
+  bool stale_rearm_pending = false;
+  conn_t *stale_rearm_conn = nullptr;
+  CUcontext stale_rearm_context = nullptr;
   // Fetch owner; its own nested faults unprotect instead of self-waiting.
   volatile pid_t stale_fetch_tid = 0;
   // Per-chunk fetched flags; owner (state 2) sets, invalidator (3) clears.
@@ -147,6 +152,7 @@ struct lupine_host_allocation {
   CUdeviceptr device_alloc_base = 0;
   int route_id = -2;
   std::vector<int> portable_routes;
+  std::vector<int> dtoh_routes;
 };
 
 struct lupine_mapped_host_snapshot {
@@ -227,8 +233,10 @@ static CUresult
 lupine_remote_cuMemHostAlloc(void **remote_host, CUdeviceptr *device_ptr,
                              size_t bytesize, unsigned int flags,
                              lupine_route route, void *requested = nullptr);
+extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 static CUresult lupine_remote_cuMemFreeHost(void *remote_host,
-                                            lupine_route route);
+                                            lupine_route route,
+                                            bool drain_only = false);
 
 static constexpr size_t LUPINE_MANAGED_HOST_FLUSH_HEADER_BYTES =
     sizeof(CUdeviceptr) + sizeof(size_t);
@@ -585,7 +593,7 @@ static void lupine_call_previous_sigsegv(int sig, siginfo_t *info, void *uctx) {
 static bool lupine_demand_fetch_run(lupine_host_allocation *allocation,
                                     size_t fault_offset, size_t *out_start,
                                     size_t *out_end);
-static void lupine_finish_demand_fetch(lupine_host_allocation *allocation,
+static bool lupine_finish_demand_fetch(lupine_host_allocation *allocation,
                                        size_t span_start, size_t span_end);
 static bool lupine_make_mapped_range_fresh(lupine_host_allocation *allocation,
                                            size_t start_offset,
@@ -1140,16 +1148,102 @@ lupine_find_io_alias_locked(uintptr_t address, size_t bytes, int route_id) {
   return allocations.end();
 }
 
-static int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
-                                          size_t bytes,
-                                          bool pinned_destination) {
-  int result = rpc_read(conn, destination, bytes);
+// The client half of pushed device-to-host delivery: one thread per
+// connection reads deliveries off a lane of its own and applies them in order.
+// It runs no application code and sends no request, so it keeps up while
+// callers, and the dispatch thread inside a host callback, wait for it. It
+// does take lupine_host_allocation_mutex() and conn->write_mutex, briefly and
+// never while reading the transport, to record bytes that landed in pinned
+// memory. Large deliveries come over a bulk connection, on a stream of its own
+// so it never waits for a caller's bulk copy.
+struct lupine_dtoh_receiver {
+  std::mutex mutex;
+  std::condition_variable applied_changed;
+  std::atomic<uint64_t> applied{0};
+  std::atomic<bool> stopped{false};
+  std::thread thread;
+  conn_t *bulk_conn = nullptr;
+  int32_t bulk_stream = -1;
+};
+
+// The copy id of a delivery that carries no bytes: its copy wrote the server's
+// copy of memory refreshed on access, which is marked stale instead.
+static constexpr uint64_t kLupineDtohInvalidate = ~uint64_t{0};
+
+static void lupine_mark_pushed_stale(conn_t *conn, void *host);
+
+// Reads bulk copy `copy_id` into `data` over one bulk stream; every chunk
+// carries its offset.
+static bool lupine_bulk_read_stream(conn_t *bulk, int32_t stream_id,
+                                    uint64_t copy_id, unsigned char *data) {
+  // A bulk sub-request takes no ticket: the request it serves orders it.
+  struct {
+    int request_id;
+    int op;
+    uint64_t ticket;
+    uint64_t copy_id;
+  } request = {2, LUPINE_RPC_lupineBulkRead, ~uint64_t{0}, copy_id};
+  rpc_write_cursor cursor(&request, sizeof(request));
+  if (rpc_http2_write_stream(bulk, stream_id, &cursor, 1) < 0) {
+    return false;
+  }
+  for (;;) {
+    struct {
+      int request_id;
+      int op;
+      uint64_t offset;
+      uint64_t bytes;
+    } frame;
+    if (rpc_http2_read_stream(bulk, stream_id, &frame, sizeof(frame)) != 0 ||
+        frame.op != -1 ||
+        (frame.bytes != 0 &&
+         rpc_http2_read_stream(bulk, stream_id, data + frame.offset,
+                               frame.bytes) != 0)) {
+      return false;
+    }
+    if (frame.bytes == 0) {
+      return true;
+    }
+  }
+}
+
+// Lands one pushed span: from the push lane, or with a nonzero copy id from
+// the bulk connection. Bytes for pinned memory arrive through its writable
+// alias and are recorded so the view stays readable after an invalidation,
+// while collection knows the server already has them.
+static int lupine_read_pushed_span(conn_t *conn, void *destination,
+                                   size_t bytes, bool pinned_destination,
+                                   intptr_t alias_offset,
+                                   lupine_dtoh_receiver *receiver,
+                                   uint64_t copy_id) {
+  int result = 0;
+  void *foreign_alias =
+      alias_offset != 0
+          ? static_cast<void *>(static_cast<unsigned char *>(destination) +
+                                alias_offset)
+          : nullptr;
+  if (copy_id == 0) {
+    result = rpc_read(
+        conn, foreign_alias != nullptr ? foreign_alias : destination, bytes);
+    if (result == 0 && foreign_alias != nullptr) {
+      result = rpc_note_host_allocation_write(conn, destination, bytes);
+    }
+  } else {
+    void *alias = foreign_alias != nullptr
+                      ? foreign_alias
+                      : rpc_host_allocation_alias(conn, destination, bytes);
+    result = !lupine_bulk_read_stream(
+                 receiver->bulk_conn, receiver->bulk_stream, copy_id,
+                 static_cast<unsigned char *>(alias != nullptr ? alias
+                                                               : destination))
+                 ? -1
+             : alias != nullptr
+                 ? rpc_note_host_allocation_write(conn, destination, bytes)
+                 : 0;
+  }
   if (result < 0 || !pinned_destination || bytes == 0) {
     return result;
   }
-  // Apply readability after mapped-memory invalidation, just like normal
-  // deferred responses, but retain the alias so collection knows the server
-  // already has these bytes.
   if (pthread_mutex_lock(&conn->write_mutex) != 0) {
     return -1;
   }
@@ -1164,38 +1258,22 @@ static int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
   return pthread_mutex_unlock(&conn->write_mutex) == 0 ? result : -1;
 }
 
-static int lupine_read_deferred_host_copy(conn_t *conn, void *destination,
-                                          size_t bytes) {
-  bool pinned_destination = false;
-  {
-    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-    pinned_destination =
-        lupine_find_io_alias_locked(
-            reinterpret_cast<uintptr_t>(destination), bytes,
-            lupine_route_identity(lupine_remote_route_for_conn(conn))) !=
-        lupine_mutable_host_allocations_locked().end();
-  }
-  return lupine_read_deferred_host_copy(conn, destination, bytes,
-                                        pinned_destination);
-}
-
-int lupine_read_deferred_rows(conn_t *conn) {
+// Applies one delivery: its rows, then its bytes in the client's own layout.
+static int lupine_read_pushed_rows(conn_t *conn, lupine_dtoh_receiver *receiver,
+                                   uint64_t copy_id) {
   lupine_host_rows rows;
   if (rpc_read(conn, &rows, sizeof(rows)) < 0) {
     return -1;
   }
+  if (copy_id == kLupineDtohInvalidate) {
+    lupine_mark_pushed_stale(conn, rows.dst);
+    return 0;
+  }
   if (rows.width == 0 || rows.height == 0 || rows.depth == 0) {
     return 0;
   }
-  const bool contiguous =
-      (rows.height == 1 && rows.depth == 1) ||
-      (rows.depth == 1 && rows.pitch == rows.width) ||
-      (rows.pitch == rows.width && rows.slice == rows.height * rows.pitch);
-  if (contiguous) {
-    return lupine_read_deferred_host_copy(conn, rows.dst, rows.bytes()) < 0 ? -1
-                                                                            : 0;
-  }
   bool pinned_destination = false;
+  intptr_t alias_offset = 0;
   {
     std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
     pinned_destination =
@@ -1203,14 +1281,122 @@ int lupine_read_deferred_rows(conn_t *conn) {
             reinterpret_cast<uintptr_t>(rows.dst), rows.width,
             lupine_route_identity(lupine_remote_route_for_conn(conn))) !=
         lupine_mutable_host_allocations_locked().end();
+    if (!pinned_destination &&
+        !lupine_va_contains(conn, reinterpret_cast<uintptr_t>(rows.dst),
+                            rows.width)) {
+      auto it = lupine_find_host_allocation_locked(rows.dst);
+      if (it != lupine_mutable_host_allocations_locked().end() &&
+          it->second.io_alias != nullptr) {
+        alias_offset = static_cast<unsigned char *>(it->second.io_alias) -
+                       static_cast<unsigned char *>(it->first);
+      }
+    }
+  }
+  const bool contiguous =
+      (rows.height == 1 && rows.depth == 1) ||
+      (rows.depth == 1 && rows.pitch == rows.width) ||
+      (rows.pitch == rows.width && rows.slice == rows.height * rows.pitch);
+  if (contiguous) {
+    return lupine_read_pushed_span(conn, rows.dst, rows.bytes(),
+                                   pinned_destination, alias_offset, receiver,
+                                   copy_id);
   }
   for (size_t index = 0; index < rows.height * rows.depth; ++index) {
-    if (lupine_read_deferred_host_copy(conn, rows.row(index), rows.width,
-                                       pinned_destination) < 0) {
+    if (lupine_read_pushed_span(conn, rows.row(index), rows.width,
+                                pinned_destination, alias_offset, receiver,
+                                0) < 0) {
       return -1;
     }
   }
   return 0;
+}
+
+static lupine_dtoh_receiver *lupine_dtoh_receiver_for(conn_t *conn) {
+  return rpc_dtoh_state<lupine_dtoh_receiver>(conn);
+}
+
+static void lupine_dtoh_receiver_stop(lupine_dtoh_receiver *receiver) {
+  {
+    std::lock_guard<std::mutex> lock(receiver->mutex);
+    receiver->stopped.store(true, std::memory_order_release);
+  }
+  receiver->applied_changed.notify_all();
+}
+
+static void lupine_dtoh_receiver_main(conn_t *conn) {
+  lupine_dtoh_receiver *receiver = lupine_dtoh_receiver_for(conn);
+  uint64_t lane = std::hash<std::thread::id>{}(std::this_thread::get_id());
+  if (lupine_bulk_lanes *lanes = lupine_client_transport_bulk_lanes(conn)) {
+    receiver->bulk_stream = rpc_http2_lane_stream(lanes->conn[0], lane);
+    if (receiver->bulk_stream >= 0) {
+      receiver->bulk_conn = lanes->conn[0];
+    }
+  }
+  // A request nobody waits for an answer to, that the server keeps as the
+  // lane its push worker sends on.
+  struct {
+    int request_id;
+    int op;
+    uint64_t ticket;
+    uint64_t bulk_reader;
+  } request = {2, LUPINE_RPC_lupineDtohPush, ~uint64_t{0},
+               receiver->bulk_conn != nullptr ? 1u : 0u};
+  std::vector<rpc_write_cursor> cursors = {
+      rpc_write_cursor(&request, sizeof(request))};
+  int32_t stream_id = rpc_http2_lane_stream(conn, lane);
+  if (stream_id >= 0 && rpc_http2_write_stream(conn, stream_id, cursors) == 0 &&
+      rpc_bind_http2_stream(conn, stream_id) == 0) {
+    uint64_t number = 0;
+    uint64_t copy_id = 0;
+    while (rpc_read(conn, &number, sizeof(number)) == 0 &&
+           rpc_read(conn, &copy_id, sizeof(copy_id)) == 0 &&
+           lupine_read_pushed_rows(conn, receiver, copy_id) == 0) {
+      {
+        std::lock_guard<std::mutex> lock(receiver->mutex);
+        receiver->applied.store(number, std::memory_order_release);
+      }
+      receiver->applied_changed.notify_all();
+    }
+    rpc_unbind_http2_stream(conn);
+  }
+  lupine_dtoh_receiver_stop(receiver);
+}
+
+void lupine_start_dtoh_receiver(conn_t *conn) {
+  lupine_dtoh_receiver *receiver = lupine_dtoh_receiver_for(conn);
+  try {
+    receiver->thread = std::thread(lupine_dtoh_receiver_main, conn);
+  } catch (const std::system_error &) {
+    LUPINE_LOG_ERROR("Starting the device-to-host receiver failed");
+    lupine_dtoh_receiver_stop(receiver);
+  }
+}
+
+void lupine_join_dtoh_receiver(conn_t *conn) {
+  lupine_dtoh_receiver *receiver = lupine_dtoh_receiver_for(conn);
+  if (receiver->thread.joinable()) {
+    receiver->thread.join();
+  }
+}
+
+static int lupine_wait_dtoh(conn_t *conn, uint64_t number) {
+  lupine_dtoh_receiver *receiver = lupine_dtoh_receiver_for(conn);
+  if (receiver->applied.load(std::memory_order_acquire) >= number) {
+    return 0;
+  }
+  std::unique_lock<std::mutex> lock(receiver->mutex);
+  receiver->applied_changed.wait(lock, [&] {
+    return receiver->applied.load(std::memory_order_acquire) >= number ||
+           receiver->stopped.load(std::memory_order_acquire);
+  });
+  return receiver->applied.load(std::memory_order_acquire) >= number ? 0 : -1;
+}
+
+extern "C" int lupine_read_dtoh_watermark(conn_t *conn) {
+  uint64_t number = 0;
+  return rpc_read(conn, &number, sizeof(number)) < 0
+             ? -1
+             : lupine_wait_dtoh(conn, number);
 }
 
 static CUresult lupine_collect_host_allocation_writes(conn_t *conn) {
@@ -1543,10 +1729,15 @@ extern "C" int lupine_prepare_rpc(conn_t *conn) {
     return -1;
   }
   __atomic_store_n(&lupine_device_work_pending, 1, __ATOMIC_RELEASE);
-  if (__atomic_load_n(&conn->host_allocation_writes_pending,
-                      __ATOMIC_ACQUIRE) != 0 &&
-      lupine_collect_host_allocation_writes(conn) != CUDA_SUCCESS) {
-    return -1;
+  for (int route_id = 0; route_id < rpc_size(); ++route_id) {
+    conn_t *route_conn =
+        lupine_route_remote_conn(lupine_route_from_identity(route_id));
+    if (route_conn != nullptr &&
+        __atomic_load_n(&route_conn->host_allocation_writes_pending,
+                        __ATOMIC_ACQUIRE) != 0 &&
+        lupine_collect_host_allocation_writes(route_conn) != CUDA_SUCCESS) {
+      return -1;
+    }
   }
 
   uint64_t required_epoch =
@@ -1695,6 +1886,22 @@ static bool lupine_translate_client_host_range_to_server(
   return true;
 }
 
+static void lupine_note_dtoh_route_locked(lupine_host_allocation &allocation,
+                                          conn_t *conn) {
+  if (conn == nullptr || allocation.local_cuda ||
+      __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0) {
+    return;
+  }
+  int route_id = lupine_route_identity(lupine_remote_route_for_conn(conn));
+  if (route_id < 0 || route_id == allocation.route_id) {
+    return;
+  }
+  if (std::find(allocation.dtoh_routes.begin(), allocation.dtoh_routes.end(),
+                route_id) == allocation.dtoh_routes.end()) {
+    allocation.dtoh_routes.push_back(route_id);
+  }
+}
+
 static bool lupine_pinned_dtoh_destination(conn_t *conn, void *destination,
                                            size_t bytes, bool *page_locked,
                                            void **client_alias,
@@ -1716,42 +1923,45 @@ static bool lupine_pinned_dtoh_destination(conn_t *conn, void *destination,
   if (it == lupine_mutable_host_allocations_locked().end()) {
     return false;
   }
-  const auto &allocation = it->second;
+  auto &allocation = it->second;
   uintptr_t address = reinterpret_cast<uintptr_t>(destination);
-  bool is_page_locked = address >= allocation.user_base &&
-                        address < allocation.user_base + allocation.user_size;
+  bool is_page_locked =
+      address >= allocation.user_base &&
+      address < allocation.user_base + allocation.user_size &&
+      bytes <= allocation.user_size - (address - allocation.user_base);
   if (page_locked != nullptr) {
     *page_locked = is_page_locked;
   }
   if (!is_page_locked || bytes == 0 || conn == nullptr) {
     return false;
   }
-  if (allocation.managed || allocation.managed_global ||
-      allocation.local_cuda || allocation.io_alias == nullptr ||
-      allocation.server_host_ptr == 0 ||
+  lupine_note_dtoh_route_locked(allocation, conn);
+  // Memory whose device pointer is exposed and tracked is refreshed from the
+  // server's copy and fetched on access, so a copy into it writes only that
+  // copy and sends no client address. Other page-locked memory gets the bytes
+  // pushed, through its writable alias where it has one; exposed but untracked
+  // memory is read back from the server's copy at a synchronize, so that copy
+  // is named to be updated too.
+  bool exposed = allocation.device_pointer_exposed;
+  bool refreshed = exposed && allocation.tracking_enabled;
+  if (allocation.local_cuda || allocation.server_host_ptr == 0 ||
       allocation.route_id !=
           lupine_route_identity(lupine_remote_route_for_conn(conn)) ||
-      __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0 ||
-      bytes > allocation.user_size - (address - allocation.user_base)) {
+      __atomic_load_n(&allocation.retiring, __ATOMIC_ACQUIRE) != 0) {
     return false;
   }
   size_t offset = address - reinterpret_cast<uintptr_t>(it->first);
-  if (client_alias != nullptr) {
-    *client_alias = static_cast<unsigned char *>(allocation.io_alias) + offset;
+  if (client_alias != nullptr && !refreshed) {
+    *client_alias =
+        allocation.io_alias != nullptr
+            ? static_cast<unsigned char *>(allocation.io_alias) + offset
+            : destination;
   }
-  if (server_host != nullptr) {
+  if (server_host != nullptr && exposed) {
     *server_host =
         reinterpret_cast<void *>(allocation.server_host_ptr + offset);
   }
   return true;
-}
-
-static bool lupine_pinned_dtoh_destination(conn_t *conn, void *destination,
-                                           size_t bytes, void **client_alias,
-                                           void **server_host) {
-  bool page_locked = false;
-  return lupine_pinned_dtoh_destination(conn, destination, bytes, &page_locked,
-                                        client_alias, server_host);
 }
 
 static bool lupine_host_ptr_is_tracked(CUdeviceptr ptr) {
@@ -1761,12 +1971,8 @@ static bool lupine_host_ptr_is_tracked(CUdeviceptr ptr) {
          lupine_mutable_host_allocations_locked().end();
 }
 
-// Whether the driver would treat this address as page-locked, which is true of
-// exactly the ranges the caller handed to cuMemHostAlloc, cuMemAllocHost,
-// cuMemHostRegister or cuMemAllocManaged. A plain malloc that shares a page
-// with a registered buffer is still pageable: treating it as page-locked would
-// defer a copy the driver completes inline.
-extern "C" bool lupine_host_ptr_is_page_locked(const void *host) {
+static bool lupine_host_range_is_page_locked(const void *host, size_t bytes,
+                                             conn_t *dtoh_conn = nullptr) {
   if (host == nullptr) {
     return false;
   }
@@ -1775,9 +1981,26 @@ extern "C" bool lupine_host_ptr_is_page_locked(const void *host) {
   if (it == lupine_mutable_host_allocations_locked().end()) {
     return false;
   }
+  auto &allocation = it->second;
   uintptr_t address = reinterpret_cast<uintptr_t>(host);
-  return address >= it->second.user_base &&
-         address < it->second.user_base + it->second.user_size;
+  if (address < allocation.user_base ||
+      address >= allocation.user_base + allocation.user_size ||
+      bytes > allocation.user_size - (address - allocation.user_base)) {
+    return false;
+  }
+  if (bytes != 0) {
+    lupine_note_dtoh_route_locked(allocation, dtoh_conn);
+  }
+  return true;
+}
+
+// Whether the driver would treat this address as page-locked, which is true of
+// exactly the ranges the caller handed to cuMemHostAlloc, cuMemAllocHost,
+// cuMemHostRegister or cuMemAllocManaged. A plain malloc that shares a page
+// with a registered buffer is still pageable: treating it as page-locked would
+// defer a copy the driver completes inline.
+extern "C" bool lupine_host_ptr_is_page_locked(const void *host) {
+  return lupine_host_range_is_page_locked(host, 0);
 }
 
 static bool lupine_managed_host_alias_base(CUdeviceptr ptr,
@@ -1819,14 +2042,17 @@ extern "C" bool lupine_copy_pointer_is_host(CUdeviceptr ptr) {
 }
 
 // A managed alias is already the server's address for its allocation, so a
-// copy into it is a device-side write in stream order, as in 2D and 3D copies.
-// Treated as host memory, the bytes would land in the client's view and reach
-// the server only with a later dirty-page flush, on top of whatever the
-// stream's subsequent work had written there.
+// copy into or out of it runs on the device side, in stream order, as in 2D and
+// 3D copies. Treated as host memory, bytes copied into it would land in the
+// client's view and reach the server only with a later dirty-page flush, on
+// top of whatever the stream's subsequent work had written there; and a copy
+// out of it into page-locked memory would block the caller until the stream
+// drained, where the driver returns at once.
 static uint8_t lupine_infer_copy_direction(CUdeviceptr dst, CUdeviceptr src) {
   const bool dst_is_host =
       !lupine_is_managed_host_alias(dst) && lupine_copy_pointer_is_host(dst);
-  const bool src_is_host = lupine_copy_pointer_is_host(src);
+  const bool src_is_host =
+      !lupine_is_managed_host_alias(src) && lupine_copy_pointer_is_host(src);
   if (dst_is_host && src_is_host) {
     return LUPINE_COPY_DIRECTION_HTOH;
   }
@@ -2003,17 +2229,23 @@ extern "C" CUresult cuMemcpyAsync_ptsz(CUdeviceptr dst, CUdeviceptr src,
 
 // Reads a device-to-host response sent as LUPINE_RPC_TRANSFER_CHUNK_BYTES
 // chunks, each led by its CUresult; a failed chunk ends the response.
+// Each chunk carries the deliveries numbered once it was copied. A readback
+// waited for its stream, so it waits for those to land too; a demand fetch,
+// which reads the server's copy for a fault, does not.
 static CUresult lupine_read_dtoh_chunks(conn_t *conn, int request_id,
-                                        unsigned char *dst, size_t bytes) {
+                                        unsigned char *dst, size_t bytes,
+                                        bool readback = true) {
   if (request_id < 0 || rpc_read_start(conn, request_id) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  uint64_t delivered = 0;
   size_t offset = 0;
   do {
     size_t chunk =
         std::min(bytes - offset, (size_t)LUPINE_RPC_TRANSFER_CHUNK_BYTES);
-    if (rpc_read(conn, &result, sizeof(result)) < 0 ||
+    if (rpc_read(conn, &delivered, sizeof(delivered)) < 0 ||
+        rpc_read(conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS && chunk != 0 &&
          rpc_read(conn, dst + offset, chunk) < 0)) {
       rpc_read_end(conn);
@@ -2031,7 +2263,9 @@ static CUresult lupine_read_dtoh_chunks(conn_t *conn, int request_id,
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
   } while (offset < bytes);
-  return result;
+  return readback && lupine_wait_dtoh(conn, delivered) < 0
+             ? CUDA_ERROR_DEVICE_UNAVAILABLE
+             : result;
 }
 
 // Wire-fetch [offset, offset + bytes) of the backing. Handler-safe: must
@@ -2129,11 +2363,19 @@ static bool lupine_fetch_stale_range(lupine_host_allocation *allocation,
   }
   return lupine_read_dtoh_chunks(conn,
                                  (rpc_expect_answer(conn), rpc_write_end(conn)),
-                                 dst, bytes) == CUDA_SUCCESS;
+                                 dst, bytes, false) == CUDA_SUCCESS;
 }
 
+static bool lupine_arm_stale_fetch(void *host,
+                                   lupine_host_allocation &allocation,
+                                   conn_t *conn, CUcontext fetch_context,
+                                   CUstream stream, uintptr_t scope,
+                                   pid_t ptds_tid, sig_atomic_t previous);
+
 // Publish a finished fetch and drop the stale state once every chunk is fresh.
-static void lupine_finish_demand_fetch(lupine_host_allocation *allocation,
+// Returns true if a pushed copy invalidated the allocation mid-fetch and
+// re-armed it stale, so normal-context callers know to re-fetch.
+static bool lupine_finish_demand_fetch(lupine_host_allocation *allocation,
                                        size_t span_start, size_t span_end) {
   bool all_fresh = true;
   for (size_t i = 0; i < allocation->fresh_chunk_count; ++i) {
@@ -2143,12 +2385,29 @@ static void lupine_finish_demand_fetch(lupine_host_allocation *allocation,
     }
   }
   std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  if (allocation->stale_rearm_pending) {
+    allocation->stale_rearm_pending = false;
+    bool keep_launch_scope =
+        allocation->stale_fetch_stream != lupine_stream_fetch_ready();
+    CUstream arm_stream = keep_launch_scope ? allocation->stale_fetch_stream
+                                            : lupine_stream_fetch_ready();
+    uintptr_t arm_scope =
+        keep_launch_scope ? allocation->stale_fetch_scope : RPC_SCOPE_LANE;
+    pid_t arm_ptds_tid =
+        keep_launch_scope ? allocation->stale_fetch_ptds_tid : 0;
+    (void)lupine_arm_stale_fetch(
+        reinterpret_cast<void *>(allocation->host_base), *allocation,
+        allocation->stale_rearm_conn, allocation->stale_rearm_context,
+        arm_stream, arm_scope, arm_ptds_tid, 1);
+    return true;
+  }
   if (span_end > span_start) {
     mprotect(reinterpret_cast<void *>(allocation->host_base + span_start),
              span_end - span_start, PROT_READ);
   }
   __atomic_store_n(&allocation->device_stale, all_fresh ? 0 : 1,
                    __ATOMIC_RELEASE);
+  return false;
 }
 
 static bool lupine_fetch_stale_span(lupine_host_allocation *allocation,
@@ -2217,79 +2476,83 @@ static bool lupine_demand_fetch_run(lupine_host_allocation *allocation,
 }
 
 // Make a host allocation range fresh from normal context. Must not be called
-// while
-// holding the allocation mutex or any connection.
+// while holding the allocation mutex or any connection.
 static bool lupine_make_mapped_range_fresh(lupine_host_allocation *allocation,
                                            size_t start_offset,
                                            size_t end_offset) {
   size_t chunk_bytes = LUPINE_DEMAND_FETCH_CHUNK_BYTES;
-  bool owns_stale = true;
   for (;;) {
-    sig_atomic_t state =
-        __atomic_load_n(&allocation->device_stale, __ATOMIC_ACQUIRE);
-    if (state == 0) {
-      return true;
-    }
-    if (__atomic_load_n(&allocation->retiring, __ATOMIC_ACQUIRE) != 0) {
-      return true;
-    }
-    if (state == 2 || state == 3) {
-      if (lupine_in_host_callback) {
-        owns_stale = false;
+    bool owns_stale = true;
+    for (;;) {
+      sig_atomic_t state =
+          __atomic_load_n(&allocation->device_stale, __ATOMIC_ACQUIRE);
+      if (state == 0) {
+        return true;
+      }
+      if (__atomic_load_n(&allocation->retiring, __ATOMIC_ACQUIRE) != 0) {
+        return true;
+      }
+      if (state == 2 || state == 3) {
+        if (lupine_in_host_callback) {
+          owns_stale = false;
+          break;
+        }
+        sched_yield();
+        continue;
+      }
+      sig_atomic_t expected = 1;
+      if (__atomic_compare_exchange_n(&allocation->device_stale, &expected, 2,
+                                      false, __ATOMIC_ACQ_REL,
+                                      __ATOMIC_ACQUIRE)) {
         break;
       }
-      sched_yield();
-      continue;
     }
-    sig_atomic_t expected = 1;
-    if (__atomic_compare_exchange_n(&allocation->device_stale, &expected, 2,
-                                    false, __ATOMIC_ACQ_REL,
-                                    __ATOMIC_ACQUIRE)) {
-      break;
+    if (owns_stale) {
+      __atomic_store_n(&allocation->stale_fetch_tid, lupine_gettid(),
+                       __ATOMIC_RELEASE);
+    }
+    bool ok = allocation->fresh_chunks != nullptr;
+    size_t position = start_offset / chunk_bytes * chunk_bytes;
+    size_t bound = std::min(lupine_round_up(end_offset, chunk_bytes),
+                            allocation->storage_size);
+    size_t span_start = position;
+    size_t span_end = position;
+    while (ok && position < bound) {
+      if (__atomic_load_n(&allocation->fresh_chunks[position / chunk_bytes],
+                          __ATOMIC_ACQUIRE) != 0) {
+        position += chunk_bytes;
+        continue;
+      }
+      size_t run_end = position;
+      while (run_end < bound &&
+             __atomic_load_n(&allocation->fresh_chunks[run_end / chunk_bytes],
+                             __ATOMIC_ACQUIRE) == 0) {
+        run_end += chunk_bytes;
+      }
+      run_end = std::min(run_end, allocation->storage_size);
+      ok = lupine_fetch_stale_span(allocation, position, run_end);
+      if (ok) {
+        span_end = run_end;
+      }
+      position = run_end;
+    }
+    bool rearmed = false;
+    if (owns_stale) {
+      if (ok) {
+        rearmed = lupine_finish_demand_fetch(allocation, span_start, span_end);
+      } else {
+        __atomic_store_n(&allocation->device_stale, 1, __ATOMIC_RELEASE);
+      }
+      __atomic_store_n(&allocation->stale_fetch_tid, 0, __ATOMIC_RELEASE);
+    } else if (ok && span_end > span_start) {
+      std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+      mprotect(reinterpret_cast<void *>(allocation->host_base + span_start),
+               span_end - span_start, PROT_READ);
+    }
+    if (!rearmed) {
+      return ok;
     }
   }
-  if (owns_stale) {
-    __atomic_store_n(&allocation->stale_fetch_tid, lupine_gettid(),
-                     __ATOMIC_RELEASE);
-  }
-  bool ok = allocation->fresh_chunks != nullptr;
-  size_t position = start_offset / chunk_bytes * chunk_bytes;
-  size_t bound = std::min(lupine_round_up(end_offset, chunk_bytes),
-                          allocation->storage_size);
-  size_t span_start = position;
-  size_t span_end = position;
-  while (ok && position < bound) {
-    if (__atomic_load_n(&allocation->fresh_chunks[position / chunk_bytes],
-                        __ATOMIC_ACQUIRE) != 0) {
-      position += chunk_bytes;
-      continue;
-    }
-    size_t run_end = position;
-    while (run_end < bound &&
-           __atomic_load_n(&allocation->fresh_chunks[run_end / chunk_bytes],
-                           __ATOMIC_ACQUIRE) == 0) {
-      run_end += chunk_bytes;
-    }
-    run_end = std::min(run_end, allocation->storage_size);
-    ok = lupine_fetch_stale_span(allocation, position, run_end);
-    if (ok) {
-      span_end = run_end;
-    }
-    position = run_end;
-  }
-  if (owns_stale) {
-    if (ok) {
-      lupine_finish_demand_fetch(allocation, span_start, span_end);
-    } else {
-      __atomic_store_n(&allocation->device_stale, 1, __ATOMIC_RELEASE);
-    }
-    __atomic_store_n(&allocation->stale_fetch_tid, 0, __ATOMIC_RELEASE);
-  } else if (ok && span_end > span_start) {
-    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
-    mprotect(reinterpret_cast<void *>(allocation->host_base + span_start),
-             span_end - span_start, PROT_READ);
-  }
-  return ok;
 }
 
 // Materialize stale data before the connection is held, then return the
@@ -2391,7 +2654,6 @@ static CUcontext lupine_demand_fetch_context(CUdeviceptr device_ptr) {
 static CUresult lupine_copy_dtoh_pageable(conn_t *conn, void *dstHost,
                                           CUdeviceptr srcDevice,
                                           size_t ByteCount, CUstream hStream);
-
 static bool lupine_arm_stale_fetch(void *host,
                                    lupine_host_allocation &allocation,
                                    conn_t *conn, CUcontext fetch_context,
@@ -2412,6 +2674,86 @@ static bool lupine_arm_stale_fetch(void *host,
   __atomic_store_n(&allocation.device_stale, protected_range ? 1 : previous,
                    __ATOMIC_RELEASE);
   return protected_range;
+}
+
+// Marks a tracked allocation stale, so its next touch fetches the server's
+// copy. Returns 1 once marked, 0 while another thread is updating stale state,
+// and -1 if its pages cannot be protected. Called with
+// lupine_host_allocation_mutex() held.
+static int lupine_mark_stale_locked(lupine_host_allocation &allocation,
+                                    void *host, conn_t *conn,
+                                    CUcontext fetch_context,
+                                    bool defer_while_fetching = false) {
+  sig_atomic_t previous =
+      __atomic_load_n(&allocation.device_stale, __ATOMIC_ACQUIRE);
+  if (previous == 2) {
+    if (!defer_while_fetching) {
+      return 0;
+    }
+    // Never block the push receiver behind a demand fetch whose stream may be
+    // waiting on a host callback that in turn awaits this push watermark.
+    allocation.stale_rearm_pending = true;
+    allocation.stale_rearm_conn = conn;
+    allocation.stale_rearm_context = fetch_context;
+    if (allocation.io_alias != nullptr) {
+      if (allocation.fresh_chunks != nullptr) {
+        memset(allocation.fresh_chunks, 0, allocation.fresh_chunk_count);
+      }
+      (void)lupine_protect_host_range(host, allocation.storage_size, PROT_NONE);
+    }
+    return 1;
+  }
+  sig_atomic_t expected = previous;
+  if (!__atomic_compare_exchange_n(&allocation.device_stale, &expected, 3,
+                                   false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+    return 0;
+  }
+  allocation.stale_rearm_pending = false;
+  bool keep_launch_scope = previous == 1 && allocation.stale_fetch_stream !=
+                                                lupine_stream_fetch_ready();
+  CUstream arm_stream = keep_launch_scope ? allocation.stale_fetch_stream
+                                          : lupine_stream_fetch_ready();
+  uintptr_t arm_scope =
+      keep_launch_scope ? allocation.stale_fetch_scope : RPC_SCOPE_LANE;
+  pid_t arm_ptds_tid = keep_launch_scope ? allocation.stale_fetch_ptds_tid : 0;
+  return lupine_arm_stale_fetch(host, allocation, conn, fetch_context,
+                                arm_stream, arm_scope, arm_ptds_tid, previous)
+             ? 1
+             : -1;
+}
+
+// A pushed copy wrote the server's copy of tracked memory: the client's view
+// of it goes stale behind the copy, as after a synchronize, so the next touch
+// fetches the new bytes. Only tracked memory is refreshed this way.
+static void lupine_mark_pushed_stale(conn_t *conn, void *host) {
+  void *base = nullptr;
+  CUdeviceptr device_ptr = 0;
+  {
+    std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+    auto it = lupine_find_host_allocation_locked(host);
+    if (it == lupine_mutable_host_allocations_locked().end() ||
+        !it->second.tracking_enabled) {
+      return;
+    }
+    base = it->first;
+    device_ptr = it->second.device_ptr;
+  }
+  // Resolved outside lupine_host_allocation_mutex(), as for a synchronize.
+  CUcontext fetch_context = lupine_demand_fetch_context(device_ptr);
+  for (;;) {
+    {
+      std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+      auto it = lupine_mutable_host_allocations_locked().find(base);
+      if (it == lupine_mutable_host_allocations_locked().end() ||
+          !it->second.tracking_enabled ||
+          __atomic_load_n(&it->second.retiring, __ATOMIC_ACQUIRE) != 0 ||
+          lupine_mark_stale_locked(it->second, base, conn, fetch_context,
+                                   true) != 0) {
+        return;
+      }
+    }
+    sched_yield();
+  }
 }
 
 extern "C" void lupine_retire_stale_fetch_stream(CUstream stream) {
@@ -2482,32 +2824,12 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
           hold_for_fallback();
           break;
         }
-        sig_atomic_t previous =
-            __atomic_load_n(&allocation.device_stale, __ATOMIC_ACQUIRE);
-        if (previous != 2) {
-          sig_atomic_t expected = previous;
-          if (__atomic_compare_exchange_n(&allocation.device_stale, &expected,
-                                          3, false, __ATOMIC_ACQ_REL,
-                                          __ATOMIC_ACQUIRE)) {
-            bool keep_launch_scope =
-                previous == 1 &&
-                allocation.stale_fetch_stream != lupine_stream_fetch_ready();
-            CUstream arm_stream = keep_launch_scope
-                                      ? allocation.stale_fetch_stream
-                                      : lupine_stream_fetch_ready();
-            uintptr_t arm_scope = keep_launch_scope
-                                      ? allocation.stale_fetch_scope
-                                      : RPC_SCOPE_LANE;
-            pid_t arm_ptds_tid =
-                keep_launch_scope ? allocation.stale_fetch_ptds_tid : 0;
-            if (lupine_arm_stale_fetch(mapping.host, allocation, conn,
-                                       fetch_context, arm_stream, arm_scope,
-                                       arm_ptds_tid, previous)) {
-              invalidated = true;
-            } else {
-              hold_for_fallback();
-            }
-          }
+        int marked = lupine_mark_stale_locked(allocation, mapping.host, conn,
+                                              fetch_context);
+        if (marked > 0) {
+          invalidated = true;
+        } else if (marked < 0) {
+          hold_for_fallback();
         }
         if (!invalidated && fallback_allocation == nullptr) {
           if (lupine_in_host_callback) {
@@ -2577,7 +2899,7 @@ extern "C" CUresult lupine_sync_mapped_device_to_host() {
     }
   }
 
-  // Deferred DtoH payloads land through the writable alias. Apply those
+  // Pushed DtoH payloads land through the writable alias. Apply those
   // writes after invalidation so their pages remain readable. Staging-backed
   // copies need a later flush; direct pinned copies are already current
   // remotely.
@@ -2789,12 +3111,14 @@ lupine_remote_cuMemHostAlloc(void **remote_host, CUdeviceptr *device_ptr,
 }
 
 static CUresult lupine_remote_cuMemFreeHost(void *remote_host,
-                                            lupine_route route) {
-  if (remote_host == nullptr) {
+                                            lupine_route route,
+                                            bool drain_only) {
+  if (remote_host == nullptr && !drain_only) {
     return CUDA_SUCCESS;
   }
   if (lupine_route_is_local(route)) {
-    return lupine_call_real_cuda_fn("cuMemFreeHost", remote_host);
+    return drain_only ? CUDA_SUCCESS
+                      : lupine_call_real_cuda_fn("cuMemFreeHost", remote_host);
   }
 
   conn_t *conn = lupine_route_remote_conn(route);
@@ -2802,7 +3126,7 @@ static CUresult lupine_remote_cuMemFreeHost(void *remote_host,
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuMemFreeHost) < 0 ||
       rpc_write(conn, &remote_host, sizeof(remote_host)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -3114,6 +3438,19 @@ lupine_retire_and_release_host_allocation(void *p, bool owned_allocation,
   mapping_lock.unlock();
   CUresult result = lupine_release_portable_registrations(
       p, allocation.device_ptr, allocation.portable_routes);
+  for (int route_id : allocation.dtoh_routes) {
+    if (route_id == allocation.route_id ||
+        std::find(allocation.portable_routes.begin(),
+                  allocation.portable_routes.end(),
+                  route_id) != allocation.portable_routes.end()) {
+      continue;
+    }
+    CUresult drain_result = lupine_remote_cuMemFreeHost(
+        nullptr, lupine_route_from_identity(route_id), true);
+    if (result == CUDA_SUCCESS) {
+      result = drain_result;
+    }
+  }
   if (allocation.local_cuda) {
     CUresult primary_result = release(nullptr, p);
     if (primary_result == CUDA_SUCCESS) {
@@ -3126,10 +3463,8 @@ lupine_retire_and_release_host_allocation(void *p, bool owned_allocation,
     }
     return result == CUDA_SUCCESS ? primary_result : result;
   }
-  if (allocation.owned) {
-    lupine_release_owned_host_storage(
-        p, allocation.io_alias, allocation.storage_size, allocation.owned_mmap);
-  }
+  // The server's answer waits for the device-to-host deliveries it numbered
+  // before freeing, so the views are still mapped when they land.
   if (allocation.server_host_ptr != 0) {
     lupine_route route = lupine_route_for_deviceptr(allocation.server_host_ptr);
     CUresult primary_result =
@@ -3144,6 +3479,10 @@ lupine_retire_and_release_host_allocation(void *p, bool owned_allocation,
     if (result == CUDA_SUCCESS) {
       result = primary_result;
     }
+  }
+  if (allocation.owned) {
+    lupine_release_owned_host_storage(
+        p, allocation.io_alias, allocation.storage_size, allocation.owned_mmap);
   }
   return result;
 }
@@ -3930,7 +4269,11 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
       LUPINE_LOG_ERROR("Cross-route DtoD source transport failed");
       return -1;
     }
+    // The readback's delivery number is for the source connection's pushed
+    // copies, which this copy between servers does not read.
+    uint64_t delivered = 0;
     bool read_failed =
+        rpc_read(source->conn, &delivered, sizeof(delivered)) < 0 ||
         rpc_read(source->conn, &result, sizeof(result)) < 0 ||
         (result == CUDA_SUCCESS &&
          rpc_read(source->conn, source->storage.data(), chunk) < 0);
@@ -3989,42 +4332,12 @@ static CUresult lupine_bulk_pull(conn_t *conn, lupine_bulk_lanes *lanes,
 
   void *alias = rpc_host_allocation_alias(conn, destination, bytes);
   std::atomic<bool> received{true};
+  auto *data =
+      static_cast<unsigned char *>(alias != nullptr ? alias : destination);
   auto pull = [&](unsigned int lane) {
-    conn_t *bulk = lanes->conn[lane];
-    int32_t stream_id = lanes->stream[lane];
-    // A bulk sub-request takes no ticket: the copy RPC on the caller's lane
-    // orders it.
-    struct {
-      int request_id;
-      int op;
-      uint64_t ticket;
-      uint64_t copy_id;
-    } request = {2, LUPINE_RPC_lupineBulkRead, ~uint64_t{0}, copy_id};
-    rpc_write_cursor cursor(&request, sizeof(request));
-    if (rpc_http2_write_stream(bulk, stream_id, &cursor, 1) < 0) {
+    if (!lupine_bulk_read_stream(lanes->conn[lane], lanes->stream[lane],
+                                 copy_id, data)) {
       received = false;
-      return;
-    }
-    auto *data =
-        static_cast<unsigned char *>(alias != nullptr ? alias : destination);
-    for (;;) {
-      struct {
-        int request_id;
-        int op;
-        uint64_t offset;
-        uint64_t bytes;
-      } frame;
-      if (rpc_http2_read_stream(bulk, stream_id, &frame, sizeof(frame)) != 0 ||
-          frame.op != -1 ||
-          (frame.bytes != 0 &&
-           rpc_http2_read_stream(bulk, stream_id, data + frame.offset,
-                                 frame.bytes) != 0)) {
-        received = false;
-        return;
-      }
-      if (frame.bytes == 0) {
-        return;
-      }
     }
   };
   std::vector<std::thread> pullers;
@@ -4044,9 +4357,14 @@ static CUresult lupine_bulk_pull(conn_t *conn, lupine_bulk_lanes *lanes,
   pthread_mutex_unlock(&lanes->mutex);
 
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  // The copy waited for its stream, so pushed copies that stream ran land
+  // first.
+  uint64_t delivered = 0;
   if (rpc_read_start(conn, request_id) < 0 ||
+      rpc_read(conn, &delivered, sizeof(delivered)) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0 || !received) {
+      rpc_read_end(conn) < 0 || !received ||
+      lupine_wait_dtoh(conn, delivered) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return return_value;
@@ -4571,9 +4889,10 @@ extern "C" CUresult cuMemcpyAtoHAsync_v2(void *dstHost, CUarray srcArray,
 }
 
 // Another thread's capture on another stream leaves this one blocking.
-static bool lupine_dtoh_blocks(const void *dstHost, CUstream hStream) {
+static bool lupine_dtoh_blocks(const void *dstHost, size_t bytes,
+                               CUstream hStream, conn_t *dtoh_conn = nullptr) {
   CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
-  return !lupine_host_ptr_is_page_locked(dstHost) &&
+  return !lupine_host_range_is_page_locked(dstHost, bytes, dtoh_conn) &&
          (lupine_active_stream_captures.load(std::memory_order_relaxed) == 0 ||
           cuStreamIsCapturing(hStream, &capture_status) != CUDA_SUCCESS ||
           capture_status == CU_STREAM_CAPTURE_STATUS_NONE);
@@ -4586,7 +4905,7 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
     return cuMemcpyDtoH_v2(dstHost, srcDevice, ByteCount);
   }
   if (lupine_route_is_local(route)) {
-    if (ByteCount != 0 && lupine_dtoh_blocks(dstHost, hStream)) {
+    if (ByteCount != 0 && lupine_dtoh_blocks(dstHost, ByteCount, hStream)) {
       return lupine_call_real_cuda_fn("cuMemcpyDtoH_v2", dstHost, srcDevice,
                                       ByteCount);
     }
@@ -4619,22 +4938,19 @@ extern "C" CUresult cuMemcpyDtoHAsync_v2(void *dstHost, CUdeviceptr srcDevice,
     }
   }
 
-  int copy_opcode = pinned_destination ? LUPINE_RPC_lupineMemcpyDtoHAsyncPinned
-                                       : RPC_cuMemcpyDtoHAsync_v2;
+  void *client_dst =
+      pinned_destination && client_alias != nullptr ? client_alias : dstHost;
+  uint8_t refresh = pinned_destination && client_alias == nullptr ? 1 : 0;
   if (lupine_prepare_rpc(conn) < 0 ||
-      lupine_rpc_start_on_stream(conn, copy_opcode, hStream) < 0 ||
-      rpc_write(conn, &dstHost, sizeof(dstHost)) < 0 ||
-      (pinned_destination &&
-       (rpc_write(conn, &client_alias, sizeof(client_alias)) < 0 ||
-        rpc_write(conn, &server_host, sizeof(server_host)) < 0)) ||
+      lupine_rpc_start_on_stream(conn, RPC_cuMemcpyDtoHAsync_v2, hStream) < 0 ||
+      rpc_write(conn, &client_dst, sizeof(client_dst)) < 0 ||
+      rpc_write(conn, &server_host, sizeof(server_host)) < 0 ||
+      rpc_write(conn, &refresh, sizeof(refresh)) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(ByteCount)) < 0 ||
       rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       rpc_write_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (ByteCount != 0) {
-    lupine_event_stale_semaphore_add(1);
   }
   return CUDA_SUCCESS;
 }
@@ -4781,9 +5097,37 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
     }
   }
   if (direction == LUPINE_COPY_DIRECTION_DTOH && api.async && !api.peer) {
-    // Deferred like a linear async copy: the server stages the rows densely
-    // and they land at the next synchronize, which a pageable destination
-    // takes right away.
+    // Pushed like a linear async copy: the server stages the rows densely and
+    // they land once the stream runs the copy, which a pageable destination
+    // waits for right away.
+    bool empty = copy.WidthInBytes == 0 || copy.Height == 0 || copy.Depth == 0;
+    size_t dst_span = 0;
+    bool span_valid = !empty;
+    if (span_valid) {
+      auto mul_ok = [](size_t a, size_t b, size_t *out) {
+        if (b != 0 && a > ~size_t{0} / b) {
+          return false;
+        }
+        *out = a * b;
+        return true;
+      };
+      auto add_ok = [](size_t a, size_t b, size_t *out) {
+        if (a > ~size_t{0} - b) {
+          return false;
+        }
+        *out = a + b;
+        return true;
+      };
+      size_t z_off = 0;
+      size_t y_off = 0;
+      span_valid = mul_ok(copy.Depth - 1, dst_slice_pitch, &z_off) &&
+                   mul_ok(copy.Height - 1, copy.dstPitch, &y_off) &&
+                   add_ok(z_off, y_off, &dst_span) &&
+                   add_ok(dst_span, copy.WidthInBytes, &dst_span);
+    }
+    bool blocks =
+        !empty &&
+        (!span_valid || lupine_dtoh_blocks(dst_base, dst_span, hStream, conn));
     if (lupine_prepare_rpc(conn) < 0 ||
         lupine_rpc_start_on_stream(conn, api.op, hStream) < 0 ||
         rpc_write(conn, &direction, sizeof(direction)) < 0 ||
@@ -4792,13 +5136,22 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
         rpc_write_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
     }
-    if (copy.WidthInBytes * copy.Height * copy.Depth == 0) {
+    if (!blocks) {
       return CUDA_SUCCESS;
     }
-    lupine_event_stale_semaphore_add(1);
-    return lupine_dtoh_blocks(copy.dstHost, hStream)
-               ? cuStreamSynchronize(hStream)
-               : CUDA_SUCCESS;
+    if (lupine_prepare_rpc(conn) < 0 ||
+        lupine_rpc_start_on_stream(conn, RPC_cuStreamSynchronize, hStream) <
+            0 ||
+        rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        lupine_read_dtoh_watermark(conn) < 0 ||
+        lupine_forward_remote_stdout(conn) < 0 ||
+        rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+        rpc_read_end(conn) < 0) {
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
+    return return_value == CUDA_SUCCESS ? lupine_sync_mapped_device_to_host()
+                                        : return_value;
   }
   if (lupine_prepare_rpc(conn) < 0 ||
       lupine_rpc_start_on_stream(conn, api.op, hStream) < 0 ||
@@ -4811,6 +5164,8 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
                          copy.srcPitch, copy.Depth, src_slice_pitch) < 0) ||
       (api.async && rpc_write(conn, &hStream, sizeof(hStream)) < 0) ||
       rpc_wait_for_response(conn) < 0 ||
+      (direction == LUPINE_COPY_DIRECTION_DTOH &&
+       lupine_read_dtoh_watermark(conn) < 0) ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       (direction == LUPINE_COPY_DIRECTION_DTOH &&
        return_value == CUDA_SUCCESS &&

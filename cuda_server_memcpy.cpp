@@ -14,10 +14,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -156,125 +158,11 @@ static CUresult lupine_current_htod_context(conn_t *conn,
   return result == CUDA_SUCCESS ? cuCtxGetDevice(device) : result;
 }
 
-struct lupine_graph_host_copy_node {
-  lupine_graph_host_copy copy;
-  // Zero for heap staging. A pinned buffer is freed only while its buffer id
-  // still matches: destroying its context frees it and the address can return.
-  unsigned long long buffer_id = 0;
-  bool borrowed = false;
-  lupine_graph_host_copy_node *next = nullptr;
-};
+// What a capture's host-to-device side effects are keyed by: the graph it
+// builds, and the streams and events joined to it while it runs. The objects
+// have process lifetime so maps can use stable raw pointers.
+struct lupine_graph_resources {};
 
-struct lupine_graph_resources {
-  void add_dtoh_copy(lupine_graph_host_copy copy, unsigned long long buffer_id,
-                     bool borrowed) {
-    auto *node = new lupine_graph_host_copy_node{copy, buffer_id, borrowed};
-    node->next = dtoh_copies.load(std::memory_order_relaxed);
-    while (!dtoh_copies.compare_exchange_weak(node->next, node,
-                                              std::memory_order_release,
-                                              std::memory_order_relaxed)) {
-    }
-  }
-
-  std::vector<lupine_graph_host_copy> dtoh_copy_snapshot() const {
-    auto copies = earlier == nullptr ? std::vector<lupine_graph_host_copy>()
-                                     : earlier->dtoh_copy_snapshot();
-    size_t first = copies.size();
-    for (auto *node = dtoh_copies.load(std::memory_order_acquire);
-         node != nullptr; node = node->next) {
-      if (node->borrowed && node->buffer_id != 0) {
-        unsigned long long current_id = 0;
-        if (cuPointerGetAttribute(&current_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
-                                  reinterpret_cast<CUdeviceptr>(
-                                      node->copy.server_src)) != CUDA_SUCCESS ||
-            current_id != node->buffer_id) {
-          continue;
-        }
-      }
-      copies.push_back(node->copy);
-    }
-    std::reverse(copies.begin() + first, copies.end());
-    return copies;
-  }
-
-  std::atomic<lupine_graph_host_copy_node *> dtoh_copies{nullptr};
-  // A capture into an existing graph owns that graph's earlier resources,
-  // whose copies run first. Execs of the earlier graph keep only those.
-  lupine_graph_resources *earlier = nullptr;
-  // Graphs, execs and launches whose bytes are undelivered. The object itself
-  // outlives them because callbacks and stream maps keep raw pointers.
-  std::atomic<int> owners{0};
-};
-
-static std::mutex &lupine_retired_dtoh_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
-}
-
-static lupine_graph_host_copy_node *&lupine_retired_dtoh_copies() {
-  static lupine_graph_host_copy_node *copies = nullptr;
-  return copies;
-}
-
-static void lupine_retire_graph_staging(lupine_graph_resources *resources) {
-  auto *head = resources->dtoh_copies.exchange(nullptr);
-  if (head == nullptr) {
-    return;
-  }
-  auto *tail = head;
-  while (tail->next != nullptr) {
-    tail = tail->next;
-  }
-  std::lock_guard<std::mutex> lock(lupine_retired_dtoh_mutex());
-  tail->next = lupine_retired_dtoh_copies();
-  lupine_retired_dtoh_copies() = head;
-}
-
-static void lupine_retain_graph_resources(lupine_graph_resources *resources) {
-  if (resources != nullptr) {
-    resources->owners.fetch_add(1);
-  }
-}
-
-// The last owner can be a delivery inside a CUDA callback, where host memory
-// cannot be freed, so release only retires the staging. Graph and exec
-// destruction free it from a handler thread.
-void lupine_release_graph_resources(lupine_graph_resources *resources) {
-  if (resources != nullptr && resources->owners.fetch_sub(1) == 1) {
-    lupine_retire_graph_staging(resources);
-    lupine_release_graph_resources(std::exchange(resources->earlier, nullptr));
-  }
-}
-
-static void lupine_free_retired_graph_staging() {
-  lupine_graph_host_copy_node *node = nullptr;
-  {
-    std::lock_guard<std::mutex> lock(lupine_retired_dtoh_mutex());
-    std::swap(node, lupine_retired_dtoh_copies());
-  }
-  while (node != nullptr) {
-    void *host = node->copy.server_src;
-    if (host != nullptr) {
-      lupine_forget_undelivered_dtoh(host);
-      if (!node->borrowed) {
-        unsigned long long buffer_id = 0;
-        if (node->buffer_id == 0) {
-          std::free(host);
-        } else if (cuPointerGetAttribute(
-                       &buffer_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
-                       reinterpret_cast<CUdeviceptr>(host)) == CUDA_SUCCESS &&
-                   buffer_id == node->buffer_id) {
-          (void)cuMemFreeHost(host);
-        }
-      }
-    }
-    delete std::exchange(node, node->next);
-  }
-}
-
-// Graph host buffers must remain valid for any queued launch or replay.
-// Graph-resource objects have process lifetime so maps can use stable raw
-// pointers; only their staging is freed when the last owner goes.
 static libcuckoo::cuckoohash_map<CUgraph, lupine_graph_resources *> &
 lupine_graph_resource_map() {
   static auto *resources =
@@ -282,31 +170,10 @@ lupine_graph_resource_map() {
   return *resources;
 }
 
-static libcuckoo::cuckoohash_map<CUgraphExec, lupine_graph_resources *> &
-lupine_graph_exec_resource_map() {
-  static auto *resources =
-      new libcuckoo::cuckoohash_map<CUgraphExec, lupine_graph_resources *>();
-  return *resources;
-}
-
-static libcuckoo::cuckoohash_map<CUstream, lupine_graph_resources *> &
-lupine_stream_capture_resource_map() {
-  static auto *resources =
-      new libcuckoo::cuckoohash_map<CUstream, lupine_graph_resources *>();
-  return *resources;
-}
-
 static libcuckoo::cuckoohash_map<CUstream, lupine_graph_resources *> &
 lupine_active_stream_capture_resource_map() {
   static auto *resources =
       new libcuckoo::cuckoohash_map<CUstream, lupine_graph_resources *>();
-  return *resources;
-}
-
-static libcuckoo::cuckoohash_map<CUevent, lupine_graph_resources *> &
-lupine_event_capture_resource_map() {
-  static auto *resources =
-      new libcuckoo::cuckoohash_map<CUevent, lupine_graph_resources *>();
   return *resources;
 }
 
@@ -330,55 +197,8 @@ static void lupine_erase_capture_resources(Map &map,
   }
 }
 
-template <typename Map, typename Key>
-static lupine_graph_resources *lupine_take_graph_resources(Map &map, Key key) {
-  lupine_graph_resources *resources = nullptr;
-  map.erase_fn(key, [&resources](lupine_graph_resources *stored) {
-    resources = stored;
-    return true;
-  });
-  return resources;
-}
-
-template <typename Map, typename Key>
-static lupine_graph_resources *
-lupine_get_or_create_graph_resources(Map &map, Key key, bool retain_new) {
-  auto *candidate = new lupine_graph_resources();
-  auto *resources = candidate;
-  map.upsert(
-      key,
-      [&resources](lupine_graph_resources *&existing,
-                   libcuckoo::UpsertContext) { resources = existing; },
-      candidate);
-  if (resources != candidate) {
-    delete candidate;
-  } else if (retain_new) {
-    lupine_retain_graph_resources(resources);
-  }
-  return resources;
-}
-
-lupine_graph_resources *lupine_get_graph_resources(CUgraph graph) {
-  return lupine_get_or_create_graph_resources(lupine_graph_resource_map(),
-                                              graph, true);
-}
-
-lupine_graph_resources *lupine_get_stream_resources(CUstream stream) {
-  return lupine_get_or_create_graph_resources(
-      lupine_stream_capture_resource_map(), stream, false);
-}
-
-lupine_graph_resources *lupine_find_stream_resources(CUstream stream) {
-  lupine_graph_resources *resources = nullptr;
-  (void)lupine_stream_capture_resource_map().find(stream, resources);
-  return resources;
-}
-
 lupine_graph_resources *lupine_begin_stream_capture_resources(CUstream stream) {
-  // The map also tracks resources from the last graph launched on a stream.
-  // A new capture needs independent callback ordering and owned storage.
   auto *resources = new lupine_graph_resources();
-  lupine_stream_capture_resource_map().insert_or_assign(stream, resources);
   lupine_active_stream_capture_resource_map().insert_or_assign(stream,
                                                                resources);
   return resources;
@@ -394,8 +214,6 @@ void lupine_discard_stream_capture_resources(
     lupine_graph_resources *resources) {
   lupine_erase_capture_resources(lupine_active_stream_capture_resource_map(),
                                  resources);
-  lupine_erase_capture_resources(lupine_stream_capture_resource_map(),
-                                 resources);
 }
 
 void lupine_finish_stream_capture_resources(CUstream stream, CUgraph graph,
@@ -409,193 +227,881 @@ void lupine_finish_stream_capture_resources(CUstream stream, CUgraph graph,
                                  resources);
   lupine_erase_capture_resources(lupine_active_event_capture_resource_map(),
                                  resources);
-  lupine_erase_capture_resources(lupine_stream_capture_resource_map(),
-                                 resources);
   if (success) {
-    resources->earlier =
-        lupine_take_graph_resources(lupine_graph_resource_map(), graph);
-    lupine_retain_graph_resources(resources);
     lupine_graph_resource_map().insert_or_assign(graph, resources);
-  } else {
-    lupine_retire_graph_staging(resources);
   }
 }
 
 void lupine_record_event_capture_resources(CUevent event, CUstream stream) {
-  auto record = [&](auto &stream_map, auto &event_map) {
-    lupine_graph_resources *resources = nullptr;
-    if (stream_map.find(stream, resources) && resources != nullptr) {
-      event_map.insert_or_assign(event, resources);
-    } else {
-      event_map.erase(event);
-    }
-  };
-  record(lupine_stream_capture_resource_map(),
-         lupine_event_capture_resource_map());
-  record(lupine_active_stream_capture_resource_map(),
-         lupine_active_event_capture_resource_map());
+  lupine_graph_resources *resources = nullptr;
+  (void)lupine_active_stream_capture_resource_map().find(stream, resources);
+  if (resources == nullptr) {
+    lupine_active_event_capture_resource_map().erase(event);
+  } else {
+    lupine_active_event_capture_resource_map().insert_or_assign(event,
+                                                                resources);
+  }
 }
 
 void lupine_forget_event_capture_resources(CUevent event) {
-  lupine_event_capture_resource_map().erase(event);
   lupine_active_event_capture_resource_map().erase(event);
 }
 
 void lupine_wait_event_capture_resources(CUstream stream, CUevent event) {
   lupine_graph_resources *resources = nullptr;
-  if (lupine_event_capture_resource_map().find(event, resources)) {
-    lupine_stream_capture_resource_map().insert_or_assign(stream, resources);
-  }
   if (lupine_active_event_capture_resource_map().find(event, resources)) {
     lupine_active_stream_capture_resource_map().insert(stream, resources);
   }
 }
 
-void lupine_clone_graph_resources(CUgraph clone, CUgraph original) {
-  lupine_graph_resources *resources = nullptr;
-  if (lupine_graph_resource_map().find(original, resources)) {
-    lupine_retain_graph_resources(resources);
-    lupine_graph_resource_map().insert_or_assign(clone, resources);
-  }
-}
-
-void lupine_erase_graph_resources(CUgraph graph) {
-  lupine_release_graph_resources(
-      lupine_take_graph_resources(lupine_graph_resource_map(), graph));
-  lupine_free_retired_graph_staging();
-}
-
-static void lupine_rebind_graph_exec_resources(CUgraphExec exec,
-                                               CUgraph graph) {
-  lupine_graph_resources *resources = nullptr;
-  (void)lupine_graph_resource_map().find(graph, resources);
-  lupine_retain_graph_resources(resources);
-  auto *previous =
-      lupine_take_graph_resources(lupine_graph_exec_resource_map(), exec);
-  if (resources != nullptr) {
-    lupine_graph_exec_resource_map().insert_or_assign(exec, resources);
-  }
-  lupine_release_graph_resources(previous);
-  lupine_free_retired_graph_staging();
-}
-
-void lupine_note_graph_launch(conn_t *conn, CUgraphExec exec, CUstream stream,
-                              CUresult result) {
-  lupine_graph_resources *resources = nullptr;
-  (void)lupine_graph_exec_resource_map().find(exec, resources);
-  if (result == CUDA_SUCCESS && resources != nullptr) {
-    const auto copies = resources->dtoh_copy_snapshot();
-    if (!copies.empty()) {
-      CUcontext context = nullptr;
-      (void)cuStreamGetCtx(stream, &context);
-      lupine_pending_dtoh_items pending;
-      for (const auto &copy : copies) {
-        lupine_retain_graph_resources(resources);
-        pending.push_back({nullptr, copy.client, copy.server_src,
-                           lupine_dtoh_storage::borrowed, context, resources});
-      }
-      lupine_queue_pending_dtoh_copies(conn, stream, pending.data(),
-                                       pending.size());
-    }
-    lupine_stream_capture_resource_map().insert_or_assign(stream, resources);
-  }
-}
-
-std::vector<lupine_graph_host_copy>
-lupine_graph_dtoh_copy_snapshot(lupine_graph_resources *resources) {
-  auto copies = resources == nullptr ? std::vector<lupine_graph_host_copy>()
-                                     : resources->dtoh_copy_snapshot();
-  for (const auto &copy : copies) {
-    lupine_forget_undelivered_dtoh(copy.server_src);
-  }
-  return copies;
-}
-
-// Each captured copy owns its staging until its graph resources lose their
-// last owner.
-// Host allocation is an unsafe call under global or thread-local capture and
-// would invalidate the capture, so it runs in relaxed mode.
-void *lupine_alloc_capture_scratch(size_t bytes) {
-  void *host = nullptr;
-  CUstreamCaptureMode mode = CU_STREAM_CAPTURE_MODE_RELAXED;
-  (void)cuThreadExchangeStreamCaptureMode(&mode);
-  if (bytes != 0 && cuMemAllocHost(&host, bytes) != CUDA_SUCCESS) {
-    host = nullptr;
-  }
-  (void)cuThreadExchangeStreamCaptureMode(&mode);
-  return host;
-}
-
-void lupine_graph_note_dtoh_copy(lupine_graph_resources *resources,
-                                 const lupine_host_rows &client,
-                                 void *server_src, bool borrowed) {
-  unsigned long long buffer_id = 0;
-  if (server_src != nullptr &&
-      cuPointerGetAttribute(&buffer_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
-                            reinterpret_cast<CUdeviceptr>(server_src)) !=
-          CUDA_SUCCESS) {
-    buffer_id = 0;
-  }
-  resources->add_dtoh_copy({client, server_src}, buffer_id, borrowed);
-}
-
-// A DtoH the stream has executed whose bytes have not been delivered to the
-// client yet. Set from a host callback queued behind the copy, so it reflects
-// execution order (and re-arms on every graph replay), not enqueue order;
-// forgotten when the bytes are delivered.
-struct lupine_undelivered_dtoh {
-  conn_t *conn = nullptr;
-  lupine_host_rows client;
-  void *server_src = nullptr;
-  // Graph host-node data lives as long as the graph resources.
-  bool persistent = false;
-};
-
-static std::mutex &lupine_undelivered_dtoh_mutex() {
+static std::mutex &lupine_dtoh_graph_nodes_mutex() {
   static auto *mutex = new std::mutex();
   return *mutex;
 }
 
-static std::vector<lupine_undelivered_dtoh> &lupine_undelivered_dtoh_list() {
-  static auto *list = new std::vector<lupine_undelivered_dtoh>();
-  return *list;
+static std::unordered_map<CUgraphNode, CUgraph> &lupine_dtoh_node_graph_map() {
+  static auto *map = new std::unordered_map<CUgraphNode, CUgraph>();
+  return *map;
 }
 
-void lupine_forget_undelivered_dtoh(const void *server_src) {
-  std::lock_guard<std::mutex> lock(lupine_undelivered_dtoh_mutex());
-  auto &list = lupine_undelivered_dtoh_list();
-  list.erase(
-      std::remove_if(list.begin(), list.end(),
-                     [server_src](const lupine_undelivered_dtoh &undelivered) {
-                       return undelivered.server_src == server_src;
-                     }),
-      list.end());
+static std::unordered_map<CUgraph, std::vector<CUgraphNode>> &
+lupine_dtoh_graph_push_nodes_map() {
+  static auto *map =
+      new std::unordered_map<CUgraph, std::vector<CUgraphNode>>();
+  return *map;
 }
 
-static void CUDA_CB lupine_dtoh_undelivered_callback(void *opaque) {
-  auto *undelivered = static_cast<lupine_undelivered_dtoh *>(opaque);
-  lupine_forget_undelivered_dtoh(undelivered->server_src);
-  try {
-    std::lock_guard<std::mutex> lock(lupine_undelivered_dtoh_mutex());
-    lupine_undelivered_dtoh_list().push_back(*undelivered);
-  } catch (...) {
-    LUPINE_LOG_ERROR("Failed to record an undelivered DtoH copy");
+void lupine_clone_graph_resources(CUgraph clone, CUgraph original) {
+  lupine_graph_resources *resources = nullptr;
+  if (lupine_graph_resource_map().find(original, resources)) {
+    lupine_graph_resource_map().insert_or_assign(clone, resources);
   }
-  if (!undelivered->persistent) {
-    delete undelivered;
+  std::vector<CUgraphNode> original_nodes;
+  {
+    std::lock_guard<std::mutex> lock(lupine_dtoh_graph_nodes_mutex());
+    auto it = lupine_dtoh_graph_push_nodes_map().find(original);
+    if (it != lupine_dtoh_graph_push_nodes_map().end()) {
+      original_nodes = it->second;
+    }
+  }
+  if (!original_nodes.empty()) {
+    std::vector<CUgraphNode> cloned_nodes;
+    for (CUgraphNode orig_push : original_nodes) {
+      CUgraphNode cloned_push = nullptr;
+      if (cuGraphNodeFindInClone(&cloned_push, orig_push, clone) ==
+              CUDA_SUCCESS &&
+          cloned_push != nullptr) {
+        cloned_nodes.push_back(cloned_push);
+      }
+    }
+    if (!cloned_nodes.empty()) {
+      std::lock_guard<std::mutex> lock(lupine_dtoh_graph_nodes_mutex());
+      auto &slot = lupine_dtoh_graph_push_nodes_map()[clone];
+      for (CUgraphNode cloned_push : cloned_nodes) {
+        lupine_dtoh_node_graph_map()[cloned_push] = clone;
+        slot.push_back(cloned_push);
+      }
+    }
   }
 }
 
-static void lupine_note_dtoh_undelivered(conn_t *conn, CUstream stream,
-                                         const lupine_host_rows &client,
-                                         void *server_src, bool persistent) {
-  auto *undelivered = new (std::nothrow)
-      lupine_undelivered_dtoh{conn, client, server_src, persistent};
-  if (undelivered != nullptr &&
-      cuLaunchHostFunc(stream, lupine_dtoh_undelivered_callback, undelivered) !=
+static void lupine_free_retired_dtoh_staging();
+
+void lupine_erase_graph_resources(CUgraph graph) {
+  lupine_graph_resource_map().erase(graph);
+  {
+    std::lock_guard<std::mutex> lock(lupine_dtoh_graph_nodes_mutex());
+    auto it = lupine_dtoh_graph_push_nodes_map().find(graph);
+    if (it != lupine_dtoh_graph_push_nodes_map().end()) {
+      for (CUgraphNode push : it->second) {
+        lupine_dtoh_node_graph_map().erase(push);
+      }
+      lupine_dtoh_graph_push_nodes_map().erase(it);
+    }
+  }
+  lupine_free_retired_dtoh_staging();
+}
+
+// Pinned staging a one-shot copy lands in, or a graph copy's scratch.
+struct lupine_dtoh_staging {
+  void *host = nullptr;
+  // Zero for heap memory, which needs no pinning bookkeeping.
+  size_t capacity = 0;
+  unsigned long long buffer_id = 0;
+};
+
+// A delivery's copy id when it carries no bytes: the copy wrote the server's
+// copy of memory the client refreshes on access, so the client marks it stale.
+static constexpr uint64_t kLupineDtohInvalidate = ~uint64_t{0};
+
+// A device-to-host copy on its way to the client.
+struct lupine_dtoh_delivery {
+  uint64_t number = 0;
+  lupine_host_rows client;
+  lupine_dtoh_staging bytes;
+  bool invalidate = false;
+  // Staging capacity this delivery holds against kLupineDtohPushLimitBytes.
+  size_t reserved = 0;
+};
+
+// Staging held by queued copies, from submission until the bytes are sent.
+// Handlers about to queue more device-to-host work wait while this is
+// exceeded, so a slow client or a long kernel bounds server memory; a CUDA
+// callback never waits.
+static constexpr size_t kLupineDtohPushLimitBytes = 256ull << 20;
+// Deliveries this large leave over a bulk connection, so they do not hold up
+// answers on the session connection.
+static constexpr size_t kLupineDtohBulkBytes = 8ull << 20;
+
+struct lupine_dtoh_push {
+  conn_t *conn = nullptr;
+  std::mutex mutex;
+  std::condition_variable changed;
+  std::deque<lupine_dtoh_delivery> queue;
+  size_t reserved_bytes = 0;
+  bool sending = false;
+  std::atomic<uint64_t> queued{0};
+  std::atomic<uint64_t> assigned{0};
+  std::atomic<bool> graph_dtoh{false};
+};
+
+// Created by whichever comes first, a copy or the client's push lane, and never
+// freed: callbacks still queued on a stream may outlive the connection.
+static lupine_dtoh_push *lupine_dtoh_push_for(conn_t *conn) {
+  return rpc_dtoh_state<lupine_dtoh_push>(
+      conn, [](lupine_dtoh_push *push, conn_t *owner) { push->conn = owner; });
+}
+
+uint64_t lupine_dtoh_watermark(conn_t *conn) {
+  return lupine_dtoh_push_for(conn)->assigned.load(std::memory_order_acquire);
+}
+
+void lupine_dtoh_sync_contexts(conn_t *conn) {
+  if (conn == nullptr) {
+    return;
+  }
+  auto *push = static_cast<lupine_dtoh_push *>(
+      __atomic_load_n(&conn->dtoh_push, __ATOMIC_ACQUIRE));
+  if (push == nullptr || (!push->graph_dtoh.load(std::memory_order_acquire) &&
+                          push->assigned.load(std::memory_order_acquire) ==
+                              push->queued.load(std::memory_order_acquire))) {
+    return;
+  }
+  std::vector<CUcontext> contexts;
+  CUcontext current = nullptr;
+  if (cuCtxGetCurrent(&current) == CUDA_SUCCESS && current != nullptr) {
+    contexts.push_back(current);
+  }
+  if (lupine_staging_state *state = lupine_staging_state_for(conn)) {
+    std::lock_guard<std::mutex> lock(state->mutex);
+    auto add_ctx = [&](CUcontext ctx, CUdevice dev, bool has_dev) {
+      if (ctx == nullptr || state->teardown_contexts.count(ctx) != 0 ||
+          (has_dev && state->teardown_devices.count(dev) != 0)) {
+        return;
+      }
+      if (std::find(contexts.begin(), contexts.end(), ctx) == contexts.end()) {
+        contexts.push_back(ctx);
+      }
+    };
+    for (const auto &entry : state->primary_contexts) {
+      add_ctx(entry.second, entry.first, true);
+    }
+    for (CUcontext ctx : state->created_contexts) {
+      add_ctx(ctx, 0, false);
+    }
+  }
+  for (CUcontext ctx : contexts) {
+    if (cuCtxPushCurrent_v2(ctx) == CUDA_SUCCESS) {
+      (void)cuCtxSynchronize();
+      CUcontext popped = nullptr;
+      (void)cuCtxPopCurrent_v2(&popped);
+    }
+  }
+}
+
+static unsigned long long lupine_pinned_buffer_id(void *host) {
+  unsigned long long buffer_id = 0;
+  if (host == nullptr ||
+      cuPointerGetAttribute(&buffer_id, CU_POINTER_ATTRIBUTE_BUFFER_ID,
+                            reinterpret_cast<CUdeviceptr>(host)) !=
           CUDA_SUCCESS) {
-    delete undelivered;
+    return 0;
   }
+  return buffer_id;
+}
+
+// Sent staging comes back to a pool, since pinning memory costs more than a
+// small copy, and the sender could not free it anyway: freeing pinned memory
+// can wait for the device, which may be waiting for a host callback, which may
+// be waiting for a delivery. The pool evicts to make room, and what it does not
+// keep, and graph scratch, is retired for a handler thread to free. The buffer
+// id guards against a context teardown having freed a buffer and its address
+// having come back.
+static constexpr size_t kLupineDtohPoolBytes = 256ull << 20;
+static constexpr size_t kLupineDtohMinStagingBytes = 4096;
+
+static std::mutex &lupine_dtoh_staging_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+static std::vector<lupine_dtoh_staging> &lupine_dtoh_staging_pool() {
+  static auto *pool = new std::vector<lupine_dtoh_staging>();
+  return *pool;
+}
+
+static std::vector<lupine_dtoh_staging> &lupine_retired_dtoh_staging() {
+  static auto *retired = new std::vector<lupine_dtoh_staging>();
+  return *retired;
+}
+
+static size_t lupine_dtoh_pooled_bytes = 0;
+
+static size_t lupine_dtoh_staging_capacity(size_t bytes) {
+  size_t capacity = kLupineDtohMinStagingBytes;
+  while (capacity < bytes) {
+    capacity *= 2;
+  }
+  return capacity;
+}
+
+static CUresult lupine_alloc_dtoh_host(conn_t *conn, CUstream stream,
+                                       void **host, size_t bytes) {
+  CUresult result = cuMemAllocHost(host, bytes);
+  if (result != CUDA_ERROR_INVALID_CONTEXT) {
+    return result;
+  }
+  CUcontext ctx = nullptr;
+  if (stream != nullptr && stream != CU_STREAM_LEGACY &&
+      stream != CU_STREAM_PER_THREAD &&
+      cuStreamGetCtx(stream, &ctx) == CUDA_SUCCESS && ctx != nullptr &&
+      cuCtxSetCurrent(ctx) == CUDA_SUCCESS) {
+    return cuMemAllocHost(host, bytes);
+  }
+  if (lupine_staging_state *state = lupine_staging_state_for(conn)) {
+    ctx = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(state->mutex);
+      for (const auto &entry : state->primary_contexts) {
+        if (entry.second != nullptr &&
+            state->teardown_contexts.count(entry.second) == 0 &&
+            state->teardown_devices.count(entry.first) == 0) {
+          ctx = entry.second;
+          break;
+        }
+      }
+      if (ctx == nullptr) {
+        for (CUcontext created : state->created_contexts) {
+          if (created != nullptr &&
+              state->teardown_contexts.count(created) == 0) {
+            ctx = created;
+            break;
+          }
+        }
+      }
+    }
+    if (ctx != nullptr && cuCtxSetCurrent(ctx) == CUDA_SUCCESS) {
+      return cuMemAllocHost(host, bytes);
+    }
+  }
+  return result;
+}
+
+static lupine_dtoh_staging
+lupine_take_dtoh_staging(conn_t *conn, CUstream stream, size_t bytes) {
+  size_t capacity = lupine_dtoh_staging_capacity(bytes);
+  lupine_dtoh_staging staging;
+  {
+    std::lock_guard<std::mutex> lock(lupine_dtoh_staging_mutex());
+    auto &pool = lupine_dtoh_staging_pool();
+    auto it = std::find_if(pool.begin(), pool.end(), [&](const auto &entry) {
+      return entry.capacity == capacity;
+    });
+    if (it != pool.end()) {
+      staging = *it;
+      *it = pool.back();
+      pool.pop_back();
+      lupine_dtoh_pooled_bytes -= capacity;
+    }
+  }
+  if (staging.host != nullptr &&
+      lupine_pinned_buffer_id(staging.host) == staging.buffer_id) {
+    return staging;
+  }
+  if (lupine_alloc_dtoh_host(conn, stream, &staging.host, capacity) ==
+      CUDA_SUCCESS) {
+    return {staging.host, capacity, lupine_pinned_buffer_id(staging.host)};
+  }
+  return {std::malloc(bytes), 0, 0};
+}
+
+static void lupine_give_back_dtoh_staging(const lupine_dtoh_staging &staging) {
+  if (staging.buffer_id == 0) {
+    std::free(staging.host);
+    return;
+  }
+  std::lock_guard<std::mutex> lock(lupine_dtoh_staging_mutex());
+  auto &pool = lupine_dtoh_staging_pool();
+  auto &retired = lupine_retired_dtoh_staging();
+  if (staging.capacity == 0 || staging.capacity > kLupineDtohPoolBytes) {
+    retired.push_back(staging);
+    return;
+  }
+  while (lupine_dtoh_pooled_bytes + staging.capacity > kLupineDtohPoolBytes) {
+    lupine_dtoh_pooled_bytes -= pool.front().capacity;
+    retired.push_back(pool.front());
+    pool.erase(pool.begin());
+  }
+  pool.push_back(staging);
+  lupine_dtoh_pooled_bytes += staging.capacity;
+}
+
+static void lupine_free_retired_dtoh_staging() {
+  std::vector<lupine_dtoh_staging> retired;
+  {
+    std::lock_guard<std::mutex> lock(lupine_dtoh_staging_mutex());
+    retired.swap(lupine_retired_dtoh_staging());
+  }
+  for (const auto &staging : retired) {
+    if (lupine_pinned_buffer_id(staging.host) == staging.buffer_id) {
+      (void)cuMemFreeHost(staging.host);
+    }
+  }
+}
+
+// What the host function queued behind a copy delivers. A one-shot copy hands
+// over the staging it landed in; a graph copy's scratch is rewritten by the
+// next replay, so each run snapshots it. With no staging at all, the copy
+// wrote the server's copy of memory the client refreshes, which only has to be
+// marked stale.
+struct lupine_dtoh_push_data {
+  lupine_dtoh_push *push = nullptr;
+  lupine_host_rows client;
+  lupine_dtoh_staging source;
+  bool one_shot = true;
+  size_t reserved = 0;
+  CUgraph graph = nullptr;
+};
+
+// Numbers the copy and hands it to the push lane. It runs in stream order, so
+// anything that observes the stream past this point -- a synchronize, an event,
+// a host function on any stream that waited for it -- reads a watermark that
+// covers it.
+static void CUDA_CB lupine_dtoh_push_callback(void *opaque) {
+  auto *data = static_cast<lupine_dtoh_push_data *>(opaque);
+  bool invalidate = data->source.host == nullptr;
+  lupine_dtoh_delivery delivery{0, data->client, data->source, invalidate,
+                                data->reserved};
+  if (!data->one_shot && !invalidate) {
+    size_t bytes = delivery.client.bytes();
+    delivery.bytes = {std::malloc(bytes), 0, 0};
+    delivery.reserved = bytes;
+    if (delivery.bytes.host == nullptr && bytes != 0) {
+      // Still numbered, so no client waits for a number never sent, but the
+      // next synchronize reports the lost copy.
+      lupine_keep_async_error(data->push->conn, CUDA_ERROR_OUT_OF_MEMORY);
+      delivery.client = {};
+      delivery.reserved = 0;
+    } else if (bytes != 0) {
+      memcpy(delivery.bytes.host, data->source.host, bytes);
+    }
+  }
+  lupine_dtoh_push *push = data->push;
+  {
+    std::lock_guard<std::mutex> lock(push->mutex);
+    delivery.number = push->assigned.load(std::memory_order_relaxed) + 1;
+    if (!data->one_shot) {
+      push->reserved_bytes += delivery.reserved;
+    }
+    push->queue.push_back(delivery);
+    push->assigned.store(delivery.number, std::memory_order_release);
+  }
+  push->changed.notify_all();
+  if (data->one_shot) {
+    delete data;
+  }
+}
+
+static void lupine_serve_host_bulk_read(conn_t *conn, uint64_t copy_id,
+                                        const void *host, size_t bytes);
+static void lupine_open_push_bulk();
+static void lupine_close_push_bulk();
+static bool lupine_bulk_lost();
+static void lupine_bulk_wake();
+
+// The client opens one lane per connection for its deliveries, saying whether
+// it reads large ones over a bulk connection, and sends nothing more on it.
+// This handler keeps that lane until the connection closes, sending each
+// delivery in number order as {number, copy id, rows}, then the bytes unless
+// the bulk connection carries them or the copy id says the delivery has none.
+int handle_lupineDtohPush(conn_t *conn) {
+  uint64_t bulk_reader = 0;
+  if (rpc_read(conn, &bulk_reader, sizeof(bulk_reader)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    return -1;
+  }
+  if (bulk_reader != 0) {
+    lupine_open_push_bulk();
+  }
+  int32_t stream_id = rpc_current_http2_stream(conn);
+  lupine_dtoh_push *push = lupine_dtoh_push_for(conn);
+  std::unique_lock<std::mutex> lock(push->mutex);
+  for (;;) {
+    push->changed.wait(lock,
+                       [&] { return conn->closed || !push->queue.empty(); });
+    if (conn->closed) {
+      break;
+    }
+    lupine_dtoh_delivery delivery = push->queue.front();
+    push->queue.pop_front();
+    push->sending = true;
+    lock.unlock();
+    size_t bytes = delivery.client.bytes();
+    bool bulk = bulk_reader != 0 && !lupine_bulk_lost() &&
+                bytes >= kLupineDtohBulkBytes && delivery.client.height == 1 &&
+                delivery.client.depth == 1;
+    uint64_t copy_id = delivery.invalidate ? kLupineDtohInvalidate
+                       : bulk ? (uint64_t{1} << 62) | delivery.number
+                              : 0;
+    std::vector<rpc_write_cursor> cursors = {
+        rpc_write_cursor(&delivery.number, sizeof(delivery.number)),
+        rpc_write_cursor(&copy_id, sizeof(copy_id)),
+        rpc_write_cursor(&delivery.client, sizeof(delivery.client)),
+        rpc_write_cursor(delivery.bytes.host,
+                         bulk || delivery.invalidate ? 0 : bytes)};
+    int sent = rpc_http2_write_stream(conn, stream_id, cursors);
+    if (sent == 0 && bulk) {
+      lupine_serve_host_bulk_read(conn, copy_id, delivery.bytes.host, bytes);
+    }
+    lupine_give_back_dtoh_staging(delivery.bytes);
+    lock.lock();
+    push->sending = false;
+    push->reserved_bytes -= delivery.reserved;
+    push->changed.notify_all();
+    if (sent < 0) {
+      break;
+    }
+  }
+  // Nothing sends the rest any more; their staging is no longer in use.
+  for (const auto &delivery : push->queue) {
+    lupine_give_back_dtoh_staging(delivery.bytes);
+    push->reserved_bytes -= delivery.reserved;
+  }
+  push->queue.clear();
+  push->changed.notify_all();
+  lock.unlock();
+  if (bulk_reader != 0) {
+    lupine_close_push_bulk();
+  }
+  return 0;
+}
+
+void lupine_dtoh_wake(conn_t *conn) {
+  auto *push = static_cast<lupine_dtoh_push *>(
+      __atomic_load_n(&conn->dtoh_push, __ATOMIC_ACQUIRE));
+  if (push != nullptr) {
+    std::lock_guard<std::mutex> lock(push->mutex);
+    push->changed.notify_all();
+  }
+  lupine_bulk_wake();
+}
+
+// Admits `capacity` bytes of staging once the queue has room.
+static void lupine_dtoh_reserve(lupine_dtoh_push *push, size_t capacity) {
+  lupine_free_retired_dtoh_staging();
+  std::unique_lock<std::mutex> lock(push->mutex);
+  push->changed.wait(lock, [&] {
+    return push->conn->closed || push->reserved_bytes == 0 ||
+           push->reserved_bytes + capacity <= kLupineDtohPushLimitBytes;
+  });
+  push->reserved_bytes += capacity;
+}
+
+void lupine_dtoh_wait_for_room(conn_t *conn) {
+  lupine_dtoh_push *push = lupine_dtoh_push_for(conn);
+  lupine_dtoh_reserve(push, 0);
+}
+
+void lupine_dtoh_drain(conn_t *conn) {
+  lupine_dtoh_push *push = lupine_dtoh_push_for(conn);
+  std::unique_lock<std::mutex> lock(push->mutex);
+  push->changed.wait(lock, [&] {
+    return conn->closed || (push->queue.empty() && !push->sending);
+  });
+}
+
+template <typename CopyFn>
+static CUresult lupine_capture_dtoh(conn_t *conn, CUstream stream,
+                                    const lupine_host_rows &client,
+                                    CopyFn &&copy_to_host, void *mirror,
+                                    bool refresh);
+
+// Queues a device-to-host copy into client memory on `stream`, and the host
+// function that numbers it once the stream has run it. The copy lands in
+// staging of its own that is pushed to `client`; with `mirror`, the server's
+// copy of the destination is updated from it on the stream first. With
+// `refresh`, the copy lands in `mirror` alone and the client is told to mark
+// `client` stale, to fetch it from there on access. While the stream captures,
+// all of this is recorded into its graph.
+template <typename CopyFn>
+static CUresult lupine_push_dtoh_with(conn_t *conn, CUstream stream,
+                                      const lupine_host_rows &client,
+                                      CopyFn &&copy_to_host, void *mirror,
+                                      bool refresh) {
+  size_t bytes = client.bytes();
+  CUstreamCaptureStatus capture = CU_STREAM_CAPTURE_STATUS_NONE;
+  if (stream != nullptr) {
+    (void)cuStreamIsCapturing(stream, &capture);
+  }
+  if (capture != CU_STREAM_CAPTURE_STATUS_NONE) {
+    return lupine_capture_dtoh(conn, stream, client,
+                               std::forward<CopyFn>(copy_to_host), mirror,
+                               refresh);
+  }
+  if (bytes == 0) {
+    return CUDA_SUCCESS;
+  }
+  lupine_dtoh_push *push = lupine_dtoh_push_for(conn);
+  lupine_dtoh_staging staging;
+  CUresult result = CUDA_SUCCESS;
+  if (refresh) {
+    lupine_dtoh_reserve(push, 0);
+    result = copy_to_host(mirror, stream);
+  } else {
+    lupine_dtoh_reserve(push, lupine_dtoh_staging_capacity(bytes));
+    staging = lupine_take_dtoh_staging(conn, stream, bytes);
+    result = staging.host == nullptr ? CUDA_ERROR_OUT_OF_MEMORY
+                                     : copy_to_host(staging.host, stream);
+    if (result == CUDA_SUCCESS && mirror != nullptr) {
+      result = cuMemcpyAsync(reinterpret_cast<CUdeviceptr>(mirror),
+                             reinterpret_cast<CUdeviceptr>(staging.host), bytes,
+                             stream);
+    }
+  }
+  size_t reserved = refresh ? 0 : lupine_dtoh_staging_capacity(bytes);
+  if (result == CUDA_SUCCESS) {
+    auto *data =
+        new lupine_dtoh_push_data{push, client, staging, true, reserved};
+    push->queued.fetch_add(1, std::memory_order_acq_rel);
+    result = cuLaunchHostFunc(stream, lupine_dtoh_push_callback, data);
+    if (result == CUDA_SUCCESS) {
+      return result;
+    }
+    push->queued.fetch_sub(1, std::memory_order_acq_rel);
+    delete data;
+    // The copy may still be running into the staging, which is therefore
+    // left alone rather than reused.
+    staging = {};
+  }
+  lupine_give_back_dtoh_staging(staging);
+  std::lock_guard<std::mutex> lock(push->mutex);
+  push->reserved_bytes -= reserved;
+  push->changed.notify_all();
+  return result;
+}
+
+CUresult lupine_push_dtoh(conn_t *conn, CUstream stream,
+                          const lupine_host_rows &client, CUdeviceptr source,
+                          void *mirror, bool refresh) {
+  size_t bytes = client.bytes();
+  return lupine_push_dtoh_with(
+      conn, stream, client,
+      [&](void *dst, CUstream s) {
+        return refresh ? cuMemcpyAsync(reinterpret_cast<CUdeviceptr>(dst),
+                                       source, bytes, s)
+                       : cuMemcpyDtoHAsync_v2(dst, source, bytes, s);
+      },
+      mirror, refresh);
+}
+
+// A graph copy's staging and push data serve every replay, and live until the
+// graph and everything instantiated, cloned or launched from it is gone,
+// which CUDA tracks with a user object. Its destructor cannot call CUDA, so it
+// retires the staging for a handler thread to free.
+static void CUDA_CB lupine_release_graph_dtoh(void *opaque) {
+  auto *data = static_cast<lupine_dtoh_push_data *>(opaque);
+  lupine_give_back_dtoh_staging(data->source);
+  delete data;
+}
+
+struct lupine_dtoh_exec_entries {
+  conn_t *conn = nullptr;
+  std::vector<lupine_dtoh_push_data *> entries;
+};
+
+static std::mutex &lupine_dtoh_exec_mutex() {
+  static auto *mutex = new std::mutex();
+  return *mutex;
+}
+
+static std::unordered_map<CUgraphExec, lupine_dtoh_exec_entries> &
+lupine_dtoh_exec_map() {
+  static auto *map =
+      new std::unordered_map<CUgraphExec, lupine_dtoh_exec_entries>();
+  return *map;
+}
+
+static lupine_dtoh_push_data *
+lupine_own_graph_dtoh(conn_t *conn, CUgraph graph,
+                      const lupine_host_rows &client, void *source) {
+  lupine_dtoh_push *push = lupine_dtoh_push_for(conn);
+  push->graph_dtoh.store(true, std::memory_order_release);
+  auto *data = new lupine_dtoh_push_data{
+      push,  client, {source, 0, lupine_pinned_buffer_id(source)},
+      false, 0,      graph};
+  CUuserObject object = nullptr;
+  if (cuUserObjectCreate(&object, data, lupine_release_graph_dtoh, 1,
+                         CU_USER_OBJECT_NO_DESTRUCTOR_SYNC) != CUDA_SUCCESS) {
+    lupine_release_graph_dtoh(data);
+    return nullptr;
+  }
+  if (cuGraphRetainUserObject(graph, object, 1, CU_GRAPH_USER_OBJECT_MOVE) !=
+      CUDA_SUCCESS) {
+    (void)cuUserObjectRelease(object, 1);
+    return nullptr;
+  }
+  return data;
+}
+
+// A captured copy lands in staging the capture's graph owns, and the push
+// behind it is captured too, so each replay delivers its own bytes. A copy the
+// client refreshes from the server lands in the server's copy instead, and each
+// replay tells the client to mark it stale.
+template <typename CopyFn>
+static CUresult lupine_capture_dtoh(conn_t *conn, CUstream stream,
+                                    const lupine_host_rows &client,
+                                    CopyFn &&copy_to_host, void *mirror,
+                                    bool refresh) {
+  size_t bytes = client.bytes();
+  if (bytes == 0) {
+    return CUDA_SUCCESS;
+  }
+  CUstreamCaptureStatus status = CU_STREAM_CAPTURE_STATUS_NONE;
+  CUgraph graph = nullptr;
+  CUresult result = cuStreamGetCaptureInfo_v3(stream, &status, nullptr, &graph,
+                                              nullptr, nullptr, nullptr);
+  if (result != CUDA_SUCCESS) {
+    return result;
+  }
+  // Host allocation is an unsafe call under global or thread-local capture and
+  // would invalidate the capture, so it runs in relaxed mode.
+  void *host = nullptr;
+  CUstreamCaptureMode mode = CU_STREAM_CAPTURE_MODE_RELAXED;
+  (void)cuThreadExchangeStreamCaptureMode(&mode);
+  if (!refresh &&
+      lupine_alloc_dtoh_host(conn, stream, &host, bytes) != CUDA_SUCCESS) {
+    host = nullptr;
+  }
+  lupine_dtoh_push_data *data =
+      host == nullptr && !refresh
+          ? nullptr
+          : lupine_own_graph_dtoh(conn, graph, client, host);
+  (void)cuThreadExchangeStreamCaptureMode(&mode);
+  if (data == nullptr) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  result = copy_to_host(refresh ? mirror : host, stream);
+  if (result == CUDA_SUCCESS && !refresh && mirror != nullptr) {
+    result = cuMemcpyAsync(reinterpret_cast<CUdeviceptr>(mirror),
+                           reinterpret_cast<CUdeviceptr>(host), bytes, stream);
+  }
+  if (result == CUDA_SUCCESS) {
+    result = cuLaunchHostFunc(stream, lupine_dtoh_push_callback, data);
+  }
+  return result;
+}
+
+CUresult lupine_graph_add_dtoh_push(conn_t *conn, CUgraph graph,
+                                    CUgraphNode copy,
+                                    const lupine_host_rows &client,
+                                    void *server_src) {
+  lupine_dtoh_push_data *data =
+      lupine_own_graph_dtoh(conn, graph, client, server_src);
+  if (data == nullptr || copy == nullptr) {
+    return data == nullptr ? CUDA_ERROR_OUT_OF_MEMORY : CUDA_SUCCESS;
+  }
+  CUDA_HOST_NODE_PARAMS params = {};
+  params.fn = lupine_dtoh_push_callback;
+  params.userData = data;
+  CUgraphNode push = nullptr;
+  CUresult result = cuGraphAddHostNode(&push, graph, &copy, 1, &params);
+  if (result == CUDA_SUCCESS && push != nullptr) {
+    std::lock_guard<std::mutex> lock(lupine_dtoh_graph_nodes_mutex());
+    lupine_dtoh_node_graph_map()[push] = graph;
+    lupine_dtoh_graph_push_nodes_map()[graph].push_back(push);
+  }
+  return result;
+}
+
+// The node pushing the bytes of explicit graph copy `copy`, if it has one.
+static CUgraphNode lupine_graph_push_node(CUgraphNode copy) {
+  CUgraphNodeType type = CU_GRAPH_NODE_TYPE_EMPTY;
+  size_t count = 0;
+  if (cuGraphNodeGetType(copy, &type) != CUDA_SUCCESS ||
+      type != CU_GRAPH_NODE_TYPE_MEMCPY ||
+      cuGraphNodeGetDependentNodes_v2(copy, nullptr, nullptr, &count) !=
+          CUDA_SUCCESS ||
+      count == 0) {
+    return nullptr;
+  }
+  std::vector<CUgraphNode> dependents(count);
+  if (cuGraphNodeGetDependentNodes_v2(copy, dependents.data(), nullptr,
+                                      &count) != CUDA_SUCCESS) {
+    return nullptr;
+  }
+  for (CUgraphNode node : dependents) {
+    CUDA_HOST_NODE_PARAMS params = {};
+    if (cuGraphNodeGetType(node, &type) == CUDA_SUCCESS &&
+        type == CU_GRAPH_NODE_TYPE_HOST &&
+        cuGraphHostNodeGetParams(node, &params) == CUDA_SUCCESS &&
+        params.fn == lupine_dtoh_push_callback) {
+      return node;
+    }
+  }
+  return nullptr;
+}
+
+void lupine_graph_push_dependencies(CUgraphNode *deps, size_t count) {
+  for (size_t i = 0; deps != nullptr && i < count; ++i) {
+    if (CUgraphNode push = lupine_graph_push_node(deps[i])) {
+      deps[i] = push;
+    }
+  }
+}
+
+// Retargets an explicit graph copy to client memory, and the node pushing its
+// bytes: the copy lands in new staging, owned by the graph or executable so
+// replays made before the update still keep their own scratch. With `exec`,
+// only that exec changes. Turning such a copy into one that does not reach
+// client memory, or the reverse, is not supported.
+static CUresult lupine_set_graph_dtoh_params(conn_t *conn, CUgraphExec exec,
+                                             CUgraphNode node,
+                                             CUDA_MEMCPY3D params,
+                                             CUcontext ctx) {
+  CUgraphNode push = lupine_graph_push_node(node);
+  CUgraphNode exec_node =
+      exec == nullptr ? node : lupine_htod_graph_exec_node(exec, node);
+  bool to_client = params.dstMemoryType == CU_MEMORYTYPE_HOST;
+  if (!to_client || push == nullptr) {
+    if (to_client || push != nullptr) {
+      return CUDA_ERROR_NOT_SUPPORTED;
+    }
+    return exec == nullptr
+               ? cuGraphMemcpyNodeSetParams(node, &params)
+               : cuGraphExecMemcpyNodeSetParams(exec, exec_node, &params, ctx);
+  }
+  CUDA_HOST_NODE_PARAMS old_push = {};
+  if (cuGraphHostNodeGetParams(push, &old_push) != CUDA_SUCCESS ||
+      old_push.userData == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
+  }
+  auto *old_data = static_cast<lupine_dtoh_push_data *>(old_push.userData);
+  lupine_host_rows client = lupine_host_destination_rows(params);
+  lupine_pack_host_destination(params);
+  void *host = nullptr;
+  if (client.bytes() != 0 &&
+      lupine_alloc_dtoh_host(conn, nullptr, &host, client.bytes()) !=
+          CUDA_SUCCESS &&
+      (host = std::malloc(client.bytes())) == nullptr) {
+    return CUDA_ERROR_OUT_OF_MEMORY;
+  }
+  params.dstHost = host;
+  CUresult result =
+      exec == nullptr
+          ? cuGraphMemcpyNodeSetParams(node, &params)
+          : cuGraphExecMemcpyNodeSetParams(exec, exec_node, &params, ctx);
+  if (result != CUDA_SUCCESS) {
+    lupine_give_back_dtoh_staging({host, 0, lupine_pinned_buffer_id(host)});
+    return result;
+  }
+  lupine_dtoh_push *push_state = lupine_dtoh_push_for(conn);
+  push_state->graph_dtoh.store(true, std::memory_order_release);
+  CUgraph owning_graph = old_data->graph;
+  {
+    std::lock_guard<std::mutex> lock(lupine_dtoh_graph_nodes_mutex());
+    auto it = lupine_dtoh_node_graph_map().find(push);
+    if (it != lupine_dtoh_node_graph_map().end()) {
+      owning_graph = it->second;
+    }
+  }
+  lupine_dtoh_push_data *data = nullptr;
+  if (exec == nullptr) {
+    data = lupine_own_graph_dtoh(conn, owning_graph, client, host);
+    if (data == nullptr) {
+      return CUDA_ERROR_OUT_OF_MEMORY;
+    }
+  } else {
+    data = new lupine_dtoh_push_data{
+        push_state, client, {host, 0, lupine_pinned_buffer_id(host)},
+        false,      0,      owning_graph};
+  }
+  CUDA_HOST_NODE_PARAMS push_params = {};
+  push_params.fn = lupine_dtoh_push_callback;
+  push_params.userData = data;
+  result = exec == nullptr ? cuGraphHostNodeSetParams(push, &push_params)
+                           : cuGraphExecHostNodeSetParams(
+                                 exec, lupine_htod_graph_exec_node(exec, push),
+                                 &push_params);
+  if (exec != nullptr) {
+    if (result == CUDA_SUCCESS) {
+      std::lock_guard<std::mutex> lock(lupine_dtoh_exec_mutex());
+      auto &slot = lupine_dtoh_exec_map()[exec];
+      slot.conn = conn;
+      slot.entries.push_back(data);
+    } else {
+      lupine_release_graph_dtoh(data);
+    }
+  }
+  return result;
+}
+
+int handle_cuGraphMemcpyNodeSetParams(conn_t *conn) {
+  CUgraphNode node = nullptr;
+  CUDA_MEMCPY3D params = {};
+  if (rpc_read(conn, &node, sizeof(node)) < 0 ||
+      rpc_read(conn, &params, sizeof(params)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUresult result =
+      lupine_set_graph_dtoh_params(conn, nullptr, node, params, nullptr);
+  if (lupine_unanswered(conn, result)) {
+    return 0;
+  }
+  return rpc_write_start_response(conn, request_id) < 0 ||
+                 rpc_write(conn, &result, sizeof(result)) < 0 ||
+                 rpc_write_end(conn) < 0
+             ? -1
+             : 0;
+}
+
+int handle_cuGraphExecMemcpyNodeSetParams(conn_t *conn) {
+  CUgraphExec exec = nullptr;
+  CUgraphNode node = nullptr;
+  CUDA_MEMCPY3D params = {};
+  CUcontext ctx = nullptr;
+  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
+      rpc_read(conn, &node, sizeof(node)) < 0 ||
+      rpc_read(conn, &params, sizeof(params)) < 0 ||
+      rpc_read(conn, &ctx, sizeof(ctx)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUresult result = lupine_set_graph_dtoh_params(conn, exec, node, params, ctx);
+  if (lupine_unanswered(conn, result)) {
+    return 0;
+  }
+  return rpc_write_start_response(conn, request_id) < 0 ||
+                 rpc_write(conn, &result, sizeof(result)) < 0 ||
+                 rpc_write_end(conn) < 0
+             ? -1
+             : 0;
 }
 
 struct lupine_htod_fragment {
@@ -682,51 +1188,6 @@ struct lupine_htod_callback_data {
   std::shared_ptr<lupine_htod_graph_execution> graph_execution;
   std::shared_ptr<lupine_htod_capture_events> capture_events;
 };
-
-// Lay every undelivered DtoH overlapping this fragment's client source over the
-// ring in execution order, and report whether one of them covered all of it.
-static bool
-lupine_overlay_undelivered_dtoh(conn_t *conn, const lupine_htod_copy &copy,
-                                const lupine_htod_fragment &fragment,
-                                unsigned char *ring) {
-  bool covered = false;
-  std::lock_guard<std::mutex> lock(lupine_undelivered_dtoh_mutex());
-  for (const auto &undelivered : lupine_undelivered_dtoh_list()) {
-    if (undelivered.conn != conn) {
-      continue;
-    }
-    const lupine_host_rows &rows = undelivered.client;
-    size_t covered_bytes = 0;
-    size_t offset = fragment.logical_offset;
-    size_t remaining = fragment.bytes;
-    while (remaining != 0) {
-      size_t row_index = offset / copy.smemcpy.width;
-      size_t x = offset - row_index * copy.smemcpy.width;
-      size_t slice = row_index / copy.smemcpy.rows;
-      size_t row = row_index - slice * copy.smemcpy.rows;
-      size_t chunk = std::min(remaining, copy.smemcpy.width - x);
-      uintptr_t begin = reinterpret_cast<uintptr_t>(copy.source) +
-                        slice * copy.source_slice_stride +
-                        row * copy.source_row_stride + x;
-      for (size_t index = 0; index < rows.height * rows.depth; ++index) {
-        uintptr_t row = reinterpret_cast<uintptr_t>(rows.row(index));
-        uintptr_t lo = std::max(begin, row);
-        uintptr_t hi = std::min(begin + chunk, row + rows.width);
-        if (lo < hi) {
-          memcpy(ring + (offset - fragment.logical_offset) + (lo - begin),
-                 static_cast<const unsigned char *>(undelivered.server_src) +
-                     index * rows.width + (lo - row),
-                 hi - lo);
-          covered_bytes += hi - lo;
-        }
-      }
-      offset += chunk;
-      remaining -= chunk;
-    }
-    covered = covered || covered_bytes == fragment.bytes;
-  }
-  return covered;
-}
 
 // Each CUDA host callback fetches one bounded fragment into this ring and
 // returns. The following copy runs on the same private stream, so slot reuse is
@@ -900,15 +1361,14 @@ public:
 
   int fetch(const lupine_htod_copy &copy,
             const lupine_htod_fragment &fragment) {
-    // A DtoH queued ahead of this copy has executed by now but only reaches
-    // the client at its next sync, so its bytes are read here, not there.
     auto *ring = static_cast<unsigned char *>(
         data(ring_offset(copy, fragment.logical_offset)));
-    if (lupine_overlay_undelivered_dtoh(conn_, copy, fragment, ring)) {
-      return 0;
-    }
+    // A device-to-host copy into this source that the stream ran before it got
+    // here is numbered by now; the client applies it before reading.
+    uint64_t delivered = lupine_dtoh_watermark(conn_);
     if (rpc_write_start_request(conn_, LUPINE_SIDE_EFFECT_READ_HOST_MEMORY) <
             0 ||
+        rpc_write(conn_, &delivered, sizeof(delivered)) < 0 ||
         rpc_write(conn_, &copy.source, sizeof(copy.source)) < 0 ||
         rpc_write(conn_, &copy.smemcpy.width, sizeof(copy.smemcpy.width)) < 0 ||
         rpc_write(conn_, &copy.smemcpy.rows, sizeof(copy.smemcpy.rows)) < 0 ||
@@ -929,7 +1389,6 @@ public:
     if (rpc_read(conn_, ring, fragment.bytes) < 0 || rpc_read_end(conn_) < 0) {
       return -1;
     }
-    lupine_overlay_undelivered_dtoh(conn_, copy, fragment, ring);
     return 0;
   }
 
@@ -1405,12 +1864,7 @@ CUresult lupine_associate_graph_exec_resources(
   if (resources == nullptr) {
     return CUDA_SUCCESS;
   }
-  CUresult result = lupine_commit_htod_graph_exec(exec, binding);
-  if (result == CUDA_SUCCESS) {
-    lupine_retain_graph_resources(resources);
-    lupine_graph_exec_resource_map().insert_or_assign(exec, resources);
-  }
-  return result;
+  return lupine_commit_htod_graph_exec(exec, binding);
 }
 
 CUgraphNode
@@ -1537,7 +1991,6 @@ void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
                                      CUresult result, CUgraphNode *error_node) {
   if (result == CUDA_SUCCESS) {
     lupine_commit_htod_graph_exec_update(exec, binding);
-    lupine_rebind_graph_exec_resources(exec, graph);
   } else if (error_node != nullptr) {
     *error_node = lupine_original_htod_graph_node(*binding, *error_node);
   }
@@ -1560,11 +2013,22 @@ void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
 
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec) {
   CUresult result = lupine_release_htod_graph_exec(exec);
-  if (result == CUDA_SUCCESS) {
-    lupine_release_graph_resources(
-        lupine_take_graph_resources(lupine_graph_exec_resource_map(), exec));
-    lupine_free_retired_graph_staging();
+  lupine_dtoh_exec_entries dtoh;
+  {
+    std::lock_guard<std::mutex> lock(lupine_dtoh_exec_mutex());
+    auto it = lupine_dtoh_exec_map().find(exec);
+    if (it != lupine_dtoh_exec_map().end()) {
+      dtoh = std::move(it->second);
+      lupine_dtoh_exec_map().erase(it);
+    }
   }
+  if (!dtoh.entries.empty()) {
+    lupine_dtoh_sync_contexts(dtoh.conn);
+    for (lupine_dtoh_push_data *data : dtoh.entries) {
+      lupine_release_graph_dtoh(data);
+    }
+  }
+  lupine_free_retired_dtoh_staging();
   return result;
 }
 
@@ -2437,6 +2901,8 @@ struct lupine_bulk_read {
   bool ready = false;
   CUcontext context = nullptr;
   CUdeviceptr source = 0;
+  // A pushed delivery's bytes, already on the host, instead of `source`.
+  const unsigned char *host = nullptr;
   size_t total = 0;
   CUstream stream = CU_STREAM_LEGACY;
   size_t next = 0;
@@ -2446,6 +2912,8 @@ struct lupine_bulk_read {
 };
 
 static std::unordered_map<uint64_t, lupine_bulk_read> lupine_bulk_reads;
+static uint64_t lupine_retired_push_bulk_number = 0;
+static bool lupine_push_bulk_closed = false;
 
 static int lupine_write_bulk_read_frame(conn_t *conn, int request_id,
                                         uint64_t offset, const void *data,
@@ -2470,14 +2938,24 @@ int handle_lupineBulkRead(conn_t *conn) {
     return -1;
   }
 
+  constexpr uint64_t kPushBulkBit = uint64_t{1} << 62;
+  bool push_bulk = (copy_id & kPushBulkBit) != 0;
   std::vector<unsigned char> host(LUPINE_RPC_TRANSFER_CHUNK_BYTES);
   int status = 0;
   std::unique_lock<std::mutex> lock(lupine_bulk_staging_mutex);
+  if (push_bulk &&
+      (lupine_push_bulk_closed ||
+       (copy_id & ~kPushBulkBit) <= lupine_retired_push_bulk_number)) {
+    lock.unlock();
+    return lupine_write_bulk_read_frame(conn, request_id, 0, nullptr, 0);
+  }
   lupine_bulk_read &read = lupine_bulk_reads[copy_id];
   ++read.arrived;
-  lupine_bulk_staging_progress.wait(
-      lock, [&] { return read.ready || lupine_bulk_connection_lost; });
-  if (read.ready && read.result == CUDA_SUCCESS) {
+  lupine_bulk_staging_progress.wait(lock, [&] {
+    return read.ready || lupine_bulk_connection_lost ||
+           (push_bulk && lupine_push_bulk_closed);
+  });
+  if (read.ready && read.result == CUDA_SUCCESS && read.host == nullptr) {
     CUcontext context = read.context;
     lock.unlock();
     CUresult result = cuCtxSetCurrent(context);
@@ -2492,14 +2970,19 @@ int handle_lupineBulkRead(conn_t *conn) {
     size_t bytes = std::min(host.size(), read.total - offset);
     read.next += bytes;
     CUdeviceptr source = read.source + offset;
+    const unsigned char *pushed = read.host;
     CUstream stream = read.stream;
     lock.unlock();
     // host is pageable, so this returns once the chunk has landed, ordered
     // behind whatever was already queued on the caller's stream.
-    CUresult result = cuMemcpyDtoHAsync_v2(host.data(), source, bytes, stream);
+    CUresult result =
+        pushed != nullptr
+            ? CUDA_SUCCESS
+            : cuMemcpyDtoHAsync_v2(host.data(), source, bytes, stream);
     if (result == CUDA_SUCCESS) {
-      status = lupine_write_bulk_read_frame(conn, request_id, offset,
-                                            host.data(), bytes);
+      status = lupine_write_bulk_read_frame(
+          conn, request_id, offset,
+          pushed != nullptr ? pushed + offset : host.data(), bytes);
     }
     lock.lock();
     if (result != CUDA_SUCCESS && read.result == CUDA_SUCCESS) {
@@ -2516,6 +2999,50 @@ int handle_lupineBulkRead(conn_t *conn) {
     return -1;
   }
   return lupine_write_bulk_read_frame(conn, request_id, 0, nullptr, 0);
+}
+
+// The push lane hands a large delivery's bytes to the client's bulk reader.
+// It gives up when the session or a bulk connection goes, once a reader that
+// already started is done with the bytes.
+static void lupine_serve_host_bulk_read(conn_t *conn, uint64_t copy_id,
+                                        const void *host, size_t bytes) {
+  constexpr uint64_t kPushBulkBit = uint64_t{1} << 62;
+  std::unique_lock<std::mutex> lock(lupine_bulk_staging_mutex);
+  lupine_bulk_read &read = lupine_bulk_reads[copy_id];
+  read.ready = true;
+  read.host = static_cast<const unsigned char *>(host);
+  read.total = bytes;
+  lupine_bulk_staging_progress.notify_all();
+  lupine_bulk_staging_progress.wait(lock, [&] {
+    return read.finished != 0 ||
+           ((conn->closed || lupine_bulk_connection_lost) &&
+            read.finished == read.arrived);
+  });
+  lupine_retired_push_bulk_number =
+      std::max(lupine_retired_push_bulk_number, copy_id & ~kPushBulkBit);
+  lupine_bulk_reads.erase(copy_id);
+}
+
+static void lupine_open_push_bulk() {
+  std::lock_guard<std::mutex> lock(lupine_bulk_staging_mutex);
+  lupine_push_bulk_closed = false;
+  lupine_retired_push_bulk_number = 0;
+}
+
+static void lupine_close_push_bulk() {
+  std::lock_guard<std::mutex> lock(lupine_bulk_staging_mutex);
+  lupine_push_bulk_closed = true;
+  lupine_bulk_staging_progress.notify_all();
+}
+
+static bool lupine_bulk_lost() {
+  std::lock_guard<std::mutex> lock(lupine_bulk_staging_mutex);
+  return lupine_bulk_connection_lost;
+}
+
+static void lupine_bulk_wake() {
+  std::lock_guard<std::mutex> lock(lupine_bulk_staging_mutex);
+  lupine_bulk_staging_progress.notify_all();
 }
 
 int handle_lupineMemcpyDtoHBulk(conn_t *conn) {
@@ -2558,13 +3085,23 @@ int handle_lupineMemcpyDtoHBulk(conn_t *conn) {
     }
     lupine_bulk_reads.erase(copy_id);
   }
-  return lupine_write_lifecycle_response(conn, request_id, result);
+  uint64_t delivered = lupine_dtoh_watermark(conn);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &delivered, sizeof(delivered)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+    return -1;
+  }
+  return 0;
 }
 
+// Each chunk carries the deliveries numbered once it was copied: a readback
+// waited for its stream, so pushed copies that stream ran land first.
 static int lupine_write_dtoh_chunk_response(conn_t *conn, int request_id,
                                             CUresult result, const void *data,
                                             size_t bytes) {
+  uint64_t delivered = lupine_dtoh_watermark(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &delivered, sizeof(delivered)) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 ||
       (result == CUDA_SUCCESS && rpc_write(conn, data, bytes) < 0) ||
       rpc_write_end(conn) < 0) {
@@ -2938,8 +3475,8 @@ int handle_cuMemcpyDtoH_v2(conn_t *conn) {
 
 using lupine_native_memcpy3d = CUresult (*)(const CUDA_MEMCPY3D &copy,
                                             CUstream stream);
-static int lupine_defer_pitched_dtoh(conn_t *conn,
-                                     lupine_native_memcpy3d native);
+static int lupine_push_pitched_dtoh(conn_t *conn,
+                                    lupine_native_memcpy3d native);
 
 // Every 2D and 3D copy arrives promoted to the 3D descriptor. Host-to-host
 // requests read completed pinned backing; other host sides are staged densely.
@@ -2950,7 +3487,7 @@ static int lupine_handle_memcpy3d(conn_t *conn, bool async, bool peer,
     return -1;
   }
   if (direction == LUPINE_COPY_DIRECTION_DTOH && async && !peer) {
-    return lupine_defer_pitched_dtoh(conn, native);
+    return lupine_push_pitched_dtoh(conn, native);
   }
   bool is_server_authoritative = false;
   CUDA_MEMCPY3D copy = {};
@@ -3005,7 +3542,12 @@ static int lupine_handle_memcpy3d(conn_t *conn, bool async, bool peer,
           ? lupine_copy_client_host_to_device(conn, stream, !async,
                                               lupine_make_3d_htod_copy(copy))
           : native(copy, stream);
+  // A readback waited for its stream: pushed copies that stream ran land
+  // first.
+  uint64_t delivered = lupine_dtoh_watermark(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
+      (direction == LUPINE_COPY_DIRECTION_DTOH &&
+       rpc_write(conn, &delivered, sizeof(delivered)) < 0) ||
       rpc_write(conn, &result, sizeof(result)) < 0 ||
       (direction == LUPINE_COPY_DIRECTION_DTOH && result == CUDA_SUCCESS &&
        rpc_write(conn, host.data(), host.size()) < 0) ||
@@ -3161,166 +3703,58 @@ int handle_cuMemcpyAtoHAsync_v2(conn_t *conn) {
   return lupine_serve_memcpy_atoh(conn, true);
 }
 
-// Stages a device-to-host copy for delivery at the client's next synchronize,
-// or at every replay while the stream captures. Errors are dropped like a
-// launch's: an execution failure surfaces from the client's next synchronize.
-static void lupine_defer_dtoh(conn_t *conn, CUstream stream,
-                              const lupine_host_rows &client,
-                              CUdeviceptr srcDevice) {
-  size_t byteCount = client.bytes();
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-  CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
-  if (stream != nullptr) {
-    cuStreamIsCapturing(stream, &capture_status);
-  }
-
-  void *host = nullptr;
-  CUresult alloc_result = CUDA_ERROR_INVALID_VALUE;
-  if (capture_status != CU_STREAM_CAPTURE_STATUS_NONE) {
-    auto *resources = lupine_get_stream_resources(stream);
-    host = lupine_alloc_capture_scratch(byteCount);
-    if (host == nullptr && byteCount != 0) {
-      result = CUDA_ERROR_OUT_OF_MEMORY;
-    } else {
-      result = cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
-      if (result == CUDA_SUCCESS) {
-        lupine_graph_note_dtoh_copy(resources, client, host);
-        lupine_note_dtoh_undelivered(conn, stream, client, host, true);
-      }
-      host = nullptr;
-    }
-  } else {
-    alloc_result = cuMemAllocHost(&host, byteCount);
-    if (alloc_result != CUDA_SUCCESS) {
-      host = byteCount == 0 ? nullptr : malloc(byteCount);
-    }
-    if (byteCount != 0 && host == nullptr) {
-      result = CUDA_ERROR_OUT_OF_MEMORY;
-    } else {
-      result = cuMemcpyDtoHAsync_v2(host, srcDevice, byteCount, stream);
-      if (result == CUDA_SUCCESS && byteCount != 0) {
-        lupine_pending_dtoh_item copy{nullptr, client, host,
-                                      alloc_result == CUDA_SUCCESS
-                                          ? lupine_dtoh_storage::pinned
-                                          : lupine_dtoh_storage::heap};
-        (void)cuStreamGetCtx(stream, &copy.context);
-        lupine_queue_pending_dtoh_copies(conn, stream, &copy, 1);
-        lupine_note_dtoh_undelivered(conn, stream, client, host, false);
-        host = nullptr;
-      }
-    }
-  }
-
-  if (alloc_result == CUDA_SUCCESS && host != nullptr) {
-    cuMemFreeHost(host);
-  } else if (host != nullptr) {
-    free(host);
-  }
-}
-
 int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   void *dstHost = nullptr;
+  void *server_host = nullptr;
+  uint8_t refresh = 0;
   CUdeviceptr srcDevice = 0;
   size_t byteCount = 0;
   CUstream stream = nullptr;
 
   if (rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
+      rpc_read(conn, &server_host, sizeof(server_host)) < 0 ||
+      rpc_read(conn, &refresh, sizeof(refresh)) < 0 ||
       rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
       rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
       rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
-  lupine_defer_dtoh(conn, stream, {dstHost, byteCount}, srcDevice);
+  // Unanswered: a failure reaches the client from its next synchronize.
+  // Memory the client refreshes on access sets `refresh`, writing only the
+  // server's copy and telling the client to mark `dstHost` stale; other
+  // page-locked memory pushes to its writable alias, updating `server_host` on
+  // the stream when device code can read it.
+  lupine_keep_async_error(
+      conn, lupine_push_dtoh(conn, stream, {dstHost, byteCount}, srcDevice,
+                             server_host, refresh != 0));
   return 0;
 }
 
-// A pitched device-to-host copy repacks its rows into dense stream-ordered
-// device scratch and leaves as a deferred linear copy; the client scatters the
-// rows back to its own pitch.
-static int lupine_defer_pitched_dtoh(conn_t *conn,
-                                     lupine_native_memcpy3d native) {
+// A pitched device-to-host copy packs its rows directly into dense pinned host
+// staging and leaves as a pushed linear copy; the client scatters the rows
+// back to its own pitch.
+static int lupine_push_pitched_dtoh(conn_t *conn,
+                                    lupine_native_memcpy3d native) {
   CUDA_MEMCPY3D copy = {};
   CUstream stream = nullptr;
   if (rpc_read(conn, &copy, sizeof(copy)) < 0 ||
       rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
-  size_t slice = copy.dstHeight * copy.dstPitch;
-  lupine_host_rows client{static_cast<unsigned char *>(copy.dstHost) +
-                              copy.dstZ * slice + copy.dstY * copy.dstPitch +
-                              copy.dstXInBytes,
-                          copy.WidthInBytes,
-                          copy.Height,
-                          copy.dstPitch,
-                          copy.Depth,
-                          slice};
+  lupine_host_rows client = lupine_host_destination_rows(copy);
   lupine_pack_host_destination(copy);
-  copy.dstMemoryType = CU_MEMORYTYPE_DEVICE;
+  copy.dstMemoryType = CU_MEMORYTYPE_HOST;
   copy.dstHost = nullptr;
-  if (client.bytes() != 0 && cuMemAllocAsync(&copy.dstDevice, client.bytes(),
-                                             stream) == CUDA_SUCCESS) {
-    if (native(copy, stream) == CUDA_SUCCESS) {
-      lupine_defer_dtoh(conn, stream, client, copy.dstDevice);
-    }
-    (void)cuMemFreeAsync(copy.dstDevice, stream);
+  if (client.bytes() == 0) {
+    return 0;
   }
-  return 0;
-}
-
-int handle_lupineMemcpyDtoHAsyncPinned(conn_t *conn) {
-  void *dstHost = nullptr;
-  void *client_alias = nullptr;
-  void *server_host = nullptr;
-  CUdeviceptr srcDevice = 0;
-  size_t byteCount = 0;
-  CUstream stream = nullptr;
-
-  if (rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
-      rpc_read(conn, &client_alias, sizeof(client_alias)) < 0 ||
-      rpc_read(conn, &server_host, sizeof(server_host)) < 0 ||
-      rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
-      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0) {
-    return -1;
-  }
-
-  if (rpc_read_end(conn) < 0) {
-    return -1;
-  }
-
-  CUstreamCaptureStatus capture_status = CU_STREAM_CAPTURE_STATUS_NONE;
-  if (stream != nullptr) {
-    cuStreamIsCapturing(stream, &capture_status);
-  }
-
-  if (capture_status != CU_STREAM_CAPTURE_STATUS_NONE) {
-    auto *resources = lupine_get_stream_resources(stream);
-    CUresult result =
-        cuMemcpyDtoHAsync_v2(server_host, srcDevice, byteCount, stream);
-    if (result == CUDA_SUCCESS && byteCount != 0) {
-      lupine_graph_note_dtoh_copy(resources, {client_alias, byteCount},
-                                  server_host, true);
-      lupine_note_dtoh_undelivered(conn, stream, {dstHost, byteCount},
-                                   server_host, true);
-    }
-  } else {
-    // Copy into the owning server's existing pinned allocation. Returning the
-    // client's writable alias identifies bytes that need no host flush.
-    CUresult result =
-        cuMemcpyDtoHAsync_v2(server_host, srcDevice, byteCount, stream);
-    if (result == CUDA_SUCCESS && byteCount != 0) {
-      lupine_pending_dtoh_item copy{nullptr,
-                                    {client_alias, byteCount},
-                                    server_host,
-                                    lupine_dtoh_storage::borrowed};
-      (void)cuStreamGetCtx(stream, &copy.context);
-      lupine_queue_pending_dtoh_copies(conn, stream, &copy, 1);
-      // A later HtoD from this memory reads the client's bytes, which this
-      // copy only reaches at delivery, so it overlays the mirror instead.
-      lupine_note_dtoh_undelivered(conn, stream, {dstHost, byteCount},
-                                   server_host, false);
-    }
-  }
-
+  CUresult result = lupine_push_dtoh_with(
+      conn, stream, client,
+      [&](void *dst, CUstream s) {
+        copy.dstHost = dst;
+        return native(copy, s);
+      },
+      nullptr, false);
+  lupine_keep_async_error(conn, result);
   return 0;
 }
