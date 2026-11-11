@@ -11,40 +11,21 @@ struct lupine_route;
 // map directly, preserving base-pointer APIs such as stream attachment.
 static constexpr size_t LUPINE_MANAGED_ALLOCATION_MIN_BYTES = 2 * 1024 * 1024;
 
-// Shared client mappings and lifetime tracking for pinned host allocations.
-// The caller owns the backend allocation and frees it if adoption fails.
-extern "C" CUresult
-lupine_adopt_host_allocation(conn_t *conn, void **host, void *remote_host,
-                             CUdeviceptr device_ptr, size_t bytes,
-                             unsigned int flags, bool managed = false);
-using lupine_host_free_fn = CUresult (*)(conn_t *, void *);
-extern "C" CUresult lupine_free_host_allocation(void *host,
-                                                lupine_host_free_fn release);
-using lupine_host_register_fn = CUresult (*)(conn_t *, void *, size_t,
-                                             unsigned int, void **,
-                                             CUdeviceptr *);
-extern "C" CUresult
-lupine_unregister_host_allocation(void *host, lupine_host_free_fn release);
-using lupine_device_free_fn = CUresult (*)(conn_t *, CUdeviceptr);
-extern "C" CUresult
-lupine_free_device_allocation(CUdeviceptr pointer,
-                              lupine_device_free_fn release);
-
-extern "C" bool lupine_copy_pointer_is_host(CUdeviceptr ptr);
 extern "C" bool
 lupine_device_attribute_is_virtualized(conn_t *conn, CUdevice_attribute attrib);
-extern "C" bool lupine_host_ptr_is_page_locked(const void *host);
 bool lupine_host_range_is_protected(uintptr_t start, size_t size);
 extern "C" bool lupine_is_managed_host_alias(CUdeviceptr ptr);
 struct lupine_pointer_query_context {
   CUdeviceptr orig_ptr = 0;
   CUdeviceptr query_ptr = 0;
+  CUdeviceptr managed_alias_base = 0;
   CUdeviceptr remote_host_base = 0;
   CUdeviceptr remote_device_base = 0;
   CUdeviceptr client_range_start = 0;
   size_t client_range_size = 0;
   bool managed_alias = false;
   bool remote_host_alias = false;
+  bool tracked_host = false;
   bool has_client_range = false;
 };
 lupine_pointer_query_context lupine_resolve_pointer_query(CUdeviceptr ptr);

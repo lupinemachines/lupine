@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <tuple>
 #include <type_traits>
@@ -601,30 +602,49 @@ lupine_param_layout_count_cache() {
   return *cache;
 }
 
-// Filled from library-load responses; serves cuLibraryGetKernel without a
-// round trip.
-struct lupine_library_kernel_name_key {
-  CUlibrary library = nullptr;
+template <typename Handle> struct lupine_named_handle_view {
+  Handle handle = nullptr;
+  std::string_view name;
+};
+
+template <typename Handle> struct lupine_named_handle_key {
+  Handle handle = nullptr;
   std::string name;
 
-  bool operator==(const lupine_library_kernel_name_key &other) const {
-    return library == other.library && name == other.name;
+  bool operator==(const lupine_named_handle_key &other) const {
+    return handle == other.handle && name == other.name;
+  }
+  bool operator==(const lupine_named_handle_view<Handle> &other) const {
+    return handle == other.handle && name == other.name;
+  }
+  friend bool operator==(const lupine_named_handle_view<Handle> &lhs,
+                         const lupine_named_handle_key &rhs) {
+    return lhs.handle == rhs.handle && lhs.name == rhs.name;
   }
 };
 
-struct lupine_library_kernel_name_key_hash {
-  size_t operator()(const lupine_library_kernel_name_key &key) const {
-    return reinterpret_cast<uintptr_t>(key.library) ^
-           std::hash<std::string>()(key.name);
+template <typename Handle> struct lupine_named_handle_hash {
+  size_t operator()(const lupine_named_handle_key<Handle> &key) const {
+    return reinterpret_cast<uintptr_t>(key.handle) ^
+           std::hash<std::string_view>()(key.name);
+  }
+  size_t operator()(const lupine_named_handle_view<Handle> &key) const {
+    return reinterpret_cast<uintptr_t>(key.handle) ^
+           std::hash<std::string_view>()(key.name);
   }
 };
 
-static libcuckoo::cuckoohash_map<lupine_library_kernel_name_key, CUkernel,
-                                 lupine_library_kernel_name_key_hash> &
+template <typename Handle, typename Value>
+using lupine_named_handle_map =
+    libcuckoo::cuckoohash_map<lupine_named_handle_key<Handle>, Value,
+                              lupine_named_handle_hash<Handle>,
+                              std::equal_to<>>;
+
+// Filled from library-load responses; serves cuLibraryGetKernel without a
+// round trip.
+static lupine_named_handle_map<CUlibrary, CUkernel> &
 lupine_library_kernel_names() {
-  static auto *cache =
-      new libcuckoo::cuckoohash_map<lupine_library_kernel_name_key, CUkernel,
-                                    lupine_library_kernel_name_key_hash>();
+  static auto *cache = new lupine_named_handle_map<CUlibrary, CUkernel>();
   return *cache;
 }
 
@@ -635,28 +655,9 @@ lupine_library_kernel_names() {
 // that holds it drops the whole cache. Those are the only ways the server frees
 // a module handle, so a recycled one never resolves against the functions of
 // the module that held it before.
-struct lupine_module_function_name_key {
-  CUmodule module = nullptr;
-  std::string name;
-
-  bool operator==(const lupine_module_function_name_key &other) const {
-    return module == other.module && name == other.name;
-  }
-};
-
-struct lupine_module_function_name_key_hash {
-  size_t operator()(const lupine_module_function_name_key &key) const {
-    return reinterpret_cast<uintptr_t>(key.module) ^
-           std::hash<std::string>()(key.name);
-  }
-};
-
-static libcuckoo::cuckoohash_map<lupine_module_function_name_key, CUfunction,
-                                 lupine_module_function_name_key_hash> &
+static lupine_named_handle_map<CUmodule, CUfunction> &
 lupine_module_function_names() {
-  static auto *cache =
-      new libcuckoo::cuckoohash_map<lupine_module_function_name_key, CUfunction,
-                                    lupine_module_function_name_key_hash>();
+  static auto *cache = new lupine_named_handle_map<CUmodule, CUfunction>();
   return *cache;
 }
 
@@ -958,7 +959,7 @@ extern "C" CUresult lupine_record_library_kernel(CUkernel kernel,
 bool lupine_try_cached_library_kernel(CUlibrary library, const char *name,
                                       CUkernel *kernel) {
   return lupine_library_kernel_names().find(
-      lupine_library_kernel_name_key{library, std::string(name)}, *kernel);
+      lupine_named_handle_view<CUlibrary>{library, name}, *kernel);
 }
 
 extern "C" CUresult lupine_record_library_kernel(CUkernel kernel,
@@ -1118,7 +1119,7 @@ static int lupine_read_module_functions(conn_t *conn, CUmodule module,
     }
     lupine_note_function_owner_route(function, route);
     lupine_module_function_names().insert_or_assign(
-        lupine_module_function_name_key{module, std::move(name)}, function);
+        lupine_named_handle_key<CUmodule>{module, std::move(name)}, function);
   }
   return 0;
 }
@@ -1148,7 +1149,7 @@ bool lupine_try_cached_module_function(CUmodule module, const char *name,
                                        CUfunction *function) {
   CUfunction cached = nullptr;
   if (!lupine_module_function_names().find(
-          lupine_module_function_name_key{module, std::string(name)}, cached)) {
+          lupine_named_handle_view<CUmodule>{module, name}, cached)) {
     return false;
   }
   *function = cached;
@@ -4240,7 +4241,7 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
           function);
     }
     lupine_library_kernel_names().insert_or_assign(
-        lupine_library_kernel_name_key{library, name}, kernel);
+        lupine_named_handle_key<CUlibrary>{library, name}, kernel);
     lupine_note_function_owner_route(reinterpret_cast<CUfunction>(kernel),
                                      route);
     lupine_cache_library_kernel(kernel, library, std::move(name), route);
@@ -5244,10 +5245,10 @@ extern "C" void lupine_release_module_retained_strings(CUmodule module) {
   std::unordered_set<CUfunction> unloaded;
   lupine_cache_erase_if(lupine_module_function_names(),
                         [&](const auto &key, CUfunction function) {
-                          if (key.module == module) {
+                          if (key.handle == module) {
                             unloaded.insert(function);
                           }
-                          return key.module == module;
+                          return key.handle == module;
                         });
   std::scoped_lock lock(lupine_library_kernel_mutex(), g_retained_string_mutex);
   lupine_release_retained_strings_locked(
@@ -7340,23 +7341,28 @@ void *rpc_client_dispatch_thread(void *arg) {
         break;
       }
 
-      std::vector<char> message;
-      try {
-        if (length == SIZE_MAX) {
-          throw std::bad_alloc();
+      char inline_msg[512];
+      std::vector<char> heap_msg;
+      char *msg_buf = inline_msg;
+      if (length >= sizeof(inline_msg)) {
+        try {
+          if (length == SIZE_MAX) {
+            throw std::bad_alloc();
+          }
+          heap_msg.resize(length + 1);
+        } catch (...) {
+          LUPINE_LOG_ERROR("Failed to allocate log callback message.");
+          break;
         }
-        message.resize(length + 1);
-      } catch (...) {
-        LUPINE_LOG_ERROR("Failed to allocate log callback message.");
-        break;
+        msg_buf = heap_msg.data();
       }
-      if ((length != 0 && rpc_read(conn, message.data(), length) < 0) ||
+      if ((length != 0 && rpc_read(conn, msg_buf, length) < 0) ||
           rpc_read(conn, &callback, sizeof(callback)) < 0 ||
           rpc_read(conn, &user_data, sizeof(user_data)) < 0) {
         LUPINE_LOG_ERROR("Failed to read log callback request.");
         break;
       }
-      message[length] = '\0';
+      msg_buf[length] = '\0';
 
       int32_t callback_stream_id = rpc_current_http2_stream(conn);
       int request_id = rpc_read_end(conn);
@@ -7370,16 +7376,25 @@ void *rpc_client_dispatch_thread(void *arg) {
       // the dispatch-thread fallback.
       if ((origin_stream_id < 0 || origin_stream_id == callback_stream_id) &&
           callback != nullptr) {
-        callback(user_data, level, message.data(), length);
-      } else if (callback != nullptr &&
-                 !lupine_pending_logs().enqueue(
-                     conn, origin_stream_id,
-                     [callback, user_data, level, length,
-                      message = std::move(message)]() mutable {
-                       callback(user_data, level, message.data(), length);
-                     })) {
-        LUPINE_LOG_ERROR("Failed to queue log callback.");
-        break;
+        callback(user_data, level, msg_buf, length);
+      } else if (callback != nullptr) {
+        if (heap_msg.empty()) {
+          try {
+            heap_msg.assign(inline_msg, inline_msg + length + 1);
+          } catch (...) {
+            LUPINE_LOG_ERROR("Failed to allocate log callback message.");
+            break;
+          }
+        }
+        if (!lupine_pending_logs().enqueue(
+                conn, origin_stream_id,
+                [callback, user_data, level, length,
+                 message = std::move(heap_msg)]() mutable {
+                  callback(user_data, level, message.data(), length);
+                })) {
+          LUPINE_LOG_ERROR("Failed to queue log callback.");
+          break;
+        }
       }
 
       void *res = nullptr;
