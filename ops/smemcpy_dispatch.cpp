@@ -1,7 +1,6 @@
 #include "ops/smemcpy_dispatch.h"
 
 #include <algorithm>
-#include <cstdio>
 #include <limits>
 
 namespace {
@@ -100,22 +99,13 @@ atomic_narrow_target atomic_target_for(const lupine_smemcpy_device *device) {
   if (device == nullptr) {
     return atomic_none;
   }
-  if (device->major == 6 && device->minor == 0) {
-    return atomic_pascal;
-  }
-  if (device->major == 7 && device->minor == 0) {
-    return atomic_volta;
-  }
-  if (device->major == 7 && device->minor == 5) {
-    return atomic_turing;
-  }
-  if (device->major == 8 && device->minor == 0) {
-    return atomic_ampere;
-  }
-  if (device->major == 8 && device->minor == 9 && device->is_l4) {
-    return atomic_l4;
-  }
-  return atomic_none;
+  int sm = device->major * 10 + device->minor;
+  return sm == 60                      ? atomic_pascal
+         : sm == 70                    ? atomic_volta
+         : sm == 75                    ? atomic_turing
+         : sm == 80                    ? atomic_ampere
+         : (sm == 89 && device->is_l4) ? atomic_l4
+                                       : atomic_none;
 }
 
 unsigned int atomic_group_threads(atomic_narrow_target target, size_t width,
@@ -125,35 +115,22 @@ unsigned int atomic_group_threads(atomic_narrow_target target, size_t width,
   }
   switch (target) {
   case atomic_pascal:
-    if (width == 1) {
-      return stride >= 128 ? 4 : 0;
-    }
-    return stride == 64 ? 8 : 4;
+    return width == 1 ? (stride >= 128 ? 4 : 0) : (stride == 64 ? 8 : 4);
   case atomic_volta:
-    if (width == 1) {
-      return stride >= 128 ? 4 : 0;
-    }
-    if (stride == 64 || (width == 3 && stride == 128)) {
-      return 16;
-    }
-    return stride == 128 ? 8 : 4;
+    return width == 1 ? (stride >= 128 ? 4 : 0)
+                      : (stride == 64 || (width == 3 && stride == 128)
+                             ? 16
+                             : (stride == 128 ? 8 : 4));
   case atomic_turing:
-    if (width == 1) {
-      return stride == 64 ? 8 : 4;
-    }
-    if (width == 2) {
-      return stride == 128 || stride == 256 ? 4 : 0;
-    }
-    return stride == 64 ? 16 : 4;
+    return width == 1 ? (stride == 64 ? 8 : 4)
+                      : (width == 2 ? (stride == 128 || stride == 256 ? 4 : 0)
+                                    : (stride == 64 ? 16 : 4));
   case atomic_ampere:
     return width == 1 && stride >= 256 ? 8 : 0;
   case atomic_l4:
-    if (width == 1) {
-      return stride == 64 ? 16 : 8;
-    }
-    return 16;
+    return width == 1 && stride != 64 ? 8 : 16;
   case atomic_none:
-    return 0;
+    break;
   }
   return 0;
 }
@@ -263,37 +240,107 @@ lupine_smemcpy_prepare_descriptor(const lupine_smemcpy_params *params,
   return CUDA_SUCCESS;
 }
 
-extern "C" const char *
-lupine_smemcpy_kernel_name(const lupine_smemcpy_launch_descriptor *launch) {
-  static thread_local char name[64];
+namespace {
+
+constexpr const char *kKernelNames[LUPINE_SMEMCPY_KERNEL_COUNT] = {
+    "lupine_smemcpy_3d",
+    "lupine_smemcpy_2d",
+    "lupine_smemcpy_pitched_2",
+    "lupine_smemcpy_pitched_4",
+    "lupine_smemcpy_pitched_8",
+    "lupine_smemcpy_pitched_16",
+    "lupine_smemcpy_narrow_2d_1_1",
+    "lupine_smemcpy_narrow_2d_1_4",
+    "lupine_smemcpy_narrow_2d_2_1",
+    "lupine_smemcpy_narrow_2d_2_4",
+    "lupine_smemcpy_narrow_2d_3_1",
+    "lupine_smemcpy_narrow_2d_3_4",
+    "lupine_smemcpy_narrow_3d_1_1",
+    "lupine_smemcpy_narrow_3d_1_4",
+    "lupine_smemcpy_narrow_3d_2_1",
+    "lupine_smemcpy_narrow_3d_2_4",
+    "lupine_smemcpy_narrow_3d_3_1",
+    "lupine_smemcpy_narrow_3d_3_4",
+    "lupine_smemcpy_atomic_2d_0_4",
+    "lupine_smemcpy_atomic_2d_1_4",
+    "lupine_smemcpy_atomic_2d_2_4",
+    "lupine_smemcpy_atomic_2d_3_4",
+    "lupine_smemcpy_atomic_2d_0_8",
+    "lupine_smemcpy_atomic_2d_1_8",
+    "lupine_smemcpy_atomic_2d_2_8",
+    "lupine_smemcpy_atomic_2d_3_8",
+    "lupine_smemcpy_atomic_2d_0_16",
+    "lupine_smemcpy_atomic_2d_1_16",
+    "lupine_smemcpy_atomic_2d_2_16",
+    "lupine_smemcpy_atomic_2d_3_16",
+    "lupine_smemcpy_atomic_rows_2_0_4",
+    "lupine_smemcpy_atomic_rows_2_1_4",
+    "lupine_smemcpy_atomic_rows_2_2_4",
+    "lupine_smemcpy_atomic_rows_3_0_4",
+    "lupine_smemcpy_atomic_rows_3_1_4",
+    "lupine_smemcpy_atomic_rows_2_0_8",
+    "lupine_smemcpy_atomic_rows_2_1_8",
+    "lupine_smemcpy_atomic_rows_2_2_8",
+    "lupine_smemcpy_atomic_rows_3_0_8",
+    "lupine_smemcpy_atomic_rows_3_1_8",
+    "lupine_smemcpy_atomic_rows_2_0_16",
+    "lupine_smemcpy_atomic_rows_2_1_16",
+    "lupine_smemcpy_atomic_rows_2_2_16",
+    "lupine_smemcpy_atomic_rows_3_0_16",
+    "lupine_smemcpy_atomic_rows_3_1_16",
+};
+
+int atomic_group_index(unsigned int g) {
+  return g == 4 ? 0 : g == 8 ? 1 : g == 16 ? 2 : -1;
+}
+
+} // namespace
+
+extern "C" int
+lupine_smemcpy_kernel_index(const lupine_smemcpy_launch_descriptor *launch) {
   if (launch == nullptr || launch->use_cuda_memcpy || launch->blocks == 0) {
-    return nullptr;
+    return -1;
   }
+  int group = atomic_group_index(launch->group_threads);
   switch (launch->kernel) {
   case LUPINE_SMEMCPY_KERNEL_3D:
-    return "lupine_smemcpy_3d";
+    return 0;
   case LUPINE_SMEMCPY_KERNEL_2D:
-    return "lupine_smemcpy_2d";
-  case LUPINE_SMEMCPY_KERNEL_PITCHED:
-    std::snprintf(name, sizeof(name), "lupine_smemcpy_pitched_%u",
-                  launch->word_bytes);
-    break;
-  case LUPINE_SMEMCPY_KERNEL_NARROW_2D:
-    std::snprintf(name, sizeof(name), "lupine_smemcpy_narrow_2d_%u_%u",
-                  launch->width, launch->items);
-    break;
-  case LUPINE_SMEMCPY_KERNEL_NARROW_3D:
-    std::snprintf(name, sizeof(name), "lupine_smemcpy_narrow_3d_%u_%u",
-                  launch->width, launch->items);
-    break;
-  case LUPINE_SMEMCPY_KERNEL_ATOMIC_NARROW_2D:
-    std::snprintf(name, sizeof(name), "lupine_smemcpy_atomic_2d_%u_%u",
-                  launch->byte_offset, launch->group_threads);
-    break;
-  case LUPINE_SMEMCPY_KERNEL_ATOMIC_ROWS:
-    std::snprintf(name, sizeof(name), "lupine_smemcpy_atomic_rows_%u_%u_%u",
-                  launch->width, launch->byte_offset, launch->group_threads);
-    break;
+    return 1;
+  case LUPINE_SMEMCPY_KERNEL_PITCHED: {
+    size_t w = launch->word_bytes;
+    return w == 2 ? 2 : w == 4 ? 3 : w == 8 ? 4 : w == 16 ? 5 : -1;
   }
-  return name;
+  case LUPINE_SMEMCPY_KERNEL_NARROW_2D:
+  case LUPINE_SMEMCPY_KERNEL_NARROW_3D:
+    return (launch->width >= 1 && launch->width <= 3 &&
+            (launch->items == 1 || launch->items == 4))
+               ? (launch->kernel == LUPINE_SMEMCPY_KERNEL_NARROW_2D ? 6 : 12) +
+                     static_cast<int>(launch->width - 1) * 2 +
+                     (launch->items == 4)
+               : -1;
+  case LUPINE_SMEMCPY_KERNEL_ATOMIC_NARROW_2D:
+    return (group >= 0 && launch->byte_offset <= 3)
+               ? 18 + group * 4 + static_cast<int>(launch->byte_offset)
+               : -1;
+  case LUPINE_SMEMCPY_KERNEL_ATOMIC_ROWS: {
+    int row = (launch->width == 2 && launch->byte_offset <= 2)
+                  ? static_cast<int>(launch->byte_offset)
+                  : ((launch->width == 3 && launch->byte_offset <= 1)
+                         ? 3 + static_cast<int>(launch->byte_offset)
+                         : -1);
+    return (group >= 0 && row >= 0) ? 30 + group * 5 + row : -1;
+  }
+  }
+  return -1;
+}
+
+extern "C" const char *lupine_smemcpy_kernel_name_at(int index) {
+  return index >= 0 && index < LUPINE_SMEMCPY_KERNEL_COUNT ? kKernelNames[index]
+                                                           : nullptr;
+}
+
+extern "C" const char *
+lupine_smemcpy_kernel_name(const lupine_smemcpy_launch_descriptor *launch) {
+  return lupine_smemcpy_kernel_name_at(lupine_smemcpy_kernel_index(launch));
 }

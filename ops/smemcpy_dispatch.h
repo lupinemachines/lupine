@@ -65,6 +65,8 @@ typedef struct lupine_smemcpy_launch_descriptor {
   unsigned int group_threads;
 } lupine_smemcpy_launch_descriptor;
 
+#define LUPINE_SMEMCPY_KERNEL_COUNT 45
+
 // Selects a launch without touching CUDA runtime state. Device properties are
 // needed only by noncontiguous one- to three-byte rows; null selects the safe
 // architecture-neutral path.
@@ -72,6 +74,13 @@ CUresult
 lupine_smemcpy_prepare_descriptor(const lupine_smemcpy_params *params,
                                   const lupine_smemcpy_device *device,
                                   lupine_smemcpy_launch_descriptor *launch);
+
+// Dense index in [0, LUPINE_SMEMCPY_KERNEL_COUNT) for O(1) kernel table lookup,
+// or -1 if the launch does not select a device kernel.
+int lupine_smemcpy_kernel_index(const lupine_smemcpy_launch_descriptor *launch);
+
+// Stable C-linkage name for a kernel index in [0, LUPINE_SMEMCPY_KERNEL_COUNT).
+const char *lupine_smemcpy_kernel_name_at(int index);
 
 // Stable C-linkage name exported by the precompiled CUDA fatbin.
 const char *

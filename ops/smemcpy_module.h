@@ -25,6 +25,28 @@ lupine_smemcpy_module_function(CUmodule module,
 
 #ifdef __cplusplus
 }
+
+#include <atomic>
+
+struct lupine_smemcpy_cached_module {
+  CUmodule module = nullptr;
+  lupine_smemcpy_device device = {};
+  std::atomic<CUfunction> functions[LUPINE_SMEMCPY_KERNEL_COUNT] = {};
+};
+
+CUresult
+lupine_smemcpy_cached_module_load(lupine_smemcpy_cached_module *cached);
+void lupine_smemcpy_cached_module_unload(lupine_smemcpy_cached_module *cached);
+CUresult
+lupine_smemcpy_cached_prepare_launch(const lupine_smemcpy_cached_module *cached,
+                                     const lupine_smemcpy_params *params,
+                                     lupine_smemcpy_launch_descriptor *launch);
+CUresult
+lupine_smemcpy_cached_function(lupine_smemcpy_cached_module *cached,
+                               const lupine_smemcpy_launch_descriptor *launch,
+                               CUfunction *function);
+bool lupine_smemcpy_cached_contains_function(
+    const lupine_smemcpy_cached_module *cached, CUfunction function);
 #endif
 
 #endif
