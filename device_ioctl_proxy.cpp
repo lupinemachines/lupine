@@ -22,6 +22,17 @@ registry &proxies() {
   static auto *state = new registry;
   return *state;
 }
+// A fork child cannot use the parent's RPC threads or inherited mutex.
+// Treat inherited proxies as ordinary fds so pre-exec close/dup stay safe.
+registry *active_registry(int fd = 0) {
+  if (fd < 0 || active_proxies.load(std::memory_order_acquire) == 0)
+    return nullptr;
+  auto &state = proxies();
+  return state.process == getpid() ? &state : nullptr;
+}
+void publish_count(const registry &state) {
+  active_proxies.store(state.descriptors.size(), std::memory_order_release);
+}
 int raw_dup(int fd, int destination, int flags, bool fixed) {
   if (!fixed)
     return static_cast<int>(syscall(SYS_fcntl, fd, F_DUPFD, 0));
@@ -52,91 +63,81 @@ int lupine_device_proxy_create(int route, uint64_t token, bool uvm) {
   auto &state = proxies();
   std::lock_guard<std::mutex> lock(state.mutex);
   state.descriptors[fd] = std::move(proxy);
-  active_proxies.store(state.descriptors.size(), std::memory_order_release);
+  publish_count(state);
   return fd;
 }
 
 std::shared_ptr<lupine_device_proxy> lupine_device_proxy_get(int fd) {
-  if (fd < 0 || active_proxies.load(std::memory_order_acquire) == 0)
+  auto *state = active_registry(fd);
+  if (!state)
     return nullptr;
-  auto &state = proxies();
-  // A fork child cannot use the parent's RPC threads or inherited mutex.
-  // Treat inherited proxies as ordinary fds so pre-exec close/dup stay safe.
-  if (state.process != getpid())
-    return nullptr;
-  std::lock_guard<std::mutex> lock(state.mutex);
-  auto found = state.descriptors.find(fd);
-  return found == state.descriptors.end() ? nullptr : found->second;
+  std::lock_guard<std::mutex> lock(state->mutex);
+  auto found = state->descriptors.find(fd);
+  return found == state->descriptors.end() ? nullptr : found->second;
 }
 
 bool lupine_device_proxy_try_close(int fd, int *result) {
-  if (fd < 0 || active_proxies.load(std::memory_order_acquire) == 0)
-    return false;
-  auto &state = proxies();
-  if (state.process != getpid())
+  auto *state = active_registry(fd);
+  if (!state)
     return false;
   std::shared_ptr<lupine_device_proxy> removed;
   {
-    std::lock_guard<std::mutex> lock(state.mutex);
-    auto found = state.descriptors.find(fd);
-    if (found == state.descriptors.end())
+    std::lock_guard<std::mutex> lock(state->mutex);
+    auto found = state->descriptors.find(fd);
+    if (found == state->descriptors.end())
       return false;
     // Linux releases the descriptor even when close reports EINTR/EIO.
     *result = static_cast<int>(syscall(SYS_close, fd));
     removed = std::move(found->second);
-    state.descriptors.erase(found);
-    active_proxies.store(state.descriptors.size(), std::memory_order_release);
+    state->descriptors.erase(found);
+    publish_count(*state);
   }
   return true;
 }
 
 int lupine_device_proxy_close(int fd) {
   int result;
-  if (lupine_device_proxy_try_close(fd, &result))
-    return result;
-  return static_cast<int>(syscall(SYS_close, fd));
+  return lupine_device_proxy_try_close(fd, &result)
+             ? result
+             : static_cast<int>(syscall(SYS_close, fd));
 }
 
 int lupine_device_proxy_dup(int fd, int destination, int flags, bool fixed) {
-  if (active_proxies.load(std::memory_order_acquire) == 0)
-    return raw_dup(fd, destination, flags, fixed);
-  auto &state = proxies();
-  if (state.process != getpid())
+  auto *state = active_registry();
+  if (!state)
     return raw_dup(fd, destination, flags, fixed);
   std::shared_ptr<lupine_device_proxy> replaced;
   int result;
   {
-    std::lock_guard<std::mutex> lock(state.mutex);
+    std::lock_guard<std::mutex> lock(state->mutex);
     result = raw_dup(fd, destination, flags, fixed);
     if (result < 0 || result == fd)
       return result;
-    auto source = state.descriptors.find(fd);
-    auto owner = source == state.descriptors.end() ? nullptr : source->second;
-    auto target = state.descriptors.find(result);
-    if (target != state.descriptors.end()) {
+    auto source = state->descriptors.find(fd);
+    auto owner = source == state->descriptors.end() ? nullptr : source->second;
+    auto target = state->descriptors.find(result);
+    if (target != state->descriptors.end()) {
       replaced = std::move(target->second);
-      state.descriptors.erase(target);
+      state->descriptors.erase(target);
     }
     if (owner)
-      state.descriptors.emplace(result, std::move(owner));
-    active_proxies.store(state.descriptors.size(), std::memory_order_release);
+      state->descriptors.emplace(result, std::move(owner));
+    publish_count(*state);
   }
   return result;
 }
 
 int lupine_device_proxy_fcntl(int fd, int command, uintptr_t argument) {
-  if (fd < 0 || active_proxies.load(std::memory_order_acquire) == 0)
+  auto *state = active_registry(fd);
+  if (!state)
     return static_cast<int>(syscall(SYS_fcntl, fd, command, argument));
-  auto &state = proxies();
-  if (state.process != getpid())
-    return static_cast<int>(syscall(SYS_fcntl, fd, command, argument));
-  std::lock_guard<std::mutex> lock(state.mutex);
+  std::lock_guard<std::mutex> lock(state->mutex);
   int result = static_cast<int>(syscall(SYS_fcntl, fd, command, argument));
   if (result >= 0 && (command == F_DUPFD || command == F_DUPFD_CLOEXEC)) {
-    auto found = state.descriptors.find(fd);
-    if (found != state.descriptors.end()) {
-      state.descriptors.emplace(result, found->second);
-      active_proxies.store(state.descriptors.size(), std::memory_order_release);
+    auto found = state->descriptors.find(fd);
+    if (found != state->descriptors.end()) {
+      state->descriptors.emplace(result, found->second);
+      publish_count(*state);
     }
   }
   return result;

@@ -1672,10 +1672,7 @@ CUresult cuKernelGetName(const char **name, CUkernel hfunc) {
       (name_present &&
        (rpc_read(conn, &name_len, sizeof(std::size_t)) < 0 ||
         name_len > (1U << 20) ||
-        (name_len != 0 &&
-         ((name_data = static_cast<char *>(
-               lupine_name_buf.alloc_uninit(name_len))) == nullptr ||
-          rpc_read(conn, name_data, name_len) < 0)))) ||
+        lupine_name_buf.read_into(conn, name_data, name_len) < 0)) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -4802,10 +4799,7 @@ CUresult cuFuncGetName(const char **name, CUfunction hfunc) {
       (name_present &&
        (rpc_read(conn, &name_len, sizeof(std::size_t)) < 0 ||
         name_len > (1U << 20) ||
-        (name_len != 0 &&
-         ((name_data = static_cast<char *>(
-               lupine_name_buf.alloc_uninit(name_len))) == nullptr ||
-          rpc_read(conn, name_data, name_len) < 0)))) ||
+        lupine_name_buf.read_into(conn, name_data, name_len) < 0)) ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -10958,7 +10952,6 @@ struct lupine_cuda_function_entry {
   const char *name;
   void *pointer;
 };
-
 const lupine_cuda_function_entry kFunctionMap[] = {
     {"cuArray3DCreate", (void *)cuArray3DCreate_v2},
     {"cuArray3DCreate_v2", (void *)cuArray3DCreate_v2},
@@ -11624,13 +11617,13 @@ const lupine_cuda_function_entry kFunctionMap[] = {
 void *get_function_pointer(const char *name) {
   if (name == nullptr)
     return nullptr;
-  constexpr size_t count = sizeof(kFunctionMap) / sizeof(kFunctionMap[0]);
-  const auto *it = std::lower_bound(
-      kFunctionMap, kFunctionMap + count, name,
-      [](const lupine_cuda_function_entry &entry, const char *key) {
-        return std::strcmp(entry.name, key) < 0;
-      });
-  if (it == kFunctionMap + count || std::strcmp(it->name, name) != 0)
-    return nullptr;
-  return it->pointer;
+  const auto *end =
+      kFunctionMap + sizeof(kFunctionMap) / sizeof(kFunctionMap[0]);
+  const auto *it =
+      std::lower_bound(kFunctionMap, end, name,
+                       [](const lupine_cuda_function_entry &e, const char *k) {
+                         return std::strcmp(e.name, k) < 0;
+                       });
+  return (it != end && std::strcmp(it->name, name) == 0) ? it->pointer
+                                                         : nullptr;
 }

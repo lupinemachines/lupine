@@ -251,12 +251,9 @@ class ArrayOperation:
         if self.length_offset > 0:
             off = self.length_offset
             if self.has_signed_length:
-                sum_expr = f"(static_cast<int64_t>({lname}) + {off})"
-                return "", f"({sum_expr} <= 0 ? size_t{{0}} : static_cast<size_t>({sum_expr}))"
-            return (
-                f"static_cast<size_t>({lname}) > (~size_t{{0}}) - {off}",
-                f"(static_cast<size_t>({lname}) + {off})",
-            )
+                s = f"(static_cast<int64_t>({lname}) + {off})"
+                return "", f"({s} <= 0 ? size_t{{0}} : static_cast<size_t>({s}))"
+            return f"static_cast<size_t>({lname}) > (~size_t{{0}}) - {off}", f"(static_cast<size_t>({lname}) + {off})"
         if self.has_signed_length:
             return "", f"({lname} <= 0 ? size_t{{0}} : static_cast<size_t>({lname}))"
         return "", f"static_cast<size_t>({lname})"
@@ -268,71 +265,29 @@ class ArrayOperation:
             f"    lupine_scratch_buffer<{self.server_inline_bytes}> lupine_{name}_buf;\n"
             f"    {self.mutable_ptr_format()} {name} = nullptr;\n"
         )
-        if not isinstance(self.length, int):
-            s += f"    size_t lupine_{name}_bytes = 0;\n"
         if self.nullable:
             s += f"    uint8_t {name}_null = 0;\n"
         return s
 
     def server_rpc_read(self, f):
         name = self.parameter.name
-        null_read = (
-            f"        rpc_read(conn, &{name}_null, sizeof(uint8_t)) < 0 ||\n"
-            if self.nullable
-            else ""
-        )
-        alloc_kind = "uninit" if (self.send and not self.recv) else "zeroed"
-        f.write(
-            f"{null_read}"
-            "        false)\n"
-            "        goto ERROR_0;\n"
-        )
+        if self.nullable:
+            f.write(f"        rpc_read(conn, &{name}_null, sizeof(uint8_t)) < 0 ||\n")
+        zeroed = "false" if (self.send and not self.recv) else "true"
         if isinstance(self.length, int):
-            size_expr = str(self.length)
-            if self.nullable:
-                f.write(f"    if (!{name}_null) {{\n")
-                indent = "        "
-            else:
-                indent = "    "
-            f.write(
-                f"{indent}{name} = ({self.mutable_ptr_format()})lupine_{name}_buf.alloc_{alloc_kind}({size_expr});\n"
-                f"{indent}if ({name} == nullptr)\n"
-                f"{indent}    goto ERROR_0;\n"
-            )
-            if self.nullable:
-                f.write("    }\n")
+            overflow_guard, count_expr, elem_size = "", str(self.length), "1"
         else:
             overflow_guard, count_expr = self._server_safe_count_expr()
-            elem_size = (
-                "size_t{1}"
-                if self.is_void_bytes
-                else f"sizeof({self.ptr.ptr_to.format()})"
-            )
-            if self.nullable:
-                f.write(f"    if (!{name}_null) {{\n")
-            else:
-                f.write("    {\n")
-            if overflow_guard:
-                f.write(
-                    f"        if ({overflow_guard})\n"
-                    "            goto ERROR_0;\n"
-                )
-            f.write(
-                f"        size_t lupine_{name}_count = {count_expr};\n"
-                f"        {name} = ({self.mutable_ptr_format()})lupine_{name}_buf.alloc_array_{alloc_kind}(lupine_{name}_count, {elem_size});\n"
-                f"        if ({name} == nullptr)\n"
-                "            goto ERROR_0;\n"
-                f"        lupine_{name}_bytes = lupine_{name}_count * {elem_size};\n"
-                "    }\n"
-            )
-            size_expr = f"lupine_{name}_bytes"
-        f.write("    if (\n")
+            elem_size = "1" if self.is_void_bytes else f"sizeof({self.ptr.ptr_to.format()})"
         if self.send:
-            guard = f"!{name}_null && " if self.nullable else ""
-            f.write(
-                f"        ({guard}{size_expr} != 0 && "
-                f"rpc_read(conn, {name}, {size_expr}) < 0) ||\n"
-            )
+            step = f"lupine_{name}_buf.read_array(conn, {name}, {count_expr}, {elem_size}, {zeroed}) < 0"
+        else:
+            step = f"!lupine_{name}_buf.alloc_into({name}, {count_expr}, {elem_size}, {zeroed})"
+        if overflow_guard:
+            step = f"({overflow_guard} || {step})"
+        if self.nullable:
+            step = f"(!{name}_null && {step})"
+        f.write(f"        {step} ||\n")
 
     @property
     def server_reference(self) -> str:
@@ -342,7 +297,7 @@ class ArrayOperation:
             and not (not self.send and self.ptr.ptr_to.format() == "char")
         ):
             return (
-                f"(lupine_{self.parameter.name}_bytes == 0 ? "
+                f"({self.server_transfer_size_expr()} == 0 ? "
                 f"nullptr : {self.parameter.name})"
             )
         return self.parameter.name
@@ -351,15 +306,11 @@ class ArrayOperation:
         if not self.recv:
             return
         name = self.parameter.name
-        size_expr = (
-            str(self.length)
-            if isinstance(self.length, int)
-            else f"lupine_{name}_bytes"
-        )
+        size = self.server_transfer_size_expr()
         guard = f"!{name}_null && " if self.nullable else ""
         f.write(
-            f"        ({guard}{size_expr} != 0 && "
-            f"rpc_write(conn, {name}, {size_expr}) < 0) ||\n"
+            f"        ({guard}{size} != 0 && "
+            f"rpc_write(conn, {name}, {size}) < 0) ||\n"
         )
 
     def client_rpc_read(self, f):
@@ -506,25 +457,12 @@ class NullableArrayOperation:
         elem = self.element_type()
         name = self.parameter.name
         requested = self.requested_count_expr()
+        # A present pointer reaches the backend non-null even at zero capacity,
+        # and zero-initialization supplies any untouched remainder on the wire.
         f.write(
             f"        rpc_read(conn, &{name}_null, sizeof(uint8_t)) < 0 ||\n"
+            f"        (!{name}_null && !lupine_{name}_buf.alloc_into({name}, static_cast<size_t>({requested}), sizeof({elem}), true)) ||\n"
         )
-        f.write("        false)\n")
-        f.write("        goto ERROR_0;\n")
-        # A present pointer must reach CUDA non-null even at zero capacity:
-        # null selects count-query semantics, which can report a count larger
-        # than the zero-length storage the response would then be read from.
-        f.write(f"    if (!{name}_null) {{\n")
-        # The whole capacity goes back on the wire whether or not the library
-        # filled it, so the allocation supplies the untouched remainder.
-        f.write(
-            f"        {name} = ({elem} *)lupine_{name}_buf.alloc_array_zeroed("
-            f"static_cast<size_t>({requested}), sizeof({elem}));\n"
-        )
-        f.write(f"        if ({name} == nullptr)\n")
-        f.write("            goto ERROR_0;\n")
-        f.write("    }\n")
-        f.write("    if (\n")
 
     @property
     def server_reference(self) -> str:
@@ -669,14 +607,8 @@ class DeepStructOperation:
         name = self.parameter.name
         f.write(f"        rpc_read(conn, &{name}, sizeof({name})) < 0 ||\n")
         for member, count in self.members:
-            buf = f"lupine_{name}_{member}_buf"
             f.write(
-                f"        ({name}.{count} == 0\n"
-                f"             ? (({name}.{member} = nullptr), false)\n"
-                f"             : (({name}.{member} = (decltype({name}.{member})){buf}.alloc_array_uninit(\n"
-                f"                     static_cast<size_t>({name}.{count}), sizeof(*{name}.{member}))) == nullptr ||\n"
-                f"                rpc_read(conn, (void *){name}.{member},\n"
-                f"                         static_cast<size_t>({name}.{count}) * sizeof(*{name}.{member})) < 0)) ||\n"
+                f"        lupine_{name}_{member}_buf.read_into(conn, {name}.{member}, static_cast<size_t>({name}.{count}), sizeof(*{name}.{member})) < 0 ||\n"
             )
 
     @property
@@ -819,16 +751,8 @@ class NullTerminatedOperation:
             return
         f.write(
             f"        rpc_read(conn, &{name}_len, sizeof({self.length_type})) < 0 ||\n"
-            f"        {name}_len > (1U << 20))\n"
-            "        goto ERROR_0;\n"
-            f"    if ({name}_len != 0) {{\n"
-            f"        char *lupine_{name}_mut = static_cast<char *>(lupine_{name}_buf.alloc_uninit({name}_len));\n"
-            f"        if (lupine_{name}_mut == nullptr || rpc_read(conn, lupine_{name}_mut, {name}_len) < 0)\n"
-            "            goto ERROR_0;\n"
-            f"        lupine_{name}_mut[{name}_len - 1] = '\\0';\n"
-            f"        {name} = ({self.ptr.format()})lupine_{name}_mut;\n"
-            "    }\n"
-            "    if (\n"
+            f"        {name}_len > (1U << 20) ||\n"
+            f"        lupine_{name}_buf.read_into(conn, {name}, {name}_len, 1, true) < 0 ||\n"
         )
 
     @property
@@ -856,23 +780,15 @@ class NullTerminatedOperation:
         if not self.recv:
             return
         name = self.parameter.name
-        if not self.nullable:
-            f.write(
-                f"        rpc_read(conn, &{name}_len, sizeof({self.length_type})) < 0 ||\n"
-                f"        {name}_len > (1U << 20) ||\n"
-                f"        ({name}_len != 0 && (\n"
-                f"            ({name}_data = static_cast<char *>(lupine_{name}_buf.alloc_uninit({name}_len))) == nullptr ||\n"
-                f"            rpc_read(conn, {name}_data, {name}_len) < 0)) ||\n"
-            )
-            return
-        f.write(
-            f"        ({name}_present && (\n"
-            f"            rpc_read(conn, &{name}_len, sizeof({self.length_type})) < 0 ||\n"
-            f"            {name}_len > (1U << 20) ||\n"
-            f"            ({name}_len != 0 && (\n"
-            f"                ({name}_data = static_cast<char *>(lupine_{name}_buf.alloc_uninit({name}_len))) == nullptr ||\n"
-            f"                rpc_read(conn, {name}_data, {name}_len) < 0)))) ||\n"
+        read = (
+            f"rpc_read(conn, &{name}_len, sizeof({self.length_type})) < 0 || "
+            f"{name}_len > (1U << 20) || "
+            f"lupine_{name}_buf.read_into(conn, {name}_data, {name}_len) < 0"
         )
+        if not self.nullable:
+            f.write(f"        {read} ||\n")
+        else:
+            f.write(f"        ({name}_present && ({read})) ||\n")
 
     def client_post_rpc(
         self,
@@ -1031,26 +947,20 @@ class ScalarOperation:
         return (
             f"    uint32_t {name}_width = 0;\n"
             f"    lupine_scratch_buffer<64> lupine_{name}_buf;\n"
-            f"    void *lupine_{name}_slot = nullptr;\n"
             f"    {self.ptr.format()} {name} = nullptr;\n"
         )
 
     def server_rpc_read(self, f):
         name = self.parameter.name
-        alloc_fn = "alloc_uninit" if (self.send and not self.recv) else "alloc_zeroed"
-        read_payload = (
-            f"                rpc_read(conn, lupine_{name}_slot, {name}_width) < 0 ||\n"
-            if self.send
-            else ""
-        )
+        if self.send:
+            zeroed = "false" if not self.recv else "true"
+            wide = f"lupine_{name}_buf.read_array(conn, {name}, {name}_width, 1, {zeroed}) < 0"
+        else:
+            wide = f"!lupine_{name}_buf.alloc_into({name}, {name}_width, 1, true)"
         f.write(
             f"        rpc_read(conn, &{name}_width, sizeof({name}_width)) < 0 ||\n"
             f"        {name}_width > (1U << 20) ||\n"
-            f"        ({name}_width == 0\n"
-            f"             ? rpc_read(conn, &{name}, sizeof({name})) < 0\n"
-            f"             : ((lupine_{name}_slot = lupine_{name}_buf.{alloc_fn}({name}_width)) == nullptr ||\n"
-            f"{read_payload}"
-            f"                (({name} = reinterpret_cast<{self.ptr.format()}>(lupine_{name}_slot)), false))) ||\n"
+            f"        ({name}_width == 0 ? rpc_read(conn, &{name}, sizeof({name})) < 0 : {wide}) ||\n"
         )
 
     @property
@@ -1062,7 +972,7 @@ class ScalarOperation:
             return
         name = self.parameter.name
         f.write(
-            f"        ({name}_width != 0 && rpc_write(conn, lupine_{name}_slot, {name}_width) < 0) ||\n"
+            f"        ({name}_width != 0 && rpc_write(conn, {name}, {name}_width) < 0) ||\n"
         )
 
 
@@ -1159,21 +1069,15 @@ class VersionedStructOperation:
             f"        rpc_read(conn, &{name}_size, sizeof({name}_size)) < 0 ||\n"
             f"        {name}_size > (1U << 20) ||\n"
             f"        ({name}_size != 0 && (\n"
-            f"            ({name}_bytes = static_cast<unsigned char *>(\n"
-            f"                lupine_{name}_buf.alloc_zeroed(std::max<size_t>(static_cast<size_t>({name}_size), sizeof({type_}))))) == nullptr ||\n"
+            f"            !lupine_{name}_buf.alloc_into({name}_bytes, std::max<size_t>(static_cast<size_t>({name}_size), sizeof({type_})), 1, true) ||\n"
             f"            rpc_read(conn, {name}_bytes, static_cast<size_t>({name}_size)) < 0)) ||\n"
         )
         for member in self.strings:
             f.write(
                 f"        rpc_read(conn, &{name}_{member}_len, sizeof(uint32_t)) < 0 ||\n"
                 f"        {name}_{member}_len > (1U << 20) ||\n"
-                f"        ({name}_{member}_len != 0 && (\n"
-                f"            ({name}_{member} = static_cast<char *>(\n"
-                f"                lupine_{name}_{member}_buf.alloc_uninit({name}_{member}_len))) == nullptr ||\n"
-                f"            rpc_read(conn, {name}_{member}, {name}_{member}_len) < 0 ||\n"
-                f"            (({name}_{member}[{name}_{member}_len - 1] = '\\0'), false))) ||\n"
+                f"        lupine_{name}_{member}_buf.read_into(conn, {name}_{member}, {name}_{member}_len, 1, true) < 0 ||\n"
             )
-        return None
 
     @property
     def server_reference(self) -> str:

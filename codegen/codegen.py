@@ -359,12 +359,7 @@ $hip_guarded_declarations
 #undef LUPINE_DECLARE_HANDLER
 
 namespace {
-
-struct rpc_handler_entry {
-  int op = 0;
-  rpc_handler handler = {};
-};
-
+struct rpc_handler_entry { int op = 0; rpc_handler handler = {}; };
 constexpr size_t kHandlerTableSize = 2048;
 
 constexpr std::array<rpc_handler_entry, kHandlerTableSize>
@@ -401,18 +396,15 @@ $hip_guarded_handlers
   std::array<rpc_handler_entry, kHandlerTableSize> table = {};
   for (size_t i = 0; i < count; ++i) {
     const int op = entries[i].op;
-    if (op <= 0 || entries[i].handler.handler == nullptr) {
+    if (op <= 0 || entries[i].handler.handler == nullptr)
       throw "invalid RPC handler registration";
-    }
-    size_t slot =
-        (static_cast<uint32_t>(op) * 2654435761U) & (kHandlerTableSize - 1);
-    while (table[slot].op != 0) {
-      if (table[slot].op == op) {
+    size_t s = (static_cast<uint32_t>(op) * 2654435761U) & (kHandlerTableSize - 1);
+    while (table[s].op != 0) {
+      if (table[s].op == op)
         throw "duplicate RPC handler operation";
-      }
-      slot = (slot + 1) & (kHandlerTableSize - 1);
+      s = (s + 1) & (kHandlerTableSize - 1);
     }
-    table[slot] = entries[i];
+    table[s] = entries[i];
   }
   return table;
 }
@@ -422,20 +414,15 @@ constexpr auto kHandlerTable = make_handler_table();
 } // namespace
 
 const rpc_handler *lupine_rpc_handler_lookup(int op) {
-  if (op <= 0) {
+  if (op <= 0)
     return nullptr;
-  }
-  size_t slot =
-      (static_cast<uint32_t>(op) * 2654435761U) & (kHandlerTableSize - 1);
-  for (;;) {
-    const rpc_handler_entry &entry = kHandlerTable[slot];
-    if (entry.op == op) {
-      return &entry.handler;
-    }
-    if (entry.op == 0) {
+  for (size_t s = (static_cast<uint32_t>(op) * 2654435761U) &
+                  (kHandlerTableSize - 1);;
+       s = (s + 1) & (kHandlerTableSize - 1)) {
+    if (kHandlerTable[s].op == op)
+      return &kHandlerTable[s].handler;
+    if (kHandlerTable[s].op == 0)
       return nullptr;
-    }
-    slot = (slot + 1) & (kHandlerTableSize - 1);
   }
 }
 
@@ -1709,60 +1696,43 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             else:
                 f.write(f"    return {call};\n")
             f.write("}\n\n")
-        map_entries = []
-        seen_map_names = set()
+        map_entries = {}
         for function, _, _, metadata in functions_with_annotations:
             fname = function.name.format()
-            if fname in seen_map_names:
-                continue
-            seen_map_names.add(fname)
-            map_entries.append((fname, fname, metadata.guard))
+            map_entries.setdefault(fname, (fname, metadata.guard))
         # write manual overrides
         for x, y in MANUAL_REMAPPINGS:
-            # ensure y exists in the function list
             if y not in function_by_name:
                 print(f"Skipping manual remapping {x} -> {y}")
                 continue
-            if x in seen_map_names:
-                continue
-            seen_map_names.add(x)
-            map_entries.append((x, y, None))
+            map_entries.setdefault(x, (y, None))
         for alias, target, guard in FUNCTION_MAP_ALIASES:
-            if target not in function_by_name or alias in seen_map_names:
-                continue
-            seen_map_names.add(alias)
-            map_entries.append((alias, target, guard))
-        map_entries.sort(key=lambda item: item[0])
+            if target in function_by_name:
+                map_entries.setdefault(alias, (target, guard))
 
         f.write(
             "namespace {\n"
-            "struct lupine_cuda_function_entry {\n"
-            "  const char *name;\n"
-            "  void *pointer;\n"
-            "};\n\n"
+            "struct lupine_cuda_function_entry { const char *name; void *pointer; };\n"
             "const lupine_cuda_function_entry kFunctionMap[] = {\n"
         )
-        for entry_name, target_name, guard in map_entries:
+        for entry_name in sorted(map_entries):
+            target_name, guard = map_entries[entry_name]
             if guard is not None:
                 f.write(f"#if {guard}\n")
             f.write(f'    {{"{entry_name}", (void *){target_name}}},\n')
             if guard is not None:
                 f.write("#endif\n")
-        f.write("};\n} // namespace\n\n")
-
         f.write(
+            "};\n} // namespace\n\n"
             "void *get_function_pointer(const char *name) {\n"
-            "  if (name == nullptr)\n"
-            "    return nullptr;\n"
-            "  constexpr size_t count = sizeof(kFunctionMap) / sizeof(kFunctionMap[0]);\n"
+            "  if (name == nullptr) return nullptr;\n"
+            "  const auto *end = kFunctionMap + sizeof(kFunctionMap) / sizeof(kFunctionMap[0]);\n"
             "  const auto *it = std::lower_bound(\n"
-            "      kFunctionMap, kFunctionMap + count, name,\n"
-            "      [](const lupine_cuda_function_entry &entry, const char *key) {\n"
-            "        return std::strcmp(entry.name, key) < 0;\n"
+            "      kFunctionMap, end, name,\n"
+            "      [](const lupine_cuda_function_entry &e, const char *k) {\n"
+            "        return std::strcmp(e.name, k) < 0;\n"
             "      });\n"
-            "  if (it == kFunctionMap + count || std::strcmp(it->name, name) != 0)\n"
-            "    return nullptr;\n"
-            "  return it->pointer;\n"
+            "  return (it != end && std::strcmp(it->name, name) == 0) ? it->pointer : nullptr;\n"
             "}\n"
         )
 

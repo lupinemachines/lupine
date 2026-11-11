@@ -10,55 +10,6 @@
 #include <unordered_map>
 #include <vector>
 
-// Small inline scratch storage with malloc/calloc fallback for RPC marshalling.
-// Keeps common arrays, strings, and structs off the heap while releasing any
-// oversized buffer automatically on return or error jump.
-template <size_t InlineBytes = 256> struct lupine_scratch_buffer {
-  static_assert(InlineBytes > 0, "InlineBytes must be non-zero");
-  alignas(std::max_align_t) unsigned char inline_bytes[InlineBytes];
-  void *heap = nullptr;
-
-  lupine_scratch_buffer() = default;
-  lupine_scratch_buffer(const lupine_scratch_buffer &) = delete;
-  lupine_scratch_buffer &operator=(const lupine_scratch_buffer &) = delete;
-  ~lupine_scratch_buffer() { std::free(heap); }
-
-  void *alloc_uninit(size_t bytes) {
-    size_t n = bytes == 0 ? 1 : bytes;
-    if (n <= InlineBytes) {
-      return inline_bytes;
-    }
-    std::free(heap);
-    heap = std::malloc(n);
-    return heap;
-  }
-
-  void *alloc_zeroed(size_t bytes) {
-    size_t n = bytes == 0 ? 1 : bytes;
-    if (n <= InlineBytes) {
-      std::memset(inline_bytes, 0, n);
-      return inline_bytes;
-    }
-    std::free(heap);
-    heap = std::calloc(n, 1);
-    return heap;
-  }
-
-  void *alloc_array_uninit(size_t count, size_t elem_size) {
-    if (elem_size != 0 && count > (~size_t{0}) / elem_size) {
-      return nullptr;
-    }
-    return alloc_uninit(count * elem_size);
-  }
-
-  void *alloc_array_zeroed(size_t count, size_t elem_size) {
-    if (elem_size != 0 && count > (~size_t{0}) / elem_size) {
-      return nullptr;
-    }
-    return alloc_zeroed(count * elem_size);
-  }
-};
-
 // Chunk size shared by the client and server for transfers split across
 // multiple RPC responses. This bounds staging independently of HTTP content
 // encoding, which is transparent to the RPC layer.
@@ -568,5 +519,56 @@ extern const char *rpc_http2_session_id(conn_t *conn);
 // and does not add, combine, or otherwise change application RPCs.
 extern void rpc_http2_response_wait_begin(conn_t *conn);
 extern void rpc_http2_response_wait_end(conn_t *conn);
+
+// Small inline scratch storage with malloc/calloc fallback for RPC marshalling.
+template <size_t InlineBytes = 256> struct lupine_scratch_buffer {
+  static_assert(InlineBytes > 0, "InlineBytes must be non-zero");
+  alignas(std::max_align_t) unsigned char inline_bytes[InlineBytes];
+  void *heap = nullptr;
+  lupine_scratch_buffer() = default;
+  lupine_scratch_buffer(const lupine_scratch_buffer &) = delete;
+  lupine_scratch_buffer &operator=(const lupine_scratch_buffer &) = delete;
+  ~lupine_scratch_buffer() { std::free(heap); }
+
+  template <typename Ptr>
+  bool alloc_into(Ptr &out, size_t count, size_t elem_size = 1,
+                  bool zeroed = false) {
+    if (elem_size != 0 && count > (~size_t{0}) / elem_size)
+      return (out = nullptr), false;
+    size_t n = count * elem_size ? count * elem_size : 1;
+    void *p = InlineBytes >= n
+                  ? (zeroed ? std::memset(inline_bytes, 0, n)
+                            : static_cast<void *>(inline_bytes))
+                  : (std::free(heap),
+                     heap = zeroed ? std::calloc(n, 1) : std::malloc(n));
+    out = reinterpret_cast<Ptr>(p);
+    return p != nullptr;
+  }
+
+  template <typename Ptr>
+  int read_array(conn_t *conn, Ptr &out, size_t count, size_t elem_size = 1,
+                 bool zeroed = false) {
+    return !alloc_into(out, count, elem_size, zeroed) ||
+                   (count * elem_size != 0 &&
+                    rpc_read(
+                        conn,
+                        const_cast<void *>(reinterpret_cast<const void *>(out)),
+                        count * elem_size) < 0)
+               ? -1
+               : 0;
+  }
+
+  template <typename Ptr>
+  int read_into(conn_t *conn, Ptr &out, size_t count, size_t elem_size = 1,
+                bool cstr = false) {
+    if (count == 0)
+      return (out = nullptr), 0;
+    if (read_array(conn, out, count, elem_size, false) < 0)
+      return -1;
+    if (cstr)
+      const_cast<char *>(reinterpret_cast<const char *>(out))[count - 1] = '\0';
+    return 0;
+  }
+};
 
 #endif

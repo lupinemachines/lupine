@@ -71,13 +71,10 @@ int write_string(conn_t *conn, int request_id, ncclResult_t status,
 template <typename Arg>
 int handle_single_string(conn_t *conn, const char *(*fn)(Arg)) {
   Arg arg;
-  if (rpc_read(conn, &arg, sizeof(arg)) < 0) {
+  int request_id;
+  if (rpc_read(conn, &arg, sizeof(arg)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0)
     return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
   return write_string(conn, request_id, ncclSuccess,
                       text(fn == nullptr ? nullptr : fn(arg)));
 }
@@ -99,13 +96,10 @@ int handle_ncclGetLastError(conn_t *conn) {
 #if NCCL_VERSION_CODE >= 23007
 int handle_ncclParamGetStr(conn_t *conn) {
   ncclParamHandle_t h;
-  if (rpc_read(conn, &h, sizeof(h)) < 0) {
+  int request_id;
+  if (rpc_read(conn, &h, sizeof(h)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0)
     return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
   using fn_t = ncclResult_t (*)(ncclParamHandle_t, const char **);
   static const fn_t fn = nccl_symbol<fn_t>("ncclParamGetStr");
   const char *string = nullptr;
@@ -116,20 +110,14 @@ int handle_ncclParamGetStr(conn_t *conn) {
 
 int handle_ncclParamGetParameter(conn_t *conn) {
   uint32_t key_length = 0;
-  if (rpc_read(conn, &key_length, sizeof(key_length)) < 0 || key_length == 0 ||
-      key_length > (1U << 20)) {
-    return -1;
-  }
   lupine_scratch_buffer<256> key_storage;
-  char *key_buf = static_cast<char *>(key_storage.alloc_uninit(key_length));
-  if (key_buf == nullptr || rpc_read(conn, key_buf, key_length) < 0) {
+  char *key_buf = nullptr;
+  int request_id;
+  if (rpc_read(conn, &key_length, sizeof(key_length)) < 0 || key_length == 0 ||
+      key_length > (1U << 20) ||
+      key_storage.read_into(conn, key_buf, key_length, 1, true) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0)
     return -1;
-  }
-  key_buf[key_length - 1] = '\0';
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
   using fn_t = ncclResult_t (*)(const char *, const char **, int *);
   static const fn_t fn = nccl_symbol<fn_t>("ncclParamGetParameter");
   const char *value = nullptr;
@@ -143,9 +131,8 @@ int handle_ncclParamGetParameter(conn_t *conn) {
 
 int handle_ncclParamGetAllParameterKeys(conn_t *conn) {
   int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  if (request_id < 0)
     return -1;
-  }
   using fn_t = ncclResult_t (*)(const char ***, int *);
   static const fn_t fn = nccl_symbol<fn_t>("ncclParamGetAllParameterKeys");
   const char **table = nullptr;
@@ -156,15 +143,12 @@ int handle_ncclParamGetAllParameterKeys(conn_t *conn) {
   wire_string *keys = nullptr;
   uint32_t key_count = 0;
   if (status == ncclSuccess && count > 0) {
-    keys = static_cast<wire_string *>(key_storage.alloc_array_uninit(
-        static_cast<size_t>(count), sizeof(wire_string)));
-    if (keys == nullptr) {
+    if (!key_storage.alloc_into(keys, static_cast<size_t>(count),
+                                sizeof(wire_string)))
       return -1;
-    }
     key_count = static_cast<uint32_t>(count);
-    for (int i = 0; i < count; ++i) {
+    for (int i = 0; i < count; ++i)
       keys[i] = text(table[i]);
-    }
   }
   return write_strings(conn, request_id, status, keys, key_count);
 }

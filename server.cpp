@@ -209,9 +209,8 @@ static int rpc_server_dispatch(conn_t *conn, int op) {
                ? -1
                : 0;
   }
-  if (op == LUPINE_RPC_CLIENT_METADATA) {
+  if (op == LUPINE_RPC_CLIENT_METADATA)
     return handle_lupine_client_metadata(conn);
-  }
   const rpc_handler *found = lupine_rpc_handler_lookup(op);
   if (found == nullptr) {
     LUPINE_LOG_ERROR("No RPC handler for op " << op << "; closing client.");
@@ -268,15 +267,13 @@ static int rpc_server_dispatch(conn_t *conn, int op) {
     break;
   }
 
-  if (result >= 0) {
+  if (result >= 0)
     return 0;
-  }
-  if (backend_name == nullptr) {
+  if (backend_name == nullptr)
     LUPINE_LOG_ERROR("RPC op " << op << " belongs to a disabled backend.");
-  } else {
+  else
     LUPINE_LOG_ERROR("Error handling " << backend_name << " request for op "
                                        << op << ".");
-  }
   return -1;
 }
 

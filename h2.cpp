@@ -912,24 +912,18 @@ unsigned char *h2_reserve_encoded(h2_stream &stream, size_t capacity) {
   size_t backlog = stream.encoded_size - stream.encoded_offset;
   if (stream.encoded_capacity < required && stream.encoded_offset != 0 &&
       stream.encoded_offset >= backlog) {
-    if (backlog != 0) {
+    if (backlog != 0)
       memmove(stream.encoded.get(),
               stream.encoded.get() + stream.encoded_offset, backlog);
-    }
     stream.encoded_size = backlog;
     stream.encoded_offset = 0;
     required = backlog + capacity;
   }
   if (stream.encoded_capacity < required) {
-    size_t grown =
-        stream.encoded_capacity == 0 ? required : stream.encoded_capacity * 2;
-    if (grown < required) {
-      grown = required;
-    }
+    size_t grown = std::max(required, stream.encoded_capacity * 2);
     std::unique_ptr<unsigned char[]> next(new unsigned char[grown]);
-    if (backlog != 0) {
+    if (backlog != 0)
       memcpy(next.get(), stream.encoded.get() + stream.encoded_offset, backlog);
-    }
     stream.encoded = std::move(next);
     stream.encoded_capacity = grown;
     stream.encoded_size = backlog;

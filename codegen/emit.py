@@ -380,15 +380,11 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
             parameter.type.format() for parameter in function.parameters
         )
         f.write(f"  using fn_t = {result} (*)({fn_params});\n")
-        f.write("  fn_t fn = nullptr;\n")
     f.write("  if (\n")
     for operation in operations:
         operation.server_rpc_read(f)
-    f.write("      false)\n")
-    f.write("    goto ERROR_0;\n\n")
-    f.write("  request_id = rpc_read_end(conn);\n")
-    f.write("  if (request_id < 0)\n")
-    f.write("    goto ERROR_0;\n\n")
+    f.write("      (request_id = rpc_read_end(conn)) < 0)\n")
+    f.write("    return -1;\n\n")
 
     for operation in operations:
         parameter = operation.parameter
@@ -428,6 +424,8 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         if update is not None and parameter.name == update.error.name:
             update_error = operation.server_reference
     args = ", ".join(call_args)
+    if backend.symbol_lookup:
+        f.write(f'  static const fn_t fn = {backend.symbol_lookup}<fn_t>("{name}");\n')
     if update is not None:
         f.write(
             f"  return_value = lupine_prepare_graph_exec_update("
@@ -435,9 +433,6 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         )
         f.write("  if (return_value == CUDA_SUCCESS)\n  ")
     if backend.symbol_lookup:
-        f.write(
-            f'  {{ static const fn_t cached = {backend.symbol_lookup}<fn_t>("{name}"); fn = cached; }}\n'
-        )
         if result == backend.result:
             f.write(
                 "  return_value = fn == nullptr ? function_not_found()\n"
@@ -445,7 +440,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
             )
         else:
             f.write("  if (fn == nullptr)\n")
-            f.write("    goto ERROR_0;\n")
+            f.write("    return -1;\n")
             if result == "void":
                 f.write(f"  fn({args});\n\n")
             else:
@@ -508,10 +503,8 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     if result != "void":
         f.write(f"      rpc_write(conn, &return_value, sizeof({result})) < 0 ||\n")
     f.write("      rpc_write_end(conn) < 0)\n")
-    f.write("    goto ERROR_0;\n")
+    f.write("    return -1;\n")
     f.write("  return 0;\n")
-    f.write("ERROR_0:\n")
-    f.write("  return -1;\n")
     f.write("}\n\n")
     if metadata.guard is not None:
         f.write("#endif\n\n")
@@ -531,21 +524,15 @@ def write_versioned_struct_helper(f, functions_with_annotations):
         "    unsigned char *bytes, uint64_t size,\n"
         "    std::initializer_list<std::pair<size_t, const char *>> strings,\n"
         "    std::initializer_list<size_t> cleared) {\n"
-        "  if (size == 0 || bytes == nullptr) {\n"
+        "  if (size == 0 || bytes == nullptr)\n"
         "    return nullptr;\n"
-        "  }\n"
-        "  for (const auto &string : strings) {\n"
-        "    if (string.first + sizeof(char *) <= size) {\n"
-        "      std::memcpy(bytes + string.first, &string.second,\n"
-        "                  sizeof(char *));\n"
-        "    }\n"
-        "  }\n"
+        "  for (const auto &string : strings)\n"
+        "    if (string.first + sizeof(char *) <= size)\n"
+        "      std::memcpy(bytes + string.first, &string.second, sizeof(char *));\n"
         "  const void *null = nullptr;\n"
-        "  for (size_t offset : cleared) {\n"
-        "    if (offset + sizeof(void *) <= size) {\n"
+        "  for (size_t offset : cleared)\n"
+        "    if (offset + sizeof(void *) <= size)\n"
         "      std::memcpy(bytes + offset, &null, sizeof(void *));\n"
-        "    }\n"
-        "  }\n"
         "  return reinterpret_cast<T *>(bytes);\n"
         "}\n\n"
     )

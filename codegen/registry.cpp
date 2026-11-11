@@ -1136,12 +1136,10 @@ LUPINE_HIP_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 #undef LUPINE_DECLARE_HANDLER
 
 namespace {
-
 struct rpc_handler_entry {
   int op = 0;
   rpc_handler handler = {};
 };
-
 constexpr size_t kHandlerTableSize = 2048;
 
 constexpr std::array<rpc_handler_entry, kHandlerTableSize>
@@ -1443,18 +1441,16 @@ make_handler_table() {
   std::array<rpc_handler_entry, kHandlerTableSize> table = {};
   for (size_t i = 0; i < count; ++i) {
     const int op = entries[i].op;
-    if (op <= 0 || entries[i].handler.handler == nullptr) {
+    if (op <= 0 || entries[i].handler.handler == nullptr)
       throw "invalid RPC handler registration";
-    }
-    size_t slot =
+    size_t s =
         (static_cast<uint32_t>(op) * 2654435761U) & (kHandlerTableSize - 1);
-    while (table[slot].op != 0) {
-      if (table[slot].op == op) {
+    while (table[s].op != 0) {
+      if (table[s].op == op)
         throw "duplicate RPC handler operation";
-      }
-      slot = (slot + 1) & (kHandlerTableSize - 1);
+      s = (s + 1) & (kHandlerTableSize - 1);
     }
-    table[slot] = entries[i];
+    table[s] = entries[i];
   }
   return table;
 }
@@ -1464,20 +1460,15 @@ constexpr auto kHandlerTable = make_handler_table();
 } // namespace
 
 const rpc_handler *lupine_rpc_handler_lookup(int op) {
-  if (op <= 0) {
+  if (op <= 0)
     return nullptr;
-  }
-  size_t slot =
-      (static_cast<uint32_t>(op) * 2654435761U) & (kHandlerTableSize - 1);
-  for (;;) {
-    const rpc_handler_entry &entry = kHandlerTable[slot];
-    if (entry.op == op) {
-      return &entry.handler;
-    }
-    if (entry.op == 0) {
+  for (size_t s =
+           (static_cast<uint32_t>(op) * 2654435761U) & (kHandlerTableSize - 1);
+       ; s = (s + 1) & (kHandlerTableSize - 1)) {
+    if (kHandlerTable[s].op == op)
+      return &kHandlerTable[s].handler;
+    if (kHandlerTable[s].op == 0)
       return nullptr;
-    }
-    slot = (slot + 1) & (kHandlerTableSize - 1);
   }
 }
 
