@@ -533,14 +533,16 @@ template <size_t InlineBytes = 256> struct lupine_scratch_buffer {
   template <typename Ptr>
   bool alloc_into(Ptr &out, size_t count, size_t elem_size = 1,
                   bool zeroed = false) {
-    if (elem_size != 0 && count > (~size_t{0}) / elem_size)
+    if (elem_size != 0 && count > (~size_t{0} - 1) / elem_size)
       return (out = nullptr), false;
-    size_t n = count * elem_size ? count * elem_size : 1;
+    size_t bytes = count * elem_size, n = bytes + 1;
     void *p = InlineBytes >= n
                   ? (zeroed ? std::memset(inline_bytes, 0, n)
                             : static_cast<void *>(inline_bytes))
                   : (std::free(heap),
                      heap = zeroed ? std::calloc(n, 1) : std::malloc(n));
+    if (p != nullptr && !zeroed)
+      static_cast<unsigned char *>(p)[bytes] = 0;
     out = reinterpret_cast<Ptr>(p);
     return p != nullptr;
   }
