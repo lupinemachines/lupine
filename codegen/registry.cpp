@@ -1,5 +1,9 @@
 #include "rpc_server.h"
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
+
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 #include <cuda.h>
 #endif
@@ -1131,13 +1135,21 @@ LUPINE_HIP_RPC_HANDLERS(LUPINE_DECLARE_HANDLER)
 #endif
 #undef LUPINE_DECLARE_HANDLER
 
-const rpc_handler_registry &lupine_rpc_handlers() {
+namespace {
+struct rpc_handler_entry {
+  int op = 0;
+  rpc_handler handler = {};
+};
+constexpr size_t kHandlerTableSize = 2048;
+
+constexpr std::array<rpc_handler_entry, kHandlerTableSize>
+make_handler_table() {
 #define LUPINE_REGISTER_HANDLER(operation, handler, backend)                   \
-  {operation, {handler, backend}},
+  {operation, {&handler, backend}},
   // clang-format treats registrations separated by preprocessor guards as a
   // single continued expression, adding another indentation level per guard.
   // clang-format off
-  static const rpc_handler_registry handlers = {
+  const rpc_handler_entry entries[] = {
 #ifdef LUPINE_BUILD_CUDA_BACKEND
       LUPINE_CUDA_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 #if CUDA_VERSION >= 12090
@@ -1419,10 +1431,45 @@ const rpc_handler_registry &lupine_rpc_handlers() {
       LUPINE_HIP_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 
 #endif
+      {0, {nullptr, rpc_backend::cuda}},
   };
   // clang-format on
 #undef LUPINE_REGISTER_HANDLER
-  return handlers;
+  constexpr size_t count = (sizeof(entries) / sizeof(entries[0])) - 1;
+  static_assert(count < kHandlerTableSize / 2,
+                "RPC handler table load factor exceeded");
+  std::array<rpc_handler_entry, kHandlerTableSize> table = {};
+  for (size_t i = 0; i < count; ++i) {
+    const int op = entries[i].op;
+    if (op <= 0 || entries[i].handler.handler == nullptr)
+      throw "invalid RPC handler registration";
+    size_t s =
+        (static_cast<uint32_t>(op) * 2654435761U) & (kHandlerTableSize - 1);
+    while (table[s].op != 0) {
+      if (table[s].op == op)
+        throw "duplicate RPC handler operation";
+      s = (s + 1) & (kHandlerTableSize - 1);
+    }
+    table[s] = entries[i];
+  }
+  return table;
+}
+
+constexpr auto kHandlerTable = make_handler_table();
+
+} // namespace
+
+const rpc_handler *lupine_rpc_handler_lookup(int op) {
+  if (op <= 0)
+    return nullptr;
+  for (size_t s =
+           (static_cast<uint32_t>(op) * 2654435761U) & (kHandlerTableSize - 1);
+       ; s = (s + 1) & (kHandlerTableSize - 1)) {
+    if (kHandlerTable[s].op == op)
+      return &kHandlerTable[s].handler;
+    if (kHandlerTable[s].op == 0)
+      return nullptr;
+  }
 }
 
 #undef LUPINE_CUDA_RPC_HANDLERS

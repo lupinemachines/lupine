@@ -17,12 +17,13 @@ template <typename Function> Function native_symbol(const char *name) {
 }
 
 bool is_remote_device(const char *path) {
+  if (!path || (std::strcmp(path, "/dev/nvidia-uvm") != 0 &&
+                std::strcmp(path, "/dev/nvidiactl") != 0))
+    return false;
   if (lupine_native_cuda_call_depth)
     return false;
   const char *server = std::getenv("LUPINE_SERVER");
-  return path && server && *server &&
-         (std::strcmp(path, "/dev/nvidia-uvm") == 0 ||
-          std::strcmp(path, "/dev/nvidiactl") == 0);
+  return server && *server;
 }
 int open_device(int directory, const char *path, int flags, va_list arguments) {
   mode_t mode = 0;
@@ -92,8 +93,9 @@ extern "C" int lupine_ioctl_entry(int fd, unsigned long command,
                              reinterpret_cast<void *>(argument));
 }
 extern "C" int close(int fd) {
-  if (lupine_device_proxy_get(fd))
-    return lupine_device_proxy_close(fd);
+  int result;
+  if (lupine_device_proxy_try_close(fd, &result))
+    return result;
   static auto native = native_symbol<int (*)(int)>("close");
   return native(fd);
 }

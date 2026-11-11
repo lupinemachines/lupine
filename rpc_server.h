@@ -3,8 +3,6 @@
 
 #include "rpc.h"
 
-#include <unordered_map>
-
 typedef int (*RequestHandler)(conn_t *conn);
 
 // The NCCL handlers run in the CUDA connection process: the same child owns
@@ -16,8 +14,6 @@ struct rpc_handler {
   rpc_backend backend = rpc_backend::cuda;
 };
 
-using rpc_handler_registry = std::unordered_map<int, rpc_handler>;
-
-const rpc_handler_registry &lupine_rpc_handlers();
+const rpc_handler *lupine_rpc_handler_lookup(int op);
 
 #endif

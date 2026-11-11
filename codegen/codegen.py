@@ -28,7 +28,6 @@ from emit import (
     write_client_wrapper,
     write_server_handler,
     unsupported,
-    write_scalar_slot,
     write_stub,
     write_profiling_aliases,
     write_versioned_struct_helper,
@@ -316,6 +315,10 @@ PRIVATE_RPC_FUNCTIONS = [
 REGISTRY_CPP_TEMPLATE = Template(
     r'''#include "rpc_server.h"
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
+
 #ifdef LUPINE_BUILD_CUDA_BACKEND
 #include <cuda.h>
 #endif
@@ -355,13 +358,18 @@ $hip_guarded_declarations
 #endif
 #undef LUPINE_DECLARE_HANDLER
 
-const rpc_handler_registry &lupine_rpc_handlers() {
-#define LUPINE_REGISTER_HANDLER(operation, handler, backend)                    \
-  {operation, {handler, backend}},
+namespace {
+struct rpc_handler_entry { int op = 0; rpc_handler handler = {}; };
+constexpr size_t kHandlerTableSize = 2048;
+
+constexpr std::array<rpc_handler_entry, kHandlerTableSize>
+make_handler_table() {
+#define LUPINE_REGISTER_HANDLER(operation, handler, backend)                   \
+  {operation, {&handler, backend}},
   // clang-format treats registrations separated by preprocessor guards as a
   // single continued expression, adding another indentation level per guard.
   // clang-format off
-  static const rpc_handler_registry handlers = {
+  const rpc_handler_entry entries[] = {
 #ifdef LUPINE_BUILD_CUDA_BACKEND
       LUPINE_CUDA_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $cuda_guarded_handlers
@@ -378,10 +386,44 @@ $nvml_guarded_handlers
       LUPINE_HIP_RPC_HANDLERS(LUPINE_REGISTER_HANDLER)
 $hip_guarded_handlers
 #endif
+      {0, {nullptr, rpc_backend::cuda}},
   };
   // clang-format on
 #undef LUPINE_REGISTER_HANDLER
-  return handlers;
+  constexpr size_t count = (sizeof(entries) / sizeof(entries[0])) - 1;
+  static_assert(count < kHandlerTableSize / 2,
+                "RPC handler table load factor exceeded");
+  std::array<rpc_handler_entry, kHandlerTableSize> table = {};
+  for (size_t i = 0; i < count; ++i) {
+    const int op = entries[i].op;
+    if (op <= 0 || entries[i].handler.handler == nullptr)
+      throw "invalid RPC handler registration";
+    size_t s = (static_cast<uint32_t>(op) * 2654435761U) & (kHandlerTableSize - 1);
+    while (table[s].op != 0) {
+      if (table[s].op == op)
+        throw "duplicate RPC handler operation";
+      s = (s + 1) & (kHandlerTableSize - 1);
+    }
+    table[s] = entries[i];
+  }
+  return table;
+}
+
+constexpr auto kHandlerTable = make_handler_table();
+
+} // namespace
+
+const rpc_handler *lupine_rpc_handler_lookup(int op) {
+  if (op <= 0)
+    return nullptr;
+  for (size_t s = (static_cast<uint32_t>(op) * 2654435761U) &
+                  (kHandlerTableSize - 1);;
+       s = (s + 1) & (kHandlerTableSize - 1)) {
+    if (kHandlerTable[s].op == op)
+      return &kHandlerTable[s].handler;
+    if (kHandlerTable[s].op == 0)
+      return nullptr;
+  }
 }
 
 #undef LUPINE_CUDA_RPC_HANDLERS
@@ -1421,7 +1463,6 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             "#include <cstdio>\n"
             "#include <cstring>\n"
             "#include <string>\n"
-            "#include <unordered_map>\n"
             "#include <vector>\n\n"
             '#include "gen_rpc_ids.h"\n\n'
             '#include "client_routing.h"\n'
@@ -1655,49 +1696,45 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             else:
                 f.write(f"    return {call};\n")
             f.write("}\n\n")
-        f.write("std::unordered_map<std::string, void *> functionMap = {\n")
+        map_entries = {}
         for function, _, _, metadata in functions_with_annotations:
-            if metadata.guard is not None:
-                f.write(f"#if {metadata.guard}\n")
-            f.write(
-                '    {{"{name}", (void *){name}}},\n'.format(
-                    name=function.name.format()
-                )
-            )
-            if metadata.guard is not None:
-                f.write("#endif\n")
+            fname = function.name.format()
+            map_entries.setdefault(fname, (fname, metadata.guard))
         # write manual overrides
         for x, y in MANUAL_REMAPPINGS:
-            # ensure y exists in the function list
             if y not in function_by_name:
                 print(f"Skipping manual remapping {x} -> {y}")
                 continue
-            f.write(
-                '    {{"{x}", (void *){y}}},\n'.format(
-                    x=x,
-                    y=y,
-                )
-            )
+            map_entries.setdefault(x, (y, None))
         for alias, target, guard in FUNCTION_MAP_ALIASES:
-            if target not in function_by_name:
-                continue
-            f.write(f"#if {guard}\n")
-            f.write(
-                '    {{"{alias}", (void *){target}}},\n'.format(
-                    alias=alias,
-                    target=target,
-                )
-            )
-            f.write("#endif\n")
-        f.write("};\n\n")
+            if target in function_by_name:
+                map_entries.setdefault(alias, (target, guard))
 
-        f.write("void *get_function_pointer(const char *name)\n")
-        f.write("{\n")
-        f.write("    auto it = functionMap.find(name);\n")
-        f.write("    if (it == functionMap.end())\n")
-        f.write("        return nullptr;\n")
-        f.write("    return it->second;\n")
-        f.write("}\n")
+        f.write(
+            "namespace {\n"
+            "struct lupine_cuda_function_entry { const char *name; void *pointer; };\n"
+            "const lupine_cuda_function_entry kFunctionMap[] = {\n"
+        )
+        for entry_name in sorted(map_entries):
+            target_name, guard = map_entries[entry_name]
+            if guard is not None:
+                f.write(f"#if {guard}\n")
+            f.write(f'    {{"{entry_name}", (void *){target_name}}},\n')
+            if guard is not None:
+                f.write("#endif\n")
+        f.write(
+            "};\n} // namespace\n\n"
+            "void *get_function_pointer(const char *name) {\n"
+            "  if (name == nullptr) return nullptr;\n"
+            "  const auto *end = kFunctionMap + sizeof(kFunctionMap) / sizeof(kFunctionMap[0]);\n"
+            "  const auto *it = std::lower_bound(\n"
+            "      kFunctionMap, end, name,\n"
+            "      [](const lupine_cuda_function_entry &e, const char *k) {\n"
+            "        return std::strcmp(e.name, k) < 0;\n"
+            "      });\n"
+            "  return (it != end && std::strcmp(it->name, name) == 0) ? it->pointer : nullptr;\n"
+            "}\n"
+        )
 
 
 def write_cuda_server(
@@ -1708,15 +1745,12 @@ def write_cuda_server(
 ):
     with open("gen_cuda_server.cpp", "w") as f:
         f.write(
-            "#include <iostream>\n"
             "#include <cuda.h>\n"
             '#include "cuda_compat.h"\n'
             "\n"
-            "#include <cstring>\n"
-            "#include <string>\n"
+            "#include <cstdio>\n"
+            "#include <cstring>\n\n"
             '#include "gen_rpc_ids.h"\n\n'
-            '#include <vector>\n\n'
-            '#include <cstdio>\n\n'
             '#include "cuda_server_memcpy.h"\n'
             '#include "device_stdout.h"\n'
             '#include "rpc.h"\n\n'
@@ -2069,7 +2103,6 @@ def main():
 
         with open(f"gen_{target}_server.inc", "w") as f:
             f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-            write_scalar_slot(f, functions)
             write_versioned_struct_helper(f, functions)
             for function, _, operations, metadata in functions:
                 if metadata.disabled_server or unsupported(function, metadata):
@@ -2137,6 +2170,8 @@ def main():
     operations_by_id = {}
     for binding in bindings:
         operation = zlib.crc32(binding.name.encode("utf-8")) & 0x7FFFFFFF
+        if operation == 0:
+            raise RuntimeError(f"Zero RPC operation ID reserved as empty sentinel: {binding.name}")
         if operation in operations_by_id:
             raise RuntimeError(
                 f"Duplicate RPC operation for {operations_by_id[operation]} "

@@ -13,6 +13,7 @@ int lupine_device_proxy_create(int route, uint64_t token, bool uvm);
 std::shared_ptr<lupine_device_proxy> lupine_device_proxy_get(int fd);
 // Hooks use the raw syscalls internally so RPC transport descriptors are never
 // interposed recursively. Duplicates retain the same remote descriptor.
+bool lupine_device_proxy_try_close(int fd, int *result);
 int lupine_device_proxy_close(int fd);
 int lupine_device_proxy_dup(int fd, int destination, int flags, bool fixed);
 int lupine_device_proxy_fcntl(int fd, int command, uintptr_t argument);

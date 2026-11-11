@@ -4,24 +4,17 @@ int handle_nvmlInit_v2(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)();
-  fn_t fn = nullptr;
-  if (false)
-    goto ERROR_0;
+  if ((request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlInit_v2");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlInit_v2");
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlInitWithFlags(conn_t *conn) {
@@ -29,75 +22,54 @@ int handle_nvmlInitWithFlags(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(unsigned int);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &flags, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
+  if (rpc_read(conn, &flags, sizeof(unsigned int)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlInitWithFlags");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlInitWithFlags");
   return_value = fn == nullptr ? function_not_found() : fn(flags);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlShutdown(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)();
-  fn_t fn = nullptr;
-  if (false)
-    goto ERROR_0;
+  if ((request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlShutdown");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlShutdown");
   return_value = fn == nullptr ? function_not_found() : fn();
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlSystemGetDriverVersion(conn_t *conn) {
   unsigned int length;
+  lupine_scratch_buffer<256> lupine_version_buf;
   char *version = nullptr;
   uint8_t version_null = 0;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(char *, unsigned int);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &length, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &version_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!version_null) {
-    version = (char *)calloc(
-        length * sizeof(char) == 0 ? 1 : length * sizeof(char), 1);
-    if (version == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &version_null, sizeof(uint8_t)) < 0 ||
+      (!version_null &&
+       !lupine_version_buf.alloc_into(version, static_cast<size_t>(length),
+                                      sizeof(char), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlSystemGetDriverVersion");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlSystemGetDriverVersion");
   return_value = fn == nullptr ? function_not_found() : fn(version, length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -105,39 +77,27 @@ int handle_nvmlSystemGetDriverVersion(conn_t *conn) {
        rpc_write(conn, version, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)version);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)version);
-  return -1;
 }
 
 int handle_nvmlSystemGetNVMLVersion(conn_t *conn) {
   unsigned int length;
+  lupine_scratch_buffer<256> lupine_version_buf;
   char *version = nullptr;
   uint8_t version_null = 0;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(char *, unsigned int);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &length, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &version_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!version_null) {
-    version = (char *)calloc(
-        length * sizeof(char) == 0 ? 1 : length * sizeof(char), 1);
-    if (version == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &version_null, sizeof(uint8_t)) < 0 ||
+      (!version_null &&
+       !lupine_version_buf.alloc_into(version, static_cast<size_t>(length),
+                                      sizeof(char), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlSystemGetNVMLVersion");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlSystemGetNVMLVersion");
   return_value = fn == nullptr ? function_not_found() : fn(version, length);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -145,12 +105,8 @@ int handle_nvmlSystemGetNVMLVersion(conn_t *conn) {
        rpc_write(conn, version, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)version);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)version);
-  return -1;
 }
 
 int handle_nvmlSystemGetCudaDriverVersion(conn_t *conn) {
@@ -159,18 +115,13 @@ int handle_nvmlSystemGetCudaDriverVersion(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &cudaDriverVersion_present, sizeof(uint8_t)) < 0 ||
       (cudaDriverVersion_present &&
        rpc_read(conn, &cudaDriverVersion, sizeof(int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlSystemGetCudaDriverVersion");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlSystemGetCudaDriverVersion");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -181,10 +132,8 @@ int handle_nvmlSystemGetCudaDriverVersion(conn_t *conn) {
        rpc_write(conn, &cudaDriverVersion, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlSystemGetCudaDriverVersion_v2(conn_t *conn) {
@@ -193,18 +142,13 @@ int handle_nvmlSystemGetCudaDriverVersion_v2(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &cudaDriverVersion_present, sizeof(uint8_t)) < 0 ||
       (cudaDriverVersion_present &&
        rpc_read(conn, &cudaDriverVersion, sizeof(int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlSystemGetCudaDriverVersion_v2");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlSystemGetCudaDriverVersion_v2");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -215,10 +159,8 @@ int handle_nvmlSystemGetCudaDriverVersion_v2(conn_t *conn) {
        rpc_write(conn, &cudaDriverVersion, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetCount_v2(conn_t *conn) {
@@ -227,18 +169,13 @@ int handle_nvmlDeviceGetCount_v2(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &deviceCount_present, sizeof(uint8_t)) < 0 ||
       (deviceCount_present &&
        rpc_read(conn, &deviceCount, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetCount_v2");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetCount_v2");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(deviceCount_present ? &deviceCount : nullptr);
@@ -248,10 +185,8 @@ int handle_nvmlDeviceGetCount_v2(conn_t *conn) {
        rpc_write(conn, &deviceCount, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetHandleByIndex_v2(conn_t *conn) {
@@ -261,18 +196,13 @@ int handle_nvmlDeviceGetHandleByIndex_v2(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(unsigned int, nvmlDevice_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &index, sizeof(unsigned int)) < 0 ||
       rpc_read(conn, &device_present, sizeof(uint8_t)) < 0 ||
       (device_present && rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetHandleByIndex_v2");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetHandleByIndex_v2");
   return_value = fn == nullptr ? function_not_found()
                                : fn(index, device_present ? &device : nullptr);
 
@@ -280,13 +210,12 @@ int handle_nvmlDeviceGetHandleByIndex_v2(conn_t *conn) {
       (device_present && rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetHandleByUUID(conn_t *conn) {
+  lupine_scratch_buffer<256> lupine_uuid_buf;
   const char *uuid = nullptr;
   unsigned int uuid_len;
   uint8_t device_present = 0;
@@ -294,25 +223,15 @@ int handle_nvmlDeviceGetHandleByUUID(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(const char *, nvmlDevice_t *);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &uuid_len, sizeof(unsigned int)) < 0)
-    goto ERROR_0;
-  if (uuid_len != 0) {
-    uuid = (const char *)malloc(uuid_len);
-    if (uuid == nullptr)
-      goto ERROR_0;
-  }
-  if ((uuid_len != 0 && rpc_read(conn, (void *)uuid, uuid_len) < 0) ||
+  if (rpc_read(conn, &uuid_len, sizeof(unsigned int)) < 0 ||
+      uuid_len > (1U << 20) ||
+      lupine_uuid_buf.read_into(conn, uuid, uuid_len, 1, true) < 0 ||
       rpc_read(conn, &device_present, sizeof(uint8_t)) < 0 ||
       (device_present && rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetHandleByUUID");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetHandleByUUID");
   return_value = fn == nullptr ? function_not_found()
                                : fn(uuid, device_present ? &device : nullptr);
 
@@ -320,15 +239,12 @@ int handle_nvmlDeviceGetHandleByUUID(conn_t *conn) {
       (device_present && rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)uuid);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)uuid);
-  return -1;
 }
 
 int handle_nvmlDeviceGetHandleByPciBusId_v2(conn_t *conn) {
+  lupine_scratch_buffer<256> lupine_pciBusId_buf;
   const char *pciBusId = nullptr;
   unsigned int pciBusId_len;
   uint8_t device_present = 0;
@@ -336,26 +252,16 @@ int handle_nvmlDeviceGetHandleByPciBusId_v2(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(const char *, nvmlDevice_t *);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &pciBusId_len, sizeof(unsigned int)) < 0)
-    goto ERROR_0;
-  if (pciBusId_len != 0) {
-    pciBusId = (const char *)malloc(pciBusId_len);
-    if (pciBusId == nullptr)
-      goto ERROR_0;
-  }
-  if ((pciBusId_len != 0 &&
-       rpc_read(conn, (void *)pciBusId, pciBusId_len) < 0) ||
+  if (rpc_read(conn, &pciBusId_len, sizeof(unsigned int)) < 0 ||
+      pciBusId_len > (1U << 20) ||
+      lupine_pciBusId_buf.read_into(conn, pciBusId, pciBusId_len, 1, true) <
+          0 ||
       rpc_read(conn, &device_present, sizeof(uint8_t)) < 0 ||
       (device_present && rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetHandleByPciBusId_v2");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetHandleByPciBusId_v2");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(pciBusId, device_present ? &device : nullptr);
@@ -364,41 +270,29 @@ int handle_nvmlDeviceGetHandleByPciBusId_v2(conn_t *conn) {
       (device_present && rpc_write(conn, &device, sizeof(nvmlDevice_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)pciBusId);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)pciBusId);
-  return -1;
 }
 
 int handle_nvmlDeviceGetName(conn_t *conn) {
   nvmlDevice_t device;
   unsigned int length;
+  lupine_scratch_buffer<256> lupine_name_buf;
   char *name = nullptr;
   uint8_t name_null = 0;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &name_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!name_null) {
-    name = (char *)calloc(
-        length * sizeof(char) == 0 ? 1 : length * sizeof(char), 1);
-    if (name == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &name_null, sizeof(uint8_t)) < 0 ||
+      (!name_null &&
+       !lupine_name_buf.alloc_into(name, static_cast<size_t>(length),
+                                   sizeof(char), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetName");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetName");
   return_value =
       fn == nullptr ? function_not_found() : fn(device, name, length);
 
@@ -407,41 +301,29 @@ int handle_nvmlDeviceGetName(conn_t *conn) {
        rpc_write(conn, name, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)name);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)name);
-  return -1;
 }
 
 int handle_nvmlDeviceGetUUID(conn_t *conn) {
   nvmlDevice_t device;
   unsigned int length;
+  lupine_scratch_buffer<256> lupine_uuid_buf;
   char *uuid = nullptr;
   uint8_t uuid_null = 0;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &uuid_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!uuid_null) {
-    uuid = (char *)calloc(
-        length * sizeof(char) == 0 ? 1 : length * sizeof(char), 1);
-    if (uuid == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &uuid_null, sizeof(uint8_t)) < 0 ||
+      (!uuid_null &&
+       !lupine_uuid_buf.alloc_into(uuid, static_cast<size_t>(length),
+                                   sizeof(char), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetUUID");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetUUID");
   return_value =
       fn == nullptr ? function_not_found() : fn(device, uuid, length);
 
@@ -450,12 +332,8 @@ int handle_nvmlDeviceGetUUID(conn_t *conn) {
        rpc_write(conn, uuid, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)uuid);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)uuid);
-  return -1;
 }
 
 int handle_nvmlDeviceGetIndex(conn_t *conn) {
@@ -465,18 +343,13 @@ int handle_nvmlDeviceGetIndex(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &index_present, sizeof(uint8_t)) < 0 ||
       (index_present && rpc_read(conn, &index, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetIndex");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetIndex");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, index_present ? &index : nullptr);
 
@@ -484,10 +357,8 @@ int handle_nvmlDeviceGetIndex(conn_t *conn) {
       (index_present && rpc_write(conn, &index, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetMinorNumber(conn_t *conn) {
@@ -497,19 +368,14 @@ int handle_nvmlDeviceGetMinorNumber(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &minorNumber_present, sizeof(uint8_t)) < 0 ||
       (minorNumber_present &&
        rpc_read(conn, &minorNumber, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetMinorNumber");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetMinorNumber");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, minorNumber_present ? &minorNumber : nullptr);
@@ -519,10 +385,8 @@ int handle_nvmlDeviceGetMinorNumber(conn_t *conn) {
        rpc_write(conn, &minorNumber, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetPciInfo_v3(conn_t *conn) {
@@ -532,17 +396,13 @@ int handle_nvmlDeviceGetPciInfo_v3(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlPciInfo_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &pci_present, sizeof(uint8_t)) < 0 ||
-      (pci_present && rpc_read(conn, &pci, sizeof(nvmlPciInfo_t)) < 0) || false)
-    goto ERROR_0;
+      (pci_present && rpc_read(conn, &pci, sizeof(nvmlPciInfo_t)) < 0) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetPciInfo_v3");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetPciInfo_v3");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, pci_present ? &pci : nullptr);
 
@@ -550,10 +410,8 @@ int handle_nvmlDeviceGetPciInfo_v3(conn_t *conn) {
       (pci_present && rpc_write(conn, &pci, sizeof(nvmlPciInfo_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetMemoryInfo(conn_t *conn) {
@@ -563,18 +421,13 @@ int handle_nvmlDeviceGetMemoryInfo(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &memory_present, sizeof(uint8_t)) < 0 ||
       (memory_present && rpc_read(conn, &memory, sizeof(nvmlMemory_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetMemoryInfo");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetMemoryInfo");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, memory_present ? &memory : nullptr);
 
@@ -582,10 +435,8 @@ int handle_nvmlDeviceGetMemoryInfo(conn_t *conn) {
       (memory_present && rpc_write(conn, &memory, sizeof(nvmlMemory_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetUtilizationRates(conn_t *conn) {
@@ -595,19 +446,14 @@ int handle_nvmlDeviceGetUtilizationRates(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlUtilization_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &utilization_present, sizeof(uint8_t)) < 0 ||
       (utilization_present &&
        rpc_read(conn, &utilization, sizeof(nvmlUtilization_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetUtilizationRates");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetUtilizationRates");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, utilization_present ? &utilization : nullptr);
@@ -617,10 +463,8 @@ int handle_nvmlDeviceGetUtilizationRates(conn_t *conn) {
        rpc_write(conn, &utilization, sizeof(nvmlUtilization_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetTemperature(conn_t *conn) {
@@ -632,19 +476,14 @@ int handle_nvmlDeviceGetTemperature(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, nvmlTemperatureSensors_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &sensorType, sizeof(nvmlTemperatureSensors_t)) < 0 ||
       rpc_read(conn, &temp_present, sizeof(uint8_t)) < 0 ||
       (temp_present && rpc_read(conn, &temp, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetTemperature");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetTemperature");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, sensorType, temp_present ? &temp : nullptr);
@@ -653,10 +492,8 @@ int handle_nvmlDeviceGetTemperature(conn_t *conn) {
       (temp_present && rpc_write(conn, &temp, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetPowerUsage(conn_t *conn) {
@@ -666,18 +503,13 @@ int handle_nvmlDeviceGetPowerUsage(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &power_present, sizeof(uint8_t)) < 0 ||
       (power_present && rpc_read(conn, &power, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetPowerUsage");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetPowerUsage");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, power_present ? &power : nullptr);
 
@@ -685,10 +517,8 @@ int handle_nvmlDeviceGetPowerUsage(conn_t *conn) {
       (power_present && rpc_write(conn, &power, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetPowerManagementLimit(conn_t *conn) {
@@ -698,18 +528,13 @@ int handle_nvmlDeviceGetPowerManagementLimit(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &limit_present, sizeof(uint8_t)) < 0 ||
       (limit_present && rpc_read(conn, &limit, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetPowerManagementLimit");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetPowerManagementLimit");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, limit_present ? &limit : nullptr);
 
@@ -717,10 +542,8 @@ int handle_nvmlDeviceGetPowerManagementLimit(conn_t *conn) {
       (limit_present && rpc_write(conn, &limit, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetClockInfo(conn_t *conn) {
@@ -731,19 +554,14 @@ int handle_nvmlDeviceGetClockInfo(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlClockType_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &type, sizeof(nvmlClockType_t)) < 0 ||
       rpc_read(conn, &clock_present, sizeof(uint8_t)) < 0 ||
       (clock_present && rpc_read(conn, &clock, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetClockInfo");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetClockInfo");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, type, clock_present ? &clock : nullptr);
@@ -752,10 +570,8 @@ int handle_nvmlDeviceGetClockInfo(conn_t *conn) {
       (clock_present && rpc_write(conn, &clock, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetMaxClockInfo(conn_t *conn) {
@@ -766,19 +582,14 @@ int handle_nvmlDeviceGetMaxClockInfo(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlClockType_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &type, sizeof(nvmlClockType_t)) < 0 ||
       rpc_read(conn, &clock_present, sizeof(uint8_t)) < 0 ||
       (clock_present && rpc_read(conn, &clock, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetMaxClockInfo");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetMaxClockInfo");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, type, clock_present ? &clock : nullptr);
@@ -787,10 +598,8 @@ int handle_nvmlDeviceGetMaxClockInfo(conn_t *conn) {
       (clock_present && rpc_write(conn, &clock, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetPerformanceState(conn_t *conn) {
@@ -800,18 +609,13 @@ int handle_nvmlDeviceGetPerformanceState(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlPstates_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &pState_present, sizeof(uint8_t)) < 0 ||
       (pState_present && rpc_read(conn, &pState, sizeof(nvmlPstates_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetPerformanceState");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetPerformanceState");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, pState_present ? &pState : nullptr);
 
@@ -819,10 +623,8 @@ int handle_nvmlDeviceGetPerformanceState(conn_t *conn) {
       (pState_present && rpc_write(conn, &pState, sizeof(nvmlPstates_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetComputeMode(conn_t *conn) {
@@ -832,18 +634,13 @@ int handle_nvmlDeviceGetComputeMode(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlComputeMode_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &mode_present, sizeof(uint8_t)) < 0 ||
       (mode_present && rpc_read(conn, &mode, sizeof(nvmlComputeMode_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetComputeMode");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetComputeMode");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, mode_present ? &mode : nullptr);
 
@@ -851,10 +648,8 @@ int handle_nvmlDeviceGetComputeMode(conn_t *conn) {
       (mode_present && rpc_write(conn, &mode, sizeof(nvmlComputeMode_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetPersistenceMode(conn_t *conn) {
@@ -864,18 +659,13 @@ int handle_nvmlDeviceGetPersistenceMode(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlEnableState_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &mode_present, sizeof(uint8_t)) < 0 ||
       (mode_present && rpc_read(conn, &mode, sizeof(nvmlEnableState_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetPersistenceMode");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetPersistenceMode");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, mode_present ? &mode : nullptr);
 
@@ -883,10 +673,8 @@ int handle_nvmlDeviceGetPersistenceMode(conn_t *conn) {
       (mode_present && rpc_write(conn, &mode, sizeof(nvmlEnableState_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetFanSpeed(conn_t *conn) {
@@ -896,18 +684,13 @@ int handle_nvmlDeviceGetFanSpeed(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &speed_present, sizeof(uint8_t)) < 0 ||
       (speed_present && rpc_read(conn, &speed, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetFanSpeed");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetFanSpeed");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, speed_present ? &speed : nullptr);
 
@@ -915,10 +698,8 @@ int handle_nvmlDeviceGetFanSpeed(conn_t *conn) {
       (speed_present && rpc_write(conn, &speed, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetBrand(conn_t *conn) {
@@ -928,18 +709,13 @@ int handle_nvmlDeviceGetBrand(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlBrandType_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &type_present, sizeof(uint8_t)) < 0 ||
       (type_present && rpc_read(conn, &type, sizeof(nvmlBrandType_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetBrand");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetBrand");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, type_present ? &type : nullptr);
 
@@ -947,39 +723,29 @@ int handle_nvmlDeviceGetBrand(conn_t *conn) {
       (type_present && rpc_write(conn, &type, sizeof(nvmlBrandType_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetVbiosVersion(conn_t *conn) {
   nvmlDevice_t device;
   unsigned int length;
+  lupine_scratch_buffer<256> lupine_version_buf;
   char *version = nullptr;
   uint8_t version_null = 0;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &version_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!version_null) {
-    version = (char *)calloc(
-        length * sizeof(char) == 0 ? 1 : length * sizeof(char), 1);
-    if (version == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &version_null, sizeof(uint8_t)) < 0 ||
+      (!version_null &&
+       !lupine_version_buf.alloc_into(version, static_cast<size_t>(length),
+                                      sizeof(char), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetVbiosVersion");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetVbiosVersion");
   return_value =
       fn == nullptr ? function_not_found() : fn(device, version, length);
 
@@ -988,41 +754,29 @@ int handle_nvmlDeviceGetVbiosVersion(conn_t *conn) {
        rpc_write(conn, version, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)version);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)version);
-  return -1;
 }
 
 int handle_nvmlDeviceGetSerial(conn_t *conn) {
   nvmlDevice_t device;
   unsigned int length;
+  lupine_scratch_buffer<256> lupine_serial_buf;
   char *serial = nullptr;
   uint8_t serial_null = 0;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &serial_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!serial_null) {
-    serial = (char *)calloc(
-        length * sizeof(char) == 0 ? 1 : length * sizeof(char), 1);
-    if (serial == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &serial_null, sizeof(uint8_t)) < 0 ||
+      (!serial_null &&
+       !lupine_serial_buf.alloc_into(serial, static_cast<size_t>(length),
+                                     sizeof(char), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetSerial");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetSerial");
   return_value =
       fn == nullptr ? function_not_found() : fn(device, serial, length);
 
@@ -1031,41 +785,29 @@ int handle_nvmlDeviceGetSerial(conn_t *conn) {
        rpc_write(conn, serial, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)serial);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)serial);
-  return -1;
 }
 
 int handle_nvmlDeviceGetBoardPartNumber(conn_t *conn) {
   nvmlDevice_t device;
   unsigned int length;
+  lupine_scratch_buffer<256> lupine_partNumber_buf;
   char *partNumber = nullptr;
   uint8_t partNumber_null = 0;
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, char *, unsigned int);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &length, sizeof(unsigned int)) < 0 ||
-      rpc_read(conn, &partNumber_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!partNumber_null) {
-    partNumber = (char *)calloc(
-        length * sizeof(char) == 0 ? 1 : length * sizeof(char), 1);
-    if (partNumber == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &partNumber_null, sizeof(uint8_t)) < 0 ||
+      (!partNumber_null &&
+       !lupine_partNumber_buf.alloc_into(
+           partNumber, static_cast<size_t>(length), sizeof(char), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetBoardPartNumber");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetBoardPartNumber");
   return_value =
       fn == nullptr ? function_not_found() : fn(device, partNumber, length);
 
@@ -1074,12 +816,8 @@ int handle_nvmlDeviceGetBoardPartNumber(conn_t *conn) {
        rpc_write(conn, partNumber, length * sizeof(char)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)partNumber);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)partNumber);
-  return -1;
 }
 
 int handle_nvmlDeviceGetDisplayMode(conn_t *conn) {
@@ -1089,19 +827,14 @@ int handle_nvmlDeviceGetDisplayMode(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlEnableState_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &display_present, sizeof(uint8_t)) < 0 ||
       (display_present &&
        rpc_read(conn, &display, sizeof(nvmlEnableState_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetDisplayMode");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetDisplayMode");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, display_present ? &display : nullptr);
@@ -1111,10 +844,8 @@ int handle_nvmlDeviceGetDisplayMode(conn_t *conn) {
        rpc_write(conn, &display, sizeof(nvmlEnableState_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetDisplayActive(conn_t *conn) {
@@ -1124,19 +855,14 @@ int handle_nvmlDeviceGetDisplayActive(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlEnableState_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &isActive_present, sizeof(uint8_t)) < 0 ||
       (isActive_present &&
        rpc_read(conn, &isActive, sizeof(nvmlEnableState_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetDisplayActive");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetDisplayActive");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, isActive_present ? &isActive : nullptr);
@@ -1146,10 +872,8 @@ int handle_nvmlDeviceGetDisplayActive(conn_t *conn) {
        rpc_write(conn, &isActive, sizeof(nvmlEnableState_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetCurrPcieLinkGeneration(conn_t *conn) {
@@ -1159,19 +883,15 @@ int handle_nvmlDeviceGetCurrPcieLinkGeneration(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &currLinkGen_present, sizeof(uint8_t)) < 0 ||
       (currLinkGen_present &&
        rpc_read(conn, &currLinkGen, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetCurrPcieLinkGeneration");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetCurrPcieLinkGeneration");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, currLinkGen_present ? &currLinkGen : nullptr);
@@ -1181,10 +901,8 @@ int handle_nvmlDeviceGetCurrPcieLinkGeneration(conn_t *conn) {
        rpc_write(conn, &currLinkGen, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetCurrPcieLinkWidth(conn_t *conn) {
@@ -1194,19 +912,14 @@ int handle_nvmlDeviceGetCurrPcieLinkWidth(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &currLinkWidth_present, sizeof(uint8_t)) < 0 ||
       (currLinkWidth_present &&
        rpc_read(conn, &currLinkWidth, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetCurrPcieLinkWidth");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetCurrPcieLinkWidth");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -1217,10 +930,8 @@ int handle_nvmlDeviceGetCurrPcieLinkWidth(conn_t *conn) {
        rpc_write(conn, &currLinkWidth, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetMaxPcieLinkGeneration(conn_t *conn) {
@@ -1230,19 +941,15 @@ int handle_nvmlDeviceGetMaxPcieLinkGeneration(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &maxLinkGen_present, sizeof(uint8_t)) < 0 ||
       (maxLinkGen_present &&
        rpc_read(conn, &maxLinkGen, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetMaxPcieLinkGeneration");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetMaxPcieLinkGeneration");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, maxLinkGen_present ? &maxLinkGen : nullptr);
@@ -1252,10 +959,8 @@ int handle_nvmlDeviceGetMaxPcieLinkGeneration(conn_t *conn) {
        rpc_write(conn, &maxLinkGen, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetMaxPcieLinkWidth(conn_t *conn) {
@@ -1265,19 +970,14 @@ int handle_nvmlDeviceGetMaxPcieLinkWidth(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &maxLinkWidth_present, sizeof(uint8_t)) < 0 ||
       (maxLinkWidth_present &&
        rpc_read(conn, &maxLinkWidth, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetMaxPcieLinkWidth");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetMaxPcieLinkWidth");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, maxLinkWidth_present ? &maxLinkWidth
                                                                  : nullptr);
@@ -1287,10 +987,8 @@ int handle_nvmlDeviceGetMaxPcieLinkWidth(conn_t *conn) {
        rpc_write(conn, &maxLinkWidth, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetPcieThroughput(conn_t *conn) {
@@ -1302,19 +1000,14 @@ int handle_nvmlDeviceGetPcieThroughput(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, nvmlPcieUtilCounter_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &counter, sizeof(nvmlPcieUtilCounter_t)) < 0 ||
       rpc_read(conn, &value_present, sizeof(uint8_t)) < 0 ||
       (value_present && rpc_read(conn, &value, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetPcieThroughput");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetPcieThroughput");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, counter, value_present ? &value : nullptr);
@@ -1323,10 +1016,8 @@ int handle_nvmlDeviceGetPcieThroughput(conn_t *conn) {
       (value_present && rpc_write(conn, &value, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetPcieReplayCounter(conn_t *conn) {
@@ -1336,18 +1027,13 @@ int handle_nvmlDeviceGetPcieReplayCounter(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &value_present, sizeof(uint8_t)) < 0 ||
       (value_present && rpc_read(conn, &value, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetPcieReplayCounter");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetPcieReplayCounter");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, value_present ? &value : nullptr);
 
@@ -1355,10 +1041,8 @@ int handle_nvmlDeviceGetPcieReplayCounter(conn_t *conn) {
       (value_present && rpc_write(conn, &value, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetComputeRunningProcesses(conn_t *conn) {
@@ -1366,6 +1050,7 @@ int handle_nvmlDeviceGetComputeRunningProcesses(conn_t *conn) {
   uint8_t infoCount_present = 0;
   unsigned int infoCount = 0;
   unsigned int infoCount_requested = 0;
+  lupine_scratch_buffer<256> lupine_infos_buf;
   nvmlProcessInfo_v1_t *infos = nullptr;
   uint8_t infos_null = 0;
   uint8_t infos_has_data = 0;
@@ -1373,28 +1058,19 @@ int handle_nvmlDeviceGetComputeRunningProcesses(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, unsigned int *, nvmlProcessInfo_v1_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &infoCount_present, sizeof(uint8_t)) < 0 ||
       rpc_read(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
       ((infoCount = infoCount_requested), false) ||
-      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!infos_null) {
-    infos = (nvmlProcessInfo_v1_t *)calloc(
-        (infoCount_requested != 0 ? infoCount_requested : 1),
-        sizeof(nvmlProcessInfo_v1_t));
-    if (infos == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      (!infos_null && !lupine_infos_buf.alloc_into(
+                          infos, static_cast<size_t>(infoCount_requested),
+                          sizeof(nvmlProcessInfo_v1_t), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetComputeRunningProcesses");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetComputeRunningProcesses");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -1413,12 +1089,8 @@ int handle_nvmlDeviceGetComputeRunningProcesses(conn_t *conn) {
        rpc_write(conn, infos, infoCount * sizeof(nvmlProcessInfo_v1_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)infos);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)infos);
-  return -1;
 }
 
 int handle_nvmlDeviceGetComputeRunningProcesses_v2(conn_t *conn) {
@@ -1426,6 +1098,7 @@ int handle_nvmlDeviceGetComputeRunningProcesses_v2(conn_t *conn) {
   uint8_t infoCount_present = 0;
   unsigned int infoCount = 0;
   unsigned int infoCount_requested = 0;
+  lupine_scratch_buffer<256> lupine_infos_buf;
   nvmlProcessInfo_v2_t *infos = nullptr;
   uint8_t infos_null = 0;
   uint8_t infos_has_data = 0;
@@ -1433,28 +1106,19 @@ int handle_nvmlDeviceGetComputeRunningProcesses_v2(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, unsigned int *, nvmlProcessInfo_v2_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &infoCount_present, sizeof(uint8_t)) < 0 ||
       rpc_read(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
       ((infoCount = infoCount_requested), false) ||
-      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!infos_null) {
-    infos = (nvmlProcessInfo_v2_t *)calloc(
-        (infoCount_requested != 0 ? infoCount_requested : 1),
-        sizeof(nvmlProcessInfo_v2_t));
-    if (infos == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      (!infos_null && !lupine_infos_buf.alloc_into(
+                          infos, static_cast<size_t>(infoCount_requested),
+                          sizeof(nvmlProcessInfo_v2_t), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetComputeRunningProcesses_v2");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetComputeRunningProcesses_v2");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -1473,12 +1137,8 @@ int handle_nvmlDeviceGetComputeRunningProcesses_v2(conn_t *conn) {
        rpc_write(conn, infos, infoCount * sizeof(nvmlProcessInfo_v2_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)infos);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)infos);
-  return -1;
 }
 
 int handle_nvmlDeviceGetComputeRunningProcesses_v3(conn_t *conn) {
@@ -1486,6 +1146,7 @@ int handle_nvmlDeviceGetComputeRunningProcesses_v3(conn_t *conn) {
   uint8_t infoCount_present = 0;
   unsigned int infoCount = 0;
   unsigned int infoCount_requested = 0;
+  lupine_scratch_buffer<256> lupine_infos_buf;
   nvmlProcessInfo_t *infos = nullptr;
   uint8_t infos_null = 0;
   uint8_t infos_has_data = 0;
@@ -1493,28 +1154,19 @@ int handle_nvmlDeviceGetComputeRunningProcesses_v3(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, unsigned int *, nvmlProcessInfo_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &infoCount_present, sizeof(uint8_t)) < 0 ||
       rpc_read(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
       ((infoCount = infoCount_requested), false) ||
-      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!infos_null) {
-    infos = (nvmlProcessInfo_t *)calloc(
-        (infoCount_requested != 0 ? infoCount_requested : 1),
-        sizeof(nvmlProcessInfo_t));
-    if (infos == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      (!infos_null && !lupine_infos_buf.alloc_into(
+                          infos, static_cast<size_t>(infoCount_requested),
+                          sizeof(nvmlProcessInfo_t), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetComputeRunningProcesses_v3");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetComputeRunningProcesses_v3");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -1533,12 +1185,8 @@ int handle_nvmlDeviceGetComputeRunningProcesses_v3(conn_t *conn) {
        rpc_write(conn, infos, infoCount * sizeof(nvmlProcessInfo_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)infos);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)infos);
-  return -1;
 }
 
 int handle_nvmlDeviceGetProcessUtilization(conn_t *conn) {
@@ -1546,6 +1194,7 @@ int handle_nvmlDeviceGetProcessUtilization(conn_t *conn) {
   uint8_t processSamplesCount_present = 0;
   unsigned int processSamplesCount = 0;
   unsigned int processSamplesCount_requested = 0;
+  lupine_scratch_buffer<256> lupine_utilization_buf;
   nvmlProcessUtilizationSample_t *utilization = nullptr;
   uint8_t utilization_null = 0;
   uint8_t utilization_has_data = 0;
@@ -1554,31 +1203,21 @@ int handle_nvmlDeviceGetProcessUtilization(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlProcessUtilizationSample_t *,
                                 unsigned int *, unsigned long long);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &processSamplesCount_present, sizeof(uint8_t)) < 0 ||
       rpc_read(conn, &processSamplesCount_requested, sizeof(unsigned int)) <
           0 ||
       ((processSamplesCount = processSamplesCount_requested), false) ||
-      rpc_read(conn, &utilization_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!utilization_null) {
-    utilization = (nvmlProcessUtilizationSample_t *)calloc(
-        (processSamplesCount_requested != 0 ? processSamplesCount_requested
-                                            : 1),
-        sizeof(nvmlProcessUtilizationSample_t));
-    if (utilization == nullptr)
-      goto ERROR_0;
-  }
-  if (rpc_read(conn, &lastSeenTimeStamp, sizeof(unsigned long long)) < 0 ||
-      false)
-    goto ERROR_0;
+      rpc_read(conn, &utilization_null, sizeof(uint8_t)) < 0 ||
+      (!utilization_null &&
+       !lupine_utilization_buf.alloc_into(
+           utilization, static_cast<size_t>(processSamplesCount_requested),
+           sizeof(nvmlProcessUtilizationSample_t), true)) ||
+      rpc_read(conn, &lastSeenTimeStamp, sizeof(unsigned long long)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetProcessUtilization");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetProcessUtilization");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -1604,12 +1243,8 @@ int handle_nvmlDeviceGetProcessUtilization(conn_t *conn) {
            0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)utilization);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)utilization);
-  return -1;
 }
 
 int handle_nvmlDeviceGetGraphicsRunningProcesses(conn_t *conn) {
@@ -1617,6 +1252,7 @@ int handle_nvmlDeviceGetGraphicsRunningProcesses(conn_t *conn) {
   uint8_t infoCount_present = 0;
   unsigned int infoCount = 0;
   unsigned int infoCount_requested = 0;
+  lupine_scratch_buffer<256> lupine_infos_buf;
   nvmlProcessInfo_v1_t *infos = nullptr;
   uint8_t infos_null = 0;
   uint8_t infos_has_data = 0;
@@ -1624,28 +1260,19 @@ int handle_nvmlDeviceGetGraphicsRunningProcesses(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, unsigned int *, nvmlProcessInfo_v1_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &infoCount_present, sizeof(uint8_t)) < 0 ||
       rpc_read(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
       ((infoCount = infoCount_requested), false) ||
-      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!infos_null) {
-    infos = (nvmlProcessInfo_v1_t *)calloc(
-        (infoCount_requested != 0 ? infoCount_requested : 1),
-        sizeof(nvmlProcessInfo_v1_t));
-    if (infos == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      (!infos_null && !lupine_infos_buf.alloc_into(
+                          infos, static_cast<size_t>(infoCount_requested),
+                          sizeof(nvmlProcessInfo_v1_t), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetGraphicsRunningProcesses");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetGraphicsRunningProcesses");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -1664,12 +1291,8 @@ int handle_nvmlDeviceGetGraphicsRunningProcesses(conn_t *conn) {
        rpc_write(conn, infos, infoCount * sizeof(nvmlProcessInfo_v1_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)infos);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)infos);
-  return -1;
 }
 
 int handle_nvmlDeviceGetGraphicsRunningProcesses_v2(conn_t *conn) {
@@ -1677,6 +1300,7 @@ int handle_nvmlDeviceGetGraphicsRunningProcesses_v2(conn_t *conn) {
   uint8_t infoCount_present = 0;
   unsigned int infoCount = 0;
   unsigned int infoCount_requested = 0;
+  lupine_scratch_buffer<256> lupine_infos_buf;
   nvmlProcessInfo_v2_t *infos = nullptr;
   uint8_t infos_null = 0;
   uint8_t infos_has_data = 0;
@@ -1684,28 +1308,19 @@ int handle_nvmlDeviceGetGraphicsRunningProcesses_v2(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, unsigned int *, nvmlProcessInfo_v2_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &infoCount_present, sizeof(uint8_t)) < 0 ||
       rpc_read(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
       ((infoCount = infoCount_requested), false) ||
-      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!infos_null) {
-    infos = (nvmlProcessInfo_v2_t *)calloc(
-        (infoCount_requested != 0 ? infoCount_requested : 1),
-        sizeof(nvmlProcessInfo_v2_t));
-    if (infos == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      (!infos_null && !lupine_infos_buf.alloc_into(
+                          infos, static_cast<size_t>(infoCount_requested),
+                          sizeof(nvmlProcessInfo_v2_t), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetGraphicsRunningProcesses_v2");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetGraphicsRunningProcesses_v2");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -1724,12 +1339,8 @@ int handle_nvmlDeviceGetGraphicsRunningProcesses_v2(conn_t *conn) {
        rpc_write(conn, infos, infoCount * sizeof(nvmlProcessInfo_v2_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)infos);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)infos);
-  return -1;
 }
 
 int handle_nvmlDeviceGetGraphicsRunningProcesses_v3(conn_t *conn) {
@@ -1737,6 +1348,7 @@ int handle_nvmlDeviceGetGraphicsRunningProcesses_v3(conn_t *conn) {
   uint8_t infoCount_present = 0;
   unsigned int infoCount = 0;
   unsigned int infoCount_requested = 0;
+  lupine_scratch_buffer<256> lupine_infos_buf;
   nvmlProcessInfo_t *infos = nullptr;
   uint8_t infos_null = 0;
   uint8_t infos_has_data = 0;
@@ -1744,28 +1356,19 @@ int handle_nvmlDeviceGetGraphicsRunningProcesses_v3(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, unsigned int *, nvmlProcessInfo_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &infoCount_present, sizeof(uint8_t)) < 0 ||
       rpc_read(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
       ((infoCount = infoCount_requested), false) ||
-      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!infos_null) {
-    infos = (nvmlProcessInfo_t *)calloc(
-        (infoCount_requested != 0 ? infoCount_requested : 1),
-        sizeof(nvmlProcessInfo_t));
-    if (infos == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      (!infos_null && !lupine_infos_buf.alloc_into(
+                          infos, static_cast<size_t>(infoCount_requested),
+                          sizeof(nvmlProcessInfo_t), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetGraphicsRunningProcesses_v3");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetGraphicsRunningProcesses_v3");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -1784,12 +1387,8 @@ int handle_nvmlDeviceGetGraphicsRunningProcesses_v3(conn_t *conn) {
        rpc_write(conn, infos, infoCount * sizeof(nvmlProcessInfo_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)infos);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)infos);
-  return -1;
 }
 
 int handle_nvmlDeviceGetMPSComputeRunningProcesses(conn_t *conn) {
@@ -1797,6 +1396,7 @@ int handle_nvmlDeviceGetMPSComputeRunningProcesses(conn_t *conn) {
   uint8_t infoCount_present = 0;
   unsigned int infoCount = 0;
   unsigned int infoCount_requested = 0;
+  lupine_scratch_buffer<256> lupine_infos_buf;
   nvmlProcessInfo_v1_t *infos = nullptr;
   uint8_t infos_null = 0;
   uint8_t infos_has_data = 0;
@@ -1804,28 +1404,19 @@ int handle_nvmlDeviceGetMPSComputeRunningProcesses(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, unsigned int *, nvmlProcessInfo_v1_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &infoCount_present, sizeof(uint8_t)) < 0 ||
       rpc_read(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
       ((infoCount = infoCount_requested), false) ||
-      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!infos_null) {
-    infos = (nvmlProcessInfo_v1_t *)calloc(
-        (infoCount_requested != 0 ? infoCount_requested : 1),
-        sizeof(nvmlProcessInfo_v1_t));
-    if (infos == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      (!infos_null && !lupine_infos_buf.alloc_into(
+                          infos, static_cast<size_t>(infoCount_requested),
+                          sizeof(nvmlProcessInfo_v1_t), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetMPSComputeRunningProcesses");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetMPSComputeRunningProcesses");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -1844,12 +1435,8 @@ int handle_nvmlDeviceGetMPSComputeRunningProcesses(conn_t *conn) {
        rpc_write(conn, infos, infoCount * sizeof(nvmlProcessInfo_v1_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)infos);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)infos);
-  return -1;
 }
 
 int handle_nvmlDeviceGetMPSComputeRunningProcesses_v2(conn_t *conn) {
@@ -1857,6 +1444,7 @@ int handle_nvmlDeviceGetMPSComputeRunningProcesses_v2(conn_t *conn) {
   uint8_t infoCount_present = 0;
   unsigned int infoCount = 0;
   unsigned int infoCount_requested = 0;
+  lupine_scratch_buffer<256> lupine_infos_buf;
   nvmlProcessInfo_v2_t *infos = nullptr;
   uint8_t infos_null = 0;
   uint8_t infos_has_data = 0;
@@ -1864,28 +1452,19 @@ int handle_nvmlDeviceGetMPSComputeRunningProcesses_v2(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, unsigned int *, nvmlProcessInfo_v2_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &infoCount_present, sizeof(uint8_t)) < 0 ||
       rpc_read(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
       ((infoCount = infoCount_requested), false) ||
-      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!infos_null) {
-    infos = (nvmlProcessInfo_v2_t *)calloc(
-        (infoCount_requested != 0 ? infoCount_requested : 1),
-        sizeof(nvmlProcessInfo_v2_t));
-    if (infos == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      (!infos_null && !lupine_infos_buf.alloc_into(
+                          infos, static_cast<size_t>(infoCount_requested),
+                          sizeof(nvmlProcessInfo_v2_t), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetMPSComputeRunningProcesses_v2");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetMPSComputeRunningProcesses_v2");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -1904,12 +1483,8 @@ int handle_nvmlDeviceGetMPSComputeRunningProcesses_v2(conn_t *conn) {
        rpc_write(conn, infos, infoCount * sizeof(nvmlProcessInfo_v2_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)infos);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)infos);
-  return -1;
 }
 
 int handle_nvmlDeviceGetMPSComputeRunningProcesses_v3(conn_t *conn) {
@@ -1917,6 +1492,7 @@ int handle_nvmlDeviceGetMPSComputeRunningProcesses_v3(conn_t *conn) {
   uint8_t infoCount_present = 0;
   unsigned int infoCount = 0;
   unsigned int infoCount_requested = 0;
+  lupine_scratch_buffer<256> lupine_infos_buf;
   nvmlProcessInfo_t *infos = nullptr;
   uint8_t infos_null = 0;
   uint8_t infos_has_data = 0;
@@ -1924,28 +1500,19 @@ int handle_nvmlDeviceGetMPSComputeRunningProcesses_v3(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, unsigned int *, nvmlProcessInfo_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &infoCount_present, sizeof(uint8_t)) < 0 ||
       rpc_read(conn, &infoCount_requested, sizeof(unsigned int)) < 0 ||
       ((infoCount = infoCount_requested), false) ||
-      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 || false)
-    goto ERROR_0;
-  if (!infos_null) {
-    infos = (nvmlProcessInfo_t *)calloc(
-        (infoCount_requested != 0 ? infoCount_requested : 1),
-        sizeof(nvmlProcessInfo_t));
-    if (infos == nullptr)
-      goto ERROR_0;
-  }
-  if (false)
-    goto ERROR_0;
+      rpc_read(conn, &infos_null, sizeof(uint8_t)) < 0 ||
+      (!infos_null && !lupine_infos_buf.alloc_into(
+                          infos, static_cast<size_t>(infoCount_requested),
+                          sizeof(nvmlProcessInfo_t), true)) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetMPSComputeRunningProcesses_v3");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetMPSComputeRunningProcesses_v3");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -1964,12 +1531,8 @@ int handle_nvmlDeviceGetMPSComputeRunningProcesses_v3(conn_t *conn) {
        rpc_write(conn, infos, infoCount * sizeof(nvmlProcessInfo_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
-  free((void *)infos);
+    return -1;
   return 0;
-ERROR_0:
-  free((void *)infos);
-  return -1;
 }
 
 int handle_nvmlEventSetCreate(conn_t *conn) {
@@ -1978,17 +1541,12 @@ int handle_nvmlEventSetCreate(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlEventSet_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &set_present, sizeof(uint8_t)) < 0 ||
       (set_present && rpc_read(conn, &set, sizeof(nvmlEventSet_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlEventSetCreate");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlEventSetCreate");
   return_value =
       fn == nullptr ? function_not_found() : fn(set_present ? &set : nullptr);
 
@@ -1996,10 +1554,8 @@ int handle_nvmlEventSetCreate(conn_t *conn) {
       (set_present && rpc_write(conn, &set, sizeof(nvmlEventSet_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlEventSetFree(conn_t *conn) {
@@ -2007,24 +1563,18 @@ int handle_nvmlEventSetFree(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlEventSet_t);
-  fn_t fn = nullptr;
-  if (rpc_read(conn, &set, sizeof(nvmlEventSet_t)) < 0 || false)
-    goto ERROR_0;
+  if (rpc_read(conn, &set, sizeof(nvmlEventSet_t)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlEventSetFree");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlEventSetFree");
   return_value = fn == nullptr ? function_not_found() : fn(set);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlEventSetWait_v2(conn_t *conn) {
@@ -2036,18 +1586,14 @@ int handle_nvmlEventSetWait_v2(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlEventSet_t, nvmlEventData_t *, unsigned int);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &set, sizeof(nvmlEventSet_t)) < 0 ||
       rpc_read(conn, &data_present, sizeof(uint8_t)) < 0 ||
       (data_present && rpc_read(conn, &data, sizeof(nvmlEventData_t)) < 0) ||
-      rpc_read(conn, &timeoutms, sizeof(unsigned int)) < 0 || false)
-    goto ERROR_0;
+      rpc_read(conn, &timeoutms, sizeof(unsigned int)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlEventSetWait_v2");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlEventSetWait_v2");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(set, data_present ? &data : nullptr, timeoutms);
@@ -2056,10 +1602,8 @@ int handle_nvmlEventSetWait_v2(conn_t *conn) {
       (data_present && rpc_write(conn, &data, sizeof(nvmlEventData_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceRegisterEvents(conn_t *conn) {
@@ -2070,27 +1614,21 @@ int handle_nvmlDeviceRegisterEvents(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, unsigned long long, nvmlEventSet_t);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &eventTypes, sizeof(unsigned long long)) < 0 ||
-      rpc_read(conn, &set, sizeof(nvmlEventSet_t)) < 0 || false)
-    goto ERROR_0;
+      rpc_read(conn, &set, sizeof(nvmlEventSet_t)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceRegisterEvents");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceRegisterEvents");
   return_value =
       fn == nullptr ? function_not_found() : fn(device, eventTypes, set);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetMaxMigDeviceCount(conn_t *conn) {
@@ -2100,18 +1638,13 @@ int handle_nvmlDeviceGetMaxMigDeviceCount(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &count_present, sizeof(uint8_t)) < 0 ||
       (count_present && rpc_read(conn, &count, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetMaxMigDeviceCount");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetMaxMigDeviceCount");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, count_present ? &count : nullptr);
 
@@ -2119,10 +1652,8 @@ int handle_nvmlDeviceGetMaxMigDeviceCount(conn_t *conn) {
       (count_present && rpc_write(conn, &count, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetTotalEccErrors(conn_t *conn) {
@@ -2135,21 +1666,16 @@ int handle_nvmlDeviceGetTotalEccErrors(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlMemoryErrorType_t,
                                 nvmlEccCounterType_t, unsigned long long *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &errorType, sizeof(nvmlMemoryErrorType_t)) < 0 ||
       rpc_read(conn, &counterType, sizeof(nvmlEccCounterType_t)) < 0 ||
       rpc_read(conn, &eccCounts_present, sizeof(uint8_t)) < 0 ||
       (eccCounts_present &&
        rpc_read(conn, &eccCounts, sizeof(unsigned long long)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetTotalEccErrors");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetTotalEccErrors");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, errorType, counterType,
                                     eccCounts_present ? &eccCounts : nullptr);
@@ -2159,10 +1685,8 @@ int handle_nvmlDeviceGetTotalEccErrors(conn_t *conn) {
        rpc_write(conn, &eccCounts, sizeof(unsigned long long)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetDetailedEccErrors(conn_t *conn) {
@@ -2175,21 +1699,16 @@ int handle_nvmlDeviceGetDetailedEccErrors(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlMemoryErrorType_t,
                                 nvmlEccCounterType_t, nvmlEccErrorCounts_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &errorType, sizeof(nvmlMemoryErrorType_t)) < 0 ||
       rpc_read(conn, &counterType, sizeof(nvmlEccCounterType_t)) < 0 ||
       rpc_read(conn, &eccCounts_present, sizeof(uint8_t)) < 0 ||
       (eccCounts_present &&
        rpc_read(conn, &eccCounts, sizeof(nvmlEccErrorCounts_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetDetailedEccErrors");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetDetailedEccErrors");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, errorType, counterType,
                                     eccCounts_present ? &eccCounts : nullptr);
@@ -2199,10 +1718,8 @@ int handle_nvmlDeviceGetDetailedEccErrors(conn_t *conn) {
        rpc_write(conn, &eccCounts, sizeof(nvmlEccErrorCounts_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetMemoryErrorCounter(conn_t *conn) {
@@ -2217,7 +1734,6 @@ int handle_nvmlDeviceGetMemoryErrorCounter(conn_t *conn) {
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlMemoryErrorType_t,
                                 nvmlEccCounterType_t, nvmlMemoryLocation_t,
                                 unsigned long long *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &errorType, sizeof(nvmlMemoryErrorType_t)) < 0 ||
       rpc_read(conn, &counterType, sizeof(nvmlEccCounterType_t)) < 0 ||
@@ -2225,14 +1741,10 @@ int handle_nvmlDeviceGetMemoryErrorCounter(conn_t *conn) {
       rpc_read(conn, &count_present, sizeof(uint8_t)) < 0 ||
       (count_present &&
        rpc_read(conn, &count, sizeof(unsigned long long)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetMemoryErrorCounter");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetMemoryErrorCounter");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, errorType, counterType, locationType,
@@ -2243,10 +1755,8 @@ int handle_nvmlDeviceGetMemoryErrorCounter(conn_t *conn) {
        rpc_write(conn, &count, sizeof(unsigned long long)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetEccMode(conn_t *conn) {
@@ -2259,7 +1769,6 @@ int handle_nvmlDeviceGetEccMode(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, nvmlEnableState_t *, nvmlEnableState_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &current_present, sizeof(uint8_t)) < 0 ||
       (current_present &&
@@ -2267,14 +1776,10 @@ int handle_nvmlDeviceGetEccMode(conn_t *conn) {
       rpc_read(conn, &pending_present, sizeof(uint8_t)) < 0 ||
       (pending_present &&
        rpc_read(conn, &pending, sizeof(nvmlEnableState_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetEccMode");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetEccMode");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, current_present ? &current : nullptr,
@@ -2287,10 +1792,8 @@ int handle_nvmlDeviceGetEccMode(conn_t *conn) {
        rpc_write(conn, &pending, sizeof(nvmlEnableState_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetTemperatureV(conn_t *conn) {
@@ -2300,19 +1803,14 @@ int handle_nvmlDeviceGetTemperatureV(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, lupine_nvmlTemperature_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &temperature_present, sizeof(uint8_t)) < 0 ||
       (temperature_present &&
        rpc_read(conn, &temperature, sizeof(lupine_nvmlTemperature_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetTemperatureV");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetTemperatureV");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, temperature_present ? &temperature : nullptr);
@@ -2322,10 +1820,8 @@ int handle_nvmlDeviceGetTemperatureV(conn_t *conn) {
        rpc_write(conn, &temperature, sizeof(lupine_nvmlTemperature_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetEnforcedPowerLimit(conn_t *conn) {
@@ -2335,18 +1831,13 @@ int handle_nvmlDeviceGetEnforcedPowerLimit(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &limit_present, sizeof(uint8_t)) < 0 ||
       (limit_present && rpc_read(conn, &limit, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetEnforcedPowerLimit");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetEnforcedPowerLimit");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, limit_present ? &limit : nullptr);
 
@@ -2354,10 +1845,8 @@ int handle_nvmlDeviceGetEnforcedPowerLimit(conn_t *conn) {
       (limit_present && rpc_write(conn, &limit, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetMemoryInfo_v2(conn_t *conn) {
@@ -2367,19 +1856,14 @@ int handle_nvmlDeviceGetMemoryInfo_v2(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_v2_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &memory_present, sizeof(uint8_t)) < 0 ||
       (memory_present &&
        rpc_read(conn, &memory, sizeof(nvmlMemory_v2_t)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetMemoryInfo_v2");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetMemoryInfo_v2");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, memory_present ? &memory : nullptr);
 
@@ -2388,10 +1872,8 @@ int handle_nvmlDeviceGetMemoryInfo_v2(conn_t *conn) {
        rpc_write(conn, &memory, sizeof(nvmlMemory_v2_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetMigMode(conn_t *conn) {
@@ -2403,7 +1885,6 @@ int handle_nvmlDeviceGetMigMode(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &currentMode_present, sizeof(uint8_t)) < 0 ||
       (currentMode_present &&
@@ -2411,14 +1892,10 @@ int handle_nvmlDeviceGetMigMode(conn_t *conn) {
       rpc_read(conn, &pendingMode_present, sizeof(uint8_t)) < 0 ||
       (pendingMode_present &&
        rpc_read(conn, &pendingMode, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetMigMode");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetMigMode");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, currentMode_present ? &currentMode : nullptr,
@@ -2431,10 +1908,8 @@ int handle_nvmlDeviceGetMigMode(conn_t *conn) {
        rpc_write(conn, &pendingMode, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetVirtualizationMode(conn_t *conn) {
@@ -2444,20 +1919,15 @@ int handle_nvmlDeviceGetVirtualizationMode(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, nvmlGpuVirtualizationMode_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &pVirtualMode_present, sizeof(uint8_t)) < 0 ||
       (pVirtualMode_present &&
        rpc_read(conn, &pVirtualMode, sizeof(nvmlGpuVirtualizationMode_t)) <
            0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetVirtualizationMode");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceGetVirtualizationMode");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, pVirtualMode_present ? &pVirtualMode
                                                                  : nullptr);
@@ -2468,10 +1938,8 @@ int handle_nvmlDeviceGetVirtualizationMode(conn_t *conn) {
            0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceIsMigDeviceHandle(conn_t *conn) {
@@ -2481,19 +1949,14 @@ int handle_nvmlDeviceIsMigDeviceHandle(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &isMigDevice_present, sizeof(uint8_t)) < 0 ||
       (isMigDevice_present &&
        rpc_read(conn, &isMigDevice, sizeof(unsigned int)) < 0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceIsMigDeviceHandle");
+  static const fn_t fn = nvml_symbol<fn_t>("nvmlDeviceIsMigDeviceHandle");
   return_value = fn == nullptr
                      ? function_not_found()
                      : fn(device, isMigDevice_present ? &isMigDevice : nullptr);
@@ -2503,10 +1966,8 @@ int handle_nvmlDeviceIsMigDeviceHandle(conn_t *conn) {
        rpc_write(conn, &isMigDevice, sizeof(unsigned int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetNvLinkRemoteDeviceType(conn_t *conn) {
@@ -2518,21 +1979,17 @@ int handle_nvmlDeviceGetNvLinkRemoteDeviceType(conn_t *conn) {
   nvmlReturn_t return_value;
   using fn_t =
       nvmlReturn_t (*)(nvmlDevice_t, unsigned int, nvmlIntNvLinkDeviceType_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &link, sizeof(unsigned int)) < 0 ||
       rpc_read(conn, &pNvLinkDeviceType_present, sizeof(uint8_t)) < 0 ||
       (pNvLinkDeviceType_present &&
        rpc_read(conn, &pNvLinkDeviceType, sizeof(nvmlIntNvLinkDeviceType_t)) <
            0) ||
-      false)
-    goto ERROR_0;
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetNvLinkRemoteDeviceType");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetNvLinkRemoteDeviceType");
   return_value =
       fn == nullptr
           ? function_not_found()
@@ -2545,10 +2002,8 @@ int handle_nvmlDeviceGetNvLinkRemoteDeviceType(conn_t *conn) {
            0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetNvLinkRemotePciInfo_v2(conn_t *conn) {
@@ -2559,18 +2014,15 @@ int handle_nvmlDeviceGetNvLinkRemotePciInfo_v2(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, unsigned int, nvmlPciInfo_t *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &link, sizeof(unsigned int)) < 0 ||
       rpc_read(conn, &pci_present, sizeof(uint8_t)) < 0 ||
-      (pci_present && rpc_read(conn, &pci, sizeof(nvmlPciInfo_t)) < 0) || false)
-    goto ERROR_0;
+      (pci_present && rpc_read(conn, &pci, sizeof(nvmlPciInfo_t)) < 0) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetNvLinkRemotePciInfo_v2");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetNvLinkRemotePciInfo_v2");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, link, pci_present ? &pci : nullptr);
 
@@ -2578,10 +2030,8 @@ int handle_nvmlDeviceGetNvLinkRemotePciInfo_v2(conn_t *conn) {
       (pci_present && rpc_write(conn, &pci, sizeof(nvmlPciInfo_t)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }
 
 int handle_nvmlDeviceGetCudaComputeCapability(conn_t *conn) {
@@ -2593,19 +2043,16 @@ int handle_nvmlDeviceGetCudaComputeCapability(conn_t *conn) {
   int request_id;
   nvmlReturn_t return_value;
   using fn_t = nvmlReturn_t (*)(nvmlDevice_t, int *, int *);
-  fn_t fn = nullptr;
   if (rpc_read(conn, &device, sizeof(nvmlDevice_t)) < 0 ||
       rpc_read(conn, &major_present, sizeof(uint8_t)) < 0 ||
       (major_present && rpc_read(conn, &major, sizeof(int)) < 0) ||
       rpc_read(conn, &minor_present, sizeof(uint8_t)) < 0 ||
-      (minor_present && rpc_read(conn, &minor, sizeof(int)) < 0) || false)
-    goto ERROR_0;
+      (minor_present && rpc_read(conn, &minor, sizeof(int)) < 0) ||
+      (request_id = rpc_read_end(conn)) < 0)
+    return -1;
 
-  request_id = rpc_read_end(conn);
-  if (request_id < 0)
-    goto ERROR_0;
-
-  fn = nvml_symbol<fn_t>("nvmlDeviceGetCudaComputeCapability");
+  static const fn_t fn =
+      nvml_symbol<fn_t>("nvmlDeviceGetCudaComputeCapability");
   return_value = fn == nullptr ? function_not_found()
                                : fn(device, major_present ? &major : nullptr,
                                     minor_present ? &minor : nullptr);
@@ -2615,8 +2062,6 @@ int handle_nvmlDeviceGetCudaComputeCapability(conn_t *conn) {
       (minor_present && rpc_write(conn, &minor, sizeof(int)) < 0) ||
       rpc_write(conn, &return_value, sizeof(nvmlReturn_t)) < 0 ||
       rpc_write_end(conn) < 0)
-    goto ERROR_0;
+    return -1;
   return 0;
-ERROR_0:
-  return -1;
 }

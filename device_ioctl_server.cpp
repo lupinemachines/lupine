@@ -4,12 +4,13 @@
 #include <array>
 #include <cerrno>
 #include <climits>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
 #include <memory>
 #include <mutex>
-#include <string>
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <unordered_map>
@@ -52,19 +53,23 @@ int find_native_fd(bool uvm) {
   DIR *directory = opendir("/proc/self/fd");
   if (!directory)
     return -1;
+  const char *expected = uvm ? "/dev/nvidia-uvm" : "/dev/nvidiactl";
   int result = -1;
   while (dirent *entry = readdir(directory)) {
     char *end;
     long value = strtol(entry->d_name, &end, 10);
     if (*end || value < 0 || value > INT_MAX)
       continue;
-    std::string path = std::string("/proc/self/fd/") + entry->d_name;
+    char path[64];
+    int written = std::snprintf(path, sizeof(path), "/proc/self/fd/%ld", value);
+    if (written <= 0 || static_cast<size_t>(written) >= sizeof(path))
+      continue;
     char target[PATH_MAX];
-    ssize_t size = readlink(path.c_str(), target, sizeof(target) - 1);
+    ssize_t size = readlink(path, target, sizeof(target) - 1);
     if (size < 0)
       continue;
     target[size] = 0;
-    if (std::string(target) == (uvm ? "/dev/nvidia-uvm" : "/dev/nvidiactl")) {
+    if (std::strcmp(target, expected) == 0) {
       result = static_cast<int>(value);
       break;
     }
@@ -116,7 +121,7 @@ int handle_lupineDeviceClose(conn_t *conn) {
 int handle_lupineDeviceIoctl(conn_t *conn) {
   uint64_t token, rm_token;
   uint32_t command, size;
-  std::array<unsigned char, lupine_uvm::map_size> buffer{};
+  std::array<unsigned char, lupine_uvm::map_size> buffer;
   if (rpc_read(conn, &token, sizeof(token)) < 0 ||
       rpc_read(conn, &command, sizeof(command)) < 0 ||
       rpc_read(conn, &size, sizeof(size)) < 0 ||

@@ -73,18 +73,15 @@ template <typename Fn> Fn hip_symbol(const char *name) {
 int handle_hipModuleLoadData(conn_t *conn) {
   uint64_t size = 0;
   if (rpc_read(conn, &size, sizeof(size)) < 0 || size == 0 ||
-      size > lupine_hip_max_image_size) {
+      size > lupine_hip_max_image_size)
     return -1;
-  }
   std::vector<unsigned char> image(static_cast<size_t>(size));
-  if (rpc_read(conn, image.data(), image.size()) < 0) {
+  int request_id;
+  if (rpc_read(conn, image.data(), image.size()) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0)
     return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  auto load = hip_symbol<decltype(&hipModuleLoadData)>("hipModuleLoadData");
+  static const auto load =
+      hip_symbol<decltype(&hipModuleLoadData)>("hipModuleLoadData");
   hipModule_t module = nullptr;
   hipError_t result = hipErrorInvalidImage;
   if (lupine_hip_bundle_size(image.data(), image.size()) == image.size()) {
@@ -106,14 +103,12 @@ int handle_hipModuleLoadData(conn_t *conn) {
 
 int handle_hipModuleUnload(conn_t *conn) {
   hipModule_t module = nullptr;
-  if (rpc_read(conn, &module, sizeof(module)) < 0) {
+  int request_id;
+  if (rpc_read(conn, &module, sizeof(module)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0)
     return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  auto unload = hip_symbol<decltype(&hipModuleUnload)>("hipModuleUnload");
+  static const auto unload =
+      hip_symbol<decltype(&hipModuleUnload)>("hipModuleUnload");
   hipError_t result = unload == nullptr ? function_not_found() : unload(module);
   if (result == hipSuccess) {
     std::lock_guard<std::mutex> lock(module_images_mutex);
@@ -131,19 +126,16 @@ int handle_hipModuleLaunchKernel(conn_t *conn) {
   unsigned int dimensions[6] = {};
   unsigned int shared_memory = 0;
   hipStream_t stream = nullptr;
+  int request_id;
   if (rpc_read(conn, &function, sizeof(function)) < 0 ||
       rpc_read(conn, dimensions, sizeof(dimensions)) < 0 ||
       rpc_read(conn, &shared_memory, sizeof(shared_memory)) < 0 ||
-      rpc_read(conn, &stream, sizeof(stream)) < 0) {
+      rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0)
     return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  auto launch =
+  static const auto launch =
       hip_symbol<decltype(&hipModuleLaunchKernel)>("hipModuleLaunchKernel");
-  auto synchronize =
+  static const auto synchronize =
       hip_symbol<decltype(&hipStreamSynchronize)>("hipStreamSynchronize");
   hipError_t result = function_not_found();
   lupine_captured_stdout capture;
@@ -173,21 +165,16 @@ int handle_hipModuleLaunchKernel(conn_t *conn) {
 
 namespace {
 
-int handle_error_text(conn_t *conn, const char *symbol) {
+int handle_error_text(conn_t *conn, const char *(*describe)(hipError_t),
+                      const char *fallback) {
   hipError_t error;
-  if (rpc_read(conn, &error, sizeof(error)) < 0) {
+  int request_id;
+  if (rpc_read(conn, &error, sizeof(error)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0)
     return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  auto describe = hip_symbol<const char *(*)(hipError_t)>(symbol);
   const char *text = describe == nullptr ? nullptr : describe(error);
-  if (text == nullptr) {
-    text = strcmp(symbol, "hipGetErrorName") == 0 ? "hipErrorUnknown"
-                                                  : "unknown error";
-  }
+  if (text == nullptr)
+    text = fallback;
   uint64_t size = strlen(text) + 1;
   return rpc_write_start_response(conn, request_id) < 0 ||
                  rpc_write(conn, &size, sizeof(size)) < 0 ||
@@ -200,9 +187,13 @@ int handle_error_text(conn_t *conn, const char *symbol) {
 } // namespace
 
 int handle_hipGetErrorString(conn_t *conn) {
-  return handle_error_text(conn, "hipGetErrorString");
+  static const auto describe =
+      hip_symbol<const char *(*)(hipError_t)>("hipGetErrorString");
+  return handle_error_text(conn, describe, "unknown error");
 }
 
 int handle_hipGetErrorName(conn_t *conn) {
-  return handle_error_text(conn, "hipGetErrorName");
+  static const auto describe =
+      hip_symbol<const char *(*)(hipError_t)>("hipGetErrorName");
+  return handle_error_text(conn, describe, "hipErrorUnknown");
 }

@@ -4,6 +4,8 @@
 #include "lupine_platform.h"
 #include <chrono>
 #include <cstddef>
+#include <cstdlib>
+#include <cstring>
 #include <stdint.h>
 #include <unordered_map>
 #include <vector>
@@ -517,5 +519,58 @@ extern const char *rpc_http2_session_id(conn_t *conn);
 // and does not add, combine, or otherwise change application RPCs.
 extern void rpc_http2_response_wait_begin(conn_t *conn);
 extern void rpc_http2_response_wait_end(conn_t *conn);
+
+// Small inline scratch storage with malloc/calloc fallback for RPC marshalling.
+template <size_t InlineBytes = 256> struct lupine_scratch_buffer {
+  static_assert(InlineBytes > 0, "InlineBytes must be non-zero");
+  alignas(std::max_align_t) unsigned char inline_bytes[InlineBytes];
+  void *heap = nullptr;
+  lupine_scratch_buffer() = default;
+  lupine_scratch_buffer(const lupine_scratch_buffer &) = delete;
+  lupine_scratch_buffer &operator=(const lupine_scratch_buffer &) = delete;
+  ~lupine_scratch_buffer() { std::free(heap); }
+
+  template <typename Ptr>
+  bool alloc_into(Ptr &out, size_t count, size_t elem_size = 1,
+                  bool zeroed = false) {
+    if (elem_size != 0 && count > (~size_t{0} - 1) / elem_size)
+      return (out = nullptr), false;
+    size_t bytes = count * elem_size, n = bytes + 1;
+    void *p = InlineBytes >= n
+                  ? (zeroed ? std::memset(inline_bytes, 0, n)
+                            : static_cast<void *>(inline_bytes))
+                  : (std::free(heap),
+                     heap = zeroed ? std::calloc(n, 1) : std::malloc(n));
+    if (p != nullptr && !zeroed)
+      static_cast<unsigned char *>(p)[bytes] = 0;
+    out = reinterpret_cast<Ptr>(p);
+    return p != nullptr;
+  }
+
+  template <typename Ptr>
+  int read_array(conn_t *conn, Ptr &out, size_t count, size_t elem_size = 1,
+                 bool zeroed = false) {
+    return !alloc_into(out, count, elem_size, zeroed) ||
+                   (count * elem_size != 0 &&
+                    rpc_read(
+                        conn,
+                        const_cast<void *>(reinterpret_cast<const void *>(out)),
+                        count * elem_size) < 0)
+               ? -1
+               : 0;
+  }
+
+  template <typename Ptr>
+  int read_into(conn_t *conn, Ptr &out, size_t count, size_t elem_size = 1,
+                bool cstr = false) {
+    if (count == 0)
+      return (out = nullptr), 0;
+    if (read_array(conn, out, count, elem_size, false) < 0)
+      return -1;
+    if (cstr)
+      const_cast<char *>(reinterpret_cast<const char *>(out))[count - 1] = '\0';
+    return 0;
+  }
+};
 
 #endif
