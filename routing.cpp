@@ -190,12 +190,11 @@ lupine_apply_visible_devices(std::vector<lupine_device_entry> &devices) {
         const lupine_device_entry &entry = devices[static_cast<size_t>(index)];
         CUuuid uuid = {};
         const CUresult result =
-            entry.local
-                ? lupine_call_real_cuda_fn("cuDeviceGetUuid_v2", &uuid,
-                                           entry.local_device)
-                : lupine_remote_cuDeviceGetUuid(
-                      rpc_client_get_connection(entry.conn_index), &uuid,
-                      entry.remote_device);
+            entry.local ? lupine_call_real_cuda_fn("cuDeviceGetUuid_v2", &uuid,
+                                                   entry.local_device)
+                        : lupine_remote_cuDeviceGetUuid(
+                              rpc_client_get_connection(entry.conn_index),
+                              &uuid, entry.remote_device);
         // A device that will not say what it is simply matches no UUID.
         return result == CUDA_SUCCESS ? lupine_uuid_hex(uuid) : std::string();
       });
@@ -482,9 +481,13 @@ static void lupine_note_deviceptr_allocation_owner_locked(CUdeviceptr ptr,
                                                           size_t size,
                                                           int route_id,
                                                           CUcontext context) {
-  auto &owner = lupine_owners<CUdeviceptr>()[ptr];
-  owner.route_id = route_id;
-  owner.pointer_context = context;
+  if (size == 0) {
+    auto &owner = lupine_owners<CUdeviceptr>()[ptr];
+    owner.route_id = route_id;
+    owner.pointer_context = context;
+  } else {
+    lupine_owners<CUdeviceptr>().erase(ptr);
+  }
   lupine_deviceptr_allocation_cache_insert(ptr, size, route_id, context);
 }
 
@@ -500,10 +503,6 @@ static void lupine_note_owner_route(Handle handle, lupine_route route) {
   if constexpr (std::is_same_v<Handle, CUdeviceptr>) {
     owner.pointer_context = lupine_current_context_hint();
   }
-}
-
-extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn) {
-  lupine_note_owner_route(ctx, lupine_remote_route_for_conn(conn));
 }
 
 extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn) {
@@ -606,10 +605,9 @@ static bool lupine_note_disjoint_deviceptr_allocation(CUdeviceptr ptr,
 
 static thread_local bool lupine_allocating_again = false;
 
-CUresult
-lupine_record_disjoint_allocation(CUdeviceptr *ptr, size_t size,
-                                  lupine_route route,
-                                  const std::function<CUresult()> &again) {
+extern "C" CUresult lupine_record_disjoint_allocation_impl(
+    CUdeviceptr *ptr, size_t size, lupine_route route, void *context,
+    lupine_disjoint_allocation_callback again) {
   // The repeated allocation re-enters here; this loop records its result.
   if (lupine_allocating_again) {
     return CUDA_SUCCESS;
@@ -618,7 +616,7 @@ lupine_record_disjoint_allocation(CUdeviceptr *ptr, size_t size,
   while (result == CUDA_SUCCESS &&
          !lupine_note_disjoint_deviceptr_allocation(*ptr, size, route)) {
     lupine_allocating_again = true;
-    result = again();
+    result = again(context);
     lupine_allocating_again = false;
   }
   return result;
@@ -752,21 +750,21 @@ extern "C" void lupine_note_stream_blocking(CUstream stream, bool blocking) {
 
 extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op, CUstream stream,
                                           unsigned flags) {
-  uintptr_t bits = reinterpret_cast<uintptr_t>(stream);
-  if (bits == LUPINE_STREAM_FETCH_READY_BITS) {
+  uintptr_t key = lupine_stream_scope(stream);
+  if (key == RPC_SCOPE_LANE) {
     return rpc_write_start_request_on(conn, op, RPC_SCOPE_LANE, flags);
   }
-  if (bits == LUPINE_STREAM_FETCH_SYNC_ALL_BITS) {
+  if (key == RPC_SCOPE_ALL) {
     return rpc_write_start_request(conn, op);
   }
-  if (stream == nullptr || stream == CU_STREAM_LEGACY) {
+  if (key == kLegacyStreamScope) {
     if (rpc_write_start_request_on(conn, op, kLegacyStreamScope, flags) < 0) {
       return -1;
     }
     {
       std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
-      for (uintptr_t key : lupine_blocking_streams()) {
-        if (rpc_request_after(conn, key) < 0) {
+      for (uintptr_t blocking_key : lupine_blocking_streams()) {
+        if (rpc_request_after(conn, blocking_key) < 0) {
           return -1;
         }
       }
@@ -776,7 +774,6 @@ extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op, CUstream stream,
     return rpc_request_after_retired(conn);
   }
   bool blocking = stream == CU_STREAM_PER_THREAD;
-  uintptr_t key = lupine_stream_scope(stream);
   if (blocking) {
     auto &thread_stream = lupine_this_thread_stream();
     if (std::find(thread_stream.conns.begin(), thread_stream.conns.end(),
@@ -934,7 +931,8 @@ extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
     if (it != lupine_owners<CUdeviceptr>().end()) {
       return lupine_route_from_identity(it->second.route_id);
     }
-    if (const auto *allocation = lupine_deviceptr_allocation_cache_lookup(ptr)) {
+    if (const auto *allocation =
+            lupine_deviceptr_allocation_cache_lookup(ptr)) {
       return lupine_route_from_identity(allocation->route_id);
     }
   }
@@ -1026,9 +1024,9 @@ static lupine_route lupine_route_for_default_context_hint(CUcontext ctx) {
 }
 
 extern "C" lupine_route lupine_route_for_default() {
-  for (CUcontext hint : {lupine_current_context_hint(),
-                         lupine_default_context_hint_value(),
-                         lupine_global_default_context_hint_value()}) {
+  for (CUcontext hint :
+       {lupine_current_context_hint(), lupine_default_context_hint_value(),
+        lupine_global_default_context_hint_value()}) {
     lupine_route route = lupine_route_for_default_context_hint(hint);
     if (route.kind != LUPINE_ROUTE_INVALID) {
       return route;

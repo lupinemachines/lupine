@@ -54,6 +54,7 @@ void lupine_require_stdout_capture() {
 
 bool lupine_start_stdout_capture(lupine_captured_stdout *capture, bool force) {
   capture->output.clear();
+  capture->wire_size = 0;
   capture->active = (force || lupine_stdout_capture_required.load(
                                   std::memory_order_acquire)) &&
                     lupine_stdout_capture_reader() >= 0;
@@ -82,7 +83,8 @@ void lupine_finish_stdout_capture(lupine_captured_stdout *capture) {
     }
     break;
   }
-  consumed += capture->output.size();
+  capture->wire_size = capture->output.size();
+  consumed += capture->wire_size;
 #if defined(__linux__)
   // The file only grows, so release the pages already read.
   if (!capture->output.empty()) {
@@ -95,16 +97,11 @@ void lupine_finish_stdout_capture(lupine_captured_stdout *capture) {
 
 int lupine_write_captured_stdout(conn_t *conn,
                                  const lupine_captured_stdout &capture) {
-  auto *output_size = static_cast<uint64_t *>(
-      rpc_write_buffer(conn, sizeof(uint64_t), alignof(uint64_t)));
-  if (output_size == nullptr) {
-    return -1;
-  }
-  *output_size = capture.output.size();
-  if (rpc_write(conn, capture.output.data(), capture.output.size()) < 0) {
-    return -1;
-  }
-  return 0;
+  return rpc_write(conn, &capture.wire_size, sizeof(capture.wire_size)) < 0 ||
+                 rpc_write(conn, capture.output.data(), capture.output.size()) <
+                     0
+             ? -1
+             : 0;
 }
 
 int lupine_read_captured_stdout(conn_t *conn) {
@@ -115,13 +112,18 @@ int lupine_read_captured_stdout(conn_t *conn) {
   if (output_size == 0) {
     return 0;
   }
-  std::string output;
-  output.resize(static_cast<size_t>(output_size));
-  if (rpc_read(conn, output.data(), output.size()) < 0) {
-    return -1;
-  }
   fflush(stdout);
   std::cout.flush();
-  return fwrite(output.data(), 1, output.size(), stdout) == output.size() ? 0
-                                                                          : -1;
+  char buffer[4096];
+  uint64_t remaining = output_size;
+  while (remaining != 0) {
+    size_t chunk = remaining < sizeof(buffer) ? static_cast<size_t>(remaining)
+                                              : sizeof(buffer);
+    if (rpc_read(conn, buffer, chunk) < 0 ||
+        fwrite(buffer, 1, chunk, stdout) != chunk) {
+      return -1;
+    }
+    remaining -= chunk;
+  }
+  return 0;
 }

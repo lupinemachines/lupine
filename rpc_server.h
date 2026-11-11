@@ -18,10 +18,6 @@ struct rpc_handler {
 
 using rpc_handler_registry = std::unordered_map<int, rpc_handler>;
 
-bool rpc_server_validate(const rpc_handler_registry &handlers);
-int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
-                        int op);
-
 const rpc_handler_registry &lupine_rpc_handlers();
 
 #endif

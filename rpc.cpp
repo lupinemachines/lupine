@@ -308,11 +308,17 @@ void rpc_close_transport_socket(conn_t *conn) {
   (void)lupine_socket_close(socket);
 }
 
+static unsigned char *rpc_inline_write_buffer(conn_t *conn);
+static bool rpc_is_inline_write_buffer(const conn_t *conn,
+                                       const unsigned char *buffer);
+
 static void rpc_write_buffer_release(conn_t *conn) {
   if (conn == nullptr) {
     return;
   }
-  free(conn->write_copy_buffer);
+  if (!rpc_is_inline_write_buffer(conn, conn->write_copy_buffer)) {
+    free(conn->write_copy_buffer);
+  }
   conn->write_copy_buffer = nullptr;
   conn->write_copy_capacity = 0;
   conn->write_copy_offset = 0;
@@ -390,13 +396,21 @@ static thread_local bool handling_unsettled_request = false;
 bool rpc_request_awaited(conn_t *) { return handling_awaited_request; }
 bool rpc_request_unsettled(conn_t *) { return handling_unsettled_request; }
 
+static bool rpc_completed_async_contains(const std::vector<uint64_t> &completed,
+                                         uint64_t ticket) {
+  auto it = std::lower_bound(completed.begin(), completed.end(), ticket,
+                             std::greater<uint64_t>());
+  return it != completed.end() && *it == ticket;
+}
+
 bool rpc_async_ticket_released(conn_t *conn, uint64_t ticket) {
   if (ticket == kNoAsyncSequence) {
     return true;
   }
   pthread_mutex_lock(&conn->async_mutex);
-  bool released = ticket < conn->serving_async_sequence ||
-                  conn->completed_async_sequences.count(ticket) != 0;
+  bool released =
+      ticket < conn->serving_async_sequence ||
+      rpc_completed_async_contains(conn->completed_async_sequences, ticket);
   pthread_mutex_unlock(&conn->async_mutex);
   return released;
 }
@@ -420,8 +434,9 @@ int rpc_async_sequence_wait(conn_t *conn, uint64_t published) {
 // Waits until one ticket has been released, whatever the watermark.
 static int rpc_async_ticket_wait(conn_t *conn, uint64_t ticket) {
   pthread_mutex_lock(&conn->async_mutex);
-  while (!conn->async_cancelled && ticket >= conn->serving_async_sequence &&
-         conn->completed_async_sequences.count(ticket) == 0) {
+  while (
+      !conn->async_cancelled && ticket >= conn->serving_async_sequence &&
+      !rpc_completed_async_contains(conn->completed_async_sequences, ticket)) {
     ++conn->async_waiters;
     int waited = pthread_cond_wait(&conn->async_cond, &conn->async_mutex);
     --conn->async_waiters;
@@ -453,16 +468,20 @@ void rpc_async_sequence_end(conn_t *conn) {
   }
   executing_async_sequence = kNoAsyncSequence;
   pthread_mutex_lock(&conn->async_mutex);
-  bool advanced = sequence == conn->serving_async_sequence;
-  if (advanced) {
+  auto &completed = conn->completed_async_sequences;
+  if (sequence == conn->serving_async_sequence) {
     ++conn->serving_async_sequence;
-    while (
-        !conn->completed_async_sequences.empty() &&
-        conn->completed_async_sequences.erase(conn->serving_async_sequence)) {
+    while (!completed.empty() &&
+           completed.back() == conn->serving_async_sequence) {
+      completed.pop_back();
       ++conn->serving_async_sequence;
     }
   } else if (sequence > conn->serving_async_sequence) {
-    conn->completed_async_sequences.insert(sequence);
+    auto it = std::lower_bound(completed.begin(), completed.end(), sequence,
+                               std::greater<uint64_t>());
+    if (it == completed.end() || *it != sequence) {
+      completed.insert(it, sequence);
+    }
   }
   // A watermark waiter can only be released by the watermark moving, but a
   // scoped request may be waiting for exactly this ticket.
@@ -478,7 +497,7 @@ void rpc_conn_destroy(conn_t *conn) {
   }
   rpc_close_transport_socket(conn);
   lupine_va_release(conn);
-  conn->completed_async_sequences.clear();
+  std::vector<uint64_t>().swap(conn->completed_async_sequences);
   conn->scope_last.clear();
   conn->retired_scopes.clear();
   rpc_write_buffer_release(conn);
@@ -572,6 +591,7 @@ struct rpc_nested_write_frame {
   unsigned char *write_copy_buffer = nullptr;
   size_t write_copy_capacity = 0;
   size_t write_copy_offset = 0;
+  alignas(std::max_align_t) unsigned char write_copy_inline[256] = {};
 };
 
 struct rpc_thread_io {
@@ -600,8 +620,8 @@ void rpc_save_outer_response(conn_t *conn) {
   frame.write_dependency = conn->write_dependency;
   frame.write_ticket = conn->write_ticket;
   frame.write_awaited = conn->write_awaited;
-  frame.write_scope = std::move(conn->write_scope);
-  frame.write_queue = std::move(conn->write_queue);
+  std::swap(frame.write_scope, conn->write_scope);
+  std::swap(frame.write_queue, conn->write_queue);
   frame.write_copy_buffer = conn->write_copy_buffer;
   frame.write_copy_capacity = conn->write_copy_capacity;
   frame.write_copy_offset = conn->write_copy_offset;
@@ -618,12 +638,15 @@ void rpc_restore_outer_response(conn_t *conn) {
   conn->write_dependency = frame.write_dependency;
   conn->write_ticket = frame.write_ticket;
   conn->write_awaited = frame.write_awaited;
-  conn->write_scope = std::move(frame.write_scope);
-  conn->write_queue = std::move(frame.write_queue);
+  std::swap(conn->write_scope, frame.write_scope);
+  std::swap(conn->write_queue, frame.write_queue);
   conn->write_copy_buffer = frame.write_copy_buffer;
   conn->write_copy_capacity = frame.write_copy_capacity;
   conn->write_copy_offset = frame.write_copy_offset;
-  frame = {};
+  frame.conn = nullptr;
+  frame.write_copy_buffer = nullptr;
+  frame.write_copy_capacity = 0;
+  frame.write_copy_offset = 0;
 }
 
 void rpc_release_write_builder(conn_t *conn, bool request_nested_in_response) {
@@ -644,6 +667,18 @@ void rpc_release_held_call_lock(conn_t *conn) {
 }
 
 } // namespace
+
+static unsigned char *rpc_inline_write_buffer(conn_t *conn) {
+  return rpc_tls_io.nested_write.conn == conn
+             ? rpc_tls_io.nested_write.write_copy_inline
+             : conn->write_copy_inline;
+}
+
+static bool rpc_is_inline_write_buffer(const conn_t *conn,
+                                       const unsigned char *buffer) {
+  return buffer == conn->write_copy_inline ||
+         buffer == rpc_tls_io.nested_write.write_copy_inline;
+}
 
 int rpc_bind_http2_stream(conn_t *conn, int32_t stream_id) {
   if (conn == nullptr || stream_id < 0) {
@@ -901,9 +936,6 @@ int rpc_read_end(conn_t *conn) {
 // Per-op RPC statistics, enabled by setting LUPINE_RPC_STATS to an output
 // path. Records how many requests each op sends and how long callers spend
 // blocked waiting for the response; dumped as TSV at process exit.
-#include <chrono>
-#include <unordered_map>
-
 struct lupine_rpc_stat {
   uint64_t count = 0;
   uint64_t wait_ns = 0;
@@ -1235,11 +1267,16 @@ int rpc_copy_alloc(conn_t *conn, const size_t size) {
   if (size == 0) {
     return 0;
   }
-  conn->write_copy_buffer = static_cast<unsigned char *>(malloc(size));
-  if (conn->write_copy_buffer == nullptr) {
-    // Continuing after request serialization runs out of memory would leave
-    // client-visible backend state ambiguous, so fail the process immediately.
-    std::abort();
+  if (size <= sizeof(conn->write_copy_inline)) {
+    conn->write_copy_buffer = rpc_inline_write_buffer(conn);
+  } else {
+    conn->write_copy_buffer = static_cast<unsigned char *>(malloc(size));
+    if (conn->write_copy_buffer == nullptr) {
+      // Continuing after request serialization runs out of memory would leave
+      // client-visible backend state ambiguous, so fail the process
+      // immediately.
+      std::abort();
+    }
   }
   conn->write_copy_capacity = size;
   return 0;
@@ -1321,10 +1358,6 @@ int rpc_write_end(conn_t *conn) {
     uint64_t ticket;
   } header;
   if (conn->write_queue.size() >= 2) {
-    conn->write_queue[0] =
-        rpc_write_cursor(&conn->write_id, sizeof(conn->write_id));
-    conn->write_queue[1] =
-        rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
     // Only a request nobody waits for takes a ticket. Tickets are dense: one is
     // taken only by a request that is written, under the builder lock, and
     // given back below if the write fails.
@@ -1339,6 +1372,11 @@ int rpc_write_end(conn_t *conn) {
               : rpc_write_cursor(waits.data(), waits.size() * sizeof(waits[0]));
       header = {write_id, conn->write_op, conn->write_ticket};
       conn->write_queue[1] = rpc_write_cursor(&header, sizeof(header));
+    } else {
+      conn->write_queue[0] =
+          rpc_write_cursor(&conn->write_id, sizeof(conn->write_id));
+      conn->write_queue[1] =
+          rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
     }
     result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
     if (result != 0 && ticketed) {

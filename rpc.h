@@ -3,7 +3,7 @@
 
 #include "lupine_platform.h"
 #include <chrono>
-#include <set>
+#include <cstddef>
 #include <stdint.h>
 #include <unordered_map>
 #include <vector>
@@ -210,7 +210,8 @@ struct conn_t {
   uint64_t issued_async_sequence; // tickets sent, under write_mutex
   uint64_t serving_async_sequence;
   int async_waiters = 0; // lanes in a ticket wait, under async_mutex
-  std::set<uint64_t> completed_async_sequences;
+  std::vector<uint64_t>
+      completed_async_sequences; // descending, under async_mutex
   // Scope state, under write_mutex.
   std::unordered_map<uintptr_t, rpc_scope_ticket> scope_last;
   std::vector<rpc_scope_ticket> retired_scopes;
@@ -228,6 +229,7 @@ struct conn_t {
   unsigned char *write_copy_buffer;
   size_t write_copy_capacity;
   size_t write_copy_offset;
+  alignas(std::max_align_t) unsigned char write_copy_inline[256];
   int local_request_parity;
   int logical_index;
   int closed;

@@ -5,7 +5,6 @@
 #include "lupine_log.h"
 
 #ifndef _WIN32
-#include <atomic>
 #include <cerrno>
 #include <cstddef>
 #include <cstdlib>
@@ -36,7 +35,6 @@ struct child_checkpoint_state {
   struct sigaction previous_sigterm = {};
   optional_checkpoint_provider provider;
   std::string connection_id;
-  std::atomic<bool> checkpoint_requested{false};
   bool handler_installed = false;
   bool started = false;
 };
@@ -156,7 +154,6 @@ void wait_for_shutdown(child_checkpoint_state &state) {
       return;
     }
     if (event == 'T') {
-      state.checkpoint_requested.store(true, std::memory_order_release);
       (void)shutdown(state.connection, SHUT_RDWR);
       return;
     }
@@ -180,9 +177,9 @@ bool lupine_server_checkpoint_child_start(lupine_socket_t connection,
 
   state.connection = connection;
   state.connection_id.clear();
-  state.checkpoint_requested.store(false, std::memory_order_relaxed);
   sigterm_received = 0;
-  state.provider = use_provider ? load_provider() : optional_checkpoint_provider{};
+  state.provider =
+      use_provider ? load_provider() : optional_checkpoint_provider{};
 
   struct sigaction action = {};
   action.sa_handler = checkpoint_sigterm_handler;
@@ -257,10 +254,7 @@ int lupine_server_checkpoint_child_finish() {
   teardown_signal_pipe(state);
 
   int result = 0;
-  bool should_checkpoint =
-      sigterm_received != 0 ||
-      state.checkpoint_requested.load(std::memory_order_acquire);
-  if (should_checkpoint) {
+  if (sigterm_received != 0) {
     // This remains unconditional even when no provider is installed.
     lupine_checkpoint_drain_cuda_calls();
     if (state.provider.api != nullptr) {

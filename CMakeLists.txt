@@ -347,13 +347,6 @@ lupine_internal_target(lupine_ipc)
 target_include_directories(lupine_ipc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lupine_ipc PUBLIC Threads::Threads)
 
-add_library(lupine_server_core STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/rpc_server.cpp)
-lupine_internal_target(lupine_server_core)
-target_include_directories(lupine_server_core PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(lupine_server_core PUBLIC lupine_rpc_core)
-
 if(LUPINE_BUILD_CUDA)
     add_library(lupine_cuda_checkpoint STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/checkpoint.cpp)
@@ -622,7 +615,7 @@ if(LUPINE_BUILD_SERVER)
                 -Wno-deprecated-declarations)
         endif()
         target_link_libraries(lupine_cuda_server PRIVATE
-            lupine_server_core lupine_cuda_checkpoint lupine_ipc
+            lupine_rpc_core lupine_cuda_checkpoint lupine_ipc
             lupine_cuda_smemcpy_module CUDA::cuda_driver)
 
         if(LUPINE_BUILD_NCCL)
@@ -633,7 +626,7 @@ if(LUPINE_BUILD_SERVER)
             target_include_directories(lupine_nccl_server PRIVATE
                 ${CUDAToolkit_INCLUDE_DIRS} ${LUPINE_NCCL_INCLUDE_DIR})
             target_link_libraries(lupine_nccl_server PRIVATE
-                lupine_server_core ${CMAKE_DL_LIBS})
+                lupine_rpc_core ${CMAKE_DL_LIBS})
         endif()
 
     endif()
@@ -645,7 +638,7 @@ if(LUPINE_BUILD_SERVER)
         lupine_internal_target(lupine_nvml_server)
         target_include_directories(lupine_nvml_server PRIVATE
             ${CUDAToolkit_INCLUDE_DIRS})
-        target_link_libraries(lupine_nvml_server PRIVATE lupine_server_core)
+        target_link_libraries(lupine_nvml_server PRIVATE lupine_rpc_core)
     endif()
 
     if(LUPINE_BUILD_HIP)
@@ -656,7 +649,7 @@ if(LUPINE_BUILD_SERVER)
             ${LUPINE_HIP_INCLUDE_DIR})
         target_compile_definitions(lupine_hip_server PRIVATE
             __HIP_PLATFORM_AMD__)
-        target_link_libraries(lupine_hip_server PRIVATE lupine_server_core)
+        target_link_libraries(lupine_hip_server PRIVATE lupine_rpc_core)
     endif()
 
     add_library(lupine_server_runtime OBJECT
@@ -675,7 +668,7 @@ if(LUPINE_BUILD_SERVER)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen
         ${CUDAToolkit_INCLUDE_DIRS})
     target_link_libraries(lupine_server_runtime PRIVATE
-        lupine_server_core lupine_ipc ${CMAKE_DL_LIBS})
+        lupine_rpc_core lupine_ipc ${CMAKE_DL_LIBS})
     if(LUPINE_CLIENT_BUNDLE_INPUT)
         if(NOT IS_DIRECTORY "${LUPINE_CLIENT_BUNDLE_INPUT}")
             message(FATAL_ERROR

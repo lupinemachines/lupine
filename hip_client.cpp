@@ -2,10 +2,10 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -37,17 +37,6 @@ std::atomic<uint64_t> connection_generation{1};
 
 hipError_t rpc_error() { return hipErrorUnknown; }
 
-void *hip_transport_dispatch(void *argument) {
-  auto *connection = static_cast<conn_t *>(argument);
-  while (!connection->closed) {
-    int op = rpc_dispatch(connection, 1);
-    if (op < 0 || connection->closed || rpc_read_end(connection) < 0) {
-      break;
-    }
-  }
-  return nullptr;
-}
-
 // Teardown can hold the transport mutex while invoking this callback. An
 // atomic generation invalidates the cache without taking devices_mutex in the
 // reverse order; the next device-scoped call rebuilds the ordinal table.
@@ -66,7 +55,6 @@ const lupine_client_transport_config &hip_transport_config() {
     config.dial_policy = lupine_client_dial_policy::single_attempt;
     config.strict_endpoints = true;
     config.log_missing_server = true;
-    config.dispatch = hip_transport_dispatch;
     config.connection_closed = hip_connection_closed;
     return config;
   }();
@@ -262,23 +250,28 @@ thread_local std::vector<hip_launch_configuration> launch_configurations;
 struct hip_remote_module {
   uint64_t generation = 0;
   hipModule_t module = nullptr;
-  std::map<std::string, hipFunction_t> functions;
+};
+
+struct hip_remote_function {
+  uint64_t generation = 0;
+  hipFunction_t function = nullptr;
 };
 
 struct hip_registration {
   const void *image;
-  std::map<int, hip_remote_module> modules;
+  std::vector<hip_remote_module> modules;
 };
 
 struct hip_registered_kernel {
   hip_registration *registration;
   std::string name;
+  std::vector<hip_remote_function> functions;
 };
 
 struct hip_registrations {
   std::mutex mutex;
-  std::map<void **, std::unique_ptr<hip_registration>> images;
-  std::map<const void *, hip_registered_kernel> kernels;
+  std::unordered_map<void **, std::unique_ptr<hip_registration>> images;
+  std::unordered_map<const void *, hip_registered_kernel> kernels;
 };
 
 hip_registrations &registrations() {
@@ -290,9 +283,11 @@ hip_registrations &registrations() {
 
 const char *error_text(hipError_t error, bool name) {
   static std::mutex mutex;
-  static std::map<std::pair<int, bool>, std::string> cache;
+  static std::unordered_map<uint64_t, std::string> cache;
   std::lock_guard<std::mutex> lock(mutex);
-  auto key = std::make_pair(static_cast<int>(error), name);
+  const uint64_t key =
+      (static_cast<uint64_t>(static_cast<uint32_t>(error)) << 1) |
+      (name ? 1u : 0u);
   auto found = cache.find(key);
   if (found != cache.end()) {
     return found->second.c_str();
@@ -364,7 +359,8 @@ extern "C" void __hipRegisterFunction(void **handle, const void *host_function,
   auto image = state.images.find(handle);
   if (image != state.images.end()) {
     state.kernels.insert_or_assign(
-        host_function, hip_registered_kernel{image->second.get(), device_name});
+        host_function,
+        hip_registered_kernel{image->second.get(), device_name, {}});
   }
 }
 
@@ -473,35 +469,49 @@ extern "C" hipError_t hipLaunchKernel(const void *host_function, dim3 grid,
   // native module launch validates its signature with null kernelParams and
   // rejects kernels requiring arguments; client pointers never cross the wire.
   (void)args;
-  auto &state = registrations();
-  std::lock_guard<std::mutex> lock(state.mutex);
-  auto kernel = state.kernels.find(host_function);
-  if (kernel == state.kernels.end()) {
-    return hipErrorInvalidDeviceFunction;
-  }
-  if (connection() == nullptr) {
-    return rpc_error();
-  }
-  uint64_t generation = connection_generation.load(std::memory_order_acquire);
-  auto &remote = kernel->second.registration->modules[current_device];
-  if (remote.generation != generation) {
-    remote = {};
-    remote.generation = generation;
-  }
-  if (remote.module == nullptr) {
-    hipError_t result =
-        hipModuleLoadData(&remote.module, kernel->second.registration->image);
-    if (result != hipSuccess) {
-      return result;
+  hipFunction_t function = nullptr;
+  {
+    auto &state = registrations();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    auto kernel = state.kernels.find(host_function);
+    if (kernel == state.kernels.end()) {
+      return hipErrorInvalidDeviceFunction;
     }
-  }
-  auto &function = remote.functions[kernel->second.name];
-  if (function == nullptr) {
-    hipError_t result = hipModuleGetFunction(&function, remote.module,
-                                             kernel->second.name.c_str());
-    if (result != hipSuccess) {
-      return result;
+    if (connection() == nullptr) {
+      return rpc_error();
     }
+    const size_t device = static_cast<size_t>(current_device);
+    const uint64_t generation =
+        connection_generation.load(std::memory_order_acquire);
+    auto &functions = kernel->second.functions;
+    if (functions.size() <= device) {
+      functions.resize(device + 1);
+    }
+    auto &remote_fn = functions[device];
+    if (remote_fn.generation != generation || remote_fn.function == nullptr) {
+      auto &modules = kernel->second.registration->modules;
+      if (modules.size() <= device) {
+        modules.resize(device + 1);
+      }
+      auto &remote_mod = modules[device];
+      if (remote_mod.generation != generation || remote_mod.module == nullptr) {
+        hipModule_t loaded = nullptr;
+        hipError_t result =
+            hipModuleLoadData(&loaded, kernel->second.registration->image);
+        if (result != hipSuccess) {
+          return result;
+        }
+        remote_mod = {generation, loaded};
+      }
+      hipFunction_t resolved = nullptr;
+      hipError_t result = hipModuleGetFunction(&resolved, remote_mod.module,
+                                               kernel->second.name.c_str());
+      if (result != hipSuccess) {
+        return result;
+      }
+      remote_fn = {generation, resolved};
+    }
+    function = remote_fn.function;
   }
   return hipModuleLaunchKernel(function, grid.x, grid.y, grid.z, block.x,
                                block.y, block.z, shared_memory, stream, nullptr,

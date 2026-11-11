@@ -192,8 +192,26 @@ struct lupine_lane {
   std::thread worker;
 };
 
-int rpc_server_dispatch(const rpc_handler_registry &handlers, conn_t *conn,
-                        int op) {
+static bool rpc_server_validate(const rpc_handler_registry &handlers) {
+  for (const auto &entry : handlers) {
+    if (entry.second.handler == nullptr) {
+      return false;
+    }
+    switch (entry.second.backend) {
+    case rpc_backend::cuda:
+    case rpc_backend::nccl:
+    case rpc_backend::nvml:
+    case rpc_backend::hip:
+      break;
+    default:
+      return false;
+    }
+  }
+  return true;
+}
+
+static int rpc_server_dispatch(const rpc_handler_registry &handlers,
+                               conn_t *conn, int op) {
   LUPINE_TRACE_LOG("LUPINE server handling op " << op);
   if (op == LUPINE_HANDOFF_DRAIN_REQUEST) {
     // Read first: the request's ticket must not be held while the drain waits

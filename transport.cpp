@@ -360,6 +360,10 @@ void *dispatch_connection(void *argument) {
   auto &state = transport();
   if (state.config.dispatch != nullptr) {
     state.config.dispatch(conn);
+  } else {
+    while (!conn->closed && rpc_dispatch(conn, 1) >= 0 &&
+           rpc_read_end(conn) >= 0) {
+    }
   }
   lupine_client_transport_close_connection(conn);
   return nullptr;

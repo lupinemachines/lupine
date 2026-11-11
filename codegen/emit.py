@@ -511,8 +511,6 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     if sync is not None:
         f.write("      rpc_write(conn, &delivered, sizeof(delivered)) < 0 ||\n")
     if stdout:
-        # The stdout length lives in the copy buffer.
-        f.write("      rpc_copy_alloc(conn, sizeof(uint64_t)) < 0 ||\n")
         f.write("      lupine_write_captured_stdout(conn, capture) < 0 ||\n")
     for operation in operations:
         if isinstance(operation, NullableArrayOperation):
