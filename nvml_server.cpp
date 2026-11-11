@@ -1,10 +1,11 @@
-#include "nvml_server.h"
+#include "rpc.h"
 
 #include <cuda.h>
 #include <nvml.h>
 
 #include <cstdlib>
 
+#include "codegen/gen_nvml_server.h"
 #include "codegen/gen_rpc_ids.h"
 #include "nvml_runtime.h"
 

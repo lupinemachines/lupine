@@ -1,11 +1,13 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 struct conn_t;
 
 struct lupine_captured_stdout {
   bool active = false;
+  uint64_t wire_size = 0;
   std::string output;
 };
 

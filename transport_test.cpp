@@ -130,14 +130,6 @@ void test_teardown_completes_after_an_abrupt_peer_close() {
 }
 
 #ifdef __linux__
-void *drain_server_requests(void *argument) {
-  auto *conn = static_cast<conn_t *>(argument);
-  while (!conn->closed && rpc_dispatch(conn, 1) >= 0 &&
-         rpc_read_end(conn) >= 0) {
-  }
-  return nullptr;
-}
-
 // A server host that vanishes after ordering a checkpoint reconnect leaves the
 // client redialing a peer that never answers its SYN. Process exit closes the
 // transport, which must interrupt that dial instead of waiting out the kernel's
@@ -153,7 +145,6 @@ void test_close_interrupts_a_checkpoint_redial() {
   const std::string checkpoint = "lease.1";
   lupine_client_transport_config config;
   config.dial_policy = lupine_client_dial_policy::single_attempt;
-  config.dispatch = drain_server_requests;
   std::string servers = "127.0.0.1:" + server.port;
   auto opened = std::async(std::launch::async, [&] {
     return lupine_client_transport_open(config, servers.c_str());

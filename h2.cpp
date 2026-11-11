@@ -20,7 +20,7 @@
 #ifdef LUPINE_TLS_OPENSSL
 #include <openssl/ssl.h>
 #endif
-#include <sstream>
+#include <cstdio>
 #include <stdint.h>
 #include <string.h>
 #include <string>
@@ -524,9 +524,10 @@ constexpr char kContentEncodingHeader[] = "content-encoding";
 constexpr char kZstdEncoding[] = "zstd";
 
 std::string h2_hex(uint64_t value) {
-  std::ostringstream result;
-  result << std::hex << value;
-  return result.str();
+  char buf[17];
+  int len = snprintf(buf, sizeof(buf), "%llx",
+                     static_cast<unsigned long long>(value));
+  return std::string(buf, static_cast<size_t>(len > 0 ? len : 0));
 }
 
 bool h2_parse_hex64(const std::string &value, uint64_t *parsed) {
@@ -572,21 +573,23 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
   } else if (status == 426) {
     status_text = "426";
   }
-  std::vector<nghttp2_nv> headers = {h2_nv(":status", status_text)};
+  std::array<nghttp2_nv, 9> headers;
+  size_t count = 0;
+  headers[count++] = h2_nv(":status", status_text);
   if (!end_stream) {
-    headers.push_back(h2_nv(kContentEncodingHeader, kZstdEncoding));
+    headers[count++] = h2_nv(kContentEncodingHeader, kZstdEncoding);
   }
   if (!transport->server_version.empty()) {
-    headers.push_back(
-        h2_nv(kLupineCudaVersionHeader, transport->server_version.c_str()));
+    headers[count++] =
+        h2_nv(kLupineCudaVersionHeader, transport->server_version.c_str());
   }
   if (!transport->expected_client_etag.empty()) {
-    headers.push_back(h2_nv(kLupineClientEtagHeader,
-                            transport->expected_client_etag.c_str()));
+    headers[count++] =
+        h2_nv(kLupineClientEtagHeader, transport->expected_client_etag.c_str());
   }
   if (!transport->server_bulk_token.empty()) {
-    headers.push_back(
-        h2_nv(kLupineBulkTokenHeader, transport->server_bulk_token.c_str()));
+    headers[count++] =
+        h2_nv(kLupineBulkTokenHeader, transport->server_bulk_token.c_str());
   }
   // State the window on every response, probe included: the client has to know
   // it before it reserves anything, and no single constant fits both platforms.
@@ -594,23 +597,23 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
   if (window.size != 0) {
     transport->local_window_base = h2_hex(window.base);
     transport->local_window_size = h2_hex(window.size);
-    headers.push_back(
-        h2_nv(kLupineVaWindowBaseHeader, transport->local_window_base.c_str()));
-    headers.push_back(
-        h2_nv(kLupineVaWindowSizeHeader, transport->local_window_size.c_str()));
+    headers[count++] =
+        h2_nv(kLupineVaWindowBaseHeader, transport->local_window_base.c_str());
+    headers[count++] =
+        h2_nv(kLupineVaWindowSizeHeader, transport->local_window_size.c_str());
   }
   if (status == 200 && transport->conn != nullptr &&
       transport->conn->va_size != 0) {
     transport->local_va_base = h2_hex(transport->conn->va_base);
     transport->local_va_size = h2_hex(transport->conn->va_size);
-    headers.push_back(
-        h2_nv(kLupineVaBaseHeader, transport->local_va_base.c_str()));
-    headers.push_back(
-        h2_nv(kLupineVaSizeHeader, transport->local_va_size.c_str()));
+    headers[count++] =
+        h2_nv(kLupineVaBaseHeader, transport->local_va_base.c_str());
+    headers[count++] =
+        h2_nv(kLupineVaSizeHeader, transport->local_va_size.c_str());
   }
   uint8_t flags = end_stream ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
   if (nghttp2_submit_headers(transport->session, flags, stream_id, nullptr,
-                             headers.data(), headers.size(), nullptr) != 0) {
+                             headers.data(), count, nullptr) != 0) {
     return -1;
   }
   stream.response_sent = true;
@@ -668,22 +671,19 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
   }
   if (!transport->server && frame->hd.type == NGHTTP2_GOAWAY &&
       lupine_h2_debug_enabled()) {
-    std::string debug;
+    std::string message = "LUPINE remote server sent HTTP/2 GOAWAY error_code=";
+    message += std::to_string(frame->goaway.error_code);
     if (frame->goaway.opaque_data != nullptr &&
         frame->goaway.opaque_data_len > 0) {
-      debug.assign(reinterpret_cast<const char *>(frame->goaway.opaque_data),
-                   frame->goaway.opaque_data_len);
-    }
-    std::ostringstream message;
-    message << "LUPINE remote server sent HTTP/2 GOAWAY"
-            << " error_code=" << frame->goaway.error_code;
-    if (!debug.empty()) {
-      message << " debug=\"" << debug << "\"";
+      message += " debug=\"";
+      message.append(reinterpret_cast<const char *>(frame->goaway.opaque_data),
+                     frame->goaway.opaque_data_len);
+      message += '"';
     }
     if (lupine_trace_stream() != nullptr) {
-      LUPINE_TRACE_LOG(message.str());
+      LUPINE_TRACE_LOG(message);
     } else {
-      LUPINE_LOG_DEBUG(message.str());
+      LUPINE_LOG_DEBUG(message);
     }
   }
   if (transport->server && frame->hd.type == NGHTTP2_HEADERS &&
@@ -1299,14 +1299,16 @@ void *h2_read_main(void *arg) {
     }
     // Retain the reader along with the HTTP/2 session. No I/O may use the
     // old socket/TLS object while the checkpoint thread replaces it.
-    pthread_cond_broadcast(&transport->session_progress);
-    while (transport->socket_parked && !transport->read_stop) {
-      pthread_cond_wait(&transport->session_progress,
-                        &transport->session_mutex);
-    }
-    if (transport->read_stop) {
-      pthread_mutex_unlock(&transport->session_mutex);
-      return nullptr;
+    if (transport->socket_parked) {
+      pthread_cond_broadcast(&transport->session_progress);
+      while (transport->socket_parked && !transport->read_stop) {
+        pthread_cond_wait(&transport->session_progress,
+                          &transport->session_mutex);
+      }
+      if (transport->read_stop) {
+        pthread_mutex_unlock(&transport->session_mutex);
+        return nullptr;
+      }
     }
     // Wake acceptors and flow-controlled writers after the complete batch
     // is applied and the mutex is available to them.
@@ -1325,14 +1327,14 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
   transport->peer_window_base.clear();
   transport->peer_window_size.clear();
 
-  std::vector<nghttp2_nv> headers = {
-      h2_nv(":method", probe ? "HEAD" : "POST"),
-      h2_nv(":scheme", h2_request_scheme(conn)),
-      h2_nv(":path", "/"),
-      h2_nv(":authority", "lupine"),
-  };
+  std::array<nghttp2_nv, 10> headers;
+  size_t count = 0;
+  headers[count++] = h2_nv(":method", probe ? "HEAD" : "POST");
+  headers[count++] = h2_nv(":scheme", h2_request_scheme(conn));
+  headers[count++] = h2_nv(":path", "/");
+  headers[count++] = h2_nv(":authority", "lupine");
   if (!probe) {
-    headers.push_back(h2_nv(kContentEncodingHeader, kZstdEncoding));
+    headers[count++] = h2_nv(kContentEncodingHeader, kZstdEncoding);
     const char *client_etag = getenv("LUPINE_CLIENT_ETAG");
     const char *client_platform = getenv("LUPINE_CLIENT_PLATFORM");
     const char *session_id = getenv("LUPINE_SESSION");
@@ -1342,30 +1344,29 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
         client_platform == nullptr ? std::string() : client_platform;
     transport->session_id = session_id == nullptr ? std::string() : session_id;
     if (!transport->client_etag.empty()) {
-      headers.push_back(
-          h2_nv(kLupineClientEtagHeader, transport->client_etag.c_str()));
+      headers[count++] =
+          h2_nv(kLupineClientEtagHeader, transport->client_etag.c_str());
     }
     if (!transport->client_platform.empty()) {
-      headers.push_back(h2_nv(kLupineClientPlatformHeader,
-                              transport->client_platform.c_str()));
+      headers[count++] = h2_nv(kLupineClientPlatformHeader,
+                               transport->client_platform.c_str());
     }
     if (!transport->session_id.empty()) {
-      headers.push_back(
-          h2_nv(kLupineSessionHeader, transport->session_id.c_str()));
+      headers[count++] =
+          h2_nv(kLupineSessionHeader, transport->session_id.c_str());
     }
     if (conn->va_size != 0) {
       transport->local_va_base = h2_hex(conn->va_base);
       transport->local_va_size = h2_hex(conn->va_size);
-      headers.push_back(
-          h2_nv(kLupineVaBaseHeader, transport->local_va_base.c_str()));
-      headers.push_back(
-          h2_nv(kLupineVaSizeHeader, transport->local_va_size.c_str()));
+      headers[count++] =
+          h2_nv(kLupineVaBaseHeader, transport->local_va_base.c_str());
+      headers[count++] =
+          h2_nv(kLupineVaSizeHeader, transport->local_va_size.c_str());
     }
   }
   uint8_t flags = probe ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE;
-  int32_t stream_id =
-      nghttp2_submit_headers(transport->session, flags, -1, nullptr,
-                             headers.data(), headers.size(), nullptr);
+  int32_t stream_id = nghttp2_submit_headers(
+      transport->session, flags, -1, nullptr, headers.data(), count, nullptr);
   if (stream_id >= 0) {
     transport->dispatch_stream_id = stream_id;
     h2_get_stream(transport, stream_id);

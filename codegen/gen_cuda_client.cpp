@@ -20,44 +20,13 @@
 #include "events.h"
 #include "rpc.h"
 
-extern int rpc_size();
-extern conn_t *rpc_client_get_connection(unsigned int index);
-extern void rpc_close(conn_t *conn);
 extern "C" void *lupine_deep_node_cache_get(CUgraphNode node, size_t slot,
                                             size_t bytes);
 extern "C" void lupine_deep_node_cache_reset(CUgraphNode node);
 std::vector<CUgraphNode> lupine_deep_cache_graph_nodes(CUgraph graph);
 
-extern "C" conn_t *lupine_rpc_conn_for_device(CUdevice *device);
-extern "C" conn_t *lupine_rpc_conn_for_current_context();
-extern "C" conn_t *lupine_rpc_conn_for_context(CUcontext ctx);
-extern "C" conn_t *lupine_rpc_conn_for_module(CUmodule module);
-extern "C" conn_t *lupine_rpc_conn_for_function(CUfunction function);
-extern "C" conn_t *lupine_rpc_conn_for_stream(CUstream stream);
-extern "C" conn_t *lupine_rpc_conn_for_event(CUevent event);
-extern "C" conn_t *lupine_rpc_conn_for_deviceptr(CUdeviceptr ptr);
 extern "C" CUfunction
 lupine_translate_private_function_for_rpc(CUfunction function);
-extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn);
-extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn);
-extern "C" void lupine_note_library_owner(CUlibrary library, conn_t *conn);
-extern "C" void lupine_note_function_owner(CUfunction function, conn_t *conn);
-extern "C" void lupine_note_stream_owner(CUstream stream, conn_t *conn);
-extern "C" void lupine_note_event_owner(CUevent event, conn_t *conn);
-extern "C" void lupine_note_memory_pool_owner(CUmemoryPool pool, conn_t *conn);
-extern "C" void lupine_note_graph_owner(CUgraph graph, conn_t *conn);
-extern "C" void lupine_note_graph_node_owner(CUgraphNode node, conn_t *conn);
-extern "C" void lupine_note_graph_exec_owner(CUgraphExec exec, conn_t *conn);
-extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn);
-
-extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
-                                                 conn_t *conn);
-
-extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);
-
-extern "C" void lupine_forget_stream_owner(CUstream stream);
-extern "C" void lupine_forget_graph_exec_owner(CUgraphExec exec);
-
 extern "C" const char *lupine_retain_returned_string(const void *handle,
                                                      const char *data,
                                                      size_t size);
@@ -73,21 +42,12 @@ extern "C" CUresult lupine_record_library_kernel(CUkernel kernel,
                                                  const char *name,
                                                  lupine_route route);
 
-extern "C" CUresult lupine_record_module_function(CUfunction function,
-                                                  CUmodule module,
-                                                  const char *name,
-                                                  lupine_route route);
-
-extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first,
-                                              CUdeviceptr second);
 extern "C" CUresult
 lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
                                size_t ByteCount, CUstream hStream, bool async);
 
 extern "C" void lupine_invalidate_current_context_cache();
 extern "C" void lupine_forget_destroyed_context(CUcontext ctx);
-extern "C" void lupine_mark_context_green(CUcontext ctx);
-extern "C" void lupine_invalidate_function_caches();
 extern "C" void lupine_disable_local_occupancy();
 extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel,
                                                     lupine_route route);

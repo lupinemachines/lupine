@@ -898,7 +898,6 @@ int handle_cuCtxSynchronize(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &delivered, sizeof(delivered)) < 0 ||
-      rpc_copy_alloc(conn, sizeof(uint64_t)) < 0 ||
       lupine_write_captured_stdout(conn, capture) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -931,7 +930,6 @@ int handle_cuCtxSynchronize_v2(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &delivered, sizeof(delivered)) < 0 ||
-      rpc_copy_alloc(conn, sizeof(uint64_t)) < 0 ||
       lupine_write_captured_stdout(conn, capture) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -4831,7 +4829,6 @@ int handle_cuStreamSynchronize(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &delivered, sizeof(delivered)) < 0 ||
-      rpc_copy_alloc(conn, sizeof(uint64_t)) < 0 ||
       lupine_write_captured_stdout(conn, capture) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)
@@ -5007,7 +5004,6 @@ int handle_cuEventSynchronize(conn_t *conn) {
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &delivered, sizeof(delivered)) < 0 ||
-      rpc_copy_alloc(conn, sizeof(uint64_t)) < 0 ||
       lupine_write_captured_stdout(conn, capture) < 0 ||
       rpc_write(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_write_end(conn) < 0)

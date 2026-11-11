@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <functional>
 #include <type_traits>
 #include <utility>
 
@@ -94,8 +93,8 @@ CUdevice lupine_virtual_device_for_route(lupine_route route,
 
 // Only DEVICE locations contain virtual CUDA ordinals. Host/NUMA identifiers
 // belong to the selected server and must pass through unchanged.
-static inline CUresult
-lupine_translate_mem_location(lupine_route route, CUmemLocation &location) {
+static inline CUresult lupine_translate_mem_location(lupine_route route,
+                                                     CUmemLocation &location) {
   if (location.type != CU_MEM_LOCATION_TYPE_DEVICE) {
     return CUDA_SUCCESS;
   }
@@ -114,8 +113,8 @@ lupine_translate_mem_location(lupine_route route, CUmemLocation &location) {
   return CUDA_SUCCESS;
 }
 
-static inline void
-lupine_restore_mem_location(lupine_route route, CUmemLocation &location) {
+static inline void lupine_restore_mem_location(lupine_route route,
+                                               CUmemLocation &location) {
   if (location.type == CU_MEM_LOCATION_TYPE_DEVICE) {
     location.id = lupine_virtual_device_for_route(route, location.id);
   }
@@ -140,7 +139,6 @@ static CUresult lupine_lookup_device_on_all_routes(CUdevice *device,
 
 extern "C" void *lupine_real_cuda_symbol(const char *name);
 
-extern "C" void lupine_note_context_owner(CUcontext ctx, conn_t *conn);
 extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn);
 extern "C" void lupine_note_library_owner(CUlibrary library, conn_t *conn);
 extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
@@ -183,10 +181,19 @@ extern "C" void lupine_note_deviceptr_allocation_route(CUdeviceptr ptr,
 // Records *ptr unless another route holds an overlapping allocation; then the
 // colliding block stays allocated until its context goes, and again() asks
 // the same route for another.
-CUresult
-lupine_record_disjoint_allocation(CUdeviceptr *ptr, size_t size,
-                                  lupine_route route,
-                                  const std::function<CUresult()> &again);
+using lupine_disjoint_allocation_callback = CUresult (*)(void *context);
+extern "C" CUresult lupine_record_disjoint_allocation_impl(
+    CUdeviceptr *ptr, size_t size, lupine_route route, void *context,
+    lupine_disjoint_allocation_callback again);
+
+template <typename Again>
+static CUresult lupine_record_disjoint_allocation(CUdeviceptr *ptr, size_t size,
+                                                  lupine_route route,
+                                                  Again again) {
+  return lupine_record_disjoint_allocation_impl(
+      ptr, size, route, &again,
+      [](void *context) { return (*static_cast<Again *>(context))(); });
+}
 
 // Starts a request on `stream`, ordered as CUDA orders that stream's work: a
 // non-blocking stream only by itself; a blocking stream, or the thread's

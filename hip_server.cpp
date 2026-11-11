@@ -1,8 +1,8 @@
 #include <hip/hip_runtime_api.h>
 
 #include <cstring>
-#include <map>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
@@ -21,7 +21,7 @@ namespace {
 hipError_t function_not_found() { return hipErrorUnknown; }
 
 std::mutex module_images_mutex;
-std::map<hipModule_t, std::vector<unsigned char>> module_images;
+std::unordered_map<hipModule_t, std::vector<unsigned char>> module_images;
 
 void *hip_library() {
   static void *library = []() -> void * {
@@ -164,7 +164,6 @@ int handle_hipModuleLaunchKernel(conn_t *conn) {
     lupine_finish_stdout_capture(&capture);
   }
   return rpc_write_start_response(conn, request_id) < 0 ||
-                 rpc_copy_alloc(conn, sizeof(uint64_t)) < 0 ||
                  rpc_write(conn, &result, sizeof(result)) < 0 ||
                  lupine_write_captured_stdout(conn, capture) < 0 ||
                  rpc_write_end(conn) < 0

@@ -248,7 +248,14 @@ extern "C" ncclResult_t ncclCommInitAll(ncclComm_t *comm, int ndev,
   if (ndev < 1) {
     return ncclInvalidArgument;
   }
-  std::vector<int> devices(static_cast<size_t>(ndev));
+  int stack_devices[16];
+  std::vector<int> heap_devices;
+  int *devices = stack_devices;
+  if (static_cast<size_t>(ndev) >
+      sizeof(stack_devices) / sizeof(stack_devices[0])) {
+    heap_devices.resize(static_cast<size_t>(ndev));
+    devices = heap_devices.data();
+  }
   conn_t *conn = nullptr;
   for (int i = 0; i < ndev; ++i) {
     devices[i] = devlist != nullptr ? devlist[i] : i;
@@ -263,7 +270,7 @@ extern "C" ncclResult_t ncclCommInitAll(ncclComm_t *comm, int ndev,
   }
   conn = enter_group(conn);
   const ncclResult_t result =
-      lupine_rpc_ncclCommInitAll(conn, comm, ndev, devices.data());
+      lupine_rpc_ncclCommInitAll(conn, comm, ndev, devices);
   if (result == ncclSuccess) {
     for (int i = 0; i < ndev; ++i) {
       note_handle_owner(conn, comm[i]);
@@ -300,24 +307,37 @@ ncclResult_t read_strings(conn_t *conn, std::vector<std::string> *out) {
   return rpc_read_end(conn) < 0 ? rpc_error() : status;
 }
 
+ncclResult_t finish_single_string(conn_t *conn, std::string *out) {
+  ncclResult_t status = rpc_error();
+  uint32_t count = 0;
+  if (rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &status, sizeof(status)) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0 ||
+      (status == ncclSuccess ? count != 1 : count != 0)) {
+    return rpc_error();
+  }
+  if (count == 1) {
+    uint32_t length = 0;
+    if (rpc_read(conn, &length, sizeof(length)) < 0 || length > kMaxText) {
+      return rpc_error();
+    }
+    out->resize(length);
+    if (length != 0 && rpc_read(conn, &(*out)[0], length) < 0) {
+      return rpc_error();
+    }
+  }
+  return rpc_read_end(conn) < 0 ? rpc_error() : status;
+}
+
 template <typename Arg>
 ncclResult_t read_single_string(conn_t *conn, int op, const Arg &arg,
                                 std::string *out) {
-  std::vector<std::string> strings;
   if (conn == nullptr ||
       rpc_write_start_request_on(conn, op, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &arg, sizeof(arg)) < 0) {
     return rpc_error();
   }
-  const ncclResult_t status = read_strings(conn, &strings);
-  if (status != ncclSuccess) {
-    return status;
-  }
-  if (strings.size() != 1) {
-    return rpc_error();
-  }
-  *out = std::move(strings[0]);
-  return ncclSuccess;
+  return finish_single_string(conn, out);
 }
 
 } // namespace
@@ -365,8 +385,8 @@ extern "C" const char *ncclGetLastError(ncclComm_t comm) {
 // of the same kind; so does the client.
 extern "C" ncclResult_t ncclParamGetStr(ncclParamHandle_t h, const char **out) {
   thread_local std::string text;
-  const ncclResult_t status = read_single_string(
-      connection_for_handle(h), RPC_ncclParamGetStr, h, &text);
+  const ncclResult_t status = read_single_string(connection_for_handle(h),
+                                                 RPC_ncclParamGetStr, h, &text);
   if (status == ncclSuccess) {
     *out = text.c_str();
   }
@@ -378,7 +398,6 @@ ncclParamGetParameter(const char *key, const char **value, int *valueLen) {
   thread_local std::string text;
   conn_t *conn = connection();
   const uint32_t key_length = static_cast<uint32_t>(std::strlen(key) + 1);
-  std::vector<std::string> strings;
   if (conn == nullptr ||
       rpc_write_start_request_on(conn, RPC_ncclParamGetParameter,
                                  RPC_SCOPE_NONE) < 0 ||
@@ -386,9 +405,8 @@ ncclParamGetParameter(const char *key, const char **value, int *valueLen) {
       rpc_write(conn, key, key_length) < 0) {
     return rpc_error();
   }
-  const ncclResult_t status = read_strings(conn, &strings);
-  if (status == ncclSuccess && strings.size() == 1) {
-    text = std::move(strings[0]);
+  const ncclResult_t status = finish_single_string(conn, &text);
+  if (status == ncclSuccess) {
     *value = text.c_str();
     *valueLen = static_cast<int>(text.size());
   }

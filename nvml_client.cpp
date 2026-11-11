@@ -72,27 +72,12 @@ nvmlReturn_t rpc_error() {
   return nvml_initialized() ? NVML_ERROR_UNKNOWN : NVML_ERROR_UNINITIALIZED;
 }
 
-void *nvml_transport_dispatch(void *argument) {
-  auto *connection = static_cast<conn_t *>(argument);
-  while (!connection->closed) {
-    int op = rpc_dispatch(connection, 1);
-    if (op < 0 || connection->closed) {
-      break;
-    }
-    if (rpc_read_end(connection) < 0) {
-      break;
-    }
-  }
-  return nullptr;
-}
-
 const lupine_client_transport_config &nvml_transport_config() {
   static const auto config = [] {
     lupine_client_transport_config config;
     config.dial_policy = lupine_client_dial_policy::single_attempt;
     config.strict_endpoints = true;
     config.log_missing_server = true;
-    config.dispatch = nvml_transport_dispatch;
     config.connection_kind = "nvml";
     return config;
   }();
@@ -312,8 +297,9 @@ extern "C" nvmlReturn_t nvmlInit_v2(void) {
 extern "C" nvmlReturn_t nvmlInit(void) { return nvmlInit_v2(); }
 
 extern "C" nvmlReturn_t nvmlInitWithFlags(unsigned int flags) {
-  return nvml_init_all_connections(
-      [flags](conn_t *conn) { return lupine_rpc_nvmlInitWithFlags(conn, flags); });
+  return nvml_init_all_connections([flags](conn_t *conn) {
+    return lupine_rpc_nvmlInitWithFlags(conn, flags);
+  });
 }
 
 extern "C" nvmlReturn_t nvmlShutdown(void) {
