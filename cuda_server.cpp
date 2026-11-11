@@ -190,6 +190,22 @@ struct lupine_jit_state {
   char *info_log = nullptr;
   size_t error_log_size = 0;
   char *error_log = nullptr;
+
+  ~lupine_jit_state() { clear(); }
+
+  void clear() {
+    std::free(options);
+    std::free(option_values);
+    std::free(info_log);
+    std::free(error_log);
+    num_options = 0;
+    options = nullptr;
+    option_values = nullptr;
+    info_log_size = 0;
+    info_log = nullptr;
+    error_log_size = 0;
+    error_log = nullptr;
+  }
 };
 
 static int lupine_read_jit_options(conn_t *conn, lupine_jit_state *jit) {
@@ -1118,6 +1134,26 @@ static int lupine_write_module(conn_t *conn,
   return 0;
 }
 
+static int lupine_finish_module_load(conn_t *conn, int request_id,
+                                     CUmodule module, CUresult result,
+                                     const unsigned char *image,
+                                     size_t image_size,
+                                     lupine_jit_state *jit = nullptr) {
+  if (result == CUDA_SUCCESS) {
+    lupine_note_device_stdout_image(image, image_size);
+  }
+  auto snapshot =
+      lupine_collect_module(result == CUDA_SUCCESS ? module : nullptr);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      (jit != nullptr && lupine_write_jit_outputs(conn, jit) < 0) ||
+      rpc_write(conn, &module, sizeof(module)) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      lupine_write_module(conn, snapshot) < 0) {
+    return -1;
+  }
+  return rpc_write_end(conn);
+}
+
 int handle_cuModuleLoad(conn_t *conn) {
   CUmodule module = nullptr;
   size_t image_size = 0;
@@ -1140,19 +1176,8 @@ int handle_cuModuleLoad(conn_t *conn) {
 
   result = lupine_in_va_arena(
       conn, [&] { return cuModuleLoadData(&module, image.data()); });
-  if (result == CUDA_SUCCESS) {
-    lupine_note_device_stdout_image(image.data(), image_size);
-  }
-
-  auto snapshot =
-      lupine_collect_module(result == CUDA_SUCCESS ? module : nullptr);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &module, sizeof(module)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
-      lupine_write_module(conn, snapshot) < 0) {
-    return -1;
-  }
-  return rpc_write_end(conn);
+  return lupine_finish_module_load(conn, request_id, module, result,
+                                   image.data(), image_size);
 }
 
 int handle_cuModuleLoadData(conn_t *conn) {
@@ -1187,19 +1212,8 @@ int handle_cuModuleLoadData(conn_t *conn) {
     }
     return CUDA_ERROR_NOT_SUPPORTED;
   });
-  if (result == CUDA_SUCCESS) {
-    lupine_note_device_stdout_image(image.data(), image.size());
-  }
-
-  auto snapshot =
-      lupine_collect_module(result == CUDA_SUCCESS ? module : nullptr);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &module, sizeof(module)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
-      lupine_write_module(conn, snapshot) < 0) {
-    return -1;
-  }
-  return rpc_write_end(conn);
+  return lupine_finish_module_load(conn, request_id, module, result,
+                                   image.data(), image.size());
 }
 
 int handle_cuModuleLoadDataEx(conn_t *conn) {
@@ -1232,25 +1246,8 @@ int handle_cuModuleLoadDataEx(conn_t *conn) {
     return cuModuleLoadDataEx(&module, image.data(), jit.num_options,
                               jit.options, jit.option_values);
   });
-  if (result == CUDA_SUCCESS) {
-    lupine_note_device_stdout_image(image.data(), image.size());
-  }
-
-  auto snapshot =
-      lupine_collect_module(result == CUDA_SUCCESS ? module : nullptr);
-  int status = 0;
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      lupine_write_jit_outputs(conn, &jit) < 0 ||
-      rpc_write(conn, &module, sizeof(module)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
-      lupine_write_module(conn, snapshot) < 0 || rpc_write_end(conn) < 0) {
-    status = -1;
-  }
-  std::free(jit.options);
-  std::free(jit.option_values);
-  std::free(jit.info_log);
-  std::free(jit.error_log);
-  return status;
+  return lupine_finish_module_load(conn, request_id, module, result,
+                                   image.data(), image.size(), &jit);
 }
 
 int handle_lupineFunctionParamLayoutSnapshot(conn_t *conn) {
@@ -1440,6 +1437,39 @@ static CUresult lupine_load_library(conn_t *conn, CUlibrary *library,
   return result;
 }
 
+static int lupine_read_library_options(conn_t *conn,
+                                       std::vector<CUlibraryOption> *options,
+                                       std::vector<void *> *values,
+                                       bool *has_values) {
+  unsigned int num_options = 0;
+  if (rpc_read(conn, &num_options, sizeof(num_options)) < 0) {
+    return -1;
+  }
+  options->resize(num_options);
+  values->resize(num_options);
+  if (rpc_read(conn, options->data(), num_options * sizeof(CUlibraryOption)) <
+          0 ||
+      rpc_read(conn, values->data(), num_options * sizeof(void *)) < 0) {
+    return -1;
+  }
+  *has_values = false;
+  for (unsigned int i = 0; i < num_options; ++i) {
+    *has_values |= reinterpret_cast<uintptr_t>((*values)[i]) !=
+                   ~static_cast<uintptr_t>((*options)[i]);
+  }
+  if (*has_values) {
+    // The client-side image is not the buffer passed to CUDA on this process.
+    // Clear the preservation hint so the driver retains its own copy rather
+    // than requiring a global library-to-image lifetime table.
+    for (unsigned int i = 0; i < num_options; ++i) {
+      if ((*options)[i] == CU_LIBRARY_BINARY_IS_PRESERVED) {
+        (*values)[i] = nullptr;
+      }
+    }
+  }
+  return 0;
+}
+
 int handle_cuLibraryLoadData(conn_t *conn) {
   uint32_t kind = 0;
   size_t image_size = 0;
@@ -1453,39 +1483,15 @@ int handle_cuLibraryLoadData(conn_t *conn) {
   }
 
   std::vector<unsigned char> image(image_size);
-  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0) {
-    return -1;
-  }
-  if (lupine_read_jit_options(conn, &jit_state) < 0) {
-    return -1;
-  }
-  unsigned int num_library_options = 0;
-  if (rpc_read(conn, &num_library_options, sizeof(num_library_options)) < 0) {
-    return -1;
-  }
-  std::vector<CUlibraryOption> library_options(num_library_options);
-  std::vector<void *> library_option_values(num_library_options);
-  if (rpc_read(conn, library_options.data(),
-               library_options.size() * sizeof(*library_options.data())) < 0 ||
-      rpc_read(conn, library_option_values.data(),
-               library_option_values.size() *
-                   sizeof(*library_option_values.data())) < 0) {
-    return -1;
-  }
+  std::vector<CUlibraryOption> library_options;
+  std::vector<void *> library_option_values;
   bool has_library_option_values = false;
-  for (unsigned int i = 0; i < num_library_options; ++i) {
-    has_library_option_values |=
-        reinterpret_cast<uintptr_t>(library_option_values[i]) !=
-        ~static_cast<uintptr_t>(library_options[i]);
-  }
-  for (unsigned int i = 0; i < num_library_options; ++i) {
-    // The client-side image is not the buffer passed to CUDA on this process.
-    // Clear the preservation hint so the driver retains its own copy rather
-    // than requiring a global library-to-image lifetime table.
-    if (has_library_option_values &&
-        library_options[i] == CU_LIBRARY_BINARY_IS_PRESERVED) {
-      library_option_values[i] = nullptr;
-    }
+  if (image_size == 0 || rpc_read(conn, image.data(), image_size) < 0 ||
+      lupine_read_jit_options(conn, &jit_state) < 0 ||
+      lupine_read_library_options(conn, &library_options,
+                                  &library_option_values,
+                                  &has_library_option_values) < 0) {
+    return -1;
   }
 
   request_id = rpc_read_end(conn);
@@ -1506,16 +1512,8 @@ int handle_cuLibraryLoadData(conn_t *conn) {
       rpc_write(conn, &result, sizeof(result)) < 0 ||
       (result == CUDA_SUCCESS && lupine_write_library(conn, snapshot) < 0) ||
       rpc_write_end(conn) < 0) {
-    std::free(jit_state.options);
-    std::free(jit_state.option_values);
-    std::free(jit_state.info_log);
-    std::free(jit_state.error_log);
     return -1;
   }
-  std::free(jit_state.options);
-  std::free(jit_state.option_values);
-  std::free(jit_state.info_log);
-  std::free(jit_state.error_log);
   return 0;
 }
 
@@ -1543,7 +1541,7 @@ int handle_lupineLibraryLoadBatch(conn_t *conn) {
   for (entry &e : entries) {
     uint32_t kind = 0;
     size_t image_size = 0;
-    unsigned int num_options = 0;
+    bool has_values = false;
     if (rpc_read(conn, &kind, sizeof(kind)) < 0 ||
         rpc_read(conn, &image_size, sizeof(image_size)) < 0 ||
         image_size == 0) {
@@ -1551,23 +1549,8 @@ int handle_lupineLibraryLoadBatch(conn_t *conn) {
     }
     image.resize(image_size);
     if (rpc_read(conn, image.data(), image_size) < 0 ||
-        rpc_read(conn, &num_options, sizeof(num_options)) < 0) {
+        lupine_read_library_options(conn, &options, &values, &has_values) < 0) {
       return -1;
-    }
-    options.resize(num_options);
-    values.resize(num_options);
-    if (rpc_read(conn, options.data(), num_options * sizeof(CUlibraryOption)) <
-            0 ||
-        rpc_read(conn, values.data(), num_options * sizeof(void *)) < 0) {
-      return -1;
-    }
-    bool has_values = false;
-    for (unsigned int i = 0; i < num_options; ++i) {
-      has_values |= reinterpret_cast<uintptr_t>(values[i]) !=
-                    ~static_cast<uintptr_t>(options[i]);
-      if (has_values && options[i] == CU_LIBRARY_BINARY_IS_PRESERVED) {
-        values[i] = nullptr;
-      }
     }
     if (pushed) {
       e.result = lupine_load_library(conn, &e.library, kind, image, jit,
@@ -1600,8 +1583,10 @@ int handle_lupineLibraryLoadBatch(conn_t *conn) {
 // parks the real fd with the parent-process broker under a random token and
 // returns the token; import redeems a token for the real fd (see ipc.h).
 
-int handle_cuMemExportToShareableHandle(conn_t *conn) {
-  CUmemGenericAllocationHandle handle = 0;
+template <typename Handle, typename ExportFn>
+static int lupine_handle_shareable_export(conn_t *conn, uint32_t kind,
+                                          ExportFn export_fn) {
+  Handle handle{};
   CUmemAllocationHandleType handleType;
   unsigned long long flags = 0;
   lupine_ipc_token token = {};
@@ -1620,11 +1605,9 @@ int handle_cuMemExportToShareableHandle(conn_t *conn) {
   if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR &&
       lupine_ipc_make_token(&token) == 0) {
     int shareable_fd = -1;
-    result =
-        cuMemExportToShareableHandle(&shareable_fd, handle, handleType, flags);
+    result = export_fn(&shareable_fd, handle, handleType, flags);
     if (result == CUDA_SUCCESS) {
-      if (lupine_ipc_broker_register_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION,
-                                        &token, shareable_fd) < 0) {
+      if (lupine_ipc_broker_register_fd(kind, &token, shareable_fd) < 0) {
         result = CUDA_ERROR_UNKNOWN;
       }
       lupine_ipc_close_fd(shareable_fd);
@@ -1637,6 +1620,11 @@ int handle_cuMemExportToShareableHandle(conn_t *conn) {
     return -1;
   }
   return 0;
+}
+
+int handle_cuMemExportToShareableHandle(conn_t *conn) {
+  return lupine_handle_shareable_export<CUmemGenericAllocationHandle>(
+      conn, LUPINE_IPC_FD_KIND_VMM_ALLOCATION, cuMemExportToShareableHandle);
 }
 
 int handle_cuMemImportFromShareableHandle(conn_t *conn) {
@@ -1674,42 +1662,8 @@ int handle_cuMemImportFromShareableHandle(conn_t *conn) {
 }
 
 int handle_cuMemPoolExportToShareableHandle(conn_t *conn) {
-  CUmemoryPool pool = nullptr;
-  CUmemAllocationHandleType handleType;
-  unsigned long long flags = 0;
-  lupine_ipc_token token = {};
-  CUresult result = CUDA_ERROR_NOT_SUPPORTED;
-
-  if (rpc_read(conn, &pool, sizeof(pool)) < 0 ||
-      rpc_read(conn, &handleType, sizeof(handleType)) < 0 ||
-      rpc_read(conn, &flags, sizeof(flags)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR &&
-      lupine_ipc_make_token(&token) == 0) {
-    int shareable_fd = -1;
-    result = cuMemPoolExportToShareableHandle(&shareable_fd, pool, handleType,
-                                              flags);
-    if (result == CUDA_SUCCESS) {
-      if (lupine_ipc_broker_register_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL, &token,
-                                        shareable_fd) < 0) {
-        result = CUDA_ERROR_UNKNOWN;
-      }
-      lupine_ipc_close_fd(shareable_fd);
-    }
-  }
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &token, sizeof(token)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_handle_shareable_export<CUmemoryPool>(
+      conn, LUPINE_IPC_FD_KIND_MEMORY_POOL, cuMemPoolExportToShareableHandle);
 }
 
 int handle_cuMemPoolImportFromShareableHandle(conn_t *conn) {
@@ -1824,11 +1778,6 @@ int handle_cuLinkCreate_v2(conn_t *conn) {
                       link_state->jit.option_values, &link_state->cuda_state);
   if (result == CUDA_SUCCESS) {
     client_state = lupine_link_state_to_handle(link_state.release());
-  } else {
-    std::free(link_state->jit.options);
-    std::free(link_state->jit.option_values);
-    std::free(link_state->jit.info_log);
-    std::free(link_state->jit.error_log);
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &client_state, sizeof(client_state)) < 0 ||
@@ -1874,16 +1823,8 @@ int handle_cuLinkAddData_v2(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       lupine_write_jit_outputs(conn, &jit_state) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    std::free(jit_state.options);
-    std::free(jit_state.option_values);
-    std::free(jit_state.info_log);
-    std::free(jit_state.error_log);
     return -1;
   }
-  std::free(jit_state.options);
-  std::free(jit_state.option_values);
-  std::free(jit_state.info_log);
-  std::free(jit_state.error_log);
   return 0;
 }
 
@@ -1938,16 +1879,8 @@ int handle_cuLinkAddFile_v2(conn_t *conn) {
   if (rpc_write_start_response(conn, request_id) < 0 ||
       lupine_write_jit_outputs(conn, &jit_state) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    std::free(jit_state.options);
-    std::free(jit_state.option_values);
-    std::free(jit_state.info_log);
-    std::free(jit_state.error_log);
     return -1;
   }
-  std::free(jit_state.options);
-  std::free(jit_state.option_values);
-  std::free(jit_state.info_log);
-  std::free(jit_state.error_log);
   return 0;
 }
 
@@ -2003,17 +1936,7 @@ int handle_cuLinkDestroy(conn_t *conn) {
     std::lock_guard<std::mutex> lock(link_state->mutex);
     result = cuLinkDestroy(link_state->cuda_state);
     if (result == CUDA_SUCCESS) {
-      std::free(link_state->jit.options);
-      std::free(link_state->jit.option_values);
-      std::free(link_state->jit.info_log);
-      std::free(link_state->jit.error_log);
-      link_state->jit.num_options = 0;
-      link_state->jit.options = nullptr;
-      link_state->jit.option_values = nullptr;
-      link_state->jit.info_log_size = 0;
-      link_state->jit.info_log = nullptr;
-      link_state->jit.error_log_size = 0;
-      link_state->jit.error_log = nullptr;
+      link_state->jit.clear();
     }
   }
   // Retain the opaque handle wrapper until process exit so stale client
