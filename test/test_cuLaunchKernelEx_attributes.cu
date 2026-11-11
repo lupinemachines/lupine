@@ -208,6 +208,7 @@ int main() {
   result = cuLaunchKernelEx(&config, function, params, nullptr);
   printf("unknown attribute result: %s (%d)\n", error_name(result),
          static_cast<int>(result));
+  cuCtxSynchronize();
   if (!output_is(output, 0)) {
     fprintf(stderr, "CUDA accepted unknown launch attribute ID 15\n");
     return 1;
