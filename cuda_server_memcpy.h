@@ -3,8 +3,8 @@
 
 #include "device_stdout.h"
 
-#include <cuda.h>
 #include <cstdint>
+#include <cuda.h>
 
 #include <memory>
 #include <string>
@@ -14,46 +14,7 @@
 #include "rpc.h"
 #include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
-struct lupine_graph_resources;
-
-struct lupine_host_callback_data {
-  conn_t *conn = nullptr;
-  CUhostFn fn = nullptr;
-  void *userData = nullptr;
-  // Uncaptured launches run once; a captured one is replayed by its graph.
-  bool one_shot = false;
-};
-
-struct lupine_stream_callback_data {
-  conn_t *conn = nullptr;
-  CUstreamCallback callback = nullptr;
-  void *userData = nullptr;
-};
-
-void CUDA_CB lupine_graph_host_callback(void *userData);
-void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
-                                    void *userData);
-
-struct lupine_host_registration_ops {
-  CUresult (*register_host)(void *, size_t, unsigned int);
-  CUresult (*unregister_host)(void *);
-  CUresult (*device_pointer)(CUdeviceptr *, void *);
-};
-
-CUresult lupine_server_map_host_allocation(
-    conn_t *conn, void **pointer, CUdeviceptr *device_pointer, size_t bytes,
-    unsigned int flags, unsigned int register_flags,
-    const lupine_host_registration_ops &ops);
-CUresult lupine_server_free_host_allocation(void *pointer,
-                                            CUresult (*native_free)(void *));
-bool lupine_server_host_allocation_flags(void *pointer, unsigned int *flags);
-CUresult lupine_server_allocate_managed(
-    conn_t *conn, CUdeviceptr *pointer, size_t bytes, unsigned int flags,
-    CUresult (*allocate)(CUdeviceptr *, size_t, unsigned int),
-    CUresult (*release)(CUdeviceptr));
-CUresult
-lupine_server_free_device_allocation(CUdeviceptr pointer,
-                                     CUresult (*native_free)(CUdeviceptr));
+using lupine_capture_id = uint64_t;
 
 // Device-to-host copies into client memory are pushed to the client as their
 // stream runs them. A host function queued behind each copy snapshots its
@@ -64,8 +25,6 @@ lupine_server_free_device_allocation(CUdeviceptr pointer,
 uint64_t lupine_dtoh_watermark(conn_t *conn);
 void lupine_dtoh_sync_contexts(conn_t *conn);
 int handle_lupineDtohPush(conn_t *conn);
-void lupine_note_device_stdout_image(const unsigned char *image,
-                                     size_t image_size);
 void lupine_keep_async_error(conn_t *conn, CUresult result);
 // True when the client does not wait for this request's answer, which then
 // gets none: a failure is kept for its next synchronize.
@@ -76,9 +35,8 @@ bool lupine_unanswered(conn_t *conn, CUresult result);
 // an error, and invalidates the capture.
 bool lupine_stream_query_unsettled(conn_t *conn, CUstream stream);
 CUresult lupine_take_async_error(conn_t *conn, CUresult result);
-lupine_graph_resources *lupine_captured_stream_resources(CUstream stream);
-lupine_graph_resources *lupine_begin_stream_capture_resources(CUstream stream);
-void lupine_discard_stream_capture_resources(lupine_graph_resources *resources);
+lupine_capture_id lupine_begin_stream_capture_resources(CUstream stream);
+void lupine_discard_stream_capture_resources(lupine_capture_id capture_id);
 void lupine_finish_stream_capture_resources(CUstream stream, CUgraph graph,
                                             bool success);
 void lupine_record_event_capture_resources(CUevent event, CUstream stream);
@@ -88,10 +46,6 @@ void lupine_clone_graph_resources(CUgraph clone, CUgraph original);
 void lupine_erase_graph_resources(CUgraph graph);
 // Applies backpressure to a handler about to queue device-to-host work.
 void lupine_dtoh_wait_for_room(conn_t *conn);
-// Queues a device-to-host copy into client memory (cuda_server_memcpy.cpp).
-CUresult lupine_push_dtoh(conn_t *conn, CUstream stream,
-                          const lupine_host_rows &client, CUdeviceptr source,
-                          void *mirror, bool refresh);
 // Replaces each dependency on a graph device-to-host copy with the node that
 // pushes its bytes, so later nodes see them. Every handler that takes graph
 // dependencies, generated or not, passes them through this.
@@ -103,11 +57,9 @@ struct lupine_htod_graph_binding {
 };
 CUresult
 lupine_prepare_graph_exec_resources(CUgraph graph,
-                                    lupine_graph_resources **resources,
                                     lupine_htod_graph_binding *binding);
 CUresult
 lupine_associate_graph_exec_resources(CUgraphExec exec,
-                                      lupine_graph_resources *resources,
                                       const lupine_htod_graph_binding &binding);
 CUgraphNode
 lupine_original_htod_graph_node(const lupine_htod_graph_binding &binding,
@@ -161,10 +113,6 @@ inline size_t lupine_pack_host_source(CUDA_MEMCPY3D &copy) {
   copy.srcHeight = copy.Height;
   return copy.WidthInBytes * copy.Height * copy.Depth;
 }
-
-// Frees a pinned staging block once the stream that is still reading from it
-// drains. Only the Windows host-to-device path defers a free this way.
-CUresult lupine_defer_host_free(CUstream stream, void *ptr);
 
 // Staging bookkeeping shared with the context handlers in cuda_server.cpp: a
 // context cannot go away until the staging buffers it owns have been retired.
