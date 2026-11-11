@@ -150,6 +150,7 @@ extern "C" void lupine_forget_context_owner(CUcontext ctx);
 extern "C" void lupine_mark_context_green(CUcontext ctx);
 extern "C" bool lupine_context_is_green(CUcontext ctx);
 extern "C" void lupine_forget_stream_owner(CUstream stream);
+extern "C" void lupine_retire_stale_fetch_stream(CUstream stream);
 extern "C" void lupine_forget_event_owner(CUevent event);
 
 extern "C" void lupine_note_context_owner_route(CUcontext ctx,
@@ -186,6 +187,23 @@ CUresult
 lupine_record_disjoint_allocation(CUdeviceptr *ptr, size_t size,
                                   lupine_route route,
                                   const std::function<CUresult()> &again);
+
+// Starts a request on `stream`, ordered as CUDA orders that stream's work: a
+// non-blocking stream only by itself; a blocking stream, or the thread's
+// per-thread default stream, also behind the legacy stream; the legacy stream
+// behind every blocking stream. `flags` are rpc.h's RPC_REQUEST_* options.
+// The scope key `stream` names on this thread.
+extern "C" uintptr_t lupine_stream_scope(CUstream stream);
+extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op, CUstream stream,
+                                          unsigned flags = 0);
+// Orders the request being built by each of `count` handles too, as
+// rpc_request_on does for one.
+extern "C" int lupine_rpc_request_on_each(conn_t *conn,
+                                          const void *const *handles,
+                                          unsigned int count);
+// Records whether a stream this client created waits for the legacy stream.
+extern "C" void lupine_note_stream_blocking(CUstream stream, bool blocking);
+extern "C" void lupine_forget_graph_exec_owner(CUgraphExec exec);
 
 // Resolves a driver entry point once per call site; name must be a literal.
 #define LUPINE_REAL_CUDA_SYMBOL(name)                                          \

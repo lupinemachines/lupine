@@ -108,6 +108,15 @@ int lupine_write_pending_dtoh_copies(conn_t *conn,
                                      const lupine_pending_dtoh_items &pending,
                                      bool include_count);
 void lupine_cleanup_pending_dtoh_copies(lupine_pending_dtoh_items *pending);
+void lupine_keep_async_error(conn_t *conn, CUresult result);
+// True when the client does not wait for this request's answer, which then
+// gets none: a failure is kept for its next synchronize.
+bool lupine_unanswered(conn_t *conn, CUresult result);
+// Whether a stream query may answer not ready without asking the driver,
+// because work sent before it is not submitted yet. A capturing stream, or one
+// whose capture state cannot be read, still asks: the driver's answer there is
+// an error, and invalidates the capture.
+bool lupine_stream_query_unsettled(conn_t *conn, CUstream stream);
 CUresult lupine_take_async_error(conn_t *conn, CUresult result);
 void lupine_forget_undelivered_dtoh(const void *server_src);
 void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream);

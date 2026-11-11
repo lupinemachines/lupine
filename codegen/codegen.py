@@ -20,6 +20,7 @@ import textwrap
 import zlib
 from client_templates import collect_client_call_templates
 from emit import (
+    REQUEST_ORDER,
     Backend,
     format_call_args,
     format_function_params,
@@ -33,6 +34,7 @@ from emit import (
     write_versioned_struct_helper,
 )
 from ops import (
+    unanswered,
     NullableOperation,
     ArrayOperation,
     InOutCountOperation,
@@ -475,6 +477,7 @@ CUDA = Backend(
     not_supported="CUDA_ERROR_NOT_SUPPORTED",
     success="CUDA_SUCCESS",
     invalid_result="CUDA_ERROR_UNKNOWN",
+    keep_async_error="lupine_keep_async_error",
 )
 
 NVML = Backend(
@@ -508,6 +511,7 @@ NCCL = Backend(
     not_supported="ncclInvalidUsage",
     async_success="ncclSuccess",
     alias_prefix="p",
+    stream_less_scoped=True,
 )
 
 ANNOTATION_FILES = {
@@ -622,7 +626,11 @@ def parse_annotation(
         if line.startswith("*"):
             line = line[2:]
         if line.strip().startswith("@async"):
-            metadata.async_fire_forget = True
+            raise NotImplementedError(
+                "@async is inferred; mark a status-only call that must wait @blocking"
+            )
+        if line.strip().startswith("@blocking"):
+            metadata.blocking = True
             continue
         if line.strip().startswith("@synchronize"):
             parts = line.split()
@@ -1248,24 +1256,79 @@ def find_header_file(filename):
     )
 
 
-def validate_async_annotation(
-    function: Function, metadata: FunctionAnnotationMetadata
-) -> None:
-    if not metadata.async_fire_forget:
-        return
+def client_request_start(function: Function, metadata) -> str:
+    """The request start for a call, ordered as CUDA orders what it touches.
+
+    A call on a stream is ordered as that stream's work is; a synchronous copy
+    or set runs on the legacy stream; an event call by its events; a call that
+    waits for the device by every earlier unanswered request; and any other
+    call only behind earlier calls that touched no stream or event.
+    """
     name = function.name.format()
-    return_type = function.return_type.format()
-    if return_type != "CUresult":
-        raise RuntimeError(
-            f"{name}: @async requires a CUresult return type, got {return_type}"
+    op = f"RPC_{name}"
+
+    def first(type_name):
+        return [p.name for p in function.parameters if p.type.format() == type_name]
+
+    streams, events = first("CUstream"), first("CUevent")
+    execs = first("CUgraphExec")
+
+    def also_on(keys):
+        return "".join(
+            " < 0 ||\n"
+            f"        rpc_request_on(conn, reinterpret_cast<uintptr_t>({key}))"
+            for key in keys
         )
+
+    order = REQUEST_ORDER.get(name)
+    if order == "all":
+        # Waits for everything already; an event it records is published too.
+        return f"rpc_write_start_request(conn, {op})" + also_on(events)
+    flags = {
+        "publish": ", RPC_REQUEST_PUBLISH_CONNECTION",
+        "soft": ", RPC_REQUEST_SOFT",
+    }.get(order, "")
+    if streams:
+        start = f"lupine_rpc_start_on_stream(conn, {op}, {streams[0]}{flags})"
+        rest = streams[1:] + events
+    elif (re.match(r"cuMem(cpy|set)", name) and "Async" not in name) or name in (
+        "cuLaunch",
+        "cuLaunchGrid",
+    ):
+        start = f"lupine_rpc_start_on_stream(conn, {op}, nullptr)"
+        rest = events
+    elif events:
+        start = (
+            f"rpc_write_start_request_on(conn, {op},\n"
+            f"            reinterpret_cast<uintptr_t>({events[0]}))"
+        )
+        rest = events[1:]
+    elif execs:
+        start = (
+            f"rpc_write_start_request_on(conn, {op},\n"
+            f"            reinterpret_cast<uintptr_t>({execs[0]}))"
+        )
+        rest = execs[1:]
+        execs = []
+    else:
+        start = f"rpc_write_start_request_on(conn, {op}, RPC_SCOPE_NONE)"
+        rest = []
+    # A graph executable runs one launch at a time, and is updated or
+    # destroyed only after the launches its caller made before.
+    start += also_on(rest + execs)
+    # A semaphore's wait is submitted after the signals sent before it.
     for operation in metadata.operations:
-        # NullableArrayOperation is an out-parameter with no send/recv flags.
-        if getattr(operation, "recv", True):
-            raise RuntimeError(
-                f"{name}: @async requires every parameter to be SEND_ONLY, "
-                f"but {operation.parameter.name} is received back"
+        if (
+            isinstance(operation, ArrayOperation)
+            and operation.ptr.ptr_to.format() == "const CUexternalSemaphore"
+        ):
+            start += (
+                " < 0 ||\n"
+                "        lupine_rpc_request_on_each(conn,\n"
+                f"            reinterpret_cast<const void *const *>({operation.parameter.name}),\n"
+                f"            {operation.count_expr()})"
             )
+    return start
 
 
 def attach_client_call_template(
@@ -1397,7 +1460,8 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             'extern "C" void lupine_note_deviceptr_owner(CUdeviceptr ptr, conn_t *conn);\n\n'
             'extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size, conn_t *conn);\n\n'
             'extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);\n\n'
-            'extern "C" void lupine_forget_stream_owner(CUstream stream);\n\n'
+            'extern "C" void lupine_forget_stream_owner(CUstream stream);\n'
+            'extern "C" void lupine_forget_graph_exec_owner(CUgraphExec exec);\n\n'
             'extern "C" const char *lupine_retain_returned_string(const void *handle, const char *data, size_t size);\n\n'
             'extern "C" void lupine_release_module_retained_strings(CUmodule module);\n'
             'extern "C" void lupine_release_library_retained_strings(CUlibrary library);\n\n'
@@ -1460,7 +1524,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                     raise RuntimeError(
                         f"{function.name.format()}: ALL routing requires a CUdevice * output"
                     )
-                if metadata.async_fire_forget:
+                if unanswered(function, metadata, "CUresult"):
                     raise RuntimeError(
                         f"{function.name.format()}: ALL routing cannot be fire-and-forget"
                     )
@@ -1544,54 +1608,30 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             for operation in operations:
                 f.write(operation.client_declaration())
 
-            if metadata.async_fire_forget:
-                error_return = result_code(function.return_type.format())
-                f.write(
-                    f"    uint64_t async_sequence = 0;\n"
-                    f"    if (lupine_prepare_rpc(conn) < 0 ||\n"
-                    f"        rpc_write_start_async_request(\n"
-                    f"            conn, RPC_{function.name.format()}, &async_sequence) < 0 ||\n"
-                    f"        rpc_write(conn, &async_sequence, sizeof(async_sequence)) < 0 ||\n"
-                )
-                for operation in operations:
-                    operation.client_rpc_write(f)
-                f.write("        rpc_write_end(conn) < 0) {\n")
-                f.write(f"        return {error_return};\n")
-                f.write("    }\n")
-                post_call = io.StringIO()
-                write_client_post_call(post_call, metadata)
-                if post_call.getvalue():
-                    f.write("    return_value = CUDA_SUCCESS;\n")
-                    f.write(post_call.getvalue())
-                    f.write("    return return_value;\n")
-                else:
-                    f.write("    return CUDA_SUCCESS;\n")
-                f.write("}\n\n")
-                if metadata.guard is not None:
-                    f.write("#endif\n\n")
-                continue
-
+            unanswered_call = unanswered(function, metadata, "CUresult")
             f.write(
                 f"    if (lupine_prepare_rpc(conn) < 0 ||\n"
-                f"        rpc_write_start_request(conn, RPC_{function.name.format()}) < 0 ||\n"
+                f"        {client_request_start(function, metadata)} < 0 ||\n"
             )
 
             for operation in operations:
                 operation.client_rpc_write(f)
 
-            f.write("        rpc_wait_for_response(conn) < 0 ||\n")
-
-            if metadata.synchronize and metadata.synchronize.deferred_dtoh:
-                f.write("        lupine_read_deferred_dtoh_copies(conn) < 0 ||\n")
-            if metadata.synchronize and metadata.synchronize.stdout:
-                f.write("        lupine_forward_remote_stdout(conn) < 0 ||\n")
-
-            for operation in operations:
-                operation.client_rpc_read(f)
-
-            f.write(f"        rpc_read(conn, &return_value, sizeof({function.return_type.format()})) < 0 ||\n")
-            f.write("        rpc_read_end(conn) < 0)\n")
+            if unanswered_call:
+                f.write("        rpc_write_end(conn) < 0)\n")
+            else:
+                f.write("        rpc_wait_for_response(conn) < 0 ||\n")
+                if metadata.synchronize and metadata.synchronize.deferred_dtoh:
+                    f.write("        lupine_read_deferred_dtoh_copies(conn) < 0 ||\n")
+                if metadata.synchronize and metadata.synchronize.stdout:
+                    f.write("        lupine_forward_remote_stdout(conn) < 0 ||\n")
+                for operation in operations:
+                    operation.client_rpc_read(f)
+                f.write(f"        rpc_read(conn, &return_value, sizeof({function.return_type.format()})) < 0 ||\n")
+                f.write("        rpc_read_end(conn) < 0)\n")
             f.write(f"        return {result_code(function.return_type.format())};\n")
+            if unanswered_call:
+                f.write("    return_value = CUDA_SUCCESS;\n")
 
             for operation in operations:
                 if isinstance(operation, NullTerminatedOperation) and operation.recv:
@@ -1859,7 +1899,6 @@ def main():
                 f"Error parsing annotation for {function.name.format()}"
             ) from e
         attach_client_call_template(function, metadata, client_call_templates)
-        validate_async_annotation(function, metadata)
         functions_with_annotations.append(
             (function, annotation, metadata.operations, metadata)
         )
@@ -1898,7 +1937,6 @@ def main():
             disabled_client_non_nullable=True,
         )
         attach_client_call_template(annotation, metadata, client_call_templates)
-        validate_async_annotation(annotation, metadata)
         annotated_function = (
             annotation,
             annotation,

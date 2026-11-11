@@ -1,13 +1,19 @@
 #include "cuda_client_rpc.h"
+#include "client_routing.h"
 #include "rpc.h"
 
 extern "C" int lupine_rpc_write_start_request(conn_t *conn, int op) {
   return rpc_write_start_request(conn, op);
 }
 
-extern "C" int lupine_rpc_write_start_async_request(conn_t *conn, int op,
-                                                    uint64_t *sequence) {
-  return rpc_write_start_async_request(conn, op, sequence);
+extern "C" int lupine_rpc_write_start_request_on(conn_t *conn, int op,
+                                                 uintptr_t key) {
+  return rpc_write_start_request_on(conn, op, key);
+}
+
+extern "C" int lupine_rpc_write_start_request_on_stream(conn_t *conn, int op,
+                                                        void *stream) {
+  return lupine_rpc_start_on_stream(conn, op, static_cast<CUstream>(stream));
 }
 
 extern "C" int lupine_rpc_write(conn_t *conn, const void *data, size_t size) {

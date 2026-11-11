@@ -11,10 +11,10 @@
 // configuration travels as the caller's bytes with its strings (`VERSIONED`),
 // so a caller built against another NCCL release still fits.
 //
-// Collectives and point-to-point calls are `@async`: inside a group NCCL only
-// queues them until ncclGroupEnd, so the client submits them fire-and-forget;
-// outside a group NCCL may block until a peer joins, so they are ordinary
-// requests. The client sends ncclGroupStart to a server the first time a group
+// Status-only calls are submitted without waiting inside a group, where NCCL
+// only queues them until ncclGroupEnd; outside a group NCCL may block until a
+// peer joins, so they are ordinary requests. Calls a group does not queue are
+// `@blocking`. The client sends ncclGroupStart to a server the first time a group
 // reaches it and ncclGroupEnd when the outermost group ends.
 //
 // Hand-written: the static and last-error strings, the parameter strings, and
@@ -43,6 +43,7 @@ ncclResult_t ncclMemAlloc(void **ptr, size_t size) {
  * @guard NCCL_VERSION_CODE >= 21903
  * @disabled client - routes by the allocation's owner
  * @param ptr SEND_ONLY
+ * @blocking - the handwritten client returns the server's status
  */
 ncclResult_t ncclMemFree(void *ptr);
 #endif
@@ -94,6 +95,7 @@ ncclResult_t ncclCommInitRank(ncclComm_t *comm, int nranks, ncclUniqueId commId,
 ncclResult_t ncclCommInitAll(ncclComm_t *comm, int ndev, const int *devlist);
 /**
  * @param comm SEND_ONLY
+ * @blocking - ncclInProgress is its result
  */
 ncclResult_t ncclCommFinalize(ncclComm_t comm);
 /**
@@ -121,6 +123,7 @@ ncclResult_t ncclCommAbort(ncclComm_t comm) {
  * @guard NCCL_VERSION_CODE >= 22807
  * @param comm SEND_ONLY
  * @param revokeFlags SEND_ONLY
+ * @blocking - not queued by a group
  */
 ncclResult_t ncclCommRevoke(ncclComm_t comm, int revokeFlags);
 #endif
@@ -265,6 +268,7 @@ ncclResult_t ncclCommRegister(const ncclComm_t comm, void *buff, size_t size,
  * @guard NCCL_VERSION_CODE >= 21903
  * @param comm SEND_ONLY
  * @param handle SEND_ONLY
+ * @blocking - not queued by a group
  */
 ncclResult_t ncclCommDeregister(const ncclComm_t comm, void *handle);
 #endif
@@ -273,11 +277,13 @@ ncclResult_t ncclCommDeregister(const ncclComm_t comm, void *handle);
  * @guard NCCL_VERSION_CODE >= 22907
  * @param comm SEND_ONLY
  * @param flags SEND_ONLY
+ * @blocking - not queued by a group
  */
 ncclResult_t ncclCommSuspend(ncclComm_t comm, int flags);
 /**
  * @guard NCCL_VERSION_CODE >= 22907
  * @param comm SEND_ONLY
+ * @blocking - not queued by a group
  */
 ncclResult_t ncclCommResume(ncclComm_t comm);
 /**
@@ -304,6 +310,7 @@ ncclResult_t ncclCommWindowRegister(ncclComm_t comm, void *buff, size_t size,
  * @guard NCCL_VERSION_CODE >= 22703
  * @param comm SEND_ONLY
  * @param win SEND_ONLY
+ * @blocking - not queued by a group
  */
 ncclResult_t ncclCommWindowDeregister(ncclComm_t comm, ncclWindow_t win);
 #endif
@@ -332,12 +339,14 @@ typedef struct ncclDevCommRequirements ncclDevCommRequirements_t;
 #if NCCL_VERSION_CODE >= 22800
 /**
  * @guard NCCL_VERSION_CODE >= 22800
+ * @blocking - not queued by a group
  */
 ncclResult_t ncclDevCommCreate(ncclComm_t comm,
                                const ncclDevCommRequirements_t *reqs,
                                ncclDevComm_t *outDevComm);
 /**
  * @guard NCCL_VERSION_CODE >= 22800
+ * @blocking - not queued by a group
  */
 ncclResult_t ncclDevCommDestroy(ncclComm_t comm, const ncclDevComm_t *devComm);
 #endif
@@ -374,10 +383,10 @@ ncclResult_t ncclRedOpCreatePreMulSum(ncclRedOp_t *op, void *scalar,
 /**
  * @param op SEND_ONLY
  * @param comm SEND_ONLY
+ * @blocking - not queued by a group
  */
 ncclResult_t ncclRedOpDestroy(ncclRedOp_t op, ncclComm_t comm);
 /**
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param count SEND_ONLY
@@ -391,7 +400,6 @@ ncclResult_t ncclReduce(const void *sendbuff, void *recvbuff, size_t count,
                         ncclDataType_t datatype, ncclRedOp_t op, int root,
                         ncclComm_t comm, cudaStream_t stream);
 /**
- * @async
  * @param buff SEND_ONLY
  * @param count SEND_ONLY
  * @param datatype SEND_ONLY
@@ -402,7 +410,6 @@ ncclResult_t ncclReduce(const void *sendbuff, void *recvbuff, size_t count,
 ncclResult_t ncclBcast(void *buff, size_t count, ncclDataType_t datatype,
                        int root, ncclComm_t comm, cudaStream_t stream);
 /**
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param count SEND_ONLY
@@ -415,7 +422,6 @@ ncclResult_t ncclBroadcast(const void *sendbuff, void *recvbuff, size_t count,
                            ncclDataType_t datatype, int root, ncclComm_t comm,
                            cudaStream_t stream);
 /**
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param count SEND_ONLY
@@ -428,7 +434,6 @@ ncclResult_t ncclAllReduce(const void *sendbuff, void *recvbuff, size_t count,
                            ncclDataType_t datatype, ncclRedOp_t op,
                            ncclComm_t comm, cudaStream_t stream);
 /**
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param recvcount SEND_ONLY
@@ -442,7 +447,6 @@ ncclResult_t ncclReduceScatter(const void *sendbuff, void *recvbuff,
                                ncclRedOp_t op, ncclComm_t comm,
                                cudaStream_t stream);
 /**
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param sendcount SEND_ONLY
@@ -456,7 +460,6 @@ ncclResult_t ncclAllGather(const void *sendbuff, void *recvbuff,
 #if NCCL_VERSION_CODE >= 22803
 /**
  * @guard NCCL_VERSION_CODE >= 22803
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param count SEND_ONLY
@@ -469,7 +472,6 @@ ncclResult_t ncclAlltoAll(const void *sendbuff, void *recvbuff, size_t count,
                           cudaStream_t stream);
 /**
  * @guard NCCL_VERSION_CODE >= 22803
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param count SEND_ONLY
@@ -483,7 +485,6 @@ ncclResult_t ncclGather(const void *sendbuff, void *recvbuff, size_t count,
                         cudaStream_t stream);
 /**
  * @guard NCCL_VERSION_CODE >= 22803
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param count SEND_ONLY
@@ -499,7 +500,6 @@ ncclResult_t ncclScatter(const void *sendbuff, void *recvbuff, size_t count,
 #if NCCL_VERSION_CODE >= 23102
 /**
  * @guard NCCL_VERSION_CODE >= 23102
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param count SEND_ONLY
@@ -516,7 +516,6 @@ ncclResult_t ncclAllReduceConfig(const void *sendbuff, void *recvbuff,
                                  const ncclCollConfig_t *config);
 /**
  * @guard NCCL_VERSION_CODE >= 23102
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param count SEND_ONLY
@@ -532,7 +531,6 @@ ncclResult_t ncclBroadcastConfig(const void *sendbuff, void *recvbuff,
                                  const ncclCollConfig_t *config);
 /**
  * @guard NCCL_VERSION_CODE >= 23102
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param count SEND_ONLY
@@ -550,7 +548,6 @@ ncclResult_t ncclReduceConfig(const void *sendbuff, void *recvbuff,
                               const ncclCollConfig_t *config);
 /**
  * @guard NCCL_VERSION_CODE >= 23102
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param sendcount SEND_ONLY
@@ -565,7 +562,6 @@ ncclResult_t ncclAllGatherConfig(const void *sendbuff, void *recvbuff,
                                  const ncclCollConfig_t *config);
 /**
  * @guard NCCL_VERSION_CODE >= 23102
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param recvcount SEND_ONLY
@@ -582,7 +578,6 @@ ncclResult_t ncclReduceScatterConfig(const void *sendbuff, void *recvbuff,
                                      const ncclCollConfig_t *config);
 /**
  * @guard NCCL_VERSION_CODE >= 23102
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param count SEND_ONLY
@@ -597,7 +592,6 @@ ncclResult_t ncclAlltoAllConfig(const void *sendbuff, void *recvbuff,
                                 const ncclCollConfig_t *config);
 /**
  * @guard NCCL_VERSION_CODE >= 23102
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param count SEND_ONLY
@@ -613,7 +607,6 @@ ncclResult_t ncclGatherConfig(const void *sendbuff, void *recvbuff,
                               const ncclCollConfig_t *config);
 /**
  * @guard NCCL_VERSION_CODE >= 23102
- * @async
  * @param sendbuff SEND_ONLY
  * @param recvbuff SEND_ONLY
  * @param count SEND_ONLY
@@ -629,7 +622,6 @@ ncclResult_t ncclScatterConfig(const void *sendbuff, void *recvbuff,
                                const ncclCollConfig_t *config);
 #endif
 /**
- * @async
  * @param sendbuff SEND_ONLY
  * @param count SEND_ONLY
  * @param datatype SEND_ONLY
@@ -641,7 +633,6 @@ ncclResult_t ncclSend(const void *sendbuff, size_t count,
                       ncclDataType_t datatype, int peer, ncclComm_t comm,
                       cudaStream_t stream);
 /**
- * @async
  * @param recvbuff SEND_ONLY
  * @param count SEND_ONLY
  * @param datatype SEND_ONLY
@@ -654,7 +645,6 @@ ncclResult_t ncclRecv(void *recvbuff, size_t count, ncclDataType_t datatype,
 #if NCCL_VERSION_CODE >= 22902
 /**
  * @guard NCCL_VERSION_CODE >= 22902
- * @async
  * @param localbuff SEND_ONLY
  * @param count SEND_ONLY
  * @param datatype SEND_ONLY
@@ -674,7 +664,6 @@ ncclResult_t ncclPutSignal(const void *localbuff, size_t count,
                            ncclComm_t comm, cudaStream_t stream);
 /**
  * @guard NCCL_VERSION_CODE >= 22902
- * @async
  * @param peer SEND_ONLY
  * @param sigIdx SEND_ONLY
  * @param ctx SEND_ONLY
@@ -686,7 +675,6 @@ ncclResult_t ncclSignal(int peer, int sigIdx, int ctx, unsigned int flags,
                         ncclComm_t comm, cudaStream_t stream);
 /**
  * @guard NCCL_VERSION_CODE >= 22902
- * @async
  * @param nDesc SEND_ONLY
  * @param signalDescs SEND_ONLY LENGTH:nDesc
  * @param comm SEND_ONLY
@@ -697,11 +685,11 @@ ncclResult_t ncclWaitSignal(int nDesc, ncclWaitSignalDesc_t *signalDescs,
 #endif
 /**
  * @disabled client - opens the group on each server it reaches
- * @async
  */
 ncclResult_t ncclGroupStart();
 /**
  * @disabled client - closes the group on the server it reached
+ * @blocking - returns the group's errors
  */
 ncclResult_t ncclGroupEnd();
 #if NCCL_VERSION_CODE >= 22203

@@ -1169,6 +1169,7 @@ void test_client_metadata_report(bool old_receiver = false,
           "metadata payload was invalid");
   int request_id = rpc_read_end(&pair.server);
   require(request_id > 0, "metadata request end failed");
+  rpc_async_sequence_end(&pair.server); // as the lane loop does
   op = rpc_dispatch(&pair.server, 0);
 
   require(op == kFollowupOp, "metadata blocked the next RPC");
@@ -2559,64 +2560,58 @@ void test_async_prefix_end_completes_only_claimed_ticket() {
           "a claimed ticket did not complete exactly once");
 }
 
-void test_async_prefix_same_lane_elision_and_cross_lane_marker() {
+// A connection-wide request leads with a marker for every earlier ticket.
+void test_async_prefix_connection_wide_marker() {
   h2_pair pair;
   init_pair(&pair);
   for (int i = 0; i < 2; ++i) {
-    uint64_t sequence;
-    require(rpc_write_start_async_request(&pair.client, 101, &sequence) == 0 &&
-                sequence == uint64_t(i) &&
-                rpc_write(&pair.client, &sequence, sizeof(sequence)) == 0 &&
-                rpc_write_end(&pair.client) > 0,
-            "same-lane enqueue failed");
+    require(rpc_write_start_request(&pair.client, 101) == 0 &&
+                rpc_write_end(&pair.client) > 0 &&
+                pair.client.write_ticket == uint64_t(i),
+            "enqueue failed");
   }
   int32_t lane = rpc_http2_accept_stream(&pair.server);
   for (int i = 0; i < 2; ++i) {
     int header[2];
-    uint64_t sequence;
+    uint64_t value;
+    require(i == 0 || (rpc_http2_read_stream(&pair.server, lane, header,
+                                             sizeof(header)) == 0 &&
+                       header[0] == 0 && header[1] == 0 &&
+                       rpc_http2_read_stream(&pair.server, lane, &value,
+                                             sizeof(value)) == 0 &&
+                       value == uint64_t(i)),
+            "request missed the earlier ticket");
     require(rpc_http2_read_stream(&pair.server, lane, header, sizeof(header)) ==
                     0 &&
                 header[0] >= 2 && header[1] == 101 &&
-                rpc_http2_read_stream(&pair.server, lane, &sequence,
-                                      sizeof(sequence)) == 0 &&
-                sequence == uint64_t(i),
-            "same-lane FIFO emitted a marker or changed ordinary framing");
+                rpc_http2_read_stream(&pair.server, lane, &value,
+                                      sizeof(value)) == 0 &&
+                value == uint64_t(i),
+            "request lost its ticket");
   }
-  std::thread other([&] {
-    require(rpc_write_start_request(&pair.client, 102) == 0 &&
-                rpc_write_end(&pair.client) > 0,
-            "cross-lane enqueue failed");
-  });
-  other.join();
-  lane = rpc_http2_accept_stream(&pair.server);
-  int marker[2];
-  uint64_t published = 0;
-  require(rpc_http2_read_stream(&pair.server, lane, marker, sizeof(marker)) ==
-                  0 &&
-              marker[0] == 0 && marker[1] == 0 &&
-              rpc_http2_read_stream(&pair.server, lane, &published,
-                                    sizeof(published)) == 0 &&
-              published == 2,
-          "cross-lane consumer missed the published prefix");
 }
 
-void test_async_prefix_entry_precedes_builder_wait() {
+// A request takes its dependencies once it holds the builder, so one that
+// overlapped another producer still waits for it. Scoped requests wait only
+// for an object's newest ticket, and that ticket must cover every request
+// that returned before a later one started.
+void test_async_prefix_builder_wait_orders_overlap() {
   h2_pair pair;
   init_pair(&pair);
   pthread_mutex_lock(&pair.client.write_mutex);
   std::thread caller([&] {
-    uint64_t sequence;
-    require(rpc_write_start_async_request(&pair.client, 101, &sequence) == 0,
+    require(rpc_write_start_request(&pair.client, 101) == 0,
             "blocked request start failed");
-    require(sequence == 1 && pair.client.write_dependency == 0,
-            "builder contention moved the entry snapshot to enqueue time");
-    require(rpc_write_end(&pair.client) > 0, "blocked request enqueue failed");
+    require(pair.client.write_dependency == 1,
+            "a request that waited for the builder missed the overlap");
+    require(rpc_write_end(&pair.client) > 0 && pair.client.write_ticket == 1,
+            "blocked request enqueue failed");
     require(rpc_write_start_request(&pair.client, 102) == 0 &&
                 rpc_write_end(&pair.client) > 0,
             "following request enqueue failed");
   });
-  // The caller has captured its entry and acquired call_mutex, but cannot
-  // finish starting its builder until this test releases write_mutex.
+  // The caller has acquired call_mutex, but cannot start its builder until
+  // this test releases write_mutex.
   auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
   for (;;) {
     if (pthread_mutex_trylock(&pair.client.call_mutex) != 0) {
@@ -2629,37 +2624,55 @@ void test_async_prefix_entry_precedes_builder_wait() {
   }
   // Simulate another producer publishing sequence 0 during the overlap.
   pair.client.issued_async_sequence = 1;
-  __atomic_store_n(&pair.client.published_async_sequence, uint64_t{1},
-                   __ATOMIC_RELEASE);
   pthread_mutex_unlock(&pair.client.write_mutex);
   caller.join();
   int32_t lane = rpc_http2_accept_stream(&pair.server);
-  int headers[4];
+  int marker[2];
   uint64_t published = 0;
-  require(rpc_http2_read_stream(&pair.server, lane, headers, sizeof(headers)) ==
+  int header[2];
+  uint64_t ticket = 0;
+  require(rpc_http2_read_stream(&pair.server, lane, marker, sizeof(marker)) ==
                   0 &&
-              headers[0] >= 2 && headers[1] == 101 && headers[2] == 0 &&
-              headers[3] == 0 &&
+              marker[0] == 0 && marker[1] == 0 &&
+              rpc_http2_read_stream(&pair.server, lane, &published,
+                                    sizeof(published)) == 0 &&
+              published == 1,
+          "blocked request does not wait for the overlapping producer");
+  require(
+      rpc_http2_read_stream(&pair.server, lane, header, sizeof(header)) == 0 &&
+          header[0] >= 2 && header[1] == 101 &&
+          rpc_http2_read_stream(&pair.server, lane, &ticket, sizeof(ticket)) ==
+              0 &&
+          ticket == 1,
+      "blocked request lost its ticket");
+  require(rpc_http2_read_stream(&pair.server, lane, marker, sizeof(marker)) ==
+                  0 &&
+              marker[0] == 0 && marker[1] == 0 &&
               rpc_http2_read_stream(&pair.server, lane, &published,
                                     sizeof(published)) == 0 &&
               published == 2,
-          "own-lane completion elided a hole belonging to another producer");
+          "following request does not wait for both earlier tickets");
+  require(
+      rpc_http2_read_stream(&pair.server, lane, header, sizeof(header)) == 0 &&
+          header[0] >= 2 && header[1] == 102 &&
+          rpc_http2_read_stream(&pair.server, lane, &ticket, sizeof(ticket)) ==
+              0 &&
+          ticket == 2,
+      "following request lost its ticket");
 }
 
 void test_async_prefix_wait_preserves_flow_control() {
   h2_pair pair;
   init_pair(&pair);
-  uint64_t sequence;
-  require(rpc_write_start_async_request(&pair.client, 101, &sequence) == 0 &&
-              rpc_write(&pair.client, &sequence, sizeof(sequence)) == 0 &&
+  require(rpc_write_start_request(&pair.client, 101) == 0 &&
               rpc_write_end(&pair.client) > 0,
           "producer enqueue");
   int32_t producer_lane = rpc_http2_accept_stream(&pair.server);
+  // Dispatch claims the producer's ticket; it stays open until ended below.
   require(rpc_bind_http2_stream(&pair.server, producer_lane) == 0 &&
               rpc_dispatch(&pair.server, 0) == 101 &&
-              rpc_read(&pair.server, &sequence, sizeof(sequence)) >= 0 &&
-              rpc_read_end(&pair.server) > 0 &&
-              rpc_async_sequence_begin(&pair.server, sequence) == 0,
+              !rpc_request_awaited(&pair.server) &&
+              rpc_read_end(&pair.server) > 0,
           "producer dispatch");
   // Twice the window: the sender finishes only if the server keeps crediting.
   std::vector<unsigned char> payload(2 * LUPINE_FF_STAGING_WINDOW_BYTES);
@@ -2833,8 +2846,8 @@ int main() {
   RUN_CASE(test_profile_hash_compatibility());
   RUN_CASE(test_async_prefix_allows_overlap_and_joins_holes());
   RUN_CASE(test_async_prefix_end_completes_only_claimed_ticket());
-  RUN_CASE(test_async_prefix_same_lane_elision_and_cross_lane_marker());
-  RUN_CASE(test_async_prefix_entry_precedes_builder_wait());
+  RUN_CASE(test_async_prefix_connection_wide_marker());
+  RUN_CASE(test_async_prefix_builder_wait_orders_overlap());
   RUN_CASE(test_async_prefix_wait_preserves_flow_control());
   RUN_CASE(test_async_prefix_shutdown_wakes_waiters());
   RUN_CASE(test_request_start_rejects_null_and_closed_conn());
