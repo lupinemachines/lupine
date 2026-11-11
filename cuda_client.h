@@ -37,6 +37,28 @@ struct lupine_function_attribute_key {
   }
 };
 
+#include "rpc.h"
+
+bool lupine_driver_version_cache_lookup(conn_t *conn, int *driverVersion);
+void lupine_driver_version_cache_insert(conn_t *conn, int driverVersion);
+bool lupine_loading_mode_cache_lookup(conn_t *conn, CUmoduleLoadingMode *mode);
+void lupine_loading_mode_cache_insert(conn_t *conn, CUmoduleLoadingMode mode);
+bool lupine_device_attribute_cache_lookup(conn_t *conn, CUdevice dev,
+                                          CUdevice_attribute attrib, int *pi);
+void lupine_device_attribute_cache_insert(conn_t *conn, CUdevice dev,
+                                          CUdevice_attribute attrib, int *pi);
+bool lupine_device_snapshot_lookup_name(conn_t *conn, CUdevice dev, char *name,
+                                        int len);
+bool lupine_device_snapshot_lookup_uuid(conn_t *conn, CUdevice dev,
+                                        CUuuid *uuid);
+bool lupine_device_snapshot_lookup_total_mem(conn_t *conn, CUdevice dev,
+                                             size_t *bytes);
+void lupine_invalidate_primary_ctx_state(CUdevice dev);
+bool lupine_primary_ctx_state_cache_lookup(conn_t *conn, CUdevice dev,
+                                           unsigned int *flags, int *active);
+void lupine_primary_ctx_state_cache_insert(conn_t *conn, CUdevice dev,
+                                           unsigned int flags, int active);
+
 // A successful set request need not equal the value the driver reports.
 enum class lupine_attribute_source { query, set };
 

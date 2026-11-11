@@ -19,10 +19,20 @@ CUresult cuGetErrorName(CUresult error, const char **pStr);
  */
 CUresult cuInit(unsigned int Flags);
 /**
- * @disabled client - manual client caches the version per route
  * @param driverVersion RECV_ONLY
  */
-CUresult cuDriverGetVersion(int *driverVersion);
+CUresult cuDriverGetVersion(int *driverVersion) {
+  if (driverVersion == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (lupine_driver_version_cache_lookup(lupine_route_remote_conn(route),
+                                         driverVersion))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_driver_version_cache_insert(lupine_route_remote_conn(route),
+                                       *driverVersion);
+  return return_value;
+}
 /**
  * @disabled client - manual client maps the virtual device ordinal
  * @param device RECV_ONLY
@@ -35,24 +45,32 @@ CUresult cuDeviceGet(CUdevice *device, int ordinal);
  */
 CUresult cuDeviceGetCount(int *count);
 /**
- * @disabled client - manual client serves the device snapshot cache
  * @param len SEND_ONLY
  * @param name RECV_ONLY LENGTH:len
  * @param dev SEND_ONLY
  */
-CUresult cuDeviceGetName(char *name, int len, CUdevice dev);
+CUresult cuDeviceGetName(char *name, int len, CUdevice dev) {
+  if (name == nullptr || len < 0)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (lupine_device_snapshot_lookup_name(lupine_route_remote_conn(route),
+                                         virtual_dev, name, len))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
- * @disabled client - manual client serves the device snapshot cache
  * @param uuid RECV_ONLY SIZE:16
  * @param dev SEND_ONLY
  */
-CUresult cuDeviceGetUuid(CUuuid *uuid, CUdevice dev);
-/**
- * @disabled client - manual client serves the device snapshot cache
- * @param uuid RECV_ONLY SIZE:16
- * @param dev SEND_ONLY
- */
-CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev);
+CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev) {
+  if (uuid == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (lupine_device_snapshot_lookup_uuid(lupine_route_remote_conn(route),
+                                         virtual_dev, uuid))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @param luid RECV_ONLY SIZE:8
  * @param deviceNodeMask RECV_ONLY
@@ -61,11 +79,18 @@ CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev);
 CUresult cuDeviceGetLuid(char *luid, unsigned int *deviceNodeMask,
                          CUdevice dev);
 /**
- * @disabled client - manual client serves the device snapshot cache
  * @param bytes RECV_ONLY
  * @param dev SEND_ONLY
  */
-CUresult cuDeviceTotalMem_v2(size_t *bytes, CUdevice dev);
+CUresult cuDeviceTotalMem_v2(size_t *bytes, CUdevice dev) {
+  if (bytes == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (lupine_device_snapshot_lookup_total_mem(lupine_route_remote_conn(route),
+                                              virtual_dev, bytes))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @param maxWidthInElements RECV_ONLY
  * @param format SEND_ONLY
@@ -76,12 +101,23 @@ CUresult cuDeviceGetTexture1DLinearMaxWidth(size_t *maxWidthInElements,
                                             CUarray_format format,
                                             unsigned numChannels, CUdevice dev);
 /**
- * @disabled client - manual client caches attributes per device
  * @param pi RECV_ONLY
  * @param attrib SEND_ONLY
  * @param dev SEND_ONLY
  */
-CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib, CUdevice dev);
+CUresult cuDeviceGetAttribute(int *pi, CUdevice_attribute attrib,
+                              CUdevice dev) {
+  if (pi == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (lupine_device_attribute_cache_lookup(lupine_route_remote_conn(route),
+                                           virtual_dev, attrib, pi))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_device_attribute_cache_insert(lupine_route_remote_conn(route),
+                                         virtual_dev, attrib, pi);
+  return return_value;
+}
 /**
  * @param dev SEND_ONLY
  * @param pool SEND_ONLY
@@ -138,19 +174,32 @@ CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev);
  */
 CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev);
 /**
- * @disabled client - manual client caches primary context state
  * @param dev SEND_ONLY
  * @param flags SEND_ONLY
  */
-CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags);
+CUresult cuDevicePrimaryCtxSetFlags_v2(CUdevice dev, unsigned int flags) {
+  lupine_invalidate_primary_ctx_state(virtual_dev);
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
- * @disabled client - manual client caches primary context state
  * @param dev SEND_ONLY
  * @param flags RECV_ONLY
  * @param active RECV_ONLY
  */
 CUresult cuDevicePrimaryCtxGetState(CUdevice dev, unsigned int *flags,
-                                    int *active);
+                                    int *active) {
+  if (flags == nullptr || active == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (lupine_primary_ctx_state_cache_lookup(lupine_route_remote_conn(route),
+                                            virtual_dev, flags, active))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_primary_ctx_state_cache_insert(lupine_route_remote_conn(route),
+                                          virtual_dev, *flags, *active);
+  return return_value;
+}
 /**
  * @disabled - manual client caches primary context state; manual server
  * coordinates retained staging lifecycle
@@ -369,10 +418,18 @@ CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
  */
 CUresult cuModuleUnload(CUmodule hmod);
 /**
- * @disabled client - manual client caches the mode per route
  * @param mode RECV_ONLY
  */
-CUresult cuModuleGetLoadingMode(CUmoduleLoadingMode *mode);
+CUresult cuModuleGetLoadingMode(CUmoduleLoadingMode *mode) {
+  if (mode == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
+  if (lupine_loading_mode_cache_lookup(lupine_route_remote_conn(route), mode))
+    return CUDA_SUCCESS;
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_loading_mode_cache_insert(lupine_route_remote_conn(route), *mode);
+  return return_value;
+}
 /**
  * @routingkey MODULE hmod
  * @param hfunc RECV_ONLY
@@ -1934,14 +1991,21 @@ CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent);
  */
 CUresult cuGreenCtxWaitEvent(CUgreenCtx hCtx, CUevent hEvent);
 /**
- * @disabled - manual client handles cross-server event waits
+ * @async
+ * @disabled server - manual server tracks capture event dependencies
  * @routingkey STREAM hStream
  * @param hStream SEND_ONLY
  * @param hEvent SEND_ONLY
  * @param Flags SEND_ONLY
  */
 CUresult cuStreamWaitEvent(CUstream hStream, CUevent hEvent,
-                           unsigned int Flags);
+                           unsigned int Flags) {
+  if (hEvent != nullptr &&
+      !lupine_routes_share_server(route, lupine_route_for_event(hEvent)))
+    return cuEventSynchronize(hEvent);
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  return return_value;
+}
 /**
  * @disabled server - manual stream callback forwarding
  * @routingkey STREAM hStream
@@ -2074,22 +2138,32 @@ CUresult cuStreamSetAttribute(CUstream hStream, CUstreamAttrID attr,
 CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags);
 /**
  * @async
- * @disabled - manual client tracks which events have work outstanding
+ * @disabled server - manual server tracks capture and deferred-copy events
  * @routingkey STREAM hStream
  * @param hEvent SEND_ONLY
  * @param hStream SEND_ONLY
  */
-CUresult cuEventRecord(CUevent hEvent, CUstream hStream);
+CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (!lupine_route_is_local(route))
+    lupine_event_invalidate_completion(hEvent);
+  return return_value;
+}
 /**
  * @async
- * @disabled - manual client tracks which events have work outstanding
+ * @disabled server - manual server tracks capture and deferred-copy events
  * @routingkey STREAM hStream
  * @param hEvent SEND_ONLY
  * @param hStream SEND_ONLY
  * @param flags SEND_ONLY
  */
 CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
-                                unsigned int flags);
+                                unsigned int flags) {
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (!lupine_route_is_local(route))
+    lupine_event_invalidate_completion(hEvent);
+  return return_value;
+}
 /**
  * @disabled - manual client caches completions and separately prefetches events
  * @synchronize DEFERRED_DTOH
@@ -2104,11 +2178,18 @@ CUresult cuEventQuery(CUevent hEvent);
  */
 CUresult cuEventSynchronize(CUevent hEvent);
 /**
- * @disabled - manual server clears deferred-copy event bookkeeping
+ * @disabled server - manual server clears deferred-copy event bookkeeping
  * @routingkey EVENT hEvent
  * @param hEvent SEND_ONLY
  */
-CUresult cuEventDestroy_v2(CUevent hEvent);
+CUresult cuEventDestroy_v2(CUevent hEvent) {
+  std::unique_lock<std::shared_mutex> event_lifecycle_lock(
+      lupine_event_lifecycle_mutex());
+  CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_SUCCESS)
+    lupine_forget_event_owner(hEvent);
+  return return_value;
+}
 /**
  * @param pMilliseconds SEND_RECV
  * @param hStart SEND_ONLY

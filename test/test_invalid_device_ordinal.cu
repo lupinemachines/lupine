@@ -28,9 +28,25 @@ static int expect_invalid_device(CUresult status, const char *call) {
   return 1;
 }
 
+static int expect_invalid_value(CUresult status, const char *call) {
+  if (status == CUDA_ERROR_INVALID_VALUE) {
+    return 0;
+  }
+  const char *name = nullptr;
+  cuGetErrorName(status, &name);
+  std::fprintf(stderr, "%s returned %d (%s), want CUDA_ERROR_INVALID_VALUE\n",
+               call, static_cast<int>(status),
+               name == nullptr ? "unknown" : name);
+  return 1;
+}
+
 int main() {
   int device_count = 0;
   if (check(cuInit(0), "cuInit") != 0 ||
+      expect_invalid_value(cuDriverGetVersion(nullptr),
+                           "cuDriverGetVersion(nullptr)") != 0 ||
+      expect_invalid_value(cuModuleGetLoadingMode(nullptr),
+                           "cuModuleGetLoadingMode(nullptr)") != 0 ||
       check(cuDeviceGetCount(&device_count), "cuDeviceGetCount") != 0) {
     return 1;
   }
