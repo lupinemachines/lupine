@@ -43,8 +43,8 @@ static std::vector<lupine_device_entry> &lupine_device_table() {
   return *devices;
 }
 
-static bool &lupine_device_table_ready() {
-  static bool ready = false;
+static std::atomic<bool> &lupine_device_table_ready() {
+  static std::atomic<bool> ready{false};
   return ready;
 }
 
@@ -208,8 +208,11 @@ lupine_apply_visible_devices(std::vector<lupine_device_entry> &devices) {
 }
 
 static CUresult lupine_ensure_device_table() {
+  if (lupine_device_table_ready().load(std::memory_order_acquire)) {
+    return CUDA_SUCCESS;
+  }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  if (lupine_device_table_ready()) {
+  if (lupine_device_table_ready().load(std::memory_order_relaxed)) {
     return CUDA_SUCCESS;
   }
 
@@ -266,7 +269,7 @@ static CUresult lupine_ensure_device_table() {
   // Selecting nothing out of a fleet that is there is an answer, not a
   // failure: the driver reports no devices rather than refusing the call.
   lupine_apply_visible_devices(devices);
-  lupine_device_table_ready() = true;
+  lupine_device_table_ready().store(true, std::memory_order_release);
   return CUDA_SUCCESS;
 }
 
@@ -284,7 +287,6 @@ lupine_connection_supports_concurrent_managed_access(conn_t *conn) {
     return false;
   }
 
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   const auto &devices = lupine_device_table();
   return !devices.empty() &&
          std::all_of(
@@ -302,14 +304,14 @@ CUresult lupine_virtual_device_count(int *count) {
   if (result != CUDA_SUCCESS) {
     return result;
   }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   *count = static_cast<int>(lupine_device_table().size());
   return CUDA_SUCCESS;
 }
 
 bool lupine_devices_span_routes() {
-  (void)lupine_ensure_device_table();
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  if (lupine_ensure_device_table() != CUDA_SUCCESS) {
+    return false;
+  }
   const auto &devices = lupine_device_table();
   return std::any_of(devices.begin(), devices.end(), [&](const auto &entry) {
     return entry.local != devices.front().local ||
@@ -325,7 +327,6 @@ CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal) {
   if (result != CUDA_SUCCESS) {
     return result;
   }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   if (ordinal < 0 ||
       ordinal >= static_cast<int>(lupine_device_table().size())) {
     return CUDA_ERROR_INVALID_DEVICE;
@@ -349,8 +350,7 @@ CUdevice lupine_virtual_device_for_route(lupine_route route,
     return -1;
   }
 
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  auto &devices = lupine_device_table();
+  const auto &devices = lupine_device_table();
   for (size_t i = 0; i < devices.size(); ++i) {
     const auto &candidate = devices[i];
     bool matches =
@@ -379,13 +379,9 @@ lupine_lookup_device_on_all_routes_impl(CUdevice *device, void *context,
     return result;
   }
 
-  bool has_local_device = false;
-  {
-    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    has_local_device =
-        std::any_of(lupine_device_table().begin(), lupine_device_table().end(),
-                    [](const auto &candidate) { return candidate.local; });
-  }
+  const bool has_local_device =
+      std::any_of(lupine_device_table().begin(), lupine_device_table().end(),
+                  [](const auto &candidate) { return candidate.local; });
 
   CUresult first_error = CUDA_ERROR_INVALID_DEVICE;
   int connection_count = rpc_size();
@@ -425,9 +421,8 @@ extern "C" lupine_route lupine_route_for_device(CUdevice *device) {
     return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
   }
 
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   int local = static_cast<int>(*device);
-  auto &devices = lupine_device_table();
+  const auto &devices = lupine_device_table();
   if (local < 0 || local >= static_cast<int>(devices.size())) {
     return lupine_route{LUPINE_ROUTE_UNKNOWN_DEVICE, nullptr};
   }
@@ -453,9 +448,8 @@ extern "C" bool lupine_translate_device_for_conn(conn_t *conn,
     return false;
   }
 
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   int local = static_cast<int>(*device);
-  auto &devices = lupine_device_table();
+  const auto &devices = lupine_device_table();
   if (local < 0 || local >= static_cast<int>(devices.size())) {
     return false;
   }
@@ -665,14 +659,24 @@ std::vector<uintptr_t> &lupine_blocking_streams() {
   return *streams;
 }
 
+std::atomic<size_t> lupine_blocking_stream_count{0};
+
 void lupine_set_stream_blocking(uintptr_t key, bool blocking) {
+  if (!blocking &&
+      lupine_blocking_stream_count.load(std::memory_order_acquire) == 0) {
+    return;
+  }
   std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
   auto &streams = lupine_blocking_streams();
   auto it = std::find(streams.begin(), streams.end(), key);
   if (blocking && it == streams.end()) {
     streams.push_back(key);
+    lupine_blocking_stream_count.store(streams.size(),
+                                       std::memory_order_release);
   } else if (!blocking && it != streams.end()) {
     streams.erase(it);
+    lupine_blocking_stream_count.store(streams.size(),
+                                       std::memory_order_release);
   }
 }
 
@@ -683,6 +687,9 @@ void lupine_set_stream_blocking(uintptr_t key, bool blocking) {
 // starts clean. Returns whether it was blocking.
 bool lupine_retire_blocking_stream(uintptr_t key, conn_t *const *conns,
                                    size_t count) {
+  if (lupine_blocking_stream_count.load(std::memory_order_acquire) == 0) {
+    return false;
+  }
   {
     std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
     auto &streams = lupine_blocking_streams();
@@ -698,6 +705,8 @@ bool lupine_retire_blocking_stream(uintptr_t key, conn_t *const *conns,
   auto it = std::find(streams.begin(), streams.end(), key);
   if (it != streams.end()) {
     streams.erase(it);
+    lupine_blocking_stream_count.store(streams.size(),
+                                       std::memory_order_release);
   }
   return true;
 }
@@ -761,7 +770,7 @@ extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op, CUstream stream,
     if (rpc_write_start_request_on(conn, op, kLegacyStreamScope, flags) < 0) {
       return -1;
     }
-    {
+    if (lupine_blocking_stream_count.load(std::memory_order_acquire) != 0) {
       std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
       for (uintptr_t blocking_key : lupine_blocking_streams()) {
         if (rpc_request_after(conn, blocking_key) < 0) {
@@ -780,7 +789,8 @@ extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op, CUstream stream,
                   conn) == thread_stream.conns.end()) {
       thread_stream.conns.push_back(conn);
     }
-  } else {
+  } else if (lupine_blocking_stream_count.load(std::memory_order_acquire) !=
+             0) {
     std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
     auto &streams = lupine_blocking_streams();
     blocking = std::find(streams.begin(), streams.end(), key) != streams.end();
@@ -937,6 +947,44 @@ extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
     }
   }
   return lupine_route_for_default();
+}
+
+lupine_htod_routing_info
+lupine_query_htod_routing(CUdeviceptr dst, const void *src, size_t bytes) {
+  lupine_htod_routing_info info;
+  bool dst_known = false;
+  int dst_route_id = -2;
+  {
+    std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+    auto &owners = lupine_owners<CUdeviceptr>();
+    auto it = owners.find(dst);
+    if (it != owners.end()) {
+      dst_route_id = it->second.route_id;
+      dst_known = true;
+    }
+    const auto *dst_allocation = lupine_deviceptr_allocation_cache_lookup(dst);
+    if (!dst_known && dst_allocation != nullptr) {
+      dst_route_id = dst_allocation->route_id;
+      dst_known = true;
+    }
+    if (bytes != 0 && dst_allocation != nullptr &&
+        dst <= UINT64_MAX - (bytes - 1)) {
+      if (dst_known && dst_allocation->route_id == dst_route_id &&
+          dst_allocation ==
+              lupine_deviceptr_allocation_cache_lookup(dst + bytes - 1)) {
+        info.dst_allocation_covers = true;
+      }
+    }
+    if (bytes != 0 && src != nullptr) {
+      CUdeviceptr src_ptr = reinterpret_cast<CUdeviceptr>(src);
+      info.src_deviceptr_tracked =
+          owners.count(src_ptr) != 0 ||
+          lupine_deviceptr_allocation_cache_lookup(src_ptr) != nullptr;
+    }
+  }
+  info.dst_route = dst_known ? lupine_route_from_identity(dst_route_id)
+                             : lupine_route_for_default();
+  return info;
 }
 
 extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr) {

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <vector>
+
 #define LUPINE_CUDA_COMPAT_TYPES_ONLY
 #include "cuda_compat.h"
 #undef LUPINE_CUDA_COMPAT_TYPES_ONLY
@@ -11,8 +15,6 @@ struct lupine_route;
 // map directly, preserving base-pointer APIs such as stream attachment.
 static constexpr size_t LUPINE_MANAGED_ALLOCATION_MIN_BYTES = 2 * 1024 * 1024;
 
-extern "C" bool
-lupine_device_attribute_is_virtualized(conn_t *conn, CUdevice_attribute attrib);
 bool lupine_host_range_is_protected(uintptr_t start, size_t size);
 extern "C" bool lupine_is_managed_host_alias(CUdeviceptr ptr);
 struct lupine_pointer_query_context {
@@ -46,7 +48,11 @@ extern "C" int lupine_write_cross_route_device_source(conn_t *destination_conn,
                                                       int request_id,
                                                       CUdeviceptr source,
                                                       size_t bytes);
+bool lupine_tracked_host_bounds(uintptr_t *min_addr, uintptr_t *max_addr);
 bool lupine_prepare_mapped_host_pointer(CUdeviceptr pointer, bool *portable);
+void lupine_prepare_mapped_host_pointers(
+    const uintptr_t *candidates, size_t count, bool *portable = nullptr,
+    std::vector<CUdeviceptr> *managed = nullptr);
 CUresult lupine_prepare_portable_host_allocations(lupine_route route,
                                                   bool expose_portable);
 extern "C" CUresult lupine_sync_mapped_device_to_host();

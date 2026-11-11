@@ -1213,9 +1213,7 @@ public:
       if (ordering_event_ != nullptr) {
         (void)cuEventDestroy_v2(ordering_event_);
       }
-      if (smemcpy_module_ != nullptr) {
-        (void)cuModuleUnload(smemcpy_module_);
-      }
+      lupine_smemcpy_cached_module_unload(&smemcpy_module_);
       CUcontext popped = nullptr;
       (void)cuCtxPopCurrent_v2(&popped);
     }
@@ -1266,8 +1264,7 @@ public:
     }
     // Load and JIT the fatbin before graph capture can enqueue a copy that
     // needs one of its kernels.
-    CUmodule smemcpy_module = nullptr;
-    result = lupine_smemcpy_module_load(&smemcpy_module);
+    result = lupine_smemcpy_cached_module_load(&smemcpy_module_);
     if (result != CUDA_SUCCESS) {
       (void)cuEventDestroy_v2(ordering_event);
       (void)cuStreamDestroy_v2(transfer_stream);
@@ -1279,7 +1276,6 @@ public:
     device_storage_ = device_storage;
     transfer_stream_ = transfer_stream;
     ordering_event_ = ordering_event;
-    smemcpy_module_ = smemcpy_module;
     return CUDA_SUCCESS;
   }
 
@@ -1342,24 +1338,20 @@ public:
                : 0;
   }
 
-  void note_smemcpy_function(CUfunction function) {
-    std::lock_guard<std::mutex> lock(smemcpy_functions_mutex_);
-    smemcpy_functions_.insert(function);
+  bool is_smemcpy_function(CUfunction function) const {
+    return lupine_smemcpy_cached_contains_function(&smemcpy_module_, function);
   }
 
-  bool is_smemcpy_function(CUfunction function) {
-    std::lock_guard<std::mutex> lock(smemcpy_functions_mutex_);
-    return smemcpy_functions_.count(function) != 0;
+  CUresult
+  prepare_smemcpy_launch(const lupine_smemcpy_params &params,
+                         lupine_smemcpy_launch_descriptor *launch) const {
+    return lupine_smemcpy_cached_prepare_launch(&smemcpy_module_, &params,
+                                                launch);
   }
 
   CUresult smemcpy_function(const lupine_smemcpy_launch_descriptor &launch,
                             CUfunction *function) {
-    CUresult result =
-        lupine_smemcpy_module_function(smemcpy_module_, &launch, function);
-    if (result == CUDA_SUCCESS) {
-      note_smemcpy_function(*function);
-    }
-    return result;
+    return lupine_smemcpy_cached_function(&smemcpy_module_, &launch, function);
   }
 
   int fetch(const lupine_htod_copy &copy,
@@ -1411,15 +1403,13 @@ private:
   CUcontext context_ = nullptr;
   std::mutex prepare_mutex_;
   std::mutex execution_mutex_;
-  std::mutex smemcpy_functions_mutex_;
   std::condition_variable execution_condition_;
   bool execution_active_ = false;
   void *storage_ = nullptr;
   CUdeviceptr device_storage_ = 0;
   CUstream transfer_stream_ = nullptr;
   CUevent ordering_event_ = nullptr;
-  CUmodule smemcpy_module_ = nullptr;
-  std::unordered_set<CUfunction> smemcpy_functions_;
+  lupine_smemcpy_cached_module smemcpy_module_;
 };
 
 struct lupine_htod_capture_events {
@@ -2109,7 +2099,7 @@ static CUresult lupine_enqueue_htod_fragment(
   params.logical_offset = fragment.logical_offset;
   params.bytes = fragment.bytes;
   lupine_smemcpy_launch_descriptor launch = {};
-  CUresult result = lupine_smemcpy_prepare_driver_launch(&params, &launch);
+  CUresult result = ring->prepare_smemcpy_launch(params, &launch);
   if (result != CUDA_SUCCESS) {
     return result;
   }
@@ -2144,7 +2134,7 @@ static CUresult lupine_prepare_htod_copy(
     params.logical_offset = fragment.logical_offset;
     params.bytes = fragment.bytes;
     lupine_smemcpy_launch_descriptor launch = {};
-    CUresult result = lupine_smemcpy_prepare_driver_launch(&params, &launch);
+    CUresult result = ring->prepare_smemcpy_launch(params, &launch);
     if (result != CUDA_SUCCESS) {
       return result;
     }
@@ -3126,20 +3116,54 @@ static int lupine_write_dtoh_chunks(conn_t *conn, int request_id, size_t bytes,
 
   size_t staging_size =
       std::min(bytes - offset, (size_t)LUPINE_RPC_TRANSFER_CHUNK_BYTES);
-  std::unique_ptr<unsigned char[]> host;
+  unsigned char inline_host[64 * 1024];
+  struct reusable_staging_buffer {
+    std::unique_ptr<unsigned char[]> data;
+    size_t capacity = 0;
+    bool in_use = false;
+  };
+  static thread_local reusable_staging_buffer tls_staging;
+  struct staging_lease {
+    reusable_staging_buffer *tls = nullptr;
+    ~staging_lease() {
+      if (tls != nullptr) {
+        tls->in_use = false;
+      }
+    }
+  } lease;
+  std::unique_ptr<unsigned char[]> fallback_host;
+  unsigned char *host = nullptr;
   if (staging_size != 0) {
-    host.reset(new (std::nothrow) unsigned char[staging_size]);
-    if (!host) {
-      return lupine_write_dtoh_chunk_response(
-          conn, request_id, CUDA_ERROR_OUT_OF_MEMORY, nullptr, 0);
+    if (staging_size <= sizeof(inline_host)) {
+      host = inline_host;
+    } else if (!tls_staging.in_use) {
+      if (tls_staging.capacity < staging_size) {
+        std::unique_ptr<unsigned char[]> grown(
+            new (std::nothrow) unsigned char[staging_size]);
+        if (!grown) {
+          return lupine_write_dtoh_chunk_response(
+              conn, request_id, CUDA_ERROR_OUT_OF_MEMORY, nullptr, 0);
+        }
+        tls_staging.data = std::move(grown);
+        tls_staging.capacity = staging_size;
+      }
+      tls_staging.in_use = true;
+      lease.tls = &tls_staging;
+      host = tls_staging.data.get();
+    } else {
+      fallback_host.reset(new (std::nothrow) unsigned char[staging_size]);
+      if (!fallback_host) {
+        return lupine_write_dtoh_chunk_response(
+            conn, request_id, CUDA_ERROR_OUT_OF_MEMORY, nullptr, 0);
+      }
+      host = fallback_host.get();
     }
   }
 
   do {
     size_t chunk = std::min(bytes - offset, staging_size);
-    CUresult result =
-        copy_chunk(chunk == 0 ? nullptr : host.get(), offset, chunk);
-    if (lupine_write_dtoh_chunk_response(conn, request_id, result, host.get(),
+    CUresult result = copy_chunk(chunk == 0 ? nullptr : host, offset, chunk);
+    if (lupine_write_dtoh_chunk_response(conn, request_id, result, host,
                                          chunk) < 0) {
       return -1;
     }
@@ -3498,7 +3522,20 @@ static int lupine_handle_memcpy3d(conn_t *conn, bool async, bool peer,
   bool is_server_authoritative = false;
   CUDA_MEMCPY3D copy = {};
   CUstream stream = CU_STREAM_LEGACY;
-  std::vector<unsigned char> host;
+  unsigned char inline_host[64 * 1024];
+  std::unique_ptr<unsigned char[]> heap_host;
+  unsigned char *host_data = inline_host;
+  size_t host_size = 0;
+  auto allocate_host = [&](size_t size) -> bool {
+    host_size = size;
+    if (size <= sizeof(inline_host)) {
+      host_data = inline_host;
+      return true;
+    }
+    heap_host.reset(new (std::nothrow) unsigned char[size]);
+    host_data = heap_host.get();
+    return host_data != nullptr;
+  };
   if ((direction == LUPINE_COPY_DIRECTION_HTOD && !peer &&
        rpc_read(conn, &is_server_authoritative,
                 sizeof(is_server_authoritative)) < 0) ||
@@ -3506,15 +3543,19 @@ static int lupine_handle_memcpy3d(conn_t *conn, bool async, bool peer,
     return -1;
   }
   if (direction == LUPINE_COPY_DIRECTION_HTOD && peer) {
-    host.resize(lupine_pack_host_source(copy));
-    copy.srcHost = host.data();
-    if (rpc_read(conn, host.data(), host.size()) < 0) {
+    if (!allocate_host(lupine_pack_host_source(copy))) {
+      return -1;
+    }
+    copy.srcHost = host_data;
+    if (host_size != 0 && rpc_read(conn, host_data, host_size) < 0) {
       return -1;
     }
   }
   if (direction == LUPINE_COPY_DIRECTION_DTOH) {
-    host.resize(lupine_pack_host_destination(copy));
-    copy.dstHost = host.data();
+    if (!allocate_host(lupine_pack_host_destination(copy))) {
+      return -1;
+    }
+    copy.dstHost = host_data;
   }
   if (async && rpc_read(conn, &stream, sizeof(stream)) < 0) {
     return -1;
@@ -3556,7 +3597,7 @@ static int lupine_handle_memcpy3d(conn_t *conn, bool async, bool peer,
        rpc_write(conn, &delivered, sizeof(delivered)) < 0) ||
       rpc_write(conn, &result, sizeof(result)) < 0 ||
       (direction == LUPINE_COPY_DIRECTION_DTOH && result == CUDA_SUCCESS &&
-       rpc_write(conn, host.data(), host.size()) < 0) ||
+       rpc_write(conn, host_data, host_size) < 0) ||
       rpc_write_end(conn) < 0) {
     return -1;
   }
