@@ -35,6 +35,17 @@ bool overlaps(const deviceptr_allocations &allocations,
          second->first - first->first < first->second.size;
 }
 
+deviceptr_allocations::iterator erase_entry(deviceptr_allocation_cache &cache,
+                                            deviceptr_allocations::iterator it) {
+  auto &allocations = cache.allocations;
+  auto previous = predecessor(allocations, it);
+  auto after = std::next(it);
+  cache.overlapping_neighbors -= overlaps(allocations, previous, it);
+  cache.overlapping_neighbors -= overlaps(allocations, it, after);
+  cache.overlapping_neighbors += overlaps(allocations, previous, after);
+  return allocations.erase(it);
+}
+
 struct current_context_device_cache_entry {
   uint64_t epoch = 0;
   CUcontext context = nullptr;
@@ -92,12 +103,7 @@ void lupine_deviceptr_allocation_cache_insert(CUdeviceptr base, size_t size,
   auto &allocations = cache.allocations;
   auto next = allocations.lower_bound(base);
   if (next != allocations.end() && next->first == base) {
-    auto previous = predecessor(allocations, next);
-    auto after = std::next(next);
-    cache.overlapping_neighbors -= overlaps(allocations, previous, next);
-    cache.overlapping_neighbors -= overlaps(allocations, next, after);
-    cache.overlapping_neighbors += overlaps(allocations, previous, after);
-    next = allocations.erase(next);
+    next = erase_entry(cache, next);
   }
   auto previous = predecessor(allocations, next);
   auto inserted = allocations.emplace_hint(
@@ -109,17 +115,10 @@ void lupine_deviceptr_allocation_cache_insert(CUdeviceptr base, size_t size,
 
 void lupine_deviceptr_allocation_cache_erase(CUdeviceptr base) {
   auto &cache = allocation_cache();
-  auto &allocations = cache.allocations;
-  auto entry = allocations.find(base);
-  if (entry == allocations.end()) {
-    return;
+  auto entry = cache.allocations.find(base);
+  if (entry != cache.allocations.end()) {
+    erase_entry(cache, entry);
   }
-  auto previous = predecessor(allocations, entry);
-  auto next = std::next(entry);
-  cache.overlapping_neighbors -= overlaps(allocations, previous, entry);
-  cache.overlapping_neighbors -= overlaps(allocations, entry, next);
-  cache.overlapping_neighbors += overlaps(allocations, previous, next);
-  allocations.erase(entry);
 }
 
 const lupine_deviceptr_allocation_record *

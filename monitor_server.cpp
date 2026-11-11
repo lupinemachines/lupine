@@ -90,6 +90,42 @@ bool lock_shared_mutex(pthread_mutex_t *mutex) {
   return status == 0;
 }
 
+class shared_mutex_lock {
+public:
+  explicit shared_mutex_lock(pthread_mutex_t *mutex)
+      : mutex_(mutex != nullptr && lock_shared_mutex(mutex) ? mutex : nullptr) {
+  }
+  shared_mutex_lock(shared_mutex_lock &&other) noexcept
+      : mutex_(other.mutex_) {
+    other.mutex_ = nullptr;
+  }
+  ~shared_mutex_lock() {
+    if (mutex_ != nullptr) {
+      pthread_mutex_unlock(mutex_);
+    }
+  }
+  explicit operator bool() const { return mutex_ != nullptr; }
+
+private:
+  pthread_mutex_t *mutex_;
+};
+
+shared_mutex_lock registry_lock() {
+  return shared_mutex_lock(registry ? &registry->registry_mutex : nullptr);
+}
+
+monitor_slot *active_slot(int slot_index) {
+  if (slot_index < 0 || slot_index >= static_cast<int>(kMaxServerChildren)) {
+    return nullptr;
+  }
+  monitor_slot *slot = &registry->slots[slot_index];
+  return slot->state == kSlotActive ? slot : nullptr;
+}
+
+const char *or_unknown(const char *value) {
+  return value[0] == '\0' ? "unknown" : value;
+}
+
 uint64_t current_time_us() {
   auto now = std::chrono::system_clock::now().time_since_epoch();
   return static_cast<uint64_t>(
@@ -126,43 +162,32 @@ std::string peer_address(lupine_socket_t socket) {
 
 bool store_metadata(int slot_index, const lupine_client_metadata &metadata,
                     const char *client_address, const char *workload_id) {
-  if (registry == nullptr || slot_index < 0 ||
-      slot_index >= static_cast<int>(kMaxServerChildren)) {
+  auto lock = registry_lock();
+  monitor_slot *slot = lock ? active_slot(slot_index) : nullptr;
+  if (slot == nullptr) {
     return false;
   }
-  if (!lock_shared_mutex(&registry->registry_mutex)) {
-    return false;
+  slot->metadata = metadata;
+  memcpy(slot->workload_id, workload_id, sizeof(slot->workload_id));
+  memset(slot->client_address, 0, sizeof(slot->client_address));
+  if (client_address != nullptr) {
+    size_t length = strnlen(client_address, sizeof(slot->client_address) - 1);
+    memcpy(slot->client_address, client_address, length);
   }
-  monitor_slot *slot = &registry->slots[slot_index];
-  bool stored = slot->state == kSlotActive;
-  if (stored) {
-    slot->metadata = metadata;
-    memcpy(slot->workload_id, workload_id, sizeof(slot->workload_id));
-    memset(slot->client_address, 0, sizeof(slot->client_address));
-    if (client_address != nullptr) {
-      size_t length = strnlen(client_address, sizeof(slot->client_address) - 1);
-      memcpy(slot->client_address, client_address, length);
-    }
-  }
-  pthread_mutex_unlock(&registry->registry_mutex);
-  return stored;
+  return true;
 }
 
 bool store_host_pid(int slot_index, int32_t host_pid) {
-  if (registry == nullptr || slot_index < 0 || host_pid <= 0 ||
-      slot_index >= static_cast<int>(kMaxServerChildren)) {
+  if (host_pid <= 0) {
     return false;
   }
-  if (!lock_shared_mutex(&registry->registry_mutex)) {
+  auto lock = registry_lock();
+  monitor_slot *slot = lock ? active_slot(slot_index) : nullptr;
+  if (slot == nullptr) {
     return false;
   }
-  monitor_slot *slot = &registry->slots[slot_index];
-  bool stored = slot->state == kSlotActive;
-  if (stored) {
-    slot->host_pid = host_pid;
-  }
-  pthread_mutex_unlock(&registry->registry_mutex);
-  return stored;
+  slot->host_pid = host_pid;
+  return true;
 }
 
 struct registry_snapshot {
@@ -174,18 +199,15 @@ struct registry_snapshot {
 
 registry_snapshot snapshot_registry() {
   registry_snapshot result;
-  if (registry == nullptr) {
-    return result;
-  }
-  if (!lock_shared_mutex(&registry->registry_mutex)) {
+  auto lock = registry_lock();
+  if (!lock) {
     return result;
   }
   result.dropped_connections = registry->dropped_connections;
   result.host_pid_discovery_failures = registry->host_pid_discovery_failures;
   result.host_pid_discovery_ambiguities =
       registry->host_pid_discovery_ambiguities;
-  for (size_t index = 0; index < kMaxServerChildren; ++index) {
-    const monitor_slot &slot = registry->slots[index];
+  for (const monitor_slot &slot : registry->slots) {
     if (slot.state != kSlotActive || slot.server_pid <= 0) {
       continue;
     }
@@ -201,7 +223,6 @@ registry_snapshot snapshot_registry() {
     snapshot.client_address[sizeof(snapshot.client_address) - 1] = '\0';
     result.children.push_back(snapshot);
   }
-  pthread_mutex_unlock(&registry->registry_mutex);
   return result;
 }
 
@@ -289,43 +310,25 @@ std::vector<nvmlProcessInfo_t> running_processes(nvmlDevice_t device,
   return {};
 }
 
-bool lock_host_pid_discovery() {
-  if (registry == nullptr) {
-    return false;
-  }
-  return lock_shared_mutex(&registry->host_pid_discovery_mutex);
-}
-
 bool slot_has_host_pid(int slot_index) {
-  if (registry == nullptr || slot_index < 0 ||
-      slot_index >= static_cast<int>(kMaxServerChildren) ||
-      !lock_shared_mutex(&registry->registry_mutex)) {
-    return false;
-  }
-  const monitor_slot &slot = registry->slots[slot_index];
-  bool found = slot.state == kSlotActive && slot.host_pid > 0;
-  pthread_mutex_unlock(&registry->registry_mutex);
-  return found;
+  auto lock = registry_lock();
+  monitor_slot *slot = lock ? active_slot(slot_index) : nullptr;
+  return slot != nullptr && slot->host_pid > 0;
 }
 
 bool host_pid_owned_by_other_slot(int32_t host_pid, int slot_index) {
-  if (registry == nullptr || host_pid <= 0 ||
-      !lock_shared_mutex(&registry->registry_mutex)) {
+  auto lock = host_pid > 0 ? registry_lock() : shared_mutex_lock(nullptr);
+  if (!lock) {
     return false;
   }
-  bool found = false;
   for (size_t index = 0; index < kMaxServerChildren; ++index) {
     const monitor_slot &slot = registry->slots[index];
-    if (static_cast<int>(index) == slot_index || slot.state != kSlotActive) {
-      continue;
-    }
-    if (slot.host_pid == host_pid) {
-      found = true;
-      break;
+    if (static_cast<int>(index) != slot_index && slot.state == kSlotActive &&
+        slot.host_pid == host_pid) {
+      return true;
     }
   }
-  pthread_mutex_unlock(&registry->registry_mutex);
-  return found;
+  return false;
 }
 
 struct host_pid_probe {
@@ -333,7 +336,7 @@ struct host_pid_probe {
   std::optional<nvml_session> session;
   nvmlDevice_t device = nullptr;
   std::set<unsigned int> before_pids;
-  bool lock_held = false;
+  std::optional<shared_mutex_lock> lock;
 };
 
 thread_local std::unique_ptr<host_pid_probe> active_host_pid_probe;
@@ -346,9 +349,8 @@ bool in_initial_pid_namespace() {
 }
 
 void note_discovery_failure() {
-  if (registry != nullptr && lock_shared_mutex(&registry->registry_mutex)) {
+  if (auto lock = registry_lock()) {
     ++registry->host_pid_discovery_failures;
-    pthread_mutex_unlock(&registry->registry_mutex);
   }
 }
 
@@ -388,20 +390,19 @@ void begin_context_probe(int cuda_device) {
     note_discovery_failure();
     return;
   }
-  if (!lock_host_pid_discovery()) {
+  probe->lock.emplace(&registry->host_pid_discovery_mutex);
+  if (!*probe->lock) {
     note_discovery_failure();
     return;
   }
-  probe->lock_held = true;
   if (slot_has_host_pid(child_slot)) {
-    pthread_mutex_unlock(&registry->host_pid_discovery_mutex);
     return;
   }
   bool query_ok = false;
   std::vector<nvmlProcessInfo_t> before =
       running_processes(probe->device, &query_ok);
   if (!query_ok) {
-    pthread_mutex_unlock(&registry->host_pid_discovery_mutex);
+    probe->lock.reset();
     note_discovery_failure();
     return;
   }
@@ -450,14 +451,12 @@ void end_context_probe(bool context_created) {
       usleep(20 * 1000);
     }
   }
-  if (probe->lock_held && registry != nullptr) {
-    pthread_mutex_unlock(&registry->host_pid_discovery_mutex);
-  }
+  probe->lock.reset();
   if (context_created && !resolved) {
-    if (ambiguous && registry != nullptr &&
-        lock_shared_mutex(&registry->registry_mutex)) {
-      ++registry->host_pid_discovery_ambiguities;
-      pthread_mutex_unlock(&registry->registry_mutex);
+    if (ambiguous) {
+      if (auto lock = registry_lock()) {
+        ++registry->host_pid_discovery_ambiguities;
+      }
     }
     note_discovery_failure();
   }
@@ -577,9 +576,7 @@ std::string process_key_for(const child_snapshot &child) {
   const auto &metadata = child.metadata;
   std::ostringstream out;
   if (metadata.client_pid > 0) {
-    out << child.client_address << ':'
-        << (metadata.client_hostname[0] == '\0' ? "unknown"
-                                                : metadata.client_hostname);
+    out << child.client_address << ':' << or_unknown(metadata.client_hostname);
     if (metadata.client_pid_namespace_inode > 0) {
       out << ':' << metadata.client_pid_namespace_inode;
     }
@@ -605,19 +602,12 @@ std::string client_id_for(const child_snapshot &child) {
 
 client_key client_key_for(const child_snapshot &child,
                           const device_snapshot &device) {
-  client_key key;
-  key.client_id = client_id_for(child);
-  key.client_address =
-      child.client_address[0] == '\0' ? "unknown" : child.client_address;
-  key.client_hostname = child.metadata.client_hostname[0] == '\0'
-                            ? "unknown"
-                            : child.metadata.client_hostname;
-  key.client_process_name = child.metadata.client_process_name[0] == '\0'
-                                ? "unknown"
-                                : child.metadata.client_process_name;
-  key.device_index = device.index;
-  key.device_uuid = device.uuid;
-  return key;
+  return {client_id_for(child),
+          or_unknown(child.client_address),
+          or_unknown(child.metadata.client_hostname),
+          or_unknown(child.metadata.client_process_name),
+          device.index,
+          device.uuid};
 }
 
 std::string client_labels(const client_key &key) {
@@ -699,7 +689,8 @@ void lupine_monitoring_register_child() {
       registry->version != kRegistryVersion) {
     return;
   }
-  if (!lock_shared_mutex(&registry->registry_mutex)) {
+  auto lock = registry_lock();
+  if (!lock) {
     return;
   }
   for (size_t index = 0; index < kMaxServerChildren; ++index) {
@@ -714,28 +705,22 @@ void lupine_monitoring_register_child() {
     }
     slot->state = kSlotActive;
     child_slot = static_cast<int>(index);
-    pthread_mutex_unlock(&registry->registry_mutex);
     return;
   }
   ++registry->dropped_connections;
-  pthread_mutex_unlock(&registry->registry_mutex);
 }
 
 void lupine_monitoring_unregister_pid(int64_t server_pid) {
-  if (registry == nullptr || server_pid <= 0) {
+  auto lock = server_pid > 0 ? registry_lock() : shared_mutex_lock(nullptr);
+  if (!lock) {
     return;
   }
-  if (!lock_shared_mutex(&registry->registry_mutex)) {
-    return;
-  }
-  for (size_t index = 0; index < kMaxServerChildren; ++index) {
-    monitor_slot *slot = &registry->slots[index];
-    if (slot->state == kSlotActive && slot->server_pid == server_pid) {
-      memset(slot, 0, sizeof(*slot));
+  for (monitor_slot &slot : registry->slots) {
+    if (slot.state == kSlotActive && slot.server_pid == server_pid) {
+      memset(&slot, 0, sizeof(slot));
       break;
     }
   }
-  pthread_mutex_unlock(&registry->registry_mutex);
 }
 
 int handle_lupine_client_metadata(conn_t *conn) {

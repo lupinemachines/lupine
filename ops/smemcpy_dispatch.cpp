@@ -41,37 +41,29 @@ bool contiguous_destination(const lupine_smemcpy_params &params,
 }
 
 template <size_t WordBytes>
-bool can_vectorize_pitched(const lupine_smemcpy_params &params,
-                           CUdeviceptr first_destination) {
+bool try_pitched_vector_launch(lupine_smemcpy_launch_descriptor *launch,
+                               CUdeviceptr first_destination) {
   constexpr size_t mask = WordBytes - 1;
-  return (params.width & mask) == 0 && (params.destination & mask) == 0 &&
-         (params.destination_row_stride & mask) == 0 &&
-         (params.destination_slice_stride & mask) == 0 &&
-         ((params.source ^ first_destination) & mask) == 0;
-}
-
-template <size_t WordBytes>
-void set_pitched_vector_launch(lupine_smemcpy_launch_descriptor *launch) {
+  const auto &params = launch->params;
+  if ((params.width & mask) != 0 || (params.destination & mask) != 0 ||
+      (params.destination_row_stride & mask) != 0 ||
+      (params.destination_slice_stride & mask) != 0 ||
+      ((params.source ^ first_destination) & mask) != 0) {
+    return false;
+  }
   launch->kernel = LUPINE_SMEMCPY_KERNEL_PITCHED;
   launch->word_bytes = WordBytes;
   launch->blocks =
-      static_cast<unsigned int>(blocks_for(launch->params.bytes, WordBytes));
+      static_cast<unsigned int>(blocks_for(params.bytes, WordBytes));
+  return true;
 }
 
 bool select_pitched_vector_launch(lupine_smemcpy_launch_descriptor *launch,
                                   CUdeviceptr first_destination) {
-  if (can_vectorize_pitched<16>(launch->params, first_destination)) {
-    set_pitched_vector_launch<16>(launch);
-  } else if (can_vectorize_pitched<8>(launch->params, first_destination)) {
-    set_pitched_vector_launch<8>(launch);
-  } else if (can_vectorize_pitched<4>(launch->params, first_destination)) {
-    set_pitched_vector_launch<4>(launch);
-  } else if (can_vectorize_pitched<2>(launch->params, first_destination)) {
-    set_pitched_vector_launch<2>(launch);
-  } else {
-    return false;
-  }
-  return true;
+  return try_pitched_vector_launch<16>(launch, first_destination) ||
+         try_pitched_vector_launch<8>(launch, first_destination) ||
+         try_pitched_vector_launch<4>(launch, first_destination) ||
+         try_pitched_vector_launch<2>(launch, first_destination);
 }
 
 void set_narrow_launch(lupine_smemcpy_launch_descriptor *launch, bool is_3d,
@@ -242,30 +234,14 @@ lupine_smemcpy_prepare_descriptor(const lupine_smemcpy_params *params,
     return CUDA_SUCCESS;
   }
 
-  if (first_slice == last_slice) {
+  bool is_3d = first_slice != last_slice;
+  if (!is_3d) {
     size_t first_row = first_row_index - first_slice * params->rows;
-    size_t first_x = params->logical_offset - first_row_index * params->width;
-    launch->params.destination =
-        params->destination + first_slice * params->destination_slice_stride +
+    launch->params.destination +=
+        first_slice * params->destination_slice_stride +
         first_row * params->destination_row_stride;
-    launch->params.logical_offset = first_x;
-    if (params->width <= 3) {
-      if (atomic_threads != 0) {
-        set_atomic_launch(launch, params->width,
-                          static_cast<unsigned int>(first_destination & 3),
-                          atomic_threads);
-      } else {
-        set_narrow_launch(launch, false, params->width,
-                          latency_hiding_narrow ? kNarrowItemsPerThread : 1);
-      }
-    } else {
-      launch->kernel = LUPINE_SMEMCPY_KERNEL_2D;
-      launch->blocks = static_cast<unsigned int>(blocks_for(params->bytes, 1));
-    }
-    return CUDA_SUCCESS;
-  }
-
-  if (first_slice != 0) {
+    launch->params.logical_offset -= first_row_index * params->width;
+  } else if (first_slice != 0) {
     launch->params.destination +=
         first_slice * params->destination_slice_stride;
     launch->params.logical_offset -= first_slice * slice_bytes;
@@ -276,11 +252,12 @@ lupine_smemcpy_prepare_descriptor(const lupine_smemcpy_params *params,
                         static_cast<unsigned int>(first_destination & 3),
                         atomic_threads);
     } else {
-      set_narrow_launch(launch, true, params->width,
+      set_narrow_launch(launch, is_3d, params->width,
                         latency_hiding_narrow ? kNarrowItemsPerThread : 1);
     }
   } else {
-    launch->kernel = LUPINE_SMEMCPY_KERNEL_3D;
+    launch->kernel =
+        is_3d ? LUPINE_SMEMCPY_KERNEL_3D : LUPINE_SMEMCPY_KERNEL_2D;
     launch->blocks = static_cast<unsigned int>(blocks_for(params->bytes, 1));
   }
   return CUDA_SUCCESS;

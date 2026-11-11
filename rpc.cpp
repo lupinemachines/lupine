@@ -921,11 +921,6 @@ int rpc_write_start_request(conn_t *conn, const int op) {
   if (request_nested_in_response) {
     rpc_save_outer_response(conn);
   } else if (pthread_mutex_lock(&conn->write_mutex) != 0) {
-#ifdef VERBOSE
-    std::cerr << "rpc_write_start failed due to rpc_open() < 0 || "
-                 "conns[index].write_mutex lock"
-              << std::endl;
-#endif
     pthread_mutex_unlock(&conn->call_mutex);
     return -1;
   } else {
@@ -972,11 +967,6 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
     return -1;
   }
   if (pthread_mutex_lock(&conn->write_mutex) != 0) {
-#ifdef VERBOSE
-    std::cerr << "rpc_write_start failed due to rpc_open() < 0 || "
-                 "conns[index].write_mutex lock"
-              << std::endl;
-#endif
     return -1;
   }
   rpc_tls_io.write_conn = conn;
