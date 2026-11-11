@@ -154,11 +154,10 @@ generated (connections that cannot reserve the identity arena fail at connect).
 Client-dirty mapped pages are flushed centrally before each CUDA RPC request.
 `@routingfallback <kind> <param>` can be paired with stream routing for APIs
 that route by stream when a stream is supplied and by another object otherwise.
-`@synchronize [DEFERRED_DTOH] [STDOUT]` refreshes mapped host allocations after
-a successful call. `DEFERRED_DTOH` returns the deferred device-to-host copies a
-successful call completes, scoped by the routing key (current context, context,
-stream or event), and `STDOUT` returns the device printf output captured around
-the call. Both sides are generated: the server writes these fields ahead of the
+`@synchronize [STDOUT]` refreshes mapped host allocations after a successful
+call. Its answer carries the push watermark, so the client applies the pushed
+device-to-host copies the call waited for before it returns, and `STDOUT`
+returns the device printf output captured around the call. Both sides are generated: the server writes these fields ahead of the
 CUDA result and the client reads them in the same order.
 `@synchronize DEVICEPTR <param>` marks an address the call writes from the
 device, as a copy or memset does. It does not synchronize: when the address

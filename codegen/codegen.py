@@ -300,11 +300,11 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineFunctionAttributeSnapshot",
     "lupineFunctionParamLayoutSnapshot",
     "lupineManagedHostFlush",
-    "lupineMemcpyDtoHAsyncPinned",
     "lupineBulkChunk",
     "lupineMemcpyHtoDBulk",
     "lupineBulkRead",
     "lupineMemcpyDtoHBulk",
+    "lupineDtohPush",
     "lupineStreamPoolInit",
     "lupineEventCreateBatch",
     "lupineLibraryLoadBatch",
@@ -640,15 +640,12 @@ def parse_annotation(
                 metadata.device_writes.append(annotation_param(params, parts[2]))
                 continue
             options = set(parts[1:])
-            unknown = options - {"DEFERRED_DTOH", "STDOUT"}
+            unknown = options - {"STDOUT"}
             if unknown:
                 raise NotImplementedError(
                     "Unknown @synchronize option(s): " + ", ".join(sorted(unknown))
                 )
-            metadata.synchronize = SynchronizeAnnotation(
-                deferred_dtoh="DEFERRED_DTOH" in options,
-                stdout="STDOUT" in options,
-            )
+            metadata.synchronize = SynchronizeAnnotation(stdout="STDOUT" in options)
             continue
         if line.strip().startswith("@guard"):
             guard = line.strip().removeprefix("@guard").strip()
@@ -1481,7 +1478,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             'extern "C" void lupine_disable_local_occupancy();\n'
             'extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel, lupine_route route);\n'
             'extern "C" CUresult lupine_resolve_library_for_route(CUlibrary *library, lupine_route route);\n'
-            'extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);\n'
+            'extern "C" int lupine_read_dtoh_watermark(conn_t *conn);\n'
             'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
             'extern "C" CUresult lupine_sync_mapped_device_to_host();\n\n'
         )
@@ -1621,8 +1618,8 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 f.write("        rpc_write_end(conn) < 0)\n")
             else:
                 f.write("        rpc_wait_for_response(conn) < 0 ||\n")
-                if metadata.synchronize and metadata.synchronize.deferred_dtoh:
-                    f.write("        lupine_read_deferred_dtoh_copies(conn) < 0 ||\n")
+                if metadata.synchronize:
+                    f.write("        lupine_read_dtoh_watermark(conn) < 0 ||\n")
                 if metadata.synchronize and metadata.synchronize.stdout:
                     f.write("        lupine_forward_remote_stdout(conn) < 0 ||\n")
                 for operation in operations:

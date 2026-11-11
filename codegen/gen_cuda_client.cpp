@@ -93,7 +93,7 @@ extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel,
                                                     lupine_route route);
 extern "C" CUresult lupine_resolve_library_for_route(CUlibrary *library,
                                                      lupine_route route);
-extern "C" int lupine_read_deferred_dtoh_copies(conn_t *conn);
+extern "C" int lupine_read_dtoh_watermark(conn_t *conn);
 extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
 
@@ -740,8 +740,7 @@ CUresult cuCtxSynchronize() {
   conn_t *conn = lupine_route_remote_conn(route);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxSynchronize) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      lupine_read_deferred_dtoh_copies(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       lupine_forward_remote_stdout(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -766,8 +765,7 @@ CUresult cuCtxSynchronize_v2(CUcontext ctx) {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxSynchronize_v2) < 0 ||
       rpc_write(conn, &ctx, sizeof(CUcontext)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      lupine_read_deferred_dtoh_copies(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       lupine_forward_remote_stdout(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -2084,7 +2082,7 @@ CUresult cuMemcpyDtoD_v2(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &srcDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ByteCount, sizeof(size_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2230,7 +2228,7 @@ CUresult cuMemsetD8_v2(CUdeviceptr dstDevice, unsigned char uc, size_t N) {
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &uc, sizeof(unsigned char)) < 0 ||
       rpc_write(conn, &N, sizeof(size_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2256,7 +2254,7 @@ CUresult cuMemsetD16_v2(CUdeviceptr dstDevice, unsigned short us, size_t N) {
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &us, sizeof(unsigned short)) < 0 ||
       rpc_write(conn, &N, sizeof(size_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2282,7 +2280,7 @@ CUresult cuMemsetD32_v2(CUdeviceptr dstDevice, unsigned int ui, size_t N) {
       rpc_write(conn, &dstDevice, sizeof(CUdeviceptr)) < 0 ||
       rpc_write(conn, &ui, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &N, sizeof(size_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2312,7 +2310,7 @@ CUresult cuMemsetD2D8_v2(CUdeviceptr dstDevice, size_t dstPitch,
       rpc_write(conn, &uc, sizeof(unsigned char)) < 0 ||
       rpc_write(conn, &Width, sizeof(size_t)) < 0 ||
       rpc_write(conn, &Height, sizeof(size_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2342,7 +2340,7 @@ CUresult cuMemsetD2D16_v2(CUdeviceptr dstDevice, size_t dstPitch,
       rpc_write(conn, &us, sizeof(unsigned short)) < 0 ||
       rpc_write(conn, &Width, sizeof(size_t)) < 0 ||
       rpc_write(conn, &Height, sizeof(size_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -2372,7 +2370,7 @@ CUresult cuMemsetD2D32_v2(CUdeviceptr dstDevice, size_t dstPitch,
       rpc_write(conn, &ui, sizeof(unsigned int)) < 0 ||
       rpc_write(conn, &Width, sizeof(size_t)) < 0 ||
       rpc_write(conn, &Height, sizeof(size_t)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -4076,8 +4074,7 @@ CUresult cuStreamQuery(CUstream hStream) {
       lupine_rpc_start_on_stream(conn, RPC_cuStreamQuery, hStream,
                                  RPC_REQUEST_SOFT) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      lupine_read_deferred_dtoh_copies(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -4101,8 +4098,7 @@ CUresult cuStreamSynchronize(CUstream hStream) {
   if (lupine_prepare_rpc(conn) < 0 ||
       lupine_rpc_start_on_stream(conn, RPC_cuStreamSynchronize, hStream) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      lupine_read_deferred_dtoh_copies(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       lupine_forward_remote_stdout(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -4275,8 +4271,7 @@ CUresult cuEventSynchronize(CUevent hEvent) {
       rpc_write_start_request_on(conn, RPC_cuEventSynchronize,
                                  reinterpret_cast<uintptr_t>(hEvent)) < 0 ||
       rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      lupine_read_deferred_dtoh_copies(conn) < 0 ||
+      rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
       lupine_forward_remote_stdout(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -5165,14 +5160,13 @@ CUresult cuGraphMemcpyNodeSetParams(CUgraphNode hNode,
         LUPINE_REAL_CUDA_SYMBOL("cuGraphMemcpyNodeSetParams"), hNode,
         nodeParams);
   conn_t *conn = lupine_route_remote_conn(route);
-  uint8_t nodeParams_present = nodeParams != nullptr;
+  if (nodeParams == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuGraphMemcpyNodeSetParams,
                                  RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_write(conn, &nodeParams_present, sizeof(uint8_t)) < 0 ||
-      (nodeParams_present &&
-       rpc_write(conn, nodeParams, sizeof(const CUDA_MEMCPY3D)) < 0) ||
+      rpc_write(conn, nodeParams, sizeof(const CUDA_MEMCPY3D)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
@@ -7021,15 +7015,14 @@ CUresult cuGraphExecMemcpyNodeSetParams(CUgraphExec hGraphExec,
         LUPINE_REAL_CUDA_SYMBOL("cuGraphExecMemcpyNodeSetParams"), hGraphExec,
         hNode, copyParams, ctx);
   conn_t *conn = lupine_route_remote_conn(route);
-  uint8_t copyParams_present = copyParams != nullptr;
+  if (copyParams == nullptr)
+    return CUDA_ERROR_INVALID_VALUE;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuGraphExecMemcpyNodeSetParams,
                                  reinterpret_cast<uintptr_t>(hGraphExec)) < 0 ||
       rpc_write(conn, &hGraphExec, sizeof(CUgraphExec)) < 0 ||
       rpc_write(conn, &hNode, sizeof(CUgraphNode)) < 0 ||
-      rpc_write(conn, &copyParams_present, sizeof(uint8_t)) < 0 ||
-      (copyParams_present &&
-       rpc_write(conn, copyParams, sizeof(const CUDA_MEMCPY3D)) < 0) ||
+      rpc_write(conn, copyParams, sizeof(const CUDA_MEMCPY3D)) < 0 ||
       rpc_write(conn, &ctx, sizeof(CUcontext)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||

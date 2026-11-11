@@ -57,6 +57,8 @@ lupine_client_transport_open(const lupine_client_transport_config &config,
 LUPINE_TRANSPORT_INTERNAL void lupine_client_transport_close();
 LUPINE_TRANSPORT_INTERNAL void
 lupine_client_transport_close_connection(conn_t *conn);
+LUPINE_TRANSPORT_INTERNAL void
+lupine_client_transport_shutdown_bulk(conn_t *conn);
 LUPINE_TRANSPORT_INTERNAL unsigned int lupine_client_transport_size();
 LUPINE_TRANSPORT_INTERNAL conn_t *
 lupine_client_transport_connection(unsigned int index);

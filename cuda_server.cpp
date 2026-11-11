@@ -501,18 +501,6 @@ CUresult lupine_take_async_error(conn_t *conn, CUresult result) {
   return error == CUDA_SUCCESS ? result : static_cast<CUresult>(error);
 }
 
-static bool lupine_is_event_dtoh_marker(const lupine_pending_dtoh_item &item,
-                                        CUevent event) {
-  return item.event != nullptr && item.event == event;
-}
-
-libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
-lupine_pending_dtoh_copies() {
-  static libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams>
-      copies;
-  return copies;
-}
-
 static uint64_t lupine_fnv1a64(const void *data, size_t size) {
   static constexpr uint64_t kOffset = 14695981039346656037ull;
   static constexpr uint64_t kPrime = 1099511628211ull;
@@ -690,6 +678,7 @@ static int lupine_read_graph_dependencies(conn_t *conn,
       rpc_read(conn, deps->data(), count * sizeof(CUgraphNode)) < 0) {
     return -1;
   }
+  lupine_graph_push_dependencies(deps->data(), deps->size());
   return 0;
 }
 
@@ -702,284 +691,6 @@ static void *lupine_alloc_process_host_buffer(size_t bytes) {
     return malloc(bytes);
   }
   return ptr;
-}
-
-// Both handles name the legacy default stream; its queue is keyed by null.
-static CUstream lupine_pending_dtoh_queue(CUstream stream) {
-  return stream == CU_STREAM_LEGACY ? nullptr : stream;
-}
-
-static std::atomic<uint64_t> &lupine_dtoh_sequence() {
-  static std::atomic<uint64_t> sequence{0};
-  return sequence;
-}
-
-uint64_t lupine_next_dtoh_sequence() {
-  return lupine_dtoh_sequence().fetch_add(1, std::memory_order_relaxed);
-}
-
-uint64_t lupine_dtoh_sequence_now() {
-  return lupine_dtoh_sequence().load(std::memory_order_relaxed);
-}
-
-// The legacy default stream waits for blocking streams' earlier work but not
-// for non-blocking streams, whose copies may not have run when it finishes.
-static bool lupine_legacy_stream_waits_for(CUstream stream) {
-  unsigned int flags = 0;
-  return stream == nullptr ||
-         (cuStreamGetFlags(stream, &flags) == CUDA_SUCCESS &&
-          (flags & CU_STREAM_NON_BLOCKING) == 0);
-}
-
-void lupine_queue_pending_dtoh_copies(conn_t *conn, CUstream stream,
-                                      const lupine_pending_dtoh_item *copies,
-                                      size_t count) {
-  if (count == 0) {
-    return;
-  }
-  stream = lupine_pending_dtoh_queue(stream);
-  bool legacy_ordered = lupine_legacy_stream_waits_for(stream);
-  lupine_pending_dtoh_copies().upsert(
-      conn,
-      [stream, copies, count, legacy_ordered](
-          lupine_pending_dtoh_streams &streams, libcuckoo::UpsertContext) {
-        auto &items = streams[stream];
-        items.reserve(items.size() + count);
-        for (size_t i = 0; i < count; ++i) {
-          items.push_back(copies[i]);
-          items.back().legacy_ordered = legacy_ordered;
-        }
-      },
-      lupine_pending_dtoh_streams{});
-}
-
-lupine_pending_dtoh_items lupine_detach_pending_dtoh_copies(conn_t *conn,
-                                                            CUstream stream,
-                                                            bool all_streams,
-                                                            CUcontext context,
-                                                            uint64_t before) {
-  std::vector<lupine_pending_dtoh_item> copies;
-  stream = lupine_pending_dtoh_queue(stream);
-  auto *inherited = lupine_find_stream_resources(stream);
-  lupine_pending_dtoh_copies().erase_fn(
-      conn, [&](lupine_pending_dtoh_streams &streams) {
-        for (auto it = streams.begin(); it != streams.end();) {
-          bool own = all_streams || it->first == stream;
-          if (!own && stream != nullptr && inherited == nullptr) {
-            ++it;
-            continue;
-          }
-          // Take the items this call covers: its own queue's, a blocking
-          // stream's when it is the legacy stream, or ones its graph
-          // inherited. Markers are dropped, copies returned.
-          lupine_pending_dtoh_items kept;
-          for (auto &item : it->second) {
-            bool covered =
-                own || (stream == nullptr && item.legacy_ordered) ||
-                (inherited != nullptr && item.graph_resources == inherited);
-            if (!covered || (context != nullptr && item.context != context) ||
-                item.sequence >= before) {
-              kept.push_back(item);
-            } else if (item.event == nullptr) {
-              copies.push_back(item);
-            }
-          }
-          auto &items = it->second;
-          items.swap(kept);
-          if (items.empty()) {
-            it = streams.erase(it);
-          } else {
-            ++it;
-          }
-        }
-        return streams.empty();
-      });
-  return copies;
-}
-
-static void
-lupine_remove_event_dtoh_markers(lupine_pending_dtoh_streams *streams,
-                                 CUevent event) {
-  for (auto stream_it = streams->begin(); stream_it != streams->end();) {
-    auto &items = stream_it->second;
-    items.erase(std::remove_if(items.begin(), items.end(),
-                               [event](const auto &item) {
-                                 return lupine_is_event_dtoh_marker(item,
-                                                                    event);
-                               }),
-                items.end());
-    if (items.empty()) {
-      stream_it = streams->erase(stream_it);
-    } else {
-      ++stream_it;
-    }
-  }
-}
-
-// Whether a queue holds copies the legacy stream waits for. One holding only
-// markers, or only a non-blocking stream's copies, needs no legacy marker.
-static bool
-lupine_owes_legacy_ordered_copies(const lupine_pending_dtoh_items &items) {
-  for (const auto &item : items) {
-    if (item.event == nullptr && item.legacy_ordered) {
-      return true;
-    }
-  }
-  return false;
-}
-
-void lupine_note_event_record(conn_t *conn, CUevent event, CUstream stream) {
-  CUcontext context = nullptr;
-  (void)cuStreamGetCtx(stream, &context);
-  stream = lupine_pending_dtoh_queue(stream);
-  lupine_pending_dtoh_item marker{event};
-  marker.context = context;
-  lupine_pending_dtoh_streams initial;
-  initial[stream].push_back(marker);
-  lupine_pending_dtoh_copies().upsert(
-      conn,
-      [event, stream, marker](lupine_pending_dtoh_streams &streams,
-                              libcuckoo::UpsertContext) {
-        lupine_remove_event_dtoh_markers(&streams, event);
-        if (stream != nullptr) {
-          streams[stream].push_back(marker);
-          return;
-        }
-
-        // The legacy default stream orders this event after every blocking
-        // stream's prior work. The null queue is its sentinel.
-        streams.try_emplace(nullptr);
-        for (auto &entry : streams) {
-          if (entry.first == nullptr ||
-              (entry.first != CU_STREAM_PER_THREAD &&
-               lupine_owes_legacy_ordered_copies(entry.second))) {
-            entry.second.push_back(marker);
-          }
-        }
-      },
-      std::move(initial));
-}
-
-void lupine_forget_event_dtoh_marker(conn_t *conn, CUevent event) {
-  lupine_pending_dtoh_copies().erase_fn(
-      conn, [event](lupine_pending_dtoh_streams &streams) {
-        lupine_remove_event_dtoh_markers(&streams, event);
-        return streams.empty();
-      });
-}
-
-std::vector<lupine_pending_dtoh_item>
-lupine_detach_event_dtoh_copies(conn_t *conn, CUevent event) {
-  std::vector<lupine_pending_dtoh_item> copies;
-  lupine_pending_dtoh_copies().erase_fn(
-      conn, [&](lupine_pending_dtoh_streams &streams) {
-        for (auto stream_it = streams.begin(); stream_it != streams.end();) {
-          auto &items = stream_it->second;
-          auto marker = std::find_if(
-              items.begin(), items.end(), [event](const auto &item) {
-                return lupine_is_event_dtoh_marker(item, event);
-              });
-          if (marker == items.end()) {
-            ++stream_it;
-            continue;
-          }
-          const CUcontext context = marker->context;
-          auto through_marker = std::next(marker);
-          auto remaining = std::remove_if(items.begin(), through_marker,
-                                          [&](const auto &item) {
-                                            if (item.context != context) {
-                                              return false;
-                                            }
-                                            if (item.event == nullptr) {
-                                              copies.push_back(item);
-                                            }
-                                            return true;
-                                          });
-          items.erase(remaining, through_marker);
-          if (items.empty()) {
-            stream_it = streams.erase(stream_it);
-          } else {
-            ++stream_it;
-          }
-        }
-        return streams.empty();
-      });
-  return copies;
-}
-
-static bool lupine_event_owes_dtoh_copies(conn_t *conn, CUevent event) {
-  bool owed = false;
-  lupine_pending_dtoh_copies().find_fn(
-      conn, [&](const lupine_pending_dtoh_streams &streams) {
-        for (const auto &entry : streams) {
-          const auto &items = entry.second;
-          auto marker = std::find_if(
-              items.begin(), items.end(), [event](const auto &item) {
-                return lupine_is_event_dtoh_marker(item, event);
-              });
-          if (marker == items.end()) {
-            continue;
-          }
-          owed =
-              owed || std::any_of(items.begin(), marker, [&](const auto &item) {
-                return item.event == nullptr && item.context == marker->context;
-              });
-        }
-      });
-  return owed;
-}
-
-int lupine_write_pending_dtoh_copies(
-    conn_t *conn, const std::vector<lupine_pending_dtoh_item> &pending,
-    bool include_count) {
-  if (include_count) {
-    auto *copy_count = static_cast<uint32_t *>(
-        rpc_write_buffer(conn, sizeof(uint32_t), alignof(uint32_t)));
-    if (copy_count == nullptr) {
-      return -1;
-    }
-    *copy_count = static_cast<uint32_t>(pending.size());
-  }
-  for (const auto &copy : pending) {
-    if (lupine_write_dtoh_rows(conn, copy.client, copy.server_src) < 0) {
-      return -1;
-    }
-  }
-  return 0;
-}
-
-int lupine_write_dtoh_rows(conn_t *conn, const lupine_host_rows &client,
-                           const void *server_src) {
-  return rpc_write(conn, &client, sizeof(client)) < 0 ||
-                 rpc_write(conn, server_src, client.bytes()) < 0
-             ? -1
-             : 0;
-}
-
-void lupine_cleanup_pending_dtoh_copies(
-    std::vector<lupine_pending_dtoh_item> *pending) {
-  if (pending == nullptr) {
-    return;
-  }
-  for (auto &copy : *pending) {
-    lupine_release_graph_resources(copy.graph_resources);
-    if (copy.server_src == nullptr) {
-      continue;
-    }
-    lupine_forget_undelivered_dtoh(copy.server_src);
-    switch (copy.storage) {
-    case lupine_dtoh_storage::borrowed:
-      break;
-    case lupine_dtoh_storage::heap:
-      free(copy.server_src);
-      break;
-    case lupine_dtoh_storage::pinned:
-      cuMemFreeHost(copy.server_src);
-      break;
-    }
-    copy.server_src = nullptr;
-  }
-  pending->clear();
 }
 
 #if CUDA_VERSION >= 12040
@@ -2115,42 +1826,28 @@ int handle_cuLaunchCooperativeKernel(conn_t *conn) {
   return handle_cuLaunchKernelCommon(conn, true);
 }
 
+// A host callback carries the deliveries numbered when it started: the copies
+// ordered before it, on any stream, have pushed their bytes by then, and the
+// client applies them before running the callback.
 void CUDA_CB lupine_graph_host_callback(void *userData) {
   auto *callback = static_cast<lupine_host_callback_data *>(userData);
   if (callback == nullptr || callback->conn == nullptr) {
     return;
   }
 
-  std::vector<lupine_graph_host_copy> copies =
-      lupine_graph_dtoh_copy_snapshot(callback->resources);
   conn_t *conn = callback->conn;
-  auto pending =
-      callback->stream.has_value()
-          ? lupine_detach_pending_dtoh_copies(conn, *callback->stream, false,
-                                              nullptr, callback->dtoh_before)
-          : lupine_pending_dtoh_items{};
-  int transfer_count = static_cast<int>(copies.size() + pending.size());
-  bool failed =
-      rpc_write_start_request(conn, LUPINE_SIDE_EFFECT_HOST_FUNCTION) < 0 ||
-      rpc_copy_alloc(conn, sizeof(uint32_t)) < 0 ||
-      rpc_write(conn, &transfer_count, sizeof(transfer_count)) < 0;
-  for (const auto &copy : copies) {
-    if (failed) {
-      break;
-    }
-    failed = lupine_write_dtoh_rows(conn, copy.client, copy.server_src) < 0;
-  }
+  uint64_t delivered = lupine_dtoh_watermark(conn);
   CUhostFn fn = callback->fn;
   void *client_user_data = callback->userData;
   void *response = nullptr;
-  if (!failed && lupine_write_pending_dtoh_copies(conn, pending, false) >= 0 &&
+  if (rpc_write_start_request(conn, LUPINE_SIDE_EFFECT_HOST_FUNCTION) >= 0 &&
+      rpc_write(conn, &delivered, sizeof(delivered)) >= 0 &&
       rpc_write(conn, &fn, sizeof(fn)) >= 0 &&
       rpc_write(conn, &client_user_data, sizeof(client_user_data)) >= 0 &&
       rpc_wait_for_response(conn) >= 0) {
     rpc_read(conn, &response, sizeof(response));
     rpc_read_end(conn);
   }
-  lupine_cleanup_pending_dtoh_copies(&pending);
   if (callback->one_shot) {
     delete callback;
   }
@@ -2166,14 +1863,12 @@ void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
   }
 
   conn_t *conn = callback->conn;
+  uint64_t delivered = lupine_dtoh_watermark(conn);
   void *fn = reinterpret_cast<void *>(callback->callback);
   void *client_user_data = callback->userData;
   void *response = nullptr;
-  auto pending = lupine_detach_pending_dtoh_copies(conn, stream, false, nullptr,
-                                                   callback->dtoh_before);
   if (rpc_write_start_request(conn, LUPINE_SIDE_EFFECT_STREAM_CALLBACK) >= 0 &&
-      rpc_copy_alloc(conn, sizeof(uint32_t)) >= 0 &&
-      lupine_write_pending_dtoh_copies(conn, pending, true) >= 0 &&
+      rpc_write(conn, &delivered, sizeof(delivered)) >= 0 &&
       rpc_write(conn, &stream, sizeof(stream)) >= 0 &&
       rpc_write(conn, &status, sizeof(status)) >= 0 &&
       rpc_write(conn, &fn, sizeof(fn)) >= 0 &&
@@ -2182,7 +1877,6 @@ void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
     rpc_read(conn, &response, sizeof(response));
     rpc_read_end(conn);
   }
-  lupine_cleanup_pending_dtoh_copies(&pending);
   delete callback;
 }
 
@@ -2368,7 +2062,6 @@ int handle_cuGraphAddMemcpyNode(conn_t *conn) {
     return -1;
   }
 
-  auto resources = lupine_get_graph_resources(hGraph);
   if (host_src_bytes != 0) {
     void *host = lupine_alloc_process_host_buffer(host_src_bytes);
     if (host == nullptr || rpc_read(conn, host, host_src_bytes) < 0) {
@@ -2378,23 +2071,14 @@ int handle_cuGraphAddMemcpyNode(conn_t *conn) {
     copyParams.srcHost = host;
   }
 
+  lupine_host_rows client;
   if (copyParams.dstMemoryType == CU_MEMORYTYPE_HOST) {
-    size_t slice = copyParams.dstHeight * copyParams.dstPitch;
-    lupine_host_rows client{static_cast<unsigned char *>(copyParams.dstHost) +
-                                copyParams.dstZ * slice +
-                                copyParams.dstY * copyParams.dstPitch +
-                                copyParams.dstXInBytes,
-                            copyParams.WidthInBytes,
-                            copyParams.Height,
-                            copyParams.dstPitch,
-                            copyParams.Depth,
-                            slice};
+    client = lupine_host_destination_rows(copyParams);
     lupine_pack_host_destination(copyParams);
     void *host = lupine_alloc_process_host_buffer(client.bytes());
     if (host == nullptr && client.bytes() != 0) {
       return -1;
     }
-    lupine_graph_note_dtoh_copy(resources, client, host);
     copyParams.dstHost = host;
   }
 
@@ -2406,6 +2090,14 @@ int handle_cuGraphAddMemcpyNode(conn_t *conn) {
   result = cuGraphAddMemcpyNode(&graphNode, hGraph,
                                 deps.empty() ? nullptr : deps.data(),
                                 deps.size(), &copyParams, ctx);
+  // The copy lands in graph-owned staging; a host node behind it pushes the
+  // bytes at every launch.
+  if (copyParams.dstMemoryType == CU_MEMORYTYPE_HOST && client.bytes() != 0) {
+    CUresult pushed = lupine_graph_add_dtoh_push(
+        conn, hGraph, result == CUDA_SUCCESS ? graphNode : nullptr, client,
+        copyParams.dstHost);
+    result = result == CUDA_SUCCESS ? pushed : result;
+  }
   if (rpc_write_start_response(conn, request_id) < 0 ||
       rpc_write(conn, &graphNode, sizeof(graphNode)) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
@@ -2434,8 +2126,7 @@ int handle_cuGraphAddHostNode(conn_t *conn) {
 
   if (nodeParams.fn != nullptr) {
     auto *callback =
-        new lupine_host_callback_data{conn, nodeParams.fn, nodeParams.userData,
-                                      lupine_get_graph_resources(hGraph)};
+        new lupine_host_callback_data{conn, nodeParams.fn, nodeParams.userData};
     CUDA_HOST_NODE_PARAMS serverParams = {};
     serverParams.fn = lupine_graph_host_callback;
     serverParams.userData = callback;
@@ -2537,8 +2228,8 @@ static int handle_cuGraphHostNodeSetParamsCommon(conn_t *conn, bool exec_node) {
   }
 
   if (params.fn != nullptr) {
-    auto *callback = new lupine_host_callback_data{conn, params.fn,
-                                                   params.userData, nullptr};
+    auto *callback =
+        new lupine_host_callback_data{conn, params.fn, params.userData};
     CUDA_HOST_NODE_PARAMS serverParams{lupine_graph_host_callback, callback};
     if (exec_node) {
       hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
@@ -2617,15 +2308,8 @@ int handle_cuLaunchHostFunc(conn_t *conn) {
     if (stream != nullptr) {
       cuStreamIsCapturing(stream, &capture_status);
     }
-    auto *resources = lupine_get_stream_resources(stream);
     auto *callback = new lupine_host_callback_data{
-        conn,      fn,     userData,
-        resources, stream, capture_status == CU_STREAM_CAPTURE_STATUS_NONE};
-    // A captured callback runs at each replay, behind copies queued since; only
-    // a one-shot callback knows which copies are ahead of it.
-    if (callback->one_shot) {
-      callback->dtoh_before = lupine_dtoh_sequence_now();
-    }
+        conn, fn, userData, capture_status == CU_STREAM_CAPTURE_STATUS_NONE};
     result = cuLaunchHostFunc(stream, lupine_graph_host_callback, callback);
     if (result != CUDA_SUCCESS) {
       delete callback;
@@ -2656,8 +2340,7 @@ int handle_cuStreamAddCallback(conn_t *conn) {
   }
 
   if (callback != nullptr) {
-    auto *data = new lupine_stream_callback_data{conn, callback, userData,
-                                                 lupine_dtoh_sequence_now()};
+    auto *data = new lupine_stream_callback_data{conn, callback, userData};
     result = cuStreamAddCallback(stream, lupine_stream_callback, data, flags);
     if (result != CUDA_SUCCESS) {
       delete data;
@@ -2787,7 +2470,6 @@ static int handle_cuEventRecordCommon(conn_t *conn, bool with_flags) {
                                : cuEventRecord(event, stream);
   if (result == CUDA_SUCCESS) {
     lupine_record_event_capture_resources(event, stream);
-    lupine_note_event_record(conn, event, stream);
   }
   lupine_keep_async_error(conn, result);
   return 0;
@@ -2815,7 +2497,6 @@ int handle_cuEventDestroy_v2(conn_t *conn) {
   CUresult result = cuEventDestroy_v2(event);
   if (result == CUDA_SUCCESS) {
     lupine_forget_event_capture_resources(event);
-    lupine_forget_event_dtoh_marker(conn, event);
   }
   lupine_keep_async_error(conn, result);
   return 0;
@@ -2845,28 +2526,17 @@ int handle_cuEventQuery(conn_t *conn) {
                             : !rpc_async_ticket_released(conn, tickets[i]);
     results[i] = unsettled ? CUDA_ERROR_NOT_READY : cuEventQuery(events[i]);
   }
-  // Copies ride back only for events[0]; a cached success would skip them.
-  for (uint32_t i = 1; i <= count; ++i) {
-    if (results[i] == CUDA_SUCCESS &&
-        lupine_event_owes_dtoh_copies(conn, events[i])) {
-      results[i] = CUDA_ERROR_NOT_READY;
-    }
-  }
-
-  if (rpc_write_start_response(conn, request_id) < 0) {
+  // Every success above is covered: copies its event follows have numbered
+  // their deliveries by now. The client applies them before using any of it.
+  uint64_t delivered = lupine_dtoh_watermark(conn);
+  results[0] = lupine_take_async_error(conn, results[0]);
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &delivered, sizeof(delivered)) < 0 ||
+      rpc_write(conn, results, (count + 1) * sizeof(*results)) < 0 ||
+      rpc_write_end(conn) < 0) {
     return -1;
   }
-  std::vector<lupine_pending_dtoh_item> pending;
-  if (results[0] == CUDA_SUCCESS) {
-    pending = lupine_detach_event_dtoh_copies(conn, events[0]);
-  }
-  results[0] = lupine_take_async_error(conn, results[0]);
-  bool failed = rpc_copy_alloc(conn, sizeof(uint32_t)) < 0 ||
-                lupine_write_pending_dtoh_copies(conn, pending, true) < 0 ||
-                rpc_write(conn, results, (count + 1) * sizeof(*results)) < 0 ||
-                rpc_write_end(conn) < 0;
-  lupine_cleanup_pending_dtoh_copies(&pending);
-  return failed ? -1 : 0;
+  return 0;
 }
 
 int handle_cuStreamWaitEvent(conn_t *conn) {
@@ -3739,9 +3409,19 @@ int handle_cuMemFreeHost(conn_t *conn) {
   if (request_id < 0) {
     return -1;
   }
-  CUresult result = lupine_server_free_host_allocation(
-      pointer, [](void *p) { return cuMemFreeHost(p); });
+  CUresult result =
+      pointer == nullptr
+          ? CUDA_SUCCESS
+          : lupine_server_free_host_allocation(
+                pointer, [](void *p) { return cuMemFreeHost(p); });
+  if (result == CUDA_SUCCESS) {
+    lupine_dtoh_sync_contexts(conn);
+  }
+  // Copies into the memory have numbered their deliveries by now; the client
+  // applies them before it unmaps its view.
+  uint64_t delivered = lupine_dtoh_watermark(conn);
   if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &delivered, sizeof(delivered)) < 0 ||
       rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
     return -1;
   }
@@ -3812,9 +3492,8 @@ int handle_cuGraphLaunch(conn_t *conn) {
       rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
-  CUresult result = cuGraphLaunch(exec, stream);
-  lupine_note_graph_launch(conn, exec, stream, result);
-  lupine_keep_async_error(conn, result);
+  lupine_dtoh_wait_for_room(conn);
+  lupine_keep_async_error(conn, cuGraphLaunch(exec, stream));
   return 0;
 }
 

@@ -53,8 +53,6 @@ void lupine_event_forget(lupine_event_table *table, CUevent event) {
 
 bool lupine_event_query_needed(lupine_event_table *table, CUevent event,
                                uint64_t *record) {
-  bool copies_owed =
-      table->stale_semaphore.load(std::memory_order_relaxed) != 0;
   lupine_event_slot *slots = table->slots;
   std::lock_guard<std::mutex> lock(table->mutex);
   *record = 0;
@@ -63,7 +61,7 @@ bool lupine_event_query_needed(lupine_event_table *table, CUevent event,
       continue;
     }
     *record = slots[i].record;
-    return copies_owed || !slots[i].complete;
+    return !slots[i].complete;
   }
   return true;
 }
@@ -108,23 +106,6 @@ void lupine_event_cache_completions(lupine_event_table *table,
   }
 }
 
-void lupine_event_stale_semaphore_add(lupine_event_table *table,
-                                      int64_t delta) {
-  if (delta >= 0) {
-    table->stale_semaphore.fetch_add(static_cast<uint64_t>(delta),
-                                     std::memory_order_relaxed);
-    return;
-  }
-  // A graph replay hands back host copies this client never counted, so the
-  // subtraction saturates at zero rather than wrapping.
-  uint64_t delivered = static_cast<uint64_t>(-delta);
-  uint64_t owed = table->stale_semaphore.load(std::memory_order_relaxed);
-  while (owed != 0 && !table->stale_semaphore.compare_exchange_weak(
-                          owed, delivered >= owed ? 0 : owed - delivered,
-                          std::memory_order_relaxed)) {
-  }
-}
-
 void lupine_event_invalidate_completion(CUevent event) {
   lupine_event_invalidate_completion(&lupine_event_table_instance(), event);
 }
@@ -154,8 +135,4 @@ void lupine_event_cache_completions(const CUevent *events,
                                     const CUresult *results, uint32_t count) {
   lupine_event_cache_completions(&lupine_event_table_instance(), events,
                                  records, results, count);
-}
-
-void lupine_event_stale_semaphore_add(int64_t delta) {
-  lupine_event_stale_semaphore_add(&lupine_event_table_instance(), delta);
 }

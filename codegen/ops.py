@@ -1178,7 +1178,6 @@ class RoutingFallbackAnnotation:
 
 @dataclass
 class SynchronizeAnnotation:
-    deferred_dtoh: bool = False
     stdout: bool = False
 
 

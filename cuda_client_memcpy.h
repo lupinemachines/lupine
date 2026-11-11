@@ -79,8 +79,15 @@ extern thread_local bool lupine_in_host_callback;
 // another one that picked up its pages, are applied on the server. Only the
 // connection's dispatch thread settles it.
 int lupine_settle_host_flushes(conn_t *conn);
-// Reads one deferred device-to-host copy: its lupine_host_rows, then the rows.
-int lupine_read_deferred_rows(conn_t *conn);
+// Device-to-host copies into client memory arrive on a lane of their own,
+// numbered (see cuda_server_memcpy.h). This starts the connection's receiver,
+// which applies them in order.
+void lupine_start_dtoh_receiver(conn_t *conn);
+// Joins it, once the connection's transport has been shut down.
+void lupine_join_dtoh_receiver(conn_t *conn);
+// Reads the delivery number an answer or server callback carries, and waits
+// until every delivery up to it has been applied.
+extern "C" int lupine_read_dtoh_watermark(conn_t *conn);
 extern "C" void lupine_materialize_host_allocations();
 
 extern "C" void lupine_stream_capture_begin();
