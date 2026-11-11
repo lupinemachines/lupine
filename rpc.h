@@ -84,17 +84,20 @@ static constexpr intptr_t LUPINE_HOST_ALLOCATION_W_OFFSET =
 
 // Each connection owns a disjoint identity-mapped arena. The client also
 // reserves a writable alias so pointers embedded in host allocation memory
-// retain
-// their server values while transport reads avoid the protected R view.
-static constexpr uintptr_t LUPINE_VA_FIRST_BASE =
-    LUPINE_HOST_ALLOCATION_SERVER_BASE;
+// retain their server values while transport reads avoid the protected R view.
+// Keep both bands above the legacy R/W offset views [0x200000000000,
+// 0x400000000000) and below Linux x86_64 PIE ET_DYN_BASE (0x555555554000) and
+// 32-bit ASLR mmap_base [0x700000000000, 0x800000000000), so a sibling server's
+// own ASLR mappings do not collide with another connection's slot when
+// replicating portable host allocations at fixed addresses.
+static constexpr uintptr_t LUPINE_VA_FIRST_BASE = UINT64_C(0x400000000000);
 static constexpr size_t LUPINE_VA_ARENA_SIZE = UINT64_C(0x010000000000);
 static constexpr unsigned int LUPINE_VA_ARENA_COUNT = 8;
 // The writable alias is client-private and never a device address, so it keeps
 // its own region instead of tracking the arena. Offsetting from the arena base
 // cannot work for every window: a positive offset from a high base leaves
 // canonical user space, and a negative one underflows from a low base.
-static constexpr uintptr_t LUPINE_VA_WRITE_BASE = UINT64_C(0x500000000000);
+static constexpr uintptr_t LUPINE_VA_WRITE_BASE = UINT64_C(0x480000000000);
 
 // The address range a peer is able to host arenas in. The server's driver
 // decides this, so the server states it and the client carves its own arenas
