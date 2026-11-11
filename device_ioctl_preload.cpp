@@ -43,13 +43,8 @@ extern "C" int open(const char *path, int flags, ...) {
   va_end(args);
   return result;
 }
-extern "C" int open64(const char *path, int flags, ...) {
-  va_list args;
-  va_start(args, flags);
-  int result = open_device(AT_FDCWD, path, flags, args);
-  va_end(args);
-  return result;
-}
+extern "C" int open64(const char *path, int flags, ...)
+    __attribute__((alias("open")));
 extern "C" int openat(int directory, const char *path, int flags, ...) {
   va_list args;
   va_start(args, flags);
@@ -57,25 +52,16 @@ extern "C" int openat(int directory, const char *path, int flags, ...) {
   va_end(args);
   return result;
 }
-extern "C" int openat64(int directory, const char *path, int flags, ...) {
-  va_list args;
-  va_start(args, flags);
-  int result = open_device(directory, path, flags, args);
-  va_end(args);
-  return result;
-}
+extern "C" int openat64(int directory, const char *path, int flags, ...)
+    __attribute__((alias("openat")));
 extern "C" int __open_2(const char *path, int flags) {
   if (is_remote_device(path))
     return lupine_device_open(path, flags);
   static auto native = native_symbol<int (*)(const char *, int)>("__open_2");
   return native(path, flags);
 }
-extern "C" int __open64_2(const char *path, int flags) {
-  if (is_remote_device(path))
-    return lupine_device_open(path, flags);
-  static auto native = native_symbol<int (*)(const char *, int)>("__open64_2");
-  return native(path, flags);
-}
+extern "C" int __open64_2(const char *path, int flags)
+    __attribute__((alias("__open_2")));
 extern "C" int __openat_2(int dir, const char *path, int flags) {
   if (is_remote_device(path))
     return lupine_device_open(path, flags);
@@ -83,13 +69,8 @@ extern "C" int __openat_2(int dir, const char *path, int flags) {
       native_symbol<int (*)(int, const char *, int)>("__openat_2");
   return native(dir, path, flags);
 }
-extern "C" int __openat64_2(int dir, const char *path, int flags) {
-  if (is_remote_device(path))
-    return lupine_device_open(path, flags);
-  static auto native =
-      native_symbol<int (*)(int, const char *, int)>("__openat64_2");
-  return native(dir, path, flags);
-}
+extern "C" int __openat64_2(int dir, const char *path, int flags)
+    __attribute__((alias("__openat_2")));
 
 // ioctl/fcntl's optional argument occupies the third integer argument register
 // on Linux amd64 and arm64. A fixed ABI entry preserves that register without
@@ -138,10 +119,8 @@ extern "C" int lupine_fcntl_entry(int fd, int command, uintptr_t argument) {
   return native(fd, command, argument);
 }
 extern "C" int lupine_fcntl64_entry(int fd, int command,
-                                    uintptr_t argument) __asm__("fcntl64");
-extern "C" int lupine_fcntl64_entry(int fd, int command, uintptr_t argument) {
-  return lupine_fcntl_entry(fd, command, argument);
-}
+                                    uintptr_t argument) __asm__("fcntl64")
+    __attribute__((alias("fcntl")));
 extern "C" void *mmap(void *address, size_t size, int protection, int flags,
                       int fd, off_t offset) noexcept {
   // Allocators call anonymous mmap while holding their own locks. Looking up
@@ -155,6 +134,5 @@ extern "C" void *mmap(void *address, size_t size, int protection, int flags,
   return native(address, size, protection, flags, fd, offset);
 }
 extern "C" void *mmap64(void *address, size_t size, int protection, int flags,
-                        int fd, off64_t offset) noexcept {
-  return mmap(address, size, protection, flags, fd, offset);
-}
+                        int fd, off64_t offset) noexcept
+    __attribute__((alias("mmap")));
