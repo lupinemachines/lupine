@@ -13,30 +13,32 @@ CUresult query_current_smemcpy_device(lupine_smemcpy_device *features) {
     return result;
   }
   *features = {};
-  result = cuDeviceGetAttribute(
-      &features->major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device);
-  if (result == CUDA_SUCCESS) {
-    result = cuDeviceGetAttribute(
-        &features->minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device);
-  }
   char name[128] = {};
-  if (result == CUDA_SUCCESS) {
-    result = cuDeviceGetName(name, sizeof(name), device);
-  }
-  if (result != CUDA_SUCCESS) {
+  if ((result = cuDeviceGetAttribute(
+           &features->major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR,
+           device)) != CUDA_SUCCESS ||
+      (result = cuDeviceGetAttribute(
+           &features->minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
+           device)) != CUDA_SUCCESS ||
+      (result = cuDeviceGetName(name, sizeof(name), device)) != CUDA_SUCCESS) {
     return result;
   }
   features->is_l4 = std::strcmp(name, "NVIDIA L4") == 0;
   return CUDA_SUCCESS;
 }
 
+void clear_cached_functions(lupine_smemcpy_cached_module *cached) {
+  for (auto &fn : cached->functions) {
+    fn.store(nullptr, std::memory_order_relaxed);
+  }
+}
+
 } // namespace
 
 extern "C" CUresult lupine_smemcpy_module_load(CUmodule *module) {
-  if (module == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  return cuModuleLoadData(module, lupine_cuda_smemcpy_image());
+  return module == nullptr
+             ? CUDA_ERROR_INVALID_VALUE
+             : cuModuleLoadData(module, lupine_cuda_smemcpy_image());
 }
 
 extern "C" CUresult
@@ -47,23 +49,20 @@ lupine_smemcpy_prepare_driver_launch(const lupine_smemcpy_params *params,
       launch->use_cuda_memcpy) {
     return result;
   }
-
   lupine_smemcpy_device features = {};
   result = query_current_smemcpy_device(&features);
-  if (result != CUDA_SUCCESS) {
-    return result;
-  }
-  return lupine_smemcpy_prepare_descriptor(params, &features, launch);
+  return result != CUDA_SUCCESS
+             ? result
+             : lupine_smemcpy_prepare_descriptor(params, &features, launch);
 }
 
 extern "C" CUresult
 lupine_smemcpy_module_function(CUmodule module,
                                const lupine_smemcpy_launch_descriptor *launch,
                                CUfunction *function) {
-  if (module == nullptr || function == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  const char *name = lupine_smemcpy_kernel_name(launch);
+  const char *name = (module != nullptr && function != nullptr)
+                         ? lupine_smemcpy_kernel_name(launch)
+                         : nullptr;
   return name == nullptr ? CUDA_ERROR_INVALID_VALUE
                          : cuModuleGetFunction(function, module, name);
 }
@@ -74,20 +73,15 @@ lupine_smemcpy_cached_module_load(lupine_smemcpy_cached_module *cached) {
     return CUDA_ERROR_INVALID_VALUE;
   }
   lupine_smemcpy_device features = {};
-  CUresult result = query_current_smemcpy_device(&features);
-  if (result != CUDA_SUCCESS) {
-    return result;
-  }
   CUmodule module = nullptr;
-  result = lupine_smemcpy_module_load(&module);
-  if (result != CUDA_SUCCESS) {
+  CUresult result = query_current_smemcpy_device(&features);
+  if (result != CUDA_SUCCESS ||
+      (result = lupine_smemcpy_module_load(&module)) != CUDA_SUCCESS) {
     return result;
   }
   cached->module = module;
   cached->device = features;
-  for (auto &fn : cached->functions) {
-    fn.store(nullptr, std::memory_order_relaxed);
-  }
+  clear_cached_functions(cached);
   return CUDA_SUCCESS;
 }
 
@@ -97,19 +91,16 @@ void lupine_smemcpy_cached_module_unload(lupine_smemcpy_cached_module *cached) {
   }
   (void)cuModuleUnload(cached->module);
   cached->module = nullptr;
-  for (auto &fn : cached->functions) {
-    fn.store(nullptr, std::memory_order_relaxed);
-  }
+  clear_cached_functions(cached);
 }
 
 CUresult
 lupine_smemcpy_cached_prepare_launch(const lupine_smemcpy_cached_module *cached,
                                      const lupine_smemcpy_params *params,
                                      lupine_smemcpy_launch_descriptor *launch) {
-  if (cached == nullptr) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-  return lupine_smemcpy_prepare_descriptor(params, &cached->device, launch);
+  return cached == nullptr ? CUDA_ERROR_INVALID_VALUE
+                           : lupine_smemcpy_prepare_descriptor(
+                                 params, &cached->device, launch);
 }
 
 CUresult

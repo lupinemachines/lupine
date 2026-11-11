@@ -118,6 +118,91 @@ static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBIN_RAW = 2;
 static constexpr uint32_t LUPINE_MODULE_IMAGE_FATBINC_V2 = 3;
 static constexpr uint32_t LUPINE_PRIVATE_EXPORT_MAX_SLOTS = 256;
 
+template <typename T, typename Tag> static T &lupine_leaked(Tag) {
+  static T *instance = new T();
+  return *instance;
+}
+
+struct lupine_raw_bytes {
+  const void *data;
+  size_t size;
+};
+
+template <typename T> static int lupine_write_one(conn_t *conn, const T &val) {
+  return rpc_write(conn, &val, sizeof(val));
+}
+
+static int lupine_write_one(conn_t *conn, lupine_raw_bytes raw) {
+  return raw.size == 0 ? 0 : rpc_write(conn, raw.data, raw.size);
+}
+
+template <typename... Args>
+static bool lupine_read_all(conn_t *conn, Args &...args) {
+  return ((rpc_read(conn, &args, sizeof(args)) >= 0) && ...);
+}
+
+template <typename... Args>
+static int lupine_write_response(conn_t *conn, int request_id,
+                                 const Args &...args) {
+  return rpc_write_start_response(conn, request_id) < 0 ||
+                 ((lupine_write_one(conn, args) < 0) || ...) ||
+                 rpc_write_end(conn) < 0
+             ? -1
+             : 0;
+}
+
+template <typename T, size_t N, size_t Align = alignof(T)>
+struct lupine_inline_buf {
+  alignas(Align) T stack[N];
+  std::unique_ptr<T[]> heap;
+  size_t cap = N;
+  T *ptr = stack;
+
+  T *alloc(size_t n) {
+    if (n <= cap) {
+      ptr = cap == N ? stack : heap.get();
+      return ptr;
+    }
+    if (n > SIZE_MAX / sizeof(T)) {
+      return nullptr;
+    }
+    heap.reset(new (std::nothrow) T[n]);
+    if (!heap) {
+      cap = N;
+      return nullptr;
+    }
+    cap = n;
+    return ptr = heap.get();
+  }
+
+  void reset() {
+    heap.reset();
+    cap = N;
+    ptr = stack;
+  }
+};
+
+template <typename T, size_t N> struct lupine_inline_vec {
+  T stack[N];
+  std::vector<T> overflow;
+  size_t count = 0;
+
+  void push(const T &val) {
+    if (overflow.empty() && count < N) {
+      stack[count++] = val;
+      return;
+    }
+    if (overflow.empty()) {
+      overflow.reserve(N * 2);
+      overflow.assign(stack, stack + count);
+    }
+    overflow.push_back(val);
+    ++count;
+  }
+
+  const T *data() const { return overflow.empty() ? stack : overflow.data(); }
+};
+
 struct lupine_attribute_record {
   CUresult result = CUDA_ERROR_UNKNOWN;
   int attribute = 0;
@@ -143,9 +228,9 @@ lupine_write_attribute_records(conn_t *conn,
 struct lupine_jit_state {
   static constexpr unsigned int kInlineCap = 16;
   unsigned int num_options = 0;
-  CUjit_option inline_options[kInlineCap]{};
-  void *inline_option_values[kInlineCap]{};
-  size_t inline_output_lengths[kInlineCap]{};
+  lupine_inline_buf<CUjit_option, kInlineCap> opt_buf;
+  lupine_inline_buf<void *, kInlineCap> val_buf;
+  lupine_inline_buf<size_t, kInlineCap> len_buf;
   CUjit_option *options = nullptr;
   void **option_values = nullptr;
   size_t *output_lengths = nullptr;
@@ -160,15 +245,9 @@ struct lupine_jit_state {
   ~lupine_jit_state() { clear(); }
 
   void clear() {
-    if (options != inline_options) {
-      std::free(options);
-    }
-    if (option_values != inline_option_values) {
-      std::free(option_values);
-    }
-    if (output_lengths != inline_output_lengths) {
-      std::free(output_lengths);
-    }
+    opt_buf.reset();
+    val_buf.reset();
+    len_buf.reset();
     std::free(info_log);
     std::free(error_log);
     num_options = 0;
@@ -182,6 +261,21 @@ struct lupine_jit_state {
   }
 };
 
+static int lupine_alloc_jit_log(char **log_buf, size_t size, void **slot) {
+  if (slot == nullptr) {
+    return 0;
+  }
+  *log_buf = static_cast<char *>(std::malloc(size));
+  if (size != 0) {
+    if (*log_buf == nullptr) {
+      return -1;
+    }
+    std::memset(*log_buf, 0, size);
+  }
+  *slot = *log_buf;
+  return 0;
+}
+
 static int lupine_read_jit_options(conn_t *conn, lupine_jit_state *jit) {
   if (rpc_read(conn, &jit->num_options, sizeof(jit->num_options)) < 0) {
     return -1;
@@ -192,67 +286,36 @@ static int lupine_read_jit_options(conn_t *conn, lupine_jit_state *jit) {
     jit->output_lengths = nullptr;
     return 0;
   }
-  if (jit->num_options <= lupine_jit_state::kInlineCap) {
-    jit->options = jit->inline_options;
-    jit->option_values = jit->inline_option_values;
-    jit->output_lengths = jit->inline_output_lengths;
-  } else {
-    if (jit->num_options > SIZE_MAX / sizeof(*jit->option_values)) {
-      return -1;
-    }
-    jit->options = static_cast<CUjit_option *>(
-        std::malloc(jit->num_options * sizeof(*jit->options)));
-    jit->option_values = static_cast<void **>(
-        std::malloc(jit->num_options * sizeof(*jit->option_values)));
-    jit->output_lengths = static_cast<size_t *>(
-        std::malloc(jit->num_options * sizeof(*jit->output_lengths)));
-    if (jit->options == nullptr || jit->option_values == nullptr ||
-        jit->output_lengths == nullptr) {
-      return -1;
-    }
-  }
-  if (rpc_read(conn, jit->options, jit->num_options * sizeof(*jit->options)) <
+  jit->options = jit->opt_buf.alloc(jit->num_options);
+  jit->option_values = jit->val_buf.alloc(jit->num_options);
+  jit->output_lengths = jit->len_buf.alloc(jit->num_options);
+  if (!jit->options || !jit->option_values || !jit->output_lengths ||
+      rpc_read(conn, jit->options, jit->num_options * sizeof(*jit->options)) <
           0 ||
       rpc_read(conn, jit->option_values,
                jit->num_options * sizeof(*jit->option_values)) < 0) {
     return -1;
   }
-  void **info_log_output = nullptr;
-  void **error_log_output = nullptr;
+  void **info_slot = nullptr;
+  void **error_slot = nullptr;
   for (unsigned int i = 0; i < jit->num_options; ++i) {
-    if (jit->options[i] == CU_JIT_INFO_LOG_BUFFER &&
-        jit->option_values[i] != nullptr) {
-      info_log_output = &jit->option_values[i];
+    if (jit->options[i] == CU_JIT_INFO_LOG_BUFFER && jit->option_values[i]) {
+      info_slot = &jit->option_values[i];
     } else if (jit->options[i] == CU_JIT_ERROR_LOG_BUFFER &&
-               jit->option_values[i] != nullptr) {
-      error_log_output = &jit->option_values[i];
+               jit->option_values[i]) {
+      error_slot = &jit->option_values[i];
     } else if (jit->options[i] == CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES) {
       jit->info_log_size = reinterpret_cast<uintptr_t>(jit->option_values[i]);
     } else if (jit->options[i] == CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES) {
       jit->error_log_size = reinterpret_cast<uintptr_t>(jit->option_values[i]);
     }
   }
-  if (info_log_output != nullptr) {
-    jit->info_log = static_cast<char *>(std::malloc(jit->info_log_size));
-    if (jit->info_log_size != 0) {
-      if (jit->info_log == nullptr) {
-        return -1;
-      }
-      std::memset(jit->info_log, 0, jit->info_log_size);
-    }
-    *info_log_output = jit->info_log;
-  }
-  if (error_log_output != nullptr) {
-    jit->error_log = static_cast<char *>(std::malloc(jit->error_log_size));
-    if (jit->error_log_size != 0) {
-      if (jit->error_log == nullptr) {
-        return -1;
-      }
-      std::memset(jit->error_log, 0, jit->error_log_size);
-    }
-    *error_log_output = jit->error_log;
-  }
-  return 0;
+  return lupine_alloc_jit_log(&jit->info_log, jit->info_log_size, info_slot) <
+                     0 ||
+                 lupine_alloc_jit_log(&jit->error_log, jit->error_log_size,
+                                      error_slot) < 0
+             ? -1
+             : 0;
 }
 
 // Every JIT option value the driver may rewrite is echoed back: the log
@@ -361,16 +424,14 @@ struct lupine_logs_callback_data {
 };
 
 static std::mutex &lupine_logs_callback_mutex() {
-  static auto *mutex = new std::mutex();
-  return *mutex;
+  return lupine_leaked<std::mutex>([] {});
 }
 
 static std::unordered_map<CUlogsCallbackHandle, lupine_logs_callback_data *> &
 lupine_logs_callbacks() {
-  static auto *callbacks =
-      new std::unordered_map<CUlogsCallbackHandle,
-                             lupine_logs_callback_data *>();
-  return *callbacks;
+  return lupine_leaked<
+      std::unordered_map<CUlogsCallbackHandle, lupine_logs_callback_data *>>(
+      [] {});
 }
 #endif
 
@@ -477,16 +538,10 @@ int handle_cuGetExportTableMetadata(conn_t *conn) {
                    << result << " bytes=" << byte_size
                    << " slots=" << slot_count << " trusted=" << trusted);
 
-  size_t hash_bytes = static_cast<size_t>(slot_count) * sizeof(uint64_t);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
-      rpc_write(conn, &byte_size, sizeof(byte_size)) < 0 ||
-      rpc_write(conn, &slot_count, sizeof(slot_count)) < 0 ||
-      rpc_write(conn, &trusted, sizeof(trusted)) < 0 ||
-      rpc_write(conn, hashes, hash_bytes) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(
+      conn, request_id, result, byte_size, slot_count, trusted,
+      lupine_raw_bytes{hashes,
+                       static_cast<size_t>(slot_count) * sizeof(uint64_t)});
 }
 
 static void lupine_private_module_node_callback(void *opaque, void *node,
@@ -565,53 +620,27 @@ int handle_cuPrivateGetModuleNode(conn_t *conn) {
     }
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &node, sizeof(node)) < 0 ||
-      rpc_write(conn, &owner, sizeof(owner)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, node, owner, result);
 }
 
 struct lupine_server_graph_deps {
-  CUgraphNode inline_nodes[16];
-  CUgraphNode *nodes = inline_nodes;
+  lupine_inline_buf<CUgraphNode, 16> buf;
   size_t count = 0;
-
-  lupine_server_graph_deps() = default;
-  lupine_server_graph_deps(const lupine_server_graph_deps &) = delete;
-  lupine_server_graph_deps &
-  operator=(const lupine_server_graph_deps &) = delete;
-
-  ~lupine_server_graph_deps() {
-    if (nodes != inline_nodes) {
-      std::free(nodes);
-    }
-  }
 
   int read(conn_t *conn) {
     if (rpc_read(conn, &count, sizeof(count)) < 0) {
       return -1;
     }
-    if (count > std::size(inline_nodes)) {
-      if (count > SIZE_MAX / sizeof(CUgraphNode)) {
-        return -1;
-      }
-      nodes =
-          static_cast<CUgraphNode *>(std::malloc(count * sizeof(CUgraphNode)));
-      if (nodes == nullptr) {
-        return -1;
-      }
-    }
-    if (count != 0 && rpc_read(conn, nodes, count * sizeof(CUgraphNode)) < 0) {
+    CUgraphNode *nodes = buf.alloc(count);
+    if (!nodes || (count != 0 &&
+                   rpc_read(conn, nodes, count * sizeof(CUgraphNode)) < 0)) {
       return -1;
     }
     lupine_graph_push_dependencies(nodes, count);
     return 0;
   }
 
-  const CUgraphNode *data() const { return count != 0 ? nodes : nullptr; }
+  const CUgraphNode *data() const { return count != 0 ? buf.ptr : nullptr; }
   size_t size() const { return count; }
 };
 
@@ -693,6 +722,26 @@ static int lupine_write_params(conn_t *conn,
              ? 0
              : -1;
 }
+static int lupine_write_kernel_record(conn_t *conn,
+                                      const lupine_kernel_record &record,
+                                      bool is_library) {
+  return rpc_write(conn, &record.name_length, sizeof(record.name_length)) < 0 ||
+                 rpc_write(conn, record.name, record.name_length) < 0 ||
+                 (is_library &&
+                  rpc_write(conn, &record.kernel, sizeof(record.kernel)) < 0) ||
+                 rpc_write(conn, &record.function, sizeof(record.function)) <
+                     0 ||
+                 rpc_write(conn, &record.param_count,
+                           sizeof(record.param_count)) < 0 ||
+                 lupine_write_params(conn, record) < 0 ||
+                 lupine_write_attributes(conn, record.function_attributes,
+                                         record.function_attribute_count) < 0 ||
+                 (is_library &&
+                  lupine_write_attributes(conn, record.kernel_attributes,
+                                          record.kernel_attribute_count) < 0)
+             ? -1
+             : 0;
+}
 #endif
 
 struct lupine_module_snapshot {
@@ -725,12 +774,14 @@ static lupine_module_snapshot lupine_collect_module(CUmodule module) {
       function_count == 0) {
     return snapshot;
   }
-  std::vector<CUfunction> functions(function_count);
-  if (cuModuleEnumerateFunctions(functions.data(), function_count, module) !=
-      CUDA_SUCCESS) {
+  lupine_inline_buf<CUfunction, 64> fn_buf;
+  CUfunction *functions = fn_buf.alloc(function_count);
+  if (!functions || cuModuleEnumerateFunctions(functions, function_count,
+                                               module) != CUDA_SUCCESS) {
     return snapshot;
   }
-  for (CUfunction function : functions) {
+  for (unsigned int i = 0; i < function_count; ++i) {
+    CUfunction function = functions[i];
     const char *name = nullptr;
     if (function == nullptr || cuFuncGetName(&name, function) != CUDA_SUCCESS ||
         name == nullptr || cuFuncLoad(function) != CUDA_SUCCESS) {
@@ -765,13 +816,7 @@ static int lupine_write_module(conn_t *conn,
   }
 #if CUDA_VERSION >= 12040
   for (const auto &record : snapshot.records) {
-    if (rpc_write(conn, &record.name_length, sizeof(record.name_length)) < 0 ||
-        rpc_write(conn, record.name, record.name_length) < 0 ||
-        rpc_write(conn, &record.function, sizeof(record.function)) < 0 ||
-        rpc_write(conn, &record.param_count, sizeof(record.param_count)) < 0 ||
-        lupine_write_params(conn, record) < 0 ||
-        lupine_write_attributes(conn, record.function_attributes,
-                                record.function_attribute_count) < 0) {
+    if (lupine_write_kernel_record(conn, record, false) < 0) {
       return -1;
     }
   }
@@ -866,55 +911,36 @@ int handle_cuModuleLoadDataEx(conn_t *conn) {
 
 int handle_lupineFunctionParamLayoutSnapshot(conn_t *conn) {
   CUfunction function = nullptr;
-  if (rpc_read(conn, &function, sizeof(function)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  int request_id = -1;
+  if (rpc_read(conn, &function, sizeof(function)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
-  static constexpr size_t wire_record_bytes =
-      2 * sizeof(size_t) + sizeof(CUresult);
-  unsigned char inline_records[(64 + 1) * wire_record_bytes];
-  std::vector<unsigned char> overflow_records;
-  size_t total_bytes = 0;
+  struct wire_rec {
+    unsigned char bytes[2 * sizeof(size_t) + sizeof(CUresult)];
+  };
+  lupine_inline_vec<wire_rec, 65> records;
   {
     lupine_internal_cuda_query probe;
     for (uint32_t i = 0;; ++i) {
-      size_t offset = 0;
-      size_t size = 0;
+      size_t offset = 0, size = 0;
       CUresult param_result = cuFuncGetParamInfo(function, i, &offset, &size);
-      unsigned char record[wire_record_bytes];
-      std::memcpy(record, &offset, sizeof(offset));
-      std::memcpy(record + sizeof(offset), &size, sizeof(size));
-      std::memcpy(record + 2 * sizeof(size_t), &param_result,
+      wire_rec rec;
+      std::memcpy(rec.bytes, &offset, sizeof(offset));
+      std::memcpy(rec.bytes + sizeof(offset), &size, sizeof(size));
+      std::memcpy(rec.bytes + 2 * sizeof(size_t), &param_result,
                   sizeof(param_result));
-      if (overflow_records.empty() &&
-          total_bytes + wire_record_bytes <= sizeof(inline_records)) {
-        std::memcpy(inline_records + total_bytes, record, wire_record_bytes);
-      } else {
-        if (overflow_records.empty()) {
-          overflow_records.reserve(sizeof(inline_records) * 2);
-          overflow_records.assign(inline_records, inline_records + total_bytes);
-        }
-        overflow_records.insert(overflow_records.end(), record,
-                                record + wire_record_bytes);
-      }
-      total_bytes += wire_record_bytes;
+      records.push(rec);
       if (param_result != CUDA_SUCCESS) {
         break;
       }
     }
   }
 
-  const unsigned char *wire_data =
-      overflow_records.empty() ? inline_records : overflow_records.data();
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, wire_data, total_bytes) < 0) {
-    return -1;
-  }
-  return rpc_write_end(conn);
+  return lupine_write_response(
+      conn, request_id,
+      lupine_raw_bytes{records.data(), records.count * sizeof(wire_rec)});
 }
 
 int handle_lupineFunctionAttributeSnapshot(conn_t *conn) {
@@ -977,17 +1003,20 @@ static lupine_library_snapshot lupine_collect_library(CUlibrary library) {
   }
   unsigned int kernel_count = 0;
   snapshot.result = cuLibraryGetKernelCount(&kernel_count, library);
-  std::vector<CUkernel> kernels;
+  lupine_inline_buf<CUkernel, 64> kern_buf;
+  CUkernel *kernels = nullptr;
   if (snapshot.result == CUDA_SUCCESS && kernel_count != 0) {
-    kernels.resize(kernel_count);
+    kernels = kern_buf.alloc(kernel_count);
     snapshot.result =
-        cuLibraryEnumerateKernels(kernels.data(), kernel_count, library);
+        kernels ? cuLibraryEnumerateKernels(kernels, kernel_count, library)
+                : CUDA_ERROR_OUT_OF_MEMORY;
   }
   if (snapshot.result != CUDA_SUCCESS) {
     return snapshot;
   }
   snapshot.records.reserve(kernel_count);
-  for (CUkernel kernel : kernels) {
+  for (unsigned int i = 0; i < kernel_count; ++i) {
+    CUkernel kernel = kernels[i];
     const char *name = nullptr;
     if (kernel == nullptr || cuKernelGetName(&name, kernel) != CUDA_SUCCESS ||
         name == nullptr) {
@@ -1036,16 +1065,7 @@ static int lupine_write_library(conn_t *conn,
   }
 #if CUDA_VERSION >= 12040
   for (const auto &record : snapshot.records) {
-    if (rpc_write(conn, &record.name_length, sizeof(record.name_length)) < 0 ||
-        rpc_write(conn, record.name, record.name_length) < 0 ||
-        rpc_write(conn, &record.kernel, sizeof(record.kernel)) < 0 ||
-        rpc_write(conn, &record.function, sizeof(record.function)) < 0 ||
-        rpc_write(conn, &record.param_count, sizeof(record.param_count)) < 0 ||
-        lupine_write_params(conn, record) < 0 ||
-        lupine_write_attributes(conn, record.function_attributes,
-                                record.function_attribute_count) < 0 ||
-        lupine_write_attributes(conn, record.kernel_attributes,
-                                record.kernel_attribute_count) < 0) {
+    if (lupine_write_kernel_record(conn, record, true) < 0) {
       return -1;
     }
   }
@@ -1054,22 +1074,13 @@ static int lupine_write_library(conn_t *conn,
 }
 
 struct lupine_library_options {
-  static constexpr unsigned int inline_capacity = 16;
-
   unsigned int count = 0;
   bool has_values = false;
-  CUlibraryOption inline_options[inline_capacity] = {};
-  void *inline_values[inline_capacity] = {};
-  std::unique_ptr<CUlibraryOption[]> heap_options;
-  std::unique_ptr<void *[]> heap_values;
-  size_t heap_capacity = 0;
+  lupine_inline_buf<CUlibraryOption, 16> opt_buf;
+  lupine_inline_buf<void *, 16> val_buf;
 
-  CUlibraryOption *options() {
-    return count <= inline_capacity ? inline_options : heap_options.get();
-  }
-  void **values() {
-    return count <= inline_capacity ? inline_values : heap_values.get();
-  }
+  CUlibraryOption *options() { return opt_buf.ptr; }
+  void **values() { return val_buf.ptr; }
 };
 
 static CUresult lupine_load_library(conn_t *conn, CUlibrary *library,
@@ -1114,19 +1125,10 @@ static int lupine_read_library_options(conn_t *conn,
   if (num_options == 0) {
     return 0;
   }
-  if (num_options > lupine_library_options::inline_capacity &&
-      opts->heap_capacity < num_options) {
-    opts->heap_options.reset(new (std::nothrow) CUlibraryOption[num_options]);
-    opts->heap_values.reset(new (std::nothrow) void *[num_options]);
-    if (!opts->heap_options || !opts->heap_values) {
-      opts->heap_capacity = 0;
-      return -1;
-    }
-    opts->heap_capacity = num_options;
-  }
-  CUlibraryOption *options = opts->options();
-  void **values = opts->values();
-  if (rpc_read(conn, options, num_options * sizeof(CUlibraryOption)) < 0 ||
+  CUlibraryOption *options = opts->opt_buf.alloc(num_options);
+  void **values = opts->val_buf.alloc(num_options);
+  if (!options || !values ||
+      rpc_read(conn, options, num_options * sizeof(CUlibraryOption)) < 0 ||
       rpc_read(conn, values, num_options * sizeof(void *)) < 0) {
     return -1;
   }
@@ -1211,35 +1213,32 @@ int handle_lupineLibraryLoadBatch(conn_t *conn) {
   lupine_library_options options;
   lupine_jit_state jit;
   bool pushed = cuCtxPushCurrent(context) == CUDA_SUCCESS;
+  auto pop_ctx = [&] {
+    if (pushed) {
+      CUcontext popped = nullptr;
+      cuCtxPopCurrent(&popped);
+    }
+  };
   for (entry &e : entries) {
     uint32_t kind = 0;
     size_t image_size = 0;
     if (rpc_read(conn, &kind, sizeof(kind)) < 0 ||
         rpc_read(conn, &image_size, sizeof(image_size)) < 0 ||
         image_size == 0) {
-      if (pushed) {
-        CUcontext popped = nullptr;
-        cuCtxPopCurrent(&popped);
-      }
+      pop_ctx();
       return -1;
     }
     if (image_size > image_capacity) {
       image.reset(new (std::nothrow) unsigned char[image_size]);
       if (!image) {
-        if (pushed) {
-          CUcontext popped = nullptr;
-          cuCtxPopCurrent(&popped);
-        }
+        pop_ctx();
         return -1;
       }
       image_capacity = image_size;
     }
     if (rpc_read(conn, image.get(), image_size) < 0 ||
         lupine_read_library_options(conn, &options) < 0) {
-      if (pushed) {
-        CUcontext popped = nullptr;
-        cuCtxPopCurrent(&popped);
-      }
+      pop_ctx();
       return -1;
     }
     if (pushed) {
@@ -1250,10 +1249,7 @@ int handle_lupineLibraryLoadBatch(conn_t *conn) {
       e.snapshot = lupine_collect_library(e.library);
     }
   }
-  if (pushed) {
-    CUcontext popped = nullptr;
-    cuCtxPopCurrent(&popped);
-  }
+  pop_ctx();
   int request_id = rpc_read_end(conn);
   if (request_id < 0 || rpc_write_start_response(conn, request_id) < 0) {
     return -1;
@@ -1281,14 +1277,10 @@ static int lupine_handle_shareable_export(conn_t *conn, uint32_t kind,
   unsigned long long flags = 0;
   lupine_ipc_token token = {};
   CUresult result = CUDA_ERROR_NOT_SUPPORTED;
+  int request_id = -1;
 
-  if (rpc_read(conn, &handle, sizeof(handle)) < 0 ||
-      rpc_read(conn, &handleType, sizeof(handleType)) < 0 ||
-      rpc_read(conn, &flags, sizeof(flags)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  if (!lupine_read_all(conn, handle, handleType, flags) ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
@@ -1303,13 +1295,36 @@ static int lupine_handle_shareable_export(conn_t *conn, uint32_t kind,
       lupine_ipc_close_fd(shareable_fd);
     }
   }
+  return lupine_write_response(conn, request_id, token, result);
+}
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &token, sizeof(token)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+template <typename Handle, bool HasFlags, typename ImportFn>
+static int lupine_handle_shareable_import(conn_t *conn, uint32_t kind,
+                                          ImportFn import_fn) {
+  lupine_ipc_token token = {};
+  CUmemAllocationHandleType handleType;
+  unsigned long long flags = 0;
+  Handle handle{};
+  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  int request_id = -1;
+
+  if (rpc_read(conn, &token, sizeof(token)) < 0 ||
+      rpc_read(conn, &handleType, sizeof(handleType)) < 0 ||
+      (HasFlags && rpc_read(conn, &flags, sizeof(flags)) < 0) ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
-  return 0;
+
+  if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
+    int import_fd = lupine_ipc_broker_get_fd(kind, &token);
+    if (import_fd >= 0) {
+      void *os_handle =
+          reinterpret_cast<void *>(static_cast<uintptr_t>(import_fd));
+      result = import_fn(&handle, os_handle, handleType, flags);
+      lupine_ipc_close_fd(import_fd);
+    }
+  }
+  return lupine_write_response(conn, request_id, handle, result);
 }
 
 int handle_cuMemExportToShareableHandle(conn_t *conn) {
@@ -1318,37 +1333,12 @@ int handle_cuMemExportToShareableHandle(conn_t *conn) {
 }
 
 int handle_cuMemImportFromShareableHandle(conn_t *conn) {
-  lupine_ipc_token token = {};
-  CUmemAllocationHandleType handleType;
-  CUmemGenericAllocationHandle handle = 0;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &token, sizeof(token)) < 0 ||
-      rpc_read(conn, &handleType, sizeof(handleType)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
-    int import_fd =
-        lupine_ipc_broker_get_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &token);
-    if (import_fd >= 0) {
-      result = cuMemImportFromShareableHandle(
-          &handle, reinterpret_cast<void *>(static_cast<uintptr_t>(import_fd)),
-          handleType);
-      lupine_ipc_close_fd(import_fd);
-    }
-  }
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &handle, sizeof(handle)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_handle_shareable_import<CUmemGenericAllocationHandle, false>(
+      conn, LUPINE_IPC_FD_KIND_VMM_ALLOCATION,
+      [](CUmemGenericAllocationHandle *h, void *os,
+         CUmemAllocationHandleType type, unsigned long long) {
+        return cuMemImportFromShareableHandle(h, os, type);
+      });
 }
 
 int handle_cuMemPoolExportToShareableHandle(conn_t *conn) {
@@ -1357,70 +1347,27 @@ int handle_cuMemPoolExportToShareableHandle(conn_t *conn) {
 }
 
 int handle_cuMemPoolImportFromShareableHandle(conn_t *conn) {
-  lupine_ipc_token token = {};
-  CUmemAllocationHandleType handleType;
-  unsigned long long flags = 0;
-  CUmemoryPool pool = nullptr;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &token, sizeof(token)) < 0 ||
-      rpc_read(conn, &handleType, sizeof(handleType)) < 0 ||
-      rpc_read(conn, &flags, sizeof(flags)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  if (handleType == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) {
-    int import_fd =
-        lupine_ipc_broker_get_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL, &token);
-    if (import_fd >= 0) {
-      result = cuMemPoolImportFromShareableHandle(
-          &pool, reinterpret_cast<void *>(static_cast<uintptr_t>(import_fd)),
-          handleType, flags);
-      lupine_ipc_close_fd(import_fd);
-    }
-  }
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pool, sizeof(pool)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_handle_shareable_import<CUmemoryPool, true>(
+      conn, LUPINE_IPC_FD_KIND_MEMORY_POOL, cuMemPoolImportFromShareableHandle);
 }
 
 int handle_cuPointerGetAttributes(conn_t *conn) {
   unsigned int num_attributes = 0;
   CUdeviceptr ptr = 0;
-  int request_id;
+  int request_id = -1;
   CUresult result = CUDA_SUCCESS;
 
   if (rpc_read(conn, &num_attributes, sizeof(num_attributes)) < 0) {
     return -1;
   }
-  CUpointer_attribute inline_attrs[16];
-  std::unique_ptr<CUpointer_attribute[]> heap_attrs;
-  CUpointer_attribute *attributes = inline_attrs;
-  if (num_attributes > std::size(inline_attrs)) {
-    heap_attrs.reset(new (std::nothrow) CUpointer_attribute[num_attributes]);
-    if (!heap_attrs) {
-      return -1;
-    }
-    attributes = heap_attrs.get();
-  }
-  if (num_attributes != 0 &&
-      rpc_read(conn, attributes, num_attributes * sizeof(CUpointer_attribute)) <
-          0) {
-    return -1;
-  }
-  if (rpc_read(conn, &ptr, sizeof(ptr)) < 0) {
-    return -1;
-  }
-  request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  lupine_inline_buf<CUpointer_attribute, 16> attr_buf;
+  CUpointer_attribute *attributes = attr_buf.alloc(num_attributes);
+  if (!attributes ||
+      (num_attributes != 0 &&
+       rpc_read(conn, attributes,
+                num_attributes * sizeof(CUpointer_attribute)) < 0) ||
+      rpc_read(conn, &ptr, sizeof(ptr)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
@@ -1434,30 +1381,15 @@ int handle_cuPointerGetAttributes(conn_t *conn) {
     total_size += value_size;
   }
 
-  alignas(std::max_align_t) unsigned char inline_values[256];
-  std::unique_ptr<unsigned char[]> heap_values;
-  unsigned char *values = inline_values;
+  lupine_inline_buf<unsigned char, 256, alignof(std::max_align_t)> val_buf;
+  lupine_inline_buf<void *, 16> data_buf;
+  unsigned char *values = nullptr;
   if (result == CUDA_SUCCESS) {
-    if (total_size > sizeof(inline_values)) {
-      heap_values.reset(new (std::nothrow) unsigned char[total_size]);
-      if (!heap_values) {
-        result = CUDA_ERROR_OUT_OF_MEMORY;
-      } else {
-        values = heap_values.get();
-      }
-    }
-    void *inline_data[16];
-    std::unique_ptr<void *[]> heap_data;
-    void **data = inline_data;
-    if (result == CUDA_SUCCESS && num_attributes > std::size(inline_data)) {
-      heap_data.reset(new (std::nothrow) void *[num_attributes]);
-      if (!heap_data) {
-        result = CUDA_ERROR_OUT_OF_MEMORY;
-      } else {
-        data = heap_data.get();
-      }
-    }
-    if (result == CUDA_SUCCESS) {
+    values = val_buf.alloc(total_size);
+    void **data = data_buf.alloc(num_attributes);
+    if (!values || !data) {
+      result = CUDA_ERROR_OUT_OF_MEMORY;
+    } else {
       if (total_size != 0) {
         std::memset(values, 0, total_size);
       }
@@ -1472,174 +1404,113 @@ int handle_cuPointerGetAttributes(conn_t *conn) {
     }
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
-      (result == CUDA_SUCCESS && total_size != 0 &&
-       rpc_write(conn, values, total_size) < 0) ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(
+      conn, request_id, result,
+      lupine_raw_bytes{values, result == CUDA_SUCCESS ? total_size : 0});
 }
 
 int handle_cuLinkCreate_v2(conn_t *conn) {
   auto link_state = std::make_unique<lupine_link_state>();
   CUlinkState client_state = nullptr;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-  if (lupine_read_jit_options(conn, &link_state->jit) < 0) {
+  int request_id = -1;
+  if (lupine_read_jit_options(conn, &link_state->jit) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  result =
+  CUresult result =
       cuLinkCreate_v2(link_state->jit.num_options, link_state->jit.options,
                       link_state->jit.option_values, &link_state->cuda_state);
   if (result == CUDA_SUCCESS) {
     client_state = lupine_link_state_to_handle(link_state.release());
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &client_state, sizeof(client_state)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+  return lupine_write_response(conn, request_id, client_state, result);
+}
+
+static int lupine_handle_link_add(conn_t *conn, bool is_file) {
+  CUlinkState state = nullptr;
+  CUjitInputType type = is_file ? CU_JIT_INPUT_LIBRARY : CU_JIT_INPUT_PTX;
+  if (rpc_read(conn, &state, sizeof(state)) < 0 ||
+      rpc_read(conn, &type, sizeof(type)) < 0) {
     return -1;
   }
-  return 0;
+
+  lupine_inline_buf<char, 512> name_buf;
+  char *name_ptr = nullptr;
+  auto read_name = [&]() -> int {
+    size_t len = 0;
+    if (rpc_read(conn, &len, sizeof(len)) < 0 || len > (1U << 20)) {
+      return -1;
+    }
+    if (len != 0) {
+      name_ptr = name_buf.alloc(len + 1);
+      if (!name_ptr || rpc_read(conn, name_ptr, len) < 0) {
+        return -1;
+      }
+      name_ptr[len] = '\0';
+    }
+    return 0;
+  };
+
+  size_t data_size = 0;
+  std::unique_ptr<unsigned char[]> data;
+  auto read_payload = [&](size_t bytes) -> int {
+    data_size = bytes;
+    if (bytes == 0) {
+      return 0;
+    }
+    data.reset(new (std::nothrow) unsigned char[bytes + 1]);
+    if (!data || rpc_read(conn, data.get(), bytes) < 0) {
+      return -1;
+    }
+    data[bytes] = 0;
+    return 0;
+  };
+
+  if (is_file) {
+    uint8_t has_file_data = 0;
+    uint64_t file_size = 0;
+    if (read_name() < 0 ||
+        rpc_read(conn, &has_file_data, sizeof(has_file_data)) < 0 ||
+        rpc_read(conn, &file_size, sizeof(file_size)) < 0 ||
+        has_file_data == 0 || file_size > (1ull << 32) ||
+        read_payload(static_cast<size_t>(file_size)) < 0) {
+      return -1;
+    }
+  } else {
+    size_t size = 0;
+    if (rpc_read(conn, &size, sizeof(size)) < 0 || size == SIZE_MAX ||
+        read_payload(size) < 0 || read_name() < 0) {
+      return -1;
+    }
+  }
+
+  lupine_jit_state jit_state;
+  int request_id = -1;
+  if (lupine_read_jit_options(conn, &jit_state) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
+    return -1;
+  }
+  auto *link_state = lupine_link_state_from_handle(state);
+  CUresult result =
+      link_state == nullptr
+          ? CUDA_ERROR_INVALID_HANDLE
+          : cuLinkAddData_v2(link_state->cuda_state, type, data.get(),
+                             data_size, name_ptr, jit_state.num_options,
+                             jit_state.options, jit_state.option_values);
+  return rpc_write_start_response(conn, request_id) < 0 ||
+                 lupine_write_jit_outputs(conn, &jit_state) < 0 ||
+                 rpc_write(conn, &result, sizeof(result)) < 0 ||
+                 rpc_write_end(conn) < 0
+             ? -1
+             : 0;
 }
 
 int handle_cuLinkAddData_v2(conn_t *conn) {
-  CUlinkState state = nullptr;
-  CUjitInputType type = CU_JIT_INPUT_PTX;
-  size_t size = 0;
-  size_t name_len = 0;
-  lupine_jit_state jit_state;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-  if (rpc_read(conn, &state, sizeof(state)) < 0 ||
-      rpc_read(conn, &type, sizeof(type)) < 0 ||
-      rpc_read(conn, &size, sizeof(size)) < 0 || size == SIZE_MAX) {
-    return -1;
-  }
-  std::unique_ptr<unsigned char[]> data;
-  if (size != 0) {
-    data.reset(new (std::nothrow) unsigned char[size + 1]);
-    if (!data || rpc_read(conn, data.get(), size) < 0) {
-      return -1;
-    }
-    data[size] = 0;
-  }
-  if (rpc_read(conn, &name_len, sizeof(name_len)) < 0 ||
-      name_len > (1U << 20)) {
-    return -1;
-  }
-  char inline_name[512];
-  std::unique_ptr<char[]> heap_name;
-  char *name_ptr = nullptr;
-  if (name_len != 0) {
-    if (name_len < sizeof(inline_name)) {
-      name_ptr = inline_name;
-    } else {
-      heap_name.reset(new (std::nothrow) char[name_len + 1]);
-      if (!heap_name) {
-        return -1;
-      }
-      name_ptr = heap_name.get();
-    }
-    if (rpc_read(conn, name_ptr, name_len) < 0) {
-      return -1;
-    }
-    name_ptr[name_len] = '\0';
-  }
-  if (lupine_read_jit_options(conn, &jit_state) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  auto *link_state = lupine_link_state_from_handle(state);
-  if (link_state == nullptr) {
-    result = CUDA_ERROR_INVALID_HANDLE;
-  } else {
-    result = cuLinkAddData_v2(link_state->cuda_state, type, data.get(), size,
-                              name_ptr, jit_state.num_options,
-                              jit_state.options, jit_state.option_values);
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      lupine_write_jit_outputs(conn, &jit_state) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_handle_link_add(conn, false);
 }
 
 int handle_cuLinkAddFile_v2(conn_t *conn) {
-  CUlinkState state = nullptr;
-  CUjitInputType type = CU_JIT_INPUT_LIBRARY;
-  size_t path_len = 0;
-  uint8_t has_file_data = 0;
-  uint64_t file_size = 0;
-  lupine_jit_state jit_state;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-  if (rpc_read(conn, &state, sizeof(state)) < 0 ||
-      rpc_read(conn, &type, sizeof(type)) < 0 ||
-      rpc_read(conn, &path_len, sizeof(path_len)) < 0 ||
-      path_len > (1U << 20)) {
-    return -1;
-  }
-  char inline_path[512];
-  std::unique_ptr<char[]> heap_path;
-  char *path_ptr = nullptr;
-  if (path_len != 0) {
-    if (path_len < sizeof(inline_path)) {
-      path_ptr = inline_path;
-    } else {
-      heap_path.reset(new (std::nothrow) char[path_len + 1]);
-      if (!heap_path) {
-        return -1;
-      }
-      path_ptr = heap_path.get();
-    }
-    if (rpc_read(conn, path_ptr, path_len) < 0) {
-      return -1;
-    }
-    path_ptr[path_len] = '\0';
-  }
-  if (rpc_read(conn, &has_file_data, sizeof(has_file_data)) < 0 ||
-      rpc_read(conn, &file_size, sizeof(file_size)) < 0 || has_file_data == 0 ||
-      file_size > (1ull << 32)) {
-    return -1;
-  }
-  std::unique_ptr<unsigned char[]> file_data;
-  if (file_size != 0) {
-    size_t bytes = static_cast<size_t>(file_size);
-    file_data.reset(new (std::nothrow) unsigned char[bytes + 1]);
-    if (!file_data || rpc_read(conn, file_data.get(), bytes) < 0) {
-      return -1;
-    }
-    file_data[bytes] = 0;
-  }
-  if (lupine_read_jit_options(conn, &jit_state) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  auto *link_state = lupine_link_state_from_handle(state);
-  if (link_state == nullptr) {
-    result = CUDA_ERROR_INVALID_HANDLE;
-  } else {
-    result = cuLinkAddData_v2(link_state->cuda_state, type, file_data.get(),
-                              static_cast<size_t>(file_size), path_ptr,
-                              jit_state.num_options, jit_state.options,
-                              jit_state.option_values);
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      lupine_write_jit_outputs(conn, &jit_state) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_handle_link_add(conn, true);
 }
 
 int handle_cuLinkComplete(conn_t *conn) {
@@ -1647,11 +1518,9 @@ int handle_cuLinkComplete(conn_t *conn) {
   void *cubin = nullptr;
   size_t size = 0;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
-  if (rpc_read(conn, &state, sizeof(state)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  int request_id = -1;
+  if (rpc_read(conn, &state, sizeof(state)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
   auto *link_state = lupine_link_state_from_handle(state);
@@ -1667,24 +1536,22 @@ int handle_cuLinkComplete(conn_t *conn) {
     jit_outputs = &link_state->jit;
   }
   size_t returned_size = result == CUDA_SUCCESS ? size : 0;
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &returned_size, sizeof(returned_size)) < 0 ||
-      rpc_write(conn, cubin, returned_size) < 0 ||
-      lupine_write_jit_outputs(conn, jit_outputs) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return rpc_write_start_response(conn, request_id) < 0 ||
+                 rpc_write(conn, &returned_size, sizeof(returned_size)) < 0 ||
+                 rpc_write(conn, cubin, returned_size) < 0 ||
+                 lupine_write_jit_outputs(conn, jit_outputs) < 0 ||
+                 rpc_write(conn, &result, sizeof(result)) < 0 ||
+                 rpc_write_end(conn) < 0
+             ? -1
+             : 0;
 }
 
 int handle_cuLinkDestroy(conn_t *conn) {
   CUlinkState state = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
-  if (rpc_read(conn, &state, sizeof(state)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  int request_id = -1;
+  if (rpc_read(conn, &state, sizeof(state)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
   auto *link_state = lupine_link_state_from_handle(state);
@@ -1699,11 +1566,7 @@ int handle_cuLinkDestroy(conn_t *conn) {
   }
   // Retain the opaque handle wrapper until process exit so stale client
   // handles never dereference freed memory.
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, result);
 }
 
 // The library stays loaded: the client mirrors libraries onto other routes and
@@ -1722,56 +1585,34 @@ int handle_cuLibraryUnload(conn_t *conn) {
 }
 
 struct lupine_server_launch_params {
-  void *inline_params[64];
-  alignas(std::max_align_t) unsigned char inline_storage[4096];
-  void **params = inline_params;
-  unsigned char *storage = inline_storage;
+  lupine_inline_buf<void *, 64> param_buf;
+  lupine_inline_buf<unsigned char, 4096, alignof(std::max_align_t)> storage_buf;
   uint32_t count = 0;
 
-  ~lupine_server_launch_params() {
-    if (params != inline_params) {
-      std::free(params);
-    }
-    if (storage != inline_storage) {
-      std::free(storage);
-    }
-  }
-
   int read(conn_t *conn) {
-    size_t inline_sizes[64];
     if (rpc_read(conn, &count, sizeof(count)) < 0) {
       return -1;
     }
-    size_t *sizes =
-        count <= std::size(inline_sizes)
-            ? inline_sizes
-            : static_cast<size_t *>(std::malloc(count * sizeof(size_t)));
-    if (count > std::size(inline_params)) {
-      params = static_cast<void **>(std::malloc(count * sizeof(void *)));
+    lupine_inline_buf<size_t, 64> size_buf;
+    size_t *sizes = size_buf.alloc(count);
+    void **params = param_buf.alloc(count);
+    if (!sizes || !params ||
+        rpc_read(conn, sizes, count * sizeof(*sizes)) != 0) {
+      return -1;
     }
-    int status = -1;
-    if ((count == 0 || (sizes != nullptr && params != nullptr)) &&
-        rpc_read(conn, sizes, count * sizeof(*sizes)) == 0) {
-      size_t storage_size = 0;
-      for (size_t i = 0; i < count; ++i) {
-        storage_size += sizes[i];
-      }
-      if (storage_size > sizeof(inline_storage)) {
-        storage = static_cast<unsigned char *>(std::malloc(storage_size));
-      }
-      if (storage != nullptr && rpc_read(conn, storage, storage_size) == 0) {
-        unsigned char *cursor = storage;
-        for (size_t i = 0; i < count; ++i) {
-          params[i] = cursor;
-          cursor += sizes[i];
-        }
-        status = 0;
-      }
+    size_t storage_size = 0;
+    for (size_t i = 0; i < count; ++i) {
+      storage_size += sizes[i];
     }
-    if (sizes != inline_sizes) {
-      std::free(sizes);
+    unsigned char *storage = storage_buf.alloc(storage_size);
+    if (!storage || rpc_read(conn, storage, storage_size) != 0) {
+      return -1;
     }
-    return status;
+    for (size_t i = 0; i < count; ++i) {
+      params[i] = storage;
+      storage += sizes[i];
+    }
+    return 0;
   }
 
   template <typename KernelNodeParams>
@@ -1784,30 +1625,19 @@ struct lupine_server_launch_params {
     return 0;
   }
 
-  void **data() const { return count != 0 ? params : nullptr; }
+  void **data() const { return count != 0 ? param_buf.ptr : nullptr; }
 };
 
 static int handle_cuLaunchKernelCommon(conn_t *conn, bool cooperative) {
   CUfunction f = nullptr;
-  unsigned int gridDimX = 0;
-  unsigned int gridDimY = 0;
-  unsigned int gridDimZ = 0;
-  unsigned int blockDimX = 0;
-  unsigned int blockDimY = 0;
-  unsigned int blockDimZ = 0;
+  unsigned int gridDimX = 0, gridDimY = 0, gridDimZ = 0;
+  unsigned int blockDimX = 0, blockDimY = 0, blockDimZ = 0;
   unsigned int sharedMemBytes = 0;
   CUstream hStream = nullptr;
   lupine_server_launch_params launch_params;
 
-  if (rpc_read(conn, &f, sizeof(f)) < 0 ||
-      rpc_read(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
-      rpc_read(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
-      rpc_read(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
-      rpc_read(conn, &blockDimX, sizeof(blockDimX)) < 0 ||
-      rpc_read(conn, &blockDimY, sizeof(blockDimY)) < 0 ||
-      rpc_read(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
-      rpc_read(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
-      rpc_read(conn, &hStream, sizeof(hStream)) < 0 ||
+  if (!lupine_read_all(conn, f, gridDimX, gridDimY, gridDimZ, blockDimX,
+                       blockDimY, blockDimZ, sharedMemBytes, hStream) ||
       launch_params.read(conn) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
@@ -1832,21 +1662,14 @@ int handle_cuLaunchKernelEx(conn_t *conn) {
   CUlaunchConfig config = {};
   CUfunction f = nullptr;
   lupine_server_launch_params launch_params;
+  lupine_inline_buf<CUlaunchAttribute, 8> attr_buf;
 
   if (rpc_read(conn, &config, sizeof(config)) < 0) {
     return -1;
   }
-  CUlaunchAttribute inline_attrs[8];
-  std::unique_ptr<CUlaunchAttribute[]> heap_attrs;
-  CUlaunchAttribute *attributes = inline_attrs;
-  if (config.numAttrs > std::size(inline_attrs)) {
-    heap_attrs.reset(new (std::nothrow) CUlaunchAttribute[config.numAttrs]);
-    if (!heap_attrs) {
-      return -1;
-    }
-    attributes = heap_attrs.get();
-  }
-  if ((config.numAttrs != 0 &&
+  CUlaunchAttribute *attributes = attr_buf.alloc(config.numAttrs);
+  if (!attributes ||
+      (config.numAttrs != 0 &&
        rpc_read(conn, attributes, config.numAttrs * sizeof(*attributes)) < 0) ||
       rpc_read(conn, &f, sizeof(f)) < 0 || launch_params.read(conn) < 0 ||
       rpc_read_end(conn) < 0) {
@@ -1885,6 +1708,17 @@ struct lupine_stream_callback_data {
 
 } // namespace
 
+template <typename... Args>
+static void lupine_send_side_effect(conn_t *conn, int op, const Args &...args) {
+  void *response = nullptr;
+  if (rpc_write_start_request(conn, op) >= 0 &&
+      ((rpc_write(conn, &args, sizeof(args)) >= 0) && ...) &&
+      rpc_wait_for_response(conn) >= 0) {
+    rpc_read(conn, &response, sizeof(response));
+    rpc_read_end(conn);
+  }
+}
+
 // A host callback carries the deliveries numbered when it started: the copies
 // ordered before it, on any stream, have pushed their bytes by then, and the
 // client applies them before running the callback.
@@ -1896,17 +1730,8 @@ static void CUDA_CB lupine_graph_host_callback(void *userData) {
 
   conn_t *conn = callback->conn;
   uint64_t delivered = lupine_dtoh_watermark(conn);
-  CUhostFn fn = callback->fn;
-  void *client_user_data = callback->userData;
-  void *response = nullptr;
-  if (rpc_write_start_request(conn, LUPINE_SIDE_EFFECT_HOST_FUNCTION) >= 0 &&
-      rpc_write(conn, &delivered, sizeof(delivered)) >= 0 &&
-      rpc_write(conn, &fn, sizeof(fn)) >= 0 &&
-      rpc_write(conn, &client_user_data, sizeof(client_user_data)) >= 0 &&
-      rpc_wait_for_response(conn) >= 0) {
-    rpc_read(conn, &response, sizeof(response));
-    rpc_read_end(conn);
-  }
+  lupine_send_side_effect(conn, LUPINE_SIDE_EFFECT_HOST_FUNCTION, delivered,
+                          callback->fn, callback->userData);
   if (callback->one_shot) {
     delete callback;
   }
@@ -1924,18 +1749,8 @@ static void CUDA_CB lupine_stream_callback(CUstream stream, CUresult status,
   conn_t *conn = callback->conn;
   uint64_t delivered = lupine_dtoh_watermark(conn);
   void *fn = reinterpret_cast<void *>(callback->callback);
-  void *client_user_data = callback->userData;
-  void *response = nullptr;
-  if (rpc_write_start_request(conn, LUPINE_SIDE_EFFECT_STREAM_CALLBACK) >= 0 &&
-      rpc_write(conn, &delivered, sizeof(delivered)) >= 0 &&
-      rpc_write(conn, &stream, sizeof(stream)) >= 0 &&
-      rpc_write(conn, &status, sizeof(status)) >= 0 &&
-      rpc_write(conn, &fn, sizeof(fn)) >= 0 &&
-      rpc_write(conn, &client_user_data, sizeof(client_user_data)) >= 0 &&
-      rpc_wait_for_response(conn) >= 0) {
-    rpc_read(conn, &response, sizeof(response));
-    rpc_read_end(conn);
-  }
+  lupine_send_side_effect(conn, LUPINE_SIDE_EFFECT_STREAM_CALLBACK, delivered,
+                          stream, status, fn, callback->userData);
   delete callback;
 }
 
@@ -1985,57 +1800,43 @@ int handle_cuGraphAddKernelNode(conn_t *conn) {
   CUDA_KERNEL_NODE_PARAMS nodeParams = {};
   CUgraphNode graphNode = nullptr;
   lupine_server_launch_params params;
+  int request_id = -1;
 
   if (rpc_read(conn, &hGraph, sizeof(hGraph)) < 0 || deps.read(conn) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
-      params.read_node(conn, &nodeParams) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+      params.read_node(conn, &nodeParams) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
   CUresult result = cuGraphAddKernelNode_v2(&graphNode, hGraph, deps.data(),
                                             deps.size(), &nodeParams);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &graphNode, sizeof(graphNode)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, graphNode, result);
 }
 
 int handle_cuGraphKernelNodeGetParams(conn_t *conn) {
   CUgraphNode hNode = nullptr;
-  int request_id;
+  int request_id = -1;
   CUDA_KERNEL_NODE_PARAMS node_params = {};
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &hNode, sizeof(hNode)) < 0) {
-    return -1;
-  }
-  request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  if (rpc_read(conn, &hNode, sizeof(hNode)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
-  result = cuGraphKernelNodeGetParams_v2(hNode, &node_params);
+  CUresult result = cuGraphKernelNodeGetParams_v2(hNode, &node_params);
   if (result == CUDA_SUCCESS && node_params.extra != nullptr) {
     result = CUDA_ERROR_NOT_SUPPORTED;
   }
-  static constexpr size_t wire_header_bytes = sizeof(size_t) + sizeof(CUresult);
-  unsigned char inline_headers[(64 + 1) * wire_header_bytes];
-  size_t inline_sizes[64];
-  std::vector<unsigned char> overflow_headers;
-  std::vector<size_t> overflow_sizes;
-  size_t param_count = 0;
-  size_t header_bytes = 0;
+  struct wire_hdr {
+    unsigned char bytes[sizeof(size_t) + sizeof(CUresult)];
+  };
+  lupine_inline_vec<wire_hdr, 65> headers;
+  lupine_inline_vec<size_t, 64> sizes;
   if (result == CUDA_SUCCESS) {
     lupine_internal_cuda_query probe;
     for (size_t i = 0;; ++i) {
-      size_t offset = 0;
-      size_t size = 0;
+      size_t offset = 0, size = 0;
       CUresult param_result = CUDA_ERROR_INVALID_HANDLE;
       if (node_params.func != nullptr) {
         param_result = cuFuncGetParamInfo(node_params.func, i, &offset, &size);
@@ -2046,35 +1847,15 @@ int handle_cuGraphKernelNodeGetParams(conn_t *conn) {
             cuKernelGetParamInfo(node_params.kern, i, &offset, &size);
       }
 #endif
-      unsigned char header[wire_header_bytes];
-      std::memcpy(header, &size, sizeof(size));
-      std::memcpy(header + sizeof(size), &param_result, sizeof(param_result));
-      if (overflow_headers.empty() &&
-          header_bytes + wire_header_bytes <= sizeof(inline_headers)) {
-        std::memcpy(inline_headers + header_bytes, header, wire_header_bytes);
-      } else {
-        if (overflow_headers.empty()) {
-          overflow_headers.reserve(sizeof(inline_headers) * 2);
-          overflow_headers.assign(inline_headers,
-                                  inline_headers + header_bytes);
-        }
-        overflow_headers.insert(overflow_headers.end(), header,
-                                header + wire_header_bytes);
-      }
-      header_bytes += wire_header_bytes;
+      wire_hdr hdr;
+      std::memcpy(hdr.bytes, &size, sizeof(size));
+      std::memcpy(hdr.bytes + sizeof(size), &param_result,
+                  sizeof(param_result));
+      headers.push(hdr);
       if (param_result != CUDA_SUCCESS) {
         break;
       }
-      if (overflow_sizes.empty() && param_count < std::size(inline_sizes)) {
-        inline_sizes[param_count] = size;
-      } else {
-        if (overflow_sizes.empty()) {
-          overflow_sizes.reserve(std::size(inline_sizes) * 2);
-          overflow_sizes.assign(inline_sizes, inline_sizes + param_count);
-        }
-        overflow_sizes.push_back(size);
-      }
-      ++param_count;
+      sizes.push(size);
     }
   }
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -2083,26 +1864,19 @@ int handle_cuGraphKernelNodeGetParams(conn_t *conn) {
     return -1;
   }
   if (result == CUDA_SUCCESS) {
-    const unsigned char *headers =
-        overflow_headers.empty() ? inline_headers : overflow_headers.data();
-    const size_t *sizes =
-        overflow_sizes.empty() ? inline_sizes : overflow_sizes.data();
-    for (size_t i = 0; i < param_count; ++i) {
-      if (rpc_write(conn, headers + i * wire_header_bytes, wire_header_bytes) <
-              0 ||
-          rpc_write(conn, node_params.kernelParams[i], sizes[i]) < 0) {
+    const wire_hdr *hdrs = headers.data();
+    const size_t *sz = sizes.data();
+    for (size_t i = 0; i < sizes.count; ++i) {
+      if (rpc_write(conn, &hdrs[i], sizeof(wire_hdr)) < 0 ||
+          rpc_write(conn, node_params.kernelParams[i], sz[i]) < 0) {
         return -1;
       }
     }
-    if (rpc_write(conn, headers + param_count * wire_header_bytes,
-                  wire_header_bytes) < 0) {
+    if (rpc_write(conn, &hdrs[sizes.count], sizeof(wire_hdr)) < 0) {
       return -1;
     }
   }
-  if (rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return rpc_write_end(conn) < 0 ? -1 : 0;
 }
 
 static int handle_cuGraphKernelNodeSetParamsCommon(conn_t *conn,
@@ -2111,15 +1885,13 @@ static int handle_cuGraphKernelNodeSetParamsCommon(conn_t *conn,
   CUgraphNode hNode = nullptr;
   CUDA_KERNEL_NODE_PARAMS nodeParams = {};
   lupine_server_launch_params params;
+  int request_id = -1;
 
   if ((exec_node && rpc_read(conn, &hGraphExec, sizeof(hGraphExec)) < 0) ||
       rpc_read(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
-      params.read_node(conn, &nodeParams) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+      params.read_node(conn, &nodeParams) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
@@ -2129,11 +1901,7 @@ static int handle_cuGraphKernelNodeSetParamsCommon(conn_t *conn,
                 hGraphExec, lupine_htod_graph_exec_node(hGraphExec, hNode),
                 &nodeParams)
           : cuGraphKernelNodeSetParams_v2(hNode, &nodeParams);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, result);
 }
 
 int handle_cuGraphKernelNodeSetParams(conn_t *conn) {
@@ -2151,12 +1919,9 @@ int handle_cuGraphAddMemcpyNode(conn_t *conn) {
   CUcontext ctx = nullptr;
   size_t host_src_bytes = 0;
   CUgraphNode graphNode = nullptr;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
 
   if (rpc_read(conn, &hGraph, sizeof(hGraph)) < 0 || deps.read(conn) < 0 ||
-      rpc_read(conn, &copyParams, sizeof(copyParams)) < 0 ||
-      rpc_read(conn, &ctx, sizeof(ctx)) < 0 ||
-      rpc_read(conn, &host_src_bytes, sizeof(host_src_bytes)) < 0) {
+      !lupine_read_all(conn, copyParams, ctx, host_src_bytes)) {
     return -1;
   }
 
@@ -2185,8 +1950,8 @@ int handle_cuGraphAddMemcpyNode(conn_t *conn) {
     return -1;
   }
 
-  result = cuGraphAddMemcpyNode(&graphNode, hGraph, deps.data(), deps.size(),
-                                &copyParams, ctx);
+  CUresult result = cuGraphAddMemcpyNode(&graphNode, hGraph, deps.data(),
+                                         deps.size(), &copyParams, ctx);
   // The copy lands in graph-owned staging; a host node behind it pushes the
   // bytes at every launch.
   if (copyParams.dstMemoryType == CU_MEMORYTYPE_HOST && client.bytes() != 0) {
@@ -2195,12 +1960,23 @@ int handle_cuGraphAddMemcpyNode(conn_t *conn) {
         copyParams.dstHost);
     result = result == CUDA_SUCCESS ? pushed : result;
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &graphNode, sizeof(graphNode)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
+  return lupine_write_response(conn, request_id, graphNode, result);
+}
+
+template <typename Call>
+static CUresult lupine_call_with_host_node_trampoline(
+    conn_t *conn, const CUDA_HOST_NODE_PARAMS &params, Call &&call) {
+  if (params.fn == nullptr) {
+    return CUDA_ERROR_INVALID_VALUE;
   }
-  return 0;
+  auto *callback =
+      new lupine_host_callback_data{conn, params.fn, params.userData};
+  CUDA_HOST_NODE_PARAMS server_params{lupine_graph_host_callback, callback};
+  CUresult result = call(&server_params);
+  if (result != CUDA_SUCCESS) {
+    delete callback;
+  }
+  return result;
 }
 
 int handle_cuGraphAddHostNode(conn_t *conn) {
@@ -2208,37 +1984,21 @@ int handle_cuGraphAddHostNode(conn_t *conn) {
   CUgraph hGraph = nullptr;
   lupine_server_graph_deps deps;
   CUDA_HOST_NODE_PARAMS nodeParams = {};
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  int request_id = -1;
 
   if (rpc_read(conn, &graphNode, sizeof(graphNode)) < 0 ||
       rpc_read(conn, &hGraph, sizeof(hGraph)) < 0 || deps.read(conn) < 0 ||
-      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+      rpc_read(conn, &nodeParams, sizeof(nodeParams)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
-  if (nodeParams.fn != nullptr) {
-    auto *callback =
-        new lupine_host_callback_data{conn, nodeParams.fn, nodeParams.userData};
-    CUDA_HOST_NODE_PARAMS serverParams = {};
-    serverParams.fn = lupine_graph_host_callback;
-    serverParams.userData = callback;
-
-    result = cuGraphAddHostNode(&graphNode, hGraph, deps.data(), deps.size(),
-                                &serverParams);
-    if (result != CUDA_SUCCESS) {
-      delete callback;
-    }
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &graphNode, sizeof(graphNode)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  CUresult result = lupine_call_with_host_node_trampoline(
+      conn, nodeParams, [&](const CUDA_HOST_NODE_PARAMS *server_params) {
+        return cuGraphAddHostNode(&graphNode, hGraph, deps.data(), deps.size(),
+                                  server_params);
+      });
+  return lupine_write_response(conn, request_id, graphNode, result);
 }
 
 static CUresult lupine_server_cuGraphAddNode(
@@ -2288,17 +2048,13 @@ int handle_cuGraphAddNode(conn_t *conn) {
                    << nodeParams.type << " graph=" << hGraph
                    << " node=" << graphNode << " result=" << result);
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &graphNode, sizeof(graphNode)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
-      (result == CUDA_SUCCESS &&
-       nodeParams.type == CU_GRAPH_NODE_TYPE_CONDITIONAL &&
-       rpc_write(conn, nodeParams.conditional.phGraph_out,
-                 nodeParams.conditional.size * sizeof(CUgraph)) < 0) ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  size_t cond_bytes = (result == CUDA_SUCCESS &&
+                       nodeParams.type == CU_GRAPH_NODE_TYPE_CONDITIONAL)
+                          ? nodeParams.conditional.size * sizeof(CUgraph)
+                          : 0;
+  return lupine_write_response(
+      conn, request_id, graphNode, result,
+      lupine_raw_bytes{nodeParams.conditional.phGraph_out, cond_bytes});
 }
 
 // Host-node callbacks set after node creation have no graph handle to own their
@@ -2308,37 +2064,24 @@ static int handle_cuGraphHostNodeSetParamsCommon(conn_t *conn, bool exec_node) {
   CUgraphExec hGraphExec = nullptr;
   CUgraphNode hNode = nullptr;
   CUDA_HOST_NODE_PARAMS params{};
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  int request_id = -1;
 
   if ((exec_node && rpc_read(conn, &hGraphExec, sizeof(hGraphExec)) < 0) ||
       rpc_read(conn, &hNode, sizeof(hNode)) < 0 ||
-      rpc_read(conn, &params, sizeof(params)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+      rpc_read(conn, &params, sizeof(params)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
-  if (params.fn != nullptr) {
-    auto *callback =
-        new lupine_host_callback_data{conn, params.fn, params.userData};
-    CUDA_HOST_NODE_PARAMS serverParams{lupine_graph_host_callback, callback};
-    if (exec_node) {
-      hNode = lupine_htod_graph_exec_node(hGraphExec, hNode);
-      result = cuGraphExecHostNodeSetParams(hGraphExec, hNode, &serverParams);
-    } else {
-      result = cuGraphHostNodeSetParams(hNode, &serverParams);
-    }
-    if (result != CUDA_SUCCESS) {
-      delete callback;
-    }
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  CUresult result = lupine_call_with_host_node_trampoline(
+      conn, params, [&](const CUDA_HOST_NODE_PARAMS *server_params) {
+        return exec_node ? cuGraphExecHostNodeSetParams(
+                               hGraphExec,
+                               lupine_htod_graph_exec_node(hGraphExec, hNode),
+                               server_params)
+                         : cuGraphHostNodeSetParams(hNode, server_params);
+      });
+  return lupine_write_response(conn, request_id, result);
 }
 
 int handle_cuGraphHostNodeSetParams(conn_t *conn) {
@@ -2352,18 +2095,15 @@ int handle_cuGraphExecHostNodeSetParams(conn_t *conn) {
 int handle_cuGraphHostNodeGetParams(conn_t *conn) {
   CUgraphNode hNode = nullptr;
   CUDA_HOST_NODE_PARAMS params{};
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  int request_id = -1;
 
   if (rpc_read(conn, &hNode, sizeof(hNode)) < 0 ||
-      rpc_read(conn, &params, sizeof(params)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+      rpc_read(conn, &params, sizeof(params)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
-  result = cuGraphHostNodeGetParams(hNode, &params);
+  CUresult result = cuGraphHostNodeGetParams(hNode, &params);
   // Unwrap the trampoline so the client sees the fn/userData it registered.
   if (result == CUDA_SUCCESS && params.fn == lupine_graph_host_callback &&
       params.userData != nullptr) {
@@ -2371,12 +2111,7 @@ int handle_cuGraphHostNodeGetParams(conn_t *conn) {
     params.fn = callback->fn;
     params.userData = callback->userData;
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &params, sizeof(params)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, params, result);
 }
 
 int handle_cuLaunchHostFunc(conn_t *conn) {
@@ -2386,13 +2121,7 @@ int handle_cuLaunchHostFunc(conn_t *conn) {
   void *userData = nullptr;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_read(conn, &fn, sizeof(fn)) < 0 ||
-      rpc_read(conn, &userData, sizeof(userData)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  if (!lupine_read_all(conn, stream, fn, userData) || rpc_read_end(conn) < 0) {
     return -1;
   }
 
@@ -2421,14 +2150,8 @@ int handle_cuStreamAddCallback(conn_t *conn) {
   unsigned int flags = 0;
   CUresult result = CUDA_ERROR_INVALID_VALUE;
 
-  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_read(conn, &callback, sizeof(callback)) < 0 ||
-      rpc_read(conn, &userData, sizeof(userData)) < 0 ||
-      rpc_read(conn, &flags, sizeof(flags)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  if (!lupine_read_all(conn, stream, callback, userData, flags) ||
+      rpc_read_end(conn) < 0) {
     return -1;
   }
 
@@ -2480,21 +2203,14 @@ int handle_cuLogsRegisterCallback(conn_t *conn) {
     }
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &callback_handle, sizeof(callback_handle)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, callback_handle, result);
 }
 
 int handle_cuLogsUnregisterCallback(conn_t *conn) {
   CUlogsCallbackHandle callback_handle = nullptr;
-  if (rpc_read(conn, &callback_handle, sizeof(callback_handle)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  int request_id = -1;
+  if (rpc_read(conn, &callback_handle, sizeof(callback_handle)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
@@ -2509,12 +2225,7 @@ int handle_cuLogsUnregisterCallback(conn_t *conn) {
     }
   }
   delete data;
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, result);
 }
 #endif
 
@@ -2623,13 +2334,9 @@ int handle_cuEventQuery(conn_t *conn) {
   // their deliveries by now. The client applies them before using any of it.
   uint64_t delivered = lupine_dtoh_watermark(conn);
   results[0] = lupine_take_async_error(conn, results[0]);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &delivered, sizeof(delivered)) < 0 ||
-      rpc_write(conn, results, (count + 1) * sizeof(*results)) < 0 ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(
+      conn, request_id, delivered,
+      lupine_raw_bytes{results, (count + 1) * sizeof(*results)});
 }
 
 int handle_cuStreamWaitEvent(conn_t *conn) {
@@ -2648,37 +2355,36 @@ int handle_cuStreamWaitEvent(conn_t *conn) {
   return 0;
 }
 
-int handle_cuStreamBeginCaptureToGraph(conn_t *conn) {
+static int lupine_handle_stream_begin_capture(conn_t *conn, bool to_graph) {
   CUstream stream = nullptr;
   CUgraph graph = nullptr;
   lupine_server_graph_deps deps;
   CUstreamCaptureMode mode = CU_STREAM_CAPTURE_MODE_GLOBAL;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  int request_id = -1;
 
   if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_read(conn, &graph, sizeof(graph)) < 0 || deps.read(conn) < 0 ||
-      rpc_read(conn, &mode, sizeof(mode)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+      (to_graph &&
+       (rpc_read(conn, &graph, sizeof(graph)) < 0 || deps.read(conn) < 0)) ||
+      rpc_read(conn, &mode, sizeof(mode)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
   lupine_capture_id capture_id = lupine_begin_stream_capture_resources(stream);
-  result = lupine_server_prepare_htod_capture(conn);
+  CUresult result = lupine_server_prepare_htod_capture(conn);
   if (result == CUDA_SUCCESS) {
-    result = cuStreamBeginCaptureToGraph(stream, graph, deps.data(), nullptr,
-                                         deps.size(), mode);
+    result = to_graph ? cuStreamBeginCaptureToGraph(stream, graph, deps.data(),
+                                                    nullptr, deps.size(), mode)
+                      : cuStreamBeginCapture_v2(stream, mode);
   }
   if (result != CUDA_SUCCESS) {
     lupine_discard_stream_capture_resources(capture_id);
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, result);
+}
+
+int handle_cuStreamBeginCaptureToGraph(conn_t *conn) {
+  return lupine_handle_stream_begin_capture(conn, true);
 }
 
 int handle_cuStreamGetCaptureInfo(conn_t *conn) {
@@ -2689,118 +2395,65 @@ int handle_cuStreamGetCaptureInfo(conn_t *conn) {
   const CUgraphNode *deps_ptr = nullptr;
   const CUgraphEdgeData *edge_ptr = nullptr;
   size_t dep_count = 0;
-  bool has_edge_data = false;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  int request_id = -1;
 
-  if (rpc_read(conn, &stream, sizeof(stream)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
-  result = cuStreamGetCaptureInfo_v3(stream, &status, &id, &graph, &deps_ptr,
-                                     &edge_ptr, &dep_count);
-  has_edge_data = edge_ptr != nullptr && dep_count != 0;
+  CUresult result = cuStreamGetCaptureInfo_v3(stream, &status, &id, &graph,
+                                              &deps_ptr, &edge_ptr, &dep_count);
+  bool has_edge_data = edge_ptr != nullptr && dep_count != 0;
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &status, sizeof(status)) < 0 ||
-      rpc_write(conn, &id, sizeof(id)) < 0 ||
-      rpc_write(conn, &graph, sizeof(graph)) < 0 ||
-      rpc_write(conn, &dep_count, sizeof(dep_count)) < 0 ||
-      rpc_write(conn, &has_edge_data, sizeof(has_edge_data)) < 0 ||
-      (deps_ptr != nullptr &&
-       rpc_write(conn, deps_ptr, dep_count * sizeof(CUgraphNode)) < 0) ||
-      (has_edge_data &&
-       rpc_write(conn, edge_ptr, dep_count * sizeof(CUgraphEdgeData)) < 0) ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(
+      conn, request_id, status, id, graph, dep_count, has_edge_data,
+      lupine_raw_bytes{deps_ptr,
+                       deps_ptr ? dep_count * sizeof(CUgraphNode) : 0},
+      lupine_raw_bytes{edge_ptr,
+                       has_edge_data ? dep_count * sizeof(CUgraphEdgeData) : 0},
+      result);
 }
 
 int handle_cuStreamBeginCapture(conn_t *conn) {
-  CUstream stream = nullptr;
-  CUstreamCaptureMode mode = CU_STREAM_CAPTURE_MODE_GLOBAL;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
-  if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_read(conn, &mode, sizeof(mode)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  lupine_capture_id capture_id = lupine_begin_stream_capture_resources(stream);
-  result = lupine_server_prepare_htod_capture(conn);
-  if (result == CUDA_SUCCESS) {
-    result = cuStreamBeginCapture_v2(stream, mode);
-  }
-  if (result != CUDA_SUCCESS) {
-    lupine_discard_stream_capture_resources(capture_id);
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_handle_stream_begin_capture(conn, false);
 }
 
 int handle_cuStreamEndCapture(conn_t *conn) {
   CUstream stream = nullptr;
   uint8_t graph_present = 0;
   CUgraph graph = nullptr;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
+  int request_id = -1;
 
   if (rpc_read(conn, &stream, sizeof(stream)) < 0 ||
       rpc_read(conn, &graph_present, sizeof(graph_present)) < 0 ||
-      (graph_present && rpc_read(conn, &graph, sizeof(graph)) < 0)) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+      (graph_present && rpc_read(conn, &graph, sizeof(graph)) < 0) ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
-  result = cuStreamEndCapture(stream, graph_present ? &graph : nullptr);
+  CUresult result =
+      cuStreamEndCapture(stream, graph_present ? &graph : nullptr);
   lupine_finish_stream_capture_resources(stream, graph, result == CUDA_SUCCESS);
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      (graph_present && rpc_write(conn, &graph, sizeof(graph)) < 0) ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(
+      conn, request_id,
+      lupine_raw_bytes{&graph, graph_present ? sizeof(graph) : 0}, result);
 }
 
 int handle_cuGraphClone(conn_t *conn) {
-  CUgraph clone = nullptr;
-  CUgraph original = nullptr;
-  CUresult result = CUDA_ERROR_INVALID_VALUE;
-
+  CUgraph clone = nullptr, original = nullptr;
+  int request_id = -1;
   if (rpc_read(conn, &clone, sizeof(clone)) < 0 ||
-      rpc_read(conn, &original, sizeof(original)) < 0) {
+      rpc_read(conn, &original, sizeof(original)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  result = cuGraphClone(&clone, original);
+  CUresult result = cuGraphClone(&clone, original);
   if (result == CUDA_SUCCESS) {
     lupine_clone_graph_resources(clone, original);
   }
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &clone, sizeof(clone)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, clone, result);
 }
 
 template <typename InstantiateFn>
@@ -2883,14 +2536,10 @@ int handle_cuGraphInstantiateWithFlags(conn_t *conn) {
   CUgraphExec exec = nullptr;
   CUgraph graph = nullptr;
   unsigned long long flags = 0;
+  int request_id = -1;
 
-  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
-      rpc_read(conn, &graph, sizeof(graph)) < 0 ||
-      rpc_read(conn, &flags, sizeof(flags)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  if (!lupine_read_all(conn, exec, graph, flags) ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
@@ -2898,27 +2547,17 @@ int handle_cuGraphInstantiateWithFlags(conn_t *conn) {
       graph, &exec, nullptr, [&](CUgraph prepared) {
         return cuGraphInstantiateWithFlags(&exec, prepared, flags);
       });
-
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &exec, sizeof(exec)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, exec, result);
 }
 
 int handle_cuGraphInstantiateWithParams(conn_t *conn) {
   CUgraphExec exec = nullptr;
   CUgraph graph = nullptr;
   CUDA_GRAPH_INSTANTIATE_PARAMS params = {};
+  int request_id = -1;
 
-  if (rpc_read(conn, &exec, sizeof(exec)) < 0 ||
-      rpc_read(conn, &graph, sizeof(graph)) < 0 ||
-      rpc_read(conn, &params, sizeof(params)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  if (!lupine_read_all(conn, exec, graph, params) ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
@@ -2931,13 +2570,7 @@ int handle_cuGraphInstantiateWithParams(conn_t *conn) {
         return cuGraphInstantiateWithParams(&exec, prepared, &params);
       });
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &exec, sizeof(exec)) < 0 ||
-      rpc_write(conn, &params, sizeof(params)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, exec, params, result);
 }
 
 int handle_cuGraphExecDestroy(conn_t *conn) {
@@ -2952,14 +2585,9 @@ int handle_cuGraphExecDestroy(conn_t *conn) {
   if (result == CUDA_SUCCESS) {
     result = lupine_release_graph_exec_resources(exec);
   }
-  if (lupine_unanswered(conn, result)) {
-    return 0;
-  }
-  return rpc_write_start_response(conn, request_id) < 0 ||
-                 rpc_write(conn, &result, sizeof(result)) < 0 ||
-                 rpc_write_end(conn) < 0
-             ? -1
-             : 0;
+  return lupine_unanswered(conn, result)
+             ? 0
+             : lupine_write_response(conn, request_id, result);
 }
 
 // Unanswered, as the generated client sends it: a failure reaches the client
@@ -3391,57 +3019,37 @@ int handle_cuMemHostAlloc(conn_t *conn) {
   void *pp = nullptr;
   size_t bytesize = 0;
   unsigned int flags = 0;
-  if (rpc_read(conn, &pp, sizeof(pp)) < 0 ||
-      rpc_read(conn, &bytesize, sizeof(bytesize)) < 0 ||
-      rpc_read(conn, &flags, sizeof(flags)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  int request_id = -1;
+  if (!lupine_read_all(conn, pp, bytesize, flags) ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
   CUdeviceptr device_ptr = 0;
   CUresult result =
       lupine_server_host_alloc(conn, &pp, &device_ptr, bytesize, flags);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pp, sizeof(pp)) < 0 ||
-      rpc_write(conn, &device_ptr, sizeof(device_ptr)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, pp, device_ptr, result);
 }
 
 int handle_cuMemHostGetFlags(conn_t *conn) {
   unsigned int flags = 0;
   void *p = nullptr;
+  int request_id = -1;
   if (rpc_read(conn, &flags, sizeof(flags)) < 0 ||
-      rpc_read(conn, &p, sizeof(p)) < 0) {
+      rpc_read(conn, &p, sizeof(p)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-  CUresult result = CUDA_SUCCESS;
-  if (!lupine_server_host_allocation_flags(p, &flags)) {
-    result = cuMemHostGetFlags(&flags, p);
-  }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  CUresult result = lupine_server_host_allocation_flags(p, &flags)
+                        ? CUDA_SUCCESS
+                        : cuMemHostGetFlags(&flags, p);
+  return lupine_write_response(conn, request_id, flags, result);
 }
 
 int handle_cuMemFreeHost(conn_t *conn) {
   void *pointer = nullptr;
-  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  int request_id = -1;
+  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
   uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
@@ -3459,43 +3067,27 @@ int handle_cuMemFreeHost(conn_t *conn) {
   // Copies into the memory have numbered their deliveries by now; the client
   // applies them before it unmaps its view.
   uint64_t delivered = lupine_dtoh_watermark(conn);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &delivered, sizeof(delivered)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, delivered, result);
 }
 
 int handle_cuMemAllocManaged(conn_t *conn) {
   CUdeviceptr pointer = 0;
   size_t bytes = 0;
   unsigned int flags = 0;
-  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0 ||
-      rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
-      rpc_read(conn, &flags, sizeof(flags)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  int request_id = -1;
+  if (!lupine_read_all(conn, pointer, bytes, flags) ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
   CUresult result = lupine_server_managed_alloc(conn, &pointer, bytes, flags);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &pointer, sizeof(pointer)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, pointer, result);
 }
 
 int handle_cuMemFree_v2(conn_t *conn) {
   CUdeviceptr pointer = 0;
-  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  int request_id = -1;
+  if (rpc_read(conn, &pointer, sizeof(pointer)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
   lupine_server_allocation allocation;
@@ -3508,11 +3100,7 @@ int handle_cuMemFree_v2(conn_t *conn) {
         lupine_server_checkpoint_cuda_symbol("cuMemFree_v2"));
     result = release != nullptr ? release(pointer) : cuMemFree_v2(pointer);
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, result);
 }
 
 void lupine_server_cleanup_identity_allocations(conn_t *conn) {
@@ -3545,31 +3133,32 @@ int handle_cuGraphLaunch(conn_t *conn) {
 extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *context,
                                            unsigned int flags, CUdevice device);
 
-int handle_cuCtxCreate_v2(conn_t *conn) {
+static int lupine_handle_context_acquire(conn_t *conn, bool primary) {
   unsigned int flags = 0;
   CUdevice device = 0;
-  if (rpc_read(conn, &flags, sizeof(flags)) < 0 ||
-      rpc_read(conn, &device, sizeof(device)) < 0) {
+  int request_id = -1;
+  if ((!primary && rpc_read(conn, &flags, sizeof(flags)) < 0) ||
+      rpc_read(conn, &device, sizeof(device)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
   CUcontext context = nullptr;
   lupine_server_begin_lifecycle_transaction(conn);
   lupine_monitoring_begin_context_create(device);
-  CUresult result = cuCtxCreate_v2(&context, flags, device);
+  CUresult result = primary ? cuDevicePrimaryCtxRetain(&context, device)
+                            : cuCtxCreate_v2(&context, flags, device);
   lupine_monitoring_end_context_create(result == CUDA_SUCCESS);
-  lupine_server_note_created_context(conn, context, result);
-  lupine_server_end_lifecycle_transaction(conn);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &context, sizeof(context)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
+  if (primary) {
+    lupine_server_note_primary_context(conn, device, context, result);
+  } else {
+    lupine_server_note_created_context(conn, context, result);
   }
-  return 0;
+  lupine_server_end_lifecycle_transaction(conn);
+  return lupine_write_response(conn, request_id, context, result);
+}
+
+int handle_cuCtxCreate_v2(conn_t *conn) {
+  return lupine_handle_context_acquire(conn, false);
 }
 
 // The first event is the caller's allocation; later creations are speculative.
@@ -3607,15 +3196,9 @@ int handle_lupineEventCreateBatch(conn_t *conn) {
   if (count != 0) {
     result = CUDA_SUCCESS;
   }
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 ||
-      rpc_write(conn, &device, sizeof(device)) < 0 ||
-      rpc_write(conn, &count, sizeof(count)) < 0 ||
-      rpc_write(conn, events, count * sizeof(*events)) < 0 ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(
+      conn, request_id, result, device, count,
+      lupine_raw_bytes{events, count * sizeof(*events)});
 }
 
 // Creates the client's stream pool under the context it names in one round
@@ -3658,49 +3241,20 @@ int handle_lupineStreamPoolInit(conn_t *conn) {
     cuCtxPopCurrent(&popped);
   }
 
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &created, sizeof(created)) < 0 ||
-      rpc_write(conn, &priorities, sizeof(priorities)) < 0 ||
-      rpc_write(conn, &least, sizeof(least)) < 0 ||
-      rpc_write(conn, streams, created * sizeof(*streams)) < 0 ||
-      rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(
+      conn, request_id, created, priorities, least,
+      lupine_raw_bytes{streams, created * sizeof(*streams)});
 }
 
 int handle_cuDevicePrimaryCtxRetain(conn_t *conn) {
-  CUdevice device = 0;
-  if (rpc_read(conn, &device, sizeof(device)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
-    return -1;
-  }
-
-  CUcontext context = nullptr;
-  lupine_server_begin_lifecycle_transaction(conn);
-  lupine_monitoring_begin_context_create(device);
-  CUresult result = cuDevicePrimaryCtxRetain(&context, device);
-  lupine_monitoring_end_context_create(result == CUDA_SUCCESS);
-  lupine_server_note_primary_context(conn, device, context, result);
-  lupine_server_end_lifecycle_transaction(conn);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &context, sizeof(context)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_handle_context_acquire(conn, true);
 }
 
 static int handle_cuDevicePrimaryCtxTeardown(conn_t *conn, bool reset) {
   CUdevice device = 0;
-  if (rpc_read(conn, &device, sizeof(device)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  int request_id = -1;
+  if (rpc_read(conn, &device, sizeof(device)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
@@ -3723,11 +3277,9 @@ int handle_cuDevicePrimaryCtxReset_v2(conn_t *conn) {
 
 int handle_cuCtxAttach(conn_t *conn) {
   unsigned int flags = 0;
-  if (rpc_read(conn, &flags, sizeof(flags)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  int request_id = -1;
+  if (rpc_read(conn, &flags, sizeof(flags)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 
@@ -3735,21 +3287,14 @@ int handle_cuCtxAttach(conn_t *conn) {
   lupine_server_begin_lifecycle_transaction(conn);
   CUresult result = cuCtxAttach(&context, flags);
   lupine_server_end_lifecycle_transaction(conn);
-  if (rpc_write_start_response(conn, request_id) < 0 ||
-      rpc_write(conn, &context, sizeof(context)) < 0 ||
-      rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
-    return -1;
-  }
-  return 0;
+  return lupine_write_response(conn, request_id, context, result);
 }
 
 static int handle_cuCtxTeardown(conn_t *conn, bool detach) {
   CUcontext context = nullptr;
-  if (rpc_read(conn, &context, sizeof(context)) < 0) {
-    return -1;
-  }
-  int request_id = rpc_read_end(conn);
-  if (request_id < 0) {
+  int request_id = -1;
+  if (rpc_read(conn, &context, sizeof(context)) < 0 ||
+      (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
 

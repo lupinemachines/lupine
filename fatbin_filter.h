@@ -26,6 +26,28 @@ struct lupine_filtered_fatbin {
   const lupine_fatbin_span *spans() const {
     return overflow_spans.empty() ? inline_spans : overflow_spans.data();
   }
+
+  void append(uint64_t offset, uint64_t len) {
+    lupine_fatbin_span *last =
+        span_count == 0
+            ? nullptr
+            : (overflow_spans.empty() ? &inline_spans[span_count - 1]
+                                      : &overflow_spans.back());
+    if (last != nullptr && last->offset + last->size == offset) {
+      last->size += len;
+      return;
+    }
+    if (overflow_spans.empty() && span_count < inline_capacity) {
+      inline_spans[span_count++] = {offset, len};
+      return;
+    }
+    if (overflow_spans.empty()) {
+      overflow_spans.reserve(inline_capacity * 2);
+      overflow_spans.assign(inline_spans, inline_spans + inline_capacity);
+    }
+    overflow_spans.push_back({offset, len});
+    ++span_count;
+  }
 };
 
 // Keep every member that might serve any device on the destination server.
@@ -64,36 +86,12 @@ lupine_filter_fatbin_spans(const unsigned char *image, size_t size,
       return {};
     }
     const size_t length = entry.header_size + entry.payload_size;
-    const bool keep =
-        std::any_of(devices.begin(), devices.end(), [&entry](unsigned device) {
-          if (entry.kind == LUPINE_FATBIN_ENTRY_PTX) {
-            return entry.arch <= device;
-          }
-          return entry.arch / 10 == device / 10 && entry.arch <= device;
-        });
-    if (keep) {
-      lupine_fatbin_span *last =
-          result.span_count == 0
-              ? nullptr
-              : (result.overflow_spans.empty()
-                     ? &result.inline_spans[result.span_count - 1]
-                     : &result.overflow_spans.back());
-      if (last != nullptr && last->offset + last->size == at) {
-        last->size += length;
-      } else if (result.overflow_spans.empty() &&
-                 result.span_count < lupine_filtered_fatbin::inline_capacity) {
-        result.inline_spans[result.span_count++] = {at, length};
-      } else {
-        if (result.overflow_spans.empty()) {
-          result.overflow_spans.reserve(
-              lupine_filtered_fatbin::inline_capacity * 2);
-          result.overflow_spans.assign(
-              result.inline_spans,
-              result.inline_spans + lupine_filtered_fatbin::inline_capacity);
-        }
-        result.overflow_spans.push_back({at, length});
-        ++result.span_count;
-      }
+    if (std::any_of(devices.begin(), devices.end(), [&entry](unsigned device) {
+          return entry.kind == LUPINE_FATBIN_ENTRY_PTX
+                     ? entry.arch <= device
+                     : (entry.arch / 10 == device / 10 && entry.arch <= device);
+        })) {
+      result.append(at, length);
       selected_size += length;
     }
     at += length;
@@ -101,7 +99,6 @@ lupine_filter_fatbin_spans(const unsigned char *image, size_t size,
   if (result.span_count == 0 || selected_size == size) {
     return {};
   }
-
   result.header.files_size = selected_size - sizeof(result.header);
   result.size = selected_size;
   result.valid = true;
