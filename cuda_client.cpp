@@ -146,6 +146,7 @@ struct lupine_library_kernel_record {
 
 struct lupine_module_function_record {
   CUmodule module = nullptr;
+  std::string name;
 };
 
 static CUresult lupine_warm_func_param_info(CUfunction function);
@@ -219,6 +220,38 @@ template <typename T, typename Tag> static T &lupine_leaked(Tag) {
   static T *instance = new T();
   return *instance;
 }
+
+template <typename Map> struct lupine_lazy_cache {
+  std::atomic<Map *> ptr{nullptr};
+  Map *try_get() const { return ptr.load(std::memory_order_acquire); }
+  Map &ensure() {
+    if (Map *p = try_get())
+      return *p;
+    static std::mutex mu;
+    std::lock_guard<std::mutex> lock(mu);
+    Map *p = ptr.load(std::memory_order_relaxed);
+    if (!p) {
+      p = new Map();
+      ptr.store(p, std::memory_order_release);
+    }
+    return *p;
+  }
+  template <typename K, typename V> bool find(const K &k, V &v) const {
+    Map *p = try_get();
+    return p != nullptr && p->find(k, v);
+  }
+  template <typename K, typename V> void insert_or_assign(K &&k, V &&v) {
+    ensure().insert_or_assign(std::forward<K>(k), std::forward<V>(v));
+  }
+  template <typename K> bool erase(const K &k) {
+    Map *p = try_get();
+    return p != nullptr && p->erase(k);
+  }
+  void clear() {
+    if (Map *p = try_get())
+      p->clear();
+  }
+};
 
 template <typename First, typename... Rest>
 static size_t lupine_hash_combine(const First &first, const Rest &...rest) {
@@ -358,7 +391,8 @@ template <lupine_attribute_cache Kind> static auto &get_cache() {
                                  lupine_function_attribute_key>;
   using hash = std::conditional_t<kernel, lupine_kernel_attribute_key_hash,
                                   lupine_function_attribute_key_hash>;
-  return lupine_leaked<libcuckoo::cuckoohash_map<key, int, hash>>([] {});
+  static lupine_lazy_cache<libcuckoo::cuckoohash_map<key, int, hash>> cache;
+  return cache;
 }
 
 struct lupine_param_info_key {
@@ -534,15 +568,17 @@ void lupine_primary_ctx_state_cache_insert(conn_t *conn, CUdevice dev,
 }
 
 static auto &lupine_kernel_function_cache() {
-  return lupine_leaked<libcuckoo::cuckoohash_map<
-      lupine_kernel_function_key, CUfunction, lupine_kernel_function_key_hash>>(
-      [] {});
+  static lupine_lazy_cache<libcuckoo::cuckoohash_map<
+      lupine_kernel_function_key, CUfunction, lupine_kernel_function_key_hash>>
+      cache;
+  return cache;
 }
 
 static auto &lupine_occupancy_cache() {
-  return lupine_leaked<libcuckoo::cuckoohash_map<lupine_occupancy_key, int,
-                                                 lupine_occupancy_key_hash>>(
-      [] {});
+  static lupine_lazy_cache<libcuckoo::cuckoohash_map<lupine_occupancy_key, int,
+                                                     lupine_occupancy_key_hash>>
+      cache;
+  return cache;
 }
 
 template <typename T, size_t InlineCount> struct lupine_inline_buf {
@@ -618,20 +654,19 @@ static int lupine_read_attributes(conn_t *conn, Key key) {
 }
 
 static auto &lupine_param_info_cache() {
-  return lupine_leaked<
+  static lupine_lazy_cache<
       libcuckoo::cuckoohash_map<lupine_param_info_key, lupine_param_info_value,
-                                lupine_param_info_key_hash>>([] {});
-}
-
-static auto &lupine_param_layout_count_cache() {
-  return lupine_leaked<libcuckoo::cuckoohash_map<
-      lupine_param_layout_key, size_t, lupine_param_layout_key_hash>>([] {});
+                                lupine_param_info_key_hash>>
+      cache;
+  return cache;
 }
 
 static auto &lupine_param_layout_cache() {
-  return lupine_leaked<libcuckoo::cuckoohash_map<
+  static lupine_lazy_cache<libcuckoo::cuckoohash_map<
       lupine_param_layout_key, std::shared_ptr<const lupine_param_layout>,
-      lupine_param_layout_key_hash>>([] {});
+      lupine_param_layout_key_hash>>
+      cache;
+  return cache;
 }
 
 static std::shared_ptr<const lupine_param_layout>
@@ -687,7 +722,8 @@ using lupine_named_handle_map =
 // Filled from library-load responses; serves cuLibraryGetKernel without a
 // round trip.
 static auto &lupine_library_kernel_names() {
-  return lupine_leaked<lupine_named_handle_map<CUlibrary, CUkernel>>([] {});
+  static lupine_lazy_cache<lupine_named_handle_map<CUlibrary, CUkernel>> cache;
+  return cache;
 }
 
 // Filled from module-load responses; serves cuModuleGetFunction without a
@@ -698,7 +734,8 @@ static auto &lupine_library_kernel_names() {
 // a module handle, so a recycled one never resolves against the functions of
 // the module that held it before.
 static auto &lupine_module_function_names() {
-  return lupine_leaked<lupine_named_handle_map<CUmodule, CUfunction>>([] {});
+  static lupine_lazy_cache<lupine_named_handle_map<CUmodule, CUfunction>> cache;
+  return cache;
 }
 
 static std::mutex &lupine_library_kernel_mutex() {
@@ -1030,17 +1067,18 @@ extern "C" CUresult lupine_record_module_function(CUfunction function,
     std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
     auto &record = lupine_module_functions()[function];
     record.module = module;
+    if (record.name.empty()) {
+      record.name = name;
+    }
   }
   return CUDA_SUCCESS;
 }
 
 static void lupine_cache_param_layout(
     uintptr_t handle, bool is_kernel,
-    const std::shared_ptr<const lupine_param_layout> &layout,
-    size_t param_count) {
-  lupine_param_layout_key key{handle, is_kernel};
-  lupine_param_layout_cache().insert_or_assign(key, layout);
-  lupine_param_layout_count_cache().insert_or_assign(key, param_count);
+    const std::shared_ptr<const lupine_param_layout> &layout) {
+  lupine_param_layout_cache().insert_or_assign(
+      lupine_param_layout_key{handle, is_kernel}, layout);
 }
 
 static void lupine_prefetch_function_param_layout(CUfunction function,
@@ -1080,8 +1118,7 @@ static void lupine_prefetch_function_param_layout(CUfunction function,
   }
   if (result == CUDA_ERROR_INVALID_VALUE) {
     lupine_cache_param_layout(
-        handle, false, lupine_make_param_layout(params.data(), params.count),
-        params.count);
+        handle, false, lupine_make_param_layout(params.data(), params.count));
   } else {
     for (size_t i = 0; i < params.count; ++i) {
       lupine_param_info_cache().insert_or_assign(
@@ -1162,9 +1199,13 @@ static int lupine_read_module_functions(conn_t *conn, CUmodule module,
     }
     if (param_count != LUPINE_PARAM_COUNT_UNKNOWN) {
       lupine_cache_param_layout(reinterpret_cast<uintptr_t>(function), false,
-                                layout, param_count);
+                                layout);
     }
     lupine_note_function_owner_route(function, route);
+    {
+      std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+      lupine_module_functions()[function] = {module, name};
+    }
     lupine_module_function_names().insert_or_assign(
         lupine_named_handle_key<CUmodule>{module, std::move(name)}, function);
   }
@@ -1830,13 +1871,6 @@ static CUresult lupine_cuGetParamInfo_cached(uintptr_t handle,
     return CUDA_SUCCESS;
   }
 
-  size_t param_count = 0;
-  if (lupine_param_layout_count_cache().find(
-          lupine_param_layout_key{handle, kernel}, param_count) &&
-      param_index >= param_count) {
-    return CUDA_ERROR_INVALID_VALUE;
-  }
-
   CUfunction function = reinterpret_cast<CUfunction>(handle);
   lupine_route route = lupine_route_for_function(function);
   if (lupine_route_is_local(route)) {
@@ -1975,9 +2009,15 @@ static void lupine_kernel_attribute_cache_erase_for_function(
       lupine_kernel_attribute_key{route_id, kernel, attrib, device});
 }
 
-template <typename Cache, typename Match>
-static void lupine_cache_erase_if(Cache &cache, Match match) {
-  auto table = cache.lock_table();
+static std::atomic<bool> lupine_extended_func_attr{false};
+
+template <typename Map, typename Match>
+static void lupine_cache_erase_if(lupine_lazy_cache<Map> &lazy, Match match) {
+  Map *cache = lazy.try_get();
+  if (cache == nullptr || cache->empty()) {
+    return;
+  }
+  auto table = cache->lock_table();
   for (auto it = table.begin(); it != table.end();) {
     it = match(it->first, it->second) ? table.erase(it) : std::next(it);
   }
@@ -2022,6 +2062,10 @@ bool lupine_attribute_get(const lupine_kernel_attribute_key &key, int &value) {
 
 void lupine_attribute_set(const lupine_function_attribute_key &key, int value,
                           lupine_attribute_source source) {
+  if (key.attribute < LUPINE_FUNC_ATTRIBUTE_DEVICE ||
+      key.attribute >= CU_FUNC_ATTRIBUTE_MAX) {
+    lupine_extended_func_attr.store(true, std::memory_order_relaxed);
+  }
   if (source == lupine_attribute_source::query) {
     get_cache<lupine_attribute_cache::function>().insert_or_assign(key, value);
     return;
@@ -4115,13 +4159,13 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
     }
     if (params_known) {
       lupine_cache_param_layout(reinterpret_cast<uintptr_t>(kernel), true,
-                                layout, param_count);
+                                layout);
     }
     if (function != nullptr) {
       lupine_note_function_owner_route(function, route);
       if (params_known) {
         lupine_cache_param_layout(reinterpret_cast<uintptr_t>(function), false,
-                                  layout, param_count);
+                                  layout);
       }
       lupine_kernel_function_cache().insert_or_assign(
           lupine_kernel_function_key{route_id, context, kernel}, function);
@@ -4788,7 +4832,6 @@ static CUresult lupine_get_param_layout(
     if (result == CUDA_ERROR_INVALID_VALUE) {
       std::shared_ptr<const lupine_param_layout> layout = std::move(built);
       lupine_param_layout_cache().insert_or_assign(key, layout);
-      lupine_param_layout_count_cache().insert_or_assign(key, i);
       if (out != nullptr) {
         *out = std::move(layout);
       }
@@ -4935,7 +4978,6 @@ extern "C" void lupine_invalidate_function_caches() {
 #endif
   lupine_module_function_names().clear();
   lupine_param_info_cache().clear();
-  lupine_param_layout_count_cache().clear();
   lupine_param_layout_cache().clear();
   lupine_kernel_function_cache().clear();
   lupine_occupancy_cache().clear();
@@ -5211,14 +5253,20 @@ static void lupine_erase_unloaded_callable_caches(
   auto has_kern = [&](CUkernel kern) {
     return unloaded_kernels != nullptr && unloaded_kernels->count(kern) != 0;
   };
-  auto match_param_key = [&](const auto &key, const auto &) {
-    return key.kernel ? has_kern(reinterpret_cast<CUkernel>(key.handle))
-                      : has_fn(reinterpret_cast<CUfunction>(key.handle));
-  };
-  lupine_cache_erase_if(lupine_param_info_cache(), match_param_key);
-  lupine_cache_erase_if(lupine_param_layout_count_cache(), match_param_key);
-  lupine_cache_erase_if(lupine_param_layout_cache(), match_param_key);
+  lupine_cache_erase_if(
+      lupine_param_info_cache(), [&](const auto &key, const auto &) {
+        return key.kernel ? has_kern(reinterpret_cast<CUkernel>(key.handle))
+                          : has_fn(reinterpret_cast<CUfunction>(key.handle));
+      });
+  for (CUfunction fn : unloaded_functions) {
+    lupine_param_layout_cache().erase(
+        lupine_param_layout_key{reinterpret_cast<uintptr_t>(fn), false});
+  }
   if (unloaded_kernels != nullptr) {
+    for (CUkernel kern : *unloaded_kernels) {
+      lupine_param_layout_cache().erase(
+          lupine_param_layout_key{reinterpret_cast<uintptr_t>(kern), true});
+    }
     lupine_cache_erase_if(lupine_kernel_function_cache(),
                           [&](const auto &key, CUfunction fn) {
                             return has_kern(key.kernel) || has_fn(fn);
@@ -5227,9 +5275,28 @@ static void lupine_erase_unloaded_callable_caches(
         get_cache<lupine_attribute_cache::kernel>(),
         [&](const auto &key, const auto &) { return has_kern(key.kernel); });
   }
-  lupine_cache_erase_if(
-      get_cache<lupine_attribute_cache::function>(),
-      [&](const auto &key, const auto &) { return has_fn(key.function); });
+  if (auto *fn_attr = get_cache<lupine_attribute_cache::function>().try_get();
+      fn_attr != nullptr && !unloaded_functions.empty()) {
+    bool direct = !lupine_extended_func_attr.load(std::memory_order_relaxed);
+    if (direct) {
+      for (CUfunction fn : unloaded_functions) {
+        int rid = lupine_route_identity(lupine_route_for_function(fn));
+        if (rid == -2) {
+          direct = false;
+          break;
+        }
+        for (int a = LUPINE_FUNC_ATTRIBUTE_DEVICE; a < CU_FUNC_ATTRIBUTE_MAX;
+             ++a) {
+          fn_attr->erase(lupine_function_attribute_key{rid, fn, a});
+        }
+      }
+    }
+    if (!direct) {
+      lupine_cache_erase_if(
+          get_cache<lupine_attribute_cache::function>(),
+          [&](const auto &key, const auto &) { return has_fn(key.function); });
+    }
+  }
   if (erase_function_set) {
     lupine_cache_erase_if(
         get_cache<lupine_attribute_cache::function_set>(),
@@ -5244,13 +5311,6 @@ static void lupine_erase_unloaded_callable_caches(
 
 extern "C" void lupine_release_module_retained_strings(CUmodule module) {
   std::unordered_set<CUfunction> unloaded;
-  lupine_cache_erase_if(lupine_module_function_names(),
-                        [&](const auto &key, CUfunction function) {
-                          if (key.handle == module) {
-                            unloaded.insert(function);
-                          }
-                          return key.handle == module;
-                        });
   {
     std::scoped_lock lock(lupine_library_kernel_mutex(),
                           g_retained_string_mutex);
@@ -5259,7 +5319,13 @@ extern "C" void lupine_release_module_retained_strings(CUmodule module) {
     lupine_erase_retained_entries_locked(
         lupine_module_functions(),
         [&](const auto &e) { return e.second.module == module; },
-        [&](const auto &e) { unloaded.insert(e.first); });
+        [&](const auto &e) {
+          unloaded.insert(e.first);
+          if (!e.second.name.empty()) {
+            lupine_module_function_names().erase(
+                lupine_named_handle_view<CUmodule>{module, e.second.name});
+          }
+        });
     lupine_library_modules().erase(module);
   }
   lupine_erase_unloaded_callable_caches(unloaded, nullptr, true);
@@ -5270,13 +5336,6 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
   get_cache<lupine_attribute_cache::function_set>().clear();
   std::unordered_set<CUkernel> unloaded_kernels;
   std::unordered_set<CUfunction> unloaded_functions;
-  lupine_cache_erase_if(lupine_library_kernel_names(),
-                        [&](const auto &key, CUkernel kernel) {
-                          if (key.handle == library) {
-                            unloaded_kernels.insert(kernel);
-                          }
-                          return key.handle == library;
-                        });
   {
     std::scoped_lock lock(lupine_library_kernel_mutex(),
                           g_retained_string_mutex);
@@ -5289,6 +5348,10 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
         kernels, [&](const auto &e) { return e.second.library == library; },
         [&](const auto &e) {
           unloaded_kernels.insert(e.first);
+          if (!e.second.name.empty()) {
+            lupine_library_kernel_names().erase(
+                lupine_named_handle_view<CUlibrary>{library, e.second.name});
+          }
           for (const auto &route_entry : e.second.kernels_by_route) {
             unloaded_kernels.insert(route_entry.second);
           }
@@ -5302,7 +5365,14 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
           return mod != lupine_library_modules().end() &&
                  mod->second == library;
         },
-        [&](const auto &e) { unloaded_functions.insert(e.first); });
+        [&](const auto &e) {
+          unloaded_functions.insert(e.first);
+          if (!e.second.name.empty()) {
+            lupine_module_function_names().erase(
+                lupine_named_handle_view<CUmodule>{e.second.module,
+                                                   e.second.name});
+          }
+        });
     lupine_erase_retained_entries_locked(
         lupine_library_functions(),
         [&](const auto &e) { return e.second == library; },
