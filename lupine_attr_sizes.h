@@ -101,4 +101,18 @@ inline bool lupine_settable_pointer_attribute_size(CUpointer_attribute attr,
   }
 }
 
+inline bool lupine_mem_range_attribute_size_valid(CUmem_range_attribute attr,
+                                                  size_t size) {
+  if (attr == CU_MEM_RANGE_ATTRIBUTE_ACCESSED_BY) {
+    return size != 0 && size % sizeof(int) == 0;
+  }
+#if CUDA_VERSION >= 12020
+  constexpr int max_attr = CU_MEM_RANGE_ATTRIBUTE_LAST_PREFETCH_LOCATION_ID;
+#else
+  constexpr int max_attr = CU_MEM_RANGE_ATTRIBUTE_LAST_PREFETCH_LOCATION;
+#endif
+  return attr >= CU_MEM_RANGE_ATTRIBUTE_READ_MOSTLY && attr <= max_attr &&
+         size == sizeof(int);
+}
+
 #endif

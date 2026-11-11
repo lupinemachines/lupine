@@ -717,21 +717,23 @@ static bool lupine_legacy_stream_waits_for(CUstream stream) {
 }
 
 void lupine_queue_pending_dtoh_copies(conn_t *conn, CUstream stream,
-                                      lupine_pending_dtoh_items copies) {
-  if (copies.empty()) {
+                                      const lupine_pending_dtoh_item *copies,
+                                      size_t count) {
+  if (count == 0) {
     return;
   }
   stream = lupine_pending_dtoh_queue(stream);
   bool legacy_ordered = lupine_legacy_stream_waits_for(stream);
-  for (auto &copy : copies) {
-    copy.legacy_ordered = legacy_ordered;
-  }
   lupine_pending_dtoh_copies().upsert(
       conn,
-      [stream, &copies](lupine_pending_dtoh_streams &streams,
-                        libcuckoo::UpsertContext) {
+      [stream, copies, count, legacy_ordered](
+          lupine_pending_dtoh_streams &streams, libcuckoo::UpsertContext) {
         auto &items = streams[stream];
-        items.insert(items.end(), copies.begin(), copies.end());
+        items.reserve(items.size() + count);
+        for (size_t i = 0; i < count; ++i) {
+          items.push_back(copies[i]);
+          items.back().legacy_ordered = legacy_ordered;
+        }
       },
       lupine_pending_dtoh_streams{});
 }
@@ -1725,38 +1727,36 @@ int handle_cuPointerGetAttributes(conn_t *conn) {
     return -1;
   }
 
-  std::vector<size_t> value_sizes(num_attributes, 0);
-  std::vector<std::vector<unsigned char>> values(num_attributes);
-  std::vector<void *> data(num_attributes, nullptr);
+  size_t total_size = 0;
   for (unsigned int i = 0; i < num_attributes; ++i) {
     size_t value_size = 0;
     if (!lupine_pointer_attribute_size(attributes[i], &value_size)) {
       result = CUDA_ERROR_INVALID_VALUE;
       break;
     }
-    value_sizes[i] = value_size;
-    values[i].resize(value_size);
-    data[i] = values[i].data();
+    total_size += value_size;
   }
 
+  std::vector<unsigned char> values;
   if (result == CUDA_SUCCESS) {
+    values.resize(total_size);
+    std::vector<void *> data(num_attributes);
+    size_t offset = 0;
+    for (unsigned int i = 0; i < num_attributes; ++i) {
+      size_t value_size = 0;
+      lupine_pointer_attribute_size(attributes[i], &value_size);
+      data[i] = values.data() + offset;
+      offset += value_size;
+    }
     result = cuPointerGetAttributes(num_attributes, attributes.data(),
                                     data.data(), ptr);
   }
-  if (result != CUDA_SUCCESS) {
-    std::fill(value_sizes.begin(), value_sizes.end(), 0);
-  }
 
-  if (rpc_write_start_response(conn, request_id) < 0) {
-    return -1;
-  }
-  for (unsigned int i = 0; i < num_attributes; ++i) {
-    if (rpc_write(conn, &value_sizes[i], sizeof(value_sizes[i])) < 0 ||
-        rpc_write(conn, values[i].data(), value_sizes[i]) < 0) {
-      return -1;
-    }
-  }
-  if (rpc_write(conn, &result, sizeof(result)) < 0 || rpc_write_end(conn) < 0) {
+  if (rpc_write_start_response(conn, request_id) < 0 ||
+      rpc_write(conn, &result, sizeof(result)) < 0 ||
+      (result == CUDA_SUCCESS && total_size != 0 &&
+       rpc_write(conn, values.data(), total_size) < 0) ||
+      rpc_write_end(conn) < 0) {
     return -1;
   }
   return 0;

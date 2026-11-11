@@ -119,7 +119,8 @@ using lupine_pending_dtoh_streams =
 libcuckoo::cuckoohash_map<conn_t *, lupine_pending_dtoh_streams> &
 lupine_pending_dtoh_copies();
 void lupine_queue_pending_dtoh_copies(conn_t *conn, CUstream stream,
-                                      lupine_pending_dtoh_items copies);
+                                      const lupine_pending_dtoh_item *copies,
+                                      size_t count);
 lupine_graph_resources *lupine_get_graph_resources(CUgraph graph);
 lupine_graph_resources *lupine_get_stream_resources(CUstream stream);
 lupine_graph_resources *lupine_find_stream_resources(CUstream stream);
