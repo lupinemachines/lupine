@@ -32,7 +32,8 @@
 // spending policy; the connection learns its current budget from idle times.
 void h2_writer_poll_policy::observe(std::chrono::nanoseconds idle_time) {
   constexpr std::chrono::nanoseconds max_poll = std::chrono::microseconds(32);
-  constexpr std::chrono::nanoseconds initial_poll = std::chrono::microseconds(1);
+  constexpr std::chrono::nanoseconds initial_poll =
+      std::chrono::microseconds(1);
   if (idle_time > max_poll) {
     budget_ /= 2;
     if (budget_ < initial_poll) {
@@ -998,13 +999,14 @@ int h2_pump_stream_locked(h2_transport *transport, int32_t stream_id,
 // short of a block stays with the encoder for the write thread to flush, so
 // every message queued while one send is in flight shares a block.
 int h2_write_stream_locked(h2_transport *transport, int32_t stream_id,
-                           std::vector<rpc_write_cursor> &cursors) {
+                           rpc_write_cursor *cursors, size_t count) {
   h2_stream &stream = h2_get_stream(transport, stream_id);
   if (stream.closed || stream.encoder_finished ||
       (!stream.encoder_started && h2_start_encoder_locked(stream) < 0)) {
     return -1;
   }
-  for (rpc_write_cursor &cursor : cursors) {
+  for (size_t i = 0; i < count; ++i) {
+    rpc_write_cursor &cursor = cursors[i];
     for (;;) {
       if (cursor.size == 0) {
         if (cursor.refill == nullptr) {
@@ -1122,8 +1124,9 @@ void *h2_write_main(void *arg) {
           !transport->writer_paused &&
           transport->writer_output_ready !=
               std::chrono::steady_clock::time_point{}) {
-        poll_policy.observe(std::chrono::duration_cast<std::chrono::nanoseconds>(
-            transport->writer_output_ready - idle_start));
+        poll_policy.observe(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                transport->writer_output_ready - idle_start));
       }
     }
     if (transport->write_stop) {
@@ -1576,16 +1579,16 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
 }
 
 int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
-                           std::vector<rpc_write_cursor> &cursors) {
+                           rpc_write_cursor *cursors, size_t count) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
-  if (std::all_of(
-          cursors.begin(), cursors.end(),
-          [](const rpc_write_cursor &cursor) { return !cursor.pending(); })) {
+  if (std::all_of(cursors, cursors + count, [](const rpc_write_cursor &cursor) {
+        return !cursor.pending();
+      })) {
     return 0;
   }
 
   pthread_mutex_lock(&transport->session_mutex);
-  int result = h2_write_stream_locked(transport, stream_id, cursors);
+  int result = h2_write_stream_locked(transport, stream_id, cursors, count);
   if (!transport->outbound.empty() || !transport->flush_pending.empty()) {
     h2_note_output_ready_locked(transport);
   }

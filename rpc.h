@@ -310,7 +310,13 @@ constexpr int LUPINE_RPC_HTTP2_CLIENT_MISMATCH = -4;
 extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                                  size_t size);
 extern int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
-                                  std::vector<rpc_write_cursor> &cursors);
+                                  rpc_write_cursor *cursors, size_t count);
+static inline int
+rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
+                       std::vector<rpc_write_cursor> &cursors) {
+  return rpc_http2_write_stream(conn, stream_id, cursors.data(),
+                                cursors.size());
+}
 extern int32_t rpc_http2_dispatch_stream(conn_t *conn);
 extern int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id);
 extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);

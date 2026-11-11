@@ -3497,9 +3497,10 @@ lupine_resolve_pointer_attribute_target(CUdeviceptr ptr) {
 // so the server's answers are cached per (pointer, attribute list). The cache
 // is cleared whenever any mapped allocation retires, since a later allocation
 // may reuse the address.
-static uint64_t lupine_pointer_attribute_cache_key(
-    CUdeviceptr ptr, const CUpointer_attribute *attributes,
-    unsigned int count) {
+static uint64_t
+lupine_pointer_attribute_cache_key(CUdeviceptr ptr,
+                                   const CUpointer_attribute *attributes,
+                                   unsigned int count) {
   uint64_t key = static_cast<uint64_t>(ptr);
   for (unsigned int i = 0; i < count; ++i) {
     key = (key ^ static_cast<uint64_t>(attributes[i])) * 1099511628211ULL;
@@ -3607,10 +3608,9 @@ extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
                        ? lupine_managed_host_alias_base(ptr, &cache_ptr)
                        : query.remote_host_alias &&
                              ((cache_ptr = query.remote_host_base), true);
-  uint64_t cache_key =
-      cacheable ? lupine_pointer_attribute_cache_key(cache_ptr, attributes,
-                                                     numAttributes)
-                : 0;
+  uint64_t cache_key = cacheable ? lupine_pointer_attribute_cache_key(
+                                       cache_ptr, attributes, numAttributes)
+                                 : 0;
   bool cache_hit = false;
   if (cacheable) {
     lupine_pointer_attribute_cache().find_fn(
@@ -3828,9 +3828,8 @@ static CUresult lupine_bulk_pull(conn_t *conn, lupine_bulk_lanes *lanes,
       int op;
       uint64_t copy_id;
     } request = {2, LUPINE_RPC_lupineBulkRead, copy_id};
-    std::vector<rpc_write_cursor> cursors = {
-        rpc_write_cursor(&request, sizeof(request))};
-    if (rpc_http2_write_stream(bulk, stream_id, cursors) < 0) {
+    rpc_write_cursor cursor(&request, sizeof(request));
+    if (rpc_http2_write_stream(bulk, stream_id, &cursor, 1) < 0) {
       received = false;
       return;
     }
@@ -3978,7 +3977,6 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
   std::atomic<bool> queued{true};
   auto feed = [&](unsigned int lane) {
     const auto *data = static_cast<const unsigned char *>(source);
-    std::vector<rpc_write_cursor> cursors(2);
     for (size_t chunk = next_chunk.fetch_add(1); chunk < chunks && queued;
          chunk = next_chunk.fetch_add(1)) {
       size_t offset = chunk * LUPINE_RPC_TRANSFER_CHUNK_BYTES;
@@ -3986,10 +3984,10 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
           static_cast<size_t>(LUPINE_RPC_TRANSFER_CHUNK_BYTES), bytes - offset);
       lupine_bulk_chunk_header header = {
           2, LUPINE_RPC_lupineBulkChunk, copy_id, bytes, offset, chunk_bytes};
-      cursors[0] = rpc_write_cursor(&header, sizeof(header));
-      cursors[1] = rpc_write_cursor(data + offset, chunk_bytes);
+      rpc_write_cursor cursors[] = {{&header, sizeof(header)},
+                                    {data + offset, chunk_bytes}};
       if (rpc_http2_write_stream(lanes->conn[lane], lanes->stream[lane],
-                                 cursors) < 0) {
+                                 cursors, 2) < 0) {
         queued = false;
       }
     }
