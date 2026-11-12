@@ -39,10 +39,45 @@ def test_normalize_server_urls():
     assert normalize_server("https://h", 1500) == "https://h:1500"
 
 
+def test_normalize_server_preserves_url_userinfo():
+    assert normalize_server("http://token@gpu-host") == "http://token@gpu-host:14833"
+    assert (
+        normalize_server("http://user:token@gpu-host")
+        == "http://user:token@gpu-host:14833"
+    )
+    assert (
+        normalize_server("https://user:pass@gpu-host") == "https://user:pass@gpu-host"
+    )
+    assert (
+        normalize_server("https://token@gpu-host", 8443)
+        == "https://token@gpu-host:8443"
+    )
+    assert (
+        normalize_server("http://user:pass@[fe80::1]")
+        == "http://user:pass@[fe80::1]:14833"
+    )
+
+
 def test_normalize_server_rejects_empty():
-    for bad in ("", "  ", "http://"):
+    for bad in (
+        "",
+        "  ",
+        ":",
+        ":14833",
+        "[]",
+        "[]:14833",
+        "host:",
+        "http://",
+        "https://",
+        "http://:14833",
+        "https://:443",
+        "http://[]:14833",
+    ):
         with pytest.raises(LupineError):
             normalize_server(bad)
+    for bad in (":14833", "[]:14833", "http://:14833", "https://:443"):
+        with pytest.raises(LupineError):
+            normalize_server(bad, 8443)
 
 
 def test_normalize_hosts_sequence():
@@ -342,3 +377,142 @@ def test_load_uses_the_bundle_manifest_names(monkeypatch, tmp_path):
     _native.load(missing_ok=False)
 
     assert tuple(loaded) == names
+
+
+def _install_fake_torch(monkeypatch):
+    from types import ModuleType, SimpleNamespace
+
+    class FakeDevice:
+        def __init__(self, kind, index=None):
+            if isinstance(kind, FakeDevice):
+                self.type, self.index = kind.type, kind.index
+                return
+            if isinstance(kind, str) and ":" in kind and index is None:
+                kind, raw = kind.split(":", 1)
+                index = int(raw)
+            self.type = kind
+            self.index = index
+
+        def __repr__(self):
+            return f"{self.type}:{self.index}" if self.index is not None else self.type
+
+    fake_torch = ModuleType("torch")
+    fake_torch.device = FakeDevice
+    fake_torch.cuda = SimpleNamespace(
+        get_device_name=None,
+        get_device_capability=None,
+        get_device_properties=None,
+    )
+    fake_torch._C = SimpleNamespace(_get_privateuse1_backend_name=lambda: "lupine")
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.delitem(sys.modules, "lupine._backend.device", raising=False)
+    import lupine._backend.device as device_mod
+
+    monkeypatch.setattr(device_mod, "current_device", lambda: 0)
+    return device_mod
+
+
+def test_native_backend_caches_device_properties(monkeypatch):
+    import ctypes as ct
+    from contextlib import contextmanager
+
+    import lupine._backend as backend_pkg
+    from lupine._backend.native import Backend
+
+    device_mod = _install_fake_torch(monkeypatch)
+    calls = {"attribute": 0, "mem_info": 0, "bind": 0, "get_name": 0}
+
+    class FakeRuntime:
+        closed = False
+        driver = object()
+        _cudnn = None
+        _blas = None
+        _operators = None
+
+        @contextmanager
+        def active(self):
+            if self.closed:
+                raise RuntimeError("Lupine native runtime is closed")
+            yield
+
+        @staticmethod
+        def check(status, name):
+            if status:
+                raise RuntimeError(f"{name}: {status}")
+
+        def attribute(self, out_ptr, attr, dev):
+            calls["attribute"] += 1
+            assert dev == 0
+            ct.cast(out_ptr, ct.POINTER(ct.c_int))[0] = {75: 8, 76: 9, 16: 58}[attr]
+            return 0
+
+        def mem_info(self, free_ptr, total_ptr):
+            calls["mem_info"] += 1
+            ct.cast(free_ptr, ct.POINTER(ct.c_size_t))[0] = 20 * 1024**3
+            ct.cast(total_ptr, ct.POINTER(ct.c_size_t))[0] = 24 * 1024**3
+            return 0
+
+        def bind(self, library, symbol, *types):
+            calls["bind"] += 1
+            assert library is self.driver and symbol == "cuDeviceGetName"
+
+            def cu_device_get_name(buf, length, dev):
+                calls["get_name"] += 1
+                assert dev == 0 and length >= 10
+                buf.value = b"NVIDIA L4"
+                return 0
+
+            return cu_device_get_name
+
+        def sync(self):
+            return 0
+
+    backend = Backend.__new__(Backend)
+    backend.runtime = FakeRuntime()
+    backend.allocations = {}
+    monkeypatch.setitem(backend_pkg._started, "backend", backend)
+
+    assert backend.cuda_call("get_device_capability") == (8, 9)
+    assert calls == {"attribute": 3, "mem_info": 1, "bind": 1, "get_name": 1}
+
+    # Repeated queries (both direct and through device.__getattr__) hit the cache.
+    for _ in range(5):
+        assert backend.cuda_call("get_device_capability") == (8, 9)
+        assert backend.cuda_call("get_device_capability", 0) == (8, 9)
+        assert backend.cuda_call("get_device_name") == "NVIDIA L4"
+        props = backend.cuda_call("get_device_properties")
+        assert (props.name, props.major, props.minor) == ("NVIDIA L4", 8, 9)
+        assert props.multi_processor_count == 58
+        assert props.total_memory == 24 * 1024**3
+        assert device_mod.get_device_capability() == (8, 9)
+        assert device_mod.get_device_name() == "NVIDIA L4"
+    assert calls == {"attribute": 3, "mem_info": 1, "bind": 1, "get_name": 1}
+
+    with pytest.raises(ValueError, match="device 0"):
+        backend.cuda_call("get_device_capability", 1)
+
+    backend.close()
+    assert backend._device_properties is None
+    with pytest.raises(RuntimeError, match="closed"):
+        backend.cuda_call("get_device_capability")
+    monkeypatch.delitem(sys.modules, "lupine._backend.device", raising=False)
+
+
+def test_stream_query_synchronizes(monkeypatch):
+    from types import SimpleNamespace
+
+    import lupine._backend as backend_pkg
+
+    device_mod = _install_fake_torch(monkeypatch)
+    syncs = []
+    fake_backend = SimpleNamespace(
+        runtime=SimpleNamespace(closed=False),
+        synchronize=lambda: syncs.append(1),
+    )
+    monkeypatch.setitem(backend_pkg._started, "backend", fake_backend)
+
+    stream = device_mod.Stream()
+    assert syncs == []
+    assert stream.query() is True
+    assert syncs == [1]
+    monkeypatch.delitem(sys.modules, "lupine._backend.device", raising=False)

@@ -29,7 +29,13 @@ def _backend():
 def __getattr__(name: str):
     if name.startswith("_") or not hasattr(torch.cuda, name):
         raise AttributeError(name)
-    return lambda *args, **kwargs: _backend().cuda_call(name, *args, **kwargs)
+
+    def wrapper(*args, **kwargs):
+        return _backend().cuda_call(name, *args, **kwargs)
+
+    wrapper.__name__ = name
+    globals()[name] = wrapper
+    return wrapper
 
 
 class _Properties:
@@ -121,7 +127,8 @@ class Stream:
         synchronize(self.device)
 
     def query(self):
-        return True  # Every native launch synchronizes before returning.
+        self.synchronize()
+        return True
 
     def wait_stream(self, stream):
         stream.synchronize()

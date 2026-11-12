@@ -9,15 +9,18 @@ raise, rather than silently running arithmetic on the CPU.
 from __future__ import annotations
 
 import atexit
-from contextlib import ExitStack
 import math
+import sys
+from contextlib import ExitStack
 
-from .runtime import Runtime, ct, I, P
 from .aten import Parameters
+from .runtime import I, P, Runtime, ct
 
 
 class Backend:
     native = True
+    _device_properties = None
+    _device_capability = None
 
     def __init__(self):
         import torch
@@ -29,6 +32,8 @@ class Backend:
         self.libraries = []
         self.seed = 0
         self.counter = 0
+        self._device_properties = None
+        self._device_capability = None
 
     def dtype(self, tensor):
         if tensor.dtype == self.torch.float32:
@@ -714,42 +719,59 @@ class Backend:
             "get_device_properties",
             "get_device_capability",
         ):
-            from ..device import _Properties, _index
+            device = args[0] if args else kwargs.get("device")
+            if type(device) is int:
+                if device != 0:
+                    raise ValueError("Lupine native supports device 0")
+            else:
+                device_mod = sys.modules.get("lupine._backend.device")
+                if device_mod is None:
+                    from .. import device as device_mod
 
-            if _index(args[0] if args else kwargs.get("device")) != 0:
-                raise ValueError("Lupine native supports device 0")
-            with self.runtime.active():
-                values = []
-                for attribute in (75, 76, 16):
-                    value = I()
-                    self.runtime.check(
-                        self.runtime.attribute(ct.byref(value), attribute, 0),
-                        "cudaDeviceGetAttribute",
-                    )
-                    values.append(value.value)
-                free, total = ct.c_size_t(), ct.c_size_t()
-                self.runtime.check(
-                    self.runtime.mem_info(ct.byref(free), ct.byref(total)),
-                    "cudaMemGetInfo",
-                )
-                buffer = ct.create_string_buffer(256)
-                get_name = self.runtime.bind(
-                    self.runtime.driver, "cuDeviceGetName", P, I, I
-                )
-                self.runtime.check(get_name(buffer, 256, 0), "cuDeviceGetName")
-            properties = _Properties(
-                dict(
-                    name=buffer.value.decode(),
-                    major=values[0],
-                    minor=values[1],
-                    multi_processor_count=values[2],
-                    total_memory=total.value,
-                )
-            )
+                if device_mod._index(device) != 0:
+                    raise ValueError("Lupine native supports device 0")
+            properties = self._device_properties
+            if properties is None:
+                device_mod = sys.modules.get("lupine._backend.device")
+                if device_mod is None:
+                    from .. import device as device_mod
+
+                with self.runtime.active():
+                    properties = self._device_properties
+                    if properties is None:
+                        values = []
+                        for attribute in (75, 76, 16):
+                            value = I()
+                            self.runtime.check(
+                                self.runtime.attribute(ct.byref(value), attribute, 0),
+                                "cudaDeviceGetAttribute",
+                            )
+                            values.append(value.value)
+                        free, total = ct.c_size_t(), ct.c_size_t()
+                        self.runtime.check(
+                            self.runtime.mem_info(ct.byref(free), ct.byref(total)),
+                            "cudaMemGetInfo",
+                        )
+                        buffer = ct.create_string_buffer(256)
+                        get_name = self.runtime.bind(
+                            self.runtime.driver, "cuDeviceGetName", P, I, I
+                        )
+                        self.runtime.check(get_name(buffer, 256, 0), "cuDeviceGetName")
+                        self._device_capability = (values[0], values[1])
+                        properties = device_mod._Properties(
+                            {
+                                "name": buffer.value.decode(),
+                                "major": values[0],
+                                "minor": values[1],
+                                "multi_processor_count": values[2],
+                                "total_memory": total.value,
+                            }
+                        )
+                        self._device_properties = properties
             if name == "get_device_name":
                 return properties.name
             if name == "get_device_capability":
-                return properties.major, properties.minor
+                return self._device_capability or (properties.major, properties.minor)
             return properties
         if name in (
             "memory_allocated",
@@ -793,6 +815,8 @@ class Backend:
             if self.runtime._operators is not None:
                 self.runtime._operators.close()
                 self.runtime._operators = None
+            self._device_properties = None
+            self._device_capability = None
             self.runtime.closed = True
 
     def install(self):

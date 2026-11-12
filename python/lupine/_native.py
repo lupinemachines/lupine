@@ -134,13 +134,13 @@ def _shim_names(directory: Path) -> tuple[str, ...]:
             sorted(
                 entry.name
                 for entry in directory.iterdir()
-                if entry.is_file() and suffix in entry.name
+                if suffix in entry.name and entry.is_file()
             )
         )
     selected = [name for name in _REQUIRED[sys.platform] if name in names]
     for name in names:
         native = _CONDITIONAL.get(_soname_stem(name))
-        if native is not None and not _native_available(*native):
+        if native is not None and (name in _loaded or not _native_available(*native)):
             selected.append(name)
     return tuple(selected)
 
