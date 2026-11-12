@@ -68,6 +68,9 @@ int rpc_read(conn_t *conn, void *data, size_t size) {
   return lupine_rpc_read(conn, data, size);
 }
 int rpc_read_end(conn_t *conn) { return lupine_rpc_read_end(conn); }
+void rpc_shutdown_transport_socket(conn_t *conn) {
+  lupine_rpc_shutdown_transport_socket(conn);
+}
 
 // ---------------------------------------------------------------------------
 // Groups
@@ -321,6 +324,7 @@ ncclResult_t read_strings(conn_t *conn, std::vector<std::string> *out) {
   }
   if (rpc_read(conn, &status, sizeof(status)) < 0 ||
       rpc_read(conn, &count, sizeof(count)) < 0 || count > kMaxText) {
+    rpc_shutdown_transport_socket(conn);
     (void)rpc_read_end(conn);
     return ncclSystemError;
   }
@@ -328,11 +332,13 @@ ncclResult_t read_strings(conn_t *conn, std::vector<std::string> *out) {
   for (std::string &text : *out) {
     uint32_t length = 0;
     if (rpc_read(conn, &length, sizeof(length)) < 0 || length > kMaxText) {
+      rpc_shutdown_transport_socket(conn);
       (void)rpc_read_end(conn);
       return ncclSystemError;
     }
     text.resize(length);
     if (length != 0 && rpc_read(conn, &text[0], length) < 0) {
+      rpc_shutdown_transport_socket(conn);
       (void)rpc_read_end(conn);
       return ncclSystemError;
     }
@@ -349,17 +355,20 @@ ncclResult_t finish_single_string(conn_t *conn, std::string *out) {
   if (rpc_read(conn, &status, sizeof(status)) < 0 ||
       rpc_read(conn, &count, sizeof(count)) < 0 ||
       (status == ncclSuccess ? count != 1 : count != 0)) {
+    rpc_shutdown_transport_socket(conn);
     (void)rpc_read_end(conn);
     return ncclSystemError;
   }
   if (count == 1) {
     uint32_t length = 0;
     if (rpc_read(conn, &length, sizeof(length)) < 0 || length > kMaxText) {
+      rpc_shutdown_transport_socket(conn);
       (void)rpc_read_end(conn);
       return ncclSystemError;
     }
     out->resize(length);
     if (length != 0 && rpc_read(conn, &(*out)[0], length) < 0) {
+      rpc_shutdown_transport_socket(conn);
       (void)rpc_read_end(conn);
       return ncclSystemError;
     }
