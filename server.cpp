@@ -13,6 +13,7 @@
 #ifndef _WIN32
 #include <algorithm>
 #include <arpa/inet.h>
+#include <chrono>
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <poll.h>
@@ -132,6 +133,13 @@ struct lupine_bulk_route {
   std::string token;
   int fd;
 };
+
+struct lupine_pending_socket {
+  lupine_socket_t fd;
+  std::chrono::steady_clock::time_point deadline;
+};
+
+constexpr auto kPendingFirstByteTimeout = std::chrono::seconds(5);
 
 static int lupine_child_bulk_fd = -1;
 
@@ -604,7 +612,8 @@ int lupine_server_main() {
   std::vector<lupine_bulk_route> bulk_routes;
   // Accepted sockets wait here until their first bytes say whether they are
   // a bulk connection for a live session or a connection of their own.
-  std::vector<lupine_socket_t> pending;
+  std::vector<lupine_pending_socket> pending;
+  std::vector<struct pollfd> poll_fds;
 
   auto spawn_child = [&](lupine_socket_t connfd) {
     // Fork a process per connection so each client gets isolated backend
@@ -668,9 +677,9 @@ int lupine_server_main() {
       for (const auto &route : bulk_routes) {
         close(route.fd);
       }
-      for (lupine_socket_t fd : pending) {
-        if (fd != connfd) {
-          lupine_socket_close(fd);
+      for (const auto &entry : pending) {
+        if (entry.fd != connfd) {
+          lupine_socket_close(entry.fd);
         }
       }
       close(broker_pair[0]);
@@ -743,15 +752,35 @@ int lupine_server_main() {
 
     // Wait for a new connection, a broker request from a child, or the first
     // bytes of a pending connection.
-    std::vector<struct pollfd> poll_fds;
+    poll_fds.clear();
+    poll_fds.reserve(1 + broker_fds.size() + pending.size());
     poll_fds.push_back({sockfd, POLLIN, 0});
     for (int broker_fd : broker_fds) {
       poll_fds.push_back({broker_fd, POLLIN, 0});
     }
-    for (lupine_socket_t fd : pending) {
-      poll_fds.push_back({fd, POLLIN, 0});
+    int poll_timeout_ms = -1;
+    if (!pending.empty()) {
+      const auto now = std::chrono::steady_clock::now();
+      auto nearest_deadline = pending.front().deadline;
+      for (size_t i = 1; i < pending.size(); ++i) {
+        if (pending[i].deadline < nearest_deadline) {
+          nearest_deadline = pending[i].deadline;
+        }
+      }
+      if (nearest_deadline <= now) {
+        poll_timeout_ms = 0;
+      } else {
+        auto remaining = std::chrono::ceil<std::chrono::milliseconds>(
+            nearest_deadline - now);
+        poll_timeout_ms = remaining.count() > INT_MAX
+                              ? INT_MAX
+                              : static_cast<int>(remaining.count());
+      }
+      for (const auto &entry : pending) {
+        poll_fds.push_back({entry.fd, POLLIN, 0});
+      }
     }
-    if (poll(poll_fds.data(), poll_fds.size(), -1) < 0) {
+    if (poll(poll_fds.data(), poll_fds.size(), poll_timeout_ms) < 0) {
       if (errno != EINTR) {
         LUPINE_LOG_ERROR("Server poll failed.");
       }
@@ -769,12 +798,28 @@ int lupine_server_main() {
             broker_fds.end());
       }
     }
-    for (size_t i = broker_end; i < poll_fds.size(); ++i) {
-      if ((poll_fds[i].revents & (POLLIN | POLLHUP | POLLERR)) != 0 &&
-          classify(poll_fds[i].fd)) {
-        pending.erase(
-            std::remove(pending.begin(), pending.end(), poll_fds[i].fd),
-            pending.end());
+    if (!pending.empty()) {
+      const auto after_poll = std::chrono::steady_clock::now();
+      for (size_t i = broker_end; i < poll_fds.size(); ++i) {
+        const lupine_socket_t pfd = poll_fds[i].fd;
+        if ((poll_fds[i].revents & (POLLIN | POLLHUP | POLLERR)) != 0 &&
+            classify(pfd)) {
+          pending.erase(
+              std::remove_if(pending.begin(), pending.end(),
+                             [pfd](const lupine_pending_socket &entry) {
+                               return entry.fd == pfd;
+                             }),
+              pending.end());
+          continue;
+        }
+        auto it = std::find_if(pending.begin(), pending.end(),
+                               [pfd](const lupine_pending_socket &entry) {
+                                 return entry.fd == pfd;
+                               });
+        if (it != pending.end() && after_poll >= it->deadline) {
+          lupine_socket_close(pfd);
+          pending.erase(it);
+        }
       }
     }
     if ((poll_fds[0].revents & POLLIN) == 0) {
@@ -813,7 +858,8 @@ int lupine_server_main() {
     // reaped by a NAT/load-balancer/firewall during idle gaps. See
     // lupine_socket_apply_transport_options.
     lupine_socket_apply_transport_options(connfd);
-    pending.push_back(connfd);
+    pending.push_back(
+        {connfd, std::chrono::steady_clock::now() + kPendingFirstByteTimeout});
 #else
     // Windows has no fork; connections share the server process.
     std::thread client_thread(client_handler, connfd);
@@ -826,9 +872,22 @@ int lupine_server_main() {
   lupine_socket_close(sockfd);
 
 #ifndef _WIN32
+  for (const auto &entry : pending) {
+    lupine_socket_close(entry.fd);
+  }
+  pending.clear();
+
   // Every connection owns backend state in a dedicated child, so each child
   // must quiesce and optionally persist itself.
   lupine_reap_connection_children(connection_children, bulk_routes);
+  for (const auto &route : bulk_routes) {
+    close(route.fd);
+  }
+  bulk_routes.clear();
+  for (int broker_fd : broker_fds) {
+    close(broker_fd);
+  }
+  broker_fds.clear();
   for (pid_t child : connection_children) {
     (void)kill(child, SIGTERM);
   }

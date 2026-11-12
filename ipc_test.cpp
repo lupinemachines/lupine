@@ -1,11 +1,15 @@
 #include "ipc.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <iostream>
+#include <string>
 #include <thread>
 #include <vector>
 
+#include <dirent.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -325,6 +329,287 @@ bool test_parent_handle_reports_hangup() {
   return ok;
 }
 
+size_t count_open_fds() {
+  DIR *dir = opendir("/proc/self/fd");
+  if (dir == nullptr) {
+    std::cerr << "FAIL: opendir(/proc/self/fd)\n";
+    abort();
+  }
+  size_t count = 0;
+  while (struct dirent *entry = readdir(dir)) {
+    if (strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+      ++count;
+    }
+  }
+  closedir(dir);
+  // Subtract the descriptor opendir() itself held open while scanning.
+  return count > 0 ? count - 1 : 0;
+}
+
+struct raw_broker_msg {
+  uint32_t cmd;
+  uint32_t kind;
+  int32_t status;
+  uint32_t reserved;
+  lupine_ipc_token token;
+};
+
+int send_raw_broker_msg(int sock, const raw_broker_msg &msg, int fd) {
+  struct iovec iov = {const_cast<raw_broker_msg *>(&msg), sizeof(msg)};
+  char control[CMSG_SPACE(sizeof(int))] = {};
+  struct msghdr hdr = {};
+  hdr.msg_iov = &iov;
+  hdr.msg_iovlen = 1;
+  if (fd >= 0) {
+    hdr.msg_control = control;
+    hdr.msg_controllen = sizeof(control);
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&hdr);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &fd, sizeof(fd));
+  }
+  return sendmsg(sock, &hdr, 0) == static_cast<ssize_t>(sizeof(msg)) ? 0 : -1;
+}
+
+int recv_raw_broker_reply(int sock, raw_broker_msg *reply) {
+  struct iovec iov = {reply, sizeof(*reply)};
+  char control[CMSG_SPACE(sizeof(int))] = {};
+  struct msghdr hdr = {};
+  hdr.msg_iov = &iov;
+  hdr.msg_iovlen = 1;
+  hdr.msg_control = control;
+  hdr.msg_controllen = sizeof(control);
+  if (recvmsg(sock, &hdr, 0) != static_cast<ssize_t>(sizeof(*reply))) {
+    return -2;
+  }
+  int fd = -1;
+  for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&hdr); cmsg != nullptr;
+       cmsg = CMSG_NXTHDR(&hdr, cmsg)) {
+    if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS &&
+        cmsg->cmsg_len >= CMSG_LEN(sizeof(int))) {
+      memcpy(&fd, CMSG_DATA(cmsg), sizeof(fd));
+      break;
+    }
+  }
+  return fd;
+}
+
+bool test_broker_get_closes_unexpected_fd() {
+  broker_fixture broker(1);
+  lupine_ipc_set_broker_fd(broker.child_ends[0]);
+
+  lupine_ipc_token known = {};
+  lupine_ipc_token missing = {};
+  if (lupine_ipc_make_token(&known) != 0 ||
+      lupine_ipc_make_token(&missing) != 0) {
+    std::cerr << "FAIL: token creation failed\n";
+    return false;
+  }
+  int payload = memfd_with_content("known-payload");
+  if (lupine_ipc_broker_register_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &known,
+                                    payload) != 0) {
+    close(payload);
+    std::cerr << "FAIL: register known token\n";
+    return false;
+  }
+  close(payload);
+
+  const size_t baseline_fds = count_open_fds();
+  constexpr uint32_t kBrokerGetCmd = 2;
+
+  // Verify both open-file-description closure (via pipe EOF) and process fd
+  // count stability across 64 hit + miss GET calls carrying unexpected fds.
+  for (int i = 0; i < 64; ++i) {
+    int pipe_fds[2] = {-1, -1};
+    if (pipe2(pipe_fds, O_NONBLOCK | O_CLOEXEC) != 0) {
+      std::cerr << "FAIL: pipe2\n";
+      return false;
+    }
+    const bool hit = (i % 2) == 0;
+    raw_broker_msg req = {kBrokerGetCmd, LUPINE_IPC_FD_KIND_VMM_ALLOCATION, 0,
+                          0, hit ? known : missing};
+    if (send_raw_broker_msg(broker.child_ends[0], req, pipe_fds[1]) != 0) {
+      close(pipe_fds[0]);
+      close(pipe_fds[1]);
+      std::cerr << "FAIL: send_raw_broker_msg\n";
+      return false;
+    }
+    close(pipe_fds[1]);
+
+    raw_broker_msg reply = {};
+    int reply_fd = recv_raw_broker_reply(broker.child_ends[0], &reply);
+    if (reply_fd == -2 || (hit && (reply.status != 0 || reply_fd < 0)) ||
+        (!hit && (reply.status == 0 || reply_fd >= 0))) {
+      if (reply_fd >= 0) {
+        close(reply_fd);
+      }
+      close(pipe_fds[0]);
+      std::cerr << "FAIL: unexpected GET reply\n";
+      return false;
+    }
+    if (reply_fd >= 0) {
+      if (!fd_has_content(reply_fd, "known-payload")) {
+        close(reply_fd);
+        close(pipe_fds[0]);
+        std::cerr << "FAIL: corrupted GET reply payload\n";
+        return false;
+      }
+      close(reply_fd);
+    }
+
+    // Because the parent already processed the GET and replied, its duplicate
+    // of pipe_fds[1] must already be closed: reading pipe_fds[0] must return
+    // immediate EOF (0), not EAGAIN.
+    char ch = 0;
+    if (read(pipe_fds[0], &ch, 1) != 0) {
+      close(pipe_fds[0]);
+      std::cerr << "FAIL: parent leaked unexpected fd attached to GET\n";
+      return false;
+    }
+    close(pipe_fds[0]);
+  }
+
+  if (count_open_fds() != baseline_fds) {
+    std::cerr << "FAIL: open fd count grew after GET with attached fds ("
+              << baseline_fds << " -> " << count_open_fds() << ")\n";
+    return false;
+  }
+  return true;
+}
+
+bool test_broker_bounds_parked_fds_with_lru_eviction() {
+  constexpr size_t kBrokerCap = 512;
+  constexpr size_t kOverflow = 128;
+  constexpr size_t kTotal = kBrokerCap + kOverflow;
+
+  broker_fixture broker(1);
+  lupine_ipc_set_broker_fd(broker.child_ends[0]);
+
+  const size_t baseline_fds = count_open_fds();
+  std::vector<lupine_ipc_token> tokens(kTotal);
+
+  for (size_t i = 0; i < kBrokerCap; ++i) {
+    if (lupine_ipc_make_token(&tokens[i]) != 0) {
+      std::cerr << "FAIL: token creation failed\n";
+      return false;
+    }
+    std::string label = "lru-" + std::to_string(i);
+    int fd = memfd_with_content(label.c_str());
+    if (fd < 0 || lupine_ipc_broker_register_fd(
+                      LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &tokens[i], fd) != 0) {
+      if (fd >= 0) {
+        close(fd);
+      }
+      std::cerr << "FAIL: register token " << i << "\n";
+      return false;
+    }
+    close(fd);
+  }
+
+  // Touch token 0 via GET so it becomes MRU and tokens [1..kOverflow] become
+  // the oldest entries eligible for eviction.
+  int refreshed =
+      lupine_ipc_broker_get_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &tokens[0]);
+  if (refreshed < 0 || !fd_has_content(refreshed, "lru-0")) {
+    if (refreshed >= 0) {
+      close(refreshed);
+    }
+    std::cerr << "FAIL: refresh GET on token 0\n";
+    return false;
+  }
+  close(refreshed);
+
+  for (size_t i = kBrokerCap; i < kTotal; ++i) {
+    if (lupine_ipc_make_token(&tokens[i]) != 0) {
+      std::cerr << "FAIL: token creation failed\n";
+      return false;
+    }
+    std::string label = "lru-" + std::to_string(i);
+    int fd = memfd_with_content(label.c_str());
+    if (fd < 0 || lupine_ipc_broker_register_fd(
+                      LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &tokens[i], fd) != 0) {
+      if (fd >= 0) {
+        close(fd);
+      }
+      std::cerr << "FAIL: register overflow token " << i << "\n";
+      return false;
+    }
+    close(fd);
+  }
+
+  const size_t full_fds = count_open_fds();
+  if (full_fds > baseline_fds + kBrokerCap) {
+    std::cerr << "FAIL: broker exceeded fd cap (baseline=" << baseline_fds
+              << ", current=" << full_fds << ")\n";
+    return false;
+  }
+
+  // Refreshed token 0 must survive; tokens [1..kOverflow] must be evicted;
+  // tokens [kOverflow + 1..kTotal - 1] must all remain redeemable.
+  int survivor0 =
+      lupine_ipc_broker_get_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &tokens[0]);
+  if (survivor0 < 0 || !fd_has_content(survivor0, "lru-0")) {
+    if (survivor0 >= 0) {
+      close(survivor0);
+    }
+    std::cerr << "FAIL: refreshed token 0 was evicted\n";
+    return false;
+  }
+  close(survivor0);
+
+  for (size_t i = 1; i <= kOverflow; ++i) {
+    int evicted =
+        lupine_ipc_broker_get_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &tokens[i]);
+    if (evicted >= 0) {
+      close(evicted);
+      std::cerr << "FAIL: LRU token " << i << " was not evicted\n";
+      return false;
+    }
+  }
+
+  for (size_t i = kOverflow + 1; i < kTotal; ++i) {
+    std::string expected = "lru-" + std::to_string(i);
+    int fetched =
+        lupine_ipc_broker_get_fd(LUPINE_IPC_FD_KIND_VMM_ALLOCATION, &tokens[i]);
+    if (fetched < 0 || !fd_has_content(fetched, expected.c_str())) {
+      if (fetched >= 0) {
+        close(fetched);
+      }
+      std::cerr << "FAIL: recent token " << i << " was not redeemable\n";
+      return false;
+    }
+    close(fetched);
+  }
+
+  // Register 200 additional tokens at steady-state capacity and confirm zero
+  // further fd growth.
+  for (size_t i = 0; i < 200; ++i) {
+    lupine_ipc_token extra = {};
+    if (lupine_ipc_make_token(&extra) != 0) {
+      std::cerr << "FAIL: extra token creation failed\n";
+      return false;
+    }
+    int fd = memfd_with_content("steady");
+    if (fd < 0 || lupine_ipc_broker_register_fd(LUPINE_IPC_FD_KIND_MEMORY_POOL,
+                                                &extra, fd) != 0) {
+      if (fd >= 0) {
+        close(fd);
+      }
+      std::cerr << "FAIL: steady-state register\n";
+      return false;
+    }
+    close(fd);
+  }
+
+  if (count_open_fds() != full_fds) {
+    std::cerr << "FAIL: steady-state registrations leaked fds (" << full_fds
+              << " -> " << count_open_fds() << ")\n";
+    return false;
+  }
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -334,7 +619,9 @@ int main() {
       !test_broker_second_connection_can_fetch() ||
       !test_broker_reregister_overwrites() ||
       !test_broker_without_fd_fails_fast() ||
-      !test_parent_handle_reports_hangup()) {
+      !test_parent_handle_reports_hangup() ||
+      !test_broker_get_closes_unexpected_fd() ||
+      !test_broker_bounds_parked_fds_with_lru_eviction()) {
     return 1;
   }
   std::cout << "ipc broker tests passed\n";
