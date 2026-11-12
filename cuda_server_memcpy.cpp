@@ -40,34 +40,6 @@ template <typename T, typename Tag> static T &lupine_leaked(Tag) {
   return *instance;
 }
 
-struct lupine_raw_bytes {
-  const void *data;
-  size_t size;
-};
-
-template <typename T> static int lupine_write_one(conn_t *conn, const T &val) {
-  return rpc_write(conn, &val, sizeof(val));
-}
-
-static int lupine_write_one(conn_t *conn, lupine_raw_bytes raw) {
-  return raw.size == 0 ? 0 : rpc_write(conn, raw.data, raw.size);
-}
-
-template <typename... Args>
-static bool lupine_read_all(conn_t *conn, Args &...args) {
-  return ((rpc_read(conn, &args, sizeof(args)) >= 0) && ...);
-}
-
-template <typename... Args>
-static int lupine_write_response(conn_t *conn, int request_id,
-                                 const Args &...args) {
-  return rpc_write_start_response(conn, request_id) < 0 ||
-                 ((lupine_write_one(conn, args) < 0) || ...) ||
-                 rpc_write_end(conn) < 0
-             ? -1
-             : 0;
-}
-
 template <typename T, size_t N> struct lupine_inline_buf {
   T stack[N];
   std::unique_ptr<T[]> heap;
@@ -1374,15 +1346,18 @@ public:
     uint64_t delivered = lupine_dtoh_watermark(conn_);
     if (rpc_write_start_request(conn_, LUPINE_SIDE_EFFECT_READ_HOST_MEMORY) <
             0 ||
-        lupine_write_one(conn_, delivered) < 0 ||
-        lupine_write_one(conn_, copy.source) < 0 ||
-        lupine_write_one(conn_, copy.smemcpy.width) < 0 ||
-        lupine_write_one(conn_, copy.smemcpy.rows) < 0 ||
-        lupine_write_one(conn_, copy.source_row_stride) < 0 ||
-        lupine_write_one(conn_, copy.slices) < 0 ||
-        lupine_write_one(conn_, copy.source_slice_stride) < 0 ||
-        lupine_write_one(conn_, fragment.logical_offset) < 0 ||
-        lupine_write_one(conn_, fragment.bytes) < 0 ||
+        rpc_write(conn_, &delivered, sizeof(delivered)) < 0 ||
+        rpc_write(conn_, &copy.source, sizeof(copy.source)) < 0 ||
+        rpc_write(conn_, &copy.smemcpy.width, sizeof(copy.smemcpy.width)) < 0 ||
+        rpc_write(conn_, &copy.smemcpy.rows, sizeof(copy.smemcpy.rows)) < 0 ||
+        rpc_write(conn_, &copy.source_row_stride,
+                  sizeof(copy.source_row_stride)) < 0 ||
+        rpc_write(conn_, &copy.slices, sizeof(copy.slices)) < 0 ||
+        rpc_write(conn_, &copy.source_slice_stride,
+                  sizeof(copy.source_slice_stride)) < 0 ||
+        rpc_write(conn_, &fragment.logical_offset,
+                  sizeof(fragment.logical_offset)) < 0 ||
+        rpc_write(conn_, &fragment.bytes, sizeof(fragment.bytes)) < 0 ||
         rpc_wait_for_response(conn_) < 0 ||
         rpc_read(conn_, ring, fragment.bytes) < 0 || rpc_read_end(conn_) < 0) {
       return -1;
@@ -2661,7 +2636,11 @@ void lupine_server_cleanup_connection(conn_t *conn) {
 
 int lupine_write_lifecycle_response(conn_t *conn, int request_id,
                                     CUresult result) {
-  return lupine_write_response(conn, request_id, result);
+  return rpc_write_start_response(conn, request_id) < 0 ||
+                 rpc_write(conn, &result, sizeof(result)) < 0 ||
+                 rpc_write_end(conn) < 0
+             ? -1
+             : 0;
 }
 
 static int lupine_serve_memcpy_htod(conn_t *conn, bool async) {
@@ -2756,7 +2735,10 @@ int handle_lupineBulkChunk(conn_t *conn) {
   uint64_t total = 0;
   uint64_t offset = 0;
   uint64_t bytes = 0;
-  if (!lupine_read_all(conn, copy_id, total, offset, bytes)) {
+  if (rpc_read(conn, &copy_id, sizeof(copy_id)) < 0 ||
+      rpc_read(conn, &total, sizeof(total)) < 0 ||
+      rpc_read(conn, &offset, sizeof(offset)) < 0 ||
+      rpc_read(conn, &bytes, sizeof(bytes)) < 0) {
     return -1;
   }
   unsigned char *destination = nullptr;
@@ -2792,7 +2774,10 @@ int handle_lupineMemcpyHtoDBulk(conn_t *conn) {
   // same memory lupineManagedHostFlush writes.
   uint8_t to_host = 0;
   int request_id = -1;
-  if (!lupine_read_all(conn, copy_id, destination, bytes, to_host) ||
+  if (rpc_read(conn, &copy_id, sizeof(copy_id)) < 0 ||
+      rpc_read(conn, &destination, sizeof(destination)) < 0 ||
+      rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
+      rpc_read(conn, &to_host, sizeof(to_host)) < 0 ||
       (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
@@ -2854,8 +2839,13 @@ static bool lupine_push_bulk_closed = false;
 static int lupine_write_bulk_read_frame(conn_t *conn, int request_id,
                                         uint64_t offset, const void *data,
                                         uint64_t bytes) {
-  return lupine_write_response(conn, request_id, offset, bytes,
-                               lupine_raw_bytes{data, bytes});
+  return rpc_write_start_response(conn, request_id) < 0 ||
+                 rpc_write(conn, &offset, sizeof(offset)) < 0 ||
+                 rpc_write(conn, &bytes, sizeof(bytes)) < 0 ||
+                 (bytes > 0 && rpc_write(conn, data, bytes) < 0) ||
+                 rpc_write_end(conn) < 0
+             ? -1
+             : 0;
 }
 
 int handle_lupineBulkRead(conn_t *conn) {
@@ -2991,7 +2981,11 @@ int handle_lupineMemcpyDtoHBulk(conn_t *conn) {
   CUstream stream = CU_STREAM_LEGACY;
   uint32_t readers = 0;
   int request_id = -1;
-  if (!lupine_read_all(conn, copy_id, source, bytes, stream, readers) ||
+  if (rpc_read(conn, &copy_id, sizeof(copy_id)) < 0 ||
+      rpc_read(conn, &source, sizeof(source)) < 0 ||
+      rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_read(conn, &readers, sizeof(readers)) < 0 ||
       (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
@@ -3019,7 +3013,12 @@ int handle_lupineMemcpyDtoHBulk(conn_t *conn) {
     lupine_bulk_reads.erase(copy_id);
   }
   uint64_t delivered = lupine_dtoh_watermark(conn);
-  return lupine_write_response(conn, request_id, delivered, result);
+  return rpc_write_start_response(conn, request_id) < 0 ||
+                 rpc_write(conn, &delivered, sizeof(delivered)) < 0 ||
+                 rpc_write(conn, &result, sizeof(result)) < 0 ||
+                 rpc_write_end(conn) < 0
+             ? -1
+             : 0;
 }
 
 // Each chunk carries the deliveries numbered once it was copied: a readback
@@ -3028,9 +3027,15 @@ static int lupine_write_dtoh_chunk_response(conn_t *conn, int request_id,
                                             CUresult result, const void *data,
                                             size_t bytes) {
   uint64_t delivered = lupine_dtoh_watermark(conn);
-  return lupine_write_response(
-      conn, request_id, delivered, result,
-      lupine_raw_bytes{data, result == CUDA_SUCCESS ? bytes : 0});
+  size_t payload_bytes = result == CUDA_SUCCESS ? bytes : 0;
+  return rpc_write_start_response(conn, request_id) < 0 ||
+                 rpc_write(conn, &delivered, sizeof(delivered)) < 0 ||
+                 rpc_write(conn, &result, sizeof(result)) < 0 ||
+                 (payload_bytes > 0 &&
+                  rpc_write(conn, data, payload_bytes) < 0) ||
+                 rpc_write_end(conn) < 0
+             ? -1
+             : 0;
 }
 
 // Sends [offset, bytes) as LUPINE_RPC_TRANSFER_CHUNK_BYTES chunks staged one at
@@ -3374,7 +3379,9 @@ int handle_cuMemcpyDtoH_v2(conn_t *conn) {
   // so the chunks stay ordered behind that stream's prior work.
   CUstream stream = CU_STREAM_LEGACY;
   int request_id = -1;
-  if (!lupine_read_all(conn, source, bytes, stream) ||
+  if (rpc_read(conn, &source, sizeof(source)) < 0 ||
+      rpc_read(conn, &bytes, sizeof(bytes)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 ||
       (request_id = rpc_read_end(conn)) < 0) {
     return -1;
   }
@@ -3671,9 +3678,12 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   size_t byteCount = 0;
   CUstream stream = nullptr;
 
-  if (!lupine_read_all(conn, dstHost, server_host, refresh, srcDevice,
-                       byteCount, stream) ||
-      rpc_read_end(conn) < 0) {
+  if (rpc_read(conn, &dstHost, sizeof(dstHost)) < 0 ||
+      rpc_read(conn, &server_host, sizeof(server_host)) < 0 ||
+      rpc_read(conn, &refresh, sizeof(refresh)) < 0 ||
+      rpc_read(conn, &srcDevice, sizeof(srcDevice)) < 0 ||
+      rpc_read(conn, &byteCount, sizeof(byteCount)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 || rpc_read_end(conn) < 0) {
     return -1;
   }
   // Unanswered: a failure reaches the client from its next synchronize.
