@@ -38,8 +38,173 @@ permissions:
   id-token: write
 
 jobs:
+  # The L4 VMs boot from an image with their packages preinstalled, named by a
+  # hash of the provisioning script below and the resolved base image. A run
+  # that finds the image skips the build; a new base image or script rebuilds
+  # it.
+  vm-image:
+    name: GCE VM image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    env:
+      GCP_PROJECT_ID: kevmo314
+      GCP_WORKLOAD_IDENTITY_PROVIDER: projects/272419586516/locations/global/workloadIdentityPools/lupine-github/providers/github
+      GCP_SERVICE_ACCOUNT: lupine-gpu-ci@kevmo314.iam.gserviceaccount.com
+      BASE_IMAGE_PROJECT: ml-images
+      BASE_IMAGE_FAMILY: common-cu129-ubuntu-2404-nvidia-580
+      IMAGE_FAMILY: lupine-gpu-ci
+      BUILDER_ZONES: us-central1-a us-central1-b us-central1-c us-east1-b
+      BUILDER_NAME: lupine-gpu-ci-image-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Resolve VM image
+        id: resolve
+        run: |
+          set -euo pipefail
+          # Runs once as the builder VM's startup script and leaves its verdict
+          # on the serial console.
+          cat > "$RUNNER_TEMP/gpu-ci-image.sh" <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euxo pipefail
+          # xtrace echoes the trap unexpanded, so the verdict only appears once.
+          marker=lupine-image-build
+          trap 'echo "$marker: failed" > /dev/ttyS0' ERR
+          export DEBIAN_FRONTEND=noninteractive
+
+          # Zonal GCE Ubuntu mirrors stall for tens of minutes in some fallback zones.
+          find /etc/apt \( -name '*.sources' -o -name '*.list' \) -exec sed -i -E \
+            's#https?://[a-z0-9-]+\.gce\.clouds\.archive\.ubuntu\.com#http://archive.ubuntu.com#g' {} +
+          apt_opts=(-o Acquire::Retries=5 -o Acquire::http::Timeout=30)
+
+          # The dependency cache is a tarball of the data root, so every image must live
+          # under /var/lib/docker rather than containerd's store.
+          mkdir -p /etc/docker
+          echo '{"features": {"containerd-snapshotter": false}}' > /etc/docker/daemon.json
+
+          apt-get "${apt_opts[@]}" update
+          apt-get "${apt_opts[@]}" install -y --no-install-recommends \
+            ca-certificates curl docker.io iproute2 libnghttp2-14 procps zstd
+
+          # Driver 580 predates CUDA 13.3; the CUDA 13.3 lane points the server at this
+          # forward-compat library. It installs under /usr/local/cuda-13.3/compat and is
+          # unused by the other lanes.
+          curl --fail --location --retry 5 --output /tmp/cuda-compat.deb \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-compat-13-3_610.57.04-1ubuntu1_amd64.deb
+          echo "5150dbbe6376c29a53ec01730aa1b335f192d5965e95be71a448a719f10044a4  /tmp/cuda-compat.deb" |
+            sha256sum --check
+          apt-get "${apt_opts[@]}" install -y --no-install-recommends /tmp/cuda-compat.deb
+          rm -f /tmp/cuda-compat.deb
+
+          apt-get clean
+          rm -rf /var/lib/apt/lists/*
+          echo "$marker: ok" > /dev/ttyS0
+          SCRIPT
+
+          base="$(gcloud compute images describe-from-family "$BASE_IMAGE_FAMILY" \
+            --project="$BASE_IMAGE_PROJECT" --format='value(name)')"
+          test -n "$base"
+          hash="$( (echo "$BASE_IMAGE_PROJECT/$base"; cat "$RUNNER_TEMP/gpu-ci-image.sh") |
+            sha256sum | cut -c1-16)"
+          image="$IMAGE_FAMILY-$hash"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          {
+            echo "BASE_IMAGE=$base"
+            echo "IMAGE=$image"
+          } >> "$GITHUB_ENV"
+          if gcloud compute images describe "$image" \
+            --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+            echo "Reusing $image"
+            echo "EXISTS=true" >> "$GITHUB_ENV"
+          else
+            echo "Building $image from $base"
+          fi
+
+      - name: Build VM image
+        if: env.EXISTS != 'true'
+        run: |
+          set -euo pipefail
+          zone=""
+          for candidate in $BUILDER_ZONES; do
+            if gcloud compute instances create "$BUILDER_NAME" \
+              --project="$GCP_PROJECT_ID" \
+              --zone="$candidate" \
+              --machine-type=e2-standard-4 \
+              --image="$BASE_IMAGE" \
+              --image-project="$BASE_IMAGE_PROJECT" \
+              --boot-disk-type=pd-balanced \
+              --max-run-duration=50m \
+              --instance-termination-action=DELETE \
+              --no-service-account \
+              --no-scopes \
+              --metadata=block-project-ssh-keys=TRUE,enable-oslogin=FALSE \
+              --metadata-from-file=startup-script="$RUNNER_TEMP/gpu-ci-image.sh"; then
+              zone="$candidate"
+              break
+            fi
+          done
+          test -n "$zone"
+          echo "BUILDER_ZONE=$zone" >> "$GITHUB_ENV"
+
+          deadline=$((SECONDS + 2400))
+          verdict=""
+          until [[ -n "$verdict" ]]; do
+            if (( SECONDS >= deadline )); then
+              echo "Image builder did not finish before the timeout" >&2
+              break
+            fi
+            sleep 15
+            serial="$(gcloud compute instances get-serial-port-output "$BUILDER_NAME" \
+              --project="$GCP_PROJECT_ID" --zone="$zone" || true)"
+            verdict="$(grep -o 'lupine-image-build: [a-z]*' <<<"$serial" | tail -n 1 || true)"
+          done
+          if [[ "$verdict" != 'lupine-image-build: ok' ]]; then
+            tail -n 200 <<<"$serial" >&2
+            exit 1
+          fi
+          gcloud compute instances stop "$BUILDER_NAME" \
+            --project="$GCP_PROJECT_ID" --zone="$zone"
+
+          # A concurrent run may have published the same image first.
+          gcloud compute images create "$IMAGE" \
+            --project="$GCP_PROJECT_ID" \
+            --source-disk="$BUILDER_NAME" \
+            --source-disk-zone="$zone" \
+            --family="$IMAGE_FAMILY" ||
+            gcloud compute images describe "$IMAGE" \
+              --project="$GCP_PROJECT_ID" >/dev/null
+
+      - name: Delete image builder
+        if: always() && env.BUILDER_ZONE != ''
+        run: |
+          gcloud compute instances delete "$BUILDER_NAME" \
+            --project="$GCP_PROJECT_ID" --zone="$BUILDER_ZONE" --quiet
+
+      - name: Delete stale VM images
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          cutoff="$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%S)"
+          gcloud compute images list \
+            --project="$GCP_PROJECT_ID" \
+            --no-standard-images \
+            --filter="family=$IMAGE_FAMILY AND creationTimestamp<'$cutoff' AND name!=$IMAGE" \
+            --format='value(name)' |
+            xargs -r gcloud compute images delete --project="$GCP_PROJECT_ID" --quiet
+
   gpu-integration:
     name: ${{ matrix.name }} GPU integration on GCE L4
+    needs: vm-image
     runs-on: ubuntu-latest
     timeout-minutes: 300
 
@@ -53,9 +218,6 @@ jobs:
             client_image: nvidia/cuda:13.3.1-devel-ubuntu24.04
             samples_ref: v13.3
             pytorch_index_url: https://download.pytorch.org/whl/cu132
-            cuda_compat_deb_url: >-
-              https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-compat-13-3_610.57.04-1ubuntu1_amd64.deb
-            cuda_compat_deb_sha256: 5150dbbe6376c29a53ec01730aa1b335f192d5965e95be71a448a719f10044a4
             server_ld_library_path: /usr/local/cuda-13.3/compat
           - label: cuda12-4
             name: CUDA 12.4
@@ -63,8 +225,6 @@ jobs:
             client_image: nvidia/cuda:12.4.1-devel-ubuntu22.04
             samples_ref: v12.4.1
             pytorch_index_url: https://download.pytorch.org/whl/cu124
-            cuda_compat_deb_url: ""
-            cuda_compat_deb_sha256: ""
             server_ld_library_path: ""
           - label: cuda11-8
             name: CUDA 11.8
@@ -72,8 +232,6 @@ jobs:
             client_image: nvidia/cuda:11.8.0-devel-ubuntu22.04
             samples_ref: v11.8
             pytorch_index_url: https://download.pytorch.org/whl/cu118
-            cuda_compat_deb_url: ""
-            cuda_compat_deb_sha256: ""
             server_ld_library_path: ""
 
     env:
@@ -94,8 +252,7 @@ jobs:
         europe-west1-b europe-west1-c
       GCP_NETWORK: default
       MACHINE_TYPE: g2-standard-8
-      VM_IMAGE_PROJECT: ml-images
-      VM_IMAGE_FAMILY: common-cu129-ubuntu-2404-nvidia-580
+      VM_IMAGE: ${{ needs.vm-image.outputs.image }}
       VM_MAX_RUN_DURATION: 260m
       COMPLIANCE_TIMEOUT: 240m
       CUDA_SAMPLE_TIMEOUT: 120
@@ -105,8 +262,6 @@ jobs:
       # cascades in otherwise passing cuBLAS and PyTorch tests.
       CUDA_SAMPLE_JOBS: 8
       SSH_COMMAND_TIMEOUT: 120
-      CUDA_COMPAT_DEB_URL: ${{ matrix.cuda_compat_deb_url }}
-      CUDA_COMPAT_DEB_SHA256: ${{ matrix.cuda_compat_deb_sha256 }}
       SERVER_LD_LIBRARY_PATH: ${{ matrix.server_ld_library_path }}
       USE_SPOT: "false"
       VM_NAME: lupine-gpu-ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.label }}
@@ -228,34 +383,6 @@ jobs:
       - name: Create L4 server VM
         run: |
           set -euo pipefail
-          startup_script="$RUNNER_TEMP/gce-startup.sh"
-          cat > "$startup_script" <<'SCRIPT'
-          #!/usr/bin/env bash
-          set -euxo pipefail
-          export DEBIAN_FRONTEND=noninteractive
-          # The dependency cache is a tarball of the data root, so every image
-          # must live under /var/lib/docker rather than containerd's store.
-          mkdir -p /etc/docker
-          echo '{"features": {"containerd-snapshotter": false}}' > /etc/docker/daemon.json
-          apt-get update
-          apt-get install -y --no-install-recommends ca-certificates curl docker.io iproute2 libnghttp2-14 procps zstd
-          SCRIPT
-
-          if [[ -n "$CUDA_COMPAT_DEB_URL" ]]; then
-            printf 'curl --fail --location --retry 5 --output /tmp/cuda-compat.deb %q\n' \
-              "$CUDA_COMPAT_DEB_URL" >> "$startup_script"
-            printf 'printf "%%s  /tmp/cuda-compat.deb\\n" %q | sha256sum --check\n' \
-              "$CUDA_COMPAT_DEB_SHA256" >> "$startup_script"
-            printf '%s\n' \
-              'apt-get install -y --no-install-recommends /tmp/cuda-compat.deb' \
-              'rm -f /tmp/cuda-compat.deb' >> "$startup_script"
-          fi
-
-          cat >> "$startup_script" <<'SCRIPT'
-          rm -rf /var/lib/apt/lists/*
-          touch /var/lib/lupine-startup-complete
-          SCRIPT
-
           # shellcheck disable=SC2206
           fallback_zones=($GCP_FALLBACK_ZONES)
           candidate_zones=("$GCP_ZONE" "${fallback_zones[@]}")
@@ -271,8 +398,8 @@ jobs:
               "--machine-type=$MACHINE_TYPE"
               "--network=$GCP_NETWORK"
               "--tags=$VM_TAG"
-              "--image-family=$VM_IMAGE_FAMILY"
-              "--image-project=$VM_IMAGE_PROJECT"
+              "--image=$VM_IMAGE"
+              "--image-project=$GCP_PROJECT_ID"
               "--boot-disk-size=100GB"
               "--boot-disk-type=pd-balanced"
               "--maintenance-policy=TERMINATE"
@@ -281,7 +408,6 @@ jobs:
               "--no-service-account"
               "--no-scopes"
               "--metadata=block-project-ssh-keys=TRUE,enable-oslogin=FALSE,ssh-keys=gha:$(cat "$SSH_DIR/id_ed25519.pub")"
-              "--metadata-from-file=startup-script=$startup_script"
               "--shielded-vtpm"
               "--shielded-integrity-monitoring"
               "--no-shielded-secure-boot"
@@ -458,17 +584,11 @@ jobs:
               sleep 15
             done
 
-            # Package downloads on a fresh VM can outlast five minutes even
-            # after the NVIDIA driver is ready.
-            deadline=$((SECONDS + 1200))
-            until command -v docker >/dev/null 2>&1 &&
-              sudo docker info >/dev/null 2>&1 &&
-              test -f /var/lib/lupine-startup-complete; do
+            deadline=$((SECONDS + 300))
+            until sudo docker info >/dev/null 2>&1; do
               if [ "$SECONDS" -ge "$deadline" ]; then
-                echo "VM startup did not become ready before the timeout" >&2
-                sudo systemctl status --no-pager google-startup-scripts.service || true
-                sudo journalctl --no-pager -n 100 \
-                  -u google-startup-scripts.service || true
+                echo "Docker did not start before the timeout" >&2
+                sudo systemctl status --no-pager docker.service || true
                 exit 1
               fi
               sleep 5
