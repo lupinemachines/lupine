@@ -203,13 +203,69 @@ bool test_drain_excludes_concurrent_dispatches() {
   return !violated;
 }
 
+bool test_capture_excludes_concurrent_captures() {
+  constexpr int lane_count = 4;
+  std::atomic<bool> stop{false};
+  std::atomic<bool> held{false};
+  std::atomic<int> inside{0};
+  std::atomic<bool> violated{false};
+  std::vector<std::unique_ptr<task_thread>> lanes;
+  for (int i = 0; i < lane_count; ++i) {
+    lanes.push_back(std::make_unique<task_thread>([&, i] {
+      std::size_t iter = 0;
+      while (!stop) {
+        ++iter;
+        lupine_checkpoint::capture_begin();
+        inside.fetch_add(1);
+        if (held) {
+          violated = true;
+        }
+        bool started = (iter + i) % 3 != 0;
+        if (started) {
+          lupine_checkpoint::capture_begin_complete(true);
+          if (held) {
+            violated = true;
+          }
+          inside.fetch_sub(1);
+          lupine_checkpoint::capture_end();
+        } else {
+          inside.fetch_sub(1);
+          lupine_checkpoint::capture_begin_complete(false);
+        }
+      }
+    }));
+  }
+  auto deadline = std::chrono::steady_clock::now() + 1s;
+  for (int i = 0; i < 50 || std::chrono::steady_clock::now() < deadline; ++i) {
+    lupine_checkpoint_wait_for_captures();
+    held = true;
+    for (int check = 0; check < 4; ++check) {
+      if (inside.load() != 0) {
+        violated = true;
+      }
+    }
+    std::this_thread::yield();
+    held = false;
+    lupine_checkpoint_resume_captures();
+  }
+  stop = true;
+  for (auto &lane : lanes) {
+    wait_done(*lane);
+  }
+  if (violated) {
+    std::cerr << "FAIL: a capture ran while the capture gate was held\n";
+  }
+  return !violated;
+}
+
 } // namespace
 
 int main() {
   if (!test_waits_for_active_capture_and_blocks_new_capture() ||
       !test_waits_for_in_flight_begin() ||
       !test_drains_all_lanes_and_blocks_new_dispatches() ||
-      !test_drain_excludes_concurrent_dispatches()) {
+      !test_drain_excludes_concurrent_dispatches() ||
+      !test_capture_excludes_concurrent_captures()) {
     return 1;
   }
   std::cout << "checkpoint gate tests passed\n";

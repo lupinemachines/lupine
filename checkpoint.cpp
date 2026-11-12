@@ -3,6 +3,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
 
 namespace {
@@ -14,26 +15,24 @@ namespace {
 class cuda_call_gate {
 public:
   void begin() {
-    if (!pending_.load()) {
-      active_calls_.fetch_add(1);
-      if (!pending_.load()) {
+    if (!pending_.load(std::memory_order_relaxed)) {
+      active_calls_.fetch_add(1, std::memory_order_seq_cst);
+      if (!pending_.load(std::memory_order_seq_cst)) {
         return;
       }
       end();
     }
     std::unique_lock<std::mutex> lock(mutex_);
     condition_.wait(lock, [this] { return !draining_ && drain_waiters_ == 0; });
-    active_calls_.fetch_add(1);
+    active_calls_.fetch_add(1, std::memory_order_seq_cst);
   }
 
   void end() {
-    std::size_t active = active_calls_.load();
-    do {
-      if (active == 0) {
-        return;
-      }
-    } while (!active_calls_.compare_exchange_weak(active, active - 1));
-    if (active == 1 && pending_.load()) {
+    if (active_calls_.load(std::memory_order_relaxed) == 0) {
+      return;
+    }
+    if (active_calls_.fetch_sub(1, std::memory_order_seq_cst) == 1 &&
+        pending_.load(std::memory_order_seq_cst)) {
       std::lock_guard<std::mutex> lock(mutex_);
       condition_.notify_all();
     }
@@ -42,11 +41,13 @@ public:
   void drain() {
     std::unique_lock<std::mutex> lock(mutex_);
     ++drain_waiters_;
-    pending_.store(true);
+    pending_.store(true, std::memory_order_seq_cst);
     condition_.wait(lock, [this] { return !draining_; });
     --drain_waiters_;
     draining_ = true;
-    condition_.wait(lock, [this] { return active_calls_.load() == 0; });
+    condition_.wait(lock, [this] {
+      return active_calls_.load(std::memory_order_seq_cst) == 0;
+    });
   }
 
   void resume() {
@@ -55,59 +56,87 @@ public:
       return;
     }
     draining_ = false;
-    pending_.store(drain_waiters_ != 0);
+    pending_.store(drain_waiters_ != 0, std::memory_order_seq_cst);
     condition_.notify_all();
   }
 
 private:
-  std::mutex mutex_;
+  alignas(64) std::atomic<std::size_t> active_calls_{0};
+  alignas(64) std::atomic<bool> pending_{false};
+  alignas(64) std::mutex mutex_;
   std::condition_variable condition_;
-  std::atomic<std::size_t> active_calls_{0};
-  std::atomic<bool> pending_{false};
   std::size_t drain_waiters_ = 0;
   bool draining_ = false;
 };
 
+// Capture lifecycle operations admit and release with atomics alone while no
+// checkpoint is pending. Admitted begins (high 32 bits) and active captures
+// (low 32 bits) are packed into a single 64-bit atomic state_ word so the
+// begin -> active capture transition in capture_begin_complete(true) executes
+// in a single atomic instruction without ever dropping to zero.
 class capture_gate {
 public:
   void begin() {
+    if (!pending_.load(std::memory_order_relaxed)) {
+      state_.fetch_add(kAdmittedBeginUnit, std::memory_order_seq_cst);
+      if (!pending_.load(std::memory_order_seq_cst)) {
+        return;
+      }
+      uint64_t prev =
+          state_.fetch_sub(kAdmittedBeginUnit, std::memory_order_seq_cst);
+      if (prev == kAdmittedBeginUnit &&
+          pending_.load(std::memory_order_seq_cst)) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        condition_.notify_all();
+      }
+    }
     std::unique_lock<std::mutex> lock(mutex_);
     condition_.wait(lock, [this] {
       return !checkpoint_active_ && checkpoint_waiters_ == 0;
     });
-    ++admitted_begins_;
+    state_.fetch_add(kAdmittedBeginUnit, std::memory_order_seq_cst);
   }
 
   void begin_complete(bool started) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (admitted_begins_ == 0) {
+    if ((state_.load(std::memory_order_relaxed) >> 32) == 0) {
       return;
     }
-    --admitted_begins_;
     if (started) {
-      ++active_captures_;
+      state_.fetch_sub(kAdmittedBeginUnit - kActiveCaptureUnit,
+                       std::memory_order_seq_cst);
+      return;
     }
-    condition_.notify_all();
+    uint64_t prev =
+        state_.fetch_sub(kAdmittedBeginUnit, std::memory_order_seq_cst);
+    if (prev == kAdmittedBeginUnit &&
+        pending_.load(std::memory_order_seq_cst)) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      condition_.notify_all();
+    }
   }
 
   void end() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (active_captures_ == 0) {
+    if ((state_.load(std::memory_order_relaxed) & 0xffffffffULL) == 0) {
       return;
     }
-    --active_captures_;
-    condition_.notify_all();
+    uint64_t prev =
+        state_.fetch_sub(kActiveCaptureUnit, std::memory_order_seq_cst);
+    if (prev == kActiveCaptureUnit &&
+        pending_.load(std::memory_order_seq_cst)) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      condition_.notify_all();
+    }
   }
 
   void wait_for_captures() {
     std::unique_lock<std::mutex> lock(mutex_);
     ++checkpoint_waiters_;
+    pending_.store(true, std::memory_order_seq_cst);
     condition_.wait(lock, [this] { return !checkpoint_active_; });
     --checkpoint_waiters_;
     checkpoint_active_ = true;
-    condition_.wait(lock, [this] {
-      return admitted_begins_ == 0 && active_captures_ == 0;
-    });
+    condition_.wait(
+        lock, [this] { return state_.load(std::memory_order_seq_cst) == 0; });
   }
 
   void resume_captures() {
@@ -116,14 +145,18 @@ public:
       return;
     }
     checkpoint_active_ = false;
+    pending_.store(checkpoint_waiters_ != 0, std::memory_order_seq_cst);
     condition_.notify_all();
   }
 
 private:
-  std::mutex mutex_;
+  static constexpr uint64_t kAdmittedBeginUnit = 1ULL << 32;
+  static constexpr uint64_t kActiveCaptureUnit = 1ULL;
+
+  alignas(64) std::atomic<uint64_t> state_{0};
+  alignas(64) std::atomic<bool> pending_{false};
+  alignas(64) std::mutex mutex_;
   std::condition_variable condition_;
-  std::size_t admitted_begins_ = 0;
-  std::size_t active_captures_ = 0;
   std::size_t checkpoint_waiters_ = 0;
   bool checkpoint_active_ = false;
 };
