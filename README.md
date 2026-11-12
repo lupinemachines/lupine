@@ -124,12 +124,16 @@ far sooner than the kernel's default 2-hour keepalive. The next RPC then fails
 fatally. Lupine keeps these connections alive and resilient without retrying
 RPCs (which would break CUDA semantics):
 
-RPC request and response bodies require `content-encoding: zstd`. Compression
-is applied transparently at level -1, using one streaming Zstd frame per HTTP/2
-body and a 512 KiB history window. RPC boundaries flush the stream without
-resetting its history. No compression setting is needed. Clients and servers
-must both support Zstd; older LZ4-only peers are rejected rather than falling
-back to another encoding. Upgrade the client and server together.
+RPC request and response bodies are compressed with `content-encoding: zstd`
+by default, at level -1, using one streaming Zstd frame per HTTP/2 body and a
+512 KiB history window. RPC boundaries flush the stream without resetting its
+history. Zstd -1 runs at roughly 1.5 GB/s per core, so on links faster than
+that it caps a connection's throughput; set `LUPINE_COMPRESSION=none` in the
+client to send identity bodies (no `content-encoding`) with
+`accept-encoding: identity`, which the server honors for its responses. Peers
+sending any other encoding, such as older LZ4-only builds, are rejected.
+Servers that predate identity support reject `LUPINE_COMPRESSION=none`
+clients; upgrade the server first.
 
 - **TCP keepalive** is enabled on every connection (client *and* server) with a
   60s idle interval, 15s between probes, and 3 unanswered probes before giving

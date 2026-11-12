@@ -302,6 +302,7 @@ struct raw_h2_peer {
   unsigned headers = 0;
   const char *response_encoding;
   std::vector<std::string> encodings;
+  std::vector<std::string> accepted;
   std::vector<std::string> schemes;
 
   raw_h2_peer(lupine_socket_t socket, bool server,
@@ -325,6 +326,9 @@ struct raw_h2_peer {
           if (n == 16 && std::memcmp(name, "content-encoding", 16) == 0) {
             peer->encodings.emplace_back(reinterpret_cast<const char *>(value),
                                          size);
+          } else if (n == 15 && std::memcmp(name, "accept-encoding", 15) == 0) {
+            peer->accepted.emplace_back(reinterpret_cast<const char *>(value),
+                                        size);
           } else if (n == 7 && std::memcmp(name, ":scheme", 7) == 0) {
             peer->schemes.emplace_back(reinterpret_cast<const char *>(value),
                                        size);
@@ -397,13 +401,14 @@ struct raw_h2_peer {
 
 void test_client_rejects_unsupported_response_encoding() {
   for (const char *encoding :
-       std::array<const char *, 3>{nullptr, "lz4", "lupine-block-v1"}) {
+       std::array<const char *, 2>{"lz4", "lupine-block-v1"}) {
     h2_pair pair;
     init_pair_sockets(&pair);
     require(rpc_http2_client_init(&pair.client) == 0, "client init");
     raw_h2_peer server(pair.server.connfd, true, encoding);
     server.receive_headers(1);
-    require(server.encodings == std::vector<std::string>({"zstd"}),
+    require(server.encodings == std::vector<std::string>({"zstd"}) &&
+                server.accepted == std::vector<std::string>({"zstd"}),
             "client did not request Zstd");
     require(rpc_http2_client_await_ready(&pair.client) < 0,
             "client accepted an unsupported response encoding");
@@ -649,11 +654,46 @@ void check_rejected_request_encoding(
 }
 
 void test_server_rejects_unsupported_request_encoding() {
-  check_rejected_request_encoding({});
   check_rejected_request_encoding({"lz4"});
   check_rejected_request_encoding({"lupine-block-v1"});
   check_rejected_request_encoding({"zstd", "zstd"});
   check_rejected_request_encoding({"lz4", "zstd"});
+}
+
+// LUPINE_COMPRESSION=none sends an identity body and asks for one back.
+void test_client_identity_encoding_headers() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+  lupine_test_setenv("LUPINE_COMPRESSION", "none");
+  require(rpc_http2_client_init(&pair.client) == 0, "client init");
+  lupine_test_unsetenv("LUPINE_COMPRESSION");
+  raw_h2_peer server(pair.server.connfd, true, nullptr);
+  server.receive_headers(1);
+  require(rpc_http2_lane_stream(&pair.client, 1) > 0, "lane open");
+  server.receive_headers(2);
+  require(server.encodings.empty(), "identity client sent content-encoding");
+  require(server.accepted == std::vector<std::string>({"identity", "identity"}),
+          "identity client did not ask for identity responses");
+  require(rpc_http2_client_await_ready(&pair.client) == 0,
+          "client rejected an identity response");
+}
+
+void test_server_honors_identity_accept_encoding() {
+  h2_pair pair;
+  init_pair_sockets(&pair);
+  raw_h2_peer client(pair.client.connfd, false);
+  std::array<nghttp2_nv, 5> headers = {
+      raw_h2_header(":method", "POST"), raw_h2_header(":scheme", "http"),
+      raw_h2_header(":path", "/"), raw_h2_header(":authority", "lupine"),
+      raw_h2_header("accept-encoding", "identity")};
+  require(nghttp2_submit_headers(client.session, NGHTTP2_FLAG_NONE, -1, nullptr,
+                                 headers.data(), headers.size(), nullptr) > 0 &&
+              nghttp2_session_send(client.session) == 0,
+          "raw request failed");
+  require(rpc_http2_server_init_with_metadata(&pair.server, nullptr) == 0,
+          "server rejected an identity request");
+  client.receive_headers(1);
+  require(client.encodings.empty(), "server compressed an identity response");
 }
 
 void init_raw_server_peer(h2_pair *pair) {
@@ -1897,11 +1937,15 @@ void test_reset_wakes_flow_controlled_writer() {
   require(!reset_failed, "failed to deliver RST_STREAM");
 }
 
-// The transport Zstd-encodes the complete HTTP/2 body, including small RPC
-// fields and large transfer data spread across several caller-owned cursors.
-void test_zstd_lane_round_trip() {
+// The transport encodes the complete HTTP/2 body, including small RPC fields
+// and large transfer data spread across several caller-owned cursors.
+void check_lane_round_trip(const char *compression) {
   h2_pair pair;
+  if (compression != nullptr) {
+    lupine_test_setenv("LUPINE_COMPRESSION", compression);
+  }
   init_pair(&pair);
+  lupine_test_unsetenv("LUPINE_COMPRESSION");
   require(rpc_http2_client_await_ready(&pair.client) == 0,
           "zstd handshake failed");
   int32_t stream = rpc_http2_lane_stream(&pair.client, 919);
@@ -1939,9 +1983,17 @@ void test_zstd_lane_round_trip() {
   require(response == payload, "zstd response mismatch");
 }
 
-void test_zstd_content_encoding_round_trip() {
+void test_zstd_lane_round_trip() { check_lane_round_trip(nullptr); }
+
+void test_identity_lane_round_trip() { check_lane_round_trip("none"); }
+
+void check_content_encoding_round_trip(const char *compression) {
   h2_pair pair;
+  if (compression != nullptr) {
+    lupine_test_setenv("LUPINE_COMPRESSION", compression);
+  }
   init_pair(&pair);
+  lupine_test_unsetenv("LUPINE_COMPRESSION");
   exchange_settings(&pair);
 
   std::string prefix = "head";
@@ -1975,6 +2027,15 @@ void test_zstd_content_encoding_round_trip() {
   require(received_prefix == prefix, "Zstd prefix mismatch");
   require(received == payload, "Zstd payload mismatch");
   require(received_suffix == suffix, "Zstd suffix mismatch");
+}
+
+void test_zstd_content_encoding_round_trip() {
+  check_content_encoding_round_trip(nullptr);
+}
+
+// Short identity writes wait for the write thread's flush.
+void test_identity_content_encoding_round_trip() {
+  check_content_encoding_round_trip("none");
 }
 
 struct refill_chunks {
@@ -2838,6 +2899,8 @@ int main() {
           "failed to install RPC test lifecycle hooks");
   RUN_CASE(test_server_rejects_unsupported_request_encoding());
   RUN_CASE(test_client_rejects_unsupported_response_encoding());
+  RUN_CASE(test_client_identity_encoding_headers());
+  RUN_CASE(test_server_honors_identity_accept_encoding());
   RUN_CASE(test_client_request_scheme(false));
 #ifdef LUPINE_TLS_OPENSSL
   RUN_CASE(test_client_request_scheme(true));
@@ -2905,7 +2968,9 @@ int main() {
 #endif
   RUN_CASE(test_large_payload());
   RUN_CASE(test_zstd_content_encoding_round_trip());
+  RUN_CASE(test_identity_content_encoding_round_trip());
   RUN_CASE(test_zstd_lane_round_trip());
+  RUN_CASE(test_identity_lane_round_trip());
   RUN_CASE(test_refillable_cursor_round_trip());
 #ifndef _WIN32
   RUN_CASE(test_refillable_cursor_across_flow_control_window());
