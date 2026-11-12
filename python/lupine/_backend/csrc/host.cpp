@@ -100,11 +100,21 @@ void ensure_storage(const at::Tensor &t) {
 // Kernels
 // ---------------------------------------------------------------------------
 
+c10::DeviceIndex checked_device_index(c10::DeviceIndex index) {
+  TORCH_CHECK(index >= 0 && index < g_device_count, "lupine: invalid device ",
+              index);
+  return index;
+}
+
+c10::DeviceIndex resolve_device_index(c10::DeviceIndex index) {
+  return checked_device_index(index == -1 ? t_current_device : index);
+}
+
 c10::DeviceIndex resolve_index(const std::optional<c10::Device> &device) {
   c10::Device d = c10::device_or_default(device);
   TORCH_CHECK(is_ours_type(d.type()), "lupine: expected a ", g_device_type,
               " device, got ", d);
-  return d.has_index() ? d.index() : t_current_device;
+  return checked_device_index(d.has_index() ? d.index() : t_current_device);
 }
 
 at::Tensor empty_memory_format(c10::IntArrayRef size,
@@ -237,14 +247,20 @@ bool _has_compatible_shallow_copy_type(const at::Tensor &, const at::Tensor &) {
 // the kernel resized); the views grow the storage the host believes in when
 // they reach past it.
 at::Tensor storage(int64_t handle, int64_t nbytes, c10::Device device) {
+  TORCH_CHECK(is_ours_type(device.type()), "lupine: expected a ", g_device_type,
+              " device, got ", device);
+  c10::Device resolved(device.type(),
+                       checked_device_index(device.has_index()
+                                                ? device.index()
+                                                : t_current_device));
   c10::Storage storage(c10::make_intrusive<c10::StorageImpl>(
       c10::StorageImpl::use_byte_size_t(), nbytes,
       at::DataPtr(fake_pointer(handle),
                   reinterpret_cast<void *>(static_cast<uintptr_t>(handle)),
-                  &release_handle, device),
+                  &release_handle, resolved),
       &g_allocator, /*resizable=*/true));
   at::Tensor t = at::detail::make_tensor<c10::TensorImpl>(
-      std::move(storage), c10::DispatchKeySet(key_for(device.type())),
+      std::move(storage), c10::DispatchKeySet(key_for(resolved.type())),
       caffe2::TypeMeta::fromScalarType(at::kByte));
   t.unsafeGetTensorImpl()->set_sizes_contiguous({nbytes});
   return t;
@@ -284,28 +300,46 @@ struct guard_impl final : c10::impl::DeviceGuardImplInterface {
   explicit guard_impl(c10::DeviceType type) : type_(type) {}
   c10::DeviceType type() const override { return type_; }
   c10::Device exchangeDevice(c10::Device d) const override {
+    TORCH_CHECK(is_ours_type(d.type()), "lupine: expected a ", type_,
+                " device, got ", d);
     c10::Device previous(type_, t_current_device);
-    t_current_device = d.index();
+    t_current_device =
+        checked_device_index(d.has_index() ? d.index() : t_current_device);
     return previous;
   }
   c10::Device getDevice() const override {
     return c10::Device(type_, t_current_device);
   }
-  void setDevice(c10::Device d) const override { t_current_device = d.index(); }
+  void setDevice(c10::Device d) const override {
+    TORCH_CHECK(is_ours_type(d.type()), "lupine: expected a ", type_,
+                " device, got ", d);
+    t_current_device =
+        checked_device_index(d.has_index() ? d.index() : t_current_device);
+  }
   void uncheckedSetDevice(c10::Device d) const noexcept override {
-    t_current_device = d.index();
+    c10::DeviceIndex idx = d.has_index() ? d.index() : t_current_device;
+    if (idx >= 0 && idx < g_device_count) {
+      t_current_device = idx;
+    }
   }
   c10::Stream getStream(c10::Device d) const noexcept override {
-    return c10::Stream(c10::Stream::DEFAULT, d);
+    c10::DeviceIndex idx = d.has_index() ? d.index() : t_current_device;
+    return c10::Stream(c10::Stream::DEFAULT, c10::Device(type_, idx));
   }
   c10::Stream getDefaultStream(c10::Device d) const override {
-    return c10::Stream(c10::Stream::DEFAULT, d);
+    c10::DeviceIndex idx =
+        checked_device_index(d.has_index() ? d.index() : t_current_device);
+    return c10::Stream(c10::Stream::DEFAULT, c10::Device(type_, idx));
   }
   c10::Stream getNewStream(c10::Device d, int) const override {
-    return c10::Stream(c10::Stream::DEFAULT, d);
+    c10::DeviceIndex idx =
+        checked_device_index(d.has_index() ? d.index() : t_current_device);
+    return c10::Stream(c10::Stream::DEFAULT, c10::Device(type_, idx));
   }
   c10::Stream getStreamFromGlobalPool(c10::Device d, bool) const override {
-    return c10::Stream(c10::Stream::DEFAULT, d);
+    c10::DeviceIndex idx =
+        checked_device_index(d.has_index() ? d.index() : t_current_device);
+    return c10::Stream(c10::Stream::DEFAULT, c10::Device(type_, idx));
   }
   c10::Stream exchangeStream(c10::Stream s) const noexcept override {
     return c10::Stream(c10::Stream::DEFAULT, s.device());
@@ -318,7 +352,10 @@ struct guard_impl final : c10::impl::DeviceGuardImplInterface {
     *event = reinterpret_cast<void *>(1);
   }
   void block(void *, const c10::Stream &) const override {}
-  bool queryEvent(void *) const override { return true; }
+  bool queryEvent(void *) const override {
+    synchronize();
+    return true;
+  }
   void destroyEvent(void *, const c10::DeviceIndex) const noexcept override {}
   void synchronizeEvent(void *) const override { synchronize(); }
   bool queryStream(const c10::Stream &) const override {
@@ -326,7 +363,8 @@ struct guard_impl final : c10::impl::DeviceGuardImplInterface {
     return true;
   }
   void synchronizeStream(const c10::Stream &) const override { synchronize(); }
-  void synchronizeDevice(const c10::DeviceIndex) const override {
+  void synchronizeDevice(const c10::DeviceIndex index) const override {
+    resolve_device_index(index);
     synchronize();
   }
   double elapsedTime(void *, void *, const c10::DeviceIndex) const override {
@@ -369,22 +407,26 @@ private:
 struct hooks_impl final : at::PrivateUse1HooksInterface {
   bool isBuilt() const override { return true; }
   bool isAvailable() const override { return g_device_count > 0; }
-  bool hasPrimaryContext(c10::DeviceIndex) const override { return true; }
+  bool hasPrimaryContext(c10::DeviceIndex index) const override {
+    return index >= 0 && index < g_device_count;
+  }
   void init() const override {}
   c10::DeviceIndex deviceCount() const override {
     return static_cast<c10::DeviceIndex>(g_device_count);
   }
   void setCurrentDevice(c10::DeviceIndex d) const override {
-    t_current_device = d;
+    t_current_device = checked_device_index(d);
   }
   c10::DeviceIndex getCurrentDevice() const override {
     return t_current_device;
   }
   c10::DeviceIndex exchangeDevice(c10::DeviceIndex d) const override {
-    return static_cast<c10::DeviceIndex>(lupine_torch::exchange_device(d));
+    c10::DeviceIndex previous = t_current_device;
+    t_current_device = checked_device_index(d);
+    return previous;
   }
   c10::DeviceIndex maybeExchangeDevice(c10::DeviceIndex d) const override {
-    return d < 0 ? t_current_device : exchangeDevice(d);
+    return d == -1 ? t_current_device : exchangeDevice(d);
   }
   bool isPinnedPtr(const void *) const override { return false; }
   at::Allocator *getPinnedMemoryAllocator() const override {
@@ -392,6 +434,7 @@ struct hooks_impl final : at::PrivateUse1HooksInterface {
   }
   const at::Generator &
   getDefaultGenerator(c10::DeviceIndex index) const override {
+    c10::DeviceIndex resolved = resolve_device_index(index);
     static std::vector<at::Generator> generators = [] {
       std::vector<at::Generator> made;
       for (int i = 0; i < std::max(g_device_count, 1); ++i) {
@@ -400,10 +443,12 @@ struct hooks_impl final : at::PrivateUse1HooksInterface {
       }
       return made;
     }();
-    return generators.at(index < 0 ? t_current_device : index);
+    TORCH_CHECK(static_cast<size_t>(resolved) < generators.size(),
+                "lupine: invalid device ", resolved);
+    return generators[resolved];
   }
   at::Generator getNewGenerator(c10::DeviceIndex index) const override {
-    return at::make_generator<generator_impl>(index);
+    return at::make_generator<generator_impl>(resolve_device_index(index));
   }
   void resizePrivateUse1Bytes(const c10::Storage &storage,
                               size_t nbytes) const override {
@@ -482,12 +527,12 @@ int current_device() { return t_current_device; }
 void set_device(int index) {
   TORCH_CHECK(index >= 0 && index < g_device_count, "lupine: invalid device ",
               index);
-  t_current_device = static_cast<c10::DeviceIndex>(index);
+  t_current_device = checked_device_index(static_cast<c10::DeviceIndex>(index));
 }
 
 int exchange_device(int index) {
   int previous = t_current_device;
-  if (index >= 0) {
+  if (index != -1) {
     set_device(index);
   }
   return previous;

@@ -29,6 +29,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from . import _bundles
 
@@ -52,34 +53,50 @@ def _torch() -> Any:
 
 
 def _normalize_server(host: str, port: int | None = None) -> str:
-    from urllib.parse import urlsplit, urlunsplit
-
     host = str(host).strip()
     if not host:
         raise LupineError("host must not be empty")
     if host.startswith(("http://", "https://")):
-        parsed = urlsplit(host)
-        if not parsed.netloc:
+        try:
+            parsed = urlsplit(host)
+            hostname = parsed.hostname
+            need_port = port is not None or (
+                parsed.scheme == "http" and parsed.port is None
+            )
+        except ValueError as exc:
+            raise LupineError("host must include a server name") from exc
+        if not hostname:
             raise LupineError("host must include a server name")
         netloc = parsed.netloc
-        if port is not None or (parsed.scheme == "http" and parsed.port is None):
+        if need_port:
             endpoint_port = int(port) if port is not None else DEFAULT_PORT
-            hostname = parsed.hostname or ""
             if ":" in hostname and not hostname.startswith("["):
                 hostname = f"[{hostname}]"
-            netloc = f"{hostname}:{endpoint_port}"
+            userinfo, sep, _ = netloc.rpartition("@")
+            netloc = f"{userinfo}{sep}{hostname}:{endpoint_port}"
         return urlunsplit(
             (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
         )
     if not host.startswith("[") and host.count(":") > 1:
         host = f"[{host}]"
-    has_port = "]:" in host if host.startswith("[") else host.count(":") == 1
+    has_port = "]:" in host if host.startswith("[") else ":" in host
+    if has_port:
+        server, port_str = host.rsplit(":", 1)
+    else:
+        server, port_str = host, ""
+    if host.startswith("["):
+        if not server.endswith("]") or not server[1:-1].strip():
+            raise LupineError("host must include a server name")
+    elif not server:
+        raise LupineError("host must include a server name")
     if port is not None:
         # An explicit port replaces the one in the host, as it does for URLs.
-        return f"{host.rsplit(':', 1)[0] if has_port else host}:{int(port)}"
+        return f"{server}:{int(port)}"
     if has_port:
+        if not port_str:
+            raise LupineError("host port must not be empty")
         return host
-    return f"{host}:{DEFAULT_PORT}"
+    return f"{server}:{DEFAULT_PORT}"
 
 
 def _normalize_hosts(
@@ -92,7 +109,9 @@ def _normalize_hosts(
 
 def _servers_from_env() -> tuple[str, ...]:
     value = os.environ.get("LUPINE_SERVER", "")
-    return tuple(server.strip() for server in value.split(",") if server.strip())
+    if not value:
+        return ()
+    return tuple(s for server in value.split(",") if (s := server.strip()))
 
 
 @dataclass

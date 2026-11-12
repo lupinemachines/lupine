@@ -1,5 +1,6 @@
 import sys
 
+import lupine
 import lupine._backend
 
 
