@@ -89,11 +89,22 @@ static int test_strings() {
   CHECK_NCCL(ncclGetVersion(&version));
   EXPECT(version >= 21304);
   printf("NCCL %d, built against %d\n", version, NCCL_VERSION_CODE);
-  EXPECT(strstr(ncclGetErrorString(ncclInvalidArgument), "invalid") !=
-         nullptr);
+  EXPECT(strstr(ncclGetErrorString(ncclInvalidArgument), "invalid") != nullptr);
   EXPECT(ncclGetErrorString(ncclInvalidArgument) ==
          ncclGetErrorString(ncclInvalidArgument));
   EXPECT(ncclGroupEnd() == ncclInvalidUsage);
+  EXPECT(ncclCommInitAll(nullptr, 1, nullptr) == ncclInvalidArgument);
+  EXPECT(ncclCommInitAll(nullptr, 0, nullptr) == ncclInvalidArgument);
+#if NCCL_VERSION_CODE >= 21903
+  CHECK_NCCL(ncclMemFree(nullptr));
+#endif
+
+  // Diagnostic queries inside an empty group must not enter group state.
+  CHECK_NCCL(ncclGroupStart());
+  EXPECT(strstr(ncclGetErrorString(ncclSuccess), "success") != nullptr ||
+         ncclGetErrorString(ncclSuccess)[0] != '\0');
+  (void)ncclGetLastError(nullptr);
+  CHECK_NCCL(ncclGroupEnd());
 
   ncclUniqueId first, second;
   CHECK_NCCL(ncclGetUniqueId(&first));
@@ -128,8 +139,8 @@ static int test_single_rank() {
   }
 
   // Outside a group each call is a request with the library's own result.
-  CHECK_NCCL(ncclAllReduce(send, recv, kCount, ncclFloat, ncclSum, comm,
-                           stream));
+  CHECK_NCCL(
+      ncclAllReduce(send, recv, kCount, ncclFloat, ncclSum, comm, stream));
   CHECK_CUDA(cudaStreamSynchronize(stream));
   if (download(recv, output) || compare(output, input, "AllReduce")) {
     return 1;
@@ -138,18 +149,31 @@ static int test_single_rank() {
                        stream) == ncclInvalidArgument);
 
   // Inside a group the calls are queued; the group's result covers them.
+  // Diagnostic and parameter queries inside the group must not poison it.
   CHECK_NCCL(ncclGroupStart());
+  EXPECT(ncclGetErrorString(ncclSuccess)[0] != '\0');
+  (void)ncclGetLastError(comm);
   CHECK_NCCL(ncclBroadcast(send, recv, kCount, ncclFloat, 0, comm, stream));
   CHECK_NCCL(ncclGroupStart());
   CHECK_NCCL(ncclAllGather(send, recv, kCount, ncclFloat, comm, stream));
   CHECK_NCCL(ncclGroupEnd());
-  CHECK_NCCL(ncclReduceScatter(send, recv, kCount, ncclFloat, ncclSum, comm,
-                               stream));
+  CHECK_NCCL(
+      ncclReduceScatter(send, recv, kCount, ncclFloat, ncclSum, comm, stream));
   CHECK_NCCL(ncclGroupEnd());
   CHECK_CUDA(cudaStreamSynchronize(stream));
   if (download(recv, output) || compare(output, input, "group")) {
     return 1;
   }
+
+  // Errors from unknown handles inside nested groups must surface at the
+  // outermost ncclGroupEnd() and leave group state clean afterwards.
+  const auto bogus_comm = reinterpret_cast<ncclComm_t>(0x1);
+  CHECK_NCCL(ncclGroupStart());
+  CHECK_NCCL(ncclGroupStart());
+  EXPECT(ncclAllReduce(send, recv, kCount, ncclFloat, ncclSum, bogus_comm,
+                       stream) == ncclInvalidArgument);
+  CHECK_NCCL(ncclGroupEnd());
+  EXPECT(ncclGroupEnd() == ncclInvalidArgument);
 
   // Send to self needs both halves in one group.
   CHECK_NCCL(ncclGroupStart());
@@ -172,8 +196,8 @@ static int test_single_rank() {
   CHECK_NCCL(ncclRedOpCreatePreMulSum(&host_op, &host_scale, ncclFloat,
                                       ncclScalarHostImmediate, comm));
   host_scale = 100.0f;
-  CHECK_NCCL(ncclAllReduce(send, recv, kCount, ncclFloat, host_op, comm,
-                           stream));
+  CHECK_NCCL(
+      ncclAllReduce(send, recv, kCount, ncclFloat, host_op, comm, stream));
   CHECK_CUDA(cudaStreamSynchronize(stream));
   if (download(recv, output) || compare(output, scaled, "host PreMulSum")) {
     return 1;
@@ -187,8 +211,8 @@ static int test_single_rank() {
   CHECK_NCCL(ncclRedOpCreatePreMulSum(&device_op, device_scale, ncclFloat,
                                       ncclScalarDevice, comm));
   CHECK_NCCL(ncclGroupStart());
-  CHECK_NCCL(ncclAllReduce(send, recv, kCount, ncclFloat, device_op, comm,
-                           stream));
+  CHECK_NCCL(
+      ncclAllReduce(send, recv, kCount, ncclFloat, device_op, comm, stream));
   CHECK_NCCL(ncclGroupEnd());
   CHECK_CUDA(cudaStreamSynchronize(stream));
   if (download(recv, output) || compare(output, scaled, "device PreMulSum")) {
@@ -202,8 +226,8 @@ static int test_single_rank() {
   CHECK_NCCL(ncclMemAlloc(&pool, kCount * sizeof(float)));
   CHECK_CUDA(cudaMemcpy(pool, input.data(), kCount * sizeof(float),
                         cudaMemcpyHostToDevice));
-  CHECK_NCCL(ncclAllReduce(pool, recv, kCount, ncclFloat, ncclSum, comm,
-                           stream));
+  CHECK_NCCL(
+      ncclAllReduce(pool, recv, kCount, ncclFloat, ncclSum, comm, stream));
   CHECK_CUDA(cudaStreamSynchronize(stream));
   if (download(recv, output) || compare(output, input, "ncclMemAlloc")) {
     return 1;
@@ -213,8 +237,8 @@ static int test_single_rank() {
   // as every device pointer the shim hands back is. One GPU has no multimem
   // mapping, so that query answers with a null pointer rather than a failure.
   ncclWindow_t window = nullptr;
-  CHECK_NCCL(ncclCommWindowRegister(comm, pool, kCount * sizeof(float),
-                                    &window, NCCL_WIN_COLL_SYMMETRIC));
+  CHECK_NCCL(ncclCommWindowRegister(comm, pool, kCount * sizeof(float), &window,
+                                    NCCL_WIN_COLL_SYMMETRIC));
   void *peer = nullptr;
   CHECK_NCCL(ncclGetPeerDevicePointer(window, 0, 0, &peer));
   EXPECT(peer != nullptr);
@@ -252,13 +276,26 @@ static int test_single_rank() {
 #endif
 
 #if NCCL_VERSION_CODE >= 23007
+  EXPECT(ncclParamGetAllParameterKeys(nullptr, nullptr) == ncclInvalidArgument);
   const char **keys = nullptr;
   int key_count = 0;
+  EXPECT(ncclParamGetAllParameterKeys(&keys, nullptr) == ncclInvalidArgument);
+  EXPECT(ncclParamGetAllParameterKeys(nullptr, &key_count) ==
+         ncclInvalidArgument);
   CHECK_NCCL(ncclParamGetAllParameterKeys(&keys, &key_count));
   EXPECT(key_count > 0 && keys[0] != nullptr);
   const char *value = nullptr;
   int value_length = -1;
+  EXPECT(ncclParamGetParameter(nullptr, &value, &value_length) ==
+         ncclInvalidArgument);
+  EXPECT(ncclParamGetParameter(keys[0], nullptr, &value_length) ==
+         ncclInvalidArgument);
+  EXPECT(ncclParamGetParameter(keys[0], &value, nullptr) ==
+         ncclInvalidArgument);
+  EXPECT(ncclParamGetStr(nullptr, nullptr) == ncclInvalidArgument);
+  CHECK_NCCL(ncclGroupStart());
   CHECK_NCCL(ncclParamGetParameter(keys[0], &value, &value_length));
+  CHECK_NCCL(ncclGroupEnd());
   EXPECT(value != nullptr && value_length >= 0);
 #endif
 
@@ -280,8 +317,7 @@ constexpr size_t kRankCount = 32;
 static int make_buffers(int device, rank_buffers &buffers) {
   CHECK_CUDA(cudaSetDevice(device));
   CHECK_CUDA(cudaStreamCreate(&buffers.stream));
-  if (upload(ramp(kRankCount, static_cast<float>(device + 1)),
-             &buffers.send) ||
+  if (upload(ramp(kRankCount, static_cast<float>(device + 1)), &buffers.send) ||
       upload(std::vector<float>(2 * kRankCount, 0), &buffers.recv)) {
     return 1;
   }
