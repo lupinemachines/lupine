@@ -73,8 +73,9 @@
 #include "lupine_fatbin.h"
 #include "lupine_log.h"
 #include "rpc.h"
-#include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 #include "transport.h"
+#include <deque>
+#include <shared_mutex>
 // Reuse Zstd's bundled xxHash to preserve existing profile-cache keys.
 #include "third_party/zstd/lib/common/xxhash.h"
 
@@ -226,73 +227,50 @@ template <typename T, typename Tag> static T &lupine_leaked(Tag) {
   return *instance;
 }
 
-template <typename Map> struct lupine_lazy_cache {
-  std::atomic<Map *> ptr{nullptr};
-  std::atomic<size_t> active_inserts{0};
-  std::atomic<bool> dirty{false};
-  Map *try_get() const { return ptr.load(std::memory_order_acquire); }
-  bool empty_fast() const {
-    return !dirty.load(std::memory_order_acquire) &&
-           active_inserts.load(std::memory_order_acquire) == 0 &&
-           !dirty.load(std::memory_order_acquire);
-  }
-  Map &ensure() {
-    if (Map *p = try_get())
-      return *p;
-    static std::mutex mu;
-    std::lock_guard<std::mutex> lock(mu);
-    Map *p = ptr.load(std::memory_order_relaxed);
-    if (!p)
-      ptr.store(p = new Map(), std::memory_order_release);
-    return *p;
-  }
-  template <typename K, typename V> bool find(const K &k, V &v) const {
-    Map *p = try_get();
-    return p != nullptr && p->find(k, v);
-  }
-  template <typename K, typename V> void insert_or_assign(K &&k, V &&v) {
-    active_inserts.fetch_add(1, std::memory_order_acq_rel);
-    dirty.store(true, std::memory_order_release);
-    ensure().insert_or_assign(std::forward<K>(k), std::forward<V>(v));
-    dirty.store(true, std::memory_order_release);
-    active_inserts.fetch_sub(1, std::memory_order_release);
-  }
-  template <typename K> bool erase(const K &k) {
-    Map *p = try_get();
-    return p != nullptr && p->erase(k);
-  }
-  void clear() {
-    if (Map *p = try_get(); p && !empty_fast()) {
-      dirty.store(false, std::memory_order_release);
-      p->clear();
-      if (active_inserts.load(std::memory_order_acquire) != 0)
-        dirty.store(true, std::memory_order_release);
-    }
-  }
-};
+template <typename K, typename V, typename Hash = std::hash<K>>
+struct lupine_conc_map {
+  std::atomic<size_t> count{0};
+  mutable std::shared_mutex mu;
+  std::unordered_map<K, V, Hash> map;
 
-template <typename K, typename V> struct lupine_tiny_cache {
-  std::atomic<bool> nonempty{false};
-  std::mutex mu;
-  std::unordered_map<K, V> map;
-  bool find(const K &k, V &v) {
-    if (!nonempty.load(std::memory_order_acquire))
+  bool empty_fast() const { return count.load(std::memory_order_acquire) == 0; }
+  bool find(const K &k, V &v) const {
+    if (empty_fast())
       return false;
-    std::lock_guard<std::mutex> lock(mu);
+    std::shared_lock<std::shared_mutex> lock(mu);
     auto it = map.find(k);
     return it != map.end() && (v = it->second, true);
   }
-  void insert_or_assign(const K &k, V v) {
-    std::lock_guard<std::mutex> lock(mu);
-    map[k] = std::move(v);
-    nonempty.store(true, std::memory_order_release);
+  template <typename KK, typename VV> void insert_or_assign(KK &&k, VV &&v) {
+    std::unique_lock<std::shared_mutex> lock(mu);
+    map.insert_or_assign(std::forward<KK>(k), std::forward<VV>(v));
+    count.store(map.size(), std::memory_order_release);
+  }
+  bool erase(const K &k) {
+    if (empty_fast())
+      return false;
+    std::unique_lock<std::shared_mutex> lock(mu);
+    return map.erase(k) != 0 &&
+           (count.store(map.size(), std::memory_order_release), true);
   }
   void clear() {
-    if (!nonempty.load(std::memory_order_acquire))
-      return;
-    std::lock_guard<std::mutex> lock(mu);
-    map.clear();
-    nonempty.store(false, std::memory_order_release);
+    if (!empty_fast()) {
+      std::unique_lock<std::shared_mutex> lock(mu);
+      map.clear(), count.store(0, std::memory_order_release);
+    }
+  }
+  template <typename Fn> void modify(Fn &&fn) {
+    if (!empty_fast()) {
+      std::unique_lock<std::shared_mutex> lock(mu);
+      fn(map);
+      count.store(map.size(), std::memory_order_release);
+    }
+  }
+  template <typename Match> void erase_if(Match match) {
+    modify([&](auto &m) {
+      for (auto it = m.begin(); it != m.end();)
+        it = match(it->first, it->second) ? m.erase(it) : std::next(it);
+    });
   }
 };
 
@@ -302,40 +280,6 @@ static size_t lupine_hash_combine(const First &first, const Rest &...rest) {
   ((hash ^= std::hash<Rest>{}(rest) + 0x9e3779b9 + (hash << 6) + (hash >> 2)),
    ...);
   return hash;
-}
-
-template <typename... Args>
-static bool lupine_read_all(conn_t *conn, Args &...args) {
-  return ((rpc_read(conn, &args, sizeof(args)) >= 0) && ...);
-}
-
-template <typename... Args>
-static bool lupine_write_lvals(conn_t *conn, Args &...args) {
-  return ((rpc_write(conn, &args, sizeof(args)) >= 0) && ...);
-}
-
-template <typename... W, typename... R>
-static bool lupine_rpc_call_impl(conn_t *conn, int op, bool unscoped,
-                                 std::tuple<W &...> w, std::tuple<R &...> r) {
-  return lupine_prepare_rpc(conn) >= 0 &&
-         (unscoped ? rpc_write_start_request_on(conn, op, RPC_SCOPE_NONE)
-                   : rpc_write_start_request(conn, op)) >= 0 &&
-         std::apply([conn](W &...x) { return lupine_write_lvals(conn, x...); },
-                    w) &&
-         rpc_wait_for_response(conn) >= 0 &&
-         std::apply([conn](R &...y) { return lupine_read_all(conn, y...); },
-                    r) &&
-         rpc_read_end(conn) >= 0;
-}
-
-template <typename WTuple, typename RTuple>
-static bool lupine_rpc_call(conn_t *conn, int op, WTuple w, RTuple r) {
-  return lupine_rpc_call_impl(conn, op, false, w, r);
-}
-
-template <typename WTuple, typename RTuple>
-static bool lupine_rpc_call_unscoped(conn_t *conn, int op, WTuple w, RTuple r) {
-  return lupine_rpc_call_impl(conn, op, true, w, r);
 }
 
 static std::unordered_map<std::string, std::vector<uint64_t>> &
@@ -464,9 +408,7 @@ template <lupine_attribute_cache Kind> static auto &get_cache() {
   using key = std::conditional_t<Kind == lupine_attribute_cache::kernel,
                                  lupine_kernel_attribute_key,
                                  lupine_function_attribute_key>;
-  static lupine_lazy_cache<libcuckoo::cuckoohash_map<key, int, lupine_key_hash>>
-      cache;
-  return cache;
+  return lupine_leaked<lupine_conc_map<key, int, lupine_key_hash>>([] {});
 }
 
 static auto &lupine_library_images() {
@@ -536,11 +478,25 @@ struct lupine_device_snapshot_info {
 // to all contexts on its server.
 struct lupine_conn_cache_slot {
   std::atomic<conn_t *> conn{nullptr};
+  std::atomic<uint64_t> gen{1};
   std::atomic<bool> initialized{false};
   std::atomic<bool> snapshot_attempted{false};
-  std::atomic<uint64_t> driver_version{0};
-  std::atomic<uint64_t> loading_mode{0};
+  std::atomic<uint64_t> u32[2]{};
   std::shared_ptr<const std::vector<unsigned>> capabilities;
+
+  void reset(conn_t *c) {
+    gen.fetch_add(1, std::memory_order_acq_rel);
+    initialized.store(false, std::memory_order_release);
+    snapshot_attempted.store(false, std::memory_order_release);
+    u32[0].store(0, std::memory_order_release);
+    u32[1].store(0, std::memory_order_release);
+    capabilities.reset();
+    conn.store(c, std::memory_order_release);
+  }
+  bool valid(conn_t *c, uint64_t g) const {
+    return g != 0 && conn.load(std::memory_order_relaxed) == c &&
+           gen.load(std::memory_order_relaxed) == g;
+  }
 };
 
 static std::mutex &lupine_conn_cache_mutex() {
@@ -559,14 +515,8 @@ static lupine_conn_cache_slot *lupine_conn_slot(conn_t *conn) {
   if (slot.conn.load(std::memory_order_acquire) == conn)
     return &slot;
   std::lock_guard<std::mutex> lock(lupine_conn_cache_mutex());
-  if (slot.conn.load(std::memory_order_relaxed) != conn) {
-    slot.initialized.store(false, std::memory_order_relaxed);
-    slot.snapshot_attempted.store(false, std::memory_order_relaxed);
-    slot.driver_version.store(0, std::memory_order_relaxed);
-    slot.loading_mode.store(0, std::memory_order_relaxed);
-    slot.capabilities.reset();
-    slot.conn.store(conn, std::memory_order_release);
-  }
+  if (slot.conn.load(std::memory_order_relaxed) != conn)
+    slot.reset(conn);
   return &slot;
 }
 
@@ -574,11 +524,7 @@ static void lupine_reset_conn_cache(conn_t *conn) {
   if (!conn || static_cast<unsigned>(conn->logical_index) >= kLupineMaxConns)
     return;
   std::lock_guard<std::mutex> lock(lupine_conn_cache_mutex());
-  if (auto &slot = lupine_conn_caches()[conn->logical_index];
-      slot.conn.load(std::memory_order_relaxed) == conn) {
-    slot.conn.store(nullptr, std::memory_order_release);
-    slot.capabilities.reset();
-  }
+  lupine_conn_caches()[conn->logical_index].reset(nullptr);
 }
 
 struct lupine_cached_device_info {
@@ -651,23 +597,14 @@ void lupine_primary_ctx_state_cache_insert(conn_t *conn, CUdevice dev,
 }
 
 static auto &lupine_kernel_function_cache() {
-  static lupine_lazy_cache<libcuckoo::cuckoohash_map<
-      lupine_kernel_function_key, CUfunction, lupine_key_hash>>
-      cache;
-  return cache;
-}
-
-static auto &lupine_kernel_function_keys() {
   return lupine_leaked<
-      std::unordered_map<CUkernel, std::vector<lupine_kernel_function_key>>>(
+      lupine_conc_map<lupine_kernel_function_key, CUfunction, lupine_key_hash>>(
       [] {});
 }
 
 static auto &lupine_occupancy_cache() {
-  static lupine_lazy_cache<
-      libcuckoo::cuckoohash_map<lupine_occupancy_key, int, lupine_key_hash>>
-      cache;
-  return cache;
+  return lupine_leaked<
+      lupine_conc_map<lupine_occupancy_key, int, lupine_key_hash>>([] {});
 }
 
 template <typename T, size_t InlineCount> struct lupine_inline_buf {
@@ -743,18 +680,14 @@ static int lupine_read_attributes(conn_t *conn, Key key) {
 }
 
 static auto &lupine_param_info_cache() {
-  static lupine_lazy_cache<libcuckoo::cuckoohash_map<
-      lupine_param_info_key, lupine_param_info_value, lupine_key_hash>>
-      cache;
-  return cache;
+  return lupine_leaked<lupine_conc_map<
+      lupine_param_info_key, lupine_param_info_value, lupine_key_hash>>([] {});
 }
 
 static auto &lupine_param_layout_cache() {
-  static lupine_lazy_cache<libcuckoo::cuckoohash_map<
+  return lupine_leaked<lupine_conc_map<
       lupine_param_layout_key, std::shared_ptr<const lupine_param_layout>,
-      lupine_key_hash>>
-      cache;
-  return cache;
+      lupine_key_hash>>([] {});
 }
 
 static std::shared_ptr<const lupine_param_layout>
@@ -769,49 +702,40 @@ lupine_make_param_layout(const lupine_param_info_value *params, size_t count) {
   return layout;
 }
 
-template <typename Handle> struct lupine_named_handle_view {
-  Handle handle = nullptr;
-  std::string_view name;
+template <typename Handle, typename Value> struct lupine_named_handle_cache {
+  struct bucket {
+    std::deque<std::string> owned;
+    std::unordered_map<std::string_view, Value> by_name;
+  };
+  lupine_conc_map<Handle, bucket> map;
+
+  bool find(Handle h, std::string_view name, Value &out) const {
+    if (map.empty_fast())
+      return false;
+    std::shared_lock<std::shared_mutex> lock(map.mu);
+    auto it = map.map.find(h);
+    if (it == map.map.end())
+      return false;
+    auto nit = it->second.by_name.find(name);
+    return nit != it->second.by_name.end() && (out = nit->second, true);
+  }
+  void insert(Handle h, std::string name, Value v) {
+    std::unique_lock<std::shared_mutex> lock(map.mu);
+    auto &b = map.map[h];
+    if (auto it = b.by_name.find(name); it != b.by_name.end())
+      it->second = v;
+    else
+      b.owned.push_back(std::move(name)), b.by_name.emplace(b.owned.back(), v);
+    map.count.store(map.map.size(), std::memory_order_release);
+  }
+  void erase_handle(Handle h) { map.erase(h); }
+  void clear() { map.clear(); }
 };
-
-template <typename Handle> struct lupine_named_handle_key {
-  Handle handle = nullptr;
-  std::string name;
-
-  bool operator==(const lupine_named_handle_key &other) const {
-    return handle == other.handle && name == other.name;
-  }
-  bool operator==(const lupine_named_handle_view<Handle> &other) const {
-    return handle == other.handle && name == other.name;
-  }
-  friend bool operator==(const lupine_named_handle_view<Handle> &lhs,
-                         const lupine_named_handle_key &rhs) {
-    return lhs.handle == rhs.handle && lhs.name == rhs.name;
-  }
-};
-
-template <typename Handle> struct lupine_named_handle_hash {
-  size_t operator()(const lupine_named_handle_key<Handle> &key) const {
-    return reinterpret_cast<uintptr_t>(key.handle) ^
-           std::hash<std::string_view>()(key.name);
-  }
-  size_t operator()(const lupine_named_handle_view<Handle> &key) const {
-    return reinterpret_cast<uintptr_t>(key.handle) ^
-           std::hash<std::string_view>()(key.name);
-  }
-};
-
-template <typename Handle, typename Value>
-using lupine_named_handle_map =
-    libcuckoo::cuckoohash_map<lupine_named_handle_key<Handle>, Value,
-                              lupine_named_handle_hash<Handle>,
-                              std::equal_to<>>;
 
 // Filled from library-load responses; serves cuLibraryGetKernel without a
 // round trip.
 static auto &lupine_library_kernel_names() {
-  static lupine_lazy_cache<lupine_named_handle_map<CUlibrary, CUkernel>> cache;
-  return cache;
+  return lupine_leaked<lupine_named_handle_cache<CUlibrary, CUkernel>>([] {});
 }
 
 // Filled from module-load responses; serves cuModuleGetFunction without a
@@ -822,8 +746,7 @@ static auto &lupine_library_kernel_names() {
 // a module handle, so a recycled one never resolves against the functions of
 // the module that held it before.
 static auto &lupine_module_function_names() {
-  static lupine_lazy_cache<lupine_named_handle_map<CUmodule, CUfunction>> cache;
-  return cache;
+  return lupine_leaked<lupine_named_handle_cache<CUmodule, CUfunction>>([] {});
 }
 
 static std::mutex &lupine_library_kernel_mutex() {
@@ -940,35 +863,62 @@ static CUresult lupine_remote_cuInit(conn_t *conn, unsigned int flags) {
   auto *slot = lupine_conn_slot(conn);
   if (flags == 0 && slot && slot->initialized.load(std::memory_order_acquire))
     return CUDA_SUCCESS;
+  uint64_t gen = slot ? slot->gen.load(std::memory_order_acquire) : 0;
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (!lupine_rpc_call(conn, RPC_cuInit, std::tie(flags), std::tie(result)))
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuInit) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (result == CUDA_SUCCESS && slot)
-    slot->initialized.store(true, std::memory_order_release);
+  if (result == CUDA_SUCCESS && slot) {
+    std::lock_guard<std::mutex> lock(lupine_conn_cache_mutex());
+    if (slot->valid(conn, gen))
+      slot->initialized.store(true, std::memory_order_release);
+  }
   return result;
 }
 
 // The driver version and module loading mode are fixed for the life of the
 // server process, so one reply per connection answers every library's query.
-bool lupine_driver_version_cache_lookup(conn_t *conn, int *driverVersion) {
+static thread_local uint64_t lupine_tls_u32_gen[2][kLupineMaxConns];
+
+template <typename T>
+static bool lupine_conn_u32_lookup(conn_t *conn, int k, T *out) {
   auto *s = lupine_conn_slot(conn);
-  return s != nullptr &&
-         lupine_atomic_u32_load(s->driver_version, driverVersion);
+  if (!s)
+    return false;
+  if (lupine_atomic_u32_load(s->u32[k], out))
+    return true;
+  lupine_tls_u32_gen[k][conn->logical_index] =
+      s->gen.load(std::memory_order_acquire);
+  return false;
+}
+
+template <typename T>
+static void lupine_conn_u32_insert(conn_t *conn, int k, T val) {
+  if (auto *s = lupine_conn_slot(conn)) {
+    uint64_t g = std::exchange(lupine_tls_u32_gen[k][conn->logical_index], 0);
+    std::lock_guard<std::mutex> lock(lupine_conn_cache_mutex());
+    if (s->valid(conn, g))
+      lupine_atomic_u32_store(s->u32[k], val);
+  }
+}
+
+bool lupine_driver_version_cache_lookup(conn_t *conn, int *driverVersion) {
+  return lupine_conn_u32_lookup(conn, 0, driverVersion);
 }
 
 void lupine_driver_version_cache_insert(conn_t *conn, int driverVersion) {
-  if (auto *s = lupine_conn_slot(conn))
-    lupine_atomic_u32_store(s->driver_version, driverVersion);
+  lupine_conn_u32_insert(conn, 0, driverVersion);
 }
 
 bool lupine_loading_mode_cache_lookup(conn_t *conn, CUmoduleLoadingMode *mode) {
-  auto *s = lupine_conn_slot(conn);
-  return s != nullptr && lupine_atomic_u32_load(s->loading_mode, mode);
+  return lupine_conn_u32_lookup(conn, 1, mode);
 }
 
 void lupine_loading_mode_cache_insert(conn_t *conn, CUmoduleLoadingMode mode) {
-  if (auto *s = lupine_conn_slot(conn))
-    lupine_atomic_u32_store(s->loading_mode, mode);
+  lupine_conn_u32_insert(conn, 1, mode);
 }
 
 static std::mutex &lupine_local_cuinit_mutex() {
@@ -1070,8 +1020,7 @@ static void lupine_cache_library_kernel(CUkernel kernel, CUlibrary library,
 
 bool lupine_try_cached_library_kernel(CUlibrary library, const char *name,
                                       CUkernel *kernel) {
-  return lupine_library_kernel_names().find(
-      lupine_named_handle_view<CUlibrary>{library, name}, *kernel);
+  return lupine_library_kernel_names().find(library, name, *kernel);
 }
 
 extern "C" CUresult lupine_record_library_kernel(CUkernel kernel,
@@ -1096,12 +1045,8 @@ extern "C" CUresult lupine_record_library_kernel(CUkernel kernel,
 
 static void lupine_cache_kernel_function(int route_id, CUcontext context,
                                          CUkernel kernel, CUfunction function) {
-  lupine_kernel_function_key key{route_id, context, kernel};
-  lupine_kernel_function_cache().insert_or_assign(key, function);
-  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-  auto &keys = lupine_kernel_function_keys()[kernel];
-  if (std::find(keys.begin(), keys.end(), key) == keys.end())
-    keys.push_back(key);
+  lupine_kernel_function_cache().insert_or_assign(
+      lupine_kernel_function_key{route_id, context, kernel}, function);
 }
 
 static void lupine_record_library_function(CUfunction function,
@@ -1280,8 +1225,7 @@ static int lupine_read_module_functions(conn_t *conn, CUmodule module,
       std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
       lupine_module_functions()[function] = {module, name};
     }
-    lupine_module_function_names().insert_or_assign(
-        lupine_named_handle_key<CUmodule>{module, std::move(name)}, function);
+    lupine_module_function_names().insert(module, std::move(name), function);
   }
   return 0;
 }
@@ -1304,8 +1248,7 @@ bool lupine_try_cached_module_function(CUmodule module, const char *name,
                                        lupine_route route,
                                        CUfunction *function) {
   CUfunction cached = nullptr;
-  if (!lupine_module_function_names().find(
-          lupine_named_handle_view<CUmodule>{module, name}, cached)) {
+  if (!lupine_module_function_names().find(module, name, cached)) {
     return false;
   }
   *function = cached;
@@ -1604,8 +1547,16 @@ static bool lupine_device_attribute_is_virtualized(conn_t *conn,
 static void lupine_prefill_device_snapshot(conn_t *conn) {
   auto *slot = lupine_conn_slot(conn);
   if (slot == nullptr ||
-      slot->snapshot_attempted.exchange(true, std::memory_order_acq_rel)) {
+      slot->snapshot_attempted.load(std::memory_order_acquire)) {
     return;
+  }
+  uint64_t gen = 0;
+  {
+    std::lock_guard<std::mutex> lock(lupine_conn_cache_mutex());
+    if (slot->conn.load(std::memory_order_relaxed) != conn ||
+        slot->snapshot_attempted.exchange(true, std::memory_order_relaxed))
+      return;
+    gen = slot->gen.load(std::memory_order_relaxed);
   }
   CUresult result = CUDA_ERROR_UNKNOWN;
   if (lupine_prepare_rpc(conn) < 0 ||
@@ -1659,17 +1610,19 @@ static void lupine_prefill_device_snapshot(conn_t *conn) {
       continue;
     }
     for (uint32_t pair = 0; pair < pair_count; ++pair) {
-      int attrib = static_cast<int>(pairs[pair * 2]);
-      int value = static_cast<int>(pairs[pair * 2 + 1]);
       if (lupine_device_attribute_is_virtualized(
-              conn, static_cast<CUdevice_attribute>(attrib))) {
-        value = 0;
-      }
-      if (static_cast<unsigned>(attrib) < kLupineMaxDevAttrs)
-        lupine_atomic_u32_store(dev_cache->attrs[attrib], value);
+              conn, static_cast<CUdevice_attribute>(pairs[pair * 2])))
+        pairs[pair * 2 + 1] = 0;
     }
     info.name[sizeof(info.name) - 1] = '\0';
     std::lock_guard<std::mutex> lock(lupine_conn_cache_mutex());
+    if (!slot->valid(conn, gen))
+      continue;
+    for (uint32_t pair = 0; pair < pair_count; ++pair) {
+      if (auto a = static_cast<unsigned>(pairs[pair * 2]);
+          a < kLupineMaxDevAttrs)
+        lupine_atomic_u32_store(dev_cache->attrs[a], pairs[pair * 2 + 1]);
+    }
     dev_cache->snapshot = info;
     dev_cache->has_snapshot.store(true, std::memory_order_release);
   }
@@ -1677,7 +1630,7 @@ static void lupine_prefill_device_snapshot(conn_t *conn) {
     auto caps =
         std::make_shared<const std::vector<unsigned>>(std::move(capabilities));
     std::lock_guard<std::mutex> lock(lupine_conn_cache_mutex());
-    if (slot->conn.load(std::memory_order_relaxed) == conn)
+    if (slot->valid(conn, gen))
       slot->capabilities = std::move(caps);
   }
 }
@@ -1772,13 +1725,15 @@ lupine_primary_ctx_retains() {
 static CUresult lupine_remote_primary_ctx_release(conn_t *conn,
                                                   CUdevice remote_dev) {
   CUresult return_value;
-  if (!lupine_rpc_call(conn, RPC_cuDevicePrimaryCtxRelease_v2,
-                       std::tie(remote_dev), std::tie(return_value))) {
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxRelease_v2) < 0 ||
+      rpc_write(conn, &remote_dev, sizeof(remote_dev)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  if (return_value == CUDA_SUCCESS) {
+  if (return_value == CUDA_SUCCESS)
     lupine_invalidate_current_context_cache();
-  }
   return return_value;
 }
 
@@ -1808,11 +1763,15 @@ extern "C" CUresult cuDevicePrimaryCtxRetain(CUcontext *pctx, CUdevice dev) {
     lupine_invalidate_primary_ctx_state(dev);
     conn_t *conn = lupine_route_remote_conn(route);
     CUcontext context = nullptr;
-    if (!lupine_rpc_call_unscoped(conn, RPC_cuDevicePrimaryCtxRetain,
-                                  std::tie(remote_dev),
-                                  std::tie(context, return_value))) {
+    if (lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_request_on(conn, RPC_cuDevicePrimaryCtxRetain,
+                                   RPC_SCOPE_NONE) < 0 ||
+        rpc_write(conn, &remote_dev, sizeof(remote_dev)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &context, sizeof(context)) < 0 ||
+        rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+        rpc_read_end(conn) < 0)
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
-    }
     if (return_value != CUDA_SUCCESS) {
       return return_value;
     }
@@ -1892,10 +1851,13 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   std::lock_guard<std::mutex> lock(lupine_primary_ctx_retain_mutex());
-  if (!lupine_rpc_call(conn, RPC_cuDevicePrimaryCtxReset_v2,
-                       std::tie(remote_dev), std::tie(return_value))) {
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuDevicePrimaryCtxReset_v2) < 0 ||
+      rpc_write(conn, &remote_dev, sizeof(remote_dev)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
   lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
   lupine_event_pool_discard(lupine_route_identity(route), remote_dev, nullptr);
   if (return_value == CUDA_SUCCESS) {
@@ -1963,10 +1925,15 @@ static CUresult lupine_cuGetParamInfo_cached(uintptr_t handle,
   size_t size = 0;
   conn_t *conn = lupine_route_remote_conn(route);
   int rpc = kernel ? RPC_cuKernelGetParamInfo : RPC_cuFuncGetParamInfo;
-  if (!lupine_rpc_call_unscoped(conn, rpc, std::tie(handle, param_index),
-                                std::tie(offset, size, result))) {
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request_on(conn, rpc, RPC_SCOPE_NONE) < 0 ||
+      rpc_write(conn, &handle, sizeof(handle)) < 0 ||
+      rpc_write(conn, &param_index, sizeof(param_index)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &offset, sizeof(offset)) < 0 ||
+      rpc_read(conn, &size, sizeof(size)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
   if (result == CUDA_SUCCESS) {
     lupine_param_info_cache().insert_or_assign(
         key, lupine_param_info_value{offset, size});
@@ -2075,22 +2042,6 @@ static void lupine_kernel_attribute_cache_erase_for_function(
       lupine_kernel_attribute_key{route_id, kernel, attrib, device});
 }
 
-static std::atomic<bool> lupine_extended_func_attr{false};
-static std::atomic<bool> lupine_extended_kernel_attr{false};
-static std::atomic<uint64_t> lupine_kernel_attr_devices{0};
-
-template <typename Map, typename Match>
-static void lupine_cache_erase_if(lupine_lazy_cache<Map> &lazy, Match match) {
-  Map *cache = lazy.try_get();
-  if (cache == nullptr || lazy.empty_fast() || cache->empty()) {
-    return;
-  }
-  auto table = cache->lock_table();
-  for (auto it = table.begin(); it != table.end();) {
-    it = match(it->first, it->second) ? table.erase(it) : std::next(it);
-  }
-}
-
 // Drops the occupancy answers that depend on one kernel, whichever handle the
 // caller queried it through. Occupancy of every other kernel stays valid.
 static void lupine_occupancy_cache_erase_function(int route_id,
@@ -2109,8 +2060,7 @@ static void lupine_occupancy_cache_erase_function(int route_id,
       }
     }
   }
-  lupine_cache_erase_if(lupine_occupancy_cache(), [&](const auto &key,
-                                                      const auto &) {
+  lupine_occupancy_cache().erase_if([&](const auto &key, const auto &) {
     return key.route_id == route_id && std::find(handles.begin(), handles.end(),
                                                  key.function) != handles.end();
   });
@@ -2130,10 +2080,6 @@ bool lupine_attribute_get(const lupine_kernel_attribute_key &key, int &value) {
 
 void lupine_attribute_set(const lupine_function_attribute_key &key, int value,
                           lupine_attribute_source source) {
-  if (key.attribute < LUPINE_FUNC_ATTRIBUTE_DEVICE ||
-      key.attribute >= CU_FUNC_ATTRIBUTE_MAX) {
-    lupine_extended_func_attr.store(true, std::memory_order_relaxed);
-  }
   if (source == lupine_attribute_source::query) {
     get_cache<lupine_attribute_cache::function>().insert_or_assign(key, value);
     return;
@@ -2148,14 +2094,6 @@ void lupine_attribute_set(const lupine_function_attribute_key &key, int value,
 
 void lupine_attribute_set(const lupine_kernel_attribute_key &key, int value,
                           lupine_attribute_source source) {
-  if (static_cast<unsigned>(key.attribute) >= CU_FUNC_ATTRIBUTE_MAX ||
-      static_cast<unsigned>(key.device) >= 64) {
-    lupine_extended_kernel_attr.store(true, std::memory_order_relaxed);
-  } else if (uint64_t bit = uint64_t{1} << key.device;
-             !(lupine_kernel_attr_devices.load(std::memory_order_relaxed) &
-               bit)) {
-    lupine_kernel_attr_devices.fetch_or(bit, std::memory_order_release);
-  }
   auto &cache = get_cache<lupine_attribute_cache::kernel>();
   int cached = 0;
   if (source == lupine_attribute_source::query) {
@@ -2171,11 +2109,10 @@ void lupine_attribute_set(const lupine_kernel_attribute_key &key, int value,
   // A kernel set changes functions without a function-level override.
   // Conservatively drop queries of this attribute and last-set memos; retain
   // unrelated snapshot inputs. The next query resolves override precedence.
-  lupine_cache_erase_if(get_cache<lupine_attribute_cache::function>(),
-                        [&](const auto &other, const auto &) {
-                          return other.route_id == key.route_id &&
-                                 other.attribute == key.attribute;
-                        });
+  get_cache<lupine_attribute_cache::function>().erase_if([&](const auto &other,
+                                                             const auto &) {
+    return other.route_id == key.route_id && other.attribute == key.attribute;
+  });
   get_cache<lupine_attribute_cache::function_set>().clear();
 }
 
@@ -2348,11 +2285,16 @@ static CUresult lupine_get_remote_private_module_node(CUcontext context,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult result = CUDA_ERROR_UNKNOWN;
-  if (!lupine_rpc_call_unscoped(
-          conn, LUPINE_RPC_cuPrivateGetModuleNode, std::tie(context, module),
-          std::tie(*server_node, *server_owner, result))) {
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request_on(conn, LUPINE_RPC_cuPrivateGetModuleNode,
+                                 RPC_SCOPE_NONE) < 0 ||
+      rpc_write(conn, &context, sizeof(context)) < 0 ||
+      rpc_write(conn, &module, sizeof(module)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, server_node, sizeof(*server_node)) < 0 ||
+      rpc_read(conn, server_owner, sizeof(*server_owner)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
   if (result == CUDA_SUCCESS && *server_node != nullptr) {
     lupine_note_function_owner_route(*server_node, route);
     result = lupine_warm_func_param_info(*server_node);
@@ -2757,7 +2699,7 @@ static const void *lupine_remote_private_export_table(const CUuuid *uuid) {
   // The server answers from its own driver, so the reply, refusals included,
   // is fixed per table id for the life of the process.
   auto &answered =
-      lupine_leaked<lupine_tiny_cache<std::string, const void *>>([] {});
+      lupine_leaked<lupine_conc_map<std::string, const void *>>([] {});
   std::string uuid_hex = lupine_uuid_hex(uuid);
   const void *table = nullptr;
   if (answered.find(uuid_hex, table)) {
@@ -2776,7 +2718,10 @@ static const void *lupine_remote_private_export_table(const CUuuid *uuid) {
                                  RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, uuid->bytes, sizeof(uuid->bytes)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      !lupine_read_all(conn, result, byte_size, slot_count, trusted)) {
+      rpc_read(conn, &result, sizeof(result)) < 0 ||
+      rpc_read(conn, &byte_size, sizeof(byte_size)) < 0 ||
+      rpc_read(conn, &slot_count, sizeof(slot_count)) < 0 ||
+      rpc_read(conn, &trusted, sizeof(trusted)) < 0) {
     return nullptr;
   }
 
@@ -3069,11 +3014,17 @@ static CUresult lupine_stream_create_remote(lupine_route route,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  if (!lupine_rpc_call_unscoped(conn, RPC_cuStreamCreateWithPriority,
-                                std::tie(*phStream, flags, priority),
-                                std::tie(*phStream, return_value))) {
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuStreamCreateWithPriority,
+                                 RPC_SCOPE_NONE) < 0 ||
+      rpc_write(conn, phStream, sizeof(*phStream)) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_write(conn, &priority, sizeof(priority)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, phStream, sizeof(*phStream)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
   if (return_value == CUDA_SUCCESS && phStream != nullptr) {
     lupine_note_stream_owner_route(*phStream, route);
     lupine_note_stream_blocking(*phStream,
@@ -3224,11 +3175,14 @@ extern "C" CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags) {
   // Preserve the ordinary RPC for IPC, unknown flags and an unknown current
   // context, including its unchanged output value on a driver error.
   CUresult result;
-  if (!lupine_rpc_call_unscoped(conn, RPC_cuEventCreate,
-                                std::tie(*phEvent, Flags),
-                                std::tie(*phEvent, result))) {
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuEventCreate, RPC_SCOPE_NONE) < 0 ||
+      rpc_write(conn, phEvent, sizeof(*phEvent)) < 0 ||
+      rpc_write(conn, &Flags, sizeof(Flags)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, phEvent, sizeof(*phEvent)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
   if (result == CUDA_SUCCESS) {
     lupine_note_event_owner_route(*phEvent, route);
   }
@@ -3320,11 +3274,16 @@ lupine_export_shareable_handle(lupine_route route, int rpc_id, uint32_t kind,
   CUresult return_value;
   conn_t *conn = lupine_route_remote_conn(route);
   lupine_ipc_token token = {};
-  if (!lupine_rpc_call_unscoped(conn, rpc_id,
-                                std::tie(handle, handleType, flags),
-                                std::tie(token, return_value))) {
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request_on(conn, rpc_id, RPC_SCOPE_NONE) < 0 ||
+      rpc_write(conn, &handle, sizeof(handle)) < 0 ||
+      rpc_write(conn, &handleType, sizeof(handleType)) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &token, sizeof(token)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
   if (return_value == CUDA_SUCCESS && shareableHandle != nullptr) {
     int proxy_fd = -1;
     if (lupine_ipc_create_proxy_fd(kind, &token, &proxy_fd) < 0) {
@@ -3546,10 +3505,14 @@ extern "C" CUresult cuCtxGetDevice(CUdevice *device) {
   conn_t *conn = lupine_route_remote_conn(route);
   CUdevice remote_device = 0;
   CUresult return_value;
-  if (!lupine_rpc_call_unscoped(conn, RPC_cuCtxGetDevice, std::tie(),
-                                std::tie(remote_device, return_value))) {
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuCtxGetDevice, RPC_SCOPE_NONE) <
+          0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &remote_device, sizeof(remote_device)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
   if (return_value == CUDA_SUCCESS) {
     *device = lupine_local_device_for_remote(conn, remote_device);
     lupine_current_context_device_cache_insert(lupine_current_context, *device);
@@ -3818,10 +3781,13 @@ extern "C" CUresult cuLinkDestroy(CUlinkState state) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  if (!lupine_rpc_call(conn, RPC_cuLinkDestroy, std::tie(state),
-                       std::tie(return_value))) {
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuLinkDestroy) < 0 ||
+      rpc_write(conn, &state, sizeof(state)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
   std::lock_guard<std::mutex> lock(lupine_jit_client_mutex());
   lupine_jit_client_states().erase(state);
   return return_value;
@@ -3902,10 +3868,15 @@ extern "C" CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   CUresult return_value;
-  if (!lupine_rpc_call(conn, RPC_cuCtxCreate_v2, std::tie(flags, dev),
-                       std::tie(*pctx, return_value))) {
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request(conn, RPC_cuCtxCreate_v2) < 0 ||
+      rpc_write(conn, &flags, sizeof(flags)) < 0 ||
+      rpc_write(conn, &dev, sizeof(dev)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, pctx, sizeof(*pctx)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
   if (return_value == CUDA_SUCCESS) {
     lupine_note_ctx_create(*pctx, conn);
   }
@@ -4223,8 +4194,7 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
       }
       lupine_cache_kernel_function(route_id, context, kernel, function);
     }
-    lupine_library_kernel_names().insert_or_assign(
-        lupine_named_handle_key<CUlibrary>{library, name}, kernel);
+    lupine_library_kernel_names().insert(library, name, kernel);
     lupine_note_function_owner_route(reinterpret_cast<CUfunction>(kernel),
                                      route);
     lupine_cache_library_kernel(kernel, library, std::move(name), route);
@@ -5037,10 +5007,6 @@ extern "C" void lupine_invalidate_function_caches() {
   lupine_module_function_names().clear();
   lupine_param_info_cache().clear();
   lupine_param_layout_cache().clear();
-  if (lupine_kernel_function_cache().try_get() != nullptr) {
-    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-    lupine_kernel_function_keys().clear();
-  }
   lupine_kernel_function_cache().clear();
   lupine_occupancy_cache().clear();
   get_cache<lupine_attribute_cache::kernel>().clear();
@@ -5146,8 +5112,15 @@ static CUresult lupine_launch_grid_kernel(
   int rpc_id = cooperative ? RPC_cuLaunchCooperativeKernel : RPC_cuLaunchKernel;
   if (lupine_prepare_rpc(conn) < 0 ||
       lupine_rpc_start_on_stream(conn, rpc_id, hStream) < 0 ||
-      !lupine_write_lvals(conn, f, gridDimX, gridDimY, gridDimZ, blockDimX,
-                          blockDimY, blockDimZ, sharedMemBytes, hStream) ||
+      rpc_write(conn, &f, sizeof(f)) < 0 ||
+      rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
+      rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
+      rpc_write(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
+      rpc_write(conn, &blockDimX, sizeof(blockDimX)) < 0 ||
+      rpc_write(conn, &blockDimY, sizeof(blockDimY)) < 0 ||
+      rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
+      rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
+      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
       lupine_write_kernel_params(conn, kernelParams,
                                  prepared.param_layout->sizes,
                                  &prepared.param_count) < 0 ||
@@ -5303,73 +5276,34 @@ static void lupine_erase_unloaded_callable_caches(
   auto has_kern = [&](CUkernel k) {
     return unloaded_kernels && unloaded_kernels->count(k) != 0;
   };
-  lupine_cache_erase_if(
-      lupine_param_info_cache(), [&](const auto &key, const auto &) {
-        return key.kernel ? has_kern(reinterpret_cast<CUkernel>(key.handle))
-                          : has_fn(reinterpret_cast<CUfunction>(key.handle));
-      });
-  for (CUfunction fn : unloaded_functions)
-    lupine_param_layout_cache().erase(
-        lupine_param_layout_key{reinterpret_cast<uintptr_t>(fn), false});
-  if (unloaded_kernels) {
-    for (CUkernel kern : *unloaded_kernels)
-      lupine_param_layout_cache().erase(
-          lupine_param_layout_key{reinterpret_cast<uintptr_t>(kern), true});
-    if (auto *ka = get_cache<lupine_attribute_cache::kernel>().try_get();
-        ka && !unloaded_kernels->empty()) {
-      bool direct =
-          !lupine_extended_kernel_attr.load(std::memory_order_relaxed);
-      uint64_t devs =
-          lupine_kernel_attr_devices.load(std::memory_order_acquire);
-      for (CUkernel kern : *unloaded_kernels) {
-        if (!direct)
-          break;
-        int rid = lupine_route_identity(
-            lupine_route_for_function(reinterpret_cast<CUfunction>(kern)));
-        if (rid == -2) {
-          direct = false;
-          break;
-        }
-        for (uint64_t m = devs, d = 0; m != 0; m >>= 1, ++d)
-          if (m & 1)
-            for (int a = 0; a < CU_FUNC_ATTRIBUTE_MAX; ++a)
-              ka->erase(lupine_kernel_attribute_key{rid, kern, a,
-                                                    static_cast<int>(d)});
-      }
-      if (!direct)
-        lupine_cache_erase_if(
-            get_cache<lupine_attribute_cache::kernel>(),
-            [&](const auto &k, const auto &) { return has_kern(k.kernel); });
-    }
+  lupine_param_info_cache().erase_if([&](const auto &key, const auto &) {
+    return key.kernel ? has_kern(reinterpret_cast<CUkernel>(key.handle))
+                      : has_fn(reinterpret_cast<CUfunction>(key.handle));
+  });
+  lupine_param_layout_cache().modify([&](auto &m) {
+    for (CUfunction fn : unloaded_functions)
+      m.erase(lupine_param_layout_key{reinterpret_cast<uintptr_t>(fn), false});
+    if (unloaded_kernels)
+      for (CUkernel kern : *unloaded_kernels)
+        m.erase(
+            lupine_param_layout_key{reinterpret_cast<uintptr_t>(kern), true});
+  });
+  if (unloaded_kernels && !unloaded_kernels->empty()) {
+    lupine_kernel_function_cache().erase_if(
+        [&](const auto &key, const auto &) { return has_kern(key.kernel); });
+    get_cache<lupine_attribute_cache::kernel>().erase_if(
+        [&](const auto &key, const auto &) { return has_kern(key.kernel); });
   }
-  if (auto *fn_attr = get_cache<lupine_attribute_cache::function>().try_get();
-      fn_attr && !unloaded_functions.empty()) {
-    bool direct = !lupine_extended_func_attr.load(std::memory_order_relaxed);
-    for (CUfunction fn : unloaded_functions) {
-      if (!direct)
-        break;
-      int rid = lupine_route_identity(lupine_route_for_function(fn));
-      if (rid == -2) {
-        direct = false;
-        break;
-      }
-      for (int a = LUPINE_FUNC_ATTRIBUTE_DEVICE; a < CU_FUNC_ATTRIBUTE_MAX; ++a)
-        fn_attr->erase(lupine_function_attribute_key{rid, fn, a});
-    }
-    if (!direct)
-      lupine_cache_erase_if(
-          get_cache<lupine_attribute_cache::function>(),
-          [&](const auto &key, const auto &) { return has_fn(key.function); });
-  }
-  if (erase_function_set)
-    lupine_cache_erase_if(
-        get_cache<lupine_attribute_cache::function_set>(),
+  if (!unloaded_functions.empty())
+    get_cache<lupine_attribute_cache::function>().erase_if(
         [&](const auto &key, const auto &) { return has_fn(key.function); });
-  lupine_cache_erase_if(
-      lupine_occupancy_cache(), [&](const auto &key, const auto &) {
-        return has_fn(key.function) ||
-               has_kern(reinterpret_cast<CUkernel>(key.function));
-      });
+  if (erase_function_set && !unloaded_functions.empty())
+    get_cache<lupine_attribute_cache::function_set>().erase_if(
+        [&](const auto &key, const auto &) { return has_fn(key.function); });
+  lupine_occupancy_cache().erase_if([&](const auto &key, const auto &) {
+    return has_fn(key.function) ||
+           has_kern(reinterpret_cast<CUkernel>(key.function));
+  });
 }
 
 extern "C" void lupine_release_module_retained_strings(CUmodule module) {
@@ -5379,16 +5313,11 @@ extern "C" void lupine_release_module_retained_strings(CUmodule module) {
                           g_retained_string_mutex);
     lupine_release_retained_strings_locked(
         reinterpret_cast<const void *>(module));
+    lupine_module_function_names().erase_handle(module);
     lupine_erase_retained_entries_locked(
         lupine_module_functions(),
         [&](const auto &e) { return e.second.module == module; },
-        [&](const auto &e) {
-          unloaded.insert(e.first);
-          if (!e.second.name.empty()) {
-            lupine_module_function_names().erase(
-                lupine_named_handle_view<CUmodule>{module, e.second.name});
-          }
-        });
+        [&](const auto &e) { unloaded.insert(e.first); });
     lupine_library_modules().erase(module);
   }
   lupine_erase_unloaded_callable_caches(unloaded, nullptr, true);
@@ -5404,6 +5333,7 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
                           g_retained_string_mutex);
     lupine_library_images().erase(library);
     lupine_library_enumerations().erase(library);
+    lupine_library_kernel_names().erase_handle(library);
     lupine_release_retained_strings_locked(
         reinterpret_cast<const void *>(library));
     auto &kernels = lupine_library_kernels();
@@ -5411,26 +5341,11 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
         kernels, [&](const auto &e) { return e.second.library == library; },
         [&](const auto &e) {
           unloaded_kernels.insert(e.first);
-          if (!e.second.name.empty()) {
-            lupine_library_kernel_names().erase(
-                lupine_named_handle_view<CUlibrary>{library, e.second.name});
-          }
-          for (const auto &route_entry : e.second.kernels_by_route) {
+          for (const auto &route_entry : e.second.kernels_by_route)
             unloaded_kernels.insert(route_entry.second);
-          }
         });
     lupine_library_kernel_count.store(kernels.size(),
                                       std::memory_order_release);
-    auto *kf_cache = lupine_kernel_function_cache().try_get();
-    auto &kf_keys = lupine_kernel_function_keys();
-    for (CUkernel kern : unloaded_kernels) {
-      if (auto it = kf_keys.find(kern); it != kf_keys.end()) {
-        if (kf_cache != nullptr)
-          for (const auto &k : it->second)
-            kf_cache->erase(k);
-        kf_keys.erase(it);
-      }
-    }
     lupine_erase_retained_entries_locked(
         lupine_module_functions(),
         [&](const auto &e) {
@@ -5438,14 +5353,7 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
           return mod != lupine_library_modules().end() &&
                  mod->second == library;
         },
-        [&](const auto &e) {
-          unloaded_functions.insert(e.first);
-          if (!e.second.name.empty()) {
-            lupine_module_function_names().erase(
-                lupine_named_handle_view<CUmodule>{e.second.module,
-                                                   e.second.name});
-          }
-        });
+        [&](const auto &e) { unloaded_functions.insert(e.first); });
     lupine_erase_retained_entries_locked(
         lupine_library_functions(),
         [&](const auto &e) { return e.second == library; },
@@ -5463,7 +5371,9 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
     lupine_erase_retained_entries_locked(
         lupine_library_modules(),
         [&](const auto &e) { return e.second == library; },
-        [](const auto &) {});
+        [](const auto &e) {
+          lupine_module_function_names().erase_handle(e.first);
+        });
   }
   lupine_erase_unloaded_callable_caches(unloaded_functions, &unloaded_kernels,
                                         false);
@@ -6121,12 +6031,19 @@ extern "C" CUresult cuLogsRegisterCallback(CUlogsCallback callbackFunc,
     return_value = lupine_call_real_cuda_fn(
         "cuLogsRegisterCallback", callbackFunc, userData,
         callback_out == nullptr ? nullptr : &server_callback);
-  } else if (!lupine_rpc_call(lupine_route_remote_conn(route),
-                              RPC_cuLogsRegisterCallback,
-                              std::tie(callbackFunc, userData),
-                              std::tie(server_callback, return_value))) {
-    delete client_callback;
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  } else {
+    conn_t *conn = lupine_route_remote_conn(route);
+    if (lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_request(conn, RPC_cuLogsRegisterCallback) < 0 ||
+        rpc_write(conn, &callbackFunc, sizeof(callbackFunc)) < 0 ||
+        rpc_write(conn, &userData, sizeof(userData)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &server_callback, sizeof(server_callback)) < 0 ||
+        rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+        rpc_read_end(conn) < 0) {
+      delete client_callback;
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
+    }
   }
 
   if (return_value == CUDA_SUCCESS && callback_out != nullptr) {
@@ -6156,10 +6073,15 @@ extern "C" CUresult cuLogsUnregisterCallback(CUlogsCallbackHandle callback) {
   if (lupine_route_is_local(route)) {
     return_value =
         lupine_call_real_cuda_fn("cuLogsUnregisterCallback", server_callback);
-  } else if (!lupine_rpc_call(
-                 lupine_route_remote_conn(route), RPC_cuLogsUnregisterCallback,
-                 std::tie(server_callback), std::tie(return_value))) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  } else {
+    conn_t *conn = lupine_route_remote_conn(route);
+    if (lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_request(conn, RPC_cuLogsUnregisterCallback) < 0 ||
+        rpc_write(conn, &server_callback, sizeof(server_callback)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
+        rpc_read_end(conn) < 0)
+      return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
 
   if (return_value == CUDA_SUCCESS) {
@@ -6205,8 +6127,8 @@ struct lupine_stream_capture_entry {
 static std::atomic<uint64_t> lupine_stream_capture_epoch{0};
 
 static auto &lupine_stream_capture_cache() {
-  return lupine_leaked<
-      lupine_tiny_cache<CUstream, lupine_stream_capture_entry>>([] {});
+  return lupine_leaked<lupine_conc_map<CUstream, lupine_stream_capture_entry>>(
+      [] {});
 }
 
 static CUresult lupine_cuStreamGetCaptureInfo(
@@ -6289,8 +6211,11 @@ static CUresult lupine_cuStreamGetCaptureInfo(
                                  stream) < 0 ||
       rpc_write(conn, &stream, sizeof(stream)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      !lupine_read_all(conn, status, id, graph, dependency_count,
-                       has_edge_data)) {
+      rpc_read(conn, &status, sizeof(status)) < 0 ||
+      rpc_read(conn, &id, sizeof(id)) < 0 ||
+      rpc_read(conn, &graph, sizeof(graph)) < 0 ||
+      rpc_read(conn, &dependency_count, sizeof(dependency_count)) < 0 ||
+      rpc_read(conn, &has_edge_data, sizeof(has_edge_data)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   capture_dependencies.resize(dependency_count);
@@ -7029,44 +6954,36 @@ static const void *lupine_get_integrity_check_table() {
 
 extern "C" CUresult cuGetExportTable(const void **ppExportTable,
                                      const CUuuid *pExportTableId) {
+  auto fp = [](auto *f) { return reinterpret_cast<const void *>(f); };
+  auto sz = [](size_t n) { return reinterpret_cast<const void *>(n); };
   static const void *kToolsTls[4] = {
-      reinterpret_cast<const void *>(sizeof(kToolsTls)),
-      reinterpret_cast<const void *>(&lupine_dark_return_zero),
-      reinterpret_cast<const void *>(&lupine_dark_return_zero_1),
-      reinterpret_cast<const void *>(&lupine_dark_return_zero_1)};
-  static const void *kToolsCbHooks[7] = {
-      reinterpret_cast<const void *>(sizeof(kToolsCbHooks)),
-      reinterpret_cast<const void *>(&lupine_dark_return_zero_2),
-      reinterpret_cast<const void *>(&lupine_dark_get_unknown_buffer1),
-      reinterpret_cast<const void *>(&lupine_dark_return_zero_2),
-      reinterpret_cast<const void *>(&lupine_dark_return_zero_2),
-      reinterpret_cast<const void *>(&lupine_dark_return_zero_2),
-      reinterpret_cast<const void *>(&lupine_dark_get_unknown_buffer2)};
-  static const void *kCtxStorage[4] = {
-      reinterpret_cast<const void *>(&lupine_context_local_storage_put),
-      reinterpret_cast<const void *>(&lupine_context_local_storage_delete),
-      reinterpret_cast<const void *>(&lupine_context_local_storage_get),
-      nullptr};
-  static const void *kCtxBypass[2] = {
-      reinterpret_cast<const void *>(sizeof(kCtxBypass)),
-      reinterpret_cast<const void *>(&lupine_ctx_create_bypass)};
+      sz(sizeof(kToolsTls)), fp(&lupine_dark_return_zero),
+      fp(&lupine_dark_return_zero_1), fp(&lupine_dark_return_zero_1)};
+  static const void *kToolsCbHooks[7] = {sz(sizeof(kToolsCbHooks)),
+                                         fp(&lupine_dark_return_zero_2),
+                                         fp(&lupine_dark_get_unknown_buffer1),
+                                         fp(&lupine_dark_return_zero_2),
+                                         fp(&lupine_dark_return_zero_2),
+                                         fp(&lupine_dark_return_zero_2),
+                                         fp(&lupine_dark_get_unknown_buffer2)};
+  static const void *kCtxStorage[4] = {fp(&lupine_context_local_storage_put),
+                                       fp(&lupine_context_local_storage_delete),
+                                       fp(&lupine_context_local_storage_get),
+                                       nullptr};
+  static const void *kCtxBypass[2] = {sz(sizeof(kCtxBypass)),
+                                      fp(&lupine_ctx_create_bypass)};
   static const void *kHeapAccess[3] = {
-      reinterpret_cast<const void *>(sizeof(kHeapAccess)),
-      reinterpret_cast<const void *>(&lupine_heap_alloc),
-      reinterpret_cast<const void *>(&lupine_heap_free)};
-  static const auto kDevExtRt = [] {
-    std::array<const void *, 26> t{};
-    t[0] = reinterpret_cast<const void *>(sizeof(t));
-    t[5] = reinterpret_cast<const void *>(&lupine_device_get_attribute_ext);
-    t[13] = reinterpret_cast<const void *>(&lupine_device_get_something);
+      sz(sizeof(kHeapAccess)), fp(&lupine_heap_alloc), fp(&lupine_heap_free)};
+  static const auto kDevExtRt = [&] {
+    std::array<const void *, 26> t{sz(sizeof(t))};
+    t[5] = fp(&lupine_device_get_attribute_ext);
+    t[13] = fp(&lupine_device_get_something);
     return t;
   }();
-  static const auto kCtxChecks = [] {
-    std::array<const void *, 17> t{};
-    t[0] = reinterpret_cast<const void *>(sizeof(t));
-    t[1] = reinterpret_cast<const void *>(&lupine_context_check_unsupported);
-    t[2] = reinterpret_cast<const void *>(&lupine_context_check);
-    t[3] = reinterpret_cast<const void *>(&lupine_context_check_fn3);
+  static const auto kCtxChecks = [&] {
+    std::array<const void *, 17> t{
+        sz(sizeof(t)), fp(&lupine_context_check_unsupported),
+        fp(&lupine_context_check), fp(&lupine_context_check_fn3)};
     return t;
   }();
   struct export_entry {
@@ -7306,7 +7223,8 @@ void *rpc_client_dispatch_thread(void *arg) {
       CUhostFn callback = nullptr;
       void *user_data = nullptr;
       if (lupine_read_dtoh_watermark(conn) < 0 ||
-          !lupine_read_all(conn, callback, user_data)) {
+          rpc_read(conn, &callback, sizeof(callback)) < 0 ||
+          rpc_read(conn, &user_data, sizeof(user_data)) < 0) {
         LUPINE_LOG_ERROR("Failed to read host callback request.");
         goto close_connection;
       }
@@ -7329,7 +7247,10 @@ void *rpc_client_dispatch_thread(void *arg) {
       CUstreamCallback callback = nullptr;
       void *user_data = nullptr;
       if (lupine_read_dtoh_watermark(conn) < 0 ||
-          !lupine_read_all(conn, stream, status, callback, user_data)) {
+          rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+          rpc_read(conn, &status, sizeof(status)) < 0 ||
+          rpc_read(conn, &callback, sizeof(callback)) < 0 ||
+          rpc_read(conn, &user_data, sizeof(user_data)) < 0) {
         LUPINE_LOG_ERROR("Failed to read stream callback request.");
         break;
       }
@@ -7353,7 +7274,9 @@ void *rpc_client_dispatch_thread(void *arg) {
       size_t length = 0;
       CUlogsCallback callback = nullptr;
       void *user_data = nullptr;
-      if (!lupine_read_all(conn, level, origin_stream_id, length)) {
+      if (rpc_read(conn, &level, sizeof(level)) < 0 ||
+          rpc_read(conn, &origin_stream_id, sizeof(origin_stream_id)) < 0 ||
+          rpc_read(conn, &length, sizeof(length)) < 0) {
         LUPINE_LOG_ERROR("Failed to read log callback metadata.");
         break;
       }
@@ -7437,9 +7360,15 @@ void *rpc_client_dispatch_thread(void *arg) {
       const void *data = nullptr;
       // Device-to-host copies the stream ran before this read land first.
       if (lupine_read_dtoh_watermark(conn) < 0 ||
-          !lupine_read_all(conn, data, read.width, read.rows, read.row_stride,
-                           read.slices, read.slice_stride, read.logical_offset,
-                           read.bytes)) {
+          rpc_read(conn, &data, sizeof(data)) < 0 ||
+          rpc_read(conn, &read.width, sizeof(read.width)) < 0 ||
+          rpc_read(conn, &read.rows, sizeof(read.rows)) < 0 ||
+          rpc_read(conn, &read.row_stride, sizeof(read.row_stride)) < 0 ||
+          rpc_read(conn, &read.slices, sizeof(read.slices)) < 0 ||
+          rpc_read(conn, &read.slice_stride, sizeof(read.slice_stride)) < 0 ||
+          rpc_read(conn, &read.logical_offset, sizeof(read.logical_offset)) <
+              0 ||
+          rpc_read(conn, &read.bytes, sizeof(read.bytes)) < 0) {
         LUPINE_LOG_ERROR("Failed to read host-memory side-effect request.");
         goto close_connection;
       }

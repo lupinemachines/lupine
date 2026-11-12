@@ -12,7 +12,6 @@
 
 #include "cuda_compat.h"
 #include "rpc.h"
-#include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
 using lupine_capture_id = uint64_t;
 

@@ -748,13 +748,20 @@ static void lupine_queue_dirty_host_range(lupine_host_allocation *allocation,
 
 static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
   struct active_fault_guard {
+    bool active = true;
     active_fault_guard() {
       __atomic_add_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_ACQUIRE);
     }
-    ~active_fault_guard() {
-      __atomic_sub_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_RELEASE);
+    void release() {
+      if (active && !(active = false))
+        __atomic_sub_fetch(&lupine_active_fault_handlers, 1, __ATOMIC_RELEASE);
     }
+    ~active_fault_guard() { release(); }
   } fault_guard;
+  auto chain_sigsegv = [&] {
+    fault_guard.release();
+    lupine_call_previous_sigsegv(sig, info, uctx);
+  };
   uintptr_t addr = reinterpret_cast<uintptr_t>(info->si_addr);
   sig_atomic_t count =
       __atomic_load_n(&lupine_fault_entry_high_water, __ATOMIC_ACQUIRE);
@@ -775,7 +782,7 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
     int route_id = allocation->route_id;
     if (route_id < 0 ||
         route_id >= static_cast<int>(LUPINE_MAX_MANAGED_HOST_FLUSH_ROUTES)) {
-      lupine_call_previous_sigsegv(sig, info, uctx);
+      chain_sigsegv();
       return;
     }
 
@@ -817,7 +824,7 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
         if (!fetched) {
           // Unrecoverable; crash rather than serve stale bytes.
           __atomic_store_n(&allocation->device_stale, 1, __ATOMIC_RELEASE);
-          lupine_call_previous_sigsegv(sig, info, uctx);
+          chain_sigsegv();
           return;
         }
       } else if (lupine_in_host_callback) {
@@ -827,7 +834,7 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
         size_t span_start = 0, span_end = 0;
         if (!lupine_demand_fetch_run(allocation, fault_offset, &span_start,
                                      &span_end)) {
-          lupine_call_previous_sigsegv(sig, info, uctx);
+          chain_sigsegv();
           return;
         }
         if (span_end > span_start)
@@ -854,7 +861,7 @@ static void lupine_sigsegv_handler(int sig, siginfo_t *info, void *uctx) {
     return;
   }
 
-  lupine_call_previous_sigsegv(sig, info, uctx);
+  chain_sigsegv();
 }
 
 // Handler RPC reads need real stack; the guard page turns overflow into a
@@ -4111,24 +4118,22 @@ lupine_pointer_attribute_cache_key(CUdeviceptr ptr,
   return key ^ count;
 }
 
-struct lupine_ptr_attr_cache_t {
-  std::atomic<bool> nonempty{false};
-  std::mutex mu;
-  std::unordered_map<uint64_t, std::vector<unsigned char>> map;
-};
-
 static auto &lupine_pointer_attribute_cache() {
-  static auto *cache = new lupine_ptr_attr_cache_t();
+  struct cache_t {
+    std::atomic<bool> nonempty{false};
+    std::mutex mu;
+    std::unordered_map<uint64_t, std::vector<unsigned char>> map;
+  };
+  static auto *cache = new cache_t();
   return *cache;
 }
 
 static void lupine_pointer_attribute_cache_clear() {
-  auto &c = lupine_pointer_attribute_cache();
-  if (!c.nonempty.load(std::memory_order_acquire))
-    return;
-  std::lock_guard<std::mutex> lock(c.mu);
-  c.map.clear();
-  c.nonempty.store(false, std::memory_order_release);
+  if (auto &c = lupine_pointer_attribute_cache();
+      c.nonempty.load(std::memory_order_acquire)) {
+    std::lock_guard<std::mutex> lock(c.mu);
+    c.map.clear(), c.nonempty.store(false, std::memory_order_release);
+  }
 }
 
 extern "C" CUresult cuPointerGetAttributes(unsigned int numAttributes,
