@@ -1,5 +1,0 @@
-#pragma once
-
-void test_hash_properties_int_alt_index_works_correctly();
-void test_hash_properties_string_alt_index_works_correctly();
-void test_hash_properties_hash_with_larger_hashpower_only_adds_top_bits();

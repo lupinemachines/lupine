@@ -30,7 +30,6 @@
 #include <vector>
 
 #include "lupine_log.h"
-#include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
 extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *context,
                                            unsigned int flags, CUdevice device);
@@ -97,8 +96,10 @@ struct lupine_staging_state {
       fetch_streams;
 };
 
-using lupine_staging_registry =
-    libcuckoo::cuckoohash_map<conn_t *, std::unique_ptr<lupine_staging_state>>;
+struct lupine_staging_registry {
+  std::mutex mutex;
+  std::unordered_map<conn_t *, std::unique_ptr<lupine_staging_state>> states;
+};
 
 static lupine_staging_registry &lupine_staging_states() {
   return lupine_leaked<lupine_staging_registry>([] {});
@@ -108,12 +109,10 @@ static lupine_staging_state *lupine_staging_state_for(conn_t *conn) {
   if (conn == nullptr) {
     return nullptr;
   }
-  lupine_staging_state *state = nullptr;
-  lupine_staging_states().find_fn(
-      conn, [&state](const std::unique_ptr<lupine_staging_state> &stored) {
-        state = stored.get();
-      });
-  return state;
+  auto &reg = lupine_staging_states();
+  std::lock_guard<std::mutex> lock(reg.mutex);
+  auto it = reg.states.find(conn);
+  return it == reg.states.end() ? nullptr : it->second.get();
 }
 
 // Called with state.mutex held. Runtime-created primary contexts
@@ -196,86 +195,170 @@ static lupine_capture_id lupine_next_capture_id() {
   return next_id.fetch_add(1, std::memory_order_relaxed);
 }
 
-static auto &lupine_graph_resource_map() {
-  return lupine_leaked<libcuckoo::cuckoohash_map<CUgraph, lupine_capture_id>>(
-      [] {});
-}
+template <typename K, typename V> struct lupine_tracked_map {
+  std::atomic<size_t> count{0};
+  std::mutex mutex;
+  std::unordered_map<K, V> entries;
 
-static auto &lupine_active_stream_capture_resource_map() {
-  return lupine_leaked<libcuckoo::cuckoohash_map<CUstream, lupine_capture_id>>(
-      [] {});
-}
-
-static auto &lupine_active_event_capture_resource_map() {
-  return lupine_leaked<libcuckoo::cuckoohash_map<CUevent, lupine_capture_id>>(
-      [] {});
-}
-
-template <typename Map>
-static void lupine_erase_capture_resources(Map &map,
-                                           lupine_capture_id capture_id) {
-  auto table = map.lock_table();
-  for (auto it = table.begin(); it != table.end();) {
-    it = it->second == capture_id ? table.erase(it) : std::next(it);
+  bool find(const K &key, V &out) {
+    if (count.load(std::memory_order_acquire) == 0)
+      return false;
+    std::lock_guard<std::mutex> lock(mutex);
+    auto it = entries.find(key);
+    return it != entries.end() && (out = it->second, true);
   }
+  void insert_or_assign(const K &key, V value) {
+    V replaced;
+    std::lock_guard<std::mutex> lock(mutex);
+    auto &slot = entries[key];
+    replaced = std::move(slot), slot = std::move(value);
+    count.store(entries.size(), std::memory_order_release);
+  }
+  void erase(const K &key) {
+    if (count.load(std::memory_order_acquire) == 0)
+      return;
+    V removed;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (auto it = entries.find(key); it != entries.end()) {
+      removed = std::move(it->second), entries.erase(it);
+      count.store(entries.size(), std::memory_order_release);
+    }
+  }
+};
+
+struct lupine_capture_tracker {
+  struct members {
+    std::vector<CUstream> streams;
+    std::vector<CUevent> events;
+  };
+  std::atomic<size_t> active_stream_captures{0};
+  std::atomic<size_t> active_event_captures{0};
+  std::atomic<size_t> tracked_capture_graphs{0};
+  std::mutex mutex;
+  std::unordered_map<CUstream, lupine_capture_id> stream_to_capture;
+  std::unordered_map<CUevent, lupine_capture_id> event_to_capture;
+  std::unordered_map<lupine_capture_id, members> capture_members;
+  std::unordered_map<CUgraph, lupine_capture_id> graph_to_capture;
+
+  void sync_counts_locked() {
+    active_stream_captures.store(stream_to_capture.size(),
+                                 std::memory_order_release);
+    active_event_captures.store(event_to_capture.size(),
+                                std::memory_order_release);
+  }
+  void erase_capture_locked(lupine_capture_id id) {
+    if (auto m = capture_members.find(id); m != capture_members.end()) {
+      auto erase_owned = [id](auto &map, const auto &keys) {
+        for (auto k : keys)
+          if (auto it = map.find(k); it != map.end() && it->second == id)
+            map.erase(it);
+      };
+      erase_owned(stream_to_capture, m->second.streams);
+      erase_owned(event_to_capture, m->second.events);
+      capture_members.erase(m);
+    }
+    sync_counts_locked();
+  }
+};
+
+static lupine_capture_tracker &lupine_capture_resources() {
+  return lupine_leaked<lupine_capture_tracker>([] {});
 }
 
 lupine_capture_id lupine_begin_stream_capture_resources(CUstream stream) {
-  lupine_capture_id capture_id = lupine_next_capture_id();
-  lupine_active_stream_capture_resource_map().insert_or_assign(stream,
-                                                               capture_id);
-  return capture_id;
+  lupine_capture_id id = lupine_next_capture_id();
+  auto &t = lupine_capture_resources();
+  std::lock_guard<std::mutex> lock(t.mutex);
+  t.stream_to_capture[stream] = id;
+  t.capture_members[id].streams.push_back(stream);
+  t.sync_counts_locked();
+  return id;
 }
 
 static lupine_capture_id lupine_captured_stream_resources(CUstream stream) {
-  lupine_capture_id capture_id = 0;
-  (void)lupine_active_stream_capture_resource_map().find(stream, capture_id);
-  return capture_id;
+  auto &t = lupine_capture_resources();
+  if (t.active_stream_captures.load(std::memory_order_acquire) == 0)
+    return 0;
+  std::lock_guard<std::mutex> lock(t.mutex);
+  auto it = t.stream_to_capture.find(stream);
+  return it == t.stream_to_capture.end() ? 0 : it->second;
 }
 
 void lupine_discard_stream_capture_resources(lupine_capture_id capture_id) {
   if (capture_id != 0) {
-    lupine_erase_capture_resources(lupine_active_stream_capture_resource_map(),
-                                   capture_id);
+    auto &t = lupine_capture_resources();
+    std::lock_guard<std::mutex> lock(t.mutex);
+    t.erase_capture_locked(capture_id);
   }
 }
 
 void lupine_finish_stream_capture_resources(CUstream stream, CUgraph graph,
                                             bool success) {
-  lupine_capture_id capture_id = 0;
-  (void)lupine_active_stream_capture_resource_map().find(stream, capture_id);
-  if (capture_id == 0) {
+  auto &t = lupine_capture_resources();
+  if (t.active_stream_captures.load(std::memory_order_acquire) == 0)
     return;
-  }
-  lupine_erase_capture_resources(lupine_active_stream_capture_resource_map(),
-                                 capture_id);
-  lupine_erase_capture_resources(lupine_active_event_capture_resource_map(),
-                                 capture_id);
+  std::lock_guard<std::mutex> lock(t.mutex);
+  auto it = t.stream_to_capture.find(stream);
+  if (it == t.stream_to_capture.end() || it->second == 0)
+    return;
+  lupine_capture_id id = it->second;
+  t.erase_capture_locked(id);
   if (success) {
-    lupine_graph_resource_map().insert_or_assign(graph, capture_id);
+    t.graph_to_capture[graph] = id;
+    t.tracked_capture_graphs.store(t.graph_to_capture.size(),
+                                   std::memory_order_release);
   }
 }
 
 void lupine_record_event_capture_resources(CUevent event, CUstream stream) {
-  lupine_capture_id capture_id = 0;
-  (void)lupine_active_stream_capture_resource_map().find(stream, capture_id);
-  if (capture_id == 0) {
-    lupine_active_event_capture_resource_map().erase(event);
-  } else {
-    lupine_active_event_capture_resource_map().insert_or_assign(event,
-                                                                capture_id);
+  auto &t = lupine_capture_resources();
+  if (t.active_stream_captures.load(std::memory_order_acquire) == 0 &&
+      t.active_event_captures.load(std::memory_order_acquire) == 0)
+    return;
+  std::lock_guard<std::mutex> lock(t.mutex);
+  auto sit = t.stream_to_capture.find(stream);
+  if (sit == t.stream_to_capture.end()) {
+    if (t.event_to_capture.erase(event) != 0)
+      t.sync_counts_locked();
+    return;
+  }
+  auto [eit, ins] = t.event_to_capture.emplace(event, sit->second);
+  if (ins || eit->second != sit->second) {
+    eit->second = sit->second;
+    t.capture_members[sit->second].events.push_back(event);
+    t.sync_counts_locked();
   }
 }
 
 void lupine_forget_event_capture_resources(CUevent event) {
-  lupine_active_event_capture_resource_map().erase(event);
+  auto &t = lupine_capture_resources();
+  if (t.active_event_captures.load(std::memory_order_acquire) == 0)
+    return;
+  std::lock_guard<std::mutex> lock(t.mutex);
+  if (t.event_to_capture.erase(event) != 0)
+    t.sync_counts_locked();
 }
 
 void lupine_wait_event_capture_resources(CUstream stream, CUevent event) {
-  lupine_capture_id capture_id = 0;
-  if (lupine_active_event_capture_resource_map().find(event, capture_id)) {
-    lupine_active_stream_capture_resource_map().insert(stream, capture_id);
+  auto &t = lupine_capture_resources();
+  if (t.active_event_captures.load(std::memory_order_acquire) == 0)
+    return;
+  std::lock_guard<std::mutex> lock(t.mutex);
+  if (auto eit = t.event_to_capture.find(event);
+      eit != t.event_to_capture.end() &&
+      t.stream_to_capture.emplace(stream, eit->second).second) {
+    t.capture_members[eit->second].streams.push_back(stream);
+    t.sync_counts_locked();
   }
+}
+
+static lupine_capture_id lupine_graph_capture_id(CUgraph graph) {
+  auto &t = lupine_capture_resources();
+  if (t.tracked_capture_graphs.load(std::memory_order_acquire) == 0)
+    return 0;
+  std::lock_guard<std::mutex> lock(t.mutex);
+  auto it = t.graph_to_capture.find(graph);
+  return it == t.graph_to_capture.end() ? 0 : it->second;
 }
 
 static std::mutex &lupine_dtoh_graph_nodes_mutex() {
@@ -292,9 +375,15 @@ static auto &lupine_dtoh_graph_push_nodes_map() {
 }
 
 void lupine_clone_graph_resources(CUgraph clone, CUgraph original) {
-  lupine_capture_id capture_id = 0;
-  if (lupine_graph_resource_map().find(original, capture_id)) {
-    lupine_graph_resource_map().insert_or_assign(clone, capture_id);
+  auto &tracker = lupine_capture_resources();
+  if (tracker.tracked_capture_graphs.load(std::memory_order_acquire) != 0) {
+    std::lock_guard<std::mutex> lock(tracker.mutex);
+    if (auto it = tracker.graph_to_capture.find(original);
+        it != tracker.graph_to_capture.end()) {
+      tracker.graph_to_capture[clone] = it->second;
+      tracker.tracked_capture_graphs.store(tracker.graph_to_capture.size(),
+                                           std::memory_order_release);
+    }
   }
   std::vector<CUgraphNode> original_nodes;
   {
@@ -328,7 +417,14 @@ void lupine_clone_graph_resources(CUgraph clone, CUgraph original) {
 static void lupine_free_retired_dtoh_staging();
 
 void lupine_erase_graph_resources(CUgraph graph) {
-  lupine_graph_resource_map().erase(graph);
+  auto &tracker = lupine_capture_resources();
+  if (tracker.tracked_capture_graphs.load(std::memory_order_acquire) != 0) {
+    std::lock_guard<std::mutex> lock(tracker.mutex);
+    if (tracker.graph_to_capture.erase(graph) != 0) {
+      tracker.tracked_capture_graphs.store(tracker.graph_to_capture.size(),
+                                           std::memory_order_release);
+    }
+  }
   {
     std::lock_guard<std::mutex> lock(lupine_dtoh_graph_nodes_mutex());
     auto it = lupine_dtoh_graph_push_nodes_map().find(graph);
@@ -1487,33 +1583,27 @@ struct lupine_htod_graph_state {
   std::vector<std::shared_ptr<lupine_htod_callback_data>> callbacks;
 };
 
-using lupine_htod_graph_registry =
-    libcuckoo::cuckoohash_map<lupine_capture_id,
-                              std::shared_ptr<lupine_htod_graph_state>>;
-
-static lupine_htod_graph_registry &lupine_htod_graph_states() {
-  return lupine_leaked<lupine_htod_graph_registry>([] {});
+static auto &lupine_htod_graph_states() {
+  return lupine_leaked<lupine_tracked_map<
+      lupine_capture_id, std::shared_ptr<lupine_htod_graph_state>>>([] {});
 }
 
 static std::shared_ptr<lupine_htod_graph_state> lupine_htod_graph_state_for(
     lupine_capture_id capture_id,
     const std::shared_ptr<lupine_htod_side_effect_ring> &ring) {
-  std::shared_ptr<lupine_htod_graph_state> state;
-  if (lupine_htod_graph_states().find(capture_id, state)) {
-    return state;
+  auto &reg = lupine_htod_graph_states();
+  std::lock_guard<std::mutex> lock(reg.mutex);
+  if (auto it = reg.entries.find(capture_id); it != reg.entries.end()) {
+    return it->second;
   }
   try {
-    auto candidate = std::make_shared<lupine_htod_graph_state>(ring);
-    state = candidate;
-    lupine_htod_graph_states().upsert(
-        capture_id,
-        [&state](std::shared_ptr<lupine_htod_graph_state> &existing,
-                 libcuckoo::UpsertContext) { state = existing; },
-        std::move(candidate));
+    auto state = std::make_shared<lupine_htod_graph_state>(ring);
+    reg.entries.emplace(capture_id, state);
+    reg.count.store(reg.entries.size(), std::memory_order_release);
+    return state;
   } catch (...) {
     return nullptr;
   }
-  return state;
 }
 
 struct lupine_htod_exec_resources {
@@ -1533,7 +1623,7 @@ struct lupine_htod_exec_resources {
 };
 
 static auto &lupine_htod_exec_resource_map() {
-  return lupine_leaked<libcuckoo::cuckoohash_map<
+  return lupine_leaked<lupine_tracked_map<
       CUgraphExec, std::shared_ptr<lupine_htod_exec_resources>>>([] {});
 }
 
@@ -1809,9 +1899,8 @@ lupine_commit_htod_graph_exec(CUgraphExec exec,
 CUresult
 lupine_prepare_graph_exec_resources(CUgraph graph,
                                     lupine_htod_graph_binding *binding) {
-  lupine_capture_id capture_id = 0;
-  (void)lupine_graph_resource_map().find(graph, capture_id);
-  return lupine_prepare_htod_graph_exec(graph, capture_id, binding);
+  return lupine_prepare_htod_graph_exec(graph, lupine_graph_capture_id(graph),
+                                        binding);
 }
 
 CUresult lupine_associate_graph_exec_resources(
@@ -2446,7 +2535,9 @@ bool lupine_server_initialize_connection(conn_t *conn) {
     return false;
   }
   state->conn = conn;
-  return lupine_staging_states().insert(conn, std::move(state));
+  auto &reg = lupine_staging_states();
+  std::lock_guard<std::mutex> lock(reg.mutex);
+  return reg.states.emplace(conn, std::move(state)).second;
 }
 
 CUresult lupine_server_prepare_htod_capture(conn_t *conn) {
@@ -2625,12 +2716,15 @@ void lupine_server_finish_context_detach(conn_t *conn, CUcontext context,
 void lupine_server_cleanup_connection(conn_t *conn) {
   lupine_server_cleanup_log_callbacks(conn);
   std::unique_ptr<lupine_staging_state> owned_state;
-  if (!lupine_staging_states().erase_fn(
-          conn, [&owned_state](std::unique_ptr<lupine_staging_state> &state) {
-            owned_state = std::move(state);
-            return true;
-          })) {
-    return;
+  {
+    auto &reg = lupine_staging_states();
+    std::lock_guard<std::mutex> lock(reg.mutex);
+    auto it = reg.states.find(conn);
+    if (it == reg.states.end()) {
+      return;
+    }
+    owned_state = std::move(it->second);
+    reg.states.erase(it);
   }
 }
 

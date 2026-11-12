@@ -59,7 +59,6 @@
 #include <unistd.h>
 #define lupine_ipc_close_fd close
 #endif
-#include "third_party/libcuckoo/libcuckoo/cuckoohash_map.hh"
 
 #if defined(__linux__)
 static thread_local conn_t *lupine_server_va_connection = nullptr;
