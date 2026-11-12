@@ -52,6 +52,7 @@ struct lupine_nvml_remote_device {
 std::vector<lupine_nvml_remote_device> devices;
 bool devices_ready = false;
 std::mutex devices_mutex;
+std::mutex lifecycle_mutex;
 
 // Real NVML reference counts init/shutdown; this shim connects lazily, so
 // without a counter it could never report UNINITIALIZED.
@@ -114,6 +115,7 @@ conn_t *connection(unsigned int index = 0) {
 
 void close_connections() {
   lupine_client_transport_close();
+  std::lock_guard<std::mutex> lock(devices_mutex);
   devices_ready = false;
   devices.clear();
 }
@@ -268,26 +270,34 @@ conn_t *connection_for_device(nvmlDevice_t *device) {
 
 extern "C" nvmlReturn_t nvmlSystemGetNVMLVersion(char *version,
                                                  unsigned int length) {
+  std::lock_guard<std::mutex> lock(lifecycle_mutex);
   uninitialized_entry_point guard;
   return lupine_nvmlSystemGetNVMLVersion_gated(version, length);
 }
 
 template <typename Init>
 static nvmlReturn_t nvml_init_all_connections(Init &&init_conn) {
-  init_refcount.fetch_add(1, std::memory_order_acq_rel);
+  std::lock_guard<std::mutex> lock(lifecycle_mutex);
+  bool first = init_refcount.load(std::memory_order_relaxed) == 0;
+  uninitialized_entry_point guard;
   if (open_connection() < 0) {
-    init_refcount.fetch_sub(1, std::memory_order_acq_rel);
     return NVML_ERROR_UNKNOWN;
   }
-  nvmlReturn_t first_error = NVML_SUCCESS;
   unsigned int connection_count = lupine_client_transport_size();
   for (unsigned int i = 0; i < connection_count; ++i) {
     nvmlReturn_t result = init_conn(lupine_client_transport_connection(i));
-    if (result != NVML_SUCCESS && first_error == NVML_SUCCESS) {
-      first_error = result;
+    if (result != NVML_SUCCESS) {
+      for (unsigned int j = 0; j < i; ++j) {
+        lupine_rpc_nvmlShutdown(lupine_client_transport_connection(j));
+      }
+      if (first) {
+        close_connections();
+      }
+      return result;
     }
   }
-  return first_error;
+  init_refcount.fetch_add(1, std::memory_order_acq_rel);
+  return NVML_SUCCESS;
 }
 
 extern "C" nvmlReturn_t nvmlInit_v2(void) {
@@ -303,23 +313,16 @@ extern "C" nvmlReturn_t nvmlInitWithFlags(unsigned int flags) {
 }
 
 extern "C" nvmlReturn_t nvmlShutdown(void) {
-  // Claim a reference up front so an unmatched shutdown fails and concurrent
-  // callers cannot tear the connections down twice.
-  int previous = init_refcount.load(std::memory_order_acquire);
-  do {
-    if (previous <= 0) {
-      return NVML_ERROR_UNINITIALIZED;
-    }
-  } while (!init_refcount.compare_exchange_weak(previous, previous - 1,
-                                                std::memory_order_acq_rel,
-                                                std::memory_order_acquire));
-  bool last = previous == 1;
-
-  if (lupine_client_transport_size() == 0) {
-    return NVML_SUCCESS;
+  std::lock_guard<std::mutex> lock(lifecycle_mutex);
+  int previous = init_refcount.load(std::memory_order_relaxed);
+  if (previous <= 0) {
+    return NVML_ERROR_UNINITIALIZED;
   }
-  unsigned int count = lupine_client_transport_size();
+  bool last = previous == 1;
+  init_refcount.store(previous - 1, std::memory_order_release);
 
+  uninitialized_entry_point guard;
+  unsigned int count = lupine_client_transport_size();
   // The server refcounts too, so forward every shutdown, not just the last.
   nvmlReturn_t first_error = NVML_SUCCESS;
   for (unsigned int i = 0; i < count; ++i) {
