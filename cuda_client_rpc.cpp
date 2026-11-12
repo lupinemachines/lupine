@@ -33,3 +33,7 @@ extern "C" int lupine_rpc_read(conn_t *conn, void *data, size_t size) {
 }
 
 extern "C" int lupine_rpc_read_end(conn_t *conn) { return rpc_read_end(conn); }
+
+extern "C" void lupine_rpc_shutdown_transport_socket(conn_t *conn) {
+  rpc_shutdown_transport_socket(conn);
+}

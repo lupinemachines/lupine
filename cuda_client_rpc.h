@@ -23,6 +23,7 @@ int lupine_rpc_write_end(conn_t *conn);
 int lupine_rpc_wait_for_response(conn_t *conn);
 int lupine_rpc_read(conn_t *conn, void *data, size_t size);
 int lupine_rpc_read_end(conn_t *conn);
+void lupine_rpc_shutdown_transport_socket(conn_t *conn);
 
 // Existing driver routing and ownership functions, shared with sibling shims.
 conn_t *lupine_rpc_conn_for_device(int *device);

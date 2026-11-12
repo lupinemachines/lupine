@@ -284,27 +284,47 @@ hip_registrations &registrations() {
 const char *error_text(hipError_t error, bool name) {
   static std::mutex mutex;
   static std::unordered_map<uint64_t, std::string> cache;
-  std::lock_guard<std::mutex> lock(mutex);
   const uint64_t key =
       (static_cast<uint64_t>(static_cast<uint32_t>(error)) << 1) |
       (name ? 1u : 0u);
-  auto found = cache.find(key);
-  if (found != cache.end()) {
-    return found->second.c_str();
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto found = cache.find(key);
+    if (found != cache.end()) {
+      return found->second.c_str();
+    }
   }
   // Error descriptions don't require a GPU or a selected device.
   if (open_connections() == 0) {
     conn_t *conn = lupine_client_transport_connection(0);
-    uint64_t size = 0;
-    int op = name ? RPC_hipGetErrorName : RPC_hipGetErrorString;
-    if (rpc_write_start_request(conn, op) >= 0 &&
+    const int op = name ? RPC_hipGetErrorName : RPC_hipGetErrorString;
+    if (conn != nullptr && rpc_write_start_request(conn, op) >= 0 &&
         rpc_write(conn, &error, sizeof(error)) >= 0 &&
-        rpc_wait_for_response(conn) >= 0 &&
-        rpc_read(conn, &size, sizeof(size)) >= 0 && size > 0 && size <= 4096) {
-      std::string text(static_cast<size_t>(size), '\0');
-      if (rpc_read(conn, text.data(), text.size()) >= 0 &&
-          rpc_read_end(conn) >= 0 && text.back() == '\0') {
-        return cache.emplace(key, std::move(text)).first->second.c_str();
+        rpc_wait_for_response(conn) >= 0) {
+      uint64_t size = 0;
+      if (rpc_read(conn, &size, sizeof(size)) < 0) {
+        rpc_shutdown_transport_socket(conn);
+        (void)rpc_read_end(conn);
+      } else if (size == 0) {
+        (void)rpc_read_end(conn);
+      } else if (size > 4096) {
+        constexpr uint64_t kMaxDrainBytes = 1ULL << 20;
+        if (size > kMaxDrainBytes ||
+            rpc_drain(conn, static_cast<size_t>(size)) < 0) {
+          rpc_shutdown_transport_socket(conn);
+        }
+        (void)rpc_read_end(conn);
+      } else {
+        std::string text(static_cast<size_t>(size), '\0');
+        const bool read_ok = rpc_read(conn, text.data(), text.size()) >= 0;
+        if (!read_ok) {
+          rpc_shutdown_transport_socket(conn);
+        }
+        const bool end_ok = rpc_read_end(conn) >= 0;
+        if (read_ok && end_ok && text.back() == '\0') {
+          std::lock_guard<std::mutex> lock(mutex);
+          return cache.emplace(key, std::move(text)).first->second.c_str();
+        }
       }
     }
   }
@@ -418,12 +438,20 @@ extern "C" hipError_t hipModuleLoadData(hipModule_t *module,
   conn_t *conn = connection();
   hipModule_t remote_module = nullptr;
   hipError_t result = rpc_error();
-  if (rpc_write_start_request(conn, RPC_hipModuleLoadData) < 0 ||
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_hipModuleLoadData) < 0 ||
       rpc_write(conn, &size, sizeof(size)) < 0 ||
       rpc_write(conn, image, static_cast<size_t>(size)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &remote_module, sizeof(remote_module)) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
+      rpc_wait_for_response(conn) < 0) {
+    return rpc_error();
+  }
+  if (rpc_read(conn, &remote_module, sizeof(remote_module)) < 0 ||
+      rpc_read(conn, &result, sizeof(result)) < 0) {
+    rpc_shutdown_transport_socket(conn);
+    (void)rpc_read_end(conn);
+    return rpc_error();
+  }
+  if (rpc_read_end(conn) < 0) {
     return rpc_error();
   }
   if (result == hipSuccess) {
@@ -445,14 +473,22 @@ hipModuleLaunchKernel(hipFunction_t function, unsigned int grid_x,
                                      block_x, block_y, block_z};
   conn_t *conn = connection();
   hipError_t result = rpc_error();
-  if (rpc_write_start_request(conn, RPC_hipModuleLaunchKernel) < 0 ||
+  if (conn == nullptr ||
+      rpc_write_start_request(conn, RPC_hipModuleLaunchKernel) < 0 ||
       rpc_write(conn, &function, sizeof(function)) < 0 ||
       rpc_write(conn, dimensions, sizeof(dimensions)) < 0 ||
       rpc_write(conn, &shared_memory, sizeof(shared_memory)) < 0 ||
       rpc_write(conn, &stream, sizeof(stream)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 ||
-      lupine_read_captured_stdout(conn) < 0 || rpc_read_end(conn) < 0) {
+      rpc_wait_for_response(conn) < 0) {
+    return rpc_error();
+  }
+  if (rpc_read(conn, &result, sizeof(result)) < 0 ||
+      lupine_read_captured_stdout(conn) < 0) {
+    rpc_shutdown_transport_socket(conn);
+    (void)rpc_read_end(conn);
+    return rpc_error();
+  }
+  if (rpc_read_end(conn) < 0) {
     return rpc_error();
   }
   return result;
@@ -464,6 +500,9 @@ extern "C" hipError_t hipLaunchKernel(const void *host_function, dim3 grid,
                                       hipStream_t stream) {
   if (shared_memory > std::numeric_limits<unsigned int>::max()) {
     return hipErrorInvalidValue;
+  }
+  if (host_function == nullptr) {
+    return hipErrorInvalidDeviceFunction;
   }
   // Clang passes a non-null args array even for a zero-argument kernel. The
   // native module launch validates its signature with null kernelParams and
