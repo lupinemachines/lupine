@@ -390,6 +390,10 @@ ssize_t h2_data_source_read_callback(nghttp2_session *, int32_t stream_id,
   h2_stream &stream = h2_get_stream(transport, stream_id);
   size_t available = stream.encoded_size - stream.encoded_offset;
   if (available == 0) {
+    if (stream.encoder_finished) {
+      *data_flags |= NGHTTP2_DATA_FLAG_EOF;
+      return 0;
+    }
     stream.provider_deferred = true;
     return NGHTTP2_ERR_DEFERRED;
   }
@@ -1011,7 +1015,8 @@ int h2_encode_terminal_locked(h2_stream &stream, bool finish) {
 // the session after the next WINDOW_UPDATE.
 int h2_pump_stream_locked(h2_transport *transport, int32_t stream_id,
                           h2_stream &stream) {
-  if (stream.encoded_offset == stream.encoded_size) {
+  if (stream.encoded_offset == stream.encoded_size &&
+      !stream.encoder_finished) {
     return 0;
   }
   if (!stream.provider_submitted) {
