@@ -95,9 +95,6 @@ struct h2_stream {
   bool response_sent = false;
   bool content_encoding_seen = false;
   h2_encoding recv_encoding = h2_encoding::identity;
-  // The client picks this per transport; the server follows the request's
-  // accept-encoding, defaulting to zstd for clients that send none.
-  h2_encoding send_encoding = h2_encoding::zstd;
   bool encoder_started = false;
   bool encoder_finished = false;
   bool decoder_finished = false;
@@ -113,6 +110,7 @@ struct h2_stream {
   size_t encoded_capacity = 0;
   size_t encoded_size = 0;
   size_t encoded_offset = 0;
+  // Stays null once started for an identity body.
   ZSTD_CCtx *encoder = nullptr;
   ZSTD_DCtx *decoder = nullptr;
   int response_status = 0;
@@ -124,9 +122,11 @@ struct h2_transport {
   lupine_socket_t netfd = LUPINE_INVALID_SOCKET;
   void *tls = nullptr; // Borrowed SSL* (owned by conn_t).
   bool server = false;
-  // LUPINE_COMPRESSION=none: zstd -1 runs at ~1.5 GB/s a core and saves ~22%
-  // on bf16 weights, so on fast links it caps a single connection.
-  h2_encoding client_encoding = h2_encoding::zstd;
+  // Every stream's body. The client takes it from LUPINE_COMPRESSION (zstd -1
+  // runs at ~1.5 GB/s a core, so on fast links it caps a connection); the
+  // server follows the handshake's accept-encoding, defaulting to zstd for
+  // clients that send none.
+  h2_encoding send_encoding = h2_encoding::zstd;
   bool request_received = false;
   bool request_handled = false;
   int request_status = 0;
@@ -595,7 +595,7 @@ int h2_submit_server_response(h2_transport *transport, int32_t stream_id,
   std::array<nghttp2_nv, 9> headers;
   size_t count = 0;
   headers[count++] = h2_nv(":status", status_text);
-  if (!end_stream && stream.send_encoding == h2_encoding::zstd) {
+  if (!end_stream && transport->send_encoding == h2_encoding::zstd) {
     headers[count++] = h2_nv(kContentEncodingHeader, kZstdEncoding);
   }
   if (!transport->server_version.empty()) {
@@ -840,9 +840,9 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
           memcmp(name, kAcceptEncodingHeader, namelen) == 0) {
         std::string_view accepted(reinterpret_cast<const char *>(value),
                                   valuelen);
-        stream.send_encoding = accepted.find(kZstdEncoding) != accepted.npos
-                                   ? h2_encoding::zstd
-                                   : h2_encoding::identity;
+        transport->send_encoding = accepted.find(kZstdEncoding) != accepted.npos
+                                       ? h2_encoding::zstd
+                                       : h2_encoding::identity;
       } else if (namelen == strlen(kLupineSessionHeader) &&
                  memcmp(name, kLupineSessionHeader, namelen) == 0) {
         transport->session_id.assign(reinterpret_cast<const char *>(value),
@@ -960,8 +960,8 @@ unsigned char *h2_reserve_encoded(h2_stream &stream, size_t capacity) {
   return stream.encoded.get() + stream.encoded_size;
 }
 
-int h2_start_encoder_locked(h2_stream &stream) {
-  if (stream.send_encoding == h2_encoding::identity) {
+int h2_start_encoder_locked(h2_transport *transport, h2_stream &stream) {
+  if (transport->send_encoding == h2_encoding::identity) {
     stream.encoder_started = true;
     return 0;
   }
@@ -979,7 +979,7 @@ int h2_start_encoder_locked(h2_stream &stream) {
 
 int h2_encode_locked(h2_stream &stream, const unsigned char *data,
                      size_t input) {
-  if (stream.send_encoding == h2_encoding::identity) {
+  if (stream.encoder == nullptr) {
     memcpy(h2_reserve_encoded(stream, input), data, input);
     stream.encoded_size += input;
     return 0;
@@ -1000,7 +1000,7 @@ int h2_encode_locked(h2_stream &stream, const unsigned char *data,
 }
 
 int h2_encode_terminal_locked(h2_stream &stream, bool finish) {
-  if (stream.send_encoding == h2_encoding::identity) {
+  if (stream.encoder == nullptr) {
     stream.encoder_finished = stream.encoder_finished || finish;
     return 0;
   }
@@ -1056,7 +1056,8 @@ int h2_write_stream_locked(h2_transport *transport, int32_t stream_id,
                            rpc_write_cursor *cursors, size_t count) {
   h2_stream &stream = h2_get_stream(transport, stream_id);
   if (stream.closed || stream.encoder_finished ||
-      (!stream.encoder_started && h2_start_encoder_locked(stream) < 0)) {
+      (!stream.encoder_started &&
+       h2_start_encoder_locked(transport, stream) < 0)) {
     return -1;
   }
   for (size_t i = 0; i < count; ++i) {
@@ -1088,7 +1089,7 @@ int h2_write_stream_locked(h2_transport *transport, int32_t stream_id,
       // Identity bytes short of a block wait for the write thread's flush, as
       // they would inside the compressor, so launches keep sharing frames.
       size_t unsent = stream.encoded_size - stream.encoded_offset;
-      bool ready = stream.send_encoding == h2_encoding::identity
+      bool ready = stream.encoder == nullptr
                        ? unsent >= kH2CompressionBlockBytes
                        : unsent != backlog;
       if (ready && h2_pump_stream_locked(transport, stream_id, stream) < 0) {
@@ -1407,7 +1408,7 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
   headers[count++] = h2_nv(":path", "/");
   headers[count++] = h2_nv(":authority", "lupine");
   if (!probe) {
-    count += h2_encoding_headers(transport->client_encoding, &headers[count]);
+    count += h2_encoding_headers(transport->send_encoding, &headers[count]);
     const char *client_etag = getenv("LUPINE_CLIENT_ETAG");
     const char *client_platform = getenv("LUPINE_CLIENT_PLATFORM");
     const char *session_id = getenv("LUPINE_SESSION");
@@ -1442,8 +1443,7 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
       transport->session, flags, -1, nullptr, headers.data(), count, nullptr);
   if (stream_id >= 0) {
     transport->dispatch_stream_id = stream_id;
-    h2_get_stream(transport, stream_id).send_encoding =
-        transport->client_encoding;
+    h2_get_stream(transport, stream_id);
   }
   return stream_id;
 }
@@ -1475,7 +1475,7 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   transport->server = server;
   const char *compression = getenv("LUPINE_COMPRESSION");
   if (!server && compression != nullptr && strcmp(compression, "none") == 0) {
-    transport->client_encoding = h2_encoding::identity;
+    transport->send_encoding = h2_encoding::identity;
   }
   if (metadata != nullptr && metadata->backend_version != nullptr) {
     transport->server_version = metadata->backend_version;
@@ -1716,14 +1716,12 @@ int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id) {
       h2_nv(":path", "/"),
       h2_nv(":authority", "lupine"),
   };
-  size_t count =
-      4 + h2_encoding_headers(transport->client_encoding, &headers[4]);
+  size_t count = 4 + h2_encoding_headers(transport->send_encoding, &headers[4]);
   int32_t stream_id =
       nghttp2_submit_headers(transport->session, NGHTTP2_FLAG_NONE, -1, nullptr,
                              headers.data(), count, nullptr);
   if (stream_id >= 0) {
-    h2_get_stream(transport, stream_id).send_encoding =
-        transport->client_encoding;
+    h2_get_stream(transport, stream_id);
     transport->local_lanes.emplace(lane_id, stream_id);
     if (h2_flush_session_locked(transport) < 0) {
       stream_id = -1;
@@ -1739,7 +1737,8 @@ namespace {
 int h2_end_stream_locked(h2_transport *transport, int32_t stream_id) {
   h2_stream &stream = h2_get_stream(transport, stream_id);
   if (stream.closed || stream.encoder_finished ||
-      (!stream.encoder_started && h2_start_encoder_locked(stream) < 0) ||
+      (!stream.encoder_started &&
+       h2_start_encoder_locked(transport, stream) < 0) ||
       h2_encode_terminal_locked(stream, true) < 0) {
     return -1;
   }
