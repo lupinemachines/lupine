@@ -1200,8 +1200,10 @@ void test_client_metadata_report(bool old_receiver = false,
             "metadata decode failed");
   }
   const std::string expected =
-      !old_receiver && lupine_valid_workload_id(identity.data(), identity.size())
-          ? identity : "";
+      !old_receiver &&
+              lupine_valid_workload_id(identity.data(), identity.size())
+          ? identity
+          : "";
   require(workload == expected, "workload identity was invalid");
   require(received.client_pid != 0 &&
               std::string(received.connection_kind) == "test",
@@ -1985,6 +1987,46 @@ void check_lane_round_trip(const char *compression) {
 void test_zstd_lane_round_trip() { check_lane_round_trip(nullptr); }
 
 void test_identity_lane_round_trip() { check_lane_round_trip("none"); }
+
+// Ending an identity stream after its buffered bytes have already flushed (or
+// with no payload at all) still has to emit an empty END_STREAM DATA frame.
+void test_identity_end_stream_after_flush() {
+  h2_pair pair;
+  lupine_test_setenv("LUPINE_COMPRESSION", "none");
+  init_pair(&pair);
+  lupine_test_unsetenv("LUPINE_COMPRESSION");
+  require(rpc_http2_client_await_ready(&pair.client) == 0,
+          "identity handshake failed");
+
+  int32_t flushed = rpc_http2_lane_stream(&pair.client, 920);
+  require(flushed > 0 && rpc_http2_accept_stream(&pair.server) == flushed,
+          "flushed identity lane missing");
+  const unsigned char message[] = "already-flushed";
+  unsigned char received[sizeof(message)] = {};
+  require(write_stream_bytes(&pair.client, flushed, message, sizeof(message)) ==
+              0,
+          "identity write failed");
+  require(rpc_http2_read_stream(&pair.server, flushed, received,
+                                sizeof(received)) == 0,
+          "identity read before end_stream failed");
+  require(std::memcmp(received, message, sizeof(message)) == 0,
+          "identity payload mismatch");
+  require(rpc_http2_end_stream(&pair.client, flushed) == 0,
+          "identity end_stream after flush failed");
+  unsigned char extra = 0;
+  require(rpc_http2_read_stream(&pair.server, flushed, &extra, 1) ==
+              LUPINE_RPC_HTTP2_STREAM_END,
+          "identity END_STREAM after flush missing");
+
+  int32_t empty = rpc_http2_lane_stream(&pair.client, 921);
+  require(empty > 0 && rpc_http2_accept_stream(&pair.server) == empty,
+          "empty identity lane missing");
+  require(rpc_http2_end_stream(&pair.client, empty) == 0,
+          "empty identity end_stream failed");
+  require(rpc_http2_read_stream(&pair.server, empty, &extra, 1) ==
+              LUPINE_RPC_HTTP2_STREAM_END,
+          "empty identity END_STREAM missing");
+}
 
 void check_content_encoding_round_trip(const char *compression) {
   h2_pair pair;
@@ -2970,6 +3012,7 @@ int main() {
   RUN_CASE(test_identity_content_encoding_round_trip());
   RUN_CASE(test_zstd_lane_round_trip());
   RUN_CASE(test_identity_lane_round_trip());
+  RUN_CASE(test_identity_end_stream_after_flush());
   RUN_CASE(test_refillable_cursor_round_trip());
 #ifndef _WIN32
   RUN_CASE(test_refillable_cursor_across_flow_control_window());
