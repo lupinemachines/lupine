@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -25,13 +26,14 @@ constexpr const char *kDefaultPort = "14833";
 struct client_transport_state {
   lupine_client_transport_config config;
   pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+  pthread_cond_t teardown_cv = PTHREAD_COND_INITIALIZER;
   std::array<conn_t, kTransportCapacity> connections = {};
   std::array<lupine_client_endpoint, kTransportCapacity> endpoints;
   std::array<lupine_bulk_lanes, kTransportCapacity> bulk = {};
   std::array<bool, kTransportCapacity> bulk_dialed = {};
   std::array<std::thread, kTransportCapacity> checkpoint_threads;
-  unsigned int count = 0;
-  bool shutting_down = false;
+  std::atomic<unsigned int> count{0};
+  std::atomic<bool> shutting_down{false};
 };
 
 client_transport_state &transport() {
@@ -227,11 +229,7 @@ bool reconnect_checkpoint(conn_t *conn, const std::string &checkpoint) {
   if (lupine_handoff_park_socket(conn) < 0) {
     return false;
   }
-  lupine_bulk_lanes &lanes = state.bulk[conn->logical_index];
-  lanes.failed = true;
-  for (unsigned int b = 0; b < lanes.count; ++b) {
-    rpc_shutdown_transport_socket(lanes.conn[b]);
-  }
+  lupine_client_transport_shutdown_bulk(conn);
   free_tls(conn);
 #ifdef _WIN32
   lupine_socket_close(conn->connfd);
@@ -530,9 +528,14 @@ void dial_bulk_lanes(client_transport_state &state, conn_t *conn,
                      unsigned int index) {
   const char *token = rpc_http2_peer_bulk_token(conn);
   const char *configured = getenv("LUPINE_BULK_CONNECTIONS");
+  char *end = nullptr;
+  long parsed = configured ? strtol(configured, &end, 10) : 4;
   unsigned int count =
-      configured == nullptr ? 4 : static_cast<unsigned int>(atoi(configured));
-  count = std::min(count, LUPINE_BULK_CONNECTIONS_MAX);
+      configured && (end == configured || *end != '\0') ? 0
+      : parsed <= 0
+          ? 0
+          : static_cast<unsigned int>(std::min(
+                parsed, static_cast<long>(LUPINE_BULK_CONNECTIONS_MAX)));
   if (token == nullptr || state.endpoints[index].tls || count == 0) {
     return;
   }
@@ -562,18 +565,22 @@ void dial_bulk_lanes(client_transport_state &state, conn_t *conn,
       ++lanes.count;
     }
   }
-  if (conn->closed || state.shutting_down) {
+  if (lanes.failed || conn->closed || state.shutting_down) {
+    lanes.failed = true;
     for (unsigned int b = 0; b < lanes.count; ++b) {
       rpc_shutdown_transport_socket(lanes.conn[b]);
     }
   }
+  bool empty = lanes.count == 0;
   pthread_mutex_unlock(&lanes.mutex);
-  if (lanes.count == 0) {
+  if (empty) {
     LUPINE_LOG_DEBUG("No bulk connections to " << state.endpoints[index].label
                                                << "; large copies stay on the "
                                                   "session connection");
   }
 }
+
+void close_opened_locked(client_transport_state &state, unsigned int count);
 
 } // namespace
 
@@ -587,7 +594,7 @@ lupine_bulk_lanes *lupine_client_transport_bulk_lanes(conn_t *conn) {
     return nullptr;
   }
   auto index = static_cast<unsigned int>(conn->logical_index);
-  if (index >= state.count) {
+  if (index >= state.count || conn != &state.connections[index]) {
     pthread_mutex_unlock(&state.mutex);
     return nullptr;
   }
@@ -608,6 +615,9 @@ int lupine_client_transport_open(const lupine_client_transport_config &config,
   auto &state = transport();
   if (pthread_mutex_lock(&state.mutex) != 0) {
     return -1;
+  }
+  while (state.shutting_down) {
+    pthread_cond_wait(&state.teardown_cv, &state.mutex);
   }
   if (state.count != 0) {
     pthread_mutex_unlock(&state.mutex);
@@ -630,18 +640,27 @@ int lupine_client_transport_open(const lupine_client_transport_config &config,
     return -1;
   }
   state.config = config;
+  unsigned int opened = 0;
   for (const auto &endpoint : endpoints) {
-    if (state.count == kTransportCapacity) {
+    if (opened == kTransportCapacity) {
       LUPINE_LOG_ERROR("Too many LUPINE_SERVER entries; ignoring the rest");
       break;
     }
-    if (connect_endpoint(state, endpoint, state.count) == 0) {
-      ++state.count;
+    if (connect_endpoint(state, endpoint, opened) == 0) {
+      ++opened;
+    } else if (config.strict_endpoints) {
+      close_opened_locked(state, opened);
+      return -1;
     }
   }
-  int result = state.count == 0 ? -1 : 0;
+  if (opened == 0) {
+    state.config = {};
+    pthread_mutex_unlock(&state.mutex);
+    return -1;
+  }
+  state.count = opened;
   pthread_mutex_unlock(&state.mutex);
-  return result;
+  return 0;
 }
 
 void lupine_client_transport_shutdown_bulk(conn_t *conn) {
@@ -650,13 +669,14 @@ void lupine_client_transport_shutdown_bulk(conn_t *conn) {
   }
   auto &state = transport();
   auto index = static_cast<unsigned int>(conn->logical_index);
-  if (index >= kTransportCapacity) {
+  if (index >= kTransportCapacity || conn != &state.connections[index]) {
     return;
   }
   lupine_bulk_lanes &lanes = state.bulk[index];
   if (pthread_mutex_lock(&lanes.mutex) != 0) {
     return;
   }
+  lanes.failed = true;
   for (unsigned int b = 0; b < lanes.count; ++b) {
     rpc_shutdown_transport_socket(lanes.conn[b]);
   }
@@ -675,17 +695,11 @@ void lupine_client_transport_close_connection(conn_t *conn) {
   rpc_shutdown_transport_socket(conn);
 }
 
-void lupine_client_transport_close() {
-  auto &state = transport();
-  if (pthread_mutex_lock(&state.mutex) != 0) {
-    return;
-  }
-  if (state.shutting_down) {
-    pthread_mutex_unlock(&state.mutex);
-    return;
-  }
+namespace {
+
+void close_opened_locked(client_transport_state &state, unsigned int count) {
   state.shutting_down = true;
-  unsigned int count = state.count;
+  state.count = 0;
   for (unsigned int i = 0; i < count; ++i) {
     lupine_client_transport_close_connection(&state.connections[i]);
   }
@@ -701,6 +715,7 @@ void lupine_client_transport_close() {
       conn->read_thread = 0;
     }
     lupine_bulk_lanes &lanes = state.bulk[i];
+    pthread_mutex_lock(&lanes.mutex);
     for (unsigned int b = 0; b < lanes.count; ++b) {
       rpc_conn_destroy(lanes.conn[b]);
       delete lanes.conn[b];
@@ -709,16 +724,32 @@ void lupine_client_transport_close() {
     }
     lanes.count = 0;
     lanes.failed = false;
+    pthread_mutex_unlock(&lanes.mutex);
     state.bulk_dialed[i] = false;
     reset_connection(conn);
     state.endpoints[i] = {};
   }
 
   if (pthread_mutex_lock(&state.mutex) == 0) {
-    state.count = 0;
+    state.config = {};
     state.shutting_down = false;
+    pthread_cond_broadcast(&state.teardown_cv);
     pthread_mutex_unlock(&state.mutex);
   }
+}
+
+} // namespace
+
+void lupine_client_transport_close() {
+  auto &state = transport();
+  if (pthread_mutex_lock(&state.mutex) != 0) {
+    return;
+  }
+  if (state.shutting_down) {
+    pthread_mutex_unlock(&state.mutex);
+    return;
+  }
+  close_opened_locked(state, state.count);
 }
 
 unsigned int lupine_client_transport_size() { return transport().count; }

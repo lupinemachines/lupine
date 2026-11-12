@@ -6,13 +6,16 @@
 #include "lupine_log.h"
 #include "process_handoff.h"
 #include "rpc.h"
+#include "test_platform.h"
 #include "transport.h"
 
+#include <atomic>
 #include <chrono>
 #include <future>
 #include <stdio.h>
 #include <string>
 #include <thread>
+#include <utility>
 
 namespace {
 
@@ -209,6 +212,143 @@ void test_close_interrupts_a_checkpoint_redial() {
 }
 #endif
 
+struct mock_server {
+  listener sock;
+  rpc_http2_server_metadata meta = {};
+  conn_t peer = {}, bulk[LUPINE_BULK_CONNECTIONS_MAX] = {};
+  unsigned int nbulk = 0;
+  bool inited = false;
+  std::atomic<bool> accepted{false}, stop{false};
+  std::thread worker;
+
+  explicit mock_server(const char *tok = nullptr,
+                       std::atomic<bool> *gate = nullptr) {
+    meta.bulk_token = tok;
+    if (!open_listener(&sock, 16))
+      return;
+    worker = std::thread([this, gate]() {
+      lupine_socket_t fd = accept(sock.fd, nullptr, nullptr);
+      if (fd == LUPINE_INVALID_SOCKET || rpc_conn_init(&peer, fd, 1) != 0)
+        return;
+      inited = accepted = true;
+      while (gate && !*gate)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      if (rpc_http2_server_init_with_metadata(&peer, &meta) != 0 ||
+          !meta.bulk_token)
+        return;
+      while (!stop && nbulk < LUPINE_BULK_CONNECTIONS_MAX) {
+        if (!lupine_test_wait_readable(sock.fd, 10))
+          continue;
+        lupine_socket_t bfd = accept(sock.fd, nullptr, nullptr);
+        char pre[LUPINE_BULK_PREAMBLE_BYTES];
+        size_t n = 0;
+        while (bfd != LUPINE_INVALID_SOCKET && n < sizeof(pre)) {
+          ssize_t r = lupine_socket_recv(bfd, pre + n, sizeof(pre) - n);
+          if (r <= 0)
+            break;
+          n += static_cast<size_t>(r);
+        }
+        if (bfd == LUPINE_INVALID_SOCKET)
+          break;
+        if (n != sizeof(pre))
+          lupine_socket_close(bfd);
+        else if (rpc_conn_init(&bulk[nbulk], bfd, 1) == 0)
+          rpc_http2_server_init_with_metadata(&bulk[nbulk], &meta) == 0
+              ? (void)++nbulk
+              : rpc_conn_destroy(&bulk[nbulk]);
+      }
+    });
+  }
+  ~mock_server() {
+    stop = true;
+    if (worker.joinable())
+      worker.join();
+    while (nbulk > 0)
+      rpc_conn_destroy(&bulk[--nbulk]);
+    if (inited)
+      rpc_conn_destroy(&peer);
+    if (sock.fd != LUPINE_INVALID_SOCKET)
+      lupine_socket_close(sock.fd);
+  }
+};
+
+void test_fleet_publication_and_bulk_lanes() {
+  lupine_client_transport_config cfg;
+  cfg.dial_policy = lupine_client_dial_policy::single_attempt;
+  cfg.strict_endpoints = true;
+  auto dial = [&](const std::string &s) {
+    return lupine_client_transport_open(cfg, s.c_str());
+  };
+  {
+    std::atomic<bool> release{false};
+    mock_server s0, s1(nullptr, &release);
+    auto rc = std::async(std::launch::async, [&] {
+      return dial("127.0.0.1:" + s0.sock.port + ",127.0.0.1:" + s1.sock.port);
+    });
+    while (!s1.accepted)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    check(lupine_client_transport_size() == 0 &&
+              !lupine_client_transport_connection(0),
+          "fleet size stays 0 while second endpoint handshake is gated");
+    release = true;
+    check(rc.get() == 0 && lupine_client_transport_size() == 2,
+          "fleet size publishes atomically as 2 after all endpoints connect");
+    lupine_client_transport_close();
+  }
+  listener dead;
+  if (open_listener(&dead)) {
+    lupine_socket_close(dead.fd);
+    for (bool strict : {true, false}) {
+      mock_server ok;
+      cfg.strict_endpoints = strict;
+      int rc = dial("127.0.0.1:" + ok.sock.port + ",127.0.0.1:" + dead.port);
+      check(strict ? (rc < 0 && ok.accepted && !lupine_client_transport_size())
+                   : (rc == 0 && lupine_client_transport_size() == 1),
+            strict ? "strict open rolls back earlier connections on failure"
+                   : "non-strict open retains healthy server when peer fails");
+      lupine_client_transport_close();
+    }
+  }
+  constexpr const char *kTok = "0123456789abcdef0123456789abcdef";
+  constexpr unsigned int kMax = LUPINE_BULK_CONNECTIONS_MAX;
+  cfg.strict_endpoints = true;
+  bool env_ok = true;
+  for (auto [env, want] :
+       std::initializer_list<std::pair<const char *, unsigned int>>{
+           {"-1", 0},
+           {"0", 0},
+           {"99", kMax},
+           {"bogus", 0},
+           {"999999999999999999999", kMax}}) {
+    lupine_test_setenv("LUPINE_BULK_CONNECTIONS", env);
+    mock_server srv(kTok);
+    int rc = dial("127.0.0.1:" + srv.sock.port);
+    auto *lanes = lupine_client_transport_bulk_lanes(
+        lupine_client_transport_connection(0));
+    env_ok =
+        env_ok && rc == 0 && (!want ? !lanes : (lanes && lanes->count == want));
+    lupine_client_transport_close();
+  }
+  check(env_ok,
+        "LUPINE_BULK_CONNECTIONS parses negative, invalid, and overflow");
+
+  lupine_test_setenv("LUPINE_BULK_CONNECTIONS", "2");
+  mock_server srv(kTok);
+  int rc = dial("127.0.0.1:" + srv.sock.port);
+  conn_t *conn = lupine_client_transport_connection(0);
+  std::thread reader([&] {
+    for (int i = 0; i < 200; ++i)
+      (void)lupine_client_transport_bulk_lanes(conn);
+  });
+  std::thread closer([&] { lupine_client_transport_shutdown_bulk(conn); });
+  reader.join();
+  closer.join();
+  check(rc == 0 && !lupine_client_transport_bulk_lanes(conn),
+        "concurrent bulk_lanes and shutdown_bulk settle cleanly");
+  lupine_client_transport_close();
+  lupine_test_unsetenv("LUPINE_BULK_CONNECTIONS");
+}
+
 } // namespace
 
 int main() {
@@ -217,6 +357,7 @@ int main() {
 #ifdef __linux__
   test_close_interrupts_a_checkpoint_redial();
 #endif
+  test_fleet_publication_and_bulk_lanes();
   printf("\ntransport_test: %s\n", failures == 0 ? "PASS" : "FAIL");
   return failures == 0 ? 0 : 1;
 }
