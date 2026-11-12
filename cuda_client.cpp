@@ -5,10 +5,13 @@
 #include "macos_library_profile.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <cuda.h>
 #include <cuda_occupancy.h>
@@ -16,7 +19,9 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <new>
 #include <sstream>
@@ -24,6 +29,7 @@
 #include <string.h>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <tuple>
 #include <type_traits>
