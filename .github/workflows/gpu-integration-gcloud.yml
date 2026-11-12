@@ -72,12 +72,14 @@ jobs:
         id: resolve
         run: |
           set -euo pipefail
-          # Runs once as the builder VM's startup script, which powers the VM
-          # off and leaves its verdict on the serial console.
+          # Runs once as the builder VM's startup script and leaves its verdict
+          # on the serial console.
           cat > "$RUNNER_TEMP/gpu-ci-image.sh" <<'SCRIPT'
           #!/usr/bin/env bash
           set -euxo pipefail
-          trap 'echo "lupine-image-build: failed" > /dev/ttyS0; poweroff' ERR
+          # xtrace echoes the trap unexpanded, so the verdict only appears once.
+          marker=lupine-image-build
+          trap 'echo "$marker: failed" > /dev/ttyS0' ERR
           export DEBIAN_FRONTEND=noninteractive
 
           # Zonal GCE Ubuntu mirrors stall for tens of minutes in some fallback zones.
@@ -106,8 +108,7 @@ jobs:
 
           apt-get clean
           rm -rf /var/lib/apt/lists/*
-          echo "lupine-image-build: ok" > /dev/ttyS0
-          poweroff
+          echo "$marker: ok" > /dev/ttyS0
           SCRIPT
 
           base="$(gcloud compute images describe-from-family "$BASE_IMAGE_FAMILY" \
@@ -156,21 +157,23 @@ jobs:
           echo "BUILDER_ZONE=$zone" >> "$GITHUB_ENV"
 
           deadline=$((SECONDS + 2400))
-          until [[ "$(gcloud compute instances describe "$BUILDER_NAME" \
-            --project="$GCP_PROJECT_ID" --zone="$zone" \
-            --format='value(status)')" == TERMINATED ]]; do
+          verdict=""
+          until [[ -n "$verdict" ]]; do
             if (( SECONDS >= deadline )); then
               echo "Image builder did not finish before the timeout" >&2
               break
             fi
             sleep 15
+            serial="$(gcloud compute instances get-serial-port-output "$BUILDER_NAME" \
+              --project="$GCP_PROJECT_ID" --zone="$zone" || true)"
+            verdict="$(grep -o 'lupine-image-build: [a-z]*' <<<"$serial" | tail -n 1 || true)"
           done
-          serial="$(gcloud compute instances get-serial-port-output "$BUILDER_NAME" \
-            --project="$GCP_PROJECT_ID" --zone="$zone" || true)"
-          if ! grep -q 'lupine-image-build: ok' <<<"$serial"; then
+          if [[ "$verdict" != 'lupine-image-build: ok' ]]; then
             tail -n 200 <<<"$serial" >&2
             exit 1
           fi
+          gcloud compute instances stop "$BUILDER_NAME" \
+            --project="$GCP_PROJECT_ID" --zone="$zone"
 
           # A concurrent run may have published the same image first.
           gcloud compute images create "$IMAGE" \
