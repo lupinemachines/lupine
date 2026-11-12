@@ -73,9 +73,9 @@ constexpr std::array<uint8_t, 8> kH2ShutdownPing = {'l', 'u', 'p', 'i',
 // collapsing the congestion window between bursts on high-latency links.
 constexpr long kH2HeartbeatIntervalMs = 100;
 
-// Content coding of one direction of a stream body. A missing content-encoding
-// header means identity; any other coding fails the stream.
-enum class h2_encoding : uint8_t { identity, zstd, unsupported };
+// Content coding of a body. A missing content-encoding header means identity;
+// any coding but zstd fails the connection.
+enum class h2_encoding : uint8_t { identity, zstd };
 
 struct h2_buffer {
   std::vector<unsigned char> data;
@@ -93,7 +93,6 @@ struct h2_stream {
   bool remote_end = false;
   bool response_received = false;
   bool response_sent = false;
-  bool content_encoding_seen = false;
   h2_encoding recv_encoding = h2_encoding::identity;
   bool encoder_started = false;
   bool encoder_finished = false;
@@ -122,10 +121,6 @@ struct h2_transport {
   lupine_socket_t netfd = LUPINE_INVALID_SOCKET;
   void *tls = nullptr; // Borrowed SSL* (owned by conn_t).
   bool server = false;
-  // Every stream's body. The client takes it from LUPINE_COMPRESSION (zstd -1
-  // runs at ~1.5 GB/s a core, so on fast links it caps a connection); the
-  // server follows the handshake's accept-encoding, defaulting to zstd for
-  // clients that send none.
   h2_encoding send_encoding = h2_encoding::zstd;
   bool request_received = false;
   bool request_handled = false;
@@ -710,13 +705,7 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
     h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
     transport->request_received = true;
     bool probe = (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0;
-    int status =
-        stream.recv_encoding != h2_encoding::unsupported || probe ? 200 : 400;
-    if (status == 400) {
-      LUPINE_LOG_ERROR("LUPINE RPC request has an unsupported "
-                       "content-encoding; update the client and server "
-                       "together");
-    }
+    int status = 200;
     if (!probe && status == 200 &&
         (!transport->client_etag.empty() ||
          !transport->client_platform.empty())) {
@@ -765,13 +754,6 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
   } else if (!transport->server && frame->hd.type == NGHTTP2_HEADERS &&
              frame->headers.cat == NGHTTP2_HCAT_RESPONSE) {
     h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
-    if ((frame->hd.flags & NGHTTP2_FLAG_END_STREAM) == 0 &&
-        stream.recv_encoding == h2_encoding::unsupported) {
-      LUPINE_LOG_ERROR("LUPINE RPC response has an unsupported "
-                       "content-encoding; update the client and server "
-                       "together");
-      return NGHTTP2_ERR_CALLBACK_FAILURE;
-    }
     stream.response_received = true;
     pthread_cond_broadcast(&stream.read_ready);
   }
@@ -827,11 +809,11 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
   h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
   if (namelen == strlen(kContentEncodingHeader) &&
       memcmp(name, kContentEncodingHeader, namelen) == 0) {
-    bool zstd = !stream.content_encoding_seen &&
-                valuelen == strlen(kZstdEncoding) &&
-                memcmp(value, kZstdEncoding, valuelen) == 0;
-    stream.recv_encoding = zstd ? h2_encoding::zstd : h2_encoding::unsupported;
-    stream.content_encoding_seen = true;
+    if (valuelen != strlen(kZstdEncoding) ||
+        memcmp(value, kZstdEncoding, valuelen) != 0) {
+      return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    stream.recv_encoding = h2_encoding::zstd;
     return 0;
   }
   if (transport->server) {
