@@ -27,7 +27,6 @@ on:
     branches: [main]
     paths:
       - .github/workflows/gpu-integration-gcloud.yml
-      - .github/gce/**
       - test/run_cuda_library_samples.sh
       - test/cuda-library-samples/patches/**
       - test/run_cuda_python_tests.sh
@@ -40,8 +39,9 @@ permissions:
 
 jobs:
   # The L4 VMs boot from an image with their packages preinstalled, named by a
-  # hash of .github/gce/gpu-ci-image.sh and the resolved base image. A run that
-  # finds the image skips the build; a new base image or script rebuilds it.
+  # hash of the provisioning script below and the resolved base image. A run
+  # that finds the image skips the build; a new base image or script rebuilds
+  # it.
   vm-image:
     name: GCE VM image
     runs-on: ubuntu-latest
@@ -58,11 +58,6 @@ jobs:
       BUILDER_ZONES: us-central1-a us-central1-b us-central1-c us-east1-b
       BUILDER_NAME: lupine-gpu-ci-image-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
         with:
@@ -77,10 +72,48 @@ jobs:
         id: resolve
         run: |
           set -euo pipefail
+          # Runs once as the builder VM's startup script, which powers the VM
+          # off and leaves its verdict on the serial console.
+          cat > "$RUNNER_TEMP/gpu-ci-image.sh" <<'SCRIPT'
+          #!/usr/bin/env bash
+          set -euxo pipefail
+          trap 'echo "lupine-image-build: failed" > /dev/ttyS0; poweroff' ERR
+          export DEBIAN_FRONTEND=noninteractive
+
+          # Zonal GCE Ubuntu mirrors stall for tens of minutes in some fallback zones.
+          find /etc/apt \( -name '*.sources' -o -name '*.list' \) -exec sed -i -E \
+            's#https?://[a-z0-9-]+\.gce\.clouds\.archive\.ubuntu\.com#http://archive.ubuntu.com#g' {} +
+          apt_opts=(-o Acquire::Retries=5 -o Acquire::http::Timeout=30)
+
+          # The dependency cache is a tarball of the data root, so every image must live
+          # under /var/lib/docker rather than containerd's store.
+          mkdir -p /etc/docker
+          echo '{"features": {"containerd-snapshotter": false}}' > /etc/docker/daemon.json
+
+          apt-get "${apt_opts[@]}" update
+          apt-get "${apt_opts[@]}" install -y --no-install-recommends \
+            ca-certificates curl docker.io iproute2 libnghttp2-14 procps zstd
+
+          # Driver 580 predates CUDA 13.3; the CUDA 13.3 lane points the server at this
+          # forward-compat library. It installs under /usr/local/cuda-13.3/compat and is
+          # unused by the other lanes.
+          curl --fail --location --retry 5 --output /tmp/cuda-compat.deb \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-compat-13-3_610.57.04-1ubuntu1_amd64.deb
+          echo "5150dbbe6376c29a53ec01730aa1b335f192d5965e95be71a448a719f10044a4  /tmp/cuda-compat.deb" |
+            sha256sum --check
+          apt-get "${apt_opts[@]}" install -y --no-install-recommends /tmp/cuda-compat.deb
+          rm -f /tmp/cuda-compat.deb
+
+          apt-get clean
+          rm -rf /var/lib/apt/lists/*
+          echo "lupine-image-build: ok" > /dev/ttyS0
+          poweroff
+          SCRIPT
+
           base="$(gcloud compute images describe-from-family "$BASE_IMAGE_FAMILY" \
             --project="$BASE_IMAGE_PROJECT" --format='value(name)')"
           test -n "$base"
-          hash="$( (echo "$BASE_IMAGE_PROJECT/$base"; cat .github/gce/gpu-ci-image.sh) |
+          hash="$( (echo "$BASE_IMAGE_PROJECT/$base"; cat "$RUNNER_TEMP/gpu-ci-image.sh") |
             sha256sum | cut -c1-16)"
           image="$IMAGE_FAMILY-$hash"
           echo "image=$image" >> "$GITHUB_OUTPUT"
@@ -114,7 +147,7 @@ jobs:
               --no-service-account \
               --no-scopes \
               --metadata=block-project-ssh-keys=TRUE,enable-oslogin=FALSE \
-              --metadata-from-file=startup-script=.github/gce/gpu-ci-image.sh; then
+              --metadata-from-file=startup-script="$RUNNER_TEMP/gpu-ci-image.sh"; then
               zone="$candidate"
               break
             fi
@@ -122,8 +155,6 @@ jobs:
           test -n "$zone"
           echo "BUILDER_ZONE=$zone" >> "$GITHUB_ENV"
 
-          # The startup script powers the builder off when it finishes and
-          # leaves its verdict on the serial console.
           deadline=$((SECONDS + 2400))
           until [[ "$(gcloud compute instances describe "$BUILDER_NAME" \
             --project="$GCP_PROJECT_ID" --zone="$zone" \
@@ -135,7 +166,7 @@ jobs:
             sleep 15
           done
           serial="$(gcloud compute instances get-serial-port-output "$BUILDER_NAME" \
-            --project="$GCP_PROJECT_ID" --zone="$zone" 2>/dev/null || true)"
+            --project="$GCP_PROJECT_ID" --zone="$zone" || true)"
           if ! grep -q 'lupine-image-build: ok' <<<"$serial"; then
             tail -n 200 <<<"$serial" >&2
             exit 1
