@@ -125,7 +125,6 @@ struct lupine_staging_state {
 };
 
 struct lupine_staging_registry {
-  std::atomic<lupine_staging_state *> primary{nullptr};
   std::mutex mutex;
   std::unordered_map<conn_t *, std::unique_ptr<lupine_staging_state>> states;
 };
@@ -139,10 +138,6 @@ static lupine_staging_state *lupine_staging_state_for(conn_t *conn) {
     return nullptr;
   }
   auto &reg = lupine_staging_states();
-  if (auto *s = reg.primary.load(std::memory_order_acquire);
-      s != nullptr && s->conn == conn) {
-    return s;
-  }
   std::lock_guard<std::mutex> lock(reg.mutex);
   auto it = reg.states.find(conn);
   return it == reg.states.end() ? nullptr : it->second.get();
@@ -2567,12 +2562,7 @@ bool lupine_server_initialize_connection(conn_t *conn) {
   state->conn = conn;
   auto &reg = lupine_staging_states();
   std::lock_guard<std::mutex> lock(reg.mutex);
-  auto [it, inserted] = reg.states.emplace(conn, std::move(state));
-  if (inserted) {
-    reg.primary.store(reg.states.size() == 1 ? it->second.get() : nullptr,
-                      std::memory_order_release);
-  }
-  return inserted;
+  return reg.states.emplace(conn, std::move(state)).second;
 }
 
 CUresult lupine_server_prepare_htod_capture(conn_t *conn) {
@@ -2758,13 +2748,8 @@ void lupine_server_cleanup_connection(conn_t *conn) {
     if (it == reg.states.end()) {
       return;
     }
-    reg.primary.store(nullptr, std::memory_order_release);
     owned_state = std::move(it->second);
     reg.states.erase(it);
-    if (reg.states.size() == 1) {
-      reg.primary.store(reg.states.begin()->second.get(),
-                        std::memory_order_release);
-    }
   }
 }
 
