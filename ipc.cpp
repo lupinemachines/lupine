@@ -27,8 +27,10 @@ extern "C" int lupine_ipc_recv_fd(int) { return -1; }
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <list>
 #include <mutex>
 #include <unordered_map>
+#include <utility>
 
 #include <fcntl.h>
 #if !defined(__APPLE__)
@@ -41,6 +43,7 @@ namespace {
 
 constexpr uint64_t LUPINE_IPC_FD_MAGIC = 0x4446454e4950554cULL; // "LUPINEFD"
 constexpr uint32_t LUPINE_IPC_FD_VERSION = 1;
+constexpr size_t kMaxBrokerParkedFds = 512;
 
 struct lupine_ipc_fd_payload {
   uint64_t magic;
@@ -158,7 +161,12 @@ int lupine_send_broker_msg(int sock, const lupine_ipc_broker_msg &msg, int fd) {
     cmsg->cmsg_len = CMSG_LEN(sizeof(int));
     memcpy(CMSG_DATA(cmsg), &fd, sizeof(fd));
   }
-  while (sendmsg(sock, &hdr, 0) < 0) {
+#ifdef MSG_NOSIGNAL
+  constexpr int kSendFlags = MSG_NOSIGNAL;
+#else
+  constexpr int kSendFlags = 0;
+#endif
+  while (sendmsg(sock, &hdr, kSendFlags) < 0) {
     if (errno != EINTR) {
       return -1;
     }
@@ -179,18 +187,30 @@ int lupine_recv_broker_msg(int sock, lupine_ipc_broker_msg *msg) {
   do {
     n = recvmsg(sock, &hdr, 0);
   } while (n < 0 && errno == EINTR);
+  int fd = -1;
+  if (n > 0) {
+    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&hdr); cmsg != nullptr;
+         cmsg = CMSG_NXTHDR(&hdr, cmsg)) {
+      if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+        size_t payload_bytes =
+            cmsg->cmsg_len >= CMSG_LEN(0) ? cmsg->cmsg_len - CMSG_LEN(0) : 0;
+        size_t count = payload_bytes / sizeof(int);
+        const unsigned char *data = CMSG_DATA(cmsg);
+        for (size_t i = 0; i < count; ++i) {
+          int cmsg_fd = -1;
+          memcpy(&cmsg_fd, data + i * sizeof(int), sizeof(cmsg_fd));
+          if (fd < 0 && n == static_cast<ssize_t>(sizeof(*msg))) {
+            fd = cmsg_fd;
+          } else if (cmsg_fd >= 0) {
+            close(cmsg_fd);
+          }
+        }
+      }
+    }
+  }
   if (n != static_cast<ssize_t>(sizeof(*msg))) {
     memset(msg, 0, sizeof(*msg));
     return -1;
-  }
-  int fd = -1;
-  for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(&hdr); cmsg != nullptr;
-       cmsg = CMSG_NXTHDR(&hdr, cmsg)) {
-    if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS &&
-        cmsg->cmsg_len >= CMSG_LEN(sizeof(int))) {
-      memcpy(&fd, CMSG_DATA(cmsg), sizeof(fd));
-      break;
-    }
   }
   return fd;
 }
@@ -299,11 +319,23 @@ extern "C" int lupine_ipc_recv_fd(int sock) {
 
 extern "C" int lupine_ipc_broker_parent_handle(int fd) {
   // Shared across every child's broker socket so fds registered on one
-  // connection can be fetched from another.
-  static std::unordered_map<lupine_ipc_key, int, lupine_ipc_key_hash> fds;
+  // connection can be fetched from another, bounded with O(1) LRU eviction so
+  // long-running servers do not exhaust RLIMIT_NOFILE or pin DMA-BUFs forever.
+  using broker_lru_list = std::list<std::pair<lupine_ipc_key, int>>;
+  static broker_lru_list lru;
+  static std::unordered_map<lupine_ipc_key, broker_lru_list::iterator,
+                            lupine_ipc_key_hash>
+      fds;
+  if (fds.empty()) {
+    fds.reserve(kMaxBrokerParkedFds);
+  }
 
   lupine_ipc_broker_msg msg = {};
   int received_fd = lupine_recv_broker_msg(fd, &msg);
+  if (msg.cmd != LUPINE_IPC_BROKER_REGISTER && received_fd >= 0) {
+    close(received_fd);
+    received_fd = -1;
+  }
   lupine_ipc_broker_msg reply = {0, msg.kind, 0, 0, msg.token};
   lupine_ipc_key key{msg.kind, msg.token};
 
@@ -312,20 +344,42 @@ extern "C" int lupine_ipc_broker_parent_handle(int fd) {
       reply.status = -1;
     } else {
       auto existing = fds.find(key);
-      if (existing != fds.end())
-        close(existing->second);
-      fds[key] = received_fd;
+      if (existing != fds.end()) {
+        if (existing->second->second != received_fd) {
+          close(existing->second->second);
+        }
+        existing->second->second = received_fd;
+        if (existing->second != lru.begin()) {
+          lru.splice(lru.begin(), lru, existing->second);
+        }
+      } else if (fds.size() >= kMaxBrokerParkedFds) {
+        auto victim = std::prev(lru.end());
+        if (victim->second != received_fd) {
+          close(victim->second);
+        }
+        fds.erase(victim->first);
+        victim->first = key;
+        victim->second = received_fd;
+        lru.splice(lru.begin(), lru, victim);
+        fds.emplace(key, victim);
+      } else {
+        lru.emplace_front(key, received_fd);
+        fds.emplace(key, lru.begin());
+      }
     }
     return lupine_send_broker_msg(fd, reply, -1);
   }
   if (msg.cmd == LUPINE_IPC_BROKER_GET) {
     auto found = fds.find(key);
-    reply.status = found == fds.end() ? -1 : 0;
-    return lupine_send_broker_msg(fd, reply,
-                                  found == fds.end() ? -1 : found->second);
+    if (found == fds.end()) {
+      reply.status = -1;
+      return lupine_send_broker_msg(fd, reply, -1);
+    }
+    if (found->second != lru.begin()) {
+      lru.splice(lru.begin(), lru, found->second);
+    }
+    return lupine_send_broker_msg(fd, reply, found->second->second);
   }
-  if (received_fd >= 0)
-    close(received_fd);
   return -1;
 }
 

@@ -39,6 +39,14 @@ static int lupine_stdout_capture_reader() {
     fflush(stdout);
     std::cout.flush();
     if (result < 0 || lupine_fd_dup2(writer, LUPINE_STDOUT_FD) < 0) {
+      if (result >= 0) {
+#ifdef _WIN32
+        _close(result);
+#else
+        close(result);
+#endif
+      }
+      fclose(file);
       return -1;
     }
     return result;
@@ -71,6 +79,16 @@ void lupine_finish_stdout_capture(lupine_captured_stdout *capture) {
   int reader = lupine_stdout_capture_reader();
   pthread_mutex_lock(&lupine_stdout_capture_mutex);
   static uint64_t consumed = 0;
+#if defined(__linux__)
+  static uint64_t punched = 0;
+  static const uint64_t punch_page_mask = []() -> uint64_t {
+    long page_size = sysconf(_SC_PAGESIZE);
+    uint64_t granularity = (page_size > 0 && (page_size & (page_size - 1)) == 0)
+                               ? static_cast<uint64_t>(page_size)
+                               : uint64_t{4096};
+    return ~(granularity - 1);
+  }();
+#endif
   char buffer[4096];
   for (;;) {
     ssize_t bytes = lupine_fd_read(reader, buffer, sizeof(buffer));
@@ -86,10 +104,15 @@ void lupine_finish_stdout_capture(lupine_captured_stdout *capture) {
   capture->wire_size = capture->output.size();
   consumed += capture->wire_size;
 #if defined(__linux__)
-  // The file only grows, so release the pages already read.
-  if (!capture->output.empty()) {
-    (void)fallocate(reader, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE, 0,
-                    static_cast<off_t>(consumed));
+  // The file only grows; incrementally release newly completed whole pages.
+  uint64_t punch_end = consumed & punch_page_mask;
+  if (punch_end > punched) {
+    if (fallocate(reader, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
+                  static_cast<off_t>(punched),
+                  static_cast<off_t>(punch_end - punched)) == 0 ||
+        (errno != EINTR && errno != EAGAIN)) {
+      punched = punch_end;
+    }
   }
 #endif
   pthread_mutex_unlock(&lupine_stdout_capture_mutex);
