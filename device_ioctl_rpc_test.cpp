@@ -36,12 +36,8 @@ static void require(bool condition, const char *message) {
 
 // Production HTTP/2 and RPC transport, with only the native GPU operations
 // mocked. A single lane preserves the client's normal request lifecycle.
-static void serve(conn_t *conn) {
-  require(rpc_http2_server_init_with_metadata(conn, nullptr) == 0,
-          "server h2 init");
-  int32_t stream = rpc_http2_accept_stream(conn);
-  require(stream >= 0 && rpc_bind_http2_stream(conn, stream) == 0,
-          "server lane");
+static void handle_stream(conn_t *conn, int32_t stream) {
+  require(rpc_bind_http2_stream(conn, stream) == 0, "server lane");
   for (;;) {
     int operation = rpc_dispatch(conn, 0);
     if (operation < 0)
@@ -63,7 +59,27 @@ static void serve(conn_t *conn) {
   rpc_unbind_http2_stream(conn);
 }
 
-extern "C" int lupine_prepare_rpc(conn_t *) { return 0; }
+static void serve(conn_t *conn) {
+  require(rpc_http2_server_init_with_metadata(conn, nullptr) == 0,
+          "server h2 init");
+  std::vector<std::thread> workers;
+  for (;;) {
+    int32_t stream = rpc_http2_accept_stream(conn);
+    if (stream < 0)
+      break;
+    workers.emplace_back(handle_stream, conn, stream);
+  }
+  for (auto &worker : workers) {
+    if (worker.joinable())
+      worker.join();
+  }
+}
+
+static std::atomic<int> prepare_rpc_calls{0};
+extern "C" int lupine_prepare_rpc(conn_t *) {
+  ++prepare_rpc_calls;
+  return 0;
+}
 extern "C" lupine_route lupine_route_for_current_context() {
   return {LUPINE_ROUTE_REMOTE, &connection};
 }
@@ -199,6 +215,26 @@ int main() {
           "free retires routing");
   lupine_device_proxy_close(rm_fd);
   lupine_device_proxy_close(uvm_fd);
+  rpc_write_lane_termination(
+      &connection, std::hash<std::thread::id>{}(std::this_thread::get_id()));
+  std::thread fresh_thread([] {
+    for (int i = 0; i < 10; ++i) {
+      int dev_fd =
+          lupine_device_open(i % 2 == 0 ? "/dev/nvidia-uvm" : "/dev/nvidiactl",
+                             O_RDWR | O_CLOEXEC);
+      require(dev_fd >= 0, "repeated open uses cached native fd");
+      auto proxy = lupine_device_proxy_get(dev_fd);
+      require(proxy != nullptr, "valid proxy descriptor on fresh thread");
+      int before = prepare_rpc_calls.load();
+      lupine_device_proxy_remote_close(proxy->route, proxy->token);
+      require(prepare_rpc_calls.load() > before,
+              "remote close invoked prepare_rpc on fresh thread");
+      lupine_device_proxy_close(dev_fd);
+    }
+    rpc_write_lane_termination(
+        &connection, std::hash<std::thread::id>{}(std::this_thread::get_id()));
+  });
+  fresh_thread.join();
   close(native_uvm);
   close(native_rm);
   rpc_close_transport_socket(&connection);

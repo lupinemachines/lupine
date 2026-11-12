@@ -12,6 +12,20 @@
 #include <unistd.h>
 
 namespace {
+struct req_hdr {
+  uint64_t token;
+  uint32_t command;
+  uint32_t size;
+  uint64_t rm_token;
+};
+static_assert(sizeof(req_hdr) == 24);
+
+struct resp_hdr {
+  int32_t result;
+  int32_t error;
+};
+static_assert(sizeof(resp_hdr) == 8);
+
 bool copy_argument(void *destination, const void *source, size_t size,
                    bool write) {
   iovec local{write ? const_cast<void *>(source) : destination, size};
@@ -39,12 +53,12 @@ bool finish(conn_t *conn) {
 void lupine_device_proxy_remote_close(int route, uint64_t token) {
   conn_t *conn = connection(route);
   int32_t result;
-  if (!conn || conn->closed ||
+  if (!conn || conn->closed || lupine_prepare_rpc(conn) != 0 ||
       rpc_write_start_request(conn, LUPINE_RPC_lupineDeviceClose) < 0 ||
       rpc_write(conn, &token, sizeof(token)) < 0 || !finish(conn))
     return;
-  if (rpc_read(conn, &result, sizeof(result)) == 0)
-    (void)rpc_read_end(conn);
+  (void)rpc_read(conn, &result, sizeof(result));
+  (void)rpc_read_end(conn);
 }
 
 int lupine_device_open(const char *path, int flags) {
@@ -105,17 +119,14 @@ int lupine_device_ioctl(int fd, uint32_t command, void *argument) {
     rm_token = rm->token;
   }
   conn_t *conn = connection(proxy->route);
-  int32_t result = -1, error = 0;
   uint32_t size = static_cast<uint32_t>(layout.size);
+  req_hdr req{proxy->token, command, size, rm_token};
+  resp_hdr resp{-1, 0};
   if (!conn || lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, LUPINE_RPC_lupineDeviceIoctl) < 0 ||
-      rpc_write(conn, &proxy->token, sizeof(proxy->token)) < 0 ||
-      rpc_write(conn, &command, sizeof(command)) < 0 ||
-      rpc_write(conn, &size, sizeof(size)) < 0 ||
-      rpc_write(conn, &rm_token, sizeof(rm_token)) < 0 ||
+      rpc_write(conn, &req, sizeof(req)) < 0 ||
       rpc_write(conn, buffer.data(), size) < 0 || !finish(conn) ||
-      rpc_read(conn, &result, sizeof(result)) < 0 ||
-      rpc_read(conn, &error, sizeof(error)) < 0 ||
+      rpc_read(conn, &resp, sizeof(resp)) < 0 ||
       rpc_read(conn, buffer.data(), size) < 0 || rpc_read_end(conn) < 0) {
     errno = EIO;
     return -1;
@@ -124,7 +135,7 @@ int lupine_device_ioctl(int fd, uint32_t command, void *argument) {
     lupine_uvm::put(buffer.data(), lupine_uvm::rm_fd_offset, original_rm_fd);
   if (!copy_argument(argument, buffer.data(), size, true))
     return -1;
-  if (result == 0 &&
+  if (resp.result == 0 &&
       lupine_uvm::get<uint32_t>(buffer.data(), layout.status) == 0) {
     auto address = lupine_uvm::get<uint64_t>(buffer.data(), 0);
     if (command == lupine_uvm::map || command == lupine_uvm::sparse)
@@ -136,7 +147,7 @@ int lupine_device_ioctl(int fd, uint32_t command, void *argument) {
     if (command == lupine_uvm::free)
       lupine_forget_deviceptr_owner(address);
   }
-  if (result < 0)
-    errno = error;
-  return result;
+  if (resp.result < 0)
+    errno = resp.error;
+  return resp.result;
 }
