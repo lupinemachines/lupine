@@ -1,8 +1,10 @@
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <map>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -418,6 +420,144 @@ extern "C" CUdevice lupine_local_device_for_remote(conn_t *conn,
                    lupine_remote_route_for_conn(conn), remote_device);
 }
 
+struct alignas(64) lupine_routing_fast_state {
+  std::atomic<uint64_t> handle_epoch{1};
+  std::atomic<uint64_t> devptr_epoch{1};
+  std::atomic<uint64_t> blocking_epoch{1};
+  std::atomic<uint64_t> green_context_count{0};
+  std::atomic<uint64_t> devptr_count{0};
+  std::atomic<uint64_t> devptr_min{UINT64_MAX};
+  std::atomic<uint64_t> devptr_last{0};
+  std::atomic<bool> sentinel_stream_owned{false};
+};
+static_assert(sizeof(lupine_routing_fast_state) == 64,
+              "fast routing state must fit in one cache line");
+
+static lupine_routing_fast_state lupine_fast_state;
+
+struct lupine_tls_handle_slot {
+  uint64_t epoch;
+  uintptr_t bits;
+  int route_id;
+  uint8_t tag;
+  bool is_green;
+};
+
+struct lupine_tls_stream_blocking_slot {
+  uint64_t epoch;
+  uintptr_t key;
+  bool blocking;
+};
+
+struct lupine_tls_alloc_slot {
+  CUdeviceptr base;
+  size_t size;
+  CUcontext context;
+  int route_id;
+};
+
+struct lupine_tls_gap_slot {
+  CUdeviceptr base;
+  CUdeviceptr last;
+};
+
+struct alignas(64) lupine_tls_routing_cache {
+  uint64_t devptr_epoch;
+  uint8_t alloc_hand;
+  uint8_t gap_hand;
+  std::array<lupine_tls_alloc_slot, 4> allocs;
+  std::array<lupine_tls_gap_slot, 2> gaps;
+  std::array<lupine_tls_stream_blocking_slot, 16> blocking_streams;
+  std::array<lupine_tls_handle_slot, 32> handles;
+};
+
+static thread_local lupine_tls_routing_cache lupine_tls_cache = {};
+
+static inline size_t lupine_splitmix64(uint64_t x) {
+  x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+  x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+  return static_cast<size_t>(x ^ (x >> 31));
+}
+
+struct lupine_devptr_range_table {
+  std::map<CUdeviceptr, size_t> ranges;
+  size_t overlaps = 0;
+};
+
+static lupine_devptr_range_table &lupine_devptr_ranges() {
+  static auto *table = new lupine_devptr_range_table();
+  return *table;
+}
+
+static bool lupine_erase_devptr_range_locked(CUdeviceptr base) {
+  auto &t = lupine_devptr_ranges();
+  auto it = t.ranges.find(base);
+  if (it == t.ranges.end()) {
+    return false;
+  }
+  auto ov = [&](auto a, auto b) {
+    return a != t.ranges.end() && b != t.ranges.end() &&
+           b->first - a->first < a->second;
+  };
+  auto prev = it == t.ranges.begin() ? t.ranges.end() : std::prev(it);
+  auto next = std::next(it);
+  t.overlaps = t.overlaps - ov(prev, it) - ov(it, next) + ov(prev, next);
+  t.ranges.erase(it);
+  return true;
+}
+
+static void lupine_insert_devptr_range_locked(CUdeviceptr base, size_t size) {
+  lupine_erase_devptr_range_locked(base);
+  if (base == 0 || size == 0) {
+    return;
+  }
+  auto &t = lupine_devptr_ranges();
+  auto ov = [&](auto a, auto b) {
+    return a != t.ranges.end() && b != t.ranges.end() &&
+           b->first - a->first < a->second;
+  };
+  auto next = t.ranges.lower_bound(base);
+  auto prev = next == t.ranges.begin() ? t.ranges.end() : std::prev(next);
+  auto ins = t.ranges.emplace_hint(next, base, size);
+  t.overlaps = t.overlaps - ov(prev, next) + ov(prev, ins) + ov(ins, next);
+}
+
+static uint64_t lupine_devptr_last_byte(CUdeviceptr base, size_t size) {
+  uint64_t b = static_cast<uint64_t>(base);
+  return size <= 1 ? b
+                   : (b <= UINT64_MAX - (size - 1) ? b + size - 1 : UINT64_MAX);
+}
+
+static void lupine_sync_devptr_metadata_locked(uint64_t lo, uint64_t hi) {
+  const auto &owners = lupine_owners<CUdeviceptr>();
+  const auto &t = lupine_devptr_ranges();
+  uint64_t count = owners.size() + t.ranges.size();
+  if (count == 0) {
+    lupine_fast_state.devptr_epoch.fetch_add(1, std::memory_order_acq_rel);
+    lupine_fast_state.devptr_count.store(0, std::memory_order_release);
+    lupine_fast_state.devptr_min.store(UINT64_MAX, std::memory_order_release);
+    lupine_fast_state.devptr_last.store(0, std::memory_order_release);
+    return;
+  }
+  if (owners.empty() && t.overlaps == 0) {
+    auto back = std::prev(t.ranges.end());
+    lupine_fast_state.devptr_min.store(t.ranges.begin()->first,
+                                       std::memory_order_release);
+    lupine_fast_state.devptr_last.store(
+        lupine_devptr_last_byte(back->first, back->second),
+        std::memory_order_release);
+  } else if (lo != 0) {
+    if (lo < lupine_fast_state.devptr_min.load(std::memory_order_relaxed)) {
+      lupine_fast_state.devptr_min.store(lo, std::memory_order_release);
+    }
+    if (hi > lupine_fast_state.devptr_last.load(std::memory_order_relaxed)) {
+      lupine_fast_state.devptr_last.store(hi, std::memory_order_release);
+    }
+  }
+  lupine_fast_state.devptr_epoch.fetch_add(1, std::memory_order_acq_rel);
+  lupine_fast_state.devptr_count.store(count, std::memory_order_release);
+}
+
 static void lupine_note_deviceptr_allocation_owner_locked(CUdeviceptr ptr,
                                                           size_t size,
                                                           int route_id,
@@ -429,7 +569,64 @@ static void lupine_note_deviceptr_allocation_owner_locked(CUdeviceptr ptr,
   } else {
     lupine_owners<CUdeviceptr>().erase(ptr);
   }
+  lupine_insert_devptr_range_locked(ptr, size);
   lupine_deviceptr_allocation_cache_insert(ptr, size, route_id, context);
+  lupine_sync_devptr_metadata_locked(ptr, lupine_devptr_last_byte(ptr, size));
+}
+
+#define LUPINE_FOR_EACH_OWNED_HANDLE(X)                                        \
+  X(context, CUcontext, 1)                                                     \
+  X(module, CUmodule, 2)                                                       \
+  X(library, CUlibrary, 3)                                                     \
+  X(function, CUfunction, 4)                                                   \
+  X(stream, CUstream, 5)                                                       \
+  X(event, CUevent, 6)                                                         \
+  X(memory_pool, CUmemoryPool, 7)                                              \
+  X(graph, CUgraph, 8)                                                         \
+  X(graph_node, CUgraphNode, 9)                                                \
+  X(graph_exec, CUgraphExec, 10)
+
+template <typename Handle> static constexpr uint8_t lupine_handle_tag() {
+  return 0;
+}
+#define LUPINE_DEFINE_HANDLE_TAG(name, type, id)                               \
+  template <> constexpr uint8_t lupine_handle_tag<type>() { return id; }
+LUPINE_FOR_EACH_OWNED_HANDLE(LUPINE_DEFINE_HANDLE_TAG)
+#undef LUPINE_DEFINE_HANDLE_TAG
+
+template <typename Handle>
+static const lupine_tls_handle_slot *lupine_lookup_handle_owner(Handle handle) {
+  constexpr uint8_t tag = lupine_handle_tag<Handle>();
+  static_assert(tag != 0, "untagged handle type");
+  uintptr_t bits = reinterpret_cast<uintptr_t>(handle);
+  if (bits == 0) {
+    return nullptr;
+  }
+  if constexpr (std::is_same_v<Handle, CUstream>) {
+    if (bits <= LUPINE_STREAM_FETCH_SYNC_ALL_BITS &&
+        !lupine_fast_state.sentinel_stream_owned.load(
+            std::memory_order_acquire)) {
+      return nullptr;
+    }
+  }
+  uint64_t epoch =
+      lupine_fast_state.handle_epoch.load(std::memory_order_acquire);
+  size_t index = lupine_splitmix64(static_cast<uint64_t>(bits) ^
+                                   (static_cast<uint64_t>(tag) << 56)) &
+                 (lupine_tls_cache.handles.size() - 1);
+  auto &slot = lupine_tls_cache.handles[index];
+  if (slot.epoch == epoch && slot.bits == bits && slot.tag == tag) {
+    return &slot;
+  }
+  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
+  epoch = lupine_fast_state.handle_epoch.load(std::memory_order_relaxed);
+  auto &owners = lupine_owners<Handle>();
+  auto it = owners.find(handle);
+  if (it == owners.end()) {
+    return nullptr;
+  }
+  slot = {epoch, bits, it->second.route_id, tag, it->second.is_green_context};
+  return &slot;
 }
 
 template <typename Handle>
@@ -439,10 +636,23 @@ static void lupine_note_owner_route(Handle handle, lupine_route route) {
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  auto &owner = lupine_owners<Handle>()[handle];
-  owner.route_id = route_id;
+  if constexpr (std::is_same_v<Handle, CUstream>) {
+    if (reinterpret_cast<uintptr_t>(handle) <=
+        LUPINE_STREAM_FETCH_SYNC_ALL_BITS) {
+      lupine_fast_state.sentinel_stream_owned.store(true,
+                                                    std::memory_order_release);
+    }
+  }
+  auto [it, inserted] = lupine_owners<Handle>().try_emplace(handle);
   if constexpr (std::is_same_v<Handle, CUdeviceptr>) {
-    owner.pointer_context = lupine_current_context_hint();
+    it->second.route_id = route_id;
+    it->second.pointer_context = lupine_current_context_hint();
+    lupine_sync_devptr_metadata_locked(handle, handle);
+  } else {
+    if (!inserted && it->second.route_id != route_id) {
+      lupine_fast_state.handle_epoch.fetch_add(1, std::memory_order_acq_rel);
+    }
+    it->second.route_id = route_id;
   }
 }
 
@@ -515,13 +725,26 @@ extern "C" CUresult lupine_record_disjoint_allocation_impl(
 
 extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_owners<CUdeviceptr>().erase(ptr);
+  bool erased_owner = lupine_owners<CUdeviceptr>().erase(ptr) != 0;
+  bool erased_range = lupine_erase_devptr_range_locked(ptr);
   lupine_deviceptr_allocation_cache_erase(ptr);
+  if (erased_owner || erased_range) {
+    lupine_sync_devptr_metadata_locked(0, 0);
+  }
 }
 
 extern "C" void lupine_forget_context_owner(CUcontext ctx) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_owners<CUcontext>().erase(ctx);
+  auto &owners = lupine_owners<CUcontext>();
+  auto it = owners.find(ctx);
+  if (it != owners.end()) {
+    if (it->second.is_green_context) {
+      lupine_fast_state.green_context_count.fetch_sub(
+          1, std::memory_order_acq_rel);
+    }
+    owners.erase(it);
+    lupine_fast_state.handle_epoch.fetch_add(1, std::memory_order_acq_rel);
+  }
 }
 
 extern "C" void lupine_mark_context_green(CUcontext ctx) {
@@ -529,17 +752,24 @@ extern "C" void lupine_mark_context_green(CUcontext ctx) {
     return;
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_owners<CUcontext>()[ctx].is_green_context = true;
+  auto [it, inserted] = lupine_owners<CUcontext>().try_emplace(ctx);
+  if (!it->second.is_green_context) {
+    it->second.is_green_context = true;
+    if (!inserted) {
+      lupine_fast_state.handle_epoch.fetch_add(1, std::memory_order_acq_rel);
+    }
+    lupine_fast_state.green_context_count.fetch_add(1,
+                                                    std::memory_order_acq_rel);
+  }
 }
 
 extern "C" bool lupine_context_is_green(CUcontext ctx) {
-  if (ctx == nullptr) {
+  if (ctx == nullptr || lupine_fast_state.green_context_count.load(
+                            std::memory_order_acquire) == 0) {
     return false;
   }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  auto &owners = lupine_owners<CUcontext>();
-  auto owner = owners.find(ctx);
-  return owner != owners.end() && owner->second.is_green_context;
+  const auto *slot = lupine_lookup_handle_owner(ctx);
+  return slot != nullptr && slot->is_green;
 }
 
 namespace {
@@ -568,13 +798,33 @@ void lupine_set_stream_blocking(uintptr_t key, bool blocking) {
   auto it = std::find(streams.begin(), streams.end(), key);
   if (blocking && it == streams.end()) {
     streams.push_back(key);
+    lupine_fast_state.blocking_epoch.fetch_add(1, std::memory_order_acq_rel);
     lupine_blocking_stream_count.store(streams.size(),
                                        std::memory_order_release);
   } else if (!blocking && it != streams.end()) {
     streams.erase(it);
+    lupine_fast_state.blocking_epoch.fetch_add(1, std::memory_order_acq_rel);
     lupine_blocking_stream_count.store(streams.size(),
                                        std::memory_order_release);
   }
+}
+
+bool lupine_is_stream_blocking(uintptr_t key) {
+  uint64_t epoch =
+      lupine_fast_state.blocking_epoch.load(std::memory_order_acquire);
+  size_t index =
+      lupine_splitmix64(key) & (lupine_tls_cache.blocking_streams.size() - 1);
+  auto &slot = lupine_tls_cache.blocking_streams[index];
+  if (slot.epoch == epoch && slot.key == key) {
+    return slot.blocking;
+  }
+  std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
+  epoch = lupine_fast_state.blocking_epoch.load(std::memory_order_relaxed);
+  const auto &streams = lupine_blocking_streams();
+  bool blocking =
+      std::find(streams.begin(), streams.end(), key) != streams.end();
+  slot = {epoch, key, blocking};
+  return blocking;
 }
 
 // Stops treating `key` as blocking, keeping the legacy stream behind what it
@@ -602,6 +852,7 @@ bool lupine_retire_blocking_stream(uintptr_t key, conn_t *const *conns,
   auto it = std::find(streams.begin(), streams.end(), key);
   if (it != streams.end()) {
     streams.erase(it);
+    lupine_fast_state.blocking_epoch.fetch_add(1, std::memory_order_acq_rel);
     lupine_blocking_stream_count.store(streams.size(),
                                        std::memory_order_release);
   }
@@ -688,9 +939,7 @@ extern "C" int lupine_rpc_start_on_stream(conn_t *conn, int op, CUstream stream,
     }
   } else if (lupine_blocking_stream_count.load(std::memory_order_acquire) !=
              0) {
-    std::lock_guard<std::mutex> lock(lupine_blocking_streams_mutex());
-    auto &streams = lupine_blocking_streams();
-    blocking = std::find(streams.begin(), streams.end(), key) != streams.end();
+    blocking = lupine_is_stream_blocking(key);
   }
   if (rpc_write_start_request_on(conn, op, key, flags) < 0) {
     return -1;
@@ -720,20 +969,16 @@ extern "C" void lupine_forget_stream_owner(CUstream stream) {
     rpc_scope_forget(conn, key);
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_owners<CUstream>().erase(stream);
+  if (lupine_owners<CUstream>().erase(stream) != 0) {
+    lupine_fast_state.handle_epoch.fetch_add(1, std::memory_order_acq_rel);
+  }
 }
 
 template <typename Handle>
 static lupine_route lupine_route_for_known_owner(Handle handle) {
-  if (handle == Handle{}) {
-    return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  auto &owners = lupine_owners<Handle>();
-  auto owner = owners.find(handle);
-  return owner == owners.end()
-             ? lupine_route{LUPINE_ROUTE_INVALID, nullptr}
-             : lupine_route_from_identity(owner->second.route_id);
+  const auto *slot = lupine_lookup_handle_owner(handle);
+  return slot == nullptr ? lupine_route{}
+                         : lupine_route_from_identity(slot->route_id);
 }
 
 template <typename Handle>
@@ -750,7 +995,9 @@ static void lupine_forget_scoped_owner(Handle handle) {
     rpc_scope_forget(conn, reinterpret_cast<uintptr_t>(handle));
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  lupine_owners<Handle>().erase(handle);
+  if (lupine_owners<Handle>().erase(handle) != 0) {
+    lupine_fast_state.handle_epoch.fetch_add(1, std::memory_order_acq_rel);
+  }
 }
 
 extern "C" void lupine_forget_event_owner(CUevent event) {
@@ -762,7 +1009,7 @@ extern "C" void lupine_forget_graph_exec_owner(CUgraphExec exec) {
   lupine_forget_scoped_owner(exec);
 }
 
-#define LUPINE_DEFINE_OWNER_ROUTE(name, type)                                  \
+#define LUPINE_DEFINE_OWNER_ROUTE(name, type, id)                              \
   extern "C" void lupine_note_##name##_owner_route(type h, lupine_route r) {   \
     lupine_note_owner_route(h, r);                                             \
   }                                                                            \
@@ -770,21 +1017,85 @@ extern "C" void lupine_forget_graph_exec_owner(CUgraphExec exec) {
     return lupine_route_for_owner_or_default(h);                               \
   }
 
-LUPINE_DEFINE_OWNER_ROUTE(context, CUcontext)
-LUPINE_DEFINE_OWNER_ROUTE(module, CUmodule)
-LUPINE_DEFINE_OWNER_ROUTE(library, CUlibrary)
-LUPINE_DEFINE_OWNER_ROUTE(function, CUfunction)
-LUPINE_DEFINE_OWNER_ROUTE(stream, CUstream)
-LUPINE_DEFINE_OWNER_ROUTE(event, CUevent)
-LUPINE_DEFINE_OWNER_ROUTE(memory_pool, CUmemoryPool)
-LUPINE_DEFINE_OWNER_ROUTE(graph, CUgraph)
-LUPINE_DEFINE_OWNER_ROUTE(graph_node, CUgraphNode)
-LUPINE_DEFINE_OWNER_ROUTE(graph_exec, CUgraphExec)
+LUPINE_FOR_EACH_OWNED_HANDLE(LUPINE_DEFINE_OWNER_ROUTE)
 #undef LUPINE_DEFINE_OWNER_ROUTE
+#undef LUPINE_FOR_EACH_OWNED_HANDLE
 
 // Unlike lupine_route_for_stream, does not fall back to the default route.
 extern "C" lupine_route lupine_route_for_known_stream(CUstream stream) {
   return lupine_route_for_known_owner(stream);
+}
+
+static inline bool lupine_devptr_outside_bounds(CUdeviceptr ptr) {
+  uint64_t p = static_cast<uint64_t>(ptr);
+  return p == 0 ||
+         lupine_fast_state.devptr_count.load(std::memory_order_acquire) == 0 ||
+         p < lupine_fast_state.devptr_min.load(std::memory_order_acquire) ||
+         p > lupine_fast_state.devptr_last.load(std::memory_order_acquire);
+}
+
+static inline bool
+lupine_tls_lookup_devptr(const lupine_tls_routing_cache &tls, CUdeviceptr ptr,
+                         uint64_t epoch,
+                         const lupine_tls_alloc_slot **slot_out) {
+  if (tls.devptr_epoch != epoch) {
+    return false;
+  }
+  for (const auto &slot : tls.allocs) {
+    if (ptr >= slot.base && ptr - slot.base < slot.size) {
+      *slot_out = &slot;
+      return true;
+    }
+  }
+  for (const auto &gap : tls.gaps) {
+    if (ptr >= gap.base && ptr <= gap.last) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static inline bool
+lupine_try_tls_devptr(CUdeviceptr ptr, const lupine_tls_alloc_slot **slot_out) {
+  *slot_out = nullptr;
+  return lupine_devptr_outside_bounds(ptr) ||
+         lupine_tls_lookup_devptr(
+             lupine_tls_cache, ptr,
+             lupine_fast_state.devptr_epoch.load(std::memory_order_acquire),
+             slot_out);
+}
+
+static void lupine_tls_populate_devptr_locked(
+    CUdeviceptr ptr, const lupine_deviceptr_allocation_record *alloc) {
+  const auto &table = lupine_devptr_ranges();
+  if (ptr == 0 || table.overlaps != 0 ||
+      !lupine_owners<CUdeviceptr>().empty()) {
+    return;
+  }
+  auto &tls = lupine_tls_cache;
+  uint64_t epoch =
+      lupine_fast_state.devptr_epoch.load(std::memory_order_relaxed);
+  if (tls.devptr_epoch != epoch) {
+    tls.allocs = {};
+    tls.gaps = {};
+    tls.devptr_epoch = epoch;
+  }
+  const lupine_tls_alloc_slot *existing = nullptr;
+  if (lupine_tls_lookup_devptr(tls, ptr, epoch, &existing)) {
+    return;
+  }
+  auto next = table.ranges.upper_bound(ptr);
+  if (alloc != nullptr) {
+    auto it = std::prev(next);
+    tls.allocs[tls.alloc_hand++ & 3] = {it->first, alloc->size, alloc->context,
+                                        alloc->route_id};
+  } else {
+    CUdeviceptr lo = next == table.ranges.begin()
+                         ? 1
+                         : std::prev(next)->first + std::prev(next)->second;
+    CUdeviceptr hi = next == table.ranges.end() ? UINT64_MAX : next->first - 1;
+    tls.gaps[tls.gap_hand++ & 1] = {lo, hi};
+  }
 }
 
 static bool lupine_lookup_deviceptr_route_locked(
@@ -811,9 +1122,22 @@ static bool lupine_lookup_deviceptr_route_locked(
   return false;
 }
 
+static inline bool lupine_alloc_slot_covers(const lupine_tls_alloc_slot *slot,
+                                            CUdeviceptr ptr, size_t bytes) {
+  return slot != nullptr && bytes != 0 && ptr <= UINT64_MAX - (bytes - 1) &&
+         bytes - 1 < slot->size - (ptr - slot->base);
+}
+
 extern "C" bool lupine_deviceptr_is_tracked(CUdeviceptr ptr) {
+  const lupine_tls_alloc_slot *slot = nullptr;
+  if (lupine_try_tls_devptr(ptr, &slot)) {
+    return slot != nullptr;
+  }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  return lupine_lookup_deviceptr_route_locked(ptr, nullptr);
+  const lupine_deviceptr_allocation_record *alloc = nullptr;
+  bool tracked = lupine_lookup_deviceptr_route_locked(ptr, nullptr, &alloc);
+  lupine_tls_populate_devptr_locked(ptr, alloc);
+  return tracked;
 }
 
 extern "C" bool lupine_deviceptr_allocation_covers(CUdeviceptr ptr,
@@ -821,19 +1145,34 @@ extern "C" bool lupine_deviceptr_allocation_covers(CUdeviceptr ptr,
   if (bytes == 0) {
     return false;
   }
+  const lupine_tls_alloc_slot *slot = nullptr;
+  if (lupine_try_tls_devptr(ptr, &slot) &&
+      (slot == nullptr || ptr <= UINT64_MAX - (bytes - 1))) {
+    return slot != nullptr && slot->route_id == route_id &&
+           lupine_alloc_slot_covers(slot, ptr, bytes);
+  }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   // An allocation is one interval, so holding both endpoints holds the range.
   const auto *allocation = lupine_deviceptr_allocation_cache_lookup(ptr);
+  lupine_tls_populate_devptr_locked(ptr, allocation);
   return allocation != nullptr && allocation->route_id == route_id &&
          allocation ==
              lupine_deviceptr_allocation_cache_lookup(ptr + bytes - 1);
 }
 
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
+  const lupine_tls_alloc_slot *slot = nullptr;
+  if (lupine_try_tls_devptr(ptr, &slot)) {
+    return slot != nullptr ? lupine_route_from_identity(slot->route_id)
+                           : lupine_route_for_default();
+  }
   int route_id = -2;
   {
     std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-    if (lupine_lookup_deviceptr_route_locked(ptr, &route_id)) {
+    const lupine_deviceptr_allocation_record *alloc = nullptr;
+    bool found = lupine_lookup_deviceptr_route_locked(ptr, &route_id, &alloc);
+    lupine_tls_populate_devptr_locked(ptr, alloc);
+    if (found) {
       return lupine_route_from_identity(route_id);
     }
   }
@@ -843,13 +1182,27 @@ extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
 lupine_htod_routing_info
 lupine_query_htod_routing(CUdeviceptr dst, const void *src, size_t bytes) {
   lupine_htod_routing_info info;
+  CUdeviceptr src_ptr = reinterpret_cast<CUdeviceptr>(src);
+  const lupine_tls_alloc_slot *dst_slot = nullptr, *src_slot = nullptr;
+  if (lupine_try_tls_devptr(dst, &dst_slot) &&
+      (bytes == 0 || src == nullptr ||
+       lupine_try_tls_devptr(src_ptr, &src_slot))) {
+    info.dst_route = dst_slot != nullptr
+                         ? lupine_route_from_identity(dst_slot->route_id)
+                         : lupine_route_for_default();
+    info.dst_allocation_covers = lupine_alloc_slot_covers(dst_slot, dst, bytes);
+    info.src_deviceptr_tracked = src_slot != nullptr;
+    return info;
+  }
+
   int dst_route_id = -2;
-  const lupine_deviceptr_allocation_record *dst_alloc = nullptr;
   bool dst_known = false;
   {
+    const lupine_deviceptr_allocation_record *dst_alloc = nullptr;
     std::lock_guard<std::mutex> lock(lupine_routing_mutex());
     dst_known =
         lupine_lookup_deviceptr_route_locked(dst, &dst_route_id, &dst_alloc);
+    lupine_tls_populate_devptr_locked(dst, dst_alloc);
     if (bytes != 0 && dst_known && dst_alloc != nullptr &&
         dst_alloc->route_id == dst_route_id &&
         dst <= UINT64_MAX - (bytes - 1) &&
@@ -858,8 +1211,10 @@ lupine_query_htod_routing(CUdeviceptr dst, const void *src, size_t bytes) {
       info.dst_allocation_covers = true;
     }
     if (bytes != 0 && src != nullptr) {
-      info.src_deviceptr_tracked = lupine_lookup_deviceptr_route_locked(
-          reinterpret_cast<CUdeviceptr>(src), nullptr);
+      const lupine_deviceptr_allocation_record *src_alloc = nullptr;
+      info.src_deviceptr_tracked =
+          lupine_lookup_deviceptr_route_locked(src_ptr, nullptr, &src_alloc);
+      lupine_tls_populate_devptr_locked(src_ptr, src_alloc);
     }
   }
   info.dst_route = dst_known ? lupine_route_from_identity(dst_route_id)
@@ -868,6 +1223,10 @@ lupine_query_htod_routing(CUdeviceptr dst, const void *src, size_t bytes) {
 }
 
 extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr) {
+  const lupine_tls_alloc_slot *slot = nullptr;
+  if (lupine_try_tls_devptr(ptr, &slot)) {
+    return slot != nullptr ? slot->context : nullptr;
+  }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   auto owner = lupine_owners<CUdeviceptr>().find(ptr);
   if (owner != lupine_owners<CUdeviceptr>().end() &&
@@ -875,6 +1234,7 @@ extern "C" CUcontext lupine_context_for_deviceptr(CUdeviceptr ptr) {
     return owner->second.pointer_context;
   }
   const auto *allocation = lupine_deviceptr_allocation_cache_lookup(ptr);
+  lupine_tls_populate_devptr_locked(ptr, allocation);
   return allocation != nullptr ? allocation->context : nullptr;
 }
 
