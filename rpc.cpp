@@ -229,18 +229,6 @@ lupine_tcp_connect(const char *host, const char *port, unsigned int max_retries,
   }
 }
 
-namespace {
-
-void rpc_shutdown_socket(lupine_socket_t socket) {
-#ifdef _WIN32
-  (void)shutdown(socket, SD_RECEIVE);
-#else
-  (void)shutdown(socket, SHUT_RD);
-#endif
-}
-
-} // namespace
-
 void rpc_cancel_async_waits(conn_t *conn) {
   if (!conn->async_sync_initialized) {
     return;
@@ -255,20 +243,14 @@ void rpc_shutdown_transport_socket(conn_t *conn) {
   if (conn == nullptr) {
     return;
   }
-
-#ifdef _WIN32
-  conn->closed = 1;
-  const lupine_socket_t socket = conn->connfd;
-#else
   __atomic_store_n(&conn->closed, 1, __ATOMIC_RELEASE);
   const lupine_socket_t socket =
       __atomic_load_n(&conn->connfd, __ATOMIC_ACQUIRE);
-#endif
   rpc_cancel_async_waits(conn);
   if (conn->http2 != nullptr) {
     rpc_http2_shutdown(conn);
   } else if (socket != LUPINE_INVALID_SOCKET) {
-    rpc_shutdown_socket(socket);
+    lupine_socket_shutdown_read(socket);
   }
 }
 
@@ -276,16 +258,9 @@ void rpc_close_transport_socket(conn_t *conn) {
   if (conn == nullptr) {
     return;
   }
-
-#ifdef _WIN32
-  conn->closed = 1;
-  lupine_socket_t socket = conn->connfd;
-  conn->connfd = LUPINE_INVALID_SOCKET;
-#else
   __atomic_store_n(&conn->closed, 1, __ATOMIC_RELEASE);
   lupine_socket_t socket = __atomic_exchange_n(
       &conn->connfd, LUPINE_INVALID_SOCKET, __ATOMIC_ACQ_REL);
-#endif
   rpc_cancel_async_waits(conn);
   if (socket == LUPINE_INVALID_SOCKET) {
     // A session parked for a checkpoint reconnect has no socket of its own.
@@ -295,15 +270,11 @@ void rpc_close_transport_socket(conn_t *conn) {
   struct linger abortive = {};
   abortive.l_onoff = 1;
   abortive.l_linger = 0;
-#ifdef _WIN32
   (void)setsockopt(socket, SOL_SOCKET, SO_LINGER,
                    reinterpret_cast<const char *>(&abortive), sizeof(abortive));
-#else
-  (void)setsockopt(socket, SOL_SOCKET, SO_LINGER, &abortive, sizeof(abortive));
-#endif
   // Wake a reader blocked in recv without sending a FIN. SHUT_RDWR would
   // gracefully close the write side before SO_LINGER can reset the peer.
-  rpc_shutdown_socket(socket);
+  lupine_socket_shutdown_read(socket);
   rpc_http2_destroy(conn);
   (void)lupine_socket_close(socket);
 }
@@ -352,37 +323,17 @@ static int rpc_write_queue_push(conn_t *conn, rpc_write_cursor cursor) {
   return 0;
 }
 
-int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id) {
+void rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id) {
   *conn = {};
   conn->connfd = connfd;
   conn->request_id = request_id;
   conn->local_request_parity = request_id & 1;
-  if (pthread_mutex_init(&conn->write_mutex, nullptr) != 0) {
-    goto fail;
-  }
-  if (pthread_mutex_init(&conn->call_mutex, nullptr) != 0) {
-    pthread_mutex_destroy(&conn->write_mutex);
-    goto fail;
-  }
-  if (pthread_mutex_init(&conn->async_mutex, nullptr) != 0) {
-    pthread_mutex_destroy(&conn->call_mutex);
-    pthread_mutex_destroy(&conn->write_mutex);
-    goto fail;
-  }
-  if (pthread_cond_init(&conn->async_cond, nullptr) != 0) {
-    pthread_mutex_destroy(&conn->async_mutex);
-    pthread_mutex_destroy(&conn->call_mutex);
-    pthread_mutex_destroy(&conn->write_mutex);
-    goto fail;
-  }
+  // Default-attribute initialization cannot fail on any supported platform.
+  pthread_mutex_init(&conn->write_mutex, nullptr);
+  pthread_mutex_init(&conn->call_mutex, nullptr);
+  pthread_mutex_init(&conn->async_mutex, nullptr);
+  pthread_cond_init(&conn->async_cond, nullptr);
   conn->async_sync_initialized = 1;
-  return 0;
-
-fail:
-  rpc_close_transport_socket(conn);
-  *conn = {};
-  conn->connfd = LUPINE_INVALID_SOCKET;
-  return -1;
 }
 
 // The ticket claimed by the handler running on this lane, if any.
@@ -396,8 +347,12 @@ static thread_local bool handling_unsettled_request = false;
 bool rpc_request_awaited(conn_t *) { return handling_awaited_request; }
 bool rpc_request_unsettled(conn_t *) { return handling_unsettled_request; }
 
-static bool rpc_completed_async_contains(const std::vector<uint64_t> &completed,
-                                         uint64_t ticket) {
+static bool rpc_async_ticket_released_locked(const conn_t *conn,
+                                             uint64_t ticket) {
+  if (ticket < conn->serving_async_sequence) {
+    return true;
+  }
+  const std::vector<uint64_t> &completed = conn->completed_async_sequences;
   auto it = std::lower_bound(completed.begin(), completed.end(), ticket,
                              std::greater<uint64_t>());
   return it != completed.end() && *it == ticket;
@@ -408,35 +363,16 @@ bool rpc_async_ticket_released(conn_t *conn, uint64_t ticket) {
     return true;
   }
   pthread_mutex_lock(&conn->async_mutex);
-  bool released =
-      ticket < conn->serving_async_sequence ||
-      rpc_completed_async_contains(conn->completed_async_sequences, ticket);
+  bool released = rpc_async_ticket_released_locked(conn, ticket);
   pthread_mutex_unlock(&conn->async_mutex);
   return released;
 }
 
-int rpc_async_sequence_wait(conn_t *conn, uint64_t published) {
+int rpc_async_sequence_wait(conn_t *conn, uint64_t value, bool exact) {
   pthread_mutex_lock(&conn->async_mutex);
-  while (!conn->async_cancelled && conn->serving_async_sequence < published) {
-    ++conn->async_waiters;
-    int waited = pthread_cond_wait(&conn->async_cond, &conn->async_mutex);
-    --conn->async_waiters;
-    if (waited != 0) {
-      pthread_mutex_unlock(&conn->async_mutex);
-      return -1;
-    }
-  }
-  bool cancelled = conn->async_cancelled;
-  pthread_mutex_unlock(&conn->async_mutex);
-  return cancelled ? -1 : 0;
-}
-
-// Waits until one ticket has been released, whatever the watermark.
-static int rpc_async_ticket_wait(conn_t *conn, uint64_t ticket) {
-  pthread_mutex_lock(&conn->async_mutex);
-  while (
-      !conn->async_cancelled && ticket >= conn->serving_async_sequence &&
-      !rpc_completed_async_contains(conn->completed_async_sequences, ticket)) {
+  while (!conn->async_cancelled &&
+         (exact ? !rpc_async_ticket_released_locked(conn, value)
+                : conn->serving_async_sequence < value)) {
     ++conn->async_waiters;
     int waited = pthread_cond_wait(&conn->async_cond, &conn->async_mutex);
     --conn->async_waiters;
@@ -741,8 +677,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
       unsettled = unsettled || !rpc_async_ticket_released(conn, value);
       continue;
     }
-    if ((header[1] == 0 ? rpc_async_sequence_wait(conn, value)
-                        : rpc_async_ticket_wait(conn, value)) < 0) {
+    if (rpc_async_sequence_wait(conn, value, header[1] == 1) < 0) {
       rpc_mark_connection_closed(conn);
       return -1;
     }

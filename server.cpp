@@ -365,10 +365,7 @@ static void lupine_serve_bulk_connection(int fd,
     consumed += static_cast<size_t>(n);
   }
   conn_t conn = {};
-  if (rpc_conn_init(&conn, fd, 1) < 0) {
-    close(fd);
-    return;
-  }
+  rpc_conn_init(&conn, fd, 1);
   if (rpc_http2_server_init_with_metadata(&conn, &metadata) == 0) {
     lupine_serve_lanes(conn);
   }
@@ -417,10 +414,7 @@ int client_handler(lupine_socket_t connfd) {
   }
 
   conn_t conn = {};
-  if (rpc_conn_init(&conn, connfd, 1) < 0) {
-    LUPINE_LOG_ERROR("Error initializing connection synchronization.");
-    return lupine_client_handler_exit();
-  }
+  rpc_conn_init(&conn, connfd, 1);
   int http2_init_result = rpc_http2_server_init_with_metadata(&conn, &metadata);
   if (http2_init_result < 0) {
     LUPINE_LOG_ERROR("Error initializing HTTP/2 connection.");

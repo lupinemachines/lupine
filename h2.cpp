@@ -548,23 +548,11 @@ std::string h2_hex(uint64_t value) {
   return std::string(buf, static_cast<size_t>(len > 0 ? len : 0));
 }
 
-bool h2_parse_hex64(const std::string &value, uint64_t *parsed) {
-  if (value.empty() || parsed == nullptr) {
-    return false;
-  }
+bool h2_parse_hex(const std::string &value, uintptr_t *parsed) {
   char *end = nullptr;
   errno = 0;
   unsigned long long number = strtoull(value.c_str(), &end, 16);
-  if (errno != 0 || end == value.c_str() || *end != '\0') {
-    return false;
-  }
-  *parsed = static_cast<uint64_t>(number);
-  return true;
-}
-
-bool h2_parse_hex(const std::string &value, uintptr_t *parsed) {
-  uint64_t number = 0;
-  if (parsed == nullptr || !h2_parse_hex64(value, &number) ||
+  if (errno != 0 || end == value.c_str() || *end != '\0' ||
       number > UINTPTR_MAX) {
     return false;
   }
@@ -802,6 +790,17 @@ int h2_on_stream_close_callback(nghttp2_session *, int32_t stream_id, uint32_t,
   return 0;
 }
 
+void h2_store_header(
+    std::string_view header, std::string_view text,
+    std::initializer_list<std::pair<const char *, std::string *>> fields) {
+  for (const auto &[field, destination] : fields) {
+    if (header == field) {
+      destination->assign(text);
+      return;
+    }
+  }
+}
+
 int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
                           const uint8_t *name, size_t namelen,
                           const uint8_t *value, size_t valuelen, uint8_t,
@@ -811,105 +810,54 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
     return 0;
   }
   h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
-  if (namelen == strlen(kContentEncodingHeader) &&
-      memcmp(name, kContentEncodingHeader, namelen) == 0) {
-    if (valuelen != strlen(kZstdEncoding) ||
-        memcmp(value, kZstdEncoding, valuelen) != 0) {
+  std::string_view header(reinterpret_cast<const char *>(name), namelen);
+  std::string_view text(reinterpret_cast<const char *>(value), valuelen);
+  if (header == kContentEncodingHeader) {
+    if (text != kZstdEncoding) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     stream.recv_encoding = h2_encoding::zstd;
     return 0;
   }
   if (transport->server) {
-    if (frame->headers.cat == NGHTTP2_HCAT_REQUEST) {
-      if (namelen == strlen(kAcceptEncodingHeader) &&
-          memcmp(name, kAcceptEncodingHeader, namelen) == 0) {
-        std::string_view accepted(reinterpret_cast<const char *>(value),
-                                  valuelen);
-        transport->send_encoding = accepted.find(kZstdEncoding) != accepted.npos
-                                       ? h2_encoding::zstd
-                                       : h2_encoding::identity;
-      } else if (namelen == strlen(kLupineSessionHeader) &&
-                 memcmp(name, kLupineSessionHeader, namelen) == 0) {
-        transport->session_id.assign(reinterpret_cast<const char *>(value),
-                                     valuelen);
-      } else if (namelen == strlen(kLupineClientEtagHeader) &&
-                 memcmp(name, kLupineClientEtagHeader, namelen) == 0) {
-        transport->client_etag.assign(reinterpret_cast<const char *>(value),
-                                      valuelen);
-      } else if (namelen == strlen(kLupineClientPlatformHeader) &&
-                 memcmp(name, kLupineClientPlatformHeader, namelen) == 0) {
-        transport->client_platform.assign(reinterpret_cast<const char *>(value),
-                                          valuelen);
-      } else if (namelen == strlen(kLupineVaBaseHeader) &&
-                 memcmp(name, kLupineVaBaseHeader, namelen) == 0) {
-        stream.requested_va_base.assign(reinterpret_cast<const char *>(value),
-                                        valuelen);
-      } else if (namelen == strlen(kLupineVaSizeHeader) &&
-                 memcmp(name, kLupineVaSizeHeader, namelen) == 0) {
-        stream.requested_va_size.assign(reinterpret_cast<const char *>(value),
-                                        valuelen);
-      }
+    if (frame->headers.cat != NGHTTP2_HCAT_REQUEST) {
+      return 0;
     }
+    if (header == kAcceptEncodingHeader) {
+      transport->send_encoding = text.find(kZstdEncoding) != text.npos
+                                     ? h2_encoding::zstd
+                                     : h2_encoding::identity;
+      return 0;
+    }
+    h2_store_header(header, text,
+                    {{kLupineSessionHeader, &transport->session_id},
+                     {kLupineClientEtagHeader, &transport->client_etag},
+                     {kLupineClientPlatformHeader, &transport->client_platform},
+                     {kLupineVaBaseHeader, &stream.requested_va_base},
+                     {kLupineVaSizeHeader, &stream.requested_va_size}});
     return 0;
   }
   if (frame->headers.cat != NGHTTP2_HCAT_RESPONSE) {
     return 0;
   }
-  if (namelen == strlen(kLupineCudaVersionHeader) &&
-      memcmp(name, kLupineCudaVersionHeader, namelen) == 0) {
-    transport->peer_cuda_version.assign(reinterpret_cast<const char *>(value),
-                                        valuelen);
-    return 0;
-  }
-  if (namelen == strlen(kLupineClientEtagHeader) &&
-      memcmp(name, kLupineClientEtagHeader, namelen) == 0) {
-    transport->peer_client_etag.assign(reinterpret_cast<const char *>(value),
-                                       valuelen);
-    return 0;
-  }
-  if (namelen == strlen(kLupineBulkTokenHeader) &&
-      memcmp(name, kLupineBulkTokenHeader, namelen) == 0) {
-    transport->peer_bulk_token.assign(reinterpret_cast<const char *>(value),
-                                      valuelen);
-    return 0;
-  }
-  if (namelen == strlen(kLupineVaWindowBaseHeader) &&
-      memcmp(name, kLupineVaWindowBaseHeader, namelen) == 0) {
-    transport->peer_window_base.assign(reinterpret_cast<const char *>(value),
-                                       valuelen);
-    return 0;
-  }
-  if (namelen == strlen(kLupineVaWindowSizeHeader) &&
-      memcmp(name, kLupineVaWindowSizeHeader, namelen) == 0) {
-    transport->peer_window_size.assign(reinterpret_cast<const char *>(value),
-                                       valuelen);
-    return 0;
-  }
-  if (namelen == strlen(kLupineVaBaseHeader) &&
-      memcmp(name, kLupineVaBaseHeader, namelen) == 0) {
-    transport->peer_va_base.assign(reinterpret_cast<const char *>(value),
-                                   valuelen);
-    return 0;
-  }
-  if (namelen == strlen(kLupineVaSizeHeader) &&
-      memcmp(name, kLupineVaSizeHeader, namelen) == 0) {
-    transport->peer_va_size.assign(reinterpret_cast<const char *>(value),
-                                   valuelen);
-    return 0;
-  }
-  if (namelen != 7 || memcmp(name, ":status", namelen) != 0) {
-    return 0;
-  }
-
-  stream.response_status = 0;
-  for (size_t i = 0; i < valuelen; ++i) {
-    if (value[i] < '0' || value[i] > '9') {
-      return 0;
+  if (header == ":status") {
+    stream.response_status = 0;
+    for (char digit : text) {
+      if (digit < '0' || digit > '9') {
+        return 0;
+      }
+      stream.response_status = stream.response_status * 10 + (digit - '0');
     }
-    stream.response_status =
-        stream.response_status * 10 + static_cast<int>(value[i] - '0');
+    return 0;
   }
+  h2_store_header(header, text,
+                  {{kLupineCudaVersionHeader, &transport->peer_cuda_version},
+                   {kLupineClientEtagHeader, &transport->peer_client_etag},
+                   {kLupineBulkTokenHeader, &transport->peer_bulk_token},
+                   {kLupineVaWindowBaseHeader, &transport->peer_window_base},
+                   {kLupineVaWindowSizeHeader, &transport->peer_window_size},
+                   {kLupineVaBaseHeader, &transport->peer_va_base},
+                   {kLupineVaSizeHeader, &transport->peer_va_size}});
   return 0;
 }
 
@@ -1474,10 +1422,14 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
     transport->client_bundles = metadata->client_bundles;
   }
 
-  nghttp2_session_callbacks *callbacks = nullptr;
-  if (nghttp2_session_callbacks_new(&callbacks) != 0) {
+  auto fail = [transport] {
+    nghttp2_session_del(transport->session);
     delete transport;
     return -1;
+  };
+  nghttp2_session_callbacks *callbacks = nullptr;
+  if (nghttp2_session_callbacks_new(&callbacks) != 0) {
+    return fail();
   }
   nghttp2_session_callbacks_set_send_callback(callbacks, h2_send_callback);
   nghttp2_session_callbacks_set_send_data_callback(callbacks,
@@ -1516,8 +1468,7 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   nghttp2_option *options = nullptr;
   if (nghttp2_option_new(&options) != 0) {
     nghttp2_session_callbacks_del(callbacks);
-    delete transport;
-    return -1;
+    return fail();
   }
   nghttp2_option_set_user_recv_extension_type(options,
                                               LUPINE_HANDOFF_CONTROL_FRAME);
@@ -1530,8 +1481,7 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   nghttp2_option_del(options);
   nghttp2_session_callbacks_del(callbacks);
   if (session_result != 0) {
-    delete transport;
-    return -1;
+    return fail();
   }
 
   const uint32_t window = server ? kH2ServerWindow : kH2ClientWindow;
@@ -1543,18 +1493,9 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
                               2) != 0 ||
       nghttp2_session_set_local_window_size(
           transport->session, NGHTTP2_FLAG_NONE, 0,
-          static_cast<int32_t>(window)) != 0) {
-    nghttp2_session_del(transport->session);
-    delete transport;
-    return -1;
-  }
-
-  if (!server) {
-    if (h2_submit_client_handshake(transport, conn, probe) < 0) {
-      nghttp2_session_del(transport->session);
-      delete transport;
-      return -1;
-    }
+          static_cast<int32_t>(window)) != 0 ||
+      (!server && h2_submit_client_handshake(transport, conn, probe) < 0)) {
+    return fail();
   }
 
   conn->http2 = transport;
@@ -1563,9 +1504,7 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
                      transport) != 0) {
     h2_own_tls_socket(transport, false);
     conn->http2 = nullptr;
-    nghttp2_session_del(transport->session);
-    delete transport;
-    return -1;
+    return fail();
   }
   pthread_mutex_lock(&transport->session_mutex);
   int flush_result = h2_flush_session_locked(transport);
@@ -1575,9 +1514,7 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
     conn->http2 = nullptr;
     h2_stop_write_thread(transport);
     h2_own_tls_socket(transport, false);
-    nghttp2_session_del(transport->session);
-    delete transport;
-    return -1;
+    return fail();
   }
   return 0;
 }
@@ -2177,13 +2114,11 @@ void rpc_http2_shutdown(conn_t *conn) {
   bool parked = transport->netfd == LUPINE_INVALID_SOCKET;
   lupine_socket_t socket = parked ? conn->connfd : transport->netfd;
   pthread_mutex_unlock(&transport->session_mutex);
+  lupine_socket_shutdown_read(socket);
 #ifdef _WIN32
-  (void)shutdown(socket, SD_RECEIVE);
   if (parked) {
     (void)CancelIoEx(reinterpret_cast<HANDLE>(socket), nullptr);
   }
-#else
-  (void)shutdown(socket, SHUT_RD);
 #endif
 }
 

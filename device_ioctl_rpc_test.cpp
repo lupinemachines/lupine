@@ -152,9 +152,8 @@ int main() {
   int sockets[2];
   require(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0, "socket pair");
   conn_t server_connection{};
-  require(rpc_conn_init(&connection, sockets[0], 0) == 0 &&
-              rpc_conn_init(&server_connection, sockets[1], 1) == 0,
-          "RPC connections");
+  rpc_conn_init(&connection, sockets[0], 0);
+  rpc_conn_init(&server_connection, sockets[1], 1);
   std::thread server(serve, &server_connection);
   require(rpc_http2_client_init(&connection) == 0, "client h2 init");
   int uvm_fd = lupine_device_open("/dev/nvidia-uvm", O_RDWR | O_CLOEXEC);
