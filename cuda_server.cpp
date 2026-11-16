@@ -971,6 +971,7 @@ int handle_lupineFunctionAttributeSnapshot(conn_t *conn) {
 struct lupine_library_snapshot {
   CUresult result = CUDA_ERROR_NOT_SUPPORTED;
   CUdevice device = -1;
+  CUmodule module = nullptr;
   uint32_t count = 0;
 #if CUDA_VERSION >= 12040
   std::vector<lupine_kernel_record> records;
@@ -987,6 +988,9 @@ static lupine_library_snapshot lupine_collect_library(CUlibrary library) {
   CUdevice current_device = -1;
   if (cuCtxGetDevice(&current_device) == CUDA_SUCCESS) {
     snapshot.device = current_device;
+    if (cuLibraryGetModule(&snapshot.module, library) != CUDA_SUCCESS) {
+      snapshot.module = nullptr;
+    }
   }
   unsigned int kernel_count = 0;
   snapshot.result = cuLibraryGetKernelCount(&kernel_count, library);
@@ -1047,6 +1051,7 @@ static int lupine_write_library(conn_t *conn,
                                 const lupine_library_snapshot &snapshot) {
   if (rpc_write(conn, &snapshot.result, sizeof(snapshot.result)) < 0 ||
       rpc_write(conn, &snapshot.device, sizeof(snapshot.device)) < 0 ||
+      rpc_write(conn, &snapshot.module, sizeof(snapshot.module)) < 0 ||
       rpc_write(conn, &snapshot.count, sizeof(snapshot.count)) < 0) {
     return -1;
   }

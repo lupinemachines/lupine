@@ -422,9 +422,13 @@ static auto &lupine_library_images() {
       std::unordered_map<CUlibrary, lupine_library_image_record>>([] {});
 }
 
+// `module` is cuLibraryGetModule's answer in `context`, the one current when
+// the library loaded.
 struct lupine_library_enumeration {
   CUresult result = CUDA_ERROR_NOT_SUPPORTED;
   std::vector<CUkernel> kernels;
+  CUcontext context = nullptr;
+  CUmodule module = nullptr;
 };
 
 static auto &lupine_library_enumerations() {
@@ -1021,6 +1025,21 @@ static void lupine_cache_library_kernel(CUkernel kernel, CUlibrary library,
   record.name = std::move(name);
   record.kernels_by_route[lupine_route_identity(route)] = kernel;
   lupine_library_kernel_count.store(kernels.size(), std::memory_order_release);
+}
+
+bool lupine_try_cached_library_module(CUlibrary library, CUmodule *module) {
+  CUcontext context = nullptr;
+  if (cuCtxGetCurrent(&context) != CUDA_SUCCESS || context == nullptr) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+  auto it = lupine_library_enumerations().find(library);
+  if (it == lupine_library_enumerations().end() ||
+      it->second.module == nullptr || it->second.context != context) {
+    return false;
+  }
+  *module = it->second.module;
+  return true;
 }
 
 bool lupine_try_cached_library_kernel(CUlibrary library, const char *name,
@@ -4143,13 +4162,17 @@ extern "C" CUresult cuModuleLoadDataEx(CUmodule *module, const void *image,
 static int lupine_read_library(conn_t *conn, CUlibrary library) {
   CUresult result = CUDA_ERROR_UNKNOWN;
   CUdevice device = -1;
+  CUcontext context = nullptr;
+  CUmodule module = nullptr;
   uint32_t count = 0;
   if (rpc_read(conn, &result, sizeof(result)) < 0 ||
       rpc_read(conn, &device, sizeof(device)) < 0 ||
+      rpc_read(conn, &module, sizeof(module)) < 0 ||
       rpc_read(conn, &count, sizeof(count)) < 0 || count > 1024 * 1024) {
     return -1;
   }
-  lupine_library_enumeration enumeration{result, {}};
+  (void)cuCtxGetCurrent(&context);
+  lupine_library_enumeration enumeration{result, {}, context, module};
   if (result != CUDA_SUCCESS) {
     if (count != 0) {
       return -1;
@@ -4161,8 +4184,6 @@ static int lupine_read_library(conn_t *conn, CUlibrary library) {
   enumeration.kernels.reserve(count);
   lupine_route route = lupine_remote_route_for_conn(conn);
   int route_id = lupine_route_identity(route);
-  CUcontext context = nullptr;
-  (void)cuCtxGetCurrent(&context);
   for (uint32_t i = 0; i < count; ++i) {
     CUkernel kernel = nullptr;
     CUfunction function = nullptr;
@@ -5009,6 +5030,12 @@ extern "C" void lupine_invalidate_function_caches() {
   lupine_param_info_cache().clear();
   lupine_param_layout_cache().clear();
   lupine_kernel_function_cache().clear();
+  {
+    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+    for (auto &entry : lupine_library_enumerations()) {
+      entry.second.module = nullptr;
+    }
+  }
   lupine_occupancy_cache().clear();
   get_cache<lupine_attribute_cache::kernel>().clear();
   get_cache<lupine_attribute_cache::function>().clear();
