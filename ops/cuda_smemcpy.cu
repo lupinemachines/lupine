@@ -532,10 +532,6 @@ const void *runtime_kernel(const lupine_smemcpy_launch_descriptor &descriptor) {
 
 } // namespace
 
-extern "C" const void *lupine_smemcpy_kernel(void) {
-  return reinterpret_cast<const void *>(lupine_smemcpy_3d);
-}
-
 extern "C" cudaError_t
 lupine_smemcpy_prepare_launch(const lupine_smemcpy_params *params,
                               lupine_smemcpy_launch *launch) {

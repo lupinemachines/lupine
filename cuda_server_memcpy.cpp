@@ -1300,7 +1300,7 @@ public:
       if (ordering_event_ != nullptr) {
         (void)cuEventDestroy_v2(ordering_event_);
       }
-      lupine_smemcpy_cached_module_unload(&smemcpy_module_);
+      lupine_smemcpy_cached_module_unload(&smemcpy_module);
     });
     if (storage_ != nullptr) {
       (void)cuMemHostUnregister(storage_);
@@ -1338,7 +1338,7 @@ public:
     // Load and JIT the fatbin before graph capture can enqueue a copy that
     // needs one of its kernels.
     if (result == CUDA_SUCCESS) {
-      result = lupine_smemcpy_cached_module_load(&smemcpy_module_);
+      result = lupine_smemcpy_cached_module_load(&smemcpy_module);
     }
     if (result != CUDA_SUCCESS) {
       if (ordering_event != nullptr) {
@@ -1417,21 +1417,7 @@ public:
                : 0;
   }
 
-  bool is_smemcpy_function(CUfunction function) const {
-    return lupine_smemcpy_cached_contains_function(&smemcpy_module_, function);
-  }
-
-  CUresult
-  prepare_smemcpy_launch(const lupine_smemcpy_params &params,
-                         lupine_smemcpy_launch_descriptor *launch) const {
-    return lupine_smemcpy_cached_prepare_launch(&smemcpy_module_, &params,
-                                                launch);
-  }
-
-  CUresult smemcpy_function(const lupine_smemcpy_launch_descriptor &launch,
-                            CUfunction *function) {
-    return lupine_smemcpy_cached_function(&smemcpy_module_, &launch, function);
-  }
+  lupine_smemcpy_cached_module smemcpy_module;
 
   int fetch(const lupine_htod_copy &copy,
             const lupine_htod_fragment &fragment) {
@@ -1483,7 +1469,6 @@ private:
   CUdeviceptr device_storage_ = 0;
   CUstream transfer_stream_ = nullptr;
   CUevent ordering_event_ = nullptr;
-  lupine_smemcpy_cached_module smemcpy_module_;
 };
 
 struct lupine_htod_capture_events {
@@ -1799,7 +1784,8 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_capture_id capture_id,
         return result;
       }
       if (params.func == nullptr ||
-          !captured_ring->is_smemcpy_function(params.func)) {
+          !lupine_smemcpy_cached_contains_function(
+              &captured_ring->smemcpy_module, params.func)) {
         continue;
       }
       if (params.kernelParams == nullptr || params.kernelParams[0] == nullptr) {
@@ -2113,9 +2099,11 @@ static CUresult lupine_prepare_fragment_smemcpy(
   params.source = ring->device_data(ring_offset);
   params.logical_offset = fragment.logical_offset;
   params.bytes = fragment.bytes;
-  CUresult result = ring->prepare_smemcpy_launch(params, launch);
+  CUresult result = lupine_smemcpy_prepare_descriptor(
+      &params, &ring->smemcpy_module.device, launch);
   if (result == CUDA_SUCCESS && !launch->use_cuda_memcpy) {
-    result = ring->smemcpy_function(*launch, function);
+    result =
+        lupine_smemcpy_cached_function(&ring->smemcpy_module, launch, function);
   }
   return result;
 }
