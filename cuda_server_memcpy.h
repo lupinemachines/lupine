@@ -7,6 +7,7 @@
 #include <cuda.h>
 
 #include <memory>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,42 @@
 #include "rpc.h"
 
 using lupine_capture_id = uint64_t;
+
+template <typename T, typename Tag> static T &lupine_leaked(Tag) {
+  static T *instance = new T();
+  return *instance;
+}
+
+template <typename T, size_t N, size_t Align = alignof(T)>
+struct lupine_inline_buf {
+  alignas(Align) T stack[N];
+  std::unique_ptr<T[]> heap;
+  size_t cap = N;
+  T *ptr = stack;
+
+  T *alloc(size_t n) {
+    if (n <= cap) {
+      ptr = cap == N ? stack : heap.get();
+      return ptr;
+    }
+    if (n > SIZE_MAX / sizeof(T)) {
+      return nullptr;
+    }
+    heap.reset(new (std::nothrow) T[n]);
+    if (!heap) {
+      cap = N;
+      return nullptr;
+    }
+    cap = n;
+    return ptr = heap.get();
+  }
+
+  void reset() {
+    heap.reset();
+    cap = N;
+    ptr = stack;
+  }
+};
 
 // Device-to-host copies into client memory are pushed to the client as their
 // stream runs them. A host function queued behind each copy snapshots its
@@ -49,10 +86,11 @@ void lupine_dtoh_wait_for_room(conn_t *conn);
 // pushes its bytes, so later nodes see them. Every handler that takes graph
 // dependencies, generated or not, passes them through this.
 void lupine_graph_push_dependencies(CUgraphNode *deps, size_t count);
+struct lupine_htod_exec_resources;
 struct lupine_htod_graph_binding {
   CUgraph original = nullptr;
   CUgraph prepared = nullptr;
-  std::shared_ptr<void> resources;
+  std::shared_ptr<lupine_htod_exec_resources> resources;
 };
 CUresult
 lupine_prepare_graph_exec_resources(CUgraph graph,
@@ -68,10 +106,10 @@ void lupine_release_htod_graph_binding(lupine_htod_graph_binding *binding);
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec);
 CUresult lupine_prepare_graph_exec_update(CUgraphExec exec, CUgraph graph,
                                           lupine_htod_graph_binding *binding);
-void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
+void lupine_finish_graph_exec_update(CUgraphExec exec,
                                      lupine_htod_graph_binding *binding,
                                      CUresult result, CUgraphNode *error_node);
-void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
+void lupine_finish_graph_exec_update(CUgraphExec exec,
                                      lupine_htod_graph_binding *binding,
                                      CUresult result,
                                      CUgraphExecUpdateResultInfo *info);
@@ -117,10 +155,8 @@ inline size_t lupine_pack_host_source(CUDA_MEMCPY3D &copy) {
 // context cannot go away until the staging buffers it owns have been retired.
 void lupine_server_begin_lifecycle_transaction(conn_t *conn);
 void lupine_server_end_lifecycle_transaction(conn_t *conn);
-void lupine_server_finish_context_destroy(conn_t *conn, CUcontext context,
-                                          CUresult result);
-void lupine_server_finish_context_detach(conn_t *conn, CUcontext context,
-                                         CUresult result);
+void lupine_server_finish_context_teardown(conn_t *conn, CUcontext context,
+                                           bool forget);
 void lupine_server_finish_primary_context(conn_t *conn, CUdevice device,
                                           bool reset, CUresult result);
 void lupine_server_note_created_context(conn_t *conn, CUcontext context,

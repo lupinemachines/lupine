@@ -6605,8 +6605,7 @@ int handle_cuGraphExecUpdate_v2(conn_t *conn) {
         cuGraphExecUpdate_v2(hGraphExec, update_binding.prepared,
                              resultInfo_present ? &resultInfo : nullptr);
 
-  lupine_finish_graph_exec_update(hGraphExec, hGraph, &update_binding,
-                                  return_value,
+  lupine_finish_graph_exec_update(hGraphExec, &update_binding, return_value,
                                   resultInfo_present ? &resultInfo : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
@@ -9246,9 +9245,9 @@ int handle_cuGraphExecUpdate(conn_t *conn) {
         hErrorNode_out_present ? &hErrorNode_out : nullptr,
         updateResult_out_present ? &updateResult_out : nullptr);
 
-  lupine_finish_graph_exec_update(
-      hGraphExec, hGraph, &update_binding, return_value,
-      hErrorNode_out_present ? &hErrorNode_out : nullptr);
+  lupine_finish_graph_exec_update(hGraphExec, &update_binding, return_value,
+                                  hErrorNode_out_present ? &hErrorNode_out
+                                                         : nullptr);
 
   if (rpc_write_start_response(conn, request_id) < 0 ||
       (hErrorNode_out_present &&

@@ -417,8 +417,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
     if update is not None:
         f.write(
             f"  lupine_finish_graph_exec_update({update.graph_exec.name}, "
-            f"{update.graph.name}, &update_binding, return_value, "
-            f"{update_error});\n\n"
+            f"&update_binding, return_value, {update_error});\n\n"
         )
     if sync is not None:
         # Device-to-host copies the call waited for have numbered their pushed
