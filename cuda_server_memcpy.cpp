@@ -2809,6 +2809,7 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
 // behind the client's earlier work on that lane.
 struct lupine_bulk_staging {
   unsigned char *data = nullptr;
+  size_t capacity = 0;
   size_t total = 0;
   size_t landed = 0;
 };
@@ -2817,6 +2818,9 @@ static std::mutex lupine_bulk_staging_mutex;
 static std::condition_variable lupine_bulk_staging_progress;
 static std::unordered_map<uint64_t, lupine_bulk_staging> lupine_bulk_stagings;
 static bool lupine_bulk_connection_lost = false;
+// The largest finished staging buffer, kept mapped: faulting in fresh pages
+// for every copy costs more than the copy into them.
+static lupine_bulk_staging lupine_bulk_spare;
 
 void lupine_server_bulk_connection_lost() {
   std::lock_guard<std::mutex> lock(lupine_bulk_staging_mutex);
@@ -2840,7 +2844,13 @@ int handle_lupineBulkChunk(conn_t *conn) {
     std::lock_guard<std::mutex> lock(lupine_bulk_staging_mutex);
     lupine_bulk_staging &staging = lupine_bulk_stagings[copy_id];
     if (staging.data == nullptr) {
-      staging.data = static_cast<unsigned char *>(malloc(total));
+      if (lupine_bulk_spare.capacity >= total) {
+        staging.data = std::exchange(lupine_bulk_spare.data, nullptr);
+        staging.capacity = std::exchange(lupine_bulk_spare.capacity, 0);
+      } else {
+        staging.data = static_cast<unsigned char *>(malloc(total));
+        staging.capacity = total;
+      }
       if (staging.data == nullptr) {
         std::abort();
       }
@@ -2877,7 +2887,7 @@ int handle_lupineMemcpyHtoDBulk(conn_t *conn) {
   }
 
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  unsigned char *data = nullptr;
+  lupine_bulk_staging staging;
   {
     std::unique_lock<std::mutex> lock(lupine_bulk_staging_mutex);
     lupine_bulk_staging_progress.wait(lock, [&] {
@@ -2888,22 +2898,26 @@ int handle_lupineMemcpyHtoDBulk(conn_t *conn) {
     });
     auto it = lupine_bulk_stagings.find(copy_id);
     if (it != lupine_bulk_stagings.end()) {
-      if (it->second.landed == it->second.total) {
-        data = it->second.data;
-      } else {
-        free(it->second.data);
-      }
+      staging = it->second;
       lupine_bulk_stagings.erase(it);
     }
   }
-  if (data != nullptr && to_host != 0) {
-    memcpy(reinterpret_cast<void *>(destination), data, bytes);
-    result = CUDA_SUCCESS;
-  } else if (data != nullptr) {
-    result =
-        cuMemcpyHtoD_v2(static_cast<CUdeviceptr>(destination), data, bytes);
+  if (staging.data != nullptr && staging.landed == staging.total) {
+    if (to_host != 0) {
+      memcpy(reinterpret_cast<void *>(destination), staging.data, bytes);
+      result = CUDA_SUCCESS;
+    } else {
+      result = cuMemcpyHtoD_v2(static_cast<CUdeviceptr>(destination),
+                               staging.data, bytes);
+    }
   }
-  free(data);
+  {
+    std::lock_guard<std::mutex> lock(lupine_bulk_staging_mutex);
+    if (staging.capacity > lupine_bulk_spare.capacity) {
+      std::swap(staging, lupine_bulk_spare);
+    }
+  }
+  free(staging.data);
   return lupine_write_lifecycle_response(conn, request_id, result);
 }
 
