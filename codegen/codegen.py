@@ -65,6 +65,48 @@ LEGACY_ABI_FUNCTIONS = {
     "cuMemPrefetchAsync",
 }
 
+# Driver functions cuda.h declares that deliberately get no generated shim
+# (hand-written elsewhere or unsupported). Any other function without an
+# annotation is an error, so a new driver API cannot be silently dropped.
+UNANNOTATED_FUNCTIONS = {
+    "cuDeviceGetHostAtomicCapabilities", "cuDeviceGetNvSciSyncAttributes",
+    "cuCtxCreate_v4", "cuCtxSetFlags", "cuModuleLoadFatBinary",
+    "cuModuleGetFunctionCount", "cuModuleEnumerateFunctions",
+    "cuLibraryLoadFromFile", "cuLibraryGetKernelCount",
+    "cuLibraryEnumerateKernels", "cuKernelGetParamCount",
+    "cuDeviceRegisterAsyncNotification",
+    "cuDeviceUnregisterAsyncNotification", "cuMemHostRegister_v2",
+    "cuMemHostUnregister", "cuMemcpyAsync", "cuMemcpyBatchAsync_v2",
+    "cuMemcpy3DBatchAsync_v2", "cuMemcpyWithAttributesAsync",
+    "cuMemcpy3DWithAttributesAsync", "cuMemBatchDecompressAsync",
+    "cuMemGetDefaultMemPool", "cuMemGetMemPool", "cuMemSetMemPool",
+    "cuMulticastCreate", "cuMulticastAddDevice", "cuMulticastBindMem",
+    "cuMulticastBindMem_v2", "cuMulticastBindAddr",
+    "cuMulticastBindAddr_v2", "cuMulticastUnbind",
+    "cuMulticastGetGranularity", "cuLogicalEndpointIdReserve",
+    "cuLogicalEndpointIdRelease", "cuLogicalEndpointCreate",
+    "cuLogicalEndpointAddDevice", "cuLogicalEndpointDestroy",
+    "cuLogicalEndpointBindAddr", "cuLogicalEndpointBindMem",
+    "cuLogicalEndpointUnbind", "cuLogicalEndpointExport",
+    "cuLogicalEndpointImport", "cuLogicalEndpointGetLimits",
+    "cuLogicalEndpointQuery", "cuMemPrefetchBatchAsync",
+    "cuMemDiscardBatchAsync", "cuMemDiscardAndPrefetchBatchAsync",
+    "cuStreamBeginCaptureToCig", "cuStreamEndCaptureToCig",
+    "cuStreamGetCtx_v2", "cuStreamBeginRecaptureToGraph",
+    "cuStreamBeginCaptureToGraph", "cuStreamGetCaptureInfo_v3",
+    "cuFuncGetParamCount", "cuFuncIsLoaded", "cuFuncLoad",
+    "cuLaunchHostFunc_v2", "cuUserObjectCreate", "cuGraphAddNode_v2",
+    "cuGraphNodeGetParams", "cuTensorMapEncodeIm2colWide",
+    "cuDeviceGetP2PAtomicCapabilities", "cuGetProcAddress_v2",
+    "cuCoredumpGetAttribute", "cuCoredumpSetAttribute",
+    "cuCoredumpRegisterStartCallback", "cuCoredumpRegisterCompleteCallback",
+    "cuCoredumpDeregisterStartCallback",
+    "cuCoredumpDeregisterCompleteCallback", "cuGetExportTable",
+    "cuCheckpointProcessGetRestoreThreadId", "cuCheckpointProcessGetState",
+    "cuCheckpointProcessLock", "cuCheckpointProcessCheckpoint",
+    "cuCheckpointProcessRestore", "cuCheckpointProcessUnlock",
+}
+
 # this table is manually generated from the cuda.h headers
 MANUAL_REMAPPINGS = [
     ("cuDeviceTotalMem", "cuDeviceTotalMem_v2"),
@@ -679,7 +721,7 @@ def parse_annotation(
         if line.startswith("@routingkey"):
             parts = line.split()
             if len(parts) < 2:
-                continue
+                raise RuntimeError(f"@routingkey requires a kind: {line.strip()}")
             metadata.routing_kind = parts[1].upper()
             if len(parts) >= 3:
                 metadata.routing_parameter = annotation_param(params, parts[2])
@@ -706,7 +748,7 @@ def parse_annotation(
         if line.startswith("@crossservercopy"):
             parts = line.split()
             if len(parts) < 4:
-                continue
+                raise RuntimeError(f"@crossservercopy requires dst, src and bytes: {line.strip()}")
             stream_arg = next(
                 (arg for arg in parts[4:] if arg.startswith("STREAM:")), None
             )
@@ -756,14 +798,14 @@ def parse_annotation(
             # @deeparray <param> <array_member> <count_member>
             parts = line.split()
             if len(parts) < 4:
-                continue
+                raise RuntimeError(f"@deeparray requires param, array and count: {line.strip()}")
             deep_arrays.setdefault(parts[1], []).append((parts[2], parts[3]))
             continue
         if line.startswith("@param"):
             parts = line.split()
 
             if len(parts) < 3:
-                continue
+                raise RuntimeError(f"@param requires a parameter and a direction: {line.strip()}")
             param = annotation_param(params, parts[1])
             args = parts[3:]
             send = parts[2] == "SEND_ONLY" or parts[2] == "SEND_RECV"
@@ -1198,7 +1240,10 @@ def collect_backend_functions(
         function = by_name.get(name)
         if function is None:
             raise RuntimeError(f"Annotation for {name} not found")
-        metadata = parse_annotation(function.doxygen, function.parameters)
+        try:
+            metadata = parse_annotation(function.doxygen, function.parameters)
+        except Exception as e:
+            raise RuntimeError(f"Error parsing annotation for {name}") from e
         if client_call_templates is not None:
             attach_client_call_template(function, metadata, client_call_templates)
         if string_length_type is not None:
@@ -1867,7 +1912,11 @@ def main():
                 f for f in annotations.namespace.functions if f.name == function.name
             )
         except StopIteration:
-            print(f"Annotation for {function.name} not found")
+            if function.name.format() not in UNANNOTATED_FUNCTIONS:
+                raise RuntimeError(
+                    f"{function.name.format()} has no annotation; annotate it "
+                    "or add it to UNANNOTATED_FUNCTIONS"
+                )
             continue
         try:
             metadata = parse_annotation(
@@ -1892,11 +1941,14 @@ def main():
         name = annotation.name.format()
         if name not in LEGACY_ABI_FUNCTIONS or name in seen:
             continue
-        metadata = parse_annotation(
-            annotation.doxygen,
-            annotation.parameters,
-            disabled_client_non_nullable=True,
-        )
+        try:
+            metadata = parse_annotation(
+                annotation.doxygen,
+                annotation.parameters,
+                disabled_client_non_nullable=True,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Error parsing annotation for {name}") from e
         attach_client_call_template(annotation, metadata, client_call_templates)
         if metadata.disabled_client:
             raise RuntimeError(
