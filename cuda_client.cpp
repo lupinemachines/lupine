@@ -663,7 +663,7 @@ static_assert(sizeof(lupine_wire_attribute_record) == 12);
 template <typename Key>
 static int lupine_read_attributes(conn_t *conn, Key key) {
   uint32_t attribute_count = 0;
-  if (rpc_read_buffer(conn, &attribute_count, sizeof(attribute_count)) < 0 ||
+  if (rpc_read(conn, &attribute_count, sizeof(attribute_count)) < 0 ||
       attribute_count > 64 * 1024) {
     return -1;
   }
@@ -673,7 +673,7 @@ static int lupine_read_attributes(conn_t *conn, Key key) {
   lupine_inline_buf<lupine_wire_attribute_record, 64> buf;
   lupine_wire_attribute_record *records = buf.alloc(attribute_count);
   if (!records ||
-      rpc_read_buffer(conn, records, attribute_count * sizeof(*records)) < 0) {
+      rpc_read(conn, records, attribute_count * sizeof(*records)) < 0) {
     return -1;
   }
   for (uint32_t i = 0; i < attribute_count; ++i) {
@@ -1126,9 +1126,9 @@ static void lupine_prefetch_function_param_layout(CUfunction function,
   CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
   for (;;) {
     size_t offset = 0, size = 0;
-    if (rpc_read_buffer(conn, &offset, sizeof(offset)) < 0 ||
-        rpc_read_buffer(conn, &size, sizeof(size)) < 0 ||
-        rpc_read_buffer(conn, &result, sizeof(result)) < 0) {
+    if (rpc_read(conn, &offset, sizeof(offset)) < 0 ||
+        rpc_read(conn, &size, sizeof(size)) < 0 ||
+        rpc_read(conn, &result, sizeof(result)) < 0) {
       return;
     }
     if (result != CUDA_SUCCESS) {
@@ -5515,7 +5515,7 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
                                  RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hNode, sizeof(hNode)) < 0 ||
       rpc_wait_for_response(conn) < 0 ||
-      rpc_read_buffer(conn, &return_value, sizeof(return_value)) < 0 ||
+      rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
       rpc_read(conn, nodeParams, sizeof(*nodeParams)) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
@@ -5531,8 +5531,8 @@ cuGraphKernelNodeGetParams_v2(CUgraphNode hNode,
     for (;;) {
       size_t param_size = 0;
       CUresult param_result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-      if (rpc_read_buffer(conn, &param_size, sizeof(param_size)) < 0 ||
-          rpc_read_buffer(conn, &param_result, sizeof(param_result)) < 0) {
+      if (rpc_read(conn, &param_size, sizeof(param_size)) < 0 ||
+          rpc_read(conn, &param_result, sizeof(param_result)) < 0) {
         return CUDA_ERROR_DEVICE_UNAVAILABLE;
       }
       if (param_result != CUDA_SUCCESS) {

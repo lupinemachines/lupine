@@ -129,7 +129,7 @@ int lupine_write_captured_stdout(conn_t *conn,
 
 int lupine_read_captured_stdout(conn_t *conn) {
   uint64_t output_size = 0;
-  if (rpc_read_buffer(conn, &output_size, sizeof(output_size)) < 0) {
+  if (rpc_read(conn, &output_size, sizeof(output_size)) < 0) {
     return -1;
   }
   if (output_size == 0) {

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdio.h>
 #include <thread>
 #include <unordered_map>
@@ -225,63 +226,28 @@ static int rpc_server_dispatch(conn_t *conn, int op) {
     return -1;
   }
 
-  const rpc_handler &handler = *found;
-  const char *backend_name = nullptr;
-  int result = -1;
-  switch (handler.backend) {
-  case rpc_backend::cuda:
+  // The registry holds only handlers of backends built into this server.
+  static const char *const kBackendNames[] = {"CUDA", "NVML", "HIP", "NCCL"};
 #ifdef LUPINE_BUILD_CUDA_BACKEND
-  {
-    backend_name = "CUDA";
-    // Bulk sub-requests run under the gate entry of the copy RPC that waits on
-    // them: chunks touch no CUDA state, and readers copy only between that RPC
-    // publishing the copy and it seeing them finish. A gate entry of their own
-    // could block a drain on a caller that never comes. The device-to-host
-    // push lane touches no CUDA state either, and never returns.
-    if (op == LUPINE_RPC_lupineBulkChunk || op == LUPINE_RPC_lupineBulkRead ||
-        op == LUPINE_RPC_lupineDtohPush) {
-      result = handler.handler(conn);
-      break;
-    }
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
+  // Bulk sub-requests run under the gate entry of the copy RPC that waits on
+  // them: chunks touch no CUDA state, and readers copy only between that RPC
+  // publishing the copy and it seeing them finish. A gate entry of their own
+  // could block a drain on a caller that never comes. The device-to-host
+  // push lane touches no CUDA state either, and never returns.
+  std::optional<lupine_checkpoint::cuda_call_guard> guard;
+  if ((found->backend == rpc_backend::cuda ||
+       found->backend == rpc_backend::nccl) &&
+      op != LUPINE_RPC_lupineBulkChunk && op != LUPINE_RPC_lupineBulkRead &&
+      op != LUPINE_RPC_lupineDtohPush) {
+    guard.emplace();
   }
-#else
-    break;
 #endif
-  case rpc_backend::nccl:
-#ifdef LUPINE_BUILD_NCCL_BACKEND
-  {
-    backend_name = "NCCL";
-    lupine_checkpoint::cuda_call_guard guard;
-    result = handler.handler(conn);
-    break;
-  }
-#else
-    break;
-#endif
-  case rpc_backend::nvml:
-#ifdef LUPINE_BUILD_NVML_BACKEND
-    backend_name = "NVML";
-    result = handler.handler(conn);
-#endif
-    break;
-  case rpc_backend::hip:
-#ifdef LUPINE_BUILD_HIP_BACKEND
-    backend_name = "HIP";
-    result = handler.handler(conn);
-#endif
-    break;
-  }
-
+  int result = found->handler(conn);
   if (result >= 0)
     return 0;
-  if (backend_name == nullptr)
-    LUPINE_LOG_ERROR("RPC op " << op << " belongs to a disabled backend.");
-  else
-    LUPINE_LOG_ERROR("Error handling " << backend_name << " request for op "
-                                       << op << ".");
+  LUPINE_LOG_ERROR("Error handling "
+                   << kBackendNames[static_cast<int>(found->backend)]
+                   << " request for op " << op << ".");
   return -1;
 }
 

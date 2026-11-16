@@ -1378,7 +1378,9 @@ int rpc_write_end(conn_t *conn) {
       conn->write_queue[1] =
           rpc_write_cursor(&conn->write_op, sizeof(conn->write_op));
     }
-    result = rpc_http2_write_stream(conn, write_stream_id, conn->write_queue);
+    result =
+        rpc_http2_write_stream(conn, write_stream_id, conn->write_queue.data(),
+                               conn->write_queue.size());
     if (result != 0 && ticketed) {
       --conn->issued_async_sequence;
     }
