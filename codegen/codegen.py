@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from string import Template
 from types import SimpleNamespace
 import argparse
-from collections import namedtuple
 import io
 import os
 import glob
@@ -511,7 +510,6 @@ def collect_server_bindings(path: str, backend: str) -> dict[str, ServerBinding]
 # whose file it lives in, so no API-name prefix is needed to tell them apart.
 CUDA = Backend(
     result="CUresult",
-    invalid_argument="CUDA_ERROR_INVALID_VALUE",
     device_routing_kind="DEVICE",
     # The driver shim links against libcuda, so its handlers call the entry
     # point directly instead of resolving it by name.
@@ -524,7 +522,6 @@ CUDA = Backend(
 
 NVML = Backend(
     result="nvmlReturn_t",
-    invalid_argument="NVML_ERROR_INVALID_ARGUMENT",
     device_routing_kind="NVML_DEVICE",
     symbol_lookup="nvml_symbol",
     lookup_on_all_connections=True,
@@ -534,7 +531,6 @@ NVML = Backend(
 
 HIP = Backend(
     result="hipError_t",
-    invalid_argument="hipErrorInvalidValue",
     device_routing_kind="HIP_DEVICE",
     symbol_lookup="hip_symbol",
     guard_null_conn=True,
@@ -546,7 +542,6 @@ HIP = Backend(
 # fire-and-forget: NCCL only queues them until ncclGroupEnd.
 NCCL = Backend(
     result="ncclResult_t",
-    invalid_argument="ncclInvalidArgument",
     device_routing_kind="DEVICE",
     symbol_lookup="nccl_symbol",
     guard_null_conn=True,
@@ -571,10 +566,24 @@ def annotation_param(params: list[Parameter], name: str) -> Parameter:
         raise NotImplementedError(f"Parameter {name} not found")
 
 
-# Types whose value is an address in one server's library.
-LIBRARY_HANDLES = {
-    "ncclComm_t",
-    "ncclParamHandle_t",
+# The first by-value handle of one of these types selects the connection. A
+# library handle is created on one server and routes every later call there.
+INFERRED_ROUTING = {
+    "nvmlDevice_t": "NVML_DEVICE",
+    "CUdevice": "DEVICE",
+    "CUcontext": "CONTEXT",
+    "CUmodule": "MODULE",
+    "CUlibrary": "LIBRARY",
+    "CUfunction": "FUNCTION",
+    "CUstream": "STREAM",
+    "CUevent": "EVENT",
+    "CUmemoryPool": "MEMORY_POOL",
+    "CUgraph": "GRAPH",
+    "CUgraphNode": "GRAPH_NODE",
+    "CUgraphExec": "GRAPH_EXEC",
+    "CUdeviceptr": "DEVICEPTR",
+    "ncclComm_t": "HANDLE",
+    "ncclParamHandle_t": "HANDLE",
 }
 
 
@@ -584,37 +593,9 @@ def infer_routing_key(
     for param in params:
         if isinstance(param.type, Pointer):
             continue
-        type_name = param.type.format().replace("const ", "").strip()
-        if type_name == "nvmlDevice_t":
-            return "NVML_DEVICE", param
-        if type_name == "CUdevice":
-            return "DEVICE", param
-        if type_name == "CUcontext":
-            return "CONTEXT", param
-        if type_name == "CUmodule":
-            return "MODULE", param
-        if type_name == "CUlibrary":
-            return "LIBRARY", param
-        if type_name == "CUfunction":
-            return "FUNCTION", param
-        if type_name == "CUstream":
-            return "STREAM", param
-        if type_name == "CUevent":
-            return "EVENT", param
-        if type_name == "CUmemoryPool":
-            return "MEMORY_POOL", param
-        if type_name == "CUgraph":
-            return "GRAPH", param
-        if type_name == "CUgraphNode":
-            return "GRAPH_NODE", param
-        if type_name == "CUgraphExec":
-            return "GRAPH_EXEC", param
-        if type_name == "CUdeviceptr":
-            return "DEVICEPTR", param
-        # A library handle is created on one server and routes every later
-        # call there.
-        if type_name in LIBRARY_HANDLES:
-            return "HANDLE", param
+        kind = INFERRED_ROUTING.get(param.type.format().replace("const ", "").strip())
+        if kind is not None:
+            return kind, param
     return None, None
 
 
@@ -846,33 +827,18 @@ def parse_annotation(
                     continue
 
                 if scalar_arg is not None:
-                    # SCALAR[:<owner>]: a pointer-mode scalar, sized by
-                    # SIZE:<expr> when the pointee is void. The owner is the
-                    # handle or descriptor whose pointer mode decides where it
-                    # lives; the call's first parameter when unnamed.
-                    if length_arg or null_terminated or nullable or deref:
+                    # SCALAR:<owner> SIZE:<expr>: the owner's residence
+                    # decides where the scalar lives.
+                    if not send or recv or ":" not in scalar_arg or not size_arg:
                         raise NotImplementedError(
-                            "SCALAR composes only with SIZE"
+                            "SCALAR is SEND_ONLY SCALAR:<owner> SIZE:<expr>"
                         )
-                    owner = (
-                        annotation_param(params, scalar_arg.split(":", 1)[1])
-                        if ":" in scalar_arg
-                        else params[0]
-                    )
-                    width = size_arg.split(":", 1)[1] if size_arg else None
-                    if width is None and param.type.ptr_to.format() in (
-                        "void",
-                        "const void",
-                    ):
-                        raise NotImplementedError("SCALAR on void needs SIZE")
                     operations.append(
                         ScalarOperation(
-                            send=send,
-                            recv=recv,
                             parameter=param,
                             ptr=param.type,
-                            mode=owner,
-                            width=width,
+                            mode=annotation_param(params, scalar_arg.split(":", 1)[1]),
+                            width=size_arg.split(":", 1)[1],
                         )
                     )
                     continue
@@ -1213,32 +1179,6 @@ def write_client_post_call(f, metadata: FunctionAnnotationMetadata):
         f.write("    if (return_value == CUDA_SUCCESS) return_value = lupine_sync_mapped_device_to_host();\n")
 
 
-# The results generated code produces on its own. An entry naming a type rather
-# than a code marks a result that carries no error value.
-ResultCodes = namedtuple(
-    "ResultCodes", "unavailable invalid_device invalid_argument"
-)
-
-RESULT_CODES = {
-    "CUresult": ResultCodes(
-        "CUDA_ERROR_DEVICE_UNAVAILABLE",
-        "CUDA_ERROR_INVALID_DEVICE",
-        "CUDA_ERROR_INVALID_VALUE",
-    ),
-    "hipError_t": ResultCodes(
-        "hipErrorUnknown", "hipErrorInvalidDevice", "hipErrorInvalidValue"
-    ),
-    "nvmlReturn_t": ResultCodes("NVML_ERROR_GPU_IS_LOST", None, "NVML_ERROR_INVALID_ARGUMENT"),
-}
-
-
-def result_code(return_type: str, result: str = "unavailable") -> str:
-    codes = RESULT_CODES.get(return_type)
-    if codes is None:
-        raise NotImplementedError(f"Unknown return type: {return_type}")
-    return getattr(codes, result) or codes.unavailable
-
-
 def collect_backend_functions(
     annotations: ParsedData,
     names=None,
@@ -1564,10 +1504,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 f.write(f"    lupine_route route = {route_expr};\n")
                 if metadata.routing_kind == "DEVICE":
                     f.write("    if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)\n")
-                    invalid = result_code(
-                        function.return_type.format(), "invalid_device"
-                    )
-                    f.write(f"        return {invalid};\n")
+                    f.write("        return CUDA_ERROR_INVALID_DEVICE;\n")
                 for written in metadata.device_writes:
                     f.write(f"    lupine_note_device_write({written.name});\n")
             if metadata.cross_server_copy is not None:
@@ -1637,7 +1574,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                     operation.client_rpc_read(f)
                 f.write(f"        rpc_read(conn, &return_value, sizeof({function.return_type.format()})) < 0 ||\n")
                 f.write("        rpc_read_end(conn) < 0)\n")
-            f.write(f"        return {result_code(function.return_type.format())};\n")
+            f.write("        return CUDA_ERROR_DEVICE_UNAVAILABLE;\n")
             if unanswered_call:
                 f.write("    return_value = CUDA_SUCCESS;\n")
 
@@ -1675,8 +1612,6 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             for function, _, _, _ in functions_with_annotations
         }
         for alias, target in MANUAL_REMAPPINGS:
-            if alias in function_by_name or target not in function_by_name:
-                continue
             target_function = function_by_name[target]
             f.write(f"#ifdef {alias}\n#undef {alias}\n#endif\n")
             f.write(
@@ -1687,24 +1622,14 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 )
             )
             f.write("{\n")
-            call = "{target}({args})".format(
-                target=target,
-                args=", ".join(format_call_args(target_function)),
-            )
-            if target_function.return_type.format() == "void":
-                f.write(f"    {call};\n")
-            else:
-                f.write(f"    return {call};\n")
-            f.write("}\n\n")
+            args = ", ".join(format_call_args(target_function))
+            f.write(f"    return {target}({args});\n}}\n\n")
         map_entries = {}
         for function, _, _, metadata in functions_with_annotations:
             fname = function.name.format()
             map_entries.setdefault(fname, (fname, metadata.guard))
         # write manual overrides
         for x, y in MANUAL_REMAPPINGS:
-            if y not in function_by_name:
-                print(f"Skipping manual remapping {x} -> {y}")
-                continue
             map_entries.setdefault(x, (y, None))
         for alias, target, guard in FUNCTION_MAP_ALIASES:
             if target in function_by_name:
@@ -1738,10 +1663,9 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
 
 
 def write_cuda_server(
-    server_functions_with_annotations,
+    functions_with_annotations,
     legacy_abi_functions,
     server_bindings,
-    annotation_only_server_functions,
 ):
     with open("gen_cuda_server.cpp", "w") as f:
         f.write(
@@ -1755,10 +1679,7 @@ def write_cuda_server(
             '#include "device_stdout.h"\n'
             '#include "rpc.h"\n\n'
         )
-        annotation_only_functions = (
-            legacy_abi_functions + annotation_only_server_functions
-        )
-        for function, _, _, _ in annotation_only_functions:
+        for function, _, _, _ in legacy_abi_functions:
             name = function.name.format()
             f.write(f"#ifdef {name}\n#undef {name}\n#endif\n")
             params = ", ".join(format_function_params(function))
@@ -1766,7 +1687,7 @@ def write_cuda_server(
                 f'extern "C" {function.return_type.format()} CUDAAPI '
                 f"{name}({params});\n\n"
             )
-        for function, _, operations, metadata in server_functions_with_annotations:
+        for function, _, operations, metadata in functions_with_annotations:
             if (
                 metadata.disabled_server
                 or unsupported(function, metadata)
@@ -1806,6 +1727,65 @@ def write_registry(registry_entries, guarded_declarations, guarded_handlers):
                 hip_guarded_handlers="\n".join(guarded_handlers["HIP"]),
             )
         )
+
+
+def write_forwarding_backend(backend, target, functions, remappings):
+    header = "// Generated by codegen.py. Do not edit by hand.\n\n"
+    with open(f"gen_{target}_client.inc", "w") as f:
+        f.write(header)
+        for function, _, operations, metadata in functions:
+            if metadata.disabled_client and metadata.disabled_server:
+                continue
+            if metadata.guard is not None:
+                f.write(f"#if {metadata.guard}\n")
+            if unsupported(function, metadata):
+                write_stub(f, backend, function)
+            else:
+                write_client_rpc(f, backend, function, operations, metadata)
+                write_client_wrapper(f, backend, function, operations, metadata)
+            if metadata.guard is not None:
+                f.write("#endif\n\n")
+        client_functions = {
+            function.name.format(): function
+            for function, _, _, metadata in functions
+            if not metadata.disabled_client
+        }
+        for alias, target_name in remappings:
+            target_function = client_functions.get(target_name)
+            if alias in client_functions or target_function is None:
+                continue
+            f.write(f"#ifdef {alias}\n#undef {alias}\n#endif\n")
+            f.write(
+                'extern "C" {return_type} {alias}({params}) {{\n'
+                "  return {target}({args});\n}}\n\n".format(
+                    return_type=target_function.return_type.format(),
+                    alias=alias,
+                    params=", ".join(format_function_params(target_function)),
+                    target=target_name,
+                    args=", ".join(format_call_args(target_function)),
+                )
+            )
+        write_profiling_aliases(f, backend, functions)
+
+    served = [
+        (function, operations, metadata)
+        for function, _, operations, metadata in functions
+        if not metadata.disabled_server and not unsupported(function, metadata)
+    ]
+    with open(f"gen_{target}_server.inc", "w") as f:
+        f.write(header)
+        write_versioned_struct_helper(f, functions)
+        for function, operations, metadata in served:
+            write_server_handler(f, backend, function, operations, metadata)
+
+    with open(f"gen_{target}_server.h", "w") as f:
+        f.write(header)
+        for function, _, metadata in served:
+            if metadata.guard is not None:
+                f.write(f"#if {metadata.guard}\n")
+            f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
+            if metadata.guard is not None:
+                f.write("#endif\n")
 
 
 def main():
@@ -1907,30 +1887,10 @@ def main():
     # Generate explicitly listed legacy ABI entry points that cuda.h hides
     # behind macros. A legacy entry point may still use @disabled server when
     # its server handler needs lifecycle management beyond ordinary marshalling.
-    server_functions_with_annotations = list(functions_with_annotations)
-    server_function_names = {
-        function.name.format()
-        for function, _, _, _ in server_functions_with_annotations
-    }
     legacy_abi_functions = []
-    annotation_only_server_functions = []
     for annotation in cuda_annotations.namespace.functions:
         name = annotation.name.format()
-        if name in server_function_names:
-            continue
-        directives = annotation_directives(annotation.doxygen)
-        legacy_abi = name in LEGACY_ABI_FUNCTIONS
-        client_disabled = any(
-            directive.startswith("@disabled client")
-            for directive in directives
-        )
-        if not legacy_abi and not client_disabled:
-            continue
-        if not legacy_abi and any(
-            directive.startswith("@disabled")
-            and not directive.startswith("@disabled client")
-            for directive in directives
-        ):
+        if name not in LEGACY_ABI_FUNCTIONS or name in seen:
             continue
         metadata = parse_annotation(
             annotation.doxygen,
@@ -1938,23 +1898,14 @@ def main():
             disabled_client_non_nullable=True,
         )
         attach_client_call_template(annotation, metadata, client_call_templates)
-        annotated_function = (
-            annotation,
-            annotation,
-            metadata.operations,
-            metadata,
+        if metadata.disabled_client:
+            raise RuntimeError(
+                f"{name}: legacy ABI function cannot disable the client"
+            )
+        legacy_abi_functions.append(
+            (annotation, annotation, metadata.operations, metadata)
         )
-        if legacy_abi:
-            if metadata.disabled_client:
-                raise RuntimeError(
-                    f"{name}: legacy ABI function cannot disable the client"
-                )
-            functions_with_annotations.append(annotated_function)
-            legacy_abi_functions.append(annotated_function)
-        server_functions_with_annotations.append(annotated_function)
-        if not legacy_abi:
-            annotation_only_server_functions.append(annotated_function)
-        server_function_names.add(name)
+    functions_with_annotations += legacy_abi_functions
 
     attached_client_call_templates = {
         function.name.format()
@@ -2014,157 +1965,40 @@ def main():
         nccl_functions_with_annotations,
     )
 
-    with open("gen_nvml_client.inc", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function, _, operations, metadata in nvml_functions_with_annotations:
-            if metadata.disabled_client and metadata.disabled_server:
-                continue
-            write_client_rpc(f, NVML, function, operations, metadata)
-            write_client_wrapper(f, NVML, function, operations, metadata)
-
-    with open("gen_nvml_server.inc", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function, _, operations, metadata in nvml_functions_with_annotations:
-            if metadata.disabled_server:
-                continue
-            write_server_handler(f, NVML, function, operations, metadata)
-
-    with open("gen_nvml_server.h", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function, _, _, metadata in nvml_functions_with_annotations:
-            if metadata.disabled_server:
-                continue
-            f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
-
-    with open("gen_hip_client.inc", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        hip_client_functions = {}
-        for function, _, operations, metadata in hip_functions_with_annotations:
-            if metadata.disabled_client and metadata.disabled_server:
-                continue
-            if not metadata.disabled_client:
-                hip_client_functions[function.name.format()] = function
-                if unsupported(function, metadata):
-                    write_stub(f, HIP, function)
-                    continue
-            write_client_rpc(f, HIP, function, operations, metadata)
-            write_client_wrapper(f, HIP, function, operations, metadata)
-        for alias, target in HIP_MANUAL_REMAPPINGS:
-            if alias in hip_client_functions:
-                continue
-            target_function = hip_client_functions.get(target)
-            if target_function is None:
-                continue
-            f.write(f"#ifdef {alias}\n#undef {alias}\n#endif\n")
-            f.write(
-                'extern "C" {return_type} {alias}({params}) {{\n'.format(
-                    return_type=target_function.return_type.format(),
-                    alias=alias,
-                    params=", ".join(format_function_params(target_function)),
-                )
-            )
-            f.write(
-                "  return {target}({args});\n}}\n\n".format(
-                    target=target,
-                    args=", ".join(format_call_args(target_function)),
-                )
-            )
-
-    with open("gen_hip_server.inc", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function, _, operations, metadata in hip_functions_with_annotations:
-            if metadata.disabled_server or unsupported(function, metadata):
-                continue
-            write_server_handler(f, HIP, function, operations, metadata)
-
-    with open("gen_hip_server.h", "w") as f:
-        f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-        for function, _, _, metadata in hip_functions_with_annotations:
-            if metadata.disabled_server or unsupported(function, metadata):
-                continue
-            f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
-
-    for backend, target, functions in ((NCCL, "nccl", nccl_functions_with_annotations),):
-        with open(f"gen_{target}_client.inc", "w") as f:
-            f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-            for function, _, operations, metadata in functions:
-                if metadata.disabled_client and metadata.disabled_server:
-                    continue
-                if metadata.guard is not None:
-                    f.write(f"#if {metadata.guard}\n")
-                if unsupported(function, metadata):
-                    write_stub(f, backend, function)
-                else:
-                    write_client_rpc(f, backend, function, operations, metadata)
-                    write_client_wrapper(f, backend, function, operations, metadata)
-                if metadata.guard is not None:
-                    f.write("#endif\n\n")
-            write_profiling_aliases(f, backend, functions)
-
-        with open(f"gen_{target}_server.inc", "w") as f:
-            f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-            write_versioned_struct_helper(f, functions)
-            for function, _, operations, metadata in functions:
-                if metadata.disabled_server or unsupported(function, metadata):
-                    continue
-                write_server_handler(f, backend, function, operations, metadata)
-
-        with open(f"gen_{target}_server.h", "w") as f:
-            f.write("// Generated by codegen.py. Do not edit by hand.\n\n")
-            for function, _, _, metadata in functions:
-                if metadata.disabled_server or unsupported(function, metadata):
-                    continue
-                if metadata.guard is not None:
-                    f.write(f"#if {metadata.guard}\n")
-                f.write(f"int handle_{function.name.format()}(conn_t *conn);\n")
-                if metadata.guard is not None:
-                    f.write("#endif\n")
+    forwarding_backends = (
+        (NVML, "nvml", nvml_functions_with_annotations, ()),
+        (HIP, "hip", hip_functions_with_annotations, HIP_MANUAL_REMAPPINGS),
+        (NCCL, "nccl", nccl_functions_with_annotations, ()),
+    )
+    for backend, target, functions, remappings in forwarding_backends:
+        write_forwarding_backend(backend, target, functions, remappings)
 
     write_cuda_client(functions_with_annotations, legacy_abi_functions)
 
     write_cuda_server(
-        server_functions_with_annotations,
+        functions_with_annotations,
         legacy_abi_functions,
         server_bindings,
-        annotation_only_server_functions,
     )
 
     generated_bindings = [
         ServerBinding(
             function.name.format(),
-            "CUDA",
+            backend,
             f"handle_{function.name.format()}",
             metadata.guard,
         )
-        for function, _, _, metadata in server_functions_with_annotations
+        for backend, functions in (
+            ("CUDA", functions_with_annotations),
+            ("NVML", nvml_functions_with_annotations),
+            ("HIP", hip_functions_with_annotations),
+            ("NCCL", nccl_functions_with_annotations),
+        )
+        for function, _, _, metadata in functions
         if not metadata.disabled_server
         and not unsupported(function, metadata)
         and function.name.format() not in server_bindings
     ]
-    generated_bindings.extend(
-        ServerBinding(name, "NVML", f"handle_{name}")
-        for name in NVML_RPC_FUNCTIONS
-        if name not in server_bindings
-    )
-    generated_bindings.extend(
-        ServerBinding(function.name.format(), "HIP", f"handle_{function.name.format()}")
-        for function, _, _, metadata in hip_functions_with_annotations
-        if not metadata.disabled_server
-        and not unsupported(function, metadata)
-        and function.name.format() not in server_bindings
-    )
-    generated_bindings.extend(
-        ServerBinding(
-            function.name.format(),
-            "NCCL",
-            f"handle_{function.name.format()}",
-            metadata.guard,
-        )
-        for function, _, _, metadata in nccl_functions_with_annotations
-        if not metadata.disabled_server
-        and not unsupported(function, metadata)
-        and function.name.format() not in server_bindings
-    )
     bindings = list(server_bindings.values()) + generated_bindings
 
     operations_by_id = {}

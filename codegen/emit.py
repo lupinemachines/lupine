@@ -8,16 +8,13 @@ nothing here asks which one it is writing.
 from dataclasses import dataclass
 import textwrap
 
-from cxxheaderparser.types import Function, FunctionType, Parameter, Pointer
+from cxxheaderparser.types import Function, Pointer
 
 from ops import (
     status_only,
     unanswered,
-    ArrayOperation,
-    InOutCountOperation,
     NullableArrayOperation,
     NullableOperation,
-    NullTerminatedOperation,
     VersionedStructOperation,
 )
 
@@ -25,7 +22,6 @@ from ops import (
 @dataclass(frozen=True)
 class Backend:
     result: str
-    invalid_argument: str
     device_routing_kind: str
     symbol_lookup: str
     # A route may have no server behind it.
@@ -148,19 +144,7 @@ def write_stub(f, backend: Backend, function):
 
 
 def format_function_params(function: Function) -> list[str]:
-    params = []
-    for param in function.parameters:
-        if param.name and isinstance(param.type, Pointer) and isinstance(
-            param.type.ptr_to, FunctionType
-        ):
-            params.append(param.type.format_decl(param.name))
-        elif param.name:
-            params.append(
-                f"{param.type.format()} {param.name}"
-            )
-        else:
-            params.append(param.type.format())
-    return params
+    return [f"{param.type.format()} {param.name}" for param in function.parameters]
 
 
 def format_call_args(function: Function) -> list[str]:
@@ -214,8 +198,7 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
         f.write(f", {params}")
     f.write(") {\n")
     if result != "void":
-        initial_value = "rpc_error()" if result == backend.result else "{}"
-        f.write(f"  {result} return_value = {initial_value};\n")
+        f.write(f"  {result} return_value = rpc_error();\n")
     for operation in operations:
         f.write(operation.client_declaration())
 
@@ -247,10 +230,8 @@ def write_client_rpc(f, backend: Backend, function, operations, metadata):
     write_cleared_fields(f, metadata, "    ", "->")
     if result == backend.result:
         f.write("    return rpc_error();\n")
-    elif result == "void":
-        f.write("    return;\n")
     else:
-        f.write("    return {};\n")
+        f.write("    return;\n")
     f.write("  }\n")
     write_cleared_fields(f, metadata, "  ", "->")
     if result != "void":
@@ -293,46 +274,18 @@ def write_client_wrapper(f, backend: Backend, function, operations, metadata):
             f"        return lupine_rpc_{name}(conn, {', '.join(lambda_args)});\n"
             "      })"
         )
-    elif metadata.routing_kind == backend.device_routing_kind:
-        if metadata.routing_parameter is None:
-            raise RuntimeError(
-                f"{name}: {metadata.routing_kind} routing requires a parameter"
-            )
-        f.write(
-            "  conn_t *conn = connection_for_device("
-            f"&{metadata.routing_parameter.name});\n"
-        )
-    elif metadata.routing_kind == "EVENT":
-        if metadata.routing_parameter is None:
-            raise RuntimeError(f"{name}: EVENT routing requires a parameter")
-        f.write(
-            "  conn_t *conn = connection_for_event("
-            f"{metadata.routing_parameter.name});\n"
-        )
-    elif metadata.routing_kind == "HANDLE":
-        if metadata.routing_parameter is None:
-            raise RuntimeError(f"{name}: HANDLE routing requires a parameter")
-        f.write(
-            "  conn_t *conn = connection_for_handle("
-            f"{metadata.routing_parameter.name});\n"
-        )
-    elif metadata.routing_kind == "STREAM":
-        if metadata.routing_parameter is None:
-            raise RuntimeError(f"{name}: STREAM routing requires a parameter")
-        f.write(
-            "  conn_t *conn = connection_for_stream("
-            f"{metadata.routing_parameter.name});\n"
-        )
     elif metadata.routing_kind is None:
         f.write("  conn_t *conn = connection();\n")
+    elif metadata.routing_kind in (backend.device_routing_kind, "EVENT", "HANDLE", "STREAM"):
+        kind = metadata.routing_kind
+        selector = "device" if kind == backend.device_routing_kind else kind.lower()
+        # A device is selected by address: the selector rewrites the handle.
+        argument = ("&" if selector == "device" else "") + metadata.routing_parameter.name
+        f.write(f"  conn_t *conn = connection_for_{selector}({argument});\n")
     else:
         raise RuntimeError(f"{name}: unsupported routing key {metadata.routing_kind}")
     template = metadata.client_call_template
-    if template is not None and result == "void":
-        f.write(textwrap.indent(template.before_call, "  "))
-        f.write(f"  {call};\n")
-        f.write(textwrap.indent(template.after_call, "  "))
-    elif template is not None:
+    if template is not None:
         f.write(textwrap.indent(template.before_call, "  "))
         f.write(f"  {result} return_value = {call};\n")
         f.write(textwrap.indent(template.after_call, "  "))
@@ -441,12 +394,7 @@ def write_server_handler(f, backend: Backend, function, operations, metadata):
         else:
             f.write("  if (fn == nullptr)\n")
             f.write("    return -1;\n")
-            if result == "void":
-                f.write(f"  fn({args});\n\n")
-            else:
-                f.write(f"  return_value = fn({args});\n\n")
-    elif result == "void":
-        f.write(f"  {entry}({args});\n\n")
+            f.write(f"  fn({args});\n\n")
     elif REQUEST_ORDER.get(name) == "soft":
         f.write(
             "  return_value = lupine_stream_query_unsettled(conn, hStream)\n"
@@ -544,8 +492,6 @@ def write_profiling_aliases(f, backend: Backend, functions_with_annotations):
         return
     for function, _, _, metadata in functions_with_annotations:
         name = function.name.format()
-        if name.startswith("lupine"):
-            continue
         if metadata.guard is not None:
             f.write(f"#if {metadata.guard}\n")
         params = ", ".join(format_function_params(function))

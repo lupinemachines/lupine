@@ -24,15 +24,12 @@ several arrays may share one count.
 `ON_ERROR` may be added to a `RECV_ONLY NULLABLE LENGTH` buffer when CUDA only
 writes the buffer on failure. The generated response preserves the caller's
 buffer on success.
-`SCALAR` marks a pointer that a library's residence argument places on the host
-or on the device (`ncclRedOpCreatePreMulSum`'s `scalar`). The residence belongs to the
-call's first parameter, or to the parameter named by `SCALAR:<param>`. The
+`SCALAR:<owner> SIZE:<expr>` marks a SEND_ONLY pointer that the `<owner>` parameter
+(`ncclRedOpCreatePreMulSum`'s `residence`) places on the host or on the device. The
 generated client asks `scalar_on_host(<owner>, "<name>")` and sends the value
 in host mode or the address in device mode, with the width leading on the wire
-so the server can tell which. `SEND_RECV SCALAR` brings a host value back, and
-`RECV_ONLY SCALAR` only brings it back. A `void` scalar carries its width as
-`SIZE:<expr>`, a C++ expression the client evaluates over the call's arguments
-(`SIZE:nccl_type_width(datatype)`).
+so the server can tell which. `SIZE:<expr>` is a C++ expression the client
+evaluates over the call's arguments (`SIZE:nccl_type_width(datatype)`).
 
 `VERSIONED` marks an optional pointer to a size-led, append-only configuration
 struct (NCCL's `ncclConfig_t`). The caller's `size` bytes travel, then each
