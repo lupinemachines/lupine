@@ -800,6 +800,19 @@ int h2_on_stream_close_callback(nghttp2_session *, int32_t stream_id, uint32_t,
   if (transport->encoding == &stream) {
     stream.encoder = nullptr; // Its encoding thread frees it.
   }
+  // A reader that took exactly the body's last bytes has not seen its frame
+  // end yet. Settle that here: the decoder does not outlive the stream, and a
+  // read after close must still tell a complete body from a truncated one.
+  if (stream.decoder != nullptr && !stream.decoder_finished) {
+    ZSTD_inBuffer source{stream.pending.data(), stream.pending.size(),
+                         stream.pending_offset};
+    unsigned char none;
+    ZSTD_outBuffer output{&none, 0, 0};
+    stream.decoder_finished =
+        ZSTD_decompressStream(stream.decoder, &output, &source) == 0 &&
+        source.pos == source.size;
+  }
+  stream.decoder_full = false;
   h2_release_codecs(stream);
   // The entry stays: lookup recreates missing streams, so a late reader would
   // wait on a fresh stream forever instead of seeing it closed.
