@@ -2211,8 +2211,8 @@ void test_rpc_write_queue_grows() {
   conn_t zero_length = {};
   require(rpc_write(&zero_length, nullptr, 0) == 0,
           "zero-length rpc_write failed");
-  require(zero_length.write_queue.empty(),
-          "zero-length write consumed a queue entry");
+  require(rpc_open_write_builder() == nullptr,
+          "zero-length write opened a builder");
 
   h2_pair pair;
   init_pair(&pair);
@@ -2243,99 +2243,11 @@ void test_rpc_write_queue_grows() {
     require(rpc_write(&pair.client, &values[i], sizeof(values[i])) == 0,
             "large queue rpc_write failed");
   }
-  require(pair.client.write_queue.size() == kCount + 2,
+  require(rpc_open_write_builder()->write_queue.size() == kCount + 2,
           "large queue count mismatch");
   require(rpc_write_end(&pair.client) > 0, "large queue write_end failed");
   reader.join();
   require(received == values, "large queue payload mismatch");
-}
-
-void test_rpc_write_buffer_uses_fixed_allocation() {
-  h2_pair pair;
-  init_pair(&pair);
-  require(rpc_write_start_response(&pair.client, 21) == 0,
-          "buffered response start failed");
-  uint8_t first = 17;
-  uint64_t second = 19;
-  uint32_t third = 23;
-  require(rpc_write_buffer(&pair.client, sizeof(first), alignof(uint8_t)) ==
-              nullptr,
-          "rpc_write_buffer accepted data without a reservation");
-  require(rpc_copy_alloc(&pair.client, 20) == 0,
-          "fixed copy allocation failed");
-  require(rpc_copy_alloc(&pair.client, sizeof(first)) < 0,
-          "rpc_copy_alloc replaced an active reservation");
-  auto *first_buffer = static_cast<uint8_t *>(
-      rpc_write_buffer(&pair.client, sizeof(first), alignof(uint8_t)));
-  require(first_buffer != nullptr, "fixed first buffer failed");
-  *first_buffer = first;
-  auto *second_buffer = static_cast<uint64_t *>(
-      rpc_write_buffer(&pair.client, sizeof(second), alignof(uint64_t)));
-  require(second_buffer != nullptr, "fixed second buffer failed");
-  *second_buffer = second;
-  auto *direct = static_cast<uint32_t *>(
-      rpc_write_buffer(&pair.client, sizeof(third), alignof(uint32_t)));
-  require(direct != nullptr, "direct write buffer allocation failed");
-  *direct = third;
-  require(rpc_write_buffer(&pair.client, 1, alignof(uint8_t)) == nullptr,
-          "rpc_write_buffer exceeded its fixed allocation");
-  require(pair.client.write_queue.size() == 5,
-          "fixed copy queue count mismatch");
-  require(pair.client.write_copy_offset == 20, "fixed copy cursor mismatch");
-  require(pair.client.write_queue[2].data == pair.client.write_copy_buffer &&
-              pair.client.write_queue[3].data ==
-                  pair.client.write_copy_buffer + 8 &&
-              pair.client.write_queue[4].data ==
-                  pair.client.write_copy_buffer + 16,
-          "fixed copy queued the wrong spans");
-  require(*pair.client.write_queue[2].data == first &&
-              *reinterpret_cast<const uint64_t *>(
-                  pair.client.write_queue[3].data) == second &&
-              *reinterpret_cast<const uint32_t *>(
-                  pair.client.write_queue[4].data) == third,
-          "fixed copy changed buffered values");
-  require(rpc_write_end(&pair.client) == 21, "fixed response write end failed");
-  require(pair.client.write_copy_buffer == nullptr,
-          "rpc_write_end retained the copy buffer");
-
-  require(rpc_copy_alloc(&pair.client, 32) == 0,
-          "stale copy allocation failed");
-  require(rpc_write_start_response(&pair.client, 22) == 0,
-          "response start after abort failed");
-  require(pair.client.write_copy_buffer == nullptr,
-          "response reset retained a stale copy buffer");
-  require(rpc_copy_alloc(&pair.client, sizeof(second)) == 0,
-          "copy allocation after reset failed");
-  require(rpc_write_end(&pair.client) == 22, "reset response write end failed");
-}
-
-void test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy() {
-  {
-    h2_pair pair;
-    init_pair(&pair);
-    require(rpc_write_start_response(&pair.client, 25) == 0,
-            "failed transport response start failed");
-    int value = 23;
-    require(rpc_copy_alloc(&pair.client, sizeof(value)) == 0,
-            "failed transport copy allocation failed");
-    auto *buffer = static_cast<int *>(
-        rpc_write_buffer(&pair.client, sizeof(value), alignof(int)));
-    require(buffer != nullptr, "failed transport buffer allocation failed");
-    *buffer = value;
-    rpc_close_transport_socket(&pair.client);
-    require(rpc_write_end(&pair.client) < 0,
-            "failed transport unexpectedly sent copied data");
-    require(pair.client.write_copy_buffer == nullptr,
-            "transport failure retained the copy buffer");
-  }
-
-  conn_t conn = {};
-  rpc_conn_init(&conn, LUPINE_INVALID_SOCKET, 0);
-  require(rpc_copy_alloc(&conn, 64) == 0, "destroy copy allocation failed");
-  rpc_conn_destroy(&conn);
-  require(conn.write_copy_buffer == nullptr && conn.write_copy_capacity == 0 &&
-              conn.write_copy_offset == 0,
-          "rpc_conn_destroy retained the copy buffer");
 }
 
 void test_rpc_small_payload_round_trip() {
@@ -2374,7 +2286,8 @@ void test_rpc_small_payload_round_trip() {
           "payload prefix write failed");
   require(rpc_write(&pair.client, payload.data(), payload.size()) == 0,
           "payload write failed");
-  const rpc_write_cursor &payload_cursor = pair.client.write_queue.back();
+  const rpc_write_cursor &payload_cursor =
+      rpc_open_write_builder()->write_queue.back();
   require(payload_cursor.data ==
                   reinterpret_cast<const unsigned char *>(payload.data()) &&
               payload_cursor.size == payload.size(),
@@ -2491,21 +2404,13 @@ void test_rpc_request_nested_in_response_builder() {
 
     require(rpc_write_start_response(&pair.server, outer_id) == 0,
             "outer response start failed");
-    require(rpc_copy_alloc(&pair.server, 2 * sizeof(int)) == 0,
-            "outer response copy allocation failed");
-    auto *before = static_cast<int *>(
-        rpc_write_buffer(&pair.server, sizeof(int), alignof(int)));
-    require(before != nullptr, "outer response first buffer failed");
-    *before = kBefore;
+    require(rpc_write(&pair.server, &kBefore, sizeof(kBefore)) == 0,
+            "outer response first write failed");
 
     require(rpc_write_start_request(&pair.server, kNestedOp) == 0,
             "request nested in response start failed");
-    require(rpc_copy_alloc(&pair.server, sizeof(int)) == 0,
-            "nested request copy allocation failed");
-    auto *nested_value = static_cast<int *>(
-        rpc_write_buffer(&pair.server, sizeof(int), alignof(int)));
-    require(nested_value != nullptr, "nested request buffer failed");
-    *nested_value = kNestedValue;
+    require(rpc_write(&pair.server, &kNestedValue, sizeof(kNestedValue)) == 0,
+            "nested request write failed");
     require(rpc_wait_for_response(&pair.server) == 0,
             "nested request response wait failed");
     int nested_response = 0;
@@ -2516,10 +2421,8 @@ void test_rpc_request_nested_in_response_builder() {
             "nested response payload mismatch");
     require(rpc_read_end(&pair.server) > 0, "nested response read end failed");
 
-    auto *after = static_cast<int *>(
-        rpc_write_buffer(&pair.server, sizeof(int), alignof(int)));
-    require(after != nullptr, "outer response second buffer failed");
-    *after = kAfter;
+    require(rpc_write(&pair.server, &kAfter, sizeof(kAfter)) == 0,
+            "outer response second write failed");
     require(rpc_write_end(&pair.server) == outer_id,
             "outer response write end failed");
     rpc_unbind_http2_stream(&pair.server);
@@ -2653,8 +2556,7 @@ void test_async_prefix_connection_wide_marker() {
   init_pair(&pair);
   for (int i = 0; i < 2; ++i) {
     require(rpc_write_start_request(&pair.client, 101) == 0 &&
-                rpc_write_end(&pair.client) > 0 &&
-                pair.client.write_ticket == uint64_t(i),
+                rpc_write_end(&pair.client) > 0,
             "enqueue failed");
   }
   int32_t lane = rpc_http2_accept_stream(&pair.server);
@@ -2689,10 +2591,9 @@ void test_async_prefix_builder_wait_orders_overlap() {
   std::thread caller([&] {
     require(rpc_write_start_request(&pair.client, 101) == 0,
             "blocked request start failed");
-    require(pair.client.write_dependency == 1,
+    require(rpc_open_write_builder()->write_dependency == 1,
             "a request that waited for the builder missed the overlap");
-    require(rpc_write_end(&pair.client) > 0 && pair.client.write_ticket == 1,
-            "blocked request enqueue failed");
+    require(rpc_write_end(&pair.client) > 0, "blocked request enqueue failed");
     require(rpc_write_start_request(&pair.client, 102) == 0 &&
                 rpc_write_end(&pair.client) > 0,
             "following request enqueue failed");
@@ -2960,8 +2861,6 @@ int main() {
   RUN_CASE(test_rpc_read_uses_w_offset());
 #endif
   RUN_CASE(test_rpc_write_queue_grows());
-  RUN_CASE(test_rpc_write_buffer_uses_fixed_allocation());
-  RUN_CASE(test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy());
   RUN_CASE(test_rpc_small_payload_round_trip());
   RUN_CASE(test_rpc_repeated_responses_on_lane());
   RUN_CASE(test_rpc_request_nested_in_response_builder());
