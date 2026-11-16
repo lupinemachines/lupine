@@ -103,11 +103,7 @@ static void lupine_note_inferred_primary_context(lupine_staging_state &state,
   if (context == nullptr || state.created_contexts.count(context) != 0) {
     return;
   }
-  try {
-    state.primary_contexts[device] = context;
-  } catch (...) {
-    LUPINE_LOG_ERROR("Failed to infer primary CUDA context for staging");
-  }
+  state.primary_contexts[device] = context;
 }
 
 static CUresult lupine_current_htod_context(conn_t *conn,
@@ -1017,8 +1013,8 @@ static CUgraphNode lupine_graph_push_node(CUgraphNode copy) {
   }
   lupine_inline_buf<CUgraphNode, 8> dep_buf;
   CUgraphNode *dependents = dep_buf.alloc(count);
-  if (!dependents || cuGraphNodeGetDependentNodes_v2(copy, dependents, nullptr,
-                                                     &count) != CUDA_SUCCESS) {
+  if (cuGraphNodeGetDependentNodes_v2(copy, dependents, nullptr, &count) !=
+      CUDA_SUCCESS) {
     return nullptr;
   }
   for (size_t i = 0; i < count; ++i) {
@@ -1278,9 +1274,6 @@ public:
     }
 
     void *storage = allocate_storage();
-    if (storage == nullptr) {
-      return CUDA_ERROR_OUT_OF_MEMORY;
-    }
     CUresult result = cuMemHostRegister(storage, storage_bytes,
                                         CU_MEMHOSTREGISTER_PORTABLE |
                                             CU_MEMHOSTREGISTER_DEVICEMAP);
@@ -1414,9 +1407,8 @@ public:
 private:
   static constexpr size_t storage_alignment = 4096;
 
-  static void *allocate_storage() noexcept {
-    return ::operator new(storage_bytes, std::align_val_t(storage_alignment),
-                          std::nothrow);
+  static void *allocate_storage() {
+    return ::operator new(storage_bytes, std::align_val_t(storage_alignment));
   }
 
   static void free_storage(void *storage) noexcept {
@@ -1459,11 +1451,7 @@ struct lupine_htod_capture_events {
 // capture. Each HtoD owns a pair to keep its fork/join edges independent.
 static CUresult lupine_make_htod_capture_events(
     CUcontext context, std::shared_ptr<lupine_htod_capture_events> &events) {
-  try {
-    events = std::make_shared<lupine_htod_capture_events>(context);
-  } catch (...) {
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
+  events = std::make_shared<lupine_htod_capture_events>(context);
   CUresult result = cuEventCreate(&events->fork, CU_EVENT_DISABLE_TIMING);
   if (result == CUDA_SUCCESS) {
     result = cuEventCreate(&events->join, CU_EVENT_DISABLE_TIMING);
@@ -1484,14 +1472,9 @@ lupine_prepare_htod_side_effect_ring(lupine_staging_state &state,
     if (existing != state.htod_rings.end()) {
       ring = existing->second;
     } else {
-      try {
-        ring =
-            std::make_shared<lupine_htod_side_effect_ring>(state.conn, context);
-        state.htod_rings.emplace(context, ring);
-      } catch (...) {
-        result = CUDA_ERROR_OUT_OF_MEMORY;
-        return nullptr;
-      }
+      ring =
+          std::make_shared<lupine_htod_side_effect_ring>(state.conn, context);
+      state.htod_rings.emplace(context, ring);
     }
   }
   result = ring->prepare();
@@ -1530,14 +1513,10 @@ static std::shared_ptr<lupine_htod_graph_state> lupine_htod_graph_state_for(
   if (auto it = reg.entries.find(capture_id); it != reg.entries.end()) {
     return it->second;
   }
-  try {
-    auto state = std::make_shared<lupine_htod_graph_state>(ring);
-    reg.entries.emplace(capture_id, state);
-    reg.count.store(reg.entries.size(), std::memory_order_release);
-    return state;
-  } catch (...) {
-    return nullptr;
-  }
+  auto state = std::make_shared<lupine_htod_graph_state>(ring);
+  reg.entries.emplace(capture_id, state);
+  reg.count.store(reg.entries.size(), std::memory_order_release);
+  return state;
 }
 
 struct lupine_htod_exec_resources {
@@ -1580,9 +1559,7 @@ static CUresult lupine_get_graph_nodes(CUgraph graph,
   if (result != CUDA_SUCCESS || *count == 0) {
     return result;
   }
-  CUgraphNode *nodes = buf.alloc(*count);
-  return nodes == nullptr ? CUDA_ERROR_OUT_OF_MEMORY
-                          : cuGraphGetNodes(graph, nodes, count);
+  return cuGraphGetNodes(graph, buf.alloc(*count), count);
 }
 
 CUresult
@@ -1615,16 +1592,10 @@ lupine_prepare_graph_exec_resources(CUgraph graph,
   }
 
   auto captured_ring = captured_execution->ring;
-  std::shared_ptr<lupine_htod_side_effect_ring> ring;
-  std::shared_ptr<lupine_htod_graph_execution> execution;
-  try {
-    ring = std::make_shared<lupine_htod_side_effect_ring>(
-        captured_ring->connection(), captured_ring->context());
-    execution = std::make_shared<lupine_htod_graph_execution>(
-        ring, captured_execution->callback_count);
-  } catch (...) {
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
+  auto ring = std::make_shared<lupine_htod_side_effect_ring>(
+      captured_ring->connection(), captured_ring->context());
+  auto execution = std::make_shared<lupine_htod_graph_execution>(
+      ring, captured_execution->callback_count);
   result = ring->prepare();
   if (result != CUDA_SUCCESS) {
     return result;
@@ -1645,12 +1616,8 @@ lupine_prepare_graph_exec_resources(CUgraph graph,
       callback_event_sets;
   size_t expected_copy_nodes = 0;
   size_t rebound_copy_nodes = 0;
-  try {
-    callbacks.reserve(captured_execution->callback_count);
-    events.reserve(captured_execution->callback_count * 2);
-  } catch (...) {
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
+  callbacks.reserve(captured_execution->callback_count);
+  events.reserve(captured_execution->callback_count * 2);
 
   // Rebind host-node data first; this also establishes the event mapping used
   // by the record/wait nodes in the second pass.
@@ -1691,25 +1658,16 @@ lupine_prepare_graph_exec_resources(CUgraph graph,
       if (result != CUDA_SUCCESS) {
         return result;
       }
-      try {
-        callback_event_sets.emplace(captured->capture_events.get(),
-                                    callback_events);
-        events.emplace(captured->capture_events->fork, callback_events->fork);
-        events.emplace(captured->capture_events->join, callback_events->join);
-      } catch (...) {
-        return CUDA_ERROR_OUT_OF_MEMORY;
-      }
+      callback_event_sets.emplace(captured->capture_events.get(),
+                                  callback_events);
+      events.emplace(captured->capture_events->fork, callback_events->fork);
+      events.emplace(captured->capture_events->join, callback_events->join);
     }
-    std::shared_ptr<lupine_htod_callback_data> callback;
-    try {
-      callback = std::make_shared<lupine_htod_callback_data>(
-          lupine_htod_callback_data{ring, captured->copy, captured->fragment,
-                                    execution, callback_events});
-      ++expected_copy_nodes;
-      callbacks.push_back(callback);
-    } catch (...) {
-      return CUDA_ERROR_OUT_OF_MEMORY;
-    }
+    auto callback = std::make_shared<lupine_htod_callback_data>(
+        lupine_htod_callback_data{ring, captured->copy, captured->fragment,
+                                  execution, callback_events});
+    ++expected_copy_nodes;
+    callbacks.push_back(callback);
     params.userData = callback.get();
     result = cuGraphHostNodeSetParams(node, &params);
     if (result != CUDA_SUCCESS) {
@@ -1794,20 +1752,16 @@ lupine_prepare_graph_exec_resources(CUgraph graph,
       rebound_copy_nodes != expected_copy_nodes) {
     return CUDA_ERROR_INVALID_VALUE;
   }
-  try {
-    auto resources = std::make_shared<lupine_htod_exec_resources>();
-    resources->callbacks = callbacks;
-    resources->original = binding->original;
-    resources->prepared = binding->prepared;
-    resources->context = ring->context();
-    binding->resources = std::move(resources);
-    if (prepared_in_place) {
-      std::lock_guard<std::mutex> lock(captured_state->callbacks_mutex);
-      captured_state->execution = execution;
-      captured_state->callbacks = std::move(callbacks);
-    }
-  } catch (...) {
-    return CUDA_ERROR_OUT_OF_MEMORY;
+  auto resources = std::make_shared<lupine_htod_exec_resources>();
+  resources->callbacks = callbacks;
+  resources->original = binding->original;
+  resources->prepared = binding->prepared;
+  resources->context = ring->context();
+  binding->resources = std::move(resources);
+  if (prepared_in_place) {
+    std::lock_guard<std::mutex> lock(captured_state->callbacks_mutex);
+    captured_state->execution = execution;
+    captured_state->callbacks = std::move(callbacks);
   }
   return CUDA_SUCCESS;
 }
@@ -1817,11 +1771,7 @@ CUresult lupine_associate_graph_exec_resources(
   if (binding.resources == nullptr) {
     return CUDA_SUCCESS;
   }
-  try {
-    lupine_htod_exec_resource_map().insert_or_assign(exec, binding.resources);
-  } catch (...) {
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
+  lupine_htod_exec_resource_map().insert_or_assign(exec, binding.resources);
   return CUDA_SUCCESS;
 }
 
@@ -1977,36 +1927,23 @@ static CUresult lupine_enqueue_htod_callback(
     CUstream stream) {
   if (graph_state != nullptr) {
     ++graph_state->execution->callback_count;
-    std::shared_ptr<lupine_htod_callback_data> callback;
-    try {
-      callback =
-          std::make_shared<lupine_htod_callback_data>(lupine_htod_callback_data{
-              ring, copy, fragment, graph_state->execution, capture_events});
-    } catch (...) {
-      return CUDA_ERROR_OUT_OF_MEMORY;
-    }
-    auto *callback_ptr = callback.get();
-    try {
+    auto callback =
+        std::make_shared<lupine_htod_callback_data>(lupine_htod_callback_data{
+            ring, copy, fragment, graph_state->execution, capture_events});
+    {
       std::lock_guard<std::mutex> lock(graph_state->callbacks_mutex);
-      graph_state->callbacks.push_back(std::move(callback));
-    } catch (...) {
-      return CUDA_ERROR_OUT_OF_MEMORY;
+      graph_state->callbacks.push_back(callback);
     }
     return cuLaunchHostFunc(stream, lupine_htod_side_effect_callback,
-                            callback_ptr);
+                            callback.get());
   }
 
-  auto callback = std::unique_ptr<lupine_htod_callback_data>(
-      new (std::nothrow)
-          lupine_htod_callback_data{ring, copy, fragment, nullptr, nullptr});
-  if (callback == nullptr) {
-    return CUDA_ERROR_OUT_OF_MEMORY;
-  }
-  auto *callback_ptr = callback.get();
+  auto *callback =
+      new lupine_htod_callback_data{ring, copy, fragment, nullptr, nullptr};
   CUresult result =
-      cuLaunchHostFunc(stream, lupine_htod_side_effect_callback, callback_ptr);
-  if (result == CUDA_SUCCESS) {
-    (void)callback.release();
+      cuLaunchHostFunc(stream, lupine_htod_side_effect_callback, callback);
+  if (result != CUDA_SUCCESS) {
+    delete callback;
   }
   return result;
 }
@@ -2137,7 +2074,7 @@ static CUresult lupine_enqueue_client_htod_copy(
   std::shared_ptr<lupine_htod_capture_events> capture_events;
   if (capture_id != 0) {
     graph_state = lupine_htod_graph_state_for(capture_id, ring);
-    if (graph_state == nullptr || graph_state->execution->ring != ring) {
+    if (graph_state->execution->ring != ring) {
       return CUDA_ERROR_INVALID_CONTEXT;
     }
     result = lupine_make_htod_capture_events(context, capture_events);
@@ -2440,11 +2377,7 @@ bool lupine_server_initialize_connection(conn_t *conn) {
   if (conn == nullptr) {
     return false;
   }
-  std::unique_ptr<lupine_staging_state> state(new (std::nothrow)
-                                                  lupine_staging_state());
-  if (state == nullptr) {
-    return false;
-  }
+  auto state = std::make_unique<lupine_staging_state>();
   state->conn = conn;
   auto &reg = lupine_staging_states();
   std::lock_guard<std::mutex> lock(reg.mutex);
@@ -2479,10 +2412,8 @@ void lupine_server_end_lifecycle_transaction(conn_t *conn) {
   }
 }
 
-template <typename Fn>
-static void lupine_server_note_context_impl(conn_t *conn, CUcontext context,
-                                            CUresult result, const char *err,
-                                            Fn record) {
+void lupine_server_note_context(conn_t *conn, CUcontext context,
+                                CUresult result, CUdevice primary_device) {
   auto *state = (result == CUDA_SUCCESS && context != nullptr)
                     ? lupine_staging_state_for(conn)
                     : nullptr;
@@ -2490,27 +2421,11 @@ static void lupine_server_note_context_impl(conn_t *conn, CUcontext context,
     return;
   }
   std::lock_guard<std::mutex> lock(state->mutex);
-  try {
-    record(*state);
-  } catch (...) {
-    LUPINE_LOG_ERROR(err);
+  if (primary_device < 0) {
+    state->created_contexts.insert(context);
+  } else {
+    state->primary_contexts[primary_device] = context;
   }
-}
-
-void lupine_server_note_primary_context(conn_t *conn, CUdevice device,
-                                        CUcontext context, CUresult result) {
-  lupine_server_note_context_impl(
-      conn, context, result,
-      "Failed to remember primary CUDA context for staging",
-      [&](lupine_staging_state &s) { s.primary_contexts[device] = context; });
-}
-
-void lupine_server_note_created_context(conn_t *conn, CUcontext context,
-                                        CUresult result) {
-  lupine_server_note_context_impl(
-      conn, context, result,
-      "Failed to remember created CUDA context for staging",
-      [&](lupine_staging_state &s) { s.created_contexts.insert(context); });
 }
 
 static void lupine_extract_context_staging_locked(
@@ -3092,51 +3007,16 @@ static int lupine_write_dtoh_chunk_response(conn_t *conn, int request_id,
 template <typename CopyChunk>
 static int lupine_write_dtoh_chunks(conn_t *conn, int request_id, size_t bytes,
                                     size_t offset, CopyChunk copy_chunk) {
+  // One handler runs on a lane thread at a time, so its staging is reused.
+  static thread_local std::unique_ptr<unsigned char[]> staging;
+  static thread_local size_t staging_capacity = 0;
   size_t staging_size =
       std::min(bytes - offset, (size_t)LUPINE_RPC_TRANSFER_CHUNK_BYTES);
-  unsigned char inline_host[64 * 1024];
-  struct reusable_staging_buffer {
-    std::unique_ptr<unsigned char[]> data;
-    size_t capacity = 0;
-    bool in_use = false;
-  };
-  static thread_local reusable_staging_buffer tls_staging;
-  struct staging_lease {
-    reusable_staging_buffer *tls = nullptr;
-    ~staging_lease() {
-      if (tls != nullptr) {
-        tls->in_use = false;
-      }
-    }
-  } lease;
-  std::unique_ptr<unsigned char[]> fallback_host;
-  unsigned char *host = nullptr;
-  if (staging_size != 0) {
-    if (staging_size <= sizeof(inline_host)) {
-      host = inline_host;
-    } else if (!tls_staging.in_use) {
-      if (tls_staging.capacity < staging_size) {
-        std::unique_ptr<unsigned char[]> grown(
-            new (std::nothrow) unsigned char[staging_size]);
-        if (!grown) {
-          return lupine_write_dtoh_chunk_response(
-              conn, request_id, CUDA_ERROR_OUT_OF_MEMORY, nullptr, 0);
-        }
-        tls_staging.data = std::move(grown);
-        tls_staging.capacity = staging_size;
-      }
-      tls_staging.in_use = true;
-      lease.tls = &tls_staging;
-      host = tls_staging.data.get();
-    } else {
-      fallback_host.reset(new (std::nothrow) unsigned char[staging_size]);
-      if (!fallback_host) {
-        return lupine_write_dtoh_chunk_response(
-            conn, request_id, CUDA_ERROR_OUT_OF_MEMORY, nullptr, 0);
-      }
-      host = fallback_host.get();
-    }
+  if (staging_size > staging_capacity) {
+    staging.reset(new unsigned char[staging_size]);
+    staging_capacity = staging_size;
   }
+  unsigned char *host = staging.get();
 
   do {
     size_t chunk = std::min(bytes - offset, staging_size);
@@ -3382,12 +3262,7 @@ lupine_prepare_fetch_stream(conn_t *conn, CUresult *out_result) {
     return nullptr;
   }
   std::shared_ptr<lupine_fetch_stream> created(
-      new (std::nothrow) lupine_fetch_stream{context, raw_stream});
-  if (created == nullptr) {
-    (void)cuStreamDestroy_v2(raw_stream);
-    *out_result = CUDA_ERROR_OUT_OF_MEMORY;
-    return nullptr;
-  }
+      new lupine_fetch_stream{context, raw_stream});
 
   std::lock_guard<std::mutex> lock(state->mutex);
   if (state->teardown_contexts.count(context) != 0 ||
@@ -3494,11 +3369,6 @@ static int lupine_handle_memcpy3d(conn_t *conn, bool async, bool peer,
   lupine_inline_buf<unsigned char, 64 * 1024> host_buf;
   unsigned char *host_data = nullptr;
   size_t host_size = 0;
-  auto allocate_host = [&](size_t size) -> bool {
-    host_size = size;
-    host_data = host_buf.alloc(size);
-    return host_data != nullptr;
-  };
   if ((direction == LUPINE_COPY_DIRECTION_HTOD && !peer &&
        rpc_read(conn, &is_server_authoritative,
                 sizeof(is_server_authoritative)) < 0) ||
@@ -3506,17 +3376,16 @@ static int lupine_handle_memcpy3d(conn_t *conn, bool async, bool peer,
     return -1;
   }
   if (direction == LUPINE_COPY_DIRECTION_HTOD && peer) {
-    if (!allocate_host(lupine_pack_host_source(copy)) ||
-        (host_size != 0 && rpc_read(conn, host_data, host_size) < 0)) {
+    host_size = lupine_pack_host_source(copy);
+    host_data = host_buf.alloc(host_size);
+    if (host_size != 0 && rpc_read(conn, host_data, host_size) < 0) {
       return -1;
     }
     copy.srcHost = host_data;
   }
   if (direction == LUPINE_COPY_DIRECTION_DTOH) {
-    if (!allocate_host(lupine_pack_host_destination(copy))) {
-      return -1;
-    }
-    copy.dstHost = host_data;
+    host_size = lupine_pack_host_destination(copy);
+    copy.dstHost = host_data = host_buf.alloc(host_size);
   }
   int request_id = -1;
   if ((async && rpc_read(conn, &stream, sizeof(stream)) < 0) ||

@@ -196,13 +196,7 @@ bool lupine_server_checkpoint_child_start(lupine_socket_t connection,
   state.handler_installed = true;
   signal_write_fd = state.signal_pipe[1];
 
-  try {
-    state.signal_thread = std::thread([&state] { wait_for_shutdown(state); });
-  } catch (...) {
-    teardown_signal_pipe(state);
-    unload_provider(state.provider);
-    return false;
-  }
+  state.signal_thread = std::thread([&state] { wait_for_shutdown(state); });
 
   state.started = true;
   return true;

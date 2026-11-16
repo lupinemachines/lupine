@@ -7,7 +7,6 @@
 #include <cuda.h>
 
 #include <memory>
-#include <new>
 #include <string>
 #include <vector>
 
@@ -29,20 +28,11 @@ struct lupine_inline_buf {
   T *ptr = stack;
 
   T *alloc(size_t n) {
-    if (n <= cap) {
-      ptr = cap == N ? stack : heap.get();
-      return ptr;
+    if (n > cap) {
+      heap.reset(new T[n]);
+      cap = n;
     }
-    if (n > SIZE_MAX / sizeof(T)) {
-      return nullptr;
-    }
-    heap.reset(new (std::nothrow) T[n]);
-    if (!heap) {
-      cap = N;
-      return nullptr;
-    }
-    cap = n;
-    return ptr = heap.get();
+    return ptr = cap == N ? stack : heap.get();
   }
 
   void reset() {
@@ -159,10 +149,9 @@ void lupine_server_finish_context_teardown(conn_t *conn, CUcontext context,
                                            bool forget);
 void lupine_server_finish_primary_context(conn_t *conn, CUdevice device,
                                           bool reset, CUresult result);
-void lupine_server_note_created_context(conn_t *conn, CUcontext context,
-                                        CUresult result);
-void lupine_server_note_primary_context(conn_t *conn, CUdevice device,
-                                        CUcontext context, CUresult result);
+// A negative device notes a created context, otherwise that device's primary.
+void lupine_server_note_context(conn_t *conn, CUcontext context,
+                                CUresult result, CUdevice primary_device);
 void lupine_server_prepare_context_destroy(conn_t *conn, CUcontext context);
 void lupine_server_prepare_primary_context(conn_t *conn, CUdevice device);
 CUresult lupine_server_prepare_htod_capture(conn_t *conn);
