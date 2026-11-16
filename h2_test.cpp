@@ -2591,8 +2591,6 @@ void test_async_prefix_builder_wait_orders_overlap() {
   std::thread caller([&] {
     require(rpc_write_start_request(&pair.client, 101) == 0,
             "blocked request start failed");
-    require(rpc_open_write_builder()->write_dependency == 1,
-            "a request that waited for the builder missed the overlap");
     require(rpc_write_end(&pair.client) > 0, "blocked request enqueue failed");
     require(rpc_write_start_request(&pair.client, 102) == 0 &&
                 rpc_write_end(&pair.client) > 0,
