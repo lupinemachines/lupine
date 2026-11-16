@@ -1585,16 +1585,17 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
 } // namespace
 
 int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
-                          size_t size) {
+                          size_t size, size_t *ahead) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   auto *out = static_cast<unsigned char *>(data);
   size_t copied = 0;
+  size_t capacity = size + (ahead != nullptr ? *ahead : 0);
   pthread_mutex_lock(&transport->session_mutex);
   h2_stream &stream = h2_get_stream(transport, stream_id);
-  while (!stream.local_out.empty() && copied < size) {
+  while (!stream.local_out.empty() && copied < capacity) {
     h2_buffer &front = stream.local_out.front();
     size_t available = front.data.size() - front.offset;
-    size_t chunk = std::min(available, size - copied);
+    size_t chunk = std::min(available, capacity - copied);
     memcpy(out + copied, front.data.data() + front.offset, chunk);
     front.offset += chunk;
     copied += chunk;
@@ -1607,7 +1608,10 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
       stream.local_out.pop_front();
     }
   }
-  if (copied == size) {
+  if (ahead != nullptr) {
+    *ahead = copied > size ? copied - size : 0;
+  }
+  if (copied >= size) {
     pthread_mutex_unlock(&transport->session_mutex);
     return 0;
   }

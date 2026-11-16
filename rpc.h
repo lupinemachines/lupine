@@ -447,8 +447,10 @@ constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;
 // arena slot cannot help; the launcher must fetch the advertised bundle.
 constexpr int LUPINE_RPC_HTTP2_CLIENT_MISMATCH = -4;
 // 0 once all `size` bytes arrived, else LUPINE_RPC_HTTP2_STREAM_END or -1.
+// With `ahead`, also takes up to *ahead already staged bytes into data + size
+// and sets *ahead to how many it took; it never waits for them.
 extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
-                                 size_t size);
+                                 size_t size, size_t *ahead = nullptr);
 extern int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
                                   rpc_write_cursor *cursors, size_t count);
 static inline int
