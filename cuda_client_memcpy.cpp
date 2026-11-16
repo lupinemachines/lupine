@@ -37,6 +37,8 @@
 #include "device_stdout.h"
 #include "events.h"
 #include "managed_advice.h"
+#include "nvcomp_htod.h"
+#include <zstd.h>
 
 // Defined with the capture wrappers in cuda_client.cpp; nonzero only while this
 // client holds a stream capture open, where a pageable copy stays a graph node.
@@ -4612,6 +4614,57 @@ struct lupine_bulk_chunk_header {
   uint64_t bytes;
 };
 
+// Frames one chunk for GPU decompression into `body`. Zero when framing would
+// not leave room for the server's per-frame arrays, so it travels as is.
+static size_t lupine_frame_bulk_chunk(const unsigned char *data, size_t bytes,
+                                      std::vector<unsigned char> &body) {
+  static const size_t frame_bytes = [] {
+    long kib = atol(getenv("LUPINE_NVCOMP_HTOD"));
+    return static_cast<size_t>(kib > 0 ? kib : 64) * 1024;
+  }();
+  static const uint32_t codec = [] {
+    const char *name = getenv("LUPINE_NVCOMP_HTOD_CODEC");
+    return name != nullptr && strcmp(name, "lz4") == 0 &&
+                   lupine_lz4().compress != nullptr
+               ? LUPINE_FRAME_LZ4
+               : LUPINE_FRAME_ZSTD;
+  }();
+  thread_local std::unique_ptr<ZSTD_CCtx, size_t (*)(ZSTD_CCtx *)> owner(
+      ZSTD_createCCtx(), ZSTD_freeCCtx);
+  auto frames = static_cast<uint32_t>((bytes + frame_bytes - 1) / frame_bytes);
+  size_t limit = bytes - frames * LUPINE_FRAMED_ARRAY_BYTES_PER_FRAME;
+  size_t written = lupine_framed_payload_offset(frames);
+  body.resize(written + frames * lupine_framed_align(
+                                     ZSTD_compressBound(frame_bytes) + 64));
+  lupine_framed_chunk_header header = {
+      bytes, frames, static_cast<uint32_t>(frame_bytes), codec, 0};
+  memcpy(body.data(), &header, sizeof(header));
+  for (uint32_t i = 0; i < frames; ++i) {
+    size_t offset = size_t{i} * frame_bytes;
+    size_t length = std::min(frame_bytes, bytes - offset);
+    size_t compressed =
+        codec == LUPINE_FRAME_LZ4
+            ? static_cast<size_t>(lupine_lz4().compress(
+                  reinterpret_cast<const char *>(data + offset),
+                  reinterpret_cast<char *>(body.data() + written),
+                  static_cast<int>(length),
+                  static_cast<int>(body.size() - written), 1))
+            : ZSTD_compressCCtx(owner.get(), body.data() + written,
+                                body.size() - written, data + offset, length,
+                                -1);
+    if (compressed == 0 || ZSTD_isError(compressed)) {
+      return 0;
+    }
+    auto size = static_cast<uint32_t>(compressed);
+    memcpy(body.data() + sizeof(header) + 4 * size_t{i}, &size, sizeof(size));
+    written += lupine_framed_align(compressed);
+    if (written >= limit) {
+      return 0;
+    }
+  }
+  return written;
+}
+
 // The copy into `destination` (device memory, or with to_host the server's
 // copy of a host allocation) is requested on the caller's lane before any
 // chunk is queued: it stays FIFO behind the caller's earlier work on that lane,
@@ -4646,8 +4699,10 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
                   LUPINE_RPC_TRANSFER_CHUNK_BYTES;
   std::atomic<size_t> next_chunk{0};
   std::atomic<bool> queued{true};
+  static const bool framing = getenv("LUPINE_NVCOMP_HTOD") != nullptr;
   auto feed = [&](unsigned int lane) {
     const auto *data = static_cast<const unsigned char *>(source);
+    thread_local std::vector<unsigned char> body;
     for (size_t chunk = next_chunk.fetch_add(1); chunk < chunks && queued;
          chunk = next_chunk.fetch_add(1)) {
       size_t offset = chunk * LUPINE_RPC_TRANSFER_CHUNK_BYTES;
@@ -4662,6 +4717,14 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
                                          chunk_bytes};
       rpc_write_cursor cursors[] = {{&header, sizeof(header)},
                                     {data + offset, chunk_bytes}};
+      // The transport copies the body before rpc_http2_write_stream returns,
+      // so the thread's buffer is free for its next chunk.
+      if (size_t framed = framing ? lupine_frame_bulk_chunk(data + offset,
+                                                            chunk_bytes, body)
+                                  : 0) {
+        header.bytes = framed | LUPINE_BULK_CHUNK_FRAMED;
+        cursors[1] = {body.data(), framed};
+      }
       if (rpc_http2_write_stream(lanes->conn[lane], lanes->stream[lane],
                                  cursors, 2) < 0) {
         queued = false;

@@ -14,6 +14,10 @@ else()
 endif()
 option(LUPINE_BUILD_SERVER "Build the RPC server"
        ${LUPINE_BUILD_SERVER_DEFAULT})
+option(LUPINE_NVCOMP
+       "Exploratory: decode framed striped host-to-device chunks on the GPU with nvCOMP (loaded at run time)"
+       OFF)
+set(LUPINE_NVCOMP_INCLUDE_DIR "" CACHE PATH "nvCOMP include directory")
 set(LUPINE_CUDA_DRIVER_LIBRARY "" CACHE FILEPATH
     "CUDA driver library or stub to use without a complete CUDA Toolkit")
 set(LUPINE_CUDA_VERSION_OVERRIDE "" CACHE STRING
@@ -613,6 +617,15 @@ if(LUPINE_BUILD_SERVER)
         target_link_libraries(lupine_cuda_server PRIVATE
             lupine_rpc_core lupine_cuda_checkpoint lupine_ipc
             lupine_cuda_smemcpy_module CUDA::cuda_driver)
+        if(LUPINE_NVCOMP)
+            target_sources(lupine_cuda_server PRIVATE
+                ${CMAKE_CURRENT_SOURCE_DIR}/nvcomp_htod.cpp)
+            target_include_directories(lupine_cuda_server PRIVATE
+                ${LUPINE_NVCOMP_INCLUDE_DIR})
+            target_compile_definitions(lupine_cuda_server PRIVATE
+                LUPINE_NVCOMP)
+            target_link_libraries(lupine_cuda_server PRIVATE ${CMAKE_DL_LIBS})
+        endif()
 
         if(LUPINE_BUILD_NCCL)
             add_library(lupine_nccl_server STATIC

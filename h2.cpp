@@ -133,6 +133,7 @@ struct h2_transport {
   void *tls = nullptr; // Borrowed SSL* (owned by conn_t).
   bool server = false;
   h2_encoding send_encoding = h2_encoding::zstd;
+  h2_encoding accept_encoding = h2_encoding::zstd;
   bool request_received = false;
   bool request_handled = false;
   int request_status = 0;
@@ -1451,16 +1452,18 @@ void *h2_read_main(void *arg) {
   }
 }
 
-// Request headers for a client body in `encoding`, asking for responses in the
-// same coding.
-size_t h2_encoding_headers(h2_encoding encoding, nghttp2_nv *headers) {
-  if (encoding == h2_encoding::identity) {
-    headers[0] = h2_nv(kAcceptEncodingHeader, kIdentityEncoding);
-    return 1;
+// Request headers for a client body in `send`, asking for responses in
+// `accept`.
+size_t h2_encoding_headers(const h2_transport *transport, nghttp2_nv *headers) {
+  size_t count = 0;
+  if (transport->send_encoding == h2_encoding::zstd) {
+    headers[count++] = h2_nv(kContentEncodingHeader, kZstdEncoding);
   }
-  headers[0] = h2_nv(kContentEncodingHeader, kZstdEncoding);
-  headers[1] = h2_nv(kAcceptEncodingHeader, kZstdEncoding);
-  return 2;
+  headers[count++] = h2_nv(kAcceptEncodingHeader,
+                           transport->accept_encoding == h2_encoding::zstd
+                               ? kZstdEncoding
+                               : kIdentityEncoding);
+  return count;
 }
 
 int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
@@ -1480,7 +1483,7 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
   headers[count++] = h2_nv(":path", "/");
   headers[count++] = h2_nv(":authority", "lupine");
   if (!probe) {
-    count += h2_encoding_headers(transport->send_encoding, &headers[count]);
+    count += h2_encoding_headers(transport, &headers[count]);
     const char *client_etag = getenv("LUPINE_CLIENT_ETAG");
     const char *client_platform = getenv("LUPINE_CLIENT_PLATFORM");
     const char *session_id = getenv("LUPINE_SESSION");
@@ -1547,6 +1550,13 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   transport->server = server;
   const char *compression = getenv("LUPINE_COMPRESSION");
   if (!server && compression != nullptr && strcmp(compression, "none") == 0) {
+    transport->send_encoding = h2_encoding::identity;
+    transport->accept_encoding = h2_encoding::identity;
+  }
+  // Bulk connections have no arena. Their host-to-device chunks arrive already
+  // framed for GPU decompression, so the body is not compressed again.
+  if (!server && !probe && conn->va_size == 0 &&
+      getenv("LUPINE_NVCOMP_HTOD") != nullptr) {
     transport->send_encoding = h2_encoding::identity;
   }
   if (metadata != nullptr && metadata->backend_version != nullptr) {
@@ -1810,7 +1820,7 @@ int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id) {
       h2_nv(":path", "/"),
       h2_nv(":authority", "lupine"),
   };
-  size_t count = 4 + h2_encoding_headers(transport->send_encoding, &headers[4]);
+  size_t count = 4 + h2_encoding_headers(transport, &headers[4]);
   int32_t stream_id =
       nghttp2_submit_headers(transport->session, NGHTTP2_FLAG_NONE, -1, nullptr,
                              headers.data(), count, nullptr);

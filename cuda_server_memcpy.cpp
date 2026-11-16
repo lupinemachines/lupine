@@ -8,6 +8,7 @@
 #include "cuda_compat.h"
 #include "cuda_server.h"
 #include "cuda_server_memcpy.h"
+#include "nvcomp_htod.h"
 #include "ops/smemcpy_module.h"
 #include "rpc.h"
 
@@ -30,6 +31,7 @@
 #include <vector>
 
 #include "lupine_log.h"
+#include <zstd.h>
 
 extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *context,
                                            unsigned int flags, CUdevice device);
@@ -2818,7 +2820,36 @@ struct lupine_bulk_chunk {
   size_t offset = 0;
   size_t bytes = 0;
   lupine_dtoh_staging buffer;
+  // Still framed in `buffer`, for the copy to decode on the device.
+  bool framed = false;
 };
+
+static void lupine_decode_framed_chunk(const unsigned char *body,
+                                       unsigned char *destination) {
+  thread_local std::unique_ptr<ZSTD_DCtx, size_t (*)(ZSTD_DCtx *)> owner(
+      ZSTD_createDCtx(), ZSTD_freeDCtx);
+  lupine_framed_chunk_header header;
+  memcpy(&header, body, sizeof(header));
+  size_t source = lupine_framed_payload_offset(header.frames);
+  for (uint32_t i = 0; i < header.frames; ++i) {
+    uint32_t compressed;
+    memcpy(&compressed, body + sizeof(header) + 4 * size_t{i},
+           sizeof(compressed));
+    size_t offset = size_t{i} * header.frame_bytes;
+    size_t decoded =
+        std::min<size_t>(header.frame_bytes, header.decoded - offset);
+    if (header.codec == LUPINE_FRAME_LZ4) {
+      lupine_lz4().decompress(reinterpret_cast<const char *>(body + source),
+                              reinterpret_cast<char *>(destination + offset),
+                              static_cast<int>(compressed),
+                              static_cast<int>(decoded));
+    } else {
+      ZSTD_decompressDCtx(owner.get(), destination + offset, decoded,
+                          body + source, compressed);
+    }
+    source += lupine_framed_align(compressed);
+  }
+}
 
 struct lupine_bulk_staging {
   bool published = false;
@@ -2854,6 +2885,10 @@ int handle_lupineBulkChunk(conn_t *conn) {
       rpc_read(conn, &bytes, sizeof(bytes)) < 0) {
     return -1;
   }
+  bool framed = (bytes & LUPINE_BULK_CHUNK_FRAMED) != 0;
+  bytes &= ~LUPINE_BULK_CHUNK_FRAMED;
+  bool decode_here = false;
+  thread_local std::vector<unsigned char> framed_body;
   unsigned char *destination = nullptr;
   lupine_dtoh_staging buffer;
   {
@@ -2874,18 +2909,44 @@ int handle_lupineBulkChunk(conn_t *conn) {
       staging.free.pop_back();
       destination = static_cast<unsigned char *>(buffer.host);
     }
+    // A framed chunk is smaller than the range it decodes to and stays framed
+    // in its buffer for a device-side decode; anywhere else it is decoded
+    // here.
+    decode_here = framed && destination != nullptr &&
+                  (staging.host != nullptr || !lupine_nvcomp_htod_enabled());
   }
-  if ((destination != nullptr ? rpc_read(conn, destination, bytes)
-                              : rpc_drain(conn, bytes)) < 0 ||
+  if (decode_here) {
+    framed_body.resize(bytes);
+  }
+  if ((destination == nullptr
+           ? rpc_drain(conn, bytes)
+           : rpc_read(conn, decode_here ? framed_body.data() : destination,
+                      bytes)) < 0 ||
       rpc_read_end(conn) < 0) {
     return -1;
+  }
+  size_t decoded = bytes;
+  if (framed && destination != nullptr) {
+    lupine_framed_chunk_header header;
+    memcpy(&header, decode_here ? framed_body.data() : destination,
+           sizeof(header));
+    decoded = header.decoded;
+    if (decode_here) {
+      lupine_decode_framed_chunk(framed_body.data(), destination);
+    }
   }
   std::lock_guard<std::mutex> lock(lupine_bulk_staging_mutex);
   auto it = lupine_bulk_stagings.find(copy_id);
   if (it != lupine_bulk_stagings.end()) {
-    it->second.received += bytes;
+    // Without a destination a framed chunk's decoded size is unknown; the
+    // copy has failed already and only waits for the chunk count to drain.
+    it->second.received +=
+        destination != nullptr || !framed
+            ? decoded
+            : std::min<size_t>(LUPINE_RPC_TRANSFER_CHUNK_BYTES, total - offset);
     if (buffer.host != nullptr) {
-      it->second.landed.push_back({offset, bytes, buffer});
+      it->second.landed.push_back(
+          {offset, decoded, buffer, framed && !decode_here});
     }
     lupine_bulk_staging_progress.notify_all();
   }
@@ -2932,7 +2993,30 @@ int handle_lupineMemcpyHtoDBulk(conn_t *conn) {
   staging.discard = result != CUDA_SUCCESS;
   staging.free = std::move(buffers);
   lupine_bulk_staging_progress.notify_all();
+  lupine_nvcomp_htod *device_decode = nullptr;
+  bool device_decode_tried = false;
+  std::vector<void *> released;
+  // Buffers queued for a device-side decode come back once it has run.
+  auto give_back = [&]() {
+    for (void *tag : released) {
+      auto *held = static_cast<lupine_dtoh_staging *>(tag);
+      staging.free.push_back(*held);
+      delete held;
+    }
+    released.clear();
+    lupine_bulk_staging_progress.notify_all();
+  };
   while (true) {
+    if (device_decode != nullptr && staging.landed.empty() &&
+        !lupine_nvcomp_htod_idle(device_decode)) {
+      lock.unlock();
+      CUresult retired =
+          lupine_nvcomp_htod_retire(device_decode, true, released);
+      lock.lock();
+      result = result == CUDA_SUCCESS ? retired : result;
+      give_back();
+      continue;
+    }
     lupine_bulk_staging_progress.wait(lock, [&] {
       return lupine_bulk_connection_lost || !staging.landed.empty() ||
              staging.received == bytes;
@@ -2943,14 +3027,54 @@ int handle_lupineMemcpyHtoDBulk(conn_t *conn) {
     lupine_bulk_chunk chunk = staging.landed.front();
     staging.landed.pop_front();
     lock.unlock();
-    if (result == CUDA_SUCCESS) {
+    bool held = false;
+    if (result == CUDA_SUCCESS && chunk.framed) {
+      if (!device_decode_tried) {
+        device_decode_tried = true;
+        device_decode =
+            lupine_nvcomp_htod_begin(static_cast<CUdeviceptr>(destination));
+      }
+      if (device_decode != nullptr) {
+        if (lupine_nvcomp_htod_full(device_decode)) {
+          result = lupine_nvcomp_htod_retire(device_decode, false, released);
+        }
+        if (result == CUDA_SUCCESS) {
+          result = lupine_nvcomp_htod_chunk(
+              device_decode, static_cast<unsigned char *>(chunk.buffer.host),
+              chunk.offset, new lupine_dtoh_staging(chunk.buffer));
+          held = true;
+        }
+      } else {
+        thread_local std::vector<unsigned char> decoded;
+        decoded.resize(chunk.bytes);
+        lupine_decode_framed_chunk(
+            static_cast<unsigned char *>(chunk.buffer.host), decoded.data());
+        result = cuMemcpyHtoD_v2(
+            static_cast<CUdeviceptr>(destination + chunk.offset),
+            decoded.data(), chunk.bytes);
+      }
+    } else if (result == CUDA_SUCCESS) {
       result =
           cuMemcpyHtoD_v2(static_cast<CUdeviceptr>(destination + chunk.offset),
                           chunk.buffer.host, chunk.bytes);
+      // A synchronous copy on the legacy stream ran after every queued
+      // decode.
+      if (device_decode != nullptr) {
+        lupine_nvcomp_htod_retire(device_decode, true, released);
+      }
     }
     lock.lock();
-    staging.free.push_back(chunk.buffer);
-    lupine_bulk_staging_progress.notify_all();
+    if (!held) {
+      staging.free.push_back(chunk.buffer);
+    }
+    give_back();
+  }
+  if (device_decode != nullptr) {
+    lock.unlock();
+    CUresult ended = lupine_nvcomp_htod_end(device_decode, released);
+    lock.lock();
+    result = result == CUDA_SUCCESS ? ended : result;
+    give_back();
   }
   if (result == CUDA_SUCCESS && staging.received != bytes) {
     result = CUDA_ERROR_DEVICE_UNAVAILABLE;

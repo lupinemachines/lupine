@@ -1,0 +1,281 @@
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=off gibs_med=1.618 min=1.568 max=1.692 all=1.692,1.568,1.618, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=64 gibs_med=17.440 min=10.498 max=23.956 all=23.956,10.498,17.440, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=256 gibs_med=24.387 min=22.973 max=24.506 all=22.973,24.387,24.506, verify=ok
+round=1 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=64 gibs_med=1.868 min=1.857 max=1.901 all=1.857,1.901,1.868, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=off gibs_med=2.710 min=2.687 max=2.861 all=2.710,2.687,2.861, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=64 gibs_med=21.834 min=7.632 max=22.444 all=21.834,22.444,7.632, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=256 gibs_med=18.185 min=6.847 max=20.928 all=20.928,6.847,18.185, verify=ok
+round=1 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=64 gibs_med=3.581 min=3.565 max=3.601 all=3.581,3.565,3.601, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=off gibs_med=0.803 min=0.800 max=0.803 all=0.800,0.803,0.803, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.107 min=1.107 max=1.115 all=1.107,1.115,1.107, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=256 gibs_med=1.077 min=1.073 max=1.078 all=1.073,1.077,1.078, verify=ok
+round=1 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=64 gibs_med=0.871 min=0.870 max=0.872 all=0.871,0.872,0.870, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=off gibs_med=1.008 min=1.003 max=1.014 all=1.008,1.003,1.014, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.084 min=1.060 max=1.085 all=1.060,1.084,1.085, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=256 gibs_med=1.057 min=1.030 max=1.076 all=1.030,1.057,1.076, verify=ok
+round=1 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.116 min=1.111 max=1.126 all=1.116,1.126,1.111, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=off gibs_med=0.787 min=0.787 max=0.795 all=0.787,0.795,0.787, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=64 gibs_med=0.909 min=0.894 max=0.909 all=0.909,0.894,0.909, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=256 gibs_med=1.025 min=1.021 max=1.025 all=1.025,1.021,1.025, verify=ok
+round=1 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=64 gibs_med=0.742 min=0.741 max=0.748 all=0.742,0.748,0.741, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=off gibs_med=0.992 min=0.991 max=0.993 all=0.991,0.993,0.992, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=64 gibs_med=0.922 min=0.906 max=0.930 all=0.930,0.906,0.922, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=256 gibs_med=1.023 min=1.011 max=1.025 all=1.011,1.023,1.025, verify=ok
+round=1 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=64 gibs_med=0.920 min=0.918 max=0.929 all=0.920,0.929,0.918, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=off gibs_med=0.952 min=0.950 max=0.959 all=0.950,0.952,0.959, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.571 min=1.555 max=1.571 all=1.555,1.571,1.571, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=256 gibs_med=1.486 min=1.484 max=1.489 all=1.486,1.484,1.489, verify=ok
+round=1 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.053 min=1.022 max=1.054 all=1.022,1.053,1.054, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=off gibs_med=1.271 min=1.254 max=1.286 all=1.254,1.286,1.271, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.553 min=1.544 max=1.553 all=1.544,1.553,1.553, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=256 gibs_med=1.377 min=1.349 max=1.475 all=1.377,1.349,1.475, verify=ok
+round=1 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.464 min=1.447 max=1.485 all=1.447,1.485,1.464, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=off gibs_med=0.245 min=0.233 max=0.245 all=0.245,0.233,0.245, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.230 min=0.207 max=0.240 all=0.240,0.207,0.230, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=256 gibs_med=0.243 min=0.242 max=0.244 all=0.242,0.243,0.244, verify=ok
+round=1 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.245 min=0.243 max=0.245 all=0.245,0.243,0.245, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=off gibs_med=0.259 min=0.257 max=0.259 all=0.259,0.257,0.259, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.259 min=0.257 max=0.260 all=0.260,0.259,0.257, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=256 gibs_med=0.236 min=0.217 max=0.259 all=0.217,0.259,0.236, verify=ok
+round=1 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.249 min=0.218 max=0.260 all=0.260,0.249,0.218, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=off gibs_med=0.243 min=0.242 max=0.243 all=0.243,0.243,0.242, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=64 gibs_med=0.243 min=0.243 max=0.243 all=0.243,0.243,0.243, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=256 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=1 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=off gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=256 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=1 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=off gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=1 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=256 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=1 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=off gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=64 gibs_med=0.262 min=0.261 max=0.262 all=0.261,0.262,0.262, verify=ok
+round=1 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=256 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=1 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=off gibs_med=1.653 min=1.652 max=1.661 all=1.661,1.652,1.653, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=64 gibs_med=24.504 min=24.109 max=25.107 all=24.109,24.504,25.107, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=256 gibs_med=24.161 min=23.058 max=24.243 all=23.058,24.161,24.243, verify=ok
+round=2 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=64 gibs_med=1.868 min=1.837 max=1.911 all=1.837,1.868,1.911, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=off gibs_med=2.877 min=2.845 max=2.882 all=2.845,2.882,2.877, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=64 gibs_med=24.189 min=22.464 max=24.408 all=22.464,24.408,24.189, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=256 gibs_med=21.686 min=20.719 max=21.697 all=20.719,21.686,21.697, verify=ok
+round=2 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=64 gibs_med=3.585 min=3.409 max=3.803 all=3.409,3.803,3.585, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=off gibs_med=0.798 min=0.795 max=0.800 all=0.800,0.798,0.795, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.110 min=1.107 max=1.113 all=1.113,1.107,1.110, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=256 gibs_med=1.067 min=1.064 max=1.074 all=1.067,1.074,1.064, verify=ok
+round=2 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=64 gibs_med=0.869 min=0.869 max=0.872 all=0.872,0.869,0.869, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=off gibs_med=1.005 min=0.995 max=1.017 all=1.005,0.995,1.017, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.057 min=0.895 max=1.088 all=1.057,1.088,0.895, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=256 gibs_med=1.028 min=1.025 max=1.073 all=1.073,1.025,1.028, verify=ok
+round=2 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.115 min=1.110 max=1.120 all=1.115,1.110,1.120, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=off gibs_med=0.787 min=0.786 max=0.795 all=0.787,0.795,0.786, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=64 gibs_med=0.907 min=0.907 max=0.910 all=0.910,0.907,0.907, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=256 gibs_med=1.017 min=1.012 max=1.018 all=1.012,1.017,1.018, verify=ok
+round=2 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=64 gibs_med=0.739 min=0.733 max=0.739 all=0.739,0.733,0.739, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=off gibs_med=0.990 min=0.987 max=0.993 all=0.993,0.990,0.987, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=64 gibs_med=0.927 min=0.911 max=0.927 all=0.911,0.927,0.927, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=256 gibs_med=1.023 min=1.005 max=1.026 all=1.005,1.026,1.023, verify=ok
+round=2 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=64 gibs_med=0.921 min=0.920 max=0.921 all=0.921,0.920,0.921, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=off gibs_med=0.953 min=0.951 max=0.954 all=0.954,0.951,0.953, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.565 min=1.558 max=1.571 all=1.558,1.571,1.565, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=256 gibs_med=1.490 min=1.484 max=1.491 all=1.491,1.490,1.484, verify=ok
+round=2 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.055 min=1.051 max=1.055 all=1.055,1.051,1.055, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=off gibs_med=1.247 min=1.246 max=1.258 all=1.247,1.246,1.258, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.549 min=1.540 max=1.551 all=1.540,1.549,1.551, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=256 gibs_med=1.474 min=1.458 max=1.477 all=1.458,1.474,1.477, verify=ok
+round=2 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.446 min=1.446 max=1.451 all=1.446,1.451,1.446, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=off gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=256 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=2 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=off gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=256 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=2 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=off gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=256 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=2 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=off gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=256 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=2 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=off gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=2 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=256 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=2 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=off gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=2 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=256 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=2 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=off gibs_med=1.651 min=1.627 max=1.673 all=1.651,1.627,1.673, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=64 gibs_med=24.927 min=24.384 max=25.056 all=24.384,25.056,24.927, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=256 gibs_med=24.084 min=23.106 max=24.315 all=23.106,24.084,24.315, verify=ok
+round=3 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=64 gibs_med=1.906 min=1.894 max=1.915 all=1.915,1.906,1.894, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=off gibs_med=2.877 min=2.856 max=2.901 all=2.877,2.856,2.901, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=64 gibs_med=22.863 min=21.463 max=22.899 all=21.463,22.899,22.863, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=256 gibs_med=21.752 min=21.109 max=21.913 all=21.109,21.913,21.752, verify=ok
+round=3 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=64 gibs_med=3.601 min=3.524 max=3.685 all=3.524,3.685,3.601, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=off gibs_med=0.797 min=0.796 max=0.802 all=0.802,0.796,0.797, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.108 min=1.108 max=1.117 all=1.117,1.108,1.108, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=256 gibs_med=1.075 min=1.056 max=1.078 all=1.056,1.075,1.078, verify=ok
+round=3 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=64 gibs_med=0.865 min=0.864 max=0.872 all=0.864,0.872,0.865, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=off gibs_med=1.014 min=1.012 max=1.028 all=1.028,1.012,1.014, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.091 min=1.086 max=1.095 all=1.095,1.091,1.086, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=256 gibs_med=1.072 min=1.070 max=1.077 all=1.070,1.072,1.077, verify=ok
+round=3 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.122 min=1.118 max=1.126 all=1.118,1.122,1.126, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=off gibs_med=0.786 min=0.785 max=0.789 all=0.789,0.786,0.785, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=64 gibs_med=0.910 min=0.907 max=0.910 all=0.910,0.910,0.907, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=256 gibs_med=1.019 min=1.013 max=1.022 all=1.019,1.013,1.022, verify=ok
+round=3 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=64 gibs_med=0.742 min=0.742 max=0.743 all=0.742,0.743,0.742, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=off gibs_med=0.987 min=0.984 max=0.988 all=0.984,0.987,0.988, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=64 gibs_med=0.925 min=0.923 max=0.925 all=0.923,0.925,0.925, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=256 gibs_med=1.010 min=1.004 max=1.021 all=1.004,1.010,1.021, verify=ok
+round=3 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=64 gibs_med=0.919 min=0.919 max=0.925 all=0.925,0.919,0.919, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=off gibs_med=0.950 min=0.949 max=0.958 all=0.949,0.958,0.950, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.568 min=1.566 max=1.573 all=1.573,1.568,1.566, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=256 gibs_med=1.493 min=1.471 max=1.494 all=1.494,1.493,1.471, verify=ok
+round=3 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.055 min=1.049 max=1.058 all=1.058,1.055,1.049, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=off gibs_med=1.262 min=1.260 max=1.269 all=1.269,1.262,1.260, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.542 min=1.525 max=1.546 all=1.525,1.546,1.542, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=256 gibs_med=1.484 min=1.474 max=1.485 all=1.484,1.474,1.485, verify=ok
+round=3 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.440 min=1.438 max=1.448 all=1.438,1.440,1.448, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=off gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=256 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=3 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=off gibs_med=0.262 min=0.261 max=0.262 all=0.262,0.261,0.262, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=256 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=3 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=off gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=256 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=3 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=off gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=256 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=3 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=off gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=3 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=256 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=3 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=off gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=3 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=256 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=3 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=off gibs_med=1.645 min=1.644 max=1.654 all=1.654,1.645,1.644, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=64 gibs_med=24.563 min=23.976 max=25.800 all=23.976,25.800,24.563, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=256 gibs_med=23.536 min=23.248 max=24.412 all=23.248,24.412,23.536, verify=ok
+round=4 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=64 gibs_med=1.811 min=1.806 max=1.851 all=1.811,1.851,1.806, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=off gibs_med=2.776 min=2.762 max=2.913 all=2.762,2.913,2.776, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=64 gibs_med=22.232 min=21.613 max=22.904 all=21.613,22.904,22.232, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=256 gibs_med=21.562 min=20.948 max=21.875 all=20.948,21.875,21.562, verify=ok
+round=4 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=64 gibs_med=3.684 min=3.526 max=3.772 all=3.526,3.772,3.684, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=off gibs_med=0.800 min=0.798 max=0.800 all=0.800,0.798,0.800, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.101 min=1.098 max=1.110 all=1.101,1.110,1.098, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=256 gibs_med=1.072 min=1.063 max=1.075 all=1.063,1.075,1.072, verify=ok
+round=4 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=64 gibs_med=0.867 min=0.864 max=0.868 all=0.867,0.868,0.864, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=off gibs_med=1.006 min=1.004 max=1.017 all=1.004,1.006,1.017, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.090 min=1.090 max=1.095 all=1.090,1.095,1.090, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=256 gibs_med=1.061 min=1.026 max=1.072 all=1.026,1.072,1.061, verify=ok
+round=4 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.129 min=1.124 max=1.132 all=1.124,1.129,1.132, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=off gibs_med=0.791 min=0.789 max=0.792 all=0.792,0.791,0.789, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=64 gibs_med=0.908 min=0.898 max=0.909 all=0.909,0.908,0.898, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=256 gibs_med=1.015 min=1.007 max=1.025 all=1.007,1.015,1.025, verify=ok
+round=4 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=64 gibs_med=0.742 min=0.740 max=0.747 all=0.742,0.740,0.747, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=off gibs_med=0.987 min=0.987 max=0.988 all=0.988,0.987,0.987, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=64 gibs_med=0.924 min=0.923 max=0.926 all=0.923,0.926,0.924, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=256 gibs_med=1.014 min=1.001 max=1.014 all=1.001,1.014,1.014, verify=ok
+round=4 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=64 gibs_med=0.917 min=0.917 max=0.918 all=0.917,0.918,0.917, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=off gibs_med=0.947 min=0.947 max=0.948 all=0.947,0.948,0.947, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.566 min=1.557 max=1.582 all=1.582,1.557,1.566, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=256 gibs_med=1.484 min=1.483 max=1.493 all=1.493,1.484,1.483, verify=ok
+round=4 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.051 min=1.046 max=1.060 all=1.051,1.046,1.060, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=off gibs_med=1.252 min=1.252 max=1.262 all=1.262,1.252,1.252, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.550 min=1.547 max=1.550 all=1.547,1.550,1.550, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=256 gibs_med=1.473 min=1.462 max=1.477 all=1.473,1.462,1.477, verify=ok
+round=4 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.444 min=1.441 max=1.446 all=1.444,1.446,1.441, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=off gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=256 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=4 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=off gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=256 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=4 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=off gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=256 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=4 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=off gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=256 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=4 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=off gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=4 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=256 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=4 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=off gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=4 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=256 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=4 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=off gibs_med=1.656 min=1.641 max=1.679 all=1.656,1.641,1.679, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=64 gibs_med=25.008 min=23.672 max=25.306 all=23.672,25.008,25.306, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=256 gibs_med=24.503 min=23.201 max=24.726 all=23.201,24.503,24.726, verify=ok
+round=5 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/zeros.bin nvcomp=64 gibs_med=1.882 min=1.834 max=1.882 all=1.882,1.834,1.882, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=off gibs_med=2.763 min=2.673 max=2.867 all=2.763,2.673,2.867, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=64 gibs_med=22.164 min=21.290 max=22.720 all=21.290,22.720,22.164, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=256 gibs_med=21.733 min=20.989 max=21.930 all=20.989,21.930,21.733, verify=ok
+round=5 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/zeros.bin nvcomp=64 gibs_med=3.691 min=3.672 max=3.932 all=3.691,3.932,3.672, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=off gibs_med=0.799 min=0.798 max=0.800 all=0.798,0.799,0.800, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.107 min=1.105 max=1.108 all=1.105,1.107,1.108, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=256 gibs_med=1.076 min=1.057 max=1.078 all=1.057,1.076,1.078, verify=ok
+round=5 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/tokens_i64.bin nvcomp=64 gibs_med=0.871 min=0.868 max=0.874 all=0.871,0.874,0.868, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=off gibs_med=1.012 min=1.010 max=1.022 all=1.022,1.010,1.012, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.085 min=1.077 max=1.085 all=1.077,1.085,1.085, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=256 gibs_med=1.074 min=1.072 max=1.076 all=1.076,1.074,1.072, verify=ok
+round=5 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/tokens_i64.bin nvcomp=64 gibs_med=1.125 min=1.122 max=1.127 all=1.127,1.122,1.125, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=off gibs_med=0.787 min=0.785 max=0.789 all=0.789,0.787,0.785, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=64 gibs_med=0.906 min=0.898 max=0.907 all=0.898,0.906,0.907, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=256 gibs_med=1.021 min=1.018 max=1.022 all=1.018,1.022,1.021, verify=ok
+round=5 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/text.bin nvcomp=64 gibs_med=0.743 min=0.738 max=0.747 all=0.743,0.738,0.747, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=off gibs_med=0.986 min=0.969 max=0.988 all=0.969,0.986,0.988, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=64 gibs_med=0.923 min=0.916 max=0.928 all=0.916,0.928,0.923, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=256 gibs_med=1.014 min=0.998 max=1.023 all=0.998,1.023,1.014, verify=ok
+round=5 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/text.bin nvcomp=64 gibs_med=0.881 min=0.833 max=0.909 all=0.909,0.881,0.833, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=off gibs_med=0.950 min=0.918 max=0.953 all=0.918,0.950,0.953, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.414 min=1.072 max=1.549 all=1.072,1.549,1.414, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=256 gibs_med=1.311 min=1.293 max=1.420 all=1.311,1.420,1.293, verify=ok
+round=5 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.056 min=1.051 max=1.060 all=1.060,1.051,1.056, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=off gibs_med=1.267 min=1.260 max=1.272 all=1.267,1.272,1.260, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.533 min=1.531 max=1.583 all=1.583,1.533,1.531, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=256 gibs_med=1.476 min=1.476 max=1.506 all=1.506,1.476,1.476, verify=ok
+round=5 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_sparse90.bin nvcomp=64 gibs_med=1.461 min=1.432 max=1.478 all=1.478,1.461,1.432, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=off gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.245 min=0.239 max=0.245 all=0.239,0.245,0.245, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=256 gibs_med=0.245 min=0.245 max=0.246 all=0.246,0.245,0.245, verify=ok
+round=5 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=off gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.262 min=0.261 max=0.262 all=0.261,0.262,0.262, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=256 gibs_med=0.262 min=0.261 max=0.262 all=0.262,0.261,0.262, verify=ok
+round=5 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/bf16_weights.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=off gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=64 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=256 gibs_med=0.245 min=0.245 max=0.245 all=0.245,0.245,0.245, verify=ok
+round=5 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/f32_normal.bin nvcomp=64 gibs_med=0.245 min=0.243 max=0.245 all=0.243,0.245,0.245, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=off gibs_med=0.262 min=0.261 max=0.262 all=0.262,0.262,0.261, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=64 gibs_med=0.262 min=0.262 max=0.262 all=0.262,0.262,0.262, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=256 gibs_med=0.262 min=0.261 max=0.262 all=0.262,0.262,0.261, verify=ok
+round=5 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/f32_normal.bin nvcomp=64 gibs_med=0.262 min=0.261 max=0.262 all=0.261,0.262,0.262, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=off gibs_med=0.245 min=0.242 max=0.245 all=0.245,0.245,0.242, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=64 gibs_med=0.245 min=0.244 max=0.245 all=0.245,0.244,0.245, verify=ok
+round=5 gpu=4090 port=16251 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=256 gibs_med=0.244 min=0.242 max=0.244 all=0.242,0.244,0.244, verify=ok
+round=5 gpu=4090 port=16253 E2E dev="NVIDIA GeForce RTX 4090" file=data/random.bin nvcomp=64 gibs_med=0.245 min=0.244 max=0.246 all=0.246,0.245,0.244, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=off gibs_med=0.262 min=0.259 max=0.262 all=0.262,0.262,0.259, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=64 gibs_med=0.259 min=0.259 max=0.262 all=0.259,0.262,0.259, verify=ok
+round=5 gpu=2070 port=16252 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=256 gibs_med=0.262 min=0.259 max=0.263 all=0.259,0.262,0.263, verify=ok
+round=5 gpu=2070 port=16254 E2E dev="NVIDIA GeForce RTX 2070 SUPER" file=data/random.bin nvcomp=64 gibs_med=0.261 min=0.256 max=0.262 all=0.256,0.261,0.262, verify=ok
+E2E_DONE
