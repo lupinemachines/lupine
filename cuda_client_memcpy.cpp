@@ -4617,11 +4617,11 @@ struct lupine_bulk_chunk_header {
   uint64_t bytes;
 };
 
-// The chunks only stage on the server, in whatever order the connections
-// deliver them. The copy into `destination` (device memory, or with to_host
-// the server's copy of a host allocation) is requested on the caller's lane
-// once every chunk has been queued, so it stays FIFO behind the caller's
-// earlier work on that lane and runs once the last chunk has landed. One
+// The copy into `destination` (device memory, or with to_host the server's
+// copy of a host allocation) is requested on the caller's lane before any
+// chunk is queued: it stays FIFO behind the caller's earlier work on that lane,
+// and the server holds each chunk until that request reaches it, then copies
+// chunks as they land, in whatever order the connections deliver them. One
 // thread per lane takes chunks from a shared counter, so a connection whose
 // window has collapsed takes fewer of them instead of pacing the whole copy.
 static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
@@ -4632,6 +4632,21 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   uint64_t copy_id = next_copy_id.fetch_add(1);
+  uint8_t host = to_host ? 1 : 0;
+  int request_id = -1;
+  if ((to_host
+           ? rpc_write_start_request_on(conn, LUPINE_RPC_lupineMemcpyHtoDBulk,
+                                        RPC_SCOPE_HOST_WRITES)
+           : lupine_rpc_start_on_stream(conn, LUPINE_RPC_lupineMemcpyHtoDBulk,
+                                        nullptr)) < 0 ||
+      rpc_write(conn, &copy_id, sizeof(copy_id)) < 0 ||
+      rpc_write(conn, &destination, sizeof(destination)) < 0 ||
+      rpc_write(conn, &bytes, sizeof(bytes)) < 0 ||
+      rpc_write(conn, &host, sizeof(host)) < 0 ||
+      (rpc_expect_answer(conn), request_id = rpc_write_end(conn)) < 0) {
+    pthread_mutex_unlock(&lanes->mutex);
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
   size_t chunks = (bytes + LUPINE_RPC_TRANSFER_CHUNK_BYTES - 1) /
                   LUPINE_RPC_TRANSFER_CHUNK_BYTES;
   std::atomic<size_t> next_chunk{0};
@@ -4671,21 +4686,10 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
   }
   pthread_mutex_unlock(&lanes->mutex);
 
-  uint8_t host = to_host ? 1 : 0;
   CUresult return_value = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (!queued ||
-      (to_host
-           ? rpc_write_start_request_on(conn, LUPINE_RPC_lupineMemcpyHtoDBulk,
-                                        RPC_SCOPE_HOST_WRITES)
-           : lupine_rpc_start_on_stream(conn, LUPINE_RPC_lupineMemcpyHtoDBulk,
-                                        nullptr)) < 0 ||
-      rpc_write(conn, &copy_id, sizeof(copy_id)) < 0 ||
-      rpc_write(conn, &destination, sizeof(destination)) < 0 ||
-      rpc_write(conn, &bytes, sizeof(bytes)) < 0 ||
-      rpc_write(conn, &host, sizeof(host)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
+  if (rpc_read_start(conn, request_id) < 0 ||
       rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
-      rpc_read_end(conn) < 0) {
+      rpc_read_end(conn) < 0 || !queued) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   return return_value;
