@@ -2833,6 +2833,31 @@ void test_async_prefix_shutdown_wakes_waiters() {
   }
 }
 
+// A server lane that gives up on its connection must fail the client's waiters
+// even while another lane, blocked in a handler, keeps the socket open.
+void test_server_shutdown_fails_client_waiters() {
+  h2_pair pair;
+  init_pair(&pair);
+  exchange_settings(&pair);
+
+  int32_t lane = rpc_http2_lane_stream(&pair.client, 601);
+  require(lane > 0 && rpc_http2_accept_stream(&pair.server) == lane,
+          "waiter lane setup failed");
+  std::atomic<bool> waiting{false}, finished{false};
+  int result = 0;
+  std::thread waiter([&] {
+    char byte;
+    waiting = true;
+    result = rpc_http2_read_stream(&pair.client, lane, &byte, 1);
+    finished = true;
+  });
+  wait_async_flag(waiting, "client waiter did not start");
+  rpc_shutdown_transport_socket(&pair.server);
+  wait_async_flag(finished, "server shutdown left the client waiting");
+  waiter.join();
+  require(result == -1, "client waiter did not fail");
+}
+
 // Handlers start request chains without their own null checks; an unreachable
 // server (null route conn) or a failed connection must fail the chain here
 // instead of dereferencing the conn.
@@ -2950,6 +2975,7 @@ int main() {
   RUN_CASE(test_async_prefix_builder_wait_orders_overlap());
   RUN_CASE(test_async_prefix_wait_preserves_flow_control());
   RUN_CASE(test_async_prefix_shutdown_wakes_waiters());
+  RUN_CASE(test_server_shutdown_fails_client_waiters());
   RUN_CASE(test_request_start_rejects_null_and_closed_conn());
 #if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__) &&           \
     !defined(_WIN32)

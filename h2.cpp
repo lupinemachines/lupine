@@ -2097,7 +2097,7 @@ int lupine_handoff_resume_socket(conn_t *conn) {
   return 0;
 }
 
-void rpc_http2_shutdown(conn_t *conn) {
+static void h2_shutdown(conn_t *conn, bool abandon) {
   if (conn == nullptr || conn->http2 == nullptr) {
     return;
   }
@@ -2113,8 +2113,16 @@ void rpc_http2_shutdown(conn_t *conn) {
   // While parked, connfd belongs to the pending resume handshake.
   bool parked = transport->netfd == LUPINE_INVALID_SOCKET;
   lupine_socket_t socket = parked ? conn->connfd : transport->netfd;
+  // A server that gives up on a connection sends FIN at once: a lane still
+  // blocked in a handler keeps the socket open, and the client's waiters
+  // would otherwise wait for that lane. Teardown drains queued output first.
+  abandon = abandon && transport->server && !parked;
   pthread_mutex_unlock(&transport->session_mutex);
-  lupine_socket_shutdown_read(socket);
+  if (abandon) {
+    lupine_socket_shutdown_both(socket);
+  } else {
+    lupine_socket_shutdown_read(socket);
+  }
 #ifdef _WIN32
   if (parked) {
     (void)CancelIoEx(reinterpret_cast<HANDLE>(socket), nullptr);
@@ -2122,11 +2130,13 @@ void rpc_http2_shutdown(conn_t *conn) {
 #endif
 }
 
+void rpc_http2_shutdown(conn_t *conn) { h2_shutdown(conn, true); }
+
 void rpc_http2_destroy(conn_t *conn) {
   if (conn == nullptr || conn->http2 == nullptr) {
     return;
   }
-  rpc_http2_shutdown(conn);
+  h2_shutdown(conn, false);
   auto *transport = static_cast<h2_transport *>(conn->http2);
   conn->http2 = nullptr;
   if (transport->heartbeat_thread != 0) {
