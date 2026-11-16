@@ -506,7 +506,7 @@ CUresult cuLinkAddData_v2(CUlinkState state, CUjitInputType type, void *data,
                           unsigned int numOptions, CUjit_option *options,
                           void **optionValues);
 /**
- * @disabled - manual client handles JIT option values and file bytes
+ * @disabled none - manual client sends the file's bytes as cuLinkAddData_v2
  * @param state SEND_ONLY
  * @param type SEND_ONLY
  * @param path SEND_ONLY NULL_TERMINATED
