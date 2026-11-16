@@ -78,6 +78,7 @@ bool lupine_try_cached_module_function(CUmodule module, const char *name,
                                        CUfunction *function);
 void lupine_finish_module_get_function(CUfunction function, CUmodule module,
                                        const char *name, lupine_route route);
+bool lupine_try_cached_library_module(CUlibrary library, CUmodule *module);
 bool lupine_try_cached_library_kernel(CUlibrary library, const char *name,
                                       CUkernel *kernel);
 CUresult lupine_prepare_kernel_get_function(CUfunction *pFunc, CUkernel *kernel,

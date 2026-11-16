@@ -598,6 +598,12 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
   CUresult resolved = lupine_resolve_library_for_route(&library, route);
   if (resolved != CUDA_SUCCESS)
     return resolved;
+  if (!lupine_route_is_local(route) &&
+      lupine_try_cached_library_module(library, pMod)) {
+    lupine_note_module_owner_route(*pMod, route);
+    lupine_record_library_module(*pMod, library);
+    return CUDA_SUCCESS;
+  }
   CUresult return_value = LUPINE_GENERATED_CALL();
   return return_value;
 }
