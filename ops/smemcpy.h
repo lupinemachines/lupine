@@ -35,11 +35,6 @@ cudaError_t lupine_smemcpy_prepare_launch(const lupine_smemcpy_params *params,
 cudaError_t lupine_smemcpy_async(const lupine_smemcpy_params *params,
                                  cudaStream_t stream);
 
-// Returns the fully general scalar kernel. Prefer prepare_launch: this symbol
-// is retained as a compatibility fallback for graph code that controls its own
-// launch geometry.
-const void *lupine_smemcpy_kernel(void);
-
 #ifdef __cplusplus
 }
 #endif
