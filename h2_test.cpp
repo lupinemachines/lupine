@@ -203,7 +203,8 @@ int read_dispatch(conn_t *conn, void *data, size_t size) {
 }
 
 int write_dispatch(conn_t *conn, std::vector<rpc_write_cursor> &cursors) {
-  return rpc_http2_write_stream(conn, rpc_http2_dispatch_stream(conn), cursors);
+  return rpc_http2_write_stream(conn, rpc_http2_dispatch_stream(conn),
+                                cursors.data(), cursors.size());
 }
 
 void write_all(conn_t *conn, const std::vector<std::string> &chunks) {
@@ -222,8 +223,8 @@ int write_bytes(conn_t *conn, const void *data, size_t size) {
 
 int write_stream_bytes(conn_t *conn, int32_t stream_id, const void *data,
                        size_t size) {
-  std::vector<rpc_write_cursor> cursors = {rpc_write_cursor(data, size)};
-  return rpc_http2_write_stream(conn, stream_id, cursors);
+  rpc_write_cursor cursor(data, size);
+  return rpc_http2_write_stream(conn, stream_id, &cursor, 1);
 }
 
 std::string read_string(conn_t *conn, size_t size) {
@@ -2202,11 +2203,10 @@ void test_read_larger_than_int_max() {
                                         rpc_http2_dispatch_stream(&pair.server),
                                         received.data(), received.size());
   });
-  std::vector<rpc_write_cursor> cursors = {
-      rpc_write_cursor(refill_repeated_chunk, &source)};
+  rpc_write_cursor cursor(refill_repeated_chunk, &source);
   require(rpc_http2_write_stream(&pair.client,
                                  rpc_http2_dispatch_stream(&pair.client),
-                                 cursors) == 0,
+                                 &cursor, 1) == 0,
           ">INT_MAX write failed");
   reader.join();
   require(read_result == 0, ">INT_MAX read reported failure");

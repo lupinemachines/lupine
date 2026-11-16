@@ -313,11 +313,6 @@ extern int rpc_read(conn_t *conn, void *data, size_t size);
 extern void *rpc_host_allocation_alias(conn_t *conn, void *data, size_t size);
 extern int rpc_note_host_allocation_write(conn_t *conn, void *data,
                                           size_t written);
-// Reads a field emitted by rpc_write_buffer. Keeping buffered reads distinct
-// makes request and response serializers exact field-for-field inverses.
-static inline int rpc_read_buffer(conn_t *conn, void *data, size_t size) {
-  return rpc_read(conn, data, size);
-}
 extern int rpc_drain(conn_t *conn, size_t size);
 extern int rpc_read_end(conn_t *conn);
 
@@ -451,12 +446,6 @@ extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                                  size_t size);
 extern int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
                                   rpc_write_cursor *cursors, size_t count);
-static inline int
-rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
-                       std::vector<rpc_write_cursor> &cursors) {
-  return rpc_http2_write_stream(conn, stream_id, cursors.data(),
-                                cursors.size());
-}
 extern int32_t rpc_http2_dispatch_stream(conn_t *conn);
 extern int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id);
 extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);
