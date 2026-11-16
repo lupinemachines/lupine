@@ -47,11 +47,10 @@ void h2_writer_poll_policy::observe(std::chrono::nanoseconds idle_time) {
 
 namespace {
 
-// Responses land straight in caller buffers, so the client keeps an
-// effectively unlimited receive window; the server's window bounds what a
-// client can have in flight to it.
-constexpr uint32_t kH2ClientWindow = 0x7fffffffU;
-constexpr uint32_t kH2ServerWindow =
+// A stream's bytes are credited to its peer once a reader takes them, so the
+// window bounds what waits staged for a reader; the connection is credited on
+// receipt, so a stalled stream never holds up the others.
+constexpr uint32_t kH2Window =
     static_cast<uint32_t>(LUPINE_FF_STAGING_WINDOW_BYTES);
 constexpr uint32_t kH2MaxFrame = (16 * 1024 * 1024) - 1;
 constexpr size_t kH2FrameHeaderLen = 9;
@@ -272,6 +271,7 @@ void receive_bytes(h2_transport *transport, int32_t stream_id,
   h2_stream &stream = h2_get_stream(transport, stream_id);
   size_t direct = std::min(len, stream.read_remaining);
   if (direct != 0) {
+    nghttp2_session_consume_stream(transport->session, stream_id, direct);
     memcpy(stream.read_destination, data, direct);
     stream.read_destination += direct;
     stream.read_remaining -= direct;
@@ -504,6 +504,7 @@ int h2_on_data_chunk_recv_callback(nghttp2_session *, uint8_t,
                                    int32_t stream_id, const uint8_t *data,
                                    size_t len, void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
+  nghttp2_session_consume_connection(transport->session, len);
   h2_stream &stream = h2_get_stream(transport, stream_id);
   if (stream.recv_encoding == h2_encoding::identity) {
     receive_bytes(transport, stream_id, data, len);
@@ -528,6 +529,7 @@ int h2_on_data_chunk_recv_callback(nghttp2_session *, uint8_t,
                          stream.read_remaining) < 0) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
+    nghttp2_session_consume_stream(transport->session, stream_id, source.pos);
     if (stream.read_remaining == 0) {
       pthread_cond_broadcast(&stream.read_ready);
     }
@@ -1653,6 +1655,7 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
   }
   nghttp2_option_set_user_recv_extension_type(options,
                                               LUPINE_HANDOFF_CONTROL_FRAME);
+  nghttp2_option_set_no_auto_window_update(options, 1);
 
   int session_result =
       server ? nghttp2_session_server_new2(&transport->session, callbacks,
@@ -1665,16 +1668,15 @@ int h2_init_direct(conn_t *conn, bool server, bool probe,
     return fail();
   }
 
-  const uint32_t window = server ? kH2ServerWindow : kH2ClientWindow;
   nghttp2_settings_entry settings[] = {
-      {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, window},
+      {NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE, kH2Window},
       {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, kH2MaxFrame},
   };
   if (nghttp2_submit_settings(transport->session, NGHTTP2_FLAG_NONE, settings,
                               2) != 0 ||
       nghttp2_session_set_local_window_size(
           transport->session, NGHTTP2_FLAG_NONE, 0,
-          static_cast<int32_t>(window)) != 0 ||
+          static_cast<int32_t>(kH2Window)) != 0 ||
       (!server && h2_submit_client_handshake(transport, conn, probe) < 0)) {
     return fail();
   }
@@ -1708,6 +1710,7 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
   auto *out = static_cast<unsigned char *>(data);
   size_t copied = 0;
   size_t capacity = size + (ahead != nullptr ? *ahead : 0);
+  size_t credited = 0;
   pthread_mutex_lock(&transport->session_mutex);
   h2_stream &stream = h2_get_stream(transport, stream_id);
   while (!stream.local_out.empty() && copied < capacity) {
@@ -1717,6 +1720,7 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
     memcpy(out + copied, front.data.data() + front.offset, chunk);
     front.offset += chunk;
     copied += chunk;
+    credited += chunk;
     if (front.offset == front.data.size()) {
       if (transport->buffer_pool_bytes + front.data.capacity() <=
           kH2StagingPoolBytes) {
@@ -1738,6 +1742,7 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
       pthread_mutex_unlock(&transport->session_mutex);
       return -1;
     }
+    credited += source.pos - stream.pending_offset;
     stream.pending_offset = source.pos;
     if (stream.pending_offset == stream.pending.size()) {
       stream.pending_offset = 0;
@@ -1748,6 +1753,12 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
       }
     }
     copied = capacity - remaining;
+  }
+  if (credited != 0 && (nghttp2_session_consume_stream(
+                            transport->session, stream_id, credited) != 0 ||
+                        h2_flush_session_locked(transport) < 0)) {
+    pthread_mutex_unlock(&transport->session_mutex);
+    return -1;
   }
   if (ahead != nullptr) {
     *ahead = copied > size ? copied - size : 0;
@@ -1829,6 +1840,18 @@ int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
     pthread_cond_broadcast(&transport->writer_ready);
   }
   return result;
+}
+
+size_t rpc_http2_staged_bytes(conn_t *conn, int32_t stream_id) {
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  h2_stream &stream = h2_get_stream(transport, stream_id);
+  size_t staged = stream.pending.size() - stream.pending_offset;
+  for (const h2_buffer &buffer : stream.local_out) {
+    staged += buffer.data.size() - buffer.offset;
+  }
+  pthread_mutex_unlock(&transport->session_mutex);
+  return staged;
 }
 
 int32_t rpc_http2_dispatch_stream(conn_t *conn) {

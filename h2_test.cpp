@@ -2841,10 +2841,16 @@ void test_rpc_pause_waits_for_open_builder() {
   lupine_handoff_resume_requests(&pair.client);
 }
 
-void test_async_prefix_wait_preserves_flow_control() {
+// A stream's bytes are credited once its reader takes them. A lane waiting
+// for an earlier ticket stops its sender at the window; another lane's round
+// trip and a server callback whose answer exceeds the window still complete.
+void test_async_prefix_wait_bounds_staging() {
   h2_pair pair;
   init_pair(&pair);
-  require(rpc_write_start_request(&pair.client, 101) == 0 &&
+  constexpr uintptr_t kKey = 0x6000;
+  constexpr uintptr_t kOtherKey = 0x7000;
+  constexpr size_t kWindow = LUPINE_FF_STAGING_WINDOW_BYTES;
+  require(rpc_write_start_request_on(&pair.client, 101, kKey) == 0 &&
               rpc_write_end(&pair.client) > 0,
           "producer enqueue");
   int32_t producer_lane = rpc_http2_accept_stream(&pair.server);
@@ -2854,13 +2860,12 @@ void test_async_prefix_wait_preserves_flow_control() {
               !rpc_request_awaited(&pair.server) &&
               rpc_read_end(&pair.server) > 0,
           "producer dispatch");
-  // Twice the window: the sender finishes only if the server keeps crediting.
-  std::vector<unsigned char> payload(2 * LUPINE_FF_STAGING_WINDOW_BYTES);
+  std::vector<unsigned char> payload(2 * kWindow);
   fill_lcg(payload, 53);
   std::atomic<bool> sent{false};
   std::thread sender([&] {
     rpc_write_cursor cursor(payload.data(), payload.size());
-    require(rpc_write_start_request(&pair.client, 102) == 0 &&
+    require(rpc_write_start_request_on(&pair.client, 102, kKey) == 0 &&
                 rpc_write_cursors(&pair.client, &cursor, 1) == 0 &&
                 rpc_write_end(&pair.client) > 0,
             "consumer enqueue");
@@ -2879,12 +2884,135 @@ void test_async_prefix_wait_preserves_flow_control() {
     consumed = true;
     rpc_unbind_http2_stream(&pair.server);
   });
-  wait_async_flag(sent, "prefix wait stopped flow-control progress");
+
+  // Another lane's round trip.
+  std::thread other([&] {
+    int value = 7, answer = 0;
+    require(rpc_write_start_request_on(&pair.client, 103, kOtherKey) == 0 &&
+                rpc_write(&pair.client, &value, sizeof(value)) == 0 &&
+                rpc_wait_for_response(&pair.client) == 0 &&
+                rpc_read(&pair.client, &answer, sizeof(answer)) == 0 &&
+                rpc_read_end(&pair.client) > 0 && answer == 2 * value,
+            "a lane behind no stalled ticket did not complete its round trip");
+  });
+  int32_t other_lane = rpc_http2_accept_stream(&pair.server);
+  std::thread other_server([&] {
+    int value = 0;
+    require(rpc_bind_http2_stream(&pair.server, other_lane) == 0 &&
+                rpc_dispatch(&pair.server, 0) == 103 &&
+                rpc_read(&pair.server, &value, sizeof(value)) == 0,
+            "other lane dispatch");
+    int request_id = rpc_read_end(&pair.server);
+    int answer = 2 * value;
+    require(rpc_write_start_response(&pair.server, request_id) == 0 &&
+                rpc_write(&pair.server, &answer, sizeof(answer)) == 0 &&
+                rpc_write_end(&pair.server) == request_id,
+            "other lane answer");
+    rpc_unbind_http2_stream(&pair.server);
+  });
+  other.join();
+  other_server.join();
+
+  // A server callback answered with more than a window.
+  std::vector<unsigned char> answer(kWindow + 1024 * 1024);
+  fill_lcg(answer, 59);
+  std::thread client_dispatch([&] {
+    require(rpc_dispatch(&pair.client, 1) == 104, "callback dispatch");
+    int request_id = rpc_read_end(&pair.client);
+    require(request_id > 0 &&
+                rpc_write_start_response(&pair.client, request_id) == 0 &&
+                rpc_write(&pair.client, answer.data(), answer.size()) == 0 &&
+                rpc_write_end(&pair.client) == request_id,
+            "callback answer");
+  });
+  std::thread callback([&] {
+    std::vector<unsigned char> received(answer.size());
+    require(rpc_write_start_request(&pair.server, 104) == 0 &&
+                rpc_wait_for_response(&pair.server) == 0 &&
+                rpc_read(&pair.server, received.data(), received.size()) == 0 &&
+                rpc_read_end(&pair.server) > 0 && received == answer,
+            "a server callback answered with more than a window failed");
+  });
+  client_dispatch.join();
+  callback.join();
+
+  require(!sent, "a sender behind an unfinished ticket was credited past the "
+                 "window");
+  size_t staged = rpc_http2_staged_bytes(&pair.server, consumer_lane);
+  require(staged <= kWindow && staged >= kWindow / 2,
+          "a stalled lane staged more than its window");
   require(!consumed, "consumer skipped its unfinished prerequisite");
   rpc_async_sequence_end(&pair.server);
   rpc_unbind_http2_stream(&pair.server);
   sender.join();
   consumer.join();
+  require(sent && consumed, "the stalled lane did not finish once released");
+}
+
+// A client that does not read one answer leaves that stream's sender at the
+// window, while another lane's answers still arrive.
+void test_unread_answer_does_not_block_other_lanes() {
+  h2_pair pair;
+  init_pair(&pair);
+  constexpr size_t kWindow = LUPINE_FF_STAGING_WINDOW_BYTES;
+  std::vector<unsigned char> large(2 * kWindow);
+  fill_lcg(large, 61);
+  int slow_id = 0;
+  std::atomic<bool> large_written{false};
+  require(rpc_write_start_request_on(&pair.client, 105, 0x8000) == 0 &&
+              (rpc_expect_answer(&pair.client),
+               slow_id = rpc_write_end(&pair.client)) > 0,
+          "slow request");
+  int32_t slow_lane = rpc_http2_accept_stream(&pair.server);
+  std::thread slow_server([&] {
+    require(rpc_bind_http2_stream(&pair.server, slow_lane) == 0 &&
+                rpc_dispatch(&pair.server, 0) == 105,
+            "slow dispatch");
+    int request_id = rpc_read_end(&pair.server);
+    require(rpc_write_start_response(&pair.server, request_id) == 0 &&
+                rpc_write(&pair.server, large.data(), large.size()) == 0 &&
+                rpc_write_end(&pair.server) == request_id,
+            "large answer");
+    large_written = true;
+    rpc_unbind_http2_stream(&pair.server);
+  });
+  std::thread other([&] {
+    for (int i = 0; i < 20; ++i) {
+      int answer = 0;
+      require(rpc_write_start_request_on(&pair.client, 106, 0x9000) == 0 &&
+                  rpc_write(&pair.client, &i, sizeof(i)) == 0 &&
+                  rpc_wait_for_response(&pair.client) == 0 &&
+                  rpc_read(&pair.client, &answer, sizeof(answer)) == 0 &&
+                  rpc_read_end(&pair.client) > 0 && answer == i + 1,
+              "a lane stalled behind another's unread answer");
+    }
+  });
+  int32_t other_lane = rpc_http2_accept_stream(&pair.server);
+  std::thread other_server([&] {
+    require(rpc_bind_http2_stream(&pair.server, other_lane) == 0, "other bind");
+    for (int i = 0; i < 20; ++i) {
+      int value = 0;
+      require(rpc_dispatch(&pair.server, 0) == 106 &&
+                  rpc_read(&pair.server, &value, sizeof(value)) == 0,
+              "other dispatch");
+      int request_id = rpc_read_end(&pair.server);
+      int answer = value + 1;
+      require(rpc_write_start_response(&pair.server, request_id) == 0 &&
+                  rpc_write(&pair.server, &answer, sizeof(answer)) == 0 &&
+                  rpc_write_end(&pair.server) == request_id,
+              "other answer");
+    }
+    rpc_unbind_http2_stream(&pair.server);
+  });
+  other.join();
+  other_server.join();
+  require(!large_written, "an unread answer was credited past the window");
+  std::vector<unsigned char> received(large.size());
+  require(rpc_read_start(&pair.client, slow_id) == 0 &&
+              rpc_read(&pair.client, received.data(), received.size()) == 0 &&
+              rpc_read_end(&pair.client) == slow_id && received == large,
+          "the unread answer was corrupted");
+  slow_server.join();
 }
 
 void test_async_prefix_shutdown_wakes_waiters() {
@@ -3054,7 +3182,8 @@ int main() {
   RUN_CASE(test_rpc_host_writes_ticket_order());
   RUN_CASE(test_rpc_host_writes_awaited_answers());
   RUN_CASE(test_rpc_pause_waits_for_open_builder());
-  RUN_CASE(test_async_prefix_wait_preserves_flow_control());
+  RUN_CASE(test_async_prefix_wait_bounds_staging());
+  RUN_CASE(test_unread_answer_does_not_block_other_lanes());
   RUN_CASE(test_async_prefix_shutdown_wakes_waiters());
   RUN_CASE(test_server_shutdown_fails_client_waiters());
   RUN_CASE(test_request_start_rejects_null_and_closed_conn());
