@@ -34,27 +34,6 @@
 extern "C" CUresult CUDAAPI cuCtxCreate_v2(CUcontext *context,
                                            unsigned int flags, CUdevice device);
 
-template <typename T, typename Tag> static T &lupine_leaked(Tag) {
-  static T *instance = new T();
-  return *instance;
-}
-
-template <typename T, size_t N> struct lupine_inline_buf {
-  T stack[N];
-  std::unique_ptr<T[]> heap;
-  T *ptr = stack;
-  T *alloc(size_t n) {
-    if (n <= N) {
-      return ptr = stack;
-    }
-    if (n > SIZE_MAX / sizeof(T)) {
-      return nullptr;
-    }
-    heap.reset(new (std::nothrow) T[n]);
-    return ptr = heap.get();
-  }
-};
-
 template <typename Fn>
 static bool lupine_with_pushed_context(CUcontext context, Fn &&fn) {
   if (context == nullptr || cuCtxPushCurrent_v2(context) != CUDA_SUCCESS) {
@@ -131,47 +110,6 @@ static void lupine_note_inferred_primary_context(lupine_staging_state &state,
   }
 }
 
-class lupine_staging_operation {
-public:
-  lupine_staging_operation(lupine_staging_state *state, CUcontext context,
-                           CUdevice device)
-      : state_(state) {
-    if (state_ == nullptr) {
-      return;
-    }
-    std::unique_lock<std::mutex> lock(state_->mutex);
-    state_->condition.wait(lock, [&] {
-      return !state_->staging_operation_active ||
-             state_->teardown_contexts.count(context) != 0 ||
-             state_->teardown_devices.count(device) != 0;
-    });
-    if (state_->teardown_contexts.count(context) != 0 ||
-        state_->teardown_devices.count(device) != 0) {
-      return;
-    }
-    state_->staging_operation_active = true;
-    acquired_ = true;
-    lupine_note_inferred_primary_context(*state_, context, device);
-  }
-
-  ~lupine_staging_operation() {
-    if (!acquired_) {
-      return;
-    }
-    {
-      std::lock_guard<std::mutex> lock(state_->mutex);
-      state_->staging_operation_active = false;
-    }
-    state_->condition.notify_all();
-  }
-
-  bool acquired() const { return acquired_; }
-
-private:
-  lupine_staging_state *state_ = nullptr;
-  bool acquired_ = false;
-};
-
 static CUresult lupine_current_htod_context(conn_t *conn,
                                             lupine_staging_state **state,
                                             CUcontext *context,
@@ -186,6 +124,47 @@ static CUresult lupine_current_htod_context(conn_t *conn,
   }
   return result == CUDA_SUCCESS ? cuCtxGetDevice(device) : result;
 }
+
+// Holds the connection's staging for one copy on the current context, which
+// is not being torn down; `result` says whether it was acquired.
+struct lupine_staging_operation {
+  explicit lupine_staging_operation(conn_t *conn) {
+    result = lupine_current_htod_context(conn, &state, &context, &device);
+    if (result != CUDA_SUCCESS) {
+      return;
+    }
+    std::unique_lock<std::mutex> lock(state->mutex);
+    auto tearing_down = [&] {
+      return state->teardown_contexts.count(context) != 0 ||
+             state->teardown_devices.count(device) != 0;
+    };
+    state->condition.wait(lock, [&] {
+      return !state->staging_operation_active || tearing_down();
+    });
+    if (tearing_down()) {
+      result = CUDA_ERROR_INVALID_CONTEXT;
+      return;
+    }
+    state->staging_operation_active = true;
+    lupine_note_inferred_primary_context(*state, context, device);
+  }
+
+  ~lupine_staging_operation() {
+    if (result != CUDA_SUCCESS) {
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(state->mutex);
+      state->staging_operation_active = false;
+    }
+    state->condition.notify_all();
+  }
+
+  CUresult result;
+  lupine_staging_state *state = nullptr;
+  CUcontext context = nullptr;
+  CUdevice device = 0;
+};
 
 // What a capture's host-to-device side effects are keyed by: the graph it
 // builds, and the streams and events joined to it while it runs. Monotonic
@@ -909,21 +888,6 @@ static CUresult lupine_push_dtoh_with(conn_t *conn, CUstream stream,
   return result;
 }
 
-static CUresult lupine_push_dtoh(conn_t *conn, CUstream stream,
-                                 const lupine_host_rows &client,
-                                 CUdeviceptr source, void *mirror,
-                                 bool refresh) {
-  size_t bytes = client.bytes();
-  return lupine_push_dtoh_with(
-      conn, stream, client,
-      [&](void *dst, CUstream s) {
-        return refresh ? cuMemcpyAsync(reinterpret_cast<CUdeviceptr>(dst),
-                                       source, bytes, s)
-                       : cuMemcpyDtoHAsync_v2(dst, source, bytes, s);
-      },
-      mirror, refresh);
-}
-
 // A graph copy's staging and push data serve every replay, and live until the
 // graph and everything instantiated, cloned or launched from it is gone,
 // which CUDA tracks with a user object. Its destructor cannot call CUDA, so it
@@ -1268,7 +1232,7 @@ struct lupine_htod_copy {
   }
 };
 
-class lupine_htod_graph_execution;
+struct lupine_htod_graph_execution;
 struct lupine_htod_capture_events;
 
 struct lupine_htod_callback_data {
@@ -1535,28 +1499,13 @@ lupine_prepare_htod_side_effect_ring(lupine_staging_state &state,
   return result == CUDA_SUCCESS ? ring : nullptr;
 }
 
-class lupine_htod_graph_execution {
-public:
-  explicit lupine_htod_graph_execution(
-      std::shared_ptr<lupine_htod_side_effect_ring> ring,
-      size_t callback_count = 0)
-      : ring_(std::move(ring)), callback_count_(callback_count) {}
+struct lupine_htod_graph_execution {
+  lupine_htod_graph_execution(std::shared_ptr<lupine_htod_side_effect_ring> r,
+                              size_t count = 0)
+      : ring(std::move(r)), callback_count(count) {}
 
-  void note_callback() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    ++callback_count_;
-  }
-
-  const std::shared_ptr<lupine_htod_side_effect_ring> &ring() const {
-    return ring_;
-  }
-
-  size_t callback_count() const { return callback_count_; }
-
-private:
-  std::shared_ptr<lupine_htod_side_effect_ring> ring_;
-  std::mutex mutex_;
-  size_t callback_count_ = 0;
+  std::shared_ptr<lupine_htod_side_effect_ring> ring;
+  std::atomic<size_t> callback_count;
 };
 
 struct lupine_htod_graph_state {
@@ -1640,9 +1589,10 @@ static CUresult lupine_get_graph_nodes(CUgraph graph,
                           : cuGraphGetNodes(graph, nodes, count);
 }
 
-static CUresult
-lupine_prepare_htod_graph_exec(CUgraph graph, lupine_capture_id capture_id,
-                               lupine_htod_graph_binding *binding) {
+CUresult
+lupine_prepare_graph_exec_resources(CUgraph graph,
+                                    lupine_htod_graph_binding *binding) {
+  lupine_capture_id capture_id = lupine_graph_capture_id(graph);
   *binding = {};
   binding->original = graph;
   binding->prepared = graph;
@@ -1668,14 +1618,14 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_capture_id capture_id,
     return result;
   }
 
-  auto captured_ring = captured_execution->ring();
+  auto captured_ring = captured_execution->ring;
   std::shared_ptr<lupine_htod_side_effect_ring> ring;
   std::shared_ptr<lupine_htod_graph_execution> execution;
   try {
     ring = std::make_shared<lupine_htod_side_effect_ring>(
         captured_ring->connection(), captured_ring->context());
     execution = std::make_shared<lupine_htod_graph_execution>(
-        ring, captured_execution->callback_count());
+        ring, captured_execution->callback_count);
   } catch (...) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -1700,8 +1650,8 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_capture_id capture_id,
   size_t expected_copy_nodes = 0;
   size_t rebound_copy_nodes = 0;
   try {
-    callbacks.reserve(captured_execution->callback_count());
-    events.reserve(captured_execution->callback_count() * 2);
+    callbacks.reserve(captured_execution->callback_count);
+    events.reserve(captured_execution->callback_count * 2);
   } catch (...) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
@@ -1844,7 +1794,7 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_capture_id capture_id,
     }
   }
 
-  if (callbacks.size() != captured_execution->callback_count() ||
+  if (callbacks.size() != captured_execution->callback_count ||
       rebound_copy_nodes != expected_copy_nodes) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -1866,33 +1816,17 @@ lupine_prepare_htod_graph_exec(CUgraph graph, lupine_capture_id capture_id,
   return CUDA_SUCCESS;
 }
 
-static CUresult
-lupine_commit_htod_graph_exec(CUgraphExec exec,
-                              const lupine_htod_graph_binding &binding) {
+CUresult lupine_associate_graph_exec_resources(
+    CUgraphExec exec, const lupine_htod_graph_binding &binding) {
   if (binding.resources == nullptr) {
     return CUDA_SUCCESS;
   }
-  auto resources =
-      std::static_pointer_cast<lupine_htod_exec_resources>(binding.resources);
   try {
-    lupine_htod_exec_resource_map().insert_or_assign(exec,
-                                                     std::move(resources));
+    lupine_htod_exec_resource_map().insert_or_assign(exec, binding.resources);
   } catch (...) {
     return CUDA_ERROR_OUT_OF_MEMORY;
   }
   return CUDA_SUCCESS;
-}
-
-CUresult
-lupine_prepare_graph_exec_resources(CUgraph graph,
-                                    lupine_htod_graph_binding *binding) {
-  return lupine_prepare_htod_graph_exec(graph, lupine_graph_capture_id(graph),
-                                        binding);
-}
-
-CUresult lupine_associate_graph_exec_resources(
-    CUgraphExec exec, const lupine_htod_graph_binding &binding) {
-  return lupine_commit_htod_graph_exec(exec, binding);
 }
 
 CUgraphNode
@@ -1958,14 +1892,6 @@ static CUresult lupine_drain_htod_graph_exec(CUgraphExec exec) {
   return result == CUDA_SUCCESS ? pop_result : result;
 }
 
-static CUresult lupine_release_htod_graph_exec(CUgraphExec exec) {
-  CUresult result = lupine_drain_htod_graph_exec(exec);
-  if (result == CUDA_SUCCESS) {
-    lupine_htod_exec_resource_map().erase(exec);
-  }
-  return result;
-}
-
 // An update copies the update graph's node parameters into the exec, so that
 // graph is rebound to a private ring first, exactly as for instantiation.
 CUresult lupine_prepare_graph_exec_update(CUgraphExec exec, CUgraph graph,
@@ -1977,15 +1903,21 @@ CUresult lupine_prepare_graph_exec_update(CUgraphExec exec, CUgraph graph,
   return lupine_prepare_graph_exec_resources(graph, binding);
 }
 
-static void
-lupine_commit_htod_graph_exec_update(CUgraphExec exec,
-                                     lupine_htod_graph_binding *binding) {
-  auto resources =
-      std::static_pointer_cast<lupine_htod_exec_resources>(binding->resources);
+void lupine_finish_graph_exec_update(CUgraphExec exec,
+                                     lupine_htod_graph_binding *binding,
+                                     CUresult result, CUgraphNode *error_node) {
+  if (result != CUDA_SUCCESS) {
+    if (error_node != nullptr) {
+      *error_node = lupine_original_htod_graph_node(*binding, *error_node);
+    }
+    lupine_release_htod_graph_binding(binding);
+    return;
+  }
   // CUDA copied the parameters, so the update clone is released with the
   // binding. Exec-node APIs still take nodes of the instantiation graph, so
   // the instantiation clone stays the translation target.
-  binding->resources.reset();
+  auto resources = std::move(binding->resources);
+  lupine_release_htod_graph_binding(binding);
   std::shared_ptr<lupine_htod_exec_resources> previous;
   (void)lupine_htod_exec_resource_map().find(exec, previous);
   if (resources == nullptr) {
@@ -2003,18 +1935,7 @@ lupine_commit_htod_graph_exec_update(CUgraphExec exec,
   lupine_htod_exec_resource_map().insert_or_assign(exec, std::move(resources));
 }
 
-void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
-                                     lupine_htod_graph_binding *binding,
-                                     CUresult result, CUgraphNode *error_node) {
-  if (result == CUDA_SUCCESS) {
-    lupine_commit_htod_graph_exec_update(exec, binding);
-  } else if (error_node != nullptr) {
-    *error_node = lupine_original_htod_graph_node(*binding, *error_node);
-  }
-  lupine_release_htod_graph_binding(binding);
-}
-
-void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
+void lupine_finish_graph_exec_update(CUgraphExec exec,
                                      lupine_htod_graph_binding *binding,
                                      CUresult result,
                                      CUgraphExecUpdateResultInfo *info) {
@@ -2024,12 +1945,15 @@ void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
         lupine_original_htod_graph_node(*binding, info->errorFromNode);
   }
 #endif
-  lupine_finish_graph_exec_update(exec, graph, binding, result,
+  lupine_finish_graph_exec_update(exec, binding, result,
                                   info != nullptr ? &info->errorNode : nullptr);
 }
 
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec) {
-  CUresult result = lupine_release_htod_graph_exec(exec);
+  CUresult result = lupine_drain_htod_graph_exec(exec);
+  if (result == CUDA_SUCCESS) {
+    lupine_htod_exec_resource_map().erase(exec);
+  }
   lupine_dtoh_exec_entries dtoh;
   {
     std::lock_guard<std::mutex> lock(lupine_dtoh_exec_mutex());
@@ -2056,7 +1980,7 @@ static CUresult lupine_enqueue_htod_callback(
     const std::shared_ptr<lupine_htod_capture_events> &capture_events,
     CUstream stream) {
   if (graph_state != nullptr) {
-    graph_state->execution->note_callback();
+    ++graph_state->execution->callback_count;
     std::shared_ptr<lupine_htod_callback_data> callback;
     try {
       callback =
@@ -2217,7 +2141,7 @@ static CUresult lupine_enqueue_client_htod_copy(
   std::shared_ptr<lupine_htod_capture_events> capture_events;
   if (capture_id != 0) {
     graph_state = lupine_htod_graph_state_for(capture_id, ring);
-    if (graph_state == nullptr || graph_state->execution->ring() != ring) {
+    if (graph_state == nullptr || graph_state->execution->ring != ring) {
       return CUDA_ERROR_INVALID_CONTEXT;
     }
     result = lupine_make_htod_capture_events(context, capture_events);
@@ -2319,19 +2243,12 @@ static CUresult lupine_copy_client_host_to_device(conn_t *conn, CUstream stream,
     return result;
   }
 
-  lupine_staging_state *state = nullptr;
-  CUcontext context = nullptr;
-  CUdevice device = 0;
-  result = lupine_current_htod_context(conn, &state, &context, &device);
-  lupine_staging_operation operation(result == CUDA_SUCCESS ? state : nullptr,
-                                     context, device);
-  if (result == CUDA_SUCCESS && !operation.acquired()) {
-    result = CUDA_ERROR_INVALID_CONTEXT;
-  }
-
+  lupine_staging_operation operation(conn);
+  result = operation.result;
   if (result == CUDA_SUCCESS) {
-    result = lupine_enqueue_client_htod_copy(conn, *state, copy, context,
-                                             stream, blocking, wait_for_source);
+    result = lupine_enqueue_client_htod_copy(conn, *operation.state, copy,
+                                             operation.context, stream,
+                                             blocking, wait_for_source);
   }
   CUcontext popped = nullptr;
   CUresult restore = cuCtxPopCurrent_v2(&popped);
@@ -2382,18 +2299,12 @@ lupine_copy_pushed_host_to_device(conn_t *conn, CUstream stream, bool blocking,
     return result == CUDA_SUCCESS ? restore : result;
   }
 
-  lupine_staging_state *state = nullptr;
-  CUcontext context = nullptr;
-  CUdevice device = 0;
-  result = lupine_current_htod_context(conn, &state, &context, &device);
-  lupine_staging_operation operation(result == CUDA_SUCCESS ? state : nullptr,
-                                     context, device);
-  if (result == CUDA_SUCCESS && !operation.acquired()) {
-    result = CUDA_ERROR_INVALID_CONTEXT;
-  }
+  lupine_staging_operation operation(conn);
+  result = operation.result;
   std::shared_ptr<lupine_htod_side_effect_ring> ring;
   if (result == CUDA_SUCCESS) {
-    ring = lupine_prepare_htod_side_effect_ring(*state, context, result);
+    ring = lupine_prepare_htod_side_effect_ring(*operation.state,
+                                                operation.context, result);
   }
   if (result == CUDA_SUCCESS) {
     result = lupine_prepare_htod_copy(copy, ring);
@@ -2686,9 +2597,8 @@ void lupine_server_prepare_context_destroy(conn_t *conn, CUcontext context) {
   lupine_extract_context_staging_locked(*state, context, ring, fetch_stream);
 }
 
-static void lupine_server_finish_context_teardown(conn_t *conn,
-                                                  CUcontext context,
-                                                  bool forget) {
+void lupine_server_finish_context_teardown(conn_t *conn, CUcontext context,
+                                           bool forget) {
   auto *state = lupine_staging_state_for(conn);
   if (state == nullptr) {
     return;
@@ -2702,19 +2612,6 @@ static void lupine_server_finish_context_teardown(conn_t *conn,
     lupine_server_forget_context_metadata(*state, context);
   }
   state->teardown_contexts.erase(context);
-}
-
-void lupine_server_finish_context_destroy(conn_t *conn, CUcontext context,
-                                          CUresult) {
-  lupine_server_finish_context_teardown(conn, context, true);
-}
-
-void lupine_server_finish_context_detach(conn_t *conn, CUcontext context,
-                                         CUresult result) {
-  unsigned int version = 0;
-  bool forget = result != CUDA_SUCCESS ||
-                cuCtxGetApiVersion(context, &version) != CUDA_SUCCESS;
-  lupine_server_finish_context_teardown(conn, context, forget);
 }
 
 void lupine_server_cleanup_connection(conn_t *conn) {
@@ -3273,19 +3170,6 @@ static int lupine_write_dtoh_chunks(conn_t *conn, int request_id, size_t bytes,
   return 0;
 }
 
-static int lupine_copy_dtoh_serial(conn_t *conn, int request_id,
-                                   CUdeviceptr source, size_t bytes,
-                                   size_t offset, CUstream stream) {
-  return lupine_write_dtoh_chunks(
-      conn, request_id, bytes, offset,
-      [&](void *destination, size_t chunk_offset, size_t chunk) {
-        // host is pageable, so this returns only once the chunk has landed,
-        // ordered behind whatever was already queued on the caller's stream.
-        return cuMemcpyDtoHAsync_v2(destination, source + chunk_offset, chunk,
-                                    stream);
-      });
-}
-
 static constexpr size_t LUPINE_DTOH_PIPELINE_SLOT_BYTES =
     LUPINE_RPC_TRANSFER_CHUNK_BYTES;
 static constexpr size_t LUPINE_DTOH_PIPELINE_SLOT_COUNT = 2;
@@ -3595,8 +3479,14 @@ int handle_cuMemcpyDtoH_v2(conn_t *conn) {
       return result;
     }
   }
-  return lupine_copy_dtoh_serial(conn, request_id, source, bytes,
-                                 fallback_offset, stream);
+  return lupine_write_dtoh_chunks(
+      conn, request_id, bytes, fallback_offset,
+      [&](void *destination, size_t chunk_offset, size_t chunk) {
+        // host is pageable, so this returns only once the chunk has landed,
+        // ordered behind whatever was already queued on the caller's stream.
+        return cuMemcpyDtoHAsync_v2(destination, source + chunk_offset, chunk,
+                                    stream);
+      });
 }
 
 using lupine_native_memcpy3d = CUresult (*)(const CUDA_MEMCPY3D &copy,
@@ -3857,8 +3747,16 @@ int handle_cuMemcpyDtoHAsync_v2(conn_t *conn) {
   // page-locked memory pushes to its writable alias, updating `server_host` on
   // the stream when device code can read it.
   lupine_keep_async_error(
-      conn, lupine_push_dtoh(conn, stream, {dstHost, byteCount}, srcDevice,
-                             server_host, refresh != 0));
+      conn, lupine_push_dtoh_with(
+                conn, stream, {dstHost, byteCount},
+                [&](void *dst, CUstream s) {
+                  return refresh != 0
+                             ? cuMemcpyAsync(reinterpret_cast<CUdeviceptr>(dst),
+                                             srcDevice, byteCount, s)
+                             : cuMemcpyDtoHAsync_v2(dst, srcDevice, byteCount,
+                                                    s);
+                },
+                server_host, refresh != 0));
   return 0;
 }
 
