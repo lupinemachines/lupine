@@ -28,9 +28,6 @@ struct lupine_route {
 lupine_route lupine_remote_route_for_conn(conn_t *conn);
 int lupine_route_identity(lupine_route route);
 lupine_route lupine_route_from_identity(int route_id);
-conn_t *lupine_thread_conn_by_index(unsigned int index);
-CUresult lupine_virtual_device_count(int *count);
-CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal);
 // Only then can a module or library handle be used on a route other than the
 // one that loaded it.
 bool lupine_devices_span_routes();
@@ -80,10 +77,6 @@ lupine_connection_supports_concurrent_managed_access(conn_t *conn);
 extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first,
                                               CUdeviceptr second);
 extern "C" bool lupine_deviceptr_is_tracked(CUdeviceptr ptr);
-// True when one tracked allocation on route_id wholly contains
-// [ptr, ptr + bytes).
-extern "C" bool lupine_deviceptr_allocation_covers(CUdeviceptr ptr,
-                                                   size_t bytes, int route_id);
 
 struct lupine_htod_routing_info {
   lupine_route dst_route{};
@@ -148,8 +141,6 @@ static CUresult lupine_lookup_device_on_all_routes(CUdevice *device,
 
 extern "C" void *lupine_real_cuda_symbol(const char *name);
 
-extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn);
-extern "C" void lupine_note_library_owner(CUlibrary library, conn_t *conn);
 extern "C" void lupine_note_deviceptr_allocation(CUdeviceptr ptr, size_t size,
                                                  conn_t *conn);
 extern "C" void lupine_forget_deviceptr_owner(CUdeviceptr ptr);

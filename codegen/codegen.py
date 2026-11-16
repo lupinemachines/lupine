@@ -1414,7 +1414,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             'extern "C" void *lupine_deep_node_cache_get(CUgraphNode node, size_t slot, size_t bytes);\n'
             'extern "C" void lupine_deep_node_cache_reset(CUgraphNode node);\n'
             'std::vector<CUgraphNode> lupine_deep_cache_graph_nodes(CUgraph graph);\n\n'
-            'extern "C" CUfunction lupine_translate_private_function_for_rpc(CUfunction function);\n'
+            'extern "C" CUfunction lupine_translate_private_function(CUfunction function);\n'
             'extern "C" const char *lupine_retain_returned_string(const void *handle, const char *data, size_t size);\n\n'
             'extern "C" void lupine_release_module_retained_strings(CUmodule module);\n'
             'extern "C" void lupine_release_library_retained_strings(CUlibrary library);\n\n'
@@ -1429,7 +1429,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             'extern "C" void lupine_forget_destroyed_context(CUcontext ctx);\n'
             'extern "C" void lupine_disable_local_occupancy();\n'
             'extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel, lupine_route route);\n'
-            'extern "C" CUresult lupine_resolve_library_for_route(CUlibrary *library, lupine_route route);\n'
+            'extern "C" CUresult lupine_load_recorded_library_on_route(CUlibrary source_library, lupine_route route, CUlibrary *library);\n'
             'extern "C" int lupine_read_dtoh_watermark(conn_t *conn);\n'
             'extern "C" CUresult lupine_sync_mapped_device_to_host();\n\n'
         )

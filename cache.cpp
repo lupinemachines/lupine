@@ -58,28 +58,11 @@ struct lane_context_cache_entry {
   CUcontext context = nullptr;
 };
 
-std::atomic<uint64_t> &current_context_device_cache_epoch() {
-  static std::atomic<uint64_t> epoch{1};
-  return epoch;
-}
-
-current_context_device_cache_entry &current_context_device_cache() {
-  static thread_local current_context_device_cache_entry cache;
-  return cache;
-}
-
-std::atomic<uint64_t> &lane_context_cache_epoch() {
-  static std::atomic<uint64_t> epoch{1};
-  return epoch;
-}
-
-std::array<lane_context_cache_entry, kLaneContextCacheSlots> &
-lane_context_cache() {
-  static thread_local std::array<lane_context_cache_entry,
-                                 kLaneContextCacheSlots>
-      cache;
-  return cache;
-}
+std::atomic<uint64_t> current_context_device_epoch{1};
+thread_local current_context_device_cache_entry current_context_device;
+std::atomic<uint64_t> lane_context_epoch{1};
+thread_local std::array<lane_context_cache_entry, kLaneContextCacheSlots>
+    lane_contexts;
 
 lane_context_cache_entry *lane_context_cache_entry_for(int route_id) {
   if (route_id < -1) {
@@ -88,7 +71,7 @@ lane_context_cache_entry *lane_context_cache_entry_for(int route_id) {
   static_assert((kLaneContextCacheSlots & (kLaneContextCacheSlots - 1)) == 0,
                 "lane context cache size must be a power of two");
   size_t slot = static_cast<size_t>(route_id) & (kLaneContextCacheSlots - 1);
-  return &lane_context_cache()[slot];
+  return &lane_contexts[slot];
 }
 
 } // namespace
@@ -165,8 +148,8 @@ bool lupine_deviceptr_allocation_cache_overlaps_other_route(CUdeviceptr base,
 bool lupine_current_context_device_cache_lookup(CUcontext context,
                                                 CUdevice *device) {
   uint64_t current_epoch =
-      current_context_device_cache_epoch().load(std::memory_order_acquire);
-  auto &entry = current_context_device_cache();
+      current_context_device_epoch.load(std::memory_order_acquire);
+  auto &entry = current_context_device;
   if (context == nullptr || device == nullptr || entry.epoch != current_epoch ||
       entry.context != context) {
     return false;
@@ -180,28 +163,20 @@ void lupine_current_context_device_cache_insert(CUcontext context,
   if (context == nullptr) {
     return;
   }
-  uint64_t epoch =
-      current_context_device_cache_epoch().load(std::memory_order_acquire);
-  auto &entry = current_context_device_cache();
-  entry.context = context;
-  entry.device = device;
-  entry.epoch = epoch;
-}
-
-void lupine_current_context_device_cache_invalidate() {
-  current_context_device_cache_epoch().fetch_add(1, std::memory_order_acq_rel);
+  current_context_device = {
+      current_context_device_epoch.load(std::memory_order_acquire), context,
+      device};
 }
 
 uint64_t lupine_lane_context_cache_epoch() {
-  return lane_context_cache_epoch().load(std::memory_order_acquire);
+  return lane_context_epoch.load(std::memory_order_acquire);
 }
 
 bool lupine_lane_context_cache_matches(int route_id, CUcontext context) {
   auto *entry = lane_context_cache_entry_for(route_id);
   return entry != nullptr && entry->route_id == route_id &&
          entry->context == context &&
-         entry->epoch ==
-             lane_context_cache_epoch().load(std::memory_order_acquire);
+         entry->epoch == lane_context_epoch.load(std::memory_order_acquire);
 }
 
 void lupine_lane_context_cache_update(int route_id, CUcontext context,
@@ -211,7 +186,7 @@ void lupine_lane_context_cache_update(int route_id, CUcontext context,
     return;
   }
   if (!succeeded ||
-      lane_context_cache_epoch().load(std::memory_order_acquire) != epoch) {
+      lane_context_epoch.load(std::memory_order_acquire) != epoch) {
     if (entry->route_id == route_id) {
       entry->epoch = 0;
     }
@@ -222,20 +197,15 @@ void lupine_lane_context_cache_update(int route_id, CUcontext context,
   entry->epoch = epoch;
 }
 
-void lupine_lane_context_cache_store(int route_id, CUcontext context) {
-  lupine_lane_context_cache_update(route_id, context,
-                                   lupine_lane_context_cache_epoch(), true);
-}
-
 extern "C" void lupine_invalidate_current_context_cache() {
-  lupine_current_context_device_cache_invalidate();
-  lane_context_cache_epoch().fetch_add(1, std::memory_order_acq_rel);
+  current_context_device_epoch.fetch_add(1, std::memory_order_acq_rel);
+  lane_context_epoch.fetch_add(1, std::memory_order_acq_rel);
 }
 
 extern "C" void lupine_note_device_binding_changed() {
   // The lane's driver context went with its device, so what this thread
   // believed was current there no longer holds.
-  for (auto &entry : lane_context_cache()) {
+  for (auto &entry : lane_contexts) {
     entry.epoch = 0;
   }
 }

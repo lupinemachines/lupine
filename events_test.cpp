@@ -2,10 +2,6 @@
 
 #include <iostream>
 
-// events.cpp's conn-aware wrapper binds the routing resolver; the policy tests
-// below inject their own, so a stub satisfies the link without routing.
-extern "C" conn_t *lupine_rpc_conn_for_event(CUevent) { return nullptr; }
-
 namespace {
 
 conn_t *const kConnA = reinterpret_cast<conn_t *>(0x1000);

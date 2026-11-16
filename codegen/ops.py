@@ -826,7 +826,7 @@ class OpaqueTypeOperation:
         if self.is_sent_cufunction():
             return (
                 f"    CUfunction {self.parameter.name}_rpc = "
-                f"lupine_translate_private_function_for_rpc({self.parameter.name});\n"
+                f"lupine_translate_private_function({self.parameter.name});\n"
             )
         return ""
 
