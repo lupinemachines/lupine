@@ -196,6 +196,7 @@ static int check_graph_nodes(CUcontext ctx, CUdeviceptr device,
     }
   }
   DRV(cuMemsetD8(device, 0, box.size()));
+  DRV(cuCtxSynchronize());
   CUgraph graph;
   DRV(cuGraphCreate(&graph, 0));
   CUDA_MEMCPY3D htod = host_side_copy(device, source.data(), true);
@@ -236,6 +237,7 @@ static int check_captured_dtoh(CUdeviceptr device, CUstream stream,
   std::vector<unsigned char> box;
   fill_device_box(box);
   DRV(cuMemcpyHtoD(device, box.data(), box.size()));
+  DRV(cuCtxSynchronize());
 
   void *pinned = nullptr;
   DRV(cuMemAllocHost(&pinned, kHostBytes));
@@ -297,6 +299,7 @@ static int check_async_dtoh(CUdeviceptr device, CUstream stream, bool pinned,
   std::vector<unsigned char> box;
   fill_device_box(box);
   DRV(cuMemcpyHtoD(device, box.data(), box.size()));
+  DRV(cuCtxSynchronize());
 
   std::vector<unsigned char> pageable;
   void *storage = nullptr;
