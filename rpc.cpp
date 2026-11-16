@@ -956,7 +956,7 @@ static int rpc_request_key(conn_t *conn, uintptr_t key, bool publish) {
   }
   // A request on no scope waits for every earlier ticket already.
   if (scope.scoped) {
-    rpc_scope_wait_for(builder, rpc_scope_snapshot(conn, key));
+    scope.after.push_back(key);
   }
   return 0;
 }
@@ -995,11 +995,32 @@ int rpc_request_after_retired(conn_t *conn) {
   if (conn == nullptr || builder == nullptr) {
     return -1;
   }
-  for (const rpc_scope_ticket &last : conn->retired_scopes) {
-    rpc_scope_wait_for(builder, last);
-  }
-  builder->write_scope.retired_count = conn->retired_scopes.size();
+  builder->write_scope.after_retired_at = builder->write_scope.after.size();
   return 0;
+}
+
+// Turns what the request being written is ordered behind into wait markers,
+// against the tickets published before it. Returns the fence for a
+// connection-wide request.
+static uint64_t rpc_resolve_waits(conn_t *conn, rpc_write_builder *builder) {
+  rpc_request_scope &scope = builder->write_scope;
+  if (scope.scoped && !scope.publish_host_writes) {
+    rpc_scope_wait_for(builder, rpc_scope_snapshot(conn, RPC_SCOPE_NONE));
+    rpc_scope_wait_for(builder,
+                       rpc_scope_snapshot(conn, RPC_SCOPE_HOST_WRITES));
+  }
+  for (size_t i = 0; i <= scope.after.size(); ++i) {
+    if (i == scope.after_retired_at) {
+      for (const rpc_scope_ticket &last : conn->retired_scopes) {
+        rpc_scope_wait_for(builder, last);
+      }
+      scope.retired_count = conn->retired_scopes.size();
+    }
+    if (i < scope.after.size()) {
+      rpc_scope_wait_for(builder, rpc_scope_snapshot(conn, scope.after[i]));
+    }
+  }
+  return scope.scoped ? 0 : conn->issued_async_sequence;
 }
 
 uint64_t rpc_request_pending_ticket(conn_t *conn, uintptr_t key) {
@@ -1054,12 +1075,6 @@ int rpc_write_start_request_on(conn_t *conn, const int op, uintptr_t key,
   conn->request_id = conn->request_id + 2; // leave the last bit the same
   builder->write_id = conn->request_id;
   builder->write_op = op;
-  // Dependencies are taken under the builder lock, in the order requests are
-  // written. Taken earlier, two overlapping requests could both wait on the
-  // same old ticket, and a later one waiting on the newest would not cover the
-  // other. Every request waits only on requests written before it.
-  builder->write_dependency =
-      client && !scoped ? conn->issued_async_sequence : 0;
   builder->write_awaited = false;
   builder->write_stream_id =
       rpc_http2_lane_stream(conn, host_writes ? ~uint64_t{0} : rpc_tls_lane.id);
@@ -1075,12 +1090,11 @@ int rpc_write_start_request_on(conn_t *conn, const int op, uintptr_t key,
   scope.publish_host_writes = host_writes;
   scope.soft = (flags & RPC_REQUEST_SOFT) != 0;
   scope.keys.clear();
+  scope.after.clear();
+  scope.after_retired_at = SIZE_MAX;
   scope.waits.clear();
   scope.retired_count = 0;
   if (scoped && !host_writes) {
-    rpc_scope_wait_for(builder, rpc_scope_snapshot(conn, RPC_SCOPE_NONE));
-    rpc_scope_wait_for(builder,
-                       rpc_scope_snapshot(conn, RPC_SCOPE_HOST_WRITES));
     rpc_request_on(conn, key);
   }
   if (lupine_rpc_stats_path() != nullptr) {
@@ -1176,8 +1190,8 @@ int rpc_write_end(conn_t *conn) {
   bool client_request = request && conn->local_request_parity == 0;
   // A client request is its wait markers, then {id, op} and its ticket. A
   // connection-wide one has a single marker, for every ticket published
-  // before it started.
-  rpc_wait_marker fence = {0, 0, builder->write_dependency};
+  // before it.
+  rpc_wait_marker fence = {0, 0, 0};
   struct {
     int request_id;
     int op;
@@ -1189,15 +1203,22 @@ int rpc_write_end(conn_t *conn) {
     // taken only by a request that is written, under the builder lock, and
     // given back below if the write fails.
     bool ticketed = client_request && !builder->write_awaited;
-    builder->write_ticket =
+    // Dependencies are taken in the order requests are written. Taken
+    // earlier, two overlapping requests could both wait on the same old
+    // ticket, and a later one waiting on the newest would not cover the
+    // other. Every request waits only on requests written before it.
+    if (client_request) {
+      fence.value = rpc_resolve_waits(conn, builder);
+    }
+    uint64_t ticket =
         ticketed ? conn->issued_async_sequence++ : kNoAsyncSequence;
     if (client_request) {
       const std::vector<rpc_wait_marker> &waits = builder->write_scope.waits;
       queue[0] =
-          builder->write_dependency > 0
+          fence.value > 0
               ? rpc_write_cursor(&fence, sizeof(fence))
               : rpc_write_cursor(waits.data(), waits.size() * sizeof(waits[0]));
-      header = {write_id, builder->write_op, builder->write_ticket};
+      header = {write_id, builder->write_op, ticket};
       queue[1] = rpc_write_cursor(&header, sizeof(header));
     } else {
       queue[0] =
@@ -1214,7 +1235,7 @@ int rpc_write_end(conn_t *conn) {
       // Later requests on the same objects, or connection-wide ones, order
       // themselves behind this one.
       const rpc_request_scope &scope = builder->write_scope;
-      rpc_scope_ticket last{builder->write_ticket, write_stream_id};
+      rpc_scope_ticket last{ticket, write_stream_id};
       if (scope.publish_connection) {
         conn->connection_last = last;
       }
