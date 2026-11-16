@@ -580,17 +580,7 @@ struct rpc_response_route {
 
 struct rpc_nested_write_frame {
   conn_t *conn = nullptr;
-  int write_id = 0;
-  int write_op = 0;
-  int32_t write_stream_id = -1;
-  uint64_t write_dependency = 0;
-  uint64_t write_ticket = 0;
-  bool write_awaited = false;
-  rpc_request_scope write_scope;
-  std::vector<rpc_write_cursor> write_queue;
-  unsigned char *write_copy_buffer = nullptr;
-  size_t write_copy_capacity = 0;
-  size_t write_copy_offset = 0;
+  rpc_write_builder builder;
   alignas(std::max_align_t) unsigned char write_copy_inline[256] = {};
 };
 
@@ -612,41 +602,15 @@ static thread_local rpc_thread_io rpc_tls_io;
 static thread_local conn_t *rpc_tls_callback_reply = nullptr;
 
 void rpc_save_outer_response(conn_t *conn) {
-  rpc_nested_write_frame &frame = rpc_tls_io.nested_write;
-  frame.conn = conn;
-  frame.write_id = conn->write_id;
-  frame.write_op = conn->write_op;
-  frame.write_stream_id = conn->write_stream_id;
-  frame.write_dependency = conn->write_dependency;
-  frame.write_ticket = conn->write_ticket;
-  frame.write_awaited = conn->write_awaited;
-  std::swap(frame.write_scope, conn->write_scope);
-  std::swap(frame.write_queue, conn->write_queue);
-  frame.write_copy_buffer = conn->write_copy_buffer;
-  frame.write_copy_capacity = conn->write_copy_capacity;
-  frame.write_copy_offset = conn->write_copy_offset;
-  conn->write_copy_buffer = nullptr;
-  conn->write_copy_capacity = 0;
-  conn->write_copy_offset = 0;
+  rpc_tls_io.nested_write.conn = conn;
+  std::swap(rpc_tls_io.nested_write.builder,
+            static_cast<rpc_write_builder &>(*conn));
 }
 
 void rpc_restore_outer_response(conn_t *conn) {
-  rpc_nested_write_frame &frame = rpc_tls_io.nested_write;
-  conn->write_id = frame.write_id;
-  conn->write_op = frame.write_op;
-  conn->write_stream_id = frame.write_stream_id;
-  conn->write_dependency = frame.write_dependency;
-  conn->write_ticket = frame.write_ticket;
-  conn->write_awaited = frame.write_awaited;
-  std::swap(conn->write_scope, frame.write_scope);
-  std::swap(conn->write_queue, frame.write_queue);
-  conn->write_copy_buffer = frame.write_copy_buffer;
-  conn->write_copy_capacity = frame.write_copy_capacity;
-  conn->write_copy_offset = frame.write_copy_offset;
-  frame.conn = nullptr;
-  frame.write_copy_buffer = nullptr;
-  frame.write_copy_capacity = 0;
-  frame.write_copy_offset = 0;
+  std::swap(rpc_tls_io.nested_write.builder,
+            static_cast<rpc_write_builder &>(*conn));
+  rpc_tls_io.nested_write.conn = nullptr;
 }
 
 void rpc_release_write_builder(conn_t *conn, bool request_nested_in_response) {

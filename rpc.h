@@ -194,10 +194,10 @@ struct rpc_request_scope {
   size_t retired_count = 0;
 };
 
-struct conn_t {
-  lupine_socket_t connfd;
-
-  int request_id;
+// The request or response being built. A request nested in a response swaps
+// the outer builder out and back; each keeps its own inline copy storage in
+// place, since queued cursors point into it.
+struct rpc_write_builder {
   int write_id;
   int write_op;
   int32_t write_stream_id;
@@ -205,6 +205,16 @@ struct conn_t {
   uint64_t write_ticket;
   bool write_awaited;
   rpc_request_scope write_scope;
+  std::vector<rpc_write_cursor> write_queue;
+  unsigned char *write_copy_buffer;
+  size_t write_copy_capacity;
+  size_t write_copy_offset;
+};
+
+struct conn_t : rpc_write_builder {
+  lupine_socket_t connfd;
+
+  int request_id;
 
   pthread_t read_thread;
   pthread_mutex_t write_mutex, call_mutex, async_mutex;
@@ -222,15 +232,11 @@ struct conn_t {
   bool async_cancelled;
   int async_sync_initialized;
   int first_async_error;
-  std::vector<rpc_write_cursor> write_queue;
   std::vector<rpc_host_allocation_write> host_allocation_writes;
   int host_allocation_writes_pending;
   // Whether a host-memory flush was sent unanswered since a callback's
   // acknowledgement last waited for the flushes.
   int host_flushes_unsettled;
-  unsigned char *write_copy_buffer;
-  size_t write_copy_capacity;
-  size_t write_copy_offset;
   alignas(std::max_align_t) unsigned char write_copy_inline[256];
   int local_request_parity;
   int logical_index;
