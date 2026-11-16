@@ -450,8 +450,15 @@ static auto &lupine_library_functions() {
   return lupine_leaked<std::unordered_map<CUfunction, CUlibrary>>([] {});
 }
 
+// A library's module belongs to the context current when it was looked up.
+struct lupine_library_module {
+  CUlibrary library = nullptr;
+  CUcontext context = nullptr;
+};
+
 static auto &lupine_library_modules() {
-  return lupine_leaked<std::unordered_map<CUmodule, CUlibrary>>([] {});
+  return lupine_leaked<std::unordered_map<CUmodule, lupine_library_module>>(
+      [] {});
 }
 
 static constexpr size_t kLupineMaxConns = 16;
@@ -1074,8 +1081,10 @@ extern "C" void lupine_record_library_module(CUmodule module,
   if (module == nullptr || library == nullptr) {
     return;
   }
+  CUcontext context = nullptr;
+  (void)cuCtxGetCurrent(&context);
   std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
-  lupine_library_modules()[module] = library;
+  lupine_library_modules()[module] = {library, context};
 }
 
 extern "C" CUresult lupine_record_module_function(CUfunction function,
@@ -1250,11 +1259,34 @@ static void lupine_prefill_function_attribute_snapshot(CUfunction function,
     (void)rpc_read_end(conn);
 }
 
+// A library's module in a context holds the functions cuKernelGetFunction
+// returns for its kernels there, which the library's load already resolved.
+static bool lupine_library_module_function(CUmodule module, const char *name,
+                                           lupine_route route,
+                                           CUfunction *function) {
+  lupine_library_module owner;
+  {
+    std::lock_guard<std::mutex> lock(lupine_library_kernel_mutex());
+    auto it = lupine_library_modules().find(module);
+    if (it == lupine_library_modules().end()) {
+      return false;
+    }
+    owner = it->second;
+  }
+  CUkernel kernel = nullptr;
+  return lupine_library_kernel_names().find(owner.library, name, kernel) &&
+         lupine_kernel_function_cache().find(
+             lupine_kernel_function_key{lupine_route_identity(route),
+                                        owner.context, kernel},
+             *function);
+}
+
 bool lupine_try_cached_module_function(CUmodule module, const char *name,
                                        lupine_route route,
                                        CUfunction *function) {
   CUfunction cached = nullptr;
-  if (!lupine_module_function_names().find(module, name, cached)) {
+  if (!lupine_module_function_names().find(module, name, cached) &&
+      !lupine_library_module_function(module, name, route, &cached)) {
     return false;
   }
   *function = cached;
@@ -5343,7 +5375,7 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
         [&](const auto &e) {
           auto mod = lupine_library_modules().find(e.second.module);
           return mod != lupine_library_modules().end() &&
-                 mod->second == library;
+                 mod->second.library == library;
         },
         [&](const auto &e) { unloaded_functions.insert(e.first); });
     lupine_erase_retained_entries_locked(
@@ -5362,7 +5394,7 @@ extern "C" void lupine_release_library_retained_strings(CUlibrary library) {
     }
     lupine_erase_retained_entries_locked(
         lupine_library_modules(),
-        [&](const auto &e) { return e.second == library; },
+        [&](const auto &e) { return e.second.library == library; },
         [](const auto &e) {
           lupine_module_function_names().erase_handle(e.first);
         });
