@@ -121,37 +121,6 @@ CUresult cuDriverGetVersion(int *driverVersion) {
   return return_value;
 }
 
-CUresult lupine_remote_cuDeviceGet(conn_t *conn, CUdevice *device,
-                                   int ordinal) {
-  CUresult return_value;
-  if (device == nullptr)
-    return CUDA_ERROR_INVALID_VALUE;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuDeviceGet, RPC_SCOPE_NONE) < 0 ||
-      rpc_write(conn, &ordinal, sizeof(int)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, device, sizeof(CUdevice)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
-CUresult lupine_remote_cuDeviceGetCount(conn_t *conn, int *count) {
-  CUresult return_value;
-  if (count == nullptr)
-    return CUDA_ERROR_INVALID_VALUE;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuDeviceGetCount, RPC_SCOPE_NONE) <
-          0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, count, sizeof(int)) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuDeviceGetName(char *name, int len, CUdevice dev) {
   CUdevice virtual_dev = dev;
   lupine_route route = lupine_route_for_device(&dev);
@@ -183,23 +152,6 @@ CUresult cuDeviceGetName(char *name, int len, CUdevice dev) {
   return return_value;
 }
 
-CUresult lupine_remote_cuDeviceGetUuid_v2(conn_t *conn, CUuuid *uuid,
-                                          CUdevice dev) {
-  CUresult return_value;
-  uint8_t uuid_null = uuid == nullptr ? 1 : 0;
-  if (lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, RPC_cuDeviceGetUuid_v2, RPC_SCOPE_NONE) <
-          0 ||
-      rpc_write(conn, &uuid_null, sizeof(uint8_t)) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      (!uuid_null && 16 != 0 && rpc_read(conn, uuid, 16) < 0) ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  return return_value;
-}
-
 CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev) {
   CUdevice virtual_dev = dev;
   lupine_route route = lupine_route_for_device(&dev);
@@ -215,7 +167,17 @@ CUresult cuDeviceGetUuid_v2(CUuuid *uuid, CUdevice dev) {
     return lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuDeviceGetUuid_v2"), uuid, dev);
   conn_t *conn = lupine_route_remote_conn(route);
-  return_value = lupine_remote_cuDeviceGetUuid_v2(conn, uuid, dev);
+  uint8_t uuid_null = uuid == nullptr ? 1 : 0;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request_on(conn, RPC_cuDeviceGetUuid_v2, RPC_SCOPE_NONE) <
+          0 ||
+      rpc_write(conn, &uuid_null, sizeof(uint8_t)) < 0 ||
+      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      (!uuid_null && 16 != 0 && rpc_read(conn, uuid, 16) < 0) ||
+      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
+      rpc_read_end(conn) < 0)
+    return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return return_value;
 }
 

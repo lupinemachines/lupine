@@ -36,14 +36,12 @@ CUresult cuDriverGetVersion(int *driverVersion) {
 }
 /**
  * @disabled client - manual client maps the virtual device ordinal
- * @remotehelper
  * @param device RECV_ONLY
  * @param ordinal SEND_ONLY
  */
 CUresult cuDeviceGet(CUdevice *device, int ordinal);
 /**
  * @disabled client - manual client reports the virtual device table size
- * @remotehelper
  * @param count RECV_ONLY
  */
 CUresult cuDeviceGetCount(int *count);
@@ -62,7 +60,6 @@ CUresult cuDeviceGetName(char *name, int len, CUdevice dev) {
   return return_value;
 }
 /**
- * @remotehelper
  * @param uuid RECV_ONLY SIZE:16
  * @param dev SEND_ONLY
  */

@@ -1186,10 +1186,6 @@ class FunctionAnnotationMetadata:
     disabled_server: bool = False
     # @blocking: a call answering only its status that must still wait for it.
     blocking: bool = False
-    # @remotehelper: also emit lupine_remote_<call>(conn, ...), the request on
-    # an already-resolved connection, for client code that cannot route by the
-    # virtual device table (it is building it).
-    remote_helper: bool = False
     # Optional response fields are emitted by the corresponding manual server
     # handler before the generated CUDA result.
     synchronize: Optional[SynchronizeAnnotation] = None
