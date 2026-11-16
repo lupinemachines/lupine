@@ -2032,13 +2032,13 @@ void lupine_finish_graph_exec_update(CUgraphExec exec, CUgraph graph,
                                      CUresult result,
                                      CUgraphExecUpdateResultInfo *info) {
 #if CUDA_VERSION >= 12000
-  if (result != CUDA_SUCCESS) {
+  if (result != CUDA_SUCCESS && info != nullptr) {
     info->errorFromNode =
         lupine_original_htod_graph_node(*binding, info->errorFromNode);
   }
 #endif
   lupine_finish_graph_exec_update(exec, graph, binding, result,
-                                  &info->errorNode);
+                                  info != nullptr ? &info->errorNode : nullptr);
 }
 
 CUresult lupine_release_graph_exec_resources(CUgraphExec exec) {
