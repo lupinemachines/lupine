@@ -2580,31 +2580,30 @@ void test_async_prefix_connection_wide_marker() {
   }
 }
 
-// A request takes its dependencies once it holds the builder, so one that
+// A request takes its dependencies when it is written, so one that
 // overlapped another producer still waits for it. Scoped requests wait only
 // for an object's newest ticket, and that ticket must cover every request
-// that returned before a later one started.
+// that returned before a later one was written.
 void test_async_prefix_builder_wait_orders_overlap() {
   h2_pair pair;
   init_pair(&pair);
-  pthread_mutex_lock(&pair.client.write_mutex);
+  std::atomic<bool> started{false}, overlapped{false};
   std::thread caller([&] {
     require(rpc_write_start_request(&pair.client, 101) == 0,
-            "blocked request start failed");
+            "overlapping request start failed");
+    started = true;
+    wait_async_flag(overlapped, "the other producer did not publish");
     require(rpc_write_end(&pair.client) > 0, "blocked request enqueue failed");
     require(rpc_write_start_request(&pair.client, 102) == 0 &&
                 rpc_write_end(&pair.client) > 0,
             "following request enqueue failed");
   });
-  // The caller has acquired call_mutex, but cannot start its builder until
-  // this test releases write_mutex.
-  while (pthread_mutex_trylock(&pair.client.call_mutex) == 0) {
-    pthread_mutex_unlock(&pair.client.call_mutex);
-    std::this_thread::yield();
-  }
+  wait_async_flag(started, "the overlapping request did not start");
   // Simulate another producer publishing sequence 0 during the overlap.
+  pthread_mutex_lock(&pair.client.write_mutex);
   pair.client.issued_async_sequence = 1;
   pthread_mutex_unlock(&pair.client.write_mutex);
+  overlapped = true;
   caller.join();
   int32_t lane = rpc_http2_accept_stream(&pair.server);
   int marker[2];
@@ -2639,6 +2638,159 @@ void test_async_prefix_builder_wait_orders_overlap() {
               0 &&
           ticket == 2,
       "following request lost its ticket");
+}
+
+struct raw_client_request {
+  int32_t lane = -1;
+  std::vector<rpc_wait_marker> waits;
+  int id = 0;
+  int op = 0;
+  uint64_t ticket = 0;
+  int payload = 0;
+};
+
+// Reads a client request off `lane` byte for byte: its wait markers, then
+// {id, op}, its ticket and an int payload.
+raw_client_request read_raw_client_request(conn_t *server, int32_t lane) {
+  raw_client_request request;
+  request.lane = lane;
+  for (;;) {
+    int header[2];
+    require(rpc_http2_read_stream(server, lane, header, sizeof(header)) == 0,
+            "raw request header read failed");
+    if (header[0] != 0) {
+      request.id = header[0];
+      request.op = header[1];
+      break;
+    }
+    uint64_t value = 0;
+    require(rpc_http2_read_stream(server, lane, &value, sizeof(value)) == 0,
+            "raw wait marker read failed");
+    request.waits.push_back({0, header[1], value});
+  }
+  require(rpc_http2_read_stream(server, lane, &request.ticket,
+                                sizeof(request.ticket)) == 0 &&
+              rpc_http2_read_stream(server, lane, &request.payload,
+                                    sizeof(request.payload)) == 0,
+          "raw request body read failed");
+  return request;
+}
+
+// Requests from several lanes on one object form a chain: each waits for the
+// ticket taken just before its own when another lane took it, and for nothing
+// when its own lane did. Taking the dependency, the ticket and publishing it
+// must therefore be one step.
+void test_rpc_scope_chain_across_lanes() {
+  h2_pair pair;
+  init_pair(&pair);
+  exchange_settings(&pair);
+  static constexpr int kThreads = 4;
+  static constexpr int kPerThread = 500;
+  static constexpr uintptr_t kKey = 0x5000;
+  std::vector<std::thread> senders;
+  for (int t = 0; t < kThreads; ++t) {
+    senders.emplace_back([&pair, t] {
+      for (int i = 0; i < kPerThread; ++i) {
+        int payload = t * kPerThread + i;
+        require(rpc_write_start_request_on(&pair.client, 103, kKey) == 0 &&
+                    rpc_write(&pair.client, &payload, sizeof(payload)) == 0 &&
+                    rpc_write_end(&pair.client) > 0,
+                "scoped request failed");
+      }
+    });
+  }
+  std::vector<raw_client_request> requests(kThreads * kPerThread);
+  std::vector<std::thread> readers;
+  for (int t = 0; t < kThreads; ++t) {
+    int32_t lane = rpc_http2_accept_stream(&pair.server);
+    readers.emplace_back([&pair, &requests, lane] {
+      for (int i = 0; i < kPerThread; ++i) {
+        raw_client_request request =
+            read_raw_client_request(&pair.server, lane);
+        require(request.ticket < requests.size(), "ticket out of range");
+        requests[request.ticket] = request;
+      }
+    });
+  }
+  for (auto &thread : senders) {
+    thread.join();
+  }
+  for (auto &thread : readers) {
+    thread.join();
+  }
+  for (size_t ticket = 0; ticket < requests.size(); ++ticket) {
+    const raw_client_request &request = requests[ticket];
+    require(request.lane >= 0 && request.ticket == ticket, "ticket missing");
+    bool other_lane = ticket != 0 && requests[ticket - 1].lane != request.lane;
+    require(request.waits.size() == (other_lane ? 1u : 0u) &&
+                (!other_lane || (request.waits[0].kind == 1 &&
+                                 request.waits[0].value == ticket - 1)),
+            "a scoped request did not wait for the previous ticket on its "
+            "object");
+  }
+}
+
+// Every thread's host-memory writes share one lane, so tickets taken for it
+// must reach the server in the order they were taken.
+void test_rpc_host_writes_ticket_order() {
+  h2_pair pair;
+  init_pair(&pair);
+  exchange_settings(&pair);
+  static constexpr int kThreads = 4;
+  static constexpr int kPerThread = 2000;
+  std::vector<std::thread> senders;
+  for (int t = 0; t < kThreads; ++t) {
+    senders.emplace_back([&pair, t] {
+      for (int i = 0; i < kPerThread; ++i) {
+        int payload = t * kPerThread + i;
+        require(rpc_write_start_request_on(&pair.client, 104,
+                                           RPC_SCOPE_HOST_WRITES) == 0 &&
+                    rpc_write(&pair.client, &payload, sizeof(payload)) == 0 &&
+                    rpc_write_end(&pair.client) > 0,
+                "host-writes request failed");
+      }
+    });
+  }
+  int32_t lane = rpc_http2_accept_stream(&pair.server);
+  uint64_t previous = 0;
+  for (int i = 0; i < kThreads * kPerThread; ++i) {
+    raw_client_request request = read_raw_client_request(&pair.server, lane);
+    require(request.op == 104 && request.waits.empty(),
+            "host-writes request corrupted");
+    require(i == 0 || request.ticket > previous,
+            "host-writes tickets reached the server out of order");
+    previous = request.ticket;
+  }
+  for (auto &thread : senders) {
+    thread.join();
+  }
+}
+
+// A pause waits for a request that is being built, but not for an answer its
+// caller has yet to read (test_rpc_repeated_responses_on_lane).
+void test_rpc_pause_waits_for_open_builder() {
+  h2_pair pair;
+  init_pair(&pair);
+  std::atomic<bool> started{false}, release{false}, paused{false};
+  std::thread builder([&] {
+    require(rpc_write_start_request(&pair.client, 105) == 0,
+            "open builder start failed");
+    started = true;
+    wait_async_flag(release, "the open builder was not released");
+    require(rpc_write_end(&pair.client) > 0, "open builder end failed");
+  });
+  wait_async_flag(started, "the builder did not open");
+  std::thread pauser([&] {
+    require(lupine_handoff_pause_requests(&pair.client) == 0, "pause failed");
+    paused = true;
+  });
+  std::this_thread::sleep_for(std::chrono::milliseconds(30));
+  require(!paused, "a pause returned while a request was being built");
+  release = true;
+  builder.join();
+  pauser.join();
+  require(paused, "the pause did not return once the builder ended");
+  lupine_handoff_resume_requests(&pair.client);
 }
 
 void test_async_prefix_wait_preserves_flow_control() {
@@ -2850,6 +3002,9 @@ int main() {
   RUN_CASE(test_async_prefix_end_completes_only_claimed_ticket());
   RUN_CASE(test_async_prefix_connection_wide_marker());
   RUN_CASE(test_async_prefix_builder_wait_orders_overlap());
+  RUN_CASE(test_rpc_scope_chain_across_lanes());
+  RUN_CASE(test_rpc_host_writes_ticket_order());
+  RUN_CASE(test_rpc_pause_waits_for_open_builder());
   RUN_CASE(test_async_prefix_wait_preserves_flow_control());
   RUN_CASE(test_async_prefix_shutdown_wakes_waiters());
   RUN_CASE(test_server_shutdown_fails_client_waiters());
