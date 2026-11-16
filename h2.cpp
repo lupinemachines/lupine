@@ -60,6 +60,9 @@ constexpr int kH2ZstdWindowLog = 19;
 // Bound input per compression step so large compressible writes start
 // reaching the socket before their whole payload is compressed.
 constexpr size_t kH2CompressionBlockBytes = 256 * 1024;
+// Cursors up to this size are copied for the write thread to compress, so a
+// request writer never waits on a block compression it did not need.
+constexpr size_t kH2StagedCursorBytes = 4096;
 constexpr size_t kH2MaxDataFrameBytes = 1024 * 1024;
 constexpr size_t kH2DecodeBufferBytes = 64 * 1024;
 // Retained capacity for drained staging buffers, a few frames' worth.
@@ -111,6 +114,8 @@ struct h2_stream {
   size_t encoded_offset = 0;
   // Stays null once started for an identity body.
   ZSTD_CCtx *encoder = nullptr;
+  // Input ahead of anything compressed later on this stream.
+  std::vector<unsigned char> staged;
   ZSTD_DCtx *decoder = nullptr;
   int response_status = 0;
   std::string requested_va_base;
@@ -143,6 +148,13 @@ struct h2_transport {
   // flushes them before each send, so every message queued while one send is
   // in flight shares a block instead of paying a block and a flush each.
   std::vector<int32_t> flush_pending;
+  // The stream whose encoder the write thread runs outside session_mutex.
+  // Nothing else touches that encoder until this is cleared.
+  h2_stream *encoding = nullptr;
+  // Write thread scratch, reused across flushes.
+  std::vector<int32_t> flushing;
+  std::vector<unsigned char> encode_input;
+  std::vector<unsigned char> encode_output;
   std::atomic<uint64_t> output_generation{0};
   // Protected by session_mutex. Record the first output arrival during an
   // idle wait so the polling policy does not learn scheduler wakeup latency.
@@ -783,6 +795,9 @@ int h2_on_stream_close_callback(nghttp2_session *, int32_t stream_id, uint32_t,
                                 void *user_data) {
   auto *transport = static_cast<h2_transport *>(user_data);
   h2_stream &stream = h2_get_stream(transport, stream_id);
+  if (transport->encoding == &stream) {
+    stream.encoder = nullptr; // The write thread frees it.
+  }
   h2_release_codecs(stream);
   // The entry stays: lookup recreates missing streams, so a late reader would
   // wait on a fresh stream forever instead of seeing it closed.
@@ -1009,6 +1024,24 @@ int h2_encode_terminal_locked(h2_stream &stream, bool finish) {
   return 0;
 }
 
+// Compresses what the write thread has not taken, so later input stays behind
+// it.
+int h2_encode_staged_locked(h2_transport *transport, h2_stream &stream) {
+  while (transport->encoding == &stream) {
+    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
+  }
+  if (stream.closed) {
+    return -1;
+  }
+  if (stream.staged.empty()) {
+    return 0;
+  }
+  int result =
+      h2_encode_locked(stream, stream.staged.data(), stream.staged.size());
+  stream.staged.clear();
+  return result;
+}
+
 // Hands the stream's encoded bytes to nghttp2. The stream's DATA item is
 // submitted on first use and resumed from its deferral after that; whatever
 // the peer's window does not cover stays encoded until the read thread pumps
@@ -1069,18 +1102,28 @@ int h2_write_stream_locked(h2_transport *transport, int32_t stream_id,
         continue;
       }
       size_t input = std::min(cursor.size, kH2CompressionBlockBytes);
-      size_t backlog = stream.encoded_size - stream.encoded_offset;
-      if (h2_encode_locked(stream, cursor.data, input) < 0) {
-        return -1;
+      bool staged = stream.encoder != nullptr && cursor.refill == nullptr &&
+                    input <= kH2StagedCursorBytes;
+      if (staged) {
+        stream.staged.insert(stream.staged.end(), cursor.data,
+                             cursor.data + input);
       }
-      // Identity bytes short of a block wait for the write thread's flush, as
-      // they would inside the compressor, so launches keep sharing frames.
-      size_t unsent = stream.encoded_size - stream.encoded_offset;
-      bool ready = stream.encoder == nullptr
-                       ? unsent >= kH2CompressionBlockBytes
-                       : unsent != backlog;
-      if (ready && h2_pump_stream_locked(transport, stream_id, stream) < 0) {
-        return -1;
+      if (!staged || stream.staged.size() >= kH2CompressionBlockBytes) {
+        size_t backlog = stream.encoded_size - stream.encoded_offset;
+        if (h2_encode_staged_locked(transport, stream) < 0 ||
+            (!staged && h2_encode_locked(stream, cursor.data, input) < 0)) {
+          return -1;
+        }
+        // Identity bytes short of a block wait for the write thread's flush,
+        // as they would inside the compressor, so launches keep sharing
+        // frames.
+        size_t unsent = stream.encoded_size - stream.encoded_offset;
+        bool ready = stream.encoder == nullptr
+                         ? unsent >= kH2CompressionBlockBytes
+                         : unsent != backlog;
+        if (ready && h2_pump_stream_locked(transport, stream_id, stream) < 0) {
+          return -1;
+        }
       }
       cursor.data += input;
       cursor.size -= input;
@@ -1108,6 +1151,9 @@ int h2_write_stream_locked(h2_transport *transport, int32_t stream_id,
 }
 
 int h2_flush_pending_locked(h2_transport *transport) {
+  while (transport->encoding != nullptr) {
+    pthread_cond_wait(&transport->session_progress, &transport->session_mutex);
+  }
   int result = 0;
   for (int32_t stream_id : transport->flush_pending) {
     h2_stream &stream = h2_get_stream(transport, stream_id);
@@ -1115,12 +1161,82 @@ int h2_flush_pending_locked(h2_transport *transport) {
     if (stream.closed || stream.encoder_finished) {
       continue;
     }
-    if (h2_encode_terminal_locked(stream, false) < 0 ||
+    if (h2_encode_staged_locked(transport, stream) < 0 ||
+        h2_encode_terminal_locked(stream, false) < 0 ||
         h2_pump_stream_locked(transport, stream_id, stream) < 0) {
       result = -1;
     }
   }
   transport->flush_pending.clear();
+  return result;
+}
+
+int h2_compress_flush(ZSTD_CCtx *encoder, const std::vector<unsigned char> &in,
+                      std::vector<unsigned char> &out, size_t *produced) {
+  size_t bound = ZSTD_compressBound(in.size()) + ZSTD_CStreamOutSize();
+  if (out.size() < bound) {
+    out.resize(bound);
+  }
+  ZSTD_inBuffer source{in.data(), in.size(), 0};
+  ZSTD_outBuffer destination{out.data(), out.size(), 0};
+  size_t remaining;
+  do {
+    if (destination.pos == destination.size) {
+      out.resize(out.size() * 2);
+      destination.dst = out.data();
+      destination.size = out.size();
+    }
+    remaining =
+        ZSTD_compressStream2(encoder, &destination, &source, ZSTD_e_flush);
+    if (ZSTD_isError(remaining)) {
+      return -1;
+    }
+  } while (remaining != 0);
+  *produced = destination.pos;
+  return 0;
+}
+
+// The write thread's flush. Compression runs outside session_mutex, so request
+// writers keep staging input on the same stream instead of waiting for it.
+int h2_writer_flush_locked(h2_transport *transport) {
+  std::vector<int32_t> &flushing = transport->flushing;
+  flushing.clear();
+  flushing.swap(transport->flush_pending);
+  int result = 0;
+  for (int32_t stream_id : flushing) {
+    h2_stream &stream = h2_get_stream(transport, stream_id);
+    stream.flush_queued = false;
+    if (stream.closed || stream.encoder_finished) {
+      continue;
+    }
+    ZSTD_CCtx *encoder = stream.encoder;
+    if (encoder != nullptr) {
+      transport->encode_input.clear();
+      transport->encode_input.swap(stream.staged);
+      transport->encoding = &stream;
+      pthread_mutex_unlock(&transport->session_mutex);
+      size_t produced = 0;
+      int encoded = h2_compress_flush(encoder, transport->encode_input,
+                                      transport->encode_output, &produced);
+      pthread_mutex_lock(&transport->session_mutex);
+      transport->encoding = nullptr;
+      pthread_cond_broadcast(&transport->session_progress);
+      if (stream.encoder != encoder) {
+        ZSTD_freeCCtx(encoder);
+        continue;
+      }
+      if (encoded < 0) {
+        result = -1;
+        continue;
+      }
+      memcpy(h2_reserve_encoded(stream, produced),
+             transport->encode_output.data(), produced);
+      stream.encoded_size += produced;
+    }
+    if (h2_pump_stream_locked(transport, stream_id, stream) < 0) {
+      result = -1;
+    }
+  }
   return result;
 }
 
@@ -1184,7 +1300,7 @@ void *h2_write_main(void *arg) {
     if (transport->writer_paused) {
       continue;
     }
-    int result = h2_flush_pending_locked(transport);
+    int result = h2_writer_flush_locked(transport);
     if (result == 0 && !transport->outbound.empty()) {
       chunk.clear();
       bool pause = transport->pause_after_bytes != 0;
@@ -1726,6 +1842,7 @@ int h2_end_stream_locked(h2_transport *transport, int32_t stream_id) {
   if (stream.closed || stream.encoder_finished ||
       (!stream.encoder_started &&
        h2_start_encoder_locked(transport, stream) < 0) ||
+      h2_encode_staged_locked(transport, stream) < 0 ||
       h2_encode_terminal_locked(stream, true) < 0) {
     return -1;
   }
