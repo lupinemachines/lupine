@@ -553,6 +553,9 @@ inline int lupine_socket_close(lupine_socket_t socket) {
 inline void lupine_socket_shutdown_read(lupine_socket_t socket) {
   (void)shutdown(socket, SD_RECEIVE);
 }
+inline void lupine_socket_shutdown_both(lupine_socket_t socket) {
+  (void)shutdown(socket, SD_BOTH);
+}
 
 inline int lupine_socket_set_reuseaddr(lupine_socket_t socket) {
   const char enable = 1;
@@ -643,6 +646,9 @@ inline bool lupine_socket_error_is_intr() { return errno == EINTR; }
 inline int lupine_socket_close(lupine_socket_t socket) { return close(socket); }
 inline void lupine_socket_shutdown_read(lupine_socket_t socket) {
   (void)shutdown(socket, SHUT_RD);
+}
+inline void lupine_socket_shutdown_both(lupine_socket_t socket) {
+  (void)shutdown(socket, SHUT_RDWR);
 }
 inline int lupine_socket_set_reuseaddr(lupine_socket_t socket) {
   const int enable = 1;
