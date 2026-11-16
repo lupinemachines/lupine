@@ -911,11 +911,6 @@ int rpc_wait_for_response(conn_t *conn) {
   return 0;
 }
 
-// rpc_write_start_request starts a new request builder on the given connection
-// index with a specific op code.
-//
-// only one request can be active at a time, so this function will take the
-// request lock from the connection.
 // The last unanswered request on `key`, or the last one on no object.
 static rpc_scope_ticket rpc_scope_snapshot(conn_t *conn, uintptr_t key) {
   if (key == RPC_SCOPE_NONE) {
@@ -1102,11 +1097,6 @@ int rpc_write_start_request_on(conn_t *conn, const int op, uintptr_t key,
   return 0;
 }
 
-// rpc_write_start_request starts a new request builder on the given connection
-// index with a specific op code.
-//
-// only one request can be active at a time, so this function will take the
-// request lock from the connection.
 int rpc_write_start_response(conn_t *conn, const int read_id) {
   if (conn == nullptr || conn->closed || rpc_tls_write != nullptr) {
     return -1;
@@ -1162,10 +1152,6 @@ int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
   return 0;
 }
 
-// rpc_write_end finalizes the current request builder on the given connection
-// index and sends the request to the server.
-//
-// Returns the request id which can be used to wait for a response.
 int rpc_write_end(conn_t *conn) {
   rpc_write_builder *builder = rpc_conn_builder(conn);
   if (conn == nullptr || builder == nullptr) {

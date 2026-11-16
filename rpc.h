@@ -127,9 +127,8 @@ struct rpc_host_allocation_write {
   size_t size;
 };
 
-// The server's HTTP/2 receive window, and with it the ceiling on the pinned
-// staging a client can hold there: fire-and-forget device-bound payload bytes
-// stay uncredited until the staging buffer they landed in retires.
+// Each HTTP/2 stream's receive window: bytes no reader has taken stay
+// uncredited, so this bounds what one stream can leave staged at its peer.
 #define LUPINE_FF_STAGING_WINDOW_BYTES (64ull * 1024 * 1024)
 
 // The largest pageable async host-to-device copy the driver stages before
