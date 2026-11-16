@@ -85,14 +85,11 @@ const lupine_client_transport_config &nvml_transport_config() {
   return config;
 }
 
-void nvml_retire_thread_lane(uint64_t lane_id) {
-  lupine_client_transport_retire_lane(lane_id);
-}
-
 pthread_once_t nvml_rpc_lifecycle_once = PTHREAD_ONCE_INIT;
 
 void nvml_install_rpc_lifecycle_hooks() {
-  const rpc_lifecycle_hooks hooks = {nullptr, nvml_retire_thread_lane, nullptr};
+  const rpc_lifecycle_hooks hooks = {
+      nullptr, lupine_client_transport_retire_lane, nullptr};
   if (rpc_set_lifecycle_hooks(&hooks) < 0) {
     LUPINE_LOG_ERROR("Failed to install NVML RPC lifecycle hooks");
   }
@@ -232,33 +229,15 @@ conn_t *connection_for_device(nvmlDevice_t *device) {
 
 } // namespace
 
-#ifdef nvmlInit
 #undef nvmlInit
-#endif
-#ifdef nvmlDeviceGetCount
 #undef nvmlDeviceGetCount
-#endif
-#ifdef nvmlDeviceGetHandleByIndex
 #undef nvmlDeviceGetHandleByIndex
-#endif
-#ifdef nvmlDeviceGetHandleByPciBusId
 #undef nvmlDeviceGetHandleByPciBusId
-#endif
-#ifdef nvmlDeviceGetPciInfo
 #undef nvmlDeviceGetPciInfo
-#endif
-#ifdef nvmlDeviceGetComputeRunningProcesses
 #undef nvmlDeviceGetComputeRunningProcesses
-#endif
-#ifdef nvmlDeviceGetGraphicsRunningProcesses
 #undef nvmlDeviceGetGraphicsRunningProcesses
-#endif
-#ifdef nvmlDeviceGetMPSComputeRunningProcesses
 #undef nvmlDeviceGetMPSComputeRunningProcesses
-#endif
-#ifdef nvmlEventSetWait
 #undef nvmlEventSetWait
-#endif
 
 // Real NVML answers this one without nvmlInit, so rename the generated entry
 // point and re-export it below with the gate lifted.
