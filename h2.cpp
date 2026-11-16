@@ -1047,6 +1047,7 @@ int h2_write_stream_locked(h2_transport *transport, int32_t stream_id,
        h2_start_encoder_locked(transport, stream) < 0)) {
     return -1;
   }
+  size_t consumed = 0;
   for (size_t i = 0; i < count; ++i) {
     rpc_write_cursor &cursor = cursors[i];
     for (;;) {
@@ -1090,8 +1091,19 @@ int h2_write_stream_locked(h2_transport *transport, int32_t stream_id,
         pthread_cond_wait(&transport->session_progress,
                           &transport->session_mutex);
       }
+      // The write thread takes the outbound queue under session_mutex, which
+      // this loop holds. Input that compresses well never reaches the outbound
+      // limit, so hand the queue over every limit's worth of input instead of
+      // keeping the whole body off the wire until it is compressed.
+      consumed += input;
+      bool handoff = consumed >= kH2OutboundLimitBytes;
+      if (handoff) {
+        consumed = 0;
+      }
       while (!transport->write_failed &&
-             transport->outbound.size() > kH2OutboundLimitBytes) {
+             (transport->outbound.size() > kH2OutboundLimitBytes ||
+              (handoff && !transport->outbound.empty() &&
+               !transport->writer_paused))) {
         pthread_cond_wait(&transport->outbound_progress,
                           &transport->session_mutex);
       }
