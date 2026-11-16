@@ -1144,10 +1144,9 @@ static int handle_cuGraphMemcpyNodeSetParamsCommon(conn_t *conn,
   if (request_id < 0) {
     return -1;
   }
-  CUresult result = lupine_set_graph_dtoh_params(conn, exec, node, params, ctx);
-  return lupine_unanswered(conn, result)
-             ? 0
-             : lupine_write_lifecycle_response(conn, request_id, result);
+  return lupine_write_lifecycle_response(
+      conn, request_id,
+      lupine_set_graph_dtoh_params(conn, exec, node, params, ctx));
 }
 
 int handle_cuGraphMemcpyNodeSetParams(conn_t *conn) {
@@ -1564,9 +1563,6 @@ static auto &lupine_htod_exec_resource_map() {
 
 static void CUDA_CB lupine_htod_side_effect_callback(void *opaque) {
   auto *data = static_cast<lupine_htod_callback_data *>(opaque);
-  if (data == nullptr) {
-    return;
-  }
   if (data->ring->fetch(data->copy, data->fragment) < 0) {
     LUPINE_LOG_ERROR("HtoD side-effect transport failed");
   }
@@ -2658,18 +2654,9 @@ static int lupine_serve_memcpy_htod(conn_t *conn, bool async) {
       rpc_read(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0) {
     return -1;
   }
-  if (pushed_bytes != 0 && pushed_bytes != bytes) {
-    return -1;
-  }
-  // Only a synchronous pageable copy, a page-locked async source, or a small
-  // pushed async copy is sent fire-and-forget. It holds its ticket until the
-  // copy is queued, not until the stream reaches it, and a failure reaches the
-  // client from its next synchronize.
-  if (fire_and_forget &&
-      (!async ? pushed_bytes != bytes
-              : (bytes == 0 || pushed_bytes > LUPINE_INLINE_HTOD_BYTES))) {
-    return -1;
-  }
+  // A fire-and-forget copy holds its ticket until the copy is queued, not
+  // until the stream reaches it, and a failure reaches the client from its
+  // next synchronize.
   if (pushed_bytes != 0) {
     result = lupine_copy_pushed_host_to_device(
         conn, stream, !async && !fire_and_forget,
@@ -3105,10 +3092,6 @@ static int lupine_write_dtoh_chunk_response(conn_t *conn, int request_id,
 template <typename CopyChunk>
 static int lupine_write_dtoh_chunks(conn_t *conn, int request_id, size_t bytes,
                                     size_t offset, CopyChunk copy_chunk) {
-  if (offset > bytes) {
-    return -1;
-  }
-
   size_t staging_size =
       std::min(bytes - offset, (size_t)LUPINE_RPC_TRANSFER_CHUNK_BYTES);
   unsigned char inline_host[64 * 1024];
@@ -3654,9 +3637,6 @@ static int lupine_serve_memcpy_htoa(conn_t *conn, bool async) {
       (async && rpc_read(conn, &stream, sizeof(stream)) < 0) ||
       rpc_read(conn, &srcHost, sizeof(srcHost)) < 0 ||
       rpc_read(conn, &pushed_bytes, sizeof(pushed_bytes)) < 0) {
-    return -1;
-  }
-  if (pushed_bytes != 0 && pushed_bytes != byteCount) {
     return -1;
   }
   if (pushed_bytes != 0) {
