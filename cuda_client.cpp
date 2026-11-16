@@ -6939,14 +6939,13 @@ extern "C" CUresult cuGetExportTable(const void **ppExportTable,
   static const void *kToolsTls[4] = {
       sz(sizeof(kToolsTls)), fp(&lupine_stub_return_zero),
       fp(&lupine_stub_return_zero_1), fp(&lupine_stub_return_zero_1)};
-  static const void *kToolsCbHooks[7] = {
-      sz(sizeof(kToolsCbHooks)),
-      fp(&lupine_stub_return_zero_2),
-      fp(&lupine_stub_static_buffer<1024>),
-      fp(&lupine_stub_return_zero_2),
-      fp(&lupine_stub_return_zero_2),
-      fp(&lupine_stub_return_zero_2),
-      fp(&lupine_stub_static_buffer<14>)};
+  static const void *kToolsCbHooks[7] = {sz(sizeof(kToolsCbHooks)),
+                                         fp(&lupine_stub_return_zero_2),
+                                         fp(&lupine_stub_static_buffer<1024>),
+                                         fp(&lupine_stub_return_zero_2),
+                                         fp(&lupine_stub_return_zero_2),
+                                         fp(&lupine_stub_return_zero_2),
+                                         fp(&lupine_stub_static_buffer<14>)};
   static const void *kCtxStorage[4] = {fp(&lupine_context_local_storage_put),
                                        fp(&lupine_context_local_storage_delete),
                                        fp(&lupine_context_local_storage_get),
