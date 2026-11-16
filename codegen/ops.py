@@ -163,8 +163,6 @@ class ArrayOperation:
         base = self._base_count_expr()
         if self.length_offset < 0:
             return f"({base} - {-self.length_offset})"
-        if self.length_offset > 0:
-            return f"({base} + {self.length_offset})"
         return base
 
     def transfer_size_expr(self) -> str:
@@ -185,8 +183,6 @@ class ArrayOperation:
         # Pointer length parameters are unmarshalled into scalar server locals.
         if self.length_offset < 0:
             return f"({self.length.name} - {-self.length_offset})"
-        if self.length_offset > 0:
-            return f"({self.length.name} + {self.length_offset})"
         return self.length.name
 
     def server_transfer_size_expr(self) -> str:
@@ -242,21 +238,14 @@ class ArrayOperation:
             return max(256, self.length)
         return 256
 
-    def _server_safe_count_expr(self) -> tuple[str, str]:
-        assert not isinstance(self.length, int)
+    def _server_safe_count_expr(self) -> str:
         lname = self.length.name
         if self.length_offset < 0:
             off = -self.length_offset
-            return "", f"({lname} <= {off} ? size_t{{0}} : static_cast<size_t>({lname}) - {off})"
-        if self.length_offset > 0:
-            off = self.length_offset
-            if self.has_signed_length:
-                s = f"(static_cast<int64_t>({lname}) + {off})"
-                return "", f"({s} <= 0 ? size_t{{0}} : static_cast<size_t>({s}))"
-            return f"static_cast<size_t>({lname}) > (~size_t{{0}}) - {off}", f"(static_cast<size_t>({lname}) + {off})"
+            return f"({lname} <= {off} ? size_t{{0}} : static_cast<size_t>({lname}) - {off})"
         if self.has_signed_length:
-            return "", f"({lname} <= 0 ? size_t{{0}} : static_cast<size_t>({lname}))"
-        return "", f"static_cast<size_t>({lname})"
+            return f"({lname} <= 0 ? size_t{{0}} : static_cast<size_t>({lname}))"
+        return f"static_cast<size_t>({lname})"
 
     @property
     def server_declaration(self) -> str:
@@ -275,16 +264,14 @@ class ArrayOperation:
             f.write(f"        rpc_read(conn, &{name}_null, sizeof(uint8_t)) < 0 ||\n")
         zeroed = "false" if (self.send and not self.recv) else "true"
         if isinstance(self.length, int):
-            overflow_guard, count_expr, elem_size = "", str(self.length), "1"
+            count_expr, elem_size = str(self.length), "1"
         else:
-            overflow_guard, count_expr = self._server_safe_count_expr()
+            count_expr = self._server_safe_count_expr()
             elem_size = "1" if self.is_void_bytes else f"sizeof({self.ptr.ptr_to.format()})"
         if self.send:
             step = f"lupine_{name}_buf.read_array(conn, {name}, {count_expr}, {elem_size}, {zeroed}) < 0"
         else:
             step = f"!lupine_{name}_buf.alloc_into({name}, {count_expr}, {elem_size}, {zeroed})"
-        if overflow_guard:
-            step = f"({overflow_guard} || {step})"
         if self.nullable:
             step = f"(!{name}_null && {step})"
         f.write(f"        {step} ||\n")
@@ -890,57 +877,41 @@ class OpaqueTypeOperation:
 @dataclass
 class ScalarOperation:
     """
-    A pointer to a scalar that the library's pointer mode places on the host or
-    on the device (a cuBLAS alpha, beta, or result). The client decides per
-    call: in host mode the value travels by copy, in device mode the address
-    travels unchanged. The width leads on the wire, and zero means an address
-    follows. `mode` is the handle or descriptor whose pointer mode decides,
-    asked as `scalar_on_host(mode, "<name>")` since a mode may place alpha and
-    beta differently; `width` is a C++ expression for the value's size, or None
-    for the pointee's sizeof.
+    A SEND_ONLY pointer to a scalar that the library's residence argument
+    places on the host or on the device. The client decides per call: in host
+    mode the value travels by copy, in device mode the address travels
+    unchanged. The width leads on the wire, and zero means an address follows.
+    `mode` is the parameter whose residence decides, asked as
+    `scalar_on_host(mode, "<name>")`; `width` is a C++ expression for the
+    value's size.
     """
 
-    send: bool
-    recv: bool
     parameter: Parameter
     ptr: Pointer
     mode: Parameter
-    width: Optional[str]
-
-    def width_expr(self) -> str:
-        return self.width or f"sizeof({self.ptr.ptr_to.format()})"
+    width: str
+    send: bool = True
+    recv: bool = False
 
     def client_declaration(self) -> str:
         name = self.parameter.name
         return (
             f"    uint32_t {name}_width = {name} != nullptr && "
             f'scalar_on_host({self.mode.name}, "{name}") ? '
-            f"static_cast<uint32_t>({self.width_expr()}) : 0;\n"
+            f"static_cast<uint32_t>({self.width}) : 0;\n"
         )
 
     def client_rpc_write(self, f):
         name = self.parameter.name
         f.write(
             f"        rpc_write(conn, &{name}_width, sizeof({name}_width)) < 0 ||\n"
-        )
-        f.write(
             f"        ({name}_width == 0 && rpc_write(conn, &{name}, sizeof({name})) < 0) ||\n"
+            f"        ({name}_width != 0 && rpc_write(conn, {name}, {name}_width) < 0) ||\n"
         )
-        if self.send:
-            f.write(
-                f"        ({name}_width != 0 && rpc_write(conn, {name}, {name}_width) < 0) ||\n"
-            )
 
     def client_rpc_read(self, f):
-        if not self.recv:
-            return
-        name = self.parameter.name
-        f.write(
-            f"        ({name}_width != 0 && rpc_read(conn, {name}, {name}_width) < 0) ||\n"
-        )
+        pass
 
-    # The value lands in an inline scratch slot, or on the heap when wider (a
-    # grouped GEMM's one-scalar-per-group alpha).
     @property
     def server_declaration(self) -> str:
         name = self.parameter.name
@@ -952,15 +923,11 @@ class ScalarOperation:
 
     def server_rpc_read(self, f):
         name = self.parameter.name
-        if self.send:
-            zeroed = "false" if not self.recv else "true"
-            wide = f"lupine_{name}_buf.read_array(conn, {name}, {name}_width, 1, {zeroed}) < 0"
-        else:
-            wide = f"!lupine_{name}_buf.alloc_into({name}, {name}_width, 1, true)"
         f.write(
             f"        rpc_read(conn, &{name}_width, sizeof({name}_width)) < 0 ||\n"
             f"        {name}_width > (1U << 20) ||\n"
-            f"        ({name}_width == 0 ? rpc_read(conn, &{name}, sizeof({name})) < 0 : {wide}) ||\n"
+            f"        ({name}_width == 0 ? rpc_read(conn, &{name}, sizeof({name})) < 0 : "
+            f"lupine_{name}_buf.read_array(conn, {name}, {name}_width, 1, false) < 0) ||\n"
         )
 
     @property
@@ -968,12 +935,7 @@ class ScalarOperation:
         return self.parameter.name
 
     def server_rpc_write(self, f):
-        if not self.recv:
-            return
-        name = self.parameter.name
-        f.write(
-            f"        ({name}_width != 0 && rpc_write(conn, {name}, {name}_width) < 0) ||\n"
-        )
+        pass
 
 
 @dataclass
