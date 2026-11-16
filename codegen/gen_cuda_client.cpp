@@ -24,8 +24,7 @@ extern "C" void *lupine_deep_node_cache_get(CUgraphNode node, size_t slot,
 extern "C" void lupine_deep_node_cache_reset(CUgraphNode node);
 std::vector<CUgraphNode> lupine_deep_cache_graph_nodes(CUgraph graph);
 
-extern "C" CUfunction
-lupine_translate_private_function_for_rpc(CUfunction function);
+extern "C" CUfunction lupine_translate_private_function(CUfunction function);
 extern "C" const char *lupine_retain_returned_string(const void *handle,
                                                      const char *data,
                                                      size_t size);
@@ -50,8 +49,9 @@ extern "C" void lupine_forget_destroyed_context(CUcontext ctx);
 extern "C" void lupine_disable_local_occupancy();
 extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel,
                                                     lupine_route route);
-extern "C" CUresult lupine_resolve_library_for_route(CUlibrary *library,
-                                                     lupine_route route);
+extern "C" CUresult
+lupine_load_recorded_library_on_route(CUlibrary source_library,
+                                      lupine_route route, CUlibrary *library);
 extern "C" int lupine_read_dtoh_watermark(conn_t *conn);
 extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
@@ -921,7 +921,7 @@ CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent) {
         LUPINE_REAL_CUDA_SYMBOL("cuCtxRecordEvent"), hCtx, hEvent);
     // Re-recording re-arms the event, so its cached completion is stale.
     // Invalidate after enqueue so an overlapping query cannot retain old state.
-    lupine_event_invalidate_completion(hEvent);
+    lupine_event_invalidate_completion(&lupine_events, hEvent);
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -934,7 +934,7 @@ CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent) {
   return_value = CUDA_SUCCESS;
   // Re-recording re-arms the event, so its cached completion is stale.
   // Invalidate after enqueue so an overlapping query cannot retain old state.
-  lupine_event_invalidate_completion(hEvent);
+  lupine_event_invalidate_completion(&lupine_events, hEvent);
   return return_value;
 }
 
@@ -1306,7 +1306,8 @@ CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
   lupine_route route = lupine_route_for_current_context();
   if (pMod == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  CUresult resolved = lupine_resolve_library_for_route(&library, route);
+  CUresult resolved =
+      lupine_load_recorded_library_on_route(library, route, &library);
   if (resolved != CUDA_SUCCESS)
     return resolved;
   CUresult return_value;
@@ -1415,7 +1416,8 @@ CUresult cuKernelGetLibrary(CUlibrary *pLib, CUkernel kernel) {
 CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
                             const char *name) {
   lupine_route route = lupine_route_for_current_context();
-  CUresult resolved = lupine_resolve_library_for_route(&library, route);
+  CUresult resolved =
+      lupine_load_recorded_library_on_route(library, route, &library);
   if (resolved != CUDA_SUCCESS)
     return resolved;
   CUresult return_value;
@@ -4170,7 +4172,7 @@ CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
     return_value = lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuEventRecord"), hEvent, hStream);
     if (!lupine_route_is_local(route))
-      lupine_event_invalidate_completion(hEvent);
+      lupine_event_invalidate_completion(&lupine_events, hEvent);
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -4183,7 +4185,7 @@ CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return_value = CUDA_SUCCESS;
   if (!lupine_route_is_local(route))
-    lupine_event_invalidate_completion(hEvent);
+    lupine_event_invalidate_completion(&lupine_events, hEvent);
   return return_value;
 }
 
@@ -4197,7 +4199,7 @@ CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
         LUPINE_REAL_CUDA_SYMBOL("cuEventRecordWithFlags"), hEvent, hStream,
         flags);
     if (!lupine_route_is_local(route))
-      lupine_event_invalidate_completion(hEvent);
+      lupine_event_invalidate_completion(&lupine_events, hEvent);
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -4212,7 +4214,7 @@ CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return_value = CUDA_SUCCESS;
   if (!lupine_route_is_local(route))
-    lupine_event_invalidate_completion(hEvent);
+    lupine_event_invalidate_completion(&lupine_events, hEvent);
   return return_value;
 }
 
@@ -4654,7 +4656,7 @@ CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
   lupine_route route = lupine_route_for_function(hfunc);
   if (pi == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  hfunc = lupine_translate_private_function_for_rpc(hfunc);
+  hfunc = lupine_translate_private_function(hfunc);
   route = lupine_route_for_function(hfunc);
   lupine_function_attribute_key key{lupine_route_identity(route), hfunc,
                                     (int)attrib};
@@ -4670,7 +4672,7 @@ CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   uint8_t pi_present = pi != nullptr;
-  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  CUfunction hfunc_rpc = lupine_translate_private_function(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuFuncGetAttribute, RPC_SCOPE_NONE) <
           0 ||
@@ -4691,9 +4693,9 @@ CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
 CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
                             int value) {
   lupine_route route = lupine_route_for_function(hfunc);
-  lupine_function_attribute_key key{
-      lupine_route_identity(route),
-      lupine_translate_private_function_for_rpc(hfunc), (int)attrib};
+  lupine_function_attribute_key key{lupine_route_identity(route),
+                                    lupine_translate_private_function(hfunc),
+                                    (int)attrib};
   int cached = 0;
   if (lupine_attribute_get(key, cached, lupine_attribute_source::set) &&
       cached == value)
@@ -4707,7 +4709,7 @@ CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  CUfunction hfunc_rpc = lupine_translate_private_function(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuFuncSetAttribute, RPC_SCOPE_NONE) <
           0 ||
@@ -4734,7 +4736,7 @@ CUresult cuFuncSetCacheConfig(CUfunction hfunc, CUfunc_cache config) {
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
-  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  CUfunction hfunc_rpc = lupine_translate_private_function(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuFuncSetCacheConfig,
                                  RPC_SCOPE_NONE) < 0 ||
@@ -4761,7 +4763,7 @@ CUresult cuFuncGetModule(CUmodule *hmod, CUfunction hfunc) {
   }
   conn_t *conn = lupine_route_remote_conn(route);
   uint8_t hmod_present = hmod != nullptr;
-  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  CUfunction hfunc_rpc = lupine_translate_private_function(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuFuncGetModule, RPC_SCOPE_NONE) <
           0 ||
@@ -4790,7 +4792,7 @@ CUresult cuFuncGetName(const char **name, CUfunction hfunc) {
   std::size_t name_len = 0;
   lupine_scratch_buffer<256> lupine_name_buf;
   char *name_data = nullptr;
-  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  CUfunction hfunc_rpc = lupine_translate_private_function(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuFuncGetName, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &name_present, sizeof(uint8_t)) < 0 ||
@@ -4841,7 +4843,7 @@ CUresult cuFuncSetBlockShape(CUfunction hfunc, int x, int y, int z) {
     return lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuFuncSetBlockShape"), hfunc, x, y, z);
   conn_t *conn = lupine_route_remote_conn(route);
-  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  CUfunction hfunc_rpc = lupine_translate_private_function(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuFuncSetBlockShape,
                                  RPC_SCOPE_NONE) < 0 ||
@@ -4861,7 +4863,7 @@ CUresult cuFuncSetSharedSize(CUfunction hfunc, unsigned int bytes) {
     return lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuFuncSetSharedSize"), hfunc, bytes);
   conn_t *conn = lupine_route_remote_conn(route);
-  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  CUfunction hfunc_rpc = lupine_translate_private_function(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuFuncSetSharedSize,
                                  RPC_SCOPE_NONE) < 0 ||
@@ -4880,7 +4882,7 @@ CUresult cuParamSetSize(CUfunction hfunc, unsigned int numbytes) {
     return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuParamSetSize"),
                                     hfunc, numbytes);
   conn_t *conn = lupine_route_remote_conn(route);
-  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  CUfunction hfunc_rpc = lupine_translate_private_function(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuParamSetSize, RPC_SCOPE_NONE) <
           0 ||
@@ -4899,7 +4901,7 @@ CUresult cuParamSeti(CUfunction hfunc, int offset, unsigned int value) {
     return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuParamSeti"),
                                     hfunc, offset, value);
   conn_t *conn = lupine_route_remote_conn(route);
-  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  CUfunction hfunc_rpc = lupine_translate_private_function(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuParamSeti, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
@@ -4918,7 +4920,7 @@ CUresult cuParamSetf(CUfunction hfunc, int offset, float value) {
     return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuParamSetf"),
                                     hfunc, offset, value);
   conn_t *conn = lupine_route_remote_conn(route);
-  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  CUfunction hfunc_rpc = lupine_translate_private_function(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuParamSetf, RPC_SCOPE_NONE) < 0 ||
       rpc_write(conn, &hfunc_rpc, sizeof(CUfunction)) < 0 ||
@@ -4937,7 +4939,7 @@ CUresult cuParamSetv(CUfunction hfunc, int offset, void *ptr,
     return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuParamSetv"),
                                     hfunc, offset, ptr, numbytes);
   conn_t *conn = lupine_route_remote_conn(route);
-  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  CUfunction hfunc_rpc = lupine_translate_private_function(hfunc);
   uint8_t ptr_null = ptr == nullptr ? 1 : 0;
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuParamSetv, RPC_SCOPE_NONE) < 0 ||
@@ -4958,7 +4960,7 @@ CUresult cuLaunch(CUfunction f) {
   if (lupine_route_is_local(route))
     return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuLaunch"), f);
   conn_t *conn = lupine_route_remote_conn(route);
-  CUfunction f_rpc = lupine_translate_private_function_for_rpc(f);
+  CUfunction f_rpc = lupine_translate_private_function(f);
   if (lupine_prepare_rpc(conn) < 0 ||
       lupine_rpc_start_on_stream(conn, RPC_cuLaunch, nullptr) < 0 ||
       rpc_write(conn, &f_rpc, sizeof(CUfunction)) < 0 ||
@@ -4975,7 +4977,7 @@ CUresult cuLaunchGrid(CUfunction f, int grid_width, int grid_height) {
     return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuLaunchGrid"), f,
                                     grid_width, grid_height);
   conn_t *conn = lupine_route_remote_conn(route);
-  CUfunction f_rpc = lupine_translate_private_function_for_rpc(f);
+  CUfunction f_rpc = lupine_translate_private_function(f);
   if (lupine_prepare_rpc(conn) < 0 ||
       lupine_rpc_start_on_stream(conn, RPC_cuLaunchGrid, nullptr) < 0 ||
       rpc_write(conn, &f_rpc, sizeof(CUfunction)) < 0 ||
@@ -4995,7 +4997,7 @@ CUresult cuLaunchGridAsync(CUfunction f, int grid_width, int grid_height,
         LUPINE_REAL_CUDA_SYMBOL("cuLaunchGridAsync"), f, grid_width,
         grid_height, hStream);
   conn_t *conn = lupine_route_remote_conn(route);
-  CUfunction f_rpc = lupine_translate_private_function_for_rpc(f);
+  CUfunction f_rpc = lupine_translate_private_function(f);
   if (lupine_prepare_rpc(conn) < 0 ||
       lupine_rpc_start_on_stream(conn, RPC_cuLaunchGridAsync, hStream) < 0 ||
       rpc_write(conn, &f_rpc, sizeof(CUfunction)) < 0 ||
@@ -5025,7 +5027,7 @@ CUresult cuParamSetTexRef(CUfunction hfunc, int texunit, CUtexref hTexRef) {
     return lupine_call_real_cuda_fn(LUPINE_REAL_CUDA_SYMBOL("cuParamSetTexRef"),
                                     hfunc, texunit, hTexRef);
   conn_t *conn = lupine_route_remote_conn(route);
-  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  CUfunction hfunc_rpc = lupine_translate_private_function(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuParamSetTexRef, RPC_SCOPE_NONE) <
           0 ||
@@ -5045,7 +5047,7 @@ CUresult cuFuncSetSharedMemConfig(CUfunction hfunc, CUsharedconfig config) {
     return lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuFuncSetSharedMemConfig"), hfunc, config);
   conn_t *conn = lupine_route_remote_conn(route);
-  CUfunction hfunc_rpc = lupine_translate_private_function_for_rpc(hfunc);
+  CUfunction hfunc_rpc = lupine_translate_private_function(hfunc);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuFuncSetSharedMemConfig,
                                  RPC_SCOPE_NONE) < 0 ||
@@ -7267,7 +7269,7 @@ CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream) {
         LUPINE_REAL_CUDA_SYMBOL("cuGraphLaunch"), hGraphExec, hStream);
     // The graph may re-record events it does not name here, so no cached
     // completion can be trusted past the launch.
-    lupine_event_invalidate_all_completions();
+    lupine_event_invalidate_all_completions(&lupine_events);
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -7282,7 +7284,7 @@ CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream) {
   return_value = CUDA_SUCCESS;
   // The graph may re-record events it does not name here, so no cached
   // completion can be trusted past the launch.
-  lupine_event_invalidate_all_completions();
+  lupine_event_invalidate_all_completions(&lupine_events);
   return return_value;
 }
 
@@ -7630,7 +7632,7 @@ CUresult cuOccupancyMaxActiveBlocksPerMultiprocessor(int *numBlocks,
   lupine_route route = lupine_route_for_function(func);
   if (numBlocks == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  func = lupine_translate_private_function_for_rpc(func);
+  func = lupine_translate_private_function(func);
   route = lupine_route_for_function(func);
   if (!lupine_route_is_local(route) &&
       lupine_try_cached_occupancy(route, func, blockSize, dynamicSMemSize, 0,
@@ -7648,7 +7650,7 @@ CUresult cuOccupancyMaxActiveBlocksPerMultiprocessor(int *numBlocks,
   }
   conn_t *conn = lupine_route_remote_conn(route);
   uint8_t numBlocks_present = numBlocks != nullptr;
-  CUfunction func_rpc = lupine_translate_private_function_for_rpc(func);
+  CUfunction func_rpc = lupine_translate_private_function(func);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(
           conn, RPC_cuOccupancyMaxActiveBlocksPerMultiprocessor,
@@ -7675,7 +7677,7 @@ CUresult cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
   lupine_route route = lupine_route_for_function(func);
   if (numBlocks == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  func = lupine_translate_private_function_for_rpc(func);
+  func = lupine_translate_private_function(func);
   route = lupine_route_for_function(func);
   if (!lupine_route_is_local(route) &&
       lupine_try_cached_occupancy(route, func, blockSize, dynamicSMemSize,
@@ -7694,7 +7696,7 @@ CUresult cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
   }
   conn_t *conn = lupine_route_remote_conn(route);
   uint8_t numBlocks_present = numBlocks != nullptr;
-  CUfunction func_rpc = lupine_translate_private_function_for_rpc(func);
+  CUfunction func_rpc = lupine_translate_private_function(func);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(
           conn, RPC_cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags,
@@ -7735,7 +7737,7 @@ cuOccupancyMaxPotentialBlockSize(int *minGridSize, int *blockSize,
   conn_t *conn = lupine_route_remote_conn(route);
   uint8_t minGridSize_present = minGridSize != nullptr;
   uint8_t blockSize_present = blockSize != nullptr;
-  CUfunction func_rpc = lupine_translate_private_function_for_rpc(func);
+  CUfunction func_rpc = lupine_translate_private_function(func);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn, RPC_cuOccupancyMaxPotentialBlockSize,
                                  RPC_SCOPE_NONE) < 0 ||
@@ -7773,7 +7775,7 @@ CUresult cuOccupancyMaxPotentialBlockSizeWithFlags(
   conn_t *conn = lupine_route_remote_conn(route);
   uint8_t minGridSize_present = minGridSize != nullptr;
   uint8_t blockSize_present = blockSize != nullptr;
-  CUfunction func_rpc = lupine_translate_private_function_for_rpc(func);
+  CUfunction func_rpc = lupine_translate_private_function(func);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn,
                                  RPC_cuOccupancyMaxPotentialBlockSizeWithFlags,
@@ -7806,7 +7808,7 @@ CUresult cuOccupancyAvailableDynamicSMemPerBlock(size_t *dynamicSmemSize,
         dynamicSmemSize, func, numBlocks, blockSize);
   conn_t *conn = lupine_route_remote_conn(route);
   uint8_t dynamicSmemSize_present = dynamicSmemSize != nullptr;
-  CUfunction func_rpc = lupine_translate_private_function_for_rpc(func);
+  CUfunction func_rpc = lupine_translate_private_function(func);
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request_on(conn,
                                  RPC_cuOccupancyAvailableDynamicSMemPerBlock,
@@ -7836,7 +7838,7 @@ CUresult cuOccupancyMaxPotentialClusterSize(int *clusterSize, CUfunction func,
         clusterSize, func, config);
   conn_t *conn = lupine_route_remote_conn(route);
   uint8_t clusterSize_present = clusterSize != nullptr;
-  CUfunction func_rpc = lupine_translate_private_function_for_rpc(func);
+  CUfunction func_rpc = lupine_translate_private_function(func);
   if (config == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (config->numAttrs > SIZE_MAX / sizeof(*config->attrs) ||
@@ -7869,7 +7871,7 @@ CUresult cuOccupancyMaxActiveClusters(int *numClusters, CUfunction func,
         func, config);
   conn_t *conn = lupine_route_remote_conn(route);
   uint8_t numClusters_present = numClusters != nullptr;
-  CUfunction func_rpc = lupine_translate_private_function_for_rpc(func);
+  CUfunction func_rpc = lupine_translate_private_function(func);
   if (config == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
   if (config->numAttrs > SIZE_MAX / sizeof(*config->attrs) ||
@@ -9620,7 +9622,7 @@ CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent) {
         LUPINE_REAL_CUDA_SYMBOL("cuGreenCtxRecordEvent"), hCtx, hEvent);
     // Re-recording re-arms the event, so its cached completion is stale.
     // Invalidate after enqueue so an overlapping query cannot retain old state.
-    lupine_event_invalidate_completion(hEvent);
+    lupine_event_invalidate_completion(&lupine_events, hEvent);
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -9633,7 +9635,7 @@ CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent) {
   return_value = CUDA_SUCCESS;
   // Re-recording re-arms the event, so its cached completion is stale.
   // Invalidate after enqueue so an overlapping query cannot retain old state.
-  lupine_event_invalidate_completion(hEvent);
+  lupine_event_invalidate_completion(&lupine_events, hEvent);
   return return_value;
 }
 

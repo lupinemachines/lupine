@@ -43,10 +43,7 @@ static std::vector<lupine_device_entry> &lupine_device_table() {
   return *devices;
 }
 
-static std::atomic<bool> &lupine_device_table_ready() {
-  static std::atomic<bool> ready{false};
-  return ready;
-}
+static std::atomic<bool> lupine_device_table_ready{false};
 
 template <typename Handle>
 static std::unordered_map<Handle, lupine_owner_record> &lupine_owners() {
@@ -62,15 +59,6 @@ static int lupine_conn_index(conn_t *conn) {
   return index >= 0 && index < rpc_size() ? index : -1;
 }
 
-conn_t *lupine_thread_conn_by_index(unsigned int index) {
-  // The Linux server forks one child process per accepted connection. CUDA
-  // object handles, including primary-context handles used by libcudart, are
-  // only valid inside that child process. Keep all client host threads on the
-  // same connection and mirror thread-local current context with
-  // cuCtxSetCurrent.
-  return rpc_client_get_connection(index);
-}
-
 extern "C" bool lupine_route_is_local(lupine_route route) {
   return route.kind == LUPINE_ROUTE_LOCAL;
 }
@@ -84,10 +72,6 @@ lupine_route lupine_remote_route_for_conn(conn_t *conn) {
     return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
   }
   return lupine_route{LUPINE_ROUTE_REMOTE, conn};
-}
-
-static lupine_route lupine_local_route() {
-  return lupine_route{LUPINE_ROUTE_LOCAL, nullptr};
 }
 
 int lupine_route_identity(lupine_route route) {
@@ -114,11 +98,11 @@ extern "C" bool lupine_deviceptrs_share_route(CUdeviceptr first,
 
 lupine_route lupine_route_from_identity(int route_id) {
   if (route_id == -1) {
-    return lupine_local_route();
+    return lupine_route{LUPINE_ROUTE_LOCAL, nullptr};
   }
   if (route_id >= 0) {
     return lupine_remote_route_for_conn(
-        lupine_thread_conn_by_index(static_cast<unsigned int>(route_id)));
+        rpc_client_get_connection(static_cast<unsigned int>(route_id)));
   }
   return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
 }
@@ -182,11 +166,11 @@ lupine_apply_visible_devices(std::vector<lupine_device_entry> &devices) {
 }
 
 static CUresult lupine_ensure_device_table() {
-  if (lupine_device_table_ready().load(std::memory_order_acquire)) {
+  if (lupine_device_table_ready.load(std::memory_order_acquire)) {
     return CUDA_SUCCESS;
   }
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  if (lupine_device_table_ready().load(std::memory_order_relaxed)) {
+  if (lupine_device_table_ready.load(std::memory_order_relaxed)) {
     return CUDA_SUCCESS;
   }
 
@@ -240,7 +224,7 @@ static CUresult lupine_ensure_device_table() {
   // Selecting nothing out of a fleet that is there is an answer, not a
   // failure: the driver reports no devices rather than refusing the call.
   lupine_apply_visible_devices(devices);
-  lupine_device_table_ready().store(true, std::memory_order_release);
+  lupine_device_table_ready.store(true, std::memory_order_release);
   return CUDA_SUCCESS;
 }
 
@@ -267,7 +251,7 @@ lupine_connection_supports_concurrent_managed_access(conn_t *conn) {
              });
 }
 
-CUresult lupine_virtual_device_count(int *count) {
+extern "C" CUresult cuDeviceGetCount(int *count) {
   if (count == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -297,7 +281,7 @@ static const lupine_device_entry *lupine_lookup_device_entry(int ordinal) {
              : nullptr;
 }
 
-CUresult lupine_virtual_device_for_ordinal(CUdevice *device, int ordinal) {
+extern "C" CUresult cuDeviceGet(CUdevice *device, int ordinal) {
   if (device == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -352,7 +336,7 @@ lupine_lookup_device_on_all_routes_impl(CUdevice *device, void *context,
   int connection_count = rpc_size();
   for (int i = has_local_device ? -1 : 0; i < connection_count; ++i) {
     lupine_route route =
-        i < 0 ? lupine_local_route()
+        i < 0 ? lupine_route{LUPINE_ROUTE_LOCAL, nullptr}
               : lupine_remote_route_for_conn(
                     rpc_client_get_connection(static_cast<unsigned int>(i)));
     CUdevice route_device = 0;
@@ -388,9 +372,9 @@ extern "C" lupine_route lupine_route_for_device(CUdevice *device) {
     return lupine_route{LUPINE_ROUTE_UNKNOWN_DEVICE, nullptr};
   }
   *device = mapped->local ? mapped->local_device : mapped->remote_device;
-  return mapped->local ? lupine_local_route()
+  return mapped->local ? lupine_route{LUPINE_ROUTE_LOCAL, nullptr}
                        : lupine_remote_route_for_conn(
-                             lupine_thread_conn_by_index(mapped->conn_index));
+                             rpc_client_get_connection(mapped->conn_index));
 }
 
 extern "C" bool lupine_translate_device_for_conn(conn_t *conn,
@@ -444,14 +428,6 @@ static void lupine_note_owner_route(Handle handle, lupine_route route) {
   if constexpr (std::is_same_v<Handle, CUdeviceptr>) {
     owner.pointer_context = lupine_current_context_hint();
   }
-}
-
-extern "C" void lupine_note_module_owner(CUmodule module, conn_t *conn) {
-  lupine_note_owner_route(module, lupine_remote_route_for_conn(conn));
-}
-
-extern "C" void lupine_note_library_owner(CUlibrary library, conn_t *conn) {
-  lupine_note_owner_route(library, lupine_remote_route_for_conn(conn));
 }
 
 extern "C" void lupine_note_deviceptr_owner_route(CUdeviceptr ptr,
@@ -755,7 +731,7 @@ static void lupine_forget_scoped_owner(Handle handle) {
 
 extern "C" void lupine_forget_event_owner(CUevent event) {
   lupine_forget_scoped_owner(event);
-  lupine_event_forget(event);
+  lupine_event_forget(&lupine_events, event);
 }
 
 extern "C" void lupine_forget_graph_exec_owner(CUgraphExec exec) {
@@ -814,19 +790,6 @@ static bool lupine_lookup_deviceptr_route_locked(
 extern "C" bool lupine_deviceptr_is_tracked(CUdeviceptr ptr) {
   std::lock_guard<std::mutex> lock(lupine_routing_mutex());
   return lupine_lookup_deviceptr_route_locked(ptr, nullptr);
-}
-
-extern "C" bool lupine_deviceptr_allocation_covers(CUdeviceptr ptr,
-                                                   size_t bytes, int route_id) {
-  if (bytes == 0) {
-    return false;
-  }
-  std::lock_guard<std::mutex> lock(lupine_routing_mutex());
-  // An allocation is one interval, so holding both endpoints holds the range.
-  const auto *allocation = lupine_deviceptr_allocation_cache_lookup(ptr);
-  return allocation != nullptr && allocation->route_id == route_id &&
-         allocation ==
-             lupine_deviceptr_allocation_cache_lookup(ptr + bytes - 1);
 }
 
 extern "C" lupine_route lupine_route_for_deviceptr(CUdeviceptr ptr) {
@@ -960,12 +923,12 @@ extern "C" lupine_route lupine_route_for_default() {
       return route;
     }
   }
-  conn_t *conn = lupine_thread_conn_by_index(0);
+  conn_t *conn = rpc_client_get_connection(0);
   if (conn != nullptr) {
     return lupine_remote_route_for_conn(conn);
   }
   return lupine_local_cuda_available()
-             ? lupine_local_route()
+             ? lupine_route{LUPINE_ROUTE_LOCAL, nullptr}
              : lupine_route{LUPINE_ROUTE_INVALID, nullptr};
 }
 

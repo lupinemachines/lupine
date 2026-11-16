@@ -988,14 +988,6 @@ extern "C" CUresult cuInit(unsigned int flags) {
                                             : CUDA_ERROR_NO_DEVICE;
 }
 
-extern "C" CUresult cuDeviceGetCount(int *count) {
-  return lupine_virtual_device_count(count);
-}
-
-extern "C" CUresult cuDeviceGet(CUdevice *device, int ordinal) {
-  return lupine_virtual_device_for_ordinal(device, ordinal);
-}
-
 static void lupine_record_library_image(CUlibrary library, lupine_route route,
                                         uint32_t kind,
                                         const unsigned char *image,
@@ -1274,10 +1266,6 @@ void lupine_finish_module_get_function(CUfunction function, CUmodule module,
 
 static int lupine_read_library(conn_t *conn, CUlibrary library);
 
-static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
-                                                      lupine_route route,
-                                                      CUlibrary *library);
-
 static CUresult lupine_mmap_readonly_file(const char *path, void **mapping,
                                           size_t *size) {
   int fd = open(path, O_RDONLY | O_BINARY);
@@ -1341,9 +1329,11 @@ extern "C" CUresult cuModuleLoad(CUmodule *module, const char *fname) {
   return result;
 }
 
-static CUresult lupine_load_recorded_library_on_route(CUlibrary source_library,
-                                                      lupine_route route,
-                                                      CUlibrary *library) {
+// A library's modules and globals belong to a context, so they come from the
+// library as loaded on the current context's connection.
+extern "C" CUresult
+lupine_load_recorded_library_on_route(CUlibrary source_library,
+                                      lupine_route route, CUlibrary *library) {
   if (library == nullptr) {
     return CUDA_ERROR_INVALID_VALUE;
   }
@@ -1488,13 +1478,6 @@ lupine_resolve_library_kernel_for_route(CUfunction function, lupine_route route,
   return CUDA_SUCCESS;
 }
 
-// A library's modules and globals belong to a context, so they come from the
-// library as loaded on the current context's connection.
-extern "C" CUresult lupine_resolve_library_for_route(CUlibrary *library,
-                                                     lupine_route route) {
-  return lupine_load_recorded_library_on_route(*library, route, library);
-}
-
 // Library kernels are context-independent, so a device-scoped kernel call
 // must name the kernel as loaded on that device's connection.
 extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel,
@@ -1506,7 +1489,7 @@ extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel,
   return result;
 }
 
-static CUfunction lupine_translate_private_function(CUfunction function) {
+extern "C" CUfunction lupine_translate_private_function(CUfunction function) {
   if (lupine_private_node_count.load(std::memory_order_acquire) == 0) {
     return function;
   }
@@ -1524,11 +1507,6 @@ static CUresult lupine_get_remote_private_module_node(CUcontext context,
                                                       CUmodule module,
                                                       CUfunction *server_node,
                                                       uint64_t *server_owner);
-
-extern "C" CUfunction
-lupine_translate_private_function_for_rpc(CUfunction function) {
-  return lupine_translate_private_function(function);
-}
 
 static bool lupine_device_attribute_is_virtualized(conn_t *conn,
                                                    CUdevice_attribute attrib) {
@@ -3414,15 +3392,12 @@ extern "C" void lupine_note_ctx_create_route(CUcontext ctx,
                                              lupine_route route) {
   lupine_note_device_binding_changed();
   lupine_note_context_owner_route(ctx, route);
-  lupine_lane_context_cache_store(lupine_route_identity(route), ctx);
+  lupine_lane_context_cache_update(lupine_route_identity(route), ctx,
+                                   lupine_lane_context_cache_epoch(), true);
   if (lupine_current_context != nullptr) {
     lupine_context_stack->push_back(lupine_current_context);
   }
   lupine_publish_current_context(ctx);
-}
-
-extern "C" void lupine_note_ctx_create(CUcontext ctx, conn_t *conn) {
-  lupine_note_ctx_create_route(ctx, lupine_remote_route_for_conn(conn));
 }
 
 extern "C" CUresult cuCtxPushCurrent_v2(CUcontext ctx) {
@@ -3820,12 +3795,13 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
   uint64_t records[kLupineEventQueryBatch + 1];
   uint64_t tickets[kLupineEventQueryBatch + 1];
   CUresult results[kLupineEventQueryBatch + 1];
-  if (!lupine_event_query_needed(hEvent, &records[0])) {
+  if (!lupine_event_query_needed(&lupine_events, hEvent, &records[0])) {
     return lupine_sync_mapped_device_to_host();
   }
   // Other pending events on this server ride along to warm the cache.
-  uint32_t count =
-      lupine_event_collect_query_batch(hEvent, conn, events + 1, records + 1);
+  uint32_t count = lupine_event_collect_query_batch(
+      &lupine_events, hEvent, conn, lupine_rpc_conn_for_event, events + 1,
+      records + 1);
   // A query checks the events' records instead of waiting for them: a record
   // another thread sent that has not been submitted answers not ready. Each
   // event that rides along carries its own record's ticket, so one still
@@ -3849,7 +3825,8 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
       rpc_read_end(conn) < 0) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
-  lupine_event_cache_completions(events, records, results, count + 1);
+  lupine_event_cache_completions(&lupine_events, events, records, results,
+                                 count + 1);
   return results[0] == CUDA_SUCCESS ? lupine_sync_mapped_device_to_host()
                                     : results[0];
 }
@@ -3884,7 +3861,7 @@ extern "C" CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags,
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   if (return_value == CUDA_SUCCESS) {
-    lupine_note_ctx_create(*pctx, conn);
+    lupine_note_ctx_create_route(*pctx, route);
   }
   return return_value;
 }
@@ -4116,7 +4093,7 @@ static CUresult lupine_module_load_data_impl(CUmodule *module,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
-    lupine_note_module_owner(*module, conn);
+    lupine_note_module_owner_route(*module, route);
   }
   return return_value;
 }
@@ -4735,9 +4712,9 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   if (return_value == CUDA_SUCCESS) {
-    lupine_note_library_owner(*library, conn);
-    lupine_record_library_image(*library, lupine_remote_route_for_conn(conn),
-                                kind, image_data, image_size, code);
+    lupine_note_library_owner_route(*library, route);
+    lupine_record_library_image(*library, route, kind, image_data, image_size,
+                                code);
     if (profiled) {
       lupine_library_profile_record(route, ref);
     }

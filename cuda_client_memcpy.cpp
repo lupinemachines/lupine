@@ -80,11 +80,6 @@ static bool lupine_stream_crosses_route(CUstream stream, lupine_route route) {
          !lupine_routes_share_server(route, stream_route);
 }
 
-static lupine_route lupine_route_for_stream_or_default(CUstream stream) {
-  return stream != nullptr ? lupine_route_for_stream(stream)
-                           : lupine_route_for_default();
-}
-
 static inline CUstream lupine_stream_fetch_ready() {
   return reinterpret_cast<CUstream>(LUPINE_STREAM_FETCH_READY_BITS);
 }
@@ -4930,9 +4925,8 @@ lupine_cuMemcpyDtoD_via_client(CUdeviceptr dstDevice, CUdeviceptr srcDevice,
 static CUresult lupine_memcpy_htoa(CUarray dstArray, size_t dstOffset,
                                    const void *srcHost, size_t ByteCount,
                                    const CUstream *hStream) {
-  lupine_route route = hStream != nullptr
-                           ? lupine_route_for_stream_or_default(*hStream)
-                           : lupine_route_for_default();
+  lupine_route route =
+      lupine_route_for_stream(hStream != nullptr ? *hStream : nullptr);
   if (hStream != nullptr && lupine_stream_crosses_route(*hStream, route)) {
     return lupine_memcpy_htoa(dstArray, dstOffset, srcHost, ByteCount, nullptr);
   }
@@ -5001,9 +4995,8 @@ extern "C" CUresult cuMemcpyHtoAAsync_v2(CUarray dstArray, size_t dstOffset,
 static CUresult lupine_memcpy_atoh(void *dstHost, CUarray srcArray,
                                    size_t srcOffset, size_t ByteCount,
                                    const CUstream *hStream) {
-  lupine_route route = hStream != nullptr
-                           ? lupine_route_for_stream_or_default(*hStream)
-                           : lupine_route_for_default();
+  lupine_route route =
+      lupine_route_for_stream(hStream != nullptr ? *hStream : nullptr);
   if (lupine_route_is_local(route)) {
     return hStream != nullptr
                ? lupine_call_real_cuda_fn("cuMemcpyAtoHAsync_v2", dstHost,
@@ -5203,7 +5196,7 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
     } else if (direction != LUPINE_COPY_DIRECTION_HTOD && !src_array) {
       route = lupine_route_for_deviceptr(copy.srcDevice);
     } else {
-      route = api.async ? lupine_route_for_stream_or_default(hStream)
+      route = api.async ? lupine_route_for_stream(hStream)
                         : lupine_route_for_current_context();
     }
     if (api.async && lupine_stream_crosses_route(hStream, route)) {

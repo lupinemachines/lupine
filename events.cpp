@@ -1,11 +1,6 @@
 #include "events.h"
 
-#include "client_routing.h"
-
-static lupine_event_table &lupine_event_table_instance() {
-  static lupine_event_table table;
-  return table;
-}
+lupine_event_table lupine_events;
 
 std::shared_mutex &lupine_event_lifecycle_mutex() {
   static std::shared_mutex mutex;
@@ -104,35 +99,4 @@ void lupine_event_cache_completions(lupine_event_table *table,
       }
     }
   }
-}
-
-void lupine_event_invalidate_completion(CUevent event) {
-  lupine_event_invalidate_completion(&lupine_event_table_instance(), event);
-}
-
-void lupine_event_invalidate_all_completions() {
-  lupine_event_invalidate_all_completions(&lupine_event_table_instance());
-}
-
-void lupine_event_forget(CUevent event) {
-  lupine_event_forget(&lupine_event_table_instance(), event);
-}
-
-bool lupine_event_query_needed(CUevent event, uint64_t *record) {
-  return lupine_event_query_needed(&lupine_event_table_instance(), event,
-                                   record);
-}
-
-uint32_t lupine_event_collect_query_batch(CUevent exclude, conn_t *conn,
-                                          CUevent *events, uint64_t *records) {
-  return lupine_event_collect_query_batch(
-      &lupine_event_table_instance(), exclude, conn, lupine_rpc_conn_for_event,
-      events, records);
-}
-
-void lupine_event_cache_completions(const CUevent *events,
-                                    const uint64_t *records,
-                                    const CUresult *results, uint32_t count) {
-  lupine_event_cache_completions(&lupine_event_table_instance(), events,
-                                 records, results, count);
 }

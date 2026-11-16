@@ -311,7 +311,7 @@ CUresult cuCtxRecordEvent(CUcontext hCtx, CUevent hEvent) {
   CUresult return_value = LUPINE_GENERATED_CALL();
   // Re-recording re-arms the event, so its cached completion is stale.
   // Invalidate after enqueue so an overlapping query cannot retain old state.
-  lupine_event_invalidate_completion(hEvent);
+  lupine_event_invalidate_completion(&lupine_events, hEvent);
   return return_value;
 }
 /**
@@ -595,7 +595,8 @@ CUresult cuLibraryGetKernel(CUkernel *pKernel, CUlibrary library,
 CUresult cuLibraryGetModule(CUmodule *pMod, CUlibrary library) {
   if (pMod == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  CUresult resolved = lupine_resolve_library_for_route(&library, route);
+  CUresult resolved =
+      lupine_load_recorded_library_on_route(library, route, &library);
   if (resolved != CUDA_SUCCESS)
     return resolved;
   CUresult return_value = LUPINE_GENERATED_CALL();
@@ -663,7 +664,8 @@ CUresult cuFuncGetParamInfo(CUfunction func, size_t paramIndex,
  */
 CUresult cuLibraryGetGlobal(CUdeviceptr *dptr, size_t *bytes, CUlibrary library,
                             const char *name) {
-  CUresult resolved = lupine_resolve_library_for_route(&library, route);
+  CUresult resolved =
+      lupine_load_recorded_library_on_route(library, route, &library);
   if (resolved != CUDA_SUCCESS)
     return resolved;
   CUresult return_value = LUPINE_GENERATED_CALL();
@@ -1995,7 +1997,7 @@ CUresult cuGreenCtxRecordEvent(CUgreenCtx hCtx, CUevent hEvent) {
   CUresult return_value = LUPINE_GENERATED_CALL();
   // Re-recording re-arms the event, so its cached completion is stale.
   // Invalidate after enqueue so an overlapping query cannot retain old state.
-  lupine_event_invalidate_completion(hEvent);
+  lupine_event_invalidate_completion(&lupine_events, hEvent);
   return return_value;
 }
 /**
@@ -2167,7 +2169,7 @@ CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags);
 CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (!lupine_route_is_local(route))
-    lupine_event_invalidate_completion(hEvent);
+    lupine_event_invalidate_completion(&lupine_events, hEvent);
   return return_value;
 }
 /**
@@ -2181,7 +2183,7 @@ CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
                                 unsigned int flags) {
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (!lupine_route_is_local(route))
-    lupine_event_invalidate_completion(hEvent);
+    lupine_event_invalidate_completion(&lupine_events, hEvent);
   return return_value;
 }
 /**
@@ -2327,7 +2329,7 @@ CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
                             CUfunction hfunc) {
   if (pi == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  hfunc = lupine_translate_private_function_for_rpc(hfunc);
+  hfunc = lupine_translate_private_function(hfunc);
   route = lupine_route_for_function(hfunc);
   lupine_function_attribute_key key{lupine_route_identity(route), hfunc,
                                     (int)attrib};
@@ -2347,9 +2349,9 @@ CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
  */
 CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
                             int value) {
-  lupine_function_attribute_key key{
-      lupine_route_identity(route),
-      lupine_translate_private_function_for_rpc(hfunc), (int)attrib};
+  lupine_function_attribute_key key{lupine_route_identity(route),
+                                    lupine_translate_private_function(hfunc),
+                                    (int)attrib};
   int cached = 0;
   if (lupine_attribute_get(key, cached, lupine_attribute_source::set) &&
       cached == value)
@@ -3225,7 +3227,7 @@ CUresult cuGraphLaunch(CUgraphExec hGraphExec, CUstream hStream) {
   CUresult return_value = LUPINE_GENERATED_CALL();
   // The graph may re-record events it does not name here, so no cached
   // completion can be trusted past the launch.
-  lupine_event_invalidate_all_completions();
+  lupine_event_invalidate_all_completions(&lupine_events);
   return return_value;
 }
 /**
@@ -3339,7 +3341,7 @@ CUresult cuOccupancyMaxActiveBlocksPerMultiprocessor(int *numBlocks,
                                                      size_t dynamicSMemSize) {
   if (numBlocks == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  func = lupine_translate_private_function_for_rpc(func);
+  func = lupine_translate_private_function(func);
   route = lupine_route_for_function(func);
   if (!lupine_route_is_local(route) &&
       lupine_try_cached_occupancy(route, func, blockSize, dynamicSMemSize, 0,
@@ -3363,7 +3365,7 @@ CUresult cuOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
     unsigned int flags) {
   if (numBlocks == nullptr)
     return CUDA_ERROR_INVALID_VALUE;
-  func = lupine_translate_private_function_for_rpc(func);
+  func = lupine_translate_private_function(func);
   route = lupine_route_for_function(func);
   if (!lupine_route_is_local(route) &&
       lupine_try_cached_occupancy(route, func, blockSize, dynamicSMemSize,
