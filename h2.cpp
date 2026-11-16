@@ -1790,7 +1790,8 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
 }
 
 int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
-                           rpc_write_cursor *cursors, size_t count) {
+                           rpc_write_cursor *cursors, size_t count,
+                           bool awaited) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
   if (std::all_of(cursors, cursors + count, [](const rpc_write_cursor &cursor) {
         return !cursor.pending();
@@ -1805,7 +1806,7 @@ int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
   // sending that, and the caller can encode its next chunk meanwhile.
   // Unawaited requests stay queued for the writer so a burst shares one block
   // and one send.
-  if (result == 0 && (transport->server || conn->write_awaited) &&
+  if (result == 0 && (transport->server || awaited) &&
       transport->writer_sleeping && transport->outbound.empty() &&
       !transport->write_busy && !transport->writer_paused &&
       transport->pause_after_bytes == 0 && !transport->socket_parked) {

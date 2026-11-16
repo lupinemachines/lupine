@@ -195,10 +195,11 @@ struct rpc_request_scope {
   size_t retired_count = 0;
 };
 
-// The request or response being built. A request nested in a response swaps
-// the outer builder out and back; each keeps its own inline copy storage in
-// place, since queued cursors point into it.
+// The request or response a thread is building, in thread-local storage. A
+// request nested in a response is built in a second one, so the response's
+// queued cursors stay valid.
 struct rpc_write_builder {
+  conn_t *conn = nullptr;
   int write_id;
   int write_op;
   int32_t write_stream_id;
@@ -207,12 +208,11 @@ struct rpc_write_builder {
   bool write_awaited;
   rpc_request_scope write_scope;
   std::vector<rpc_write_cursor> write_queue;
-  unsigned char *write_copy_buffer;
-  size_t write_copy_capacity;
-  size_t write_copy_offset;
 };
+// The builder the calling thread has open, or null. For tests.
+extern rpc_write_builder *rpc_open_write_builder();
 
-struct conn_t : rpc_write_builder {
+struct conn_t {
   lupine_socket_t connfd;
 
   int request_id;
@@ -239,7 +239,6 @@ struct conn_t : rpc_write_builder {
   // Whether a host-memory flush was sent unanswered since a callback's
   // acknowledgement last waited for the flushes.
   int host_flushes_unsettled;
-  alignas(std::max_align_t) unsigned char write_copy_inline[256];
   int local_request_parity;
   int logical_index;
   int closed;
@@ -363,14 +362,6 @@ extern int rpc_write_pitched(conn_t *conn, const void *data, size_t width,
 extern int rpc_read_pitched(conn_t *conn, void *data, size_t width, size_t rows,
                             size_t row_stride, size_t slices,
                             size_t slice_stride);
-// Reserves the request-owned storage used by subsequent rpc_write_buffer
-// calls. The reservation must be made once before the first buffered write in
-// an RPC and is released with the request.
-extern int rpc_copy_alloc(conn_t *conn, const size_t size);
-// Returns and queues the next aligned span in the request-owned allocation.
-// The complete allocation is fixed before serialization starts, so returned
-// pointers remain valid until the request ends.
-extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
 extern int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
                              size_t count);
 extern int rpc_write_end(conn_t *conn);
@@ -456,8 +447,11 @@ constexpr int LUPINE_RPC_HTTP2_CLIENT_MISMATCH = -4;
 // and sets *ahead to how many it took; it never waits for them.
 extern int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
                                  size_t size, size_t *ahead = nullptr);
+// `awaited` says a caller waits for the reply, so the message is sent from
+// this thread when the writer sleeps.
 extern int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
-                                  rpc_write_cursor *cursors, size_t count);
+                                  rpc_write_cursor *cursors, size_t count,
+                                  bool awaited = false);
 extern int32_t rpc_http2_dispatch_stream(conn_t *conn);
 extern int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id);
 extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);
