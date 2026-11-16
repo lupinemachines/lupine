@@ -4,12 +4,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iostream>
-#include <new>
 #include <string.h>
 #include <thread>
 #include <utility>
@@ -324,32 +322,10 @@ static void rpc_write_buffer_release(conn_t *conn) {
   conn->write_copy_offset = 0;
 }
 
-static int rpc_write_queue_reset(conn_t *conn, size_t count) {
+// Leaves room for the header cursors rpc_write_end fills in.
+static void rpc_write_queue_reset(conn_t *conn) {
   rpc_write_buffer_release(conn);
-  if (conn == nullptr) {
-    return -1;
-  }
-  conn->write_queue.clear();
-  try {
-    conn->write_queue.resize(count);
-  } catch (const std::bad_alloc &) {
-    return -1;
-  }
-  return 0;
-}
-
-static int rpc_write_queue_push(conn_t *conn, rpc_write_cursor cursor) {
-  if (conn == nullptr ||
-      conn->write_queue.size() >= static_cast<size_t>(INT_MAX) ||
-      conn->write_queue.size() == conn->write_queue.max_size()) {
-    return -1;
-  }
-  try {
-    conn->write_queue.push_back(cursor);
-  } catch (const std::bad_alloc &) {
-    return -1;
-  }
-  return 0;
+  conn->write_queue.assign(2, rpc_write_cursor());
 }
 
 int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id) {
@@ -829,18 +805,13 @@ int rpc_note_host_allocation_write(conn_t *conn, void *data, size_t written) {
     return -1;
   }
   uintptr_t start = reinterpret_cast<uintptr_t>(data);
-  try {
-    if (!conn->host_allocation_writes.empty() &&
-        conn->host_allocation_writes.back().start +
-                conn->host_allocation_writes.back().size ==
-            start) {
-      conn->host_allocation_writes.back().size += written;
-    } else {
-      conn->host_allocation_writes.push_back({start, written});
-    }
-  } catch (const std::bad_alloc &) {
-    pthread_mutex_unlock(&conn->write_mutex);
-    return -1;
+  if (!conn->host_allocation_writes.empty() &&
+      conn->host_allocation_writes.back().start +
+              conn->host_allocation_writes.back().size ==
+          start) {
+    conn->host_allocation_writes.back().size += written;
+  } else {
+    conn->host_allocation_writes.push_back({start, written});
   }
   if (written != 0) {
     __atomic_store_n(&conn->host_allocation_writes_pending, 1,
@@ -1030,22 +1001,17 @@ static rpc_scope_ticket rpc_scope_snapshot(conn_t *conn, uintptr_t key) {
 
 // Waits for `last` unless this lane sent it: a lane's requests arrive in order.
 // A soft request only checks it: kind 2 instead of 1.
-static int rpc_scope_wait_for(conn_t *conn, const rpc_scope_ticket &last) {
+static void rpc_scope_wait_for(conn_t *conn, const rpc_scope_ticket &last) {
   rpc_request_scope &scope = conn->write_scope;
   if (last.ticket == kNoAsyncSequence || last.lane == conn->write_stream_id) {
-    return 0;
+    return;
   }
   for (const rpc_wait_marker &wait : scope.waits) {
     if (wait.value == last.ticket) {
-      return 0;
+      return;
     }
   }
-  try {
-    scope.waits.push_back({0, scope.soft ? 2 : 1, last.ticket});
-  } catch (const std::bad_alloc &) {
-    return -1;
-  }
-  return 0;
+  scope.waits.push_back({0, scope.soft ? 2 : 1, last.ticket});
 }
 
 void rpc_begin_callback_reply(conn_t *conn) { rpc_tls_callback_reply = conn; }
@@ -1059,16 +1025,14 @@ static int rpc_request_key(conn_t *conn, uintptr_t key, bool publish) {
   if (key == RPC_SCOPE_NONE || key == RPC_SCOPE_LANE) {
     return 0;
   }
-  try {
-    if (publish) {
-      scope.keys.push_back(key);
-    }
-  } catch (const std::bad_alloc &) {
-    return -1;
+  if (publish) {
+    scope.keys.push_back(key);
   }
   // A request on no scope waits for every earlier ticket already.
-  return scope.scoped ? rpc_scope_wait_for(conn, rpc_scope_snapshot(conn, key))
-                      : 0;
+  if (scope.scoped) {
+    rpc_scope_wait_for(conn, rpc_scope_snapshot(conn, key));
+  }
+  return 0;
 }
 
 int rpc_request_on(conn_t *conn, uintptr_t key) {
@@ -1105,9 +1069,7 @@ int rpc_request_after_retired(conn_t *conn) {
     return -1;
   }
   for (const rpc_scope_ticket &last : conn->retired_scopes) {
-    if (rpc_scope_wait_for(conn, last) < 0) {
-      return -1;
-    }
+    rpc_scope_wait_for(conn, last);
   }
   conn->write_scope.retired_count = conn->retired_scopes.size();
   return 0;
@@ -1162,11 +1124,7 @@ int rpc_write_start_request_on(conn_t *conn, const int op, uintptr_t key,
     rpc_tls_io.write_conn = conn;
   }
 
-  if (rpc_write_queue_reset(conn, 2) < 0) {
-    rpc_release_write_builder(conn, request_nested_in_response);
-    pthread_mutex_unlock(&conn->call_mutex);
-    return -1;
-  }
+  rpc_write_queue_reset(conn);
   conn->request_id = conn->request_id + 2; // leave the last bit the same
   conn->write_id = conn->request_id;
   conn->write_op = op;
@@ -1192,14 +1150,10 @@ int rpc_write_start_request_on(conn_t *conn, const int op, uintptr_t key,
   scope.keys.clear();
   scope.waits.clear();
   scope.retired_count = 0;
-  if (scoped && !host_writes &&
-      (rpc_scope_wait_for(conn, rpc_scope_snapshot(conn, RPC_SCOPE_NONE)) < 0 ||
-       rpc_scope_wait_for(
-           conn, rpc_scope_snapshot(conn, RPC_SCOPE_HOST_WRITES)) < 0 ||
-       rpc_request_on(conn, key) < 0)) {
-    rpc_release_write_builder(conn, request_nested_in_response);
-    pthread_mutex_unlock(&conn->call_mutex);
-    return -1;
+  if (scoped && !host_writes) {
+    rpc_scope_wait_for(conn, rpc_scope_snapshot(conn, RPC_SCOPE_NONE));
+    rpc_scope_wait_for(conn, rpc_scope_snapshot(conn, RPC_SCOPE_HOST_WRITES));
+    rpc_request_on(conn, key);
   }
   if (lupine_rpc_stats_path() != nullptr) {
     lupine_rpc_stats_record(op, 1, 0);
@@ -1220,12 +1174,7 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
     return -1;
   }
   rpc_tls_io.write_conn = conn;
-
-  if (rpc_write_queue_reset(conn, 2) < 0) {
-    rpc_tls_io.write_conn = nullptr;
-    pthread_mutex_unlock(&conn->write_mutex);
-    return -1;
-  }
+  rpc_write_queue_reset(conn);
   conn->write_id = read_id;
   conn->write_op = -1;
   conn->write_stream_id = rpc_current_http2_stream(conn);
@@ -1238,10 +1187,10 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
 }
 
 int rpc_write(conn_t *conn, const void *data, const size_t size) {
-  if (size == 0) {
-    return 0;
+  if (size != 0) {
+    conn->write_queue.emplace_back(data, size);
   }
-  return rpc_write_queue_push(conn, rpc_write_cursor(data, size));
+  return 0;
 }
 
 // Rows are queued, not copied, so the caller's buffer must stay valid until
@@ -1303,26 +1252,7 @@ void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment) {
 
 int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
                       size_t count) {
-  if (count == 0) {
-    return 0;
-  }
-  if (conn == nullptr || cursors == nullptr ||
-      count > static_cast<size_t>(INT_MAX) - conn->write_queue.size() ||
-      count > conn->write_queue.max_size() - conn->write_queue.size()) {
-    return -1;
-  }
-
-  try {
-    conn->write_queue.reserve(conn->write_queue.size() + count);
-  } catch (const std::bad_alloc &) {
-    return -1;
-  }
-  for (size_t i = 0; i < count; ++i) {
-    if (cursors[i].data == nullptr && cursors[i].size != 0) {
-      return -1;
-    }
-    conn->write_queue.push_back(cursors[i]);
-  }
+  conn->write_queue.insert(conn->write_queue.end(), cursors, cursors + count);
   return 0;
 }
 
