@@ -64,7 +64,6 @@ constexpr size_t kH2CompressionBlockBytes = 256 * 1024;
 // request writer never waits on a block compression it did not need.
 constexpr size_t kH2StagedCursorBytes = 4096;
 constexpr size_t kH2MaxDataFrameBytes = 1024 * 1024;
-constexpr size_t kH2DecodeBufferBytes = 64 * 1024;
 // Retained capacity for drained staging buffers, a few frames' worth.
 constexpr size_t kH2StagingPoolBytes = 4 * 1024 * 1024;
 // Output nghttp2 may produce ahead of the socket before request writers block.
@@ -100,6 +99,13 @@ struct h2_stream {
   bool encoder_started = false;
   bool encoder_finished = false;
   bool decoder_finished = false;
+  // Compressed bytes no reader has asked for yet. They are decoded straight
+  // into the reader's buffer: decoding ahead of the reader stages the whole
+  // decoded body, and a compressible body is far larger than its window.
+  std::vector<unsigned char> pending;
+  size_t pending_offset = 0;
+  // The last decode filled its buffer, so zstd may still hold output.
+  bool decoder_full = false;
   // One DATA item carries the stream's whole body. It defers whenever
   // `encoded` runs dry and is resumed when more output lands.
   bool provider_submitted = false;
@@ -457,6 +463,30 @@ ssize_t h2_data_source_read_length_callback(nghttp2_session *, uint8_t,
   return static_cast<ssize_t>(std::max<size_t>(1, max_len));
 }
 
+// Decodes `source` into [destination, destination + remaining) until either
+// runs out, advancing both.
+int h2_decode_locked(h2_stream &stream, ZSTD_inBuffer &source,
+                     unsigned char *&destination, size_t &remaining) {
+  while (remaining > 0 && !stream.decoder_finished) {
+    ZSTD_outBuffer output{destination, remaining, 0};
+    size_t result = ZSTD_decompressStream(stream.decoder, &output, &source);
+    if (ZSTD_isError(result)) {
+      return -1;
+    }
+    destination += output.pos;
+    remaining -= output.pos;
+    stream.decoder_full = output.pos == output.size;
+    if (result == 0) {
+      stream.decoder_finished = true;
+      return source.pos == source.size ? 0 : -1;
+    }
+    if (source.pos == source.size && !stream.decoder_full) {
+      break;
+    }
+  }
+  return 0;
+}
+
 int h2_on_data_chunk_recv_callback(nghttp2_session *, uint8_t,
                                    int32_t stream_id, const uint8_t *data,
                                    size_t len, void *user_data) {
@@ -478,49 +508,24 @@ int h2_on_data_chunk_recv_callback(nghttp2_session *, uint8_t,
     }
   }
 
-  size_t offset = 0;
-  std::array<unsigned char, kH2DecodeBufferBytes> output;
-  for (;;) {
-    bool direct = stream.read_remaining > 0;
-    unsigned char *dst = direct ? stream.read_destination : output.data();
-    size_t dst_capacity = direct ? stream.read_remaining : output.size();
-    ZSTD_inBuffer source{data + offset, len - offset, 0};
-    ZSTD_outBuffer destination{dst, dst_capacity, 0};
-    size_t result =
-        ZSTD_decompressStream(stream.decoder, &destination, &source);
-    size_t input = source.pos;
-    size_t produced = destination.pos;
-    if (ZSTD_isError(result)) {
+  ZSTD_inBuffer source{data, len, 0};
+  if (stream.pending_offset == stream.pending.size() && !stream.decoder_full &&
+      stream.read_remaining > 0) {
+    if (h2_decode_locked(stream, source, stream.read_destination,
+                         stream.read_remaining) < 0) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
-    if (direct) {
-      stream.read_destination += produced;
-      stream.read_remaining -= produced;
-      if (stream.read_remaining == 0) {
-        pthread_cond_broadcast(&stream.read_ready);
-      }
-    } else {
-      receive_bytes(transport, stream_id, dst, produced);
+    if (stream.read_remaining == 0) {
+      pthread_cond_broadcast(&stream.read_ready);
     }
-    offset += input;
-    if (result == 0) {
-      if (offset != len) {
-        return NGHTTP2_ERR_CALLBACK_FAILURE;
-      }
-      stream.decoder_finished = true;
-      break;
+  }
+  if (source.pos < source.size) {
+    if (stream.pending_offset * 2 >= stream.pending.size()) {
+      stream.pending.erase(stream.pending.begin(),
+                           stream.pending.begin() + stream.pending_offset);
+      stream.pending_offset = 0;
     }
-    if (input == 0 && produced == 0) {
-      if (offset != len) {
-        return NGHTTP2_ERR_CALLBACK_FAILURE;
-      }
-      break;
-    }
-    // Zstd can consume the complete encoded block while retaining decoded
-    // output internally. Drain it before waiting for the next DATA frame.
-    if (offset == len && produced < dst_capacity) {
-      break;
-    }
+    stream.pending.insert(stream.pending.end(), data + source.pos, data + len);
   }
   return 0;
 }
@@ -764,7 +769,9 @@ int h2_on_frame_recv_callback(nghttp2_session *, const nghttp2_frame *frame,
   if ((frame->hd.type == NGHTTP2_DATA || frame->hd.type == NGHTTP2_HEADERS) &&
       (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0) {
     h2_stream &stream = h2_get_stream(transport, frame->hd.stream_id);
-    if (stream.recv_encoding == h2_encoding::zstd && !stream.decoder_finished) {
+    if (stream.recv_encoding == h2_encoding::zstd && !stream.decoder_finished &&
+        stream.pending_offset == stream.pending.size() &&
+        !stream.decoder_full) {
       return NGHTTP2_ERR_CALLBACK_FAILURE;
     }
     stream.remote_end = true;
@@ -794,6 +801,8 @@ int h2_on_stream_close_callback(nghttp2_session *, int32_t stream_id, uint32_t,
   stream.encoded_size = 0;
   stream.encoded_offset = 0;
   stream.local_out.clear();
+  stream.pending.clear();
+  stream.pending_offset = 0;
   stream.closed = true;
   pthread_cond_broadcast(&stream.read_ready);
   bool retryable_rejection =
@@ -1673,6 +1682,29 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
       stream.local_out.pop_front();
     }
   }
+  // Pending bytes follow everything in local_out. They are decoded only into
+  // room this reader provides, read-ahead included.
+  if (copied < capacity && stream.local_out.empty() &&
+      (stream.pending_offset < stream.pending.size() || stream.decoder_full)) {
+    ZSTD_inBuffer source{stream.pending.data(), stream.pending.size(),
+                         stream.pending_offset};
+    unsigned char *destination = out + copied;
+    size_t remaining = capacity - copied;
+    if (h2_decode_locked(stream, source, destination, remaining) < 0) {
+      pthread_mutex_unlock(&transport->session_mutex);
+      return -1;
+    }
+    stream.pending_offset = source.pos;
+    if (stream.pending_offset == stream.pending.size()) {
+      stream.pending_offset = 0;
+      if (stream.pending.capacity() > kH2StagingPoolBytes) {
+        std::vector<unsigned char>().swap(stream.pending);
+      } else {
+        stream.pending.clear();
+      }
+    }
+    copied = capacity - remaining;
+  }
   if (ahead != nullptr) {
     *ahead = copied > size ? copied - size : 0;
   }
@@ -1685,8 +1717,13 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
     pthread_mutex_unlock(&transport->session_mutex);
     return -1;
   }
+  // A zstd body that ended with pending bytes is only valid once they decode
+  // to the end of its frame.
+  bool ended =
+      stream.remote_end &&
+      (stream.recv_encoding != h2_encoding::zstd || stream.decoder_finished);
   if (transport->transport_failed || stream.closed || stream.remote_end) {
-    int result = stream.remote_end ? LUPINE_RPC_HTTP2_STREAM_END : -1;
+    int result = ended ? LUPINE_RPC_HTTP2_STREAM_END : -1;
     pthread_mutex_unlock(&transport->session_mutex);
     return result;
   }
@@ -1706,7 +1743,8 @@ int rpc_http2_read_stream(conn_t *conn, int32_t stream_id, void *data,
   int result = -1;
   if (complete) {
     result = 0;
-  } else if (stream.remote_end) {
+  } else if (stream.remote_end && (stream.recv_encoding != h2_encoding::zstd ||
+                                   stream.decoder_finished)) {
     result = LUPINE_RPC_HTTP2_STREAM_END;
   }
   pthread_mutex_unlock(&transport->session_mutex);
