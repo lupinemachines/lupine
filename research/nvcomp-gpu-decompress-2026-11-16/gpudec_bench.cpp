@@ -135,7 +135,8 @@ static double compress_all() {
       w = (w + cs + ALIGN - 1) & ~(ALIGN - 1);
     }
     lc.wlen = w - start;
-    if (codec == NONE || lc.wlen * 100 >= lc.ulen * 97) {
+    if (codec == NONE ||
+        (lc.wlen * 100 >= lc.ulen * 97 && !getenv("FORCE_FRAMED"))) {
       lc.raw = true;
       memcpy(&wire[start], &src[u], lc.ulen);
       lc.subs.clear();
@@ -393,6 +394,24 @@ static void kernel_only(double *gibs, size_t *tb_out) {
       exit(2);
     }
   *gibs = ubytes / (best / 1e3) / (1 << 30);
+  {
+    CUdeviceptr d2;
+    CK(cuMemAlloc(&d2, ubytes));
+    float dbest = 1e30f;
+    for (int r = 0; r < 4; r++) {
+      CK(cuEventRecord(e0, 0));
+      CK(cuMemcpyDtoD(d2, dst, ubytes));
+      CK(cuEventRecord(e1, 0));
+      CK(cuEventSynchronize(e1));
+      float ms;
+      CK(cuEventElapsedTime(&ms, e0, e1));
+      if (r)
+        dbest = std::min(dbest, ms);
+    }
+    fprintf(stderr, "DTOD_GIBS %.2f decode_ms=%.2f dtod_ms=%.2f\n",
+            ubytes / (dbest / 1e3) / (1 << 30), best, dbest);
+    cuMemFree(d2);
+  }
   cuMemFree(dw);
   cuMemFree(arr);
   cuMemFree(act);

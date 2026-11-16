@@ -83,8 +83,11 @@ lupine_nvcomp_htod *lupine_nvcomp_htod_begin(CUdeviceptr destination) {
   bool ok = cuMemAllocAsync(&state->slots, kSlots * kSlotBytes,
                             CU_STREAM_LEGACY) == CUDA_SUCCESS;
   for (size_t i = 0; ok && i < kSlots; ++i) {
-    ok =
-        cuEventCreate(&state->done[i], CU_EVENT_DISABLE_TIMING) == CUDA_SUCCESS;
+    // Blocking, so a copy waiting on its decodes yields the core instead of
+    // spinning on it.
+    ok = cuEventCreate(&state->done[i], CU_EVENT_DISABLE_TIMING |
+                                            CU_EVENT_BLOCKING_SYNC) ==
+         CUDA_SUCCESS;
   }
   if (!ok) {
     std::vector<void *> none;

@@ -1,6 +1,8 @@
 // End-to-end sync pageable HtoD through Lupine: htod_e2e <file> <reps>
 #include <cuda.h>
 
+#include <sys/resource.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -39,6 +41,8 @@ int main(int argc, char **argv) {
   CK(cuMemAlloc(&d, n));
   CK(cuMemcpyHtoD(d, src.data(), n)); // warm-up: dials bulk lanes
   std::vector<double> r;
+  rusage u0, u1;
+  getrusage(RUSAGE_SELF, &u0);
   for (int i = 0; i < reps; i++) {
     CK(cuMemsetD8(d, 0xab, n));
     CK(cuCtxSynchronize());
@@ -50,6 +54,13 @@ int main(int argc, char **argv) {
             .count();
     r.push_back(n / s / (1 << 30));
   }
+  getrusage(RUSAGE_SELF, &u1);
+  auto secs = [](const rusage &u) {
+    return u.ru_utime.tv_sec + u.ru_stime.tv_sec +
+           1e-6 * (u.ru_utime.tv_usec + u.ru_stime.tv_usec);
+  };
+  double client_cpu =
+      reps ? (secs(u1) - secs(u0)) / (reps * (n / double(1 << 30))) : 0;
   CK(cuMemcpyDtoH(back.data(), d, n));
   bool ok = memcmp(back.data(), src.data(), n) == 0;
   std::vector<double> s = r;
@@ -58,9 +69,10 @@ int main(int argc, char **argv) {
       "E2E dev=\"%s\" file=%s nvcomp=%s gibs_med=%.3f min=%.3f max=%.3f all=",
       name, argv[1],
       getenv("LUPINE_NVCOMP_HTOD") ? getenv("LUPINE_NVCOMP_HTOD") : "off",
-      s[s.size() / 2], s.front(), s.back());
+      reps ? s[s.size() / 2] : 0, reps ? s.front() : 0, reps ? s.back() : 0);
   for (double x : r)
     printf("%.3f,", x);
-  printf(" verify=%s\n", ok ? "ok" : "FAIL");
+  printf(" client_cpu_s_per_gib=%.3f verify=%s\n", client_cpu,
+         ok ? "ok" : "FAIL");
   return ok ? 0 : 2;
 }
