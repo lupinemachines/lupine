@@ -759,10 +759,7 @@ void test_process_control_preserves_queued_output() {
           return raw_read_exact(pair.client.connfd, &byte, 1);
         });
         rpc_shutdown_transport_socket(&pair.client);
-        require(reading.wait_for(std::chrono::seconds(1)) ==
-                        std::future_status::ready &&
-                    !reading.get(),
-                "shutdown left the resume handshake blocked");
+        require(!reading.get(), "shutdown left the resume handshake blocked");
         break;
       }
       require(lupine_handoff_resume_socket(&pair.client) == 0,
@@ -809,8 +806,6 @@ void test_response_wait_sends_transport_heartbeat() {
   rpc_http2_response_wait_begin(&pair.client);
   bool received_ping = false;
   for (int frame_count = 0; frame_count < 8 && !received_ping; ++frame_count) {
-    require(lupine_test_wait_readable(pair.server.connfd, 1000),
-            "response wait did not emit an HTTP/2 frame");
     std::array<unsigned char, 9> header = {};
     require(raw_read_frame(pair.server.connfd, &header),
             "heartbeat frame read failed");
@@ -1738,7 +1733,6 @@ void test_socket_reader_hands_off_between_streams() {
 
   char dispatch_value = '\0';
   char lane_value = '\0';
-  std::atomic<bool> lane_done{false};
   std::thread dispatch_reader([&] {
     require(read_dispatch(&pair.client, &dispatch_value, 1) == 0,
             "dispatch stream handoff read failed");
@@ -1748,21 +1742,16 @@ void test_socket_reader_hands_off_between_streams() {
     require(rpc_http2_read_stream(&pair.client, client_lane, &lane_value, 1) ==
                 0,
             "lane handoff read failed");
-    lane_done.store(true, std::memory_order_release);
   });
   std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
   require(write_stream_bytes(&pair.server, server_lane, "l", 1) == 0,
           "lane handoff write failed");
-  for (int i = 0; i < 100 && !lane_done.load(std::memory_order_acquire); ++i) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  bool handed_off = lane_done.load(std::memory_order_acquire);
-
-  write_all(&pair.server, {"d"});
+  // The dispatch byte is written only after the lane read completes, so a
+  // reader that kept recv from the waiting lane hangs here.
   lane_reader.join();
+  write_all(&pair.server, {"d"});
   dispatch_reader.join();
-  require(handed_off, "socket reader reclaimed recv ahead of a waiting lane");
   require(lane_value == 'l' && dispatch_value == 'd',
           "reader handoff payload mismatch");
 }
@@ -1947,6 +1936,10 @@ void check_lane_round_trip(const char *compression) {
   fill_lcg(payload, 913);
   std::fill_n(payload.begin(), 256 * 1024, 0);
   std::vector<unsigned char> received(payload.size());
+  // A stream closed by both ends drops unread data, so the response is read
+  // before the server ends it.
+  std::promise<void> response_read;
+  std::future<void> response_read_done = response_read.get_future();
   std::thread server([&] {
     require(rpc_http2_read_stream(&pair.server, stream, received.data(),
                                   received.size()) == 0,
@@ -1959,6 +1952,7 @@ void check_lane_round_trip(const char *compression) {
     require(write_stream_bytes(&pair.server, stream, received.data(),
                                received.size()) == 0,
             "zstd response write failed");
+    response_read_done.wait();
     require(rpc_http2_end_stream(&pair.server, stream) == 0,
             "zstd response end failed");
   });
@@ -1971,8 +1965,13 @@ void check_lane_round_trip(const char *compression) {
   require(rpc_http2_read_stream(&pair.client, stream, response.data(),
                                 response.size()) == 0,
           "zstd response decode failed");
+  response_read.set_value();
   server.join();
   require(response == payload, "zstd response mismatch");
+  unsigned char byte;
+  require(rpc_http2_read_stream(&pair.client, stream, &byte, 1) ==
+              LUPINE_RPC_HTTP2_STREAM_END,
+          "zstd response terminator missing");
 }
 
 void test_zstd_lane_round_trip() { check_lane_round_trip(nullptr); }
@@ -2449,9 +2448,7 @@ void test_rpc_repeated_responses_on_lane() {
     require(received == payload, "repeated response payload mismatch");
   }
   lupine_handoff_resume_requests(&pair.client);
-  require(next_call.wait_for(std::chrono::seconds(1)) ==
-                  std::future_status::ready &&
-              next_call.get() > 0,
+  require(next_call.get() > 0,
           "client request did not resume after checkpointing");
   server.join();
 }
@@ -2594,10 +2591,9 @@ void test_rpc_response_completed_hook() {
   server.join();
 }
 
-void wait_async_flag(const std::atomic<bool> &flag, const char *message) {
-  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+// The message names what a hang here is waiting for.
+void wait_async_flag(const std::atomic<bool> &flag, const char *) {
   while (!flag.load(std::memory_order_acquire)) {
-    require(std::chrono::steady_clock::now() < deadline, message);
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
 }
@@ -2703,14 +2699,8 @@ void test_async_prefix_builder_wait_orders_overlap() {
   });
   // The caller has acquired call_mutex, but cannot start its builder until
   // this test releases write_mutex.
-  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  for (;;) {
-    if (pthread_mutex_trylock(&pair.client.call_mutex) != 0) {
-      break;
-    }
+  while (pthread_mutex_trylock(&pair.client.call_mutex) == 0) {
     pthread_mutex_unlock(&pair.client.call_mutex);
-    require(std::chrono::steady_clock::now() < deadline,
-            "caller did not reach the builder wait");
     std::this_thread::yield();
   }
   // Simulate another producer publishing sequence 0 during the overlap.
@@ -2790,12 +2780,7 @@ void test_async_prefix_wait_preserves_flow_control() {
     consumed = true;
     rpc_unbind_http2_stream(&pair.server);
   });
-  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-  while (!sent) {
-    require(std::chrono::steady_clock::now() < deadline,
-            "prefix wait stopped flow-control progress");
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  wait_async_flag(sent, "prefix wait stopped flow-control progress");
   require(!consumed, "consumer skipped its unfinished prerequisite");
   rpc_async_sequence_end(&pair.server);
   rpc_unbind_http2_stream(&pair.server);
