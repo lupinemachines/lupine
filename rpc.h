@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <stdint.h>
 #include <unordered_map>
 #include <vector>
@@ -222,8 +223,9 @@ struct conn_t : rpc_write_builder {
   uint64_t issued_async_sequence; // tickets sent, under write_mutex
   uint64_t serving_async_sequence;
   int async_waiters = 0; // lanes in a ticket wait, under async_mutex
-  std::vector<uint64_t>
-      completed_async_sequences; // descending, under async_mutex
+  // Entry i: ticket serving_async_sequence + i has completed. Under
+  // async_mutex.
+  std::deque<bool> completed_async_sequences;
   // Scope state, under write_mutex.
   std::unordered_map<uintptr_t, rpc_scope_ticket> scope_last;
   std::vector<rpc_scope_ticket> retired_scopes;

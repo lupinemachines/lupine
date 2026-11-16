@@ -325,13 +325,11 @@ bool rpc_request_unsettled(conn_t *) { return handling_unsettled_request; }
 
 static bool rpc_async_ticket_released_locked(const conn_t *conn,
                                              uint64_t ticket) {
-  if (ticket < conn->serving_async_sequence) {
-    return true;
-  }
-  const std::vector<uint64_t> &completed = conn->completed_async_sequences;
-  auto it = std::lower_bound(completed.begin(), completed.end(), ticket,
-                             std::greater<uint64_t>());
-  return it != completed.end() && *it == ticket;
+  return ticket < conn->serving_async_sequence ||
+         (ticket - conn->serving_async_sequence <
+              conn->completed_async_sequences.size() &&
+          conn->completed_async_sequences[ticket -
+                                          conn->serving_async_sequence]);
 }
 
 bool rpc_async_ticket_released(conn_t *conn, uint64_t ticket) {
@@ -381,18 +379,15 @@ void rpc_async_sequence_end(conn_t *conn) {
   executing_async_sequence = kNoAsyncSequence;
   pthread_mutex_lock(&conn->async_mutex);
   auto &completed = conn->completed_async_sequences;
-  if (sequence == conn->serving_async_sequence) {
-    ++conn->serving_async_sequence;
-    while (!completed.empty() &&
-           completed.back() == conn->serving_async_sequence) {
-      completed.pop_back();
-      ++conn->serving_async_sequence;
+  if (sequence >= conn->serving_async_sequence) {
+    uint64_t index = sequence - conn->serving_async_sequence;
+    if (index >= completed.size()) {
+      completed.resize(index + 1);
     }
-  } else if (sequence > conn->serving_async_sequence) {
-    auto it = std::lower_bound(completed.begin(), completed.end(), sequence,
-                               std::greater<uint64_t>());
-    if (it == completed.end() || *it != sequence) {
-      completed.insert(it, sequence);
+    completed[index] = true;
+    while (!completed.empty() && completed.front()) {
+      completed.pop_front();
+      ++conn->serving_async_sequence;
     }
   }
   // A watermark waiter can only be released by the watermark moving, but a
@@ -409,7 +404,7 @@ void rpc_conn_destroy(conn_t *conn) {
   }
   rpc_close_transport_socket(conn);
   lupine_va_release(conn);
-  std::vector<uint64_t>().swap(conn->completed_async_sequences);
+  std::deque<bool>().swap(conn->completed_async_sequences);
   conn->scope_last.clear();
   conn->retired_scopes.clear();
   rpc_write_buffer_release(conn);
