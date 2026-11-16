@@ -16,6 +16,7 @@
 #include "client_routing.h"
 #include "cuda_client.h"
 #include "cuda_client_memcpy.h"
+#include "device_stdout.h"
 #include "events.h"
 #include "rpc.h"
 
@@ -53,7 +54,6 @@ extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel,
 extern "C" CUresult lupine_resolve_library_for_route(CUlibrary *library,
                                                      lupine_route route);
 extern "C" int lupine_read_dtoh_watermark(conn_t *conn);
-extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
 
 #ifdef cuMemPrefetchAsync
@@ -700,7 +700,7 @@ CUresult cuCtxSynchronize() {
   if (lupine_prepare_rpc(conn) < 0 ||
       rpc_write_start_request(conn, RPC_cuCtxSynchronize) < 0 ||
       rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
-      lupine_forward_remote_stdout(conn) < 0 ||
+      lupine_read_captured_stdout(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -725,7 +725,7 @@ CUresult cuCtxSynchronize_v2(CUcontext ctx) {
       rpc_write_start_request(conn, RPC_cuCtxSynchronize_v2) < 0 ||
       rpc_write(conn, &ctx, sizeof(CUcontext)) < 0 ||
       rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
-      lupine_forward_remote_stdout(conn) < 0 ||
+      lupine_read_captured_stdout(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -4059,7 +4059,7 @@ CUresult cuStreamSynchronize(CUstream hStream) {
       lupine_rpc_start_on_stream(conn, RPC_cuStreamSynchronize, hStream) < 0 ||
       rpc_write(conn, &hStream, sizeof(CUstream)) < 0 ||
       rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
-      lupine_forward_remote_stdout(conn) < 0 ||
+      lupine_read_captured_stdout(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
@@ -4232,7 +4232,7 @@ CUresult cuEventSynchronize(CUevent hEvent) {
                                  reinterpret_cast<uintptr_t>(hEvent)) < 0 ||
       rpc_write(conn, &hEvent, sizeof(CUevent)) < 0 ||
       rpc_wait_for_response(conn) < 0 || lupine_read_dtoh_watermark(conn) < 0 ||
-      lupine_forward_remote_stdout(conn) < 0 ||
+      lupine_read_captured_stdout(conn) < 0 ||
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;

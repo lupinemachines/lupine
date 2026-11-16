@@ -34,6 +34,7 @@
 #include "client_routing.h"
 #include "codegen/gen_rpc_ids.h"
 #include "cuda_client_memcpy.h"
+#include "device_stdout.h"
 #include "events.h"
 #include "managed_advice.h"
 
@@ -337,7 +338,6 @@ static CUresult
 lupine_remote_cuMemHostAlloc(void **remote_host, CUdeviceptr *device_ptr,
                              size_t bytesize, unsigned int flags,
                              lupine_route route, void *requested = nullptr);
-extern "C" int lupine_forward_remote_stdout(conn_t *conn);
 static CUresult lupine_remote_cuMemFreeHost(void *remote_host,
                                             lupine_route route,
                                             bool drain_only = false);
@@ -5288,7 +5288,7 @@ static CUresult lupine_memcpy3d(CUDA_MEMCPY3D copy, CUstream hStream,
         rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
         rpc_wait_for_response(conn) < 0 ||
         lupine_read_dtoh_watermark(conn) < 0 ||
-        lupine_forward_remote_stdout(conn) < 0 ||
+        lupine_read_captured_stdout(conn) < 0 ||
         rpc_read(conn, &return_value, sizeof(return_value)) < 0 ||
         rpc_read_end(conn) < 0) {
       return CUDA_ERROR_DEVICE_UNAVAILABLE;
