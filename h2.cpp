@@ -128,6 +128,8 @@ struct h2_stream {
   std::string requested_va_size;
 };
 
+std::atomic<uint64_t> h2_next_transport_serial{1};
+
 struct h2_transport {
   lupine_socket_t netfd = LUPINE_INVALID_SOCKET;
   void *tls = nullptr; // Borrowed SSL* (owned by conn_t).
@@ -188,6 +190,10 @@ struct h2_transport {
   bool read_stop = false;
   bool checkpoint_pending = false;
   std::atomic<bool> requests_paused{false};
+  // Request builders open on a client connection.
+  std::atomic<int> open_requests{0};
+  // Tells this transport from a later one at the same address.
+  const uint64_t serial = h2_next_transport_serial.fetch_add(1);
   bool socket_parked = false;
   // OpenSSL does not allow concurrent calls on one SSL object, and the reader
   // and writer threads share the connection's. Every SSL call holds tls_mutex;
@@ -1836,11 +1842,23 @@ int32_t rpc_http2_dispatch_stream(conn_t *conn) {
   return stream_id;
 }
 
+// The calling thread's last lane, so issuing a request does not take
+// session_mutex to find it.
+static thread_local struct {
+  uint64_t serial = 0;
+  uint64_t lane_id = 0;
+  int32_t stream_id = -1;
+} h2_tls_lane;
+
 int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id) {
   if (conn == nullptr || conn->http2 == nullptr) {
     return -1;
   }
   auto *transport = static_cast<h2_transport *>(conn->http2);
+  if (h2_tls_lane.serial == transport->serial &&
+      h2_tls_lane.lane_id == lane_id) {
+    return h2_tls_lane.stream_id;
+  }
   pthread_mutex_lock(&transport->session_mutex);
   if (transport->server) {
     int32_t stream_id = transport->dispatch_stream_id;
@@ -1851,6 +1869,7 @@ int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id) {
   if (existing != transport->local_lanes.end()) {
     int32_t stream_id = existing->second;
     pthread_mutex_unlock(&transport->session_mutex);
+    h2_tls_lane = {transport->serial, lane_id, stream_id};
     return stream_id;
   }
   if (transport->transport_failed) {
@@ -1920,6 +1939,7 @@ int rpc_write_lane_termination(conn_t *conn, uint64_t lane_id) {
   }
   int32_t stream_id = lane->second;
   transport->local_lanes.erase(lane);
+  h2_tls_lane = {};
   int result = h2_end_stream_locked(transport, stream_id);
   pthread_mutex_unlock(&transport->session_mutex);
   return result == 0 ? 0 : -1;
@@ -2190,32 +2210,51 @@ int rpc_http2_server_graceful_shutdown(conn_t *conn) {
 
 int lupine_handoff_request_begin(conn_t *conn, int op, bool callback) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
-  if (transport == nullptr || transport->server || callback ||
-      op == LUPINE_HANDOFF_DRAIN_REQUEST) {
+  if (transport == nullptr || transport->server) {
     return 0;
   }
-  while (transport->requests_paused.load(std::memory_order_acquire)) {
-    pthread_mutex_unlock(&conn->call_mutex);
+  for (;;) {
+    // Sequentially consistent with the pause: either it sees this builder
+    // open, or this sees the pause.
+    transport->open_requests.fetch_add(1);
+    if (callback || op == LUPINE_HANDOFF_DRAIN_REQUEST ||
+        !transport->requests_paused.load()) {
+      return 0;
+    }
+    lupine_handoff_request_end(conn);
     pthread_mutex_lock(&conn->async_mutex);
-    while (transport->requests_paused.load(std::memory_order_acquire) &&
-           !conn->async_cancelled) {
+    while (transport->requests_paused.load() && !conn->async_cancelled) {
       pthread_cond_wait(&conn->async_cond, &conn->async_mutex);
     }
     bool cancelled = conn->async_cancelled;
     pthread_mutex_unlock(&conn->async_mutex);
-    pthread_mutex_lock(&conn->call_mutex);
     if (cancelled) {
       return -1;
     }
   }
-  return 0;
+}
+
+void lupine_handoff_request_end(conn_t *conn) {
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  if (transport == nullptr || transport->server) {
+    return;
+  }
+  if (transport->open_requests.fetch_sub(1) == 1 &&
+      transport->requests_paused.load()) {
+    pthread_mutex_lock(&conn->async_mutex);
+    pthread_cond_broadcast(&conn->async_cond);
+    pthread_mutex_unlock(&conn->async_mutex);
+  }
 }
 
 int lupine_handoff_pause_requests(conn_t *conn) {
   auto *transport = static_cast<h2_transport *>(conn->http2);
-  pthread_mutex_lock(&conn->call_mutex);
-  transport->requests_paused.store(true, std::memory_order_release);
-  pthread_mutex_unlock(&conn->call_mutex);
+  transport->requests_paused.store(true);
+  pthread_mutex_lock(&conn->async_mutex);
+  while (transport->open_requests.load() != 0 && !conn->async_cancelled) {
+    pthread_cond_wait(&conn->async_cond, &conn->async_mutex);
+  }
+  pthread_mutex_unlock(&conn->async_mutex);
   return conn->closed ? -1 : 0;
 }
 

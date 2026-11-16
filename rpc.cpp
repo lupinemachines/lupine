@@ -523,13 +523,18 @@ rpc_write_builder *rpc_open_builder(conn_t *conn, rpc_write_builder *builder) {
   return builder;
 }
 
-void rpc_release_write_builder(conn_t *conn, rpc_write_builder *builder) {
-  if (builder == &rpc_tls_frames->nested) {
-    rpc_tls_write = &rpc_tls_frames->outer;
-    return;
-  }
-  rpc_tls_write = nullptr;
-  pthread_mutex_unlock(&conn->write_mutex);
+void rpc_release_write_builder(rpc_write_builder *builder) {
+  rpc_tls_write =
+      builder == &rpc_tls_frames->nested ? &rpc_tls_frames->outer : nullptr;
+}
+
+// Requests on a stream several threads write, the client's host-writes lane
+// and the server's dispatch stream, hold call_mutex from start until written,
+// so their order on the stream is their ticket order.
+bool rpc_request_shares_stream(const conn_t *conn,
+                               const rpc_write_builder *builder) {
+  return builder->write_op != -1 && (conn->local_request_parity == 1 ||
+                                     builder->write_scope.publish_host_writes);
 }
 
 void rpc_release_held_call_lock(conn_t *conn) {
@@ -1028,7 +1033,9 @@ uint64_t rpc_request_pending_ticket(conn_t *conn, uintptr_t key) {
   if (conn == nullptr || builder == nullptr) {
     return kNoAsyncSequence;
   }
+  pthread_mutex_lock(&conn->write_mutex);
   rpc_scope_ticket last = rpc_scope_snapshot(conn, key);
+  pthread_mutex_unlock(&conn->write_mutex);
   return last.lane == builder->write_stream_id ? kNoAsyncSequence : last.ticket;
 }
 
@@ -1047,42 +1054,27 @@ int rpc_write_start_request_on(conn_t *conn, const int op, uintptr_t key,
   bool client = conn->local_request_parity == 0;
   bool scoped = client && key != RPC_SCOPE_ALL;
   bool host_writes = scoped && key == RPC_SCOPE_HOST_WRITES;
-  int call_lock_result = 0;
-  if (request_nested_in_response) {
-    // Never wait for a call that may itself be waiting for this response's
-    // write lock. A failed side effect is preferable to a lock-order deadlock.
-    call_lock_result = pthread_mutex_trylock(&conn->call_mutex);
-  } else {
-    call_lock_result = pthread_mutex_lock(&conn->call_mutex);
-  }
-  if (call_lock_result != 0) {
-    return -1;
-  }
   bool callback = request_nested_in_response ||
                   (rpc_tls_io.read_conn == conn && rpc_tls_io.read.op != -1) ||
                   rpc_tls_callback_reply == conn;
-  if (lupine_handoff_request_begin(conn, op, callback) < 0 || conn->closed) {
-    pthread_mutex_unlock(&conn->call_mutex);
+  if (lupine_handoff_request_begin(conn, op, callback) < 0) {
     return -1;
   }
-  if (!request_nested_in_response &&
-      pthread_mutex_lock(&conn->write_mutex) != 0) {
-    pthread_mutex_unlock(&conn->call_mutex);
+  // Never wait for a call that may itself be waiting for this response. A
+  // failed side effect is preferable to a deadlock.
+  if ((!client || host_writes) &&
+      (request_nested_in_response
+           ? pthread_mutex_trylock(&conn->call_mutex)
+           : pthread_mutex_lock(&conn->call_mutex)) != 0) {
+    lupine_handoff_request_end(conn);
     return -1;
   }
   rpc_write_builder *builder = rpc_open_builder(
       conn, request_nested_in_response ? &frames->nested : &frames->outer);
-  conn->request_id = conn->request_id + 2; // leave the last bit the same
-  builder->write_id = conn->request_id;
+  builder->write_id = __atomic_add_fetch(&conn->request_id, 2, // keeps parity
+                                         __ATOMIC_RELAXED);
   builder->write_op = op;
   builder->write_awaited = false;
-  builder->write_stream_id =
-      rpc_http2_lane_stream(conn, host_writes ? ~uint64_t{0} : rpc_tls_lane.id);
-  if (builder->write_stream_id < 0) {
-    rpc_release_write_builder(conn, builder);
-    pthread_mutex_unlock(&conn->call_mutex);
-    return -1;
-  }
   rpc_request_scope &scope = builder->write_scope;
   scope.scoped = scoped;
   scope.publish_connection = !scoped || key == RPC_SCOPE_NONE ||
@@ -1094,6 +1086,12 @@ int rpc_write_start_request_on(conn_t *conn, const int op, uintptr_t key,
   scope.after_retired_at = SIZE_MAX;
   scope.waits.clear();
   scope.retired_count = 0;
+  builder->write_stream_id =
+      rpc_http2_lane_stream(conn, host_writes ? ~uint64_t{0} : rpc_tls_lane.id);
+  if (builder->write_stream_id < 0 || conn->closed) {
+    rpc_write_end(conn);
+    return -1;
+  }
   if (scoped && !host_writes) {
     rpc_request_on(conn, key);
   }
@@ -1112,9 +1110,6 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
   if (conn == nullptr || conn->closed || rpc_tls_write != nullptr) {
     return -1;
   }
-  if (pthread_mutex_lock(&conn->write_mutex) != 0) {
-    return -1;
-  }
   rpc_write_builder *builder =
       rpc_open_builder(conn, &rpc_thread_write_frames()->outer);
   builder->write_id = read_id;
@@ -1123,7 +1118,7 @@ int rpc_write_start_response(conn_t *conn, const int read_id) {
   builder->write_awaited = true;
   builder->write_stream_id = rpc_current_http2_stream(conn);
   if (builder->write_stream_id < 0) {
-    rpc_release_write_builder(conn, builder);
+    rpc_release_write_builder(builder);
     return -1;
   }
   return 0;
@@ -1169,21 +1164,14 @@ int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
 // rpc_write_end finalizes the current request builder on the given connection
 // index and sends the request to the server.
 //
-// the request lock is released after the request is sent and the function
-// returns the request id which can be used to wait for a response.
+// Returns the request id which can be used to wait for a response.
 int rpc_write_end(conn_t *conn) {
   rpc_write_builder *builder = rpc_conn_builder(conn);
   if (conn == nullptr || builder == nullptr) {
     return -1;
   }
   bool request = builder->write_op != -1;
-  if (conn->closed) {
-    rpc_release_write_builder(conn, builder);
-    if (request) {
-      pthread_mutex_unlock(&conn->call_mutex);
-    }
-    return -1;
-  }
+  bool shares_stream = rpc_request_shares_stream(conn, builder);
   int write_id = builder->write_id;
   int32_t write_stream_id = builder->write_stream_id;
   int result = -1;
@@ -1198,21 +1186,34 @@ int rpc_write_end(conn_t *conn) {
     uint64_t ticket;
   } header;
   std::vector<rpc_write_cursor> &queue = builder->write_queue;
-  if (queue.size() >= 2) {
-    // Only a request nobody waits for takes a ticket. Tickets are dense: one is
-    // taken only by a request that is written, under the builder lock, and
-    // given back below if the write fails.
+  if (!conn->closed && write_stream_id >= 0) {
+    // Only a request nobody waits for takes a ticket. A request waits only on
+    // tickets taken before its own, and publishes its own before it is
+    // written, so the newest ticket on an object covers every earlier one.
     bool ticketed = client_request && !builder->write_awaited;
-    // Dependencies are taken in the order requests are written. Taken
-    // earlier, two overlapping requests could both wait on the same old
-    // ticket, and a later one waiting on the newest would not cover the
-    // other. Every request waits only on requests written before it.
+    uint64_t ticket = kNoAsyncSequence;
     if (client_request) {
+      pthread_mutex_lock(&conn->write_mutex);
       fence.value = rpc_resolve_waits(conn, builder);
-    }
-    uint64_t ticket =
-        ticketed ? conn->issued_async_sequence++ : kNoAsyncSequence;
-    if (client_request) {
+      if (ticketed) {
+        ticket = conn->issued_async_sequence++;
+        const rpc_request_scope &scope = builder->write_scope;
+        rpc_scope_ticket last{ticket, write_stream_id};
+        if (scope.publish_connection) {
+          conn->connection_last = last;
+        }
+        if (scope.publish_host_writes) {
+          conn->host_writes_last = last;
+        }
+        for (uintptr_t key : scope.keys) {
+          conn->scope_last[key] = last;
+        }
+        // This ticket now stands for the retired scopes it waited for.
+        conn->retired_scopes.erase(conn->retired_scopes.begin(),
+                                   conn->retired_scopes.begin() +
+                                       scope.retired_count);
+      }
+      pthread_mutex_unlock(&conn->write_mutex);
       const std::vector<rpc_wait_marker> &waits = builder->write_scope.waits;
       queue[0] =
           fence.value > 0
@@ -1228,31 +1229,15 @@ int rpc_write_end(conn_t *conn) {
     }
     result = rpc_http2_write_stream(conn, write_stream_id, queue.data(),
                                     queue.size(), builder->write_awaited);
+    // Later requests may already wait for this ticket. The stream or the
+    // transport is gone, so nothing can be sent after it anyway.
     if (result != 0 && ticketed) {
-      --conn->issued_async_sequence;
-    }
-    if (result == 0 && ticketed) {
-      // Later requests on the same objects, or connection-wide ones, order
-      // themselves behind this one.
-      const rpc_request_scope &scope = builder->write_scope;
-      rpc_scope_ticket last{ticket, write_stream_id};
-      if (scope.publish_connection) {
-        conn->connection_last = last;
-      }
-      if (scope.publish_host_writes) {
-        conn->host_writes_last = last;
-      }
-      for (uintptr_t key : scope.keys) {
-        conn->scope_last[key] = last;
-      }
-      // This ticket now stands for the retired scopes it waited for.
-      conn->retired_scopes.erase(conn->retired_scopes.begin(),
-                                 conn->retired_scopes.begin() +
-                                     scope.retired_count);
+      rpc_mark_connection_closed(conn);
     }
   }
-  rpc_release_write_builder(conn, builder);
+  rpc_release_write_builder(builder);
   if (request) {
+    lupine_handoff_request_end(conn);
     if (result == 0) {
       rpc_tls_io.response_conn = conn;
       rpc_tls_io.response = {write_id, write_stream_id};
@@ -1262,7 +1247,7 @@ int rpc_write_end(conn_t *conn) {
     // read its response directly without an application-level dispatcher.
     if (result == 0 && conn->local_request_parity == 1) {
       rpc_tls_io.held_call_lock = conn;
-    } else {
+    } else if (shares_stream) {
       pthread_mutex_unlock(&conn->call_mutex);
     }
   }
