@@ -2968,11 +2968,8 @@ int handle_lupineBulkRead(conn_t *conn) {
 
   constexpr uint64_t kPushBulkBit = uint64_t{1} << 62;
   bool push_bulk = (copy_id & kPushBulkBit) != 0;
-  std::unique_ptr<unsigned char[]> host;
-  if (!push_bulk) {
-    host.reset(
-        new (std::nothrow) unsigned char[LUPINE_RPC_TRANSFER_CHUNK_BYTES]);
-  }
+  lupine_dtoh_staging host;
+  CUevent copied = nullptr;
   int status = 0;
   std::unique_lock<std::mutex> lock(lupine_bulk_staging_mutex);
   if (push_bulk &&
@@ -2988,16 +2985,19 @@ int handle_lupineBulkRead(conn_t *conn) {
            (push_bulk && lupine_push_bulk_closed);
   });
   if (read.ready && read.result == CUDA_SUCCESS && read.host == nullptr) {
-    if (!host) {
-      read.result = CUDA_ERROR_OUT_OF_MEMORY;
-    } else {
-      CUcontext context = read.context;
-      lock.unlock();
-      CUresult result = cuCtxSetCurrent(context);
-      lock.lock();
-      if (result != CUDA_SUCCESS && read.result == CUDA_SUCCESS) {
-        read.result = result;
-      }
+    CUcontext context = read.context;
+    CUstream stream = read.stream;
+    lock.unlock();
+    CUresult result = cuCtxSetCurrent(context);
+    if (result == CUDA_SUCCESS) {
+      host = lupine_take_dtoh_staging(conn, stream,
+                                      LUPINE_RPC_TRANSFER_CHUNK_BYTES);
+      result = cuEventCreate(&copied,
+                             CU_EVENT_DISABLE_TIMING | CU_EVENT_BLOCKING_SYNC);
+    }
+    lock.lock();
+    if (result != CUDA_SUCCESS && read.result == CUDA_SUCCESS) {
+      read.result = result;
     }
   }
   while (read.ready && !lupine_bulk_connection_lost &&
@@ -3010,16 +3010,23 @@ int handle_lupineBulkRead(conn_t *conn) {
     const unsigned char *pushed = read.host;
     CUstream stream = read.stream;
     lock.unlock();
-    // host is pageable, so this returns once the chunk has landed, ordered
-    // behind whatever was already queued on the caller's stream.
-    CUresult result =
-        pushed != nullptr
-            ? CUDA_SUCCESS
-            : cuMemcpyDtoHAsync_v2(host.get(), source, bytes, stream);
+    // Ordered behind whatever was already queued on the caller's stream.
+    CUresult result = CUDA_SUCCESS;
+    if (pushed == nullptr) {
+      result = cuMemcpyDtoHAsync_v2(host.host, source, bytes, stream);
+      if (result == CUDA_SUCCESS) {
+        result = cuEventRecord(copied, stream);
+      }
+      if (result == CUDA_SUCCESS) {
+        result = cuEventSynchronize(copied);
+      }
+    }
     if (result == CUDA_SUCCESS) {
       status = lupine_write_bulk_read_frame(
           conn, request_id, offset,
-          pushed != nullptr ? pushed + offset : host.get(), bytes);
+          pushed != nullptr ? pushed + offset
+                            : static_cast<unsigned char *>(host.host),
+          bytes);
     }
     lock.lock();
     if (result != CUDA_SUCCESS && read.result == CUDA_SUCCESS) {
@@ -3032,6 +3039,12 @@ int handle_lupineBulkRead(conn_t *conn) {
   ++read.finished;
   lupine_bulk_staging_progress.notify_all();
   lock.unlock();
+  if (copied != nullptr) {
+    (void)cuEventDestroy_v2(copied);
+  }
+  if (host.host != nullptr) {
+    lupine_give_back_dtoh_staging(host);
+  }
   if (status < 0) {
     return -1;
   }

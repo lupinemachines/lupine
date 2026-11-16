@@ -40,8 +40,6 @@
 
 namespace {
 
-constexpr uint32_t kRegistryMagic = 0x4c504d52;
-constexpr uint32_t kRegistryVersion = 2;
 constexpr size_t kMaxServerChildren = 4096;
 constexpr uint64_t kProcessUtilizationWindowUs = 2 * 1000 * 1000;
 constexpr uint32_t kSlotFree = 0;
@@ -57,8 +55,6 @@ struct alignas(64) monitor_slot {
 };
 
 struct monitor_registry {
-  uint32_t magic;
-  uint32_t version;
   uint64_t dropped_connections;
   uint64_t host_pid_discovery_failures;
   uint64_t host_pid_discovery_ambiguities;
@@ -115,7 +111,7 @@ shared_mutex_lock registry_lock() {
 }
 
 monitor_slot *active_slot(int slot_index) {
-  if (slot_index < 0 || slot_index >= static_cast<int>(kMaxServerChildren)) {
+  if (slot_index < 0) {
     return nullptr;
   }
   monitor_slot *slot = &registry->slots[slot_index];
@@ -365,7 +361,9 @@ bool primary_context_active(int cuda_device) {
          active != 0;
 }
 
-void begin_context_probe(int cuda_device) {
+} // namespace
+
+void lupine_monitoring_begin_context_create(int cuda_device) {
   if (registry == nullptr || child_slot < 0 || slot_has_host_pid(child_slot) ||
       active_host_pid_probe != nullptr || primary_context_active(cuda_device)) {
     return;
@@ -413,7 +411,7 @@ void begin_context_probe(int cuda_device) {
   active_host_pid_probe = std::move(probe);
 }
 
-void end_context_probe(bool context_created) {
+void lupine_monitoring_end_context_create(bool context_created) {
   std::unique_ptr<host_pid_probe> probe = std::move(active_host_pid_probe);
   if (probe == nullptr) {
     return;
@@ -461,6 +459,8 @@ void end_context_probe(bool context_created) {
     note_discovery_failure();
   }
 }
+
+namespace {
 
 using process_util_map = std::unordered_map<unsigned int, unsigned int>;
 
@@ -636,40 +636,14 @@ bool lupine_monitoring_initialize() {
   }
   registry = static_cast<monitor_registry *>(memory);
   memset(registry, 0, sizeof(*registry));
-  registry->magic = kRegistryMagic;
-  registry->version = kRegistryVersion;
 
   pthread_mutexattr_t attributes;
-  int status = pthread_mutexattr_init(&attributes);
-  bool initialized = status == 0;
-  if (status == 0) {
-    status = pthread_mutexattr_setpshared(&attributes, PTHREAD_PROCESS_SHARED);
-  }
-  if (status == 0) {
-    status = pthread_mutexattr_setrobust(&attributes, PTHREAD_MUTEX_ROBUST);
-  }
-  bool registry_mutex_initialized = false;
-  if (status == 0) {
-    status = pthread_mutex_init(&registry->registry_mutex, &attributes);
-    registry_mutex_initialized = status == 0;
-  }
-  if (status == 0) {
-    status =
-        pthread_mutex_init(&registry->host_pid_discovery_mutex, &attributes);
-  }
-  if (initialized) {
-    pthread_mutexattr_destroy(&attributes);
-  }
-  if (status != 0) {
-    LUPINE_LOG_ERROR(
-        "Unable to initialize monitoring mutex: " << strerror(status));
-    if (registry_mutex_initialized) {
-      pthread_mutex_destroy(&registry->registry_mutex);
-    }
-    munmap(registry, sizeof(*registry));
-    registry = nullptr;
-    return false;
-  }
+  pthread_mutexattr_init(&attributes);
+  pthread_mutexattr_setpshared(&attributes, PTHREAD_PROCESS_SHARED);
+  pthread_mutexattr_setrobust(&attributes, PTHREAD_MUTEX_ROBUST);
+  pthread_mutex_init(&registry->registry_mutex, &attributes);
+  pthread_mutex_init(&registry->host_pid_discovery_mutex, &attributes);
+  pthread_mutexattr_destroy(&attributes);
   return true;
 }
 
@@ -685,8 +659,7 @@ void lupine_monitoring_shutdown() {
 
 void lupine_monitoring_register_child() {
   child_slot = -1;
-  if (registry == nullptr || registry->magic != kRegistryMagic ||
-      registry->version != kRegistryVersion) {
+  if (registry == nullptr) {
     return;
   }
   auto lock = registry_lock();
@@ -749,14 +722,6 @@ int handle_lupine_client_metadata(conn_t *conn) {
     }
   }
   return rpc_read_end(conn) < 0 ? -1 : 0;
-}
-
-void lupine_monitoring_begin_context_create(int cuda_device) {
-  begin_context_probe(cuda_device);
-}
-
-void lupine_monitoring_end_context_create(bool context_created) {
-  end_context_probe(context_created);
 }
 
 std::string lupine_monitoring_render_metrics() {

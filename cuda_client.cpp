@@ -2516,16 +2516,6 @@ lupine_private_export_slot_called(int slot, const char *table_name,
   return CUDA_ERROR_NOT_SUPPORTED;
 }
 
-static bool lupine_stub_private_exports_enabled() {
-  static bool enabled = lupine_env_flag("LUPINE_STUB_PRIVATE_EXPORTS", false);
-  return enabled;
-}
-
-static bool lupine_remote_private_exports_enabled() {
-  static bool enabled = lupine_env_flag("LUPINE_REMOTE_PRIVATE_EXPORTS", true);
-  return enabled;
-}
-
 #if defined(__aarch64__)
 // Materializes a 64-bit constant into Xd with a fixed four-word
 // movz/movk/movk/movk sequence. The length is deliberately constant (never
@@ -2547,9 +2537,8 @@ static void lupine_a64_emit_mov_imm64(uint32_t *out, unsigned reg,
 }
 #endif
 
-#if defined(__x86_64__) || defined(__aarch64__)
-static void *lupine_publish_exec_stub(const void *bytes, size_t size,
-                                      bool flush_icache) {
+#if defined(__x86_64__) || defined(__aarch64__) || defined(_M_X64)
+static void *lupine_publish_exec_stub(const void *bytes, size_t size) {
   unsigned char *code =
       static_cast<unsigned char *>(mmap(nullptr, size, PROT_READ | PROT_WRITE,
                                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
@@ -2557,10 +2546,12 @@ static void *lupine_publish_exec_stub(const void *bytes, size_t size,
     return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
   }
   memcpy(code, bytes, size);
-  if (flush_icache) {
-    __builtin___clear_cache(reinterpret_cast<char *>(code),
-                            reinterpret_cast<char *>(code + size));
-  }
+#if defined(__aarch64__)
+  // The writes land in the data cache and are not otherwise visible to the
+  // instruction fetcher.
+  __builtin___clear_cache(reinterpret_cast<char *>(code),
+                          reinterpret_cast<char *>(code + size));
+#endif
   // Publish immutable executable code only after construction. macOS rejects
   // anonymous mappings that request write and execute permissions together.
   if (mprotect(code, size, PROT_READ | PROT_EXEC) != 0) {
@@ -2613,7 +2604,7 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
       0xc3                    // ret
   };
   memcpy(code + offset, epilogue, sizeof(epilogue));
-  return lupine_publish_exec_stub(code, sizeof(code), false);
+  return lupine_publish_exec_stub(code, sizeof(code));
 #elif defined(__aarch64__)
   // AAPCS64 mirror of the x86-64 thunk above: the six incoming integer/pointer
   // arguments are shifted up two slots and the (slot, table_name) pair is
@@ -2645,10 +2636,7 @@ static void *lupine_make_private_export_stub(int slot, const char *table_name) {
   lupine_a64_emit_mov_imm64(&words[n], 16, reinterpret_cast<uint64_t>(handler));
   n += 4;
   words[n++] = 0xd61f0200u; // br x16
-  // Instruction-cache maintenance is mandatory on AArch64: the writes above
-  // land in the data cache and are not otherwise visible to the instruction
-  // fetcher.
-  return lupine_publish_exec_stub(words, sizeof(words), true);
+  return lupine_publish_exec_stub(words, sizeof(words));
 #else
   (void)slot;
   (void)table_name;
@@ -2684,7 +2672,7 @@ static const void *lupine_make_private_export_table(
   return inserted.first->second.data();
 }
 
-static std::string lupine_uuid_hex(const CUuuid *uuid) {
+std::string lupine_uuid_hex(const CUuuid *uuid) {
   static constexpr char kHex[] = "0123456789abcdef";
   std::string out;
   if (uuid == nullptr) {
@@ -2699,7 +2687,9 @@ static std::string lupine_uuid_hex(const CUuuid *uuid) {
 }
 
 static const void *lupine_remote_private_export_table(const CUuuid *uuid) {
-  if (uuid == nullptr || !lupine_remote_private_exports_enabled()) {
+  static const bool enabled =
+      lupine_env_flag("LUPINE_REMOTE_PRIVATE_EXPORTS", true);
+  if (uuid == nullptr || !enabled) {
     return nullptr;
   }
   // The server answers from its own driver, so the reply, refusals included,
@@ -3797,10 +3787,6 @@ extern "C" CUresult cuLinkDestroy(CUlinkState state) {
   std::lock_guard<std::mutex> lock(lupine_jit_client_mutex());
   lupine_jit_client_states().erase(state);
   return return_value;
-}
-
-extern "C" int lupine_forward_remote_stdout(conn_t *conn) {
-  return lupine_read_captured_stdout(conn);
 }
 
 extern "C" CUresult cuEventQuery(CUevent hEvent) {
@@ -6451,10 +6437,6 @@ extern "C" CUresult cuStreamUpdateCaptureDependencies_ptsz(
                                               numDependencies, flags);
 }
 
-static bool lupine_uuid_equals(const CUuuid *uuid, const unsigned char *bytes) {
-  return uuid != nullptr && memcmp(uuid->bytes, bytes, 16) == 0;
-}
-
 static CUresult lupine_cudart_load_cubin_ext(CUmodule *module,
                                              const void *fatbin, void *arg3,
                                              void *arg4, unsigned int arg5,
@@ -6518,14 +6500,6 @@ static void lupine_dark_get_unknown_buffer(void **ptr, size_t *size) {
   if (size != nullptr) {
     *size = sizeof(buffer);
   }
-}
-
-extern "C" void lupine_dark_get_unknown_buffer1(void **ptr, size_t *size) {
-  lupine_dark_get_unknown_buffer<1024>(ptr, size);
-}
-
-extern "C" void lupine_dark_get_unknown_buffer2(void **ptr, size_t *size) {
-  lupine_dark_get_unknown_buffer<14>(ptr, size);
 }
 
 using lupine_context_storage_dtor_t = void (*)(CUcontext context, void *key,
@@ -6965,13 +6939,14 @@ extern "C" CUresult cuGetExportTable(const void **ppExportTable,
   static const void *kToolsTls[4] = {
       sz(sizeof(kToolsTls)), fp(&lupine_dark_return_zero),
       fp(&lupine_dark_return_zero_1), fp(&lupine_dark_return_zero_1)};
-  static const void *kToolsCbHooks[7] = {sz(sizeof(kToolsCbHooks)),
-                                         fp(&lupine_dark_return_zero_2),
-                                         fp(&lupine_dark_get_unknown_buffer1),
-                                         fp(&lupine_dark_return_zero_2),
-                                         fp(&lupine_dark_return_zero_2),
-                                         fp(&lupine_dark_return_zero_2),
-                                         fp(&lupine_dark_get_unknown_buffer2)};
+  static const void *kToolsCbHooks[7] = {
+      sz(sizeof(kToolsCbHooks)),
+      fp(&lupine_dark_return_zero_2),
+      fp(&lupine_dark_get_unknown_buffer<1024>),
+      fp(&lupine_dark_return_zero_2),
+      fp(&lupine_dark_return_zero_2),
+      fp(&lupine_dark_return_zero_2),
+      fp(&lupine_dark_get_unknown_buffer<14>)};
   static const void *kCtxStorage[4] = {fp(&lupine_context_local_storage_put),
                                        fp(&lupine_context_local_storage_delete),
                                        fp(&lupine_context_local_storage_get),
@@ -7037,7 +7012,7 @@ extern "C" CUresult cuGetExportTable(const void **ppExportTable,
     return CUDA_ERROR_INVALID_VALUE;
   }
   for (const auto &entry : kKnownTables) {
-    if (lupine_uuid_equals(pExportTableId, entry.uuid)) {
+    if (memcmp(pExportTableId->bytes, entry.uuid, 16) == 0) {
       *ppExportTable = entry.table;
       return CUDA_SUCCESS;
     }
@@ -7047,7 +7022,9 @@ extern "C" CUresult cuGetExportTable(const void **ppExportTable,
     *ppExportTable = private_table;
     return CUDA_SUCCESS;
   }
-  if (lupine_stub_private_exports_enabled()) {
+  static const bool stub_private_exports =
+      lupine_env_flag("LUPINE_STUB_PRIVATE_EXPORTS", false);
+  if (stub_private_exports) {
     if (const void *private_table =
             lupine_private_export_table_from_env(pExportTableId)) {
       *ppExportTable = private_table;
@@ -7069,24 +7046,12 @@ static void *lupine_make_missing_stub(const char *symbol) {
     return existing->second;
   }
 
-#if defined(__x86_64__) || defined(_M_X64)
-  constexpr size_t stub_size = 22;
-#else
-  constexpr size_t stub_words = 9;
-  constexpr size_t stub_size = stub_words * sizeof(uint32_t);
-#endif
-  unsigned char *code = static_cast<unsigned char *>(
-      mmap(nullptr, stub_size, PROT_READ | PROT_WRITE | PROT_EXEC,
-           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-  if (code == MAP_FAILED) {
-    return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
-  }
-
   char *stable_symbol = strdup(symbol);
   void *handler = reinterpret_cast<void *>(&lupine_missing_driver_api_called);
 #if defined(_WIN32) || defined(__x86_64__)
   // Microsoft x64 passes the first argument in rcx (0xb9), SysV x86-64 in rdi
   // (0xbf).
+  unsigned char code[22];
   code[0] = 0x48;
 #if defined(_WIN32)
   code[1] = 0xb9;
@@ -7099,27 +7064,24 @@ static void *lupine_make_missing_stub(const char *symbol) {
   memcpy(code + 12, &handler, sizeof(handler));
   code[20] = 0xff;
   code[21] = 0xe0;
+  void *stub = lupine_publish_exec_stub(code, sizeof(code));
 #else
   // AAPCS64 mirror of the x86-64 stub above: overwrite the first argument
   // register with the symbol name and tail-branch to the handler, discarding
   // whatever the caller passed.
   //
   //   stub(...) -> lupine_missing_driver_api_called(stable_symbol)
-  uint32_t words[stub_words];
+  uint32_t words[9];
   // x0 = stable_symbol
   lupine_a64_emit_mov_imm64(&words[0], 0,
                             reinterpret_cast<uint64_t>(stable_symbol));
   // x16 = handler (IP0 scratch, free to clobber across the tail branch)
   lupine_a64_emit_mov_imm64(&words[4], 16, reinterpret_cast<uint64_t>(handler));
   words[8] = 0xd61f0200u; // br x16
-  memcpy(code, words, stub_size);
-  // Mandatory on AArch64: make the freshly written words visible to the
-  // instruction fetcher.
-  __builtin___clear_cache(reinterpret_cast<char *>(code),
-                          reinterpret_cast<char *>(code + stub_size));
+  void *stub = lupine_publish_exec_stub(words, sizeof(words));
 #endif
-  stubs[symbol] = code;
-  return code;
+  stubs[symbol] = stub;
+  return stub;
 #else
   return reinterpret_cast<void *>(&lupine_unsupported_driver_api);
 #endif

@@ -19,6 +19,7 @@
 extern int rpc_open();
 extern int rpc_size();
 extern conn_t *rpc_client_get_connection(unsigned int index);
+std::string lupine_uuid_hex(const CUuuid *uuid);
 
 struct lupine_device_entry {
   bool local = false;
@@ -137,18 +138,6 @@ static CUresult lupine_remote_device_query(conn_t *conn, int op,
   return result;
 }
 
-static std::string lupine_uuid_hex(const CUuuid &uuid) {
-  static const char *digits = "0123456789abcdef";
-  std::string out;
-  out.reserve(32);
-  for (int i = 0; i < 16; ++i) {
-    const unsigned char byte = static_cast<unsigned char>(uuid.bytes[i]);
-    out.push_back(digits[(byte >> 4) & 0xf]);
-    out.push_back(digits[byte & 0xf]);
-  }
-  return out;
-}
-
 // Narrows the table to what CUDA_VISIBLE_DEVICES leaves visible, in the order
 // it lists. The table is the ordinal space, so dropping an entry here is what
 // renumbers the rest and puts a device beyond a client's reach.
@@ -170,7 +159,7 @@ lupine_apply_visible_devices(std::vector<lupine_device_entry> &devices) {
                               RPC_cuDeviceGetUuid_v2, &entry.remote_device,
                               sizeof(entry.remote_device), &uuid, 16);
         // A device that will not say what it is simply matches no UUID.
-        return result == CUDA_SUCCESS ? lupine_uuid_hex(uuid) : std::string();
+        return result == CUDA_SUCCESS ? lupine_uuid_hex(&uuid) : std::string();
       });
 
   std::vector<lupine_device_entry> selected;

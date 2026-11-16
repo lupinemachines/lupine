@@ -355,9 +355,7 @@ if(LUPINE_BUILD_CUDA)
     target_include_directories(lupine_cuda_checkpoint PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(lupine_cuda_checkpoint PUBLIC Threads::Threads)
-endif()
 
-if(LUPINE_BUILD_CUDA)
     add_library(lupine_cuda_client SHARED
         ${CMAKE_CURRENT_SOURCE_DIR}/cache.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cuda_client.cpp
@@ -406,9 +404,7 @@ if(LUPINE_BUILD_CUDA)
                 SOVERSION 1)
         endif()
     endif()
-endif()
 
-if(LUPINE_BUILD_CUDA)
     # nccl.h and nvshmem_host.h include NVIDIA's cuda_runtime.h.
     add_library(lupine_cuda_runtime_headers INTERFACE)
     target_include_directories(lupine_cuda_runtime_headers INTERFACE
