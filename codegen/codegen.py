@@ -1468,6 +1468,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             '#include "client_routing.h"\n'
             '#include "cuda_client.h"\n'
             '#include "cuda_client_memcpy.h"\n'
+            '#include "device_stdout.h"\n'
             '#include "events.h"\n'
             '#include "rpc.h"\n\n'
             'extern "C" void *lupine_deep_node_cache_get(CUgraphNode node, size_t slot, size_t bytes);\n'
@@ -1490,7 +1491,6 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
             'extern "C" CUresult lupine_resolve_kernel_for_route(CUkernel *kernel, lupine_route route);\n'
             'extern "C" CUresult lupine_resolve_library_for_route(CUlibrary *library, lupine_route route);\n'
             'extern "C" int lupine_read_dtoh_watermark(conn_t *conn);\n'
-            'extern "C" int lupine_forward_remote_stdout(conn_t *conn);\n'
             'extern "C" CUresult lupine_sync_mapped_device_to_host();\n\n'
         )
         for function, _, _, _ in legacy_abi_functions:
@@ -1632,7 +1632,7 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 if metadata.synchronize:
                     f.write("        lupine_read_dtoh_watermark(conn) < 0 ||\n")
                 if metadata.synchronize and metadata.synchronize.stdout:
-                    f.write("        lupine_forward_remote_stdout(conn) < 0 ||\n")
+                    f.write("        lupine_read_captured_stdout(conn) < 0 ||\n")
                 for operation in operations:
                     operation.client_rpc_read(f)
                 f.write(f"        rpc_read(conn, &return_value, sizeof({function.return_type.format()})) < 0 ||\n")
