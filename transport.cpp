@@ -231,13 +231,8 @@ bool reconnect_checkpoint(conn_t *conn, const std::string &checkpoint) {
   }
   lupine_client_transport_shutdown_bulk(conn);
   free_tls(conn);
-#ifdef _WIN32
-  lupine_socket_close(conn->connfd);
-  conn->connfd = LUPINE_INVALID_SOCKET;
-#else
   lupine_socket_close(__atomic_exchange_n(&conn->connfd, LUPINE_INVALID_SOCKET,
                                           __ATOMIC_ACQ_REL));
-#endif
   while (!conn->closed) {
     conn_t replacement = {};
     // Closing the client must interrupt the dial and then a pending TLS/resume
@@ -388,12 +383,7 @@ int connect_endpoint(client_transport_state &state,
                                       << endpoint.port << " failed");
     return -1;
   }
-  if (rpc_conn_init(conn, connfd, 0) < 0) {
-    LUPINE_LOG_ERROR("Initializing RPC connection to "
-                     << endpoint.host << " port " << endpoint.port
-                     << " failed");
-    return -1;
-  }
+  rpc_conn_init(conn, connfd, 0);
   conn->logical_index = static_cast<int>(index);
   conn->w_offset = state.config.w_offset;
   bool first_handshake = true;
@@ -508,10 +498,7 @@ bool dial_bulk_connection(const lupine_client_endpoint &endpoint,
     sent += static_cast<size_t>(n);
   }
   auto *conn = new conn_t();
-  if (rpc_conn_init(conn, connfd, 0) < 0) {
-    delete conn;
-    return false;
-  }
+  rpc_conn_init(conn, connfd, 0);
   conn->logical_index = static_cast<int>(index);
   if (rpc_http2_client_init(conn) < 0 ||
       rpc_http2_client_await_ready(conn) != 0 ||

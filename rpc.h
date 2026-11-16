@@ -372,10 +372,12 @@ extern void *rpc_write_buffer(conn_t *conn, size_t size, size_t alignment);
 extern int rpc_write_cursors(conn_t *conn, const rpc_write_cursor *cursors,
                              size_t count);
 extern int rpc_write_end(conn_t *conn);
-// Wait for all fire-and-forget calls published before an RPC's entry. These
-// waits order native submission, not GPU completion; overlapping calls remain
-// free to execute and complete in either order.
-extern int rpc_async_sequence_wait(conn_t *conn, uint64_t published);
+// Wait for all fire-and-forget calls published before an RPC's entry, or with
+// `exact` only for ticket `value`. These waits order native submission, not GPU
+// completion; overlapping calls remain free to execute and complete in either
+// order.
+extern int rpc_async_sequence_wait(conn_t *conn, uint64_t value,
+                                   bool exact = false);
 extern void rpc_cancel_async_waits(conn_t *conn);
 // Dispatch claims a request's ticket before its handler runs, and the lane loop
 // releases it once the handler returns, so later requests wait for the call's
@@ -411,7 +413,7 @@ extern void rpc_shutdown_transport_socket(conn_t *conn);
 // socket before aborting it. Safe after a transport error has already set
 // conn->closed, and safe for concurrent/idempotent cleanup.
 extern void rpc_close_transport_socket(conn_t *conn);
-extern int rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id);
+extern void rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id);
 extern void rpc_conn_destroy(conn_t *conn);
 
 // lupine_tcp_connect resolves host:port and returns a connected socket with

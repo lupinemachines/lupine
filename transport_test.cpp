@@ -109,10 +109,7 @@ void test_teardown_completes_after_an_abrupt_peer_close() {
   }
 
   conn_t peer = {};
-  if (rpc_conn_init(&peer, accepted, 1) < 0) {
-    check(false, "peer conn init");
-    return;
-  }
+  rpc_conn_init(&peer, accepted, 1);
   // Drop the dialing side without a graceful shutdown, the way a client that
   // refuses its peer mid-handshake does.
   lupine_socket_close(dialed);
@@ -155,8 +152,8 @@ void test_close_interrupts_a_checkpoint_redial() {
 
   conn_t peer = {};
   lupine_socket_t accepted = accept(server.fd, nullptr, nullptr);
+  rpc_conn_init(&peer, accepted, 1);
   bool ready = accepted != LUPINE_INVALID_SOCKET &&
-               rpc_conn_init(&peer, accepted, 1) == 0 &&
                rpc_http2_server_init_with_metadata(&peer, nullptr) == 0 &&
                opened.get() == 0;
   char command;
@@ -228,8 +225,9 @@ struct mock_server {
       return;
     worker = std::thread([this, gate]() {
       lupine_socket_t fd = accept(sock.fd, nullptr, nullptr);
-      if (fd == LUPINE_INVALID_SOCKET || rpc_conn_init(&peer, fd, 1) != 0)
+      if (fd == LUPINE_INVALID_SOCKET)
         return;
+      rpc_conn_init(&peer, fd, 1);
       inited = accepted = true;
       while (gate && !*gate)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -252,10 +250,12 @@ struct mock_server {
           break;
         if (n != sizeof(pre))
           lupine_socket_close(bfd);
-        else if (rpc_conn_init(&bulk[nbulk], bfd, 1) == 0)
+        else {
+          rpc_conn_init(&bulk[nbulk], bfd, 1);
           rpc_http2_server_init_with_metadata(&bulk[nbulk], &meta) == 0
               ? (void)++nbulk
               : rpc_conn_destroy(&bulk[nbulk]);
+        }
       }
     });
   }

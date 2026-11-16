@@ -191,10 +191,8 @@ void init_pair(h2_pair *pair) {
 void init_pair_sockets(h2_pair *pair) {
   lupine_socket_t fds[2];
   require(lupine_test_connected_pair(fds), "connected socket pair failed");
-  require(rpc_conn_init(&pair->client, fds[0], 0) == 0,
-          "client RPC init failed");
-  require(rpc_conn_init(&pair->server, fds[1], 1) == 0,
-          "server RPC init failed");
+  rpc_conn_init(&pair->client, fds[0], 0);
+  rpc_conn_init(&pair->server, fds[1], 1);
 }
 
 int read_dispatch(conn_t *conn, void *data, size_t size) {
@@ -807,8 +805,7 @@ void test_destroy_releases_a_parked_session() {
   require(pair.client.http2 == nullptr,
           "destroying a parked connection leaked its HTTP/2 session");
   // Give the pair's destructor a live connection to destroy.
-  require(rpc_conn_init(&pair.client, LUPINE_INVALID_SOCKET, 0) == 0,
-          "client RPC reinit failed");
+  rpc_conn_init(&pair.client, LUPINE_INVALID_SOCKET, 0);
 }
 
 void test_response_wait_sends_transport_heartbeat() {
@@ -2341,8 +2338,7 @@ void test_rpc_write_buffer_cleans_up_on_transport_failure_and_destroy() {
   }
 
   conn_t conn = {};
-  require(rpc_conn_init(&conn, LUPINE_INVALID_SOCKET, 0) == 0,
-          "destroy connection init failed");
+  rpc_conn_init(&conn, LUPINE_INVALID_SOCKET, 0);
   require(rpc_copy_alloc(&conn, 64) == 0, "destroy copy allocation failed");
   rpc_conn_destroy(&conn);
   require(conn.write_copy_buffer == nullptr && conn.write_copy_capacity == 0 &&
