@@ -6511,9 +6511,9 @@ lupine_cudart_get_module_from_cubin_ext1(CUmodule *module, const void *fatbin,
 }
 
 extern "C" void lupine_cudart_noop_size_arg(size_t) {}
-extern "C" uintptr_t lupine_dark_return_zero() { return 0; }
-extern "C" uintptr_t lupine_dark_return_zero_1(const void *) { return 0; }
-extern "C" uintptr_t lupine_dark_return_zero_2(const void *, const void *) {
+extern "C" uintptr_t lupine_stub_return_zero() { return 0; }
+extern "C" uintptr_t lupine_stub_return_zero_1(const void *) { return 0; }
+extern "C" uintptr_t lupine_stub_return_zero_2(const void *, const void *) {
   return 0;
 }
 
@@ -6528,7 +6528,7 @@ lupine_cudart_get_module_from_cubin_ext2(const void *fatbin, CUmodule *module,
 extern "C" CUresult lupine_cudart_load_compilers() { return CUDA_SUCCESS; }
 
 template <size_t N>
-static void lupine_dark_get_unknown_buffer(void **ptr, size_t *size) {
+static void lupine_stub_static_buffer(void **ptr, size_t *size) {
   static unsigned char buffer[N] = {};
   if (ptr != nullptr) {
     *ptr = buffer;
@@ -6973,16 +6973,15 @@ extern "C" CUresult cuGetExportTable(const void **ppExportTable,
   auto fp = [](auto *f) { return reinterpret_cast<const void *>(f); };
   auto sz = [](size_t n) { return reinterpret_cast<const void *>(n); };
   static const void *kToolsTls[4] = {
-      sz(sizeof(kToolsTls)), fp(&lupine_dark_return_zero),
-      fp(&lupine_dark_return_zero_1), fp(&lupine_dark_return_zero_1)};
-  static const void *kToolsCbHooks[7] = {
-      sz(sizeof(kToolsCbHooks)),
-      fp(&lupine_dark_return_zero_2),
-      fp(&lupine_dark_get_unknown_buffer<1024>),
-      fp(&lupine_dark_return_zero_2),
-      fp(&lupine_dark_return_zero_2),
-      fp(&lupine_dark_return_zero_2),
-      fp(&lupine_dark_get_unknown_buffer<14>)};
+      sz(sizeof(kToolsTls)), fp(&lupine_stub_return_zero),
+      fp(&lupine_stub_return_zero_1), fp(&lupine_stub_return_zero_1)};
+  static const void *kToolsCbHooks[7] = {sz(sizeof(kToolsCbHooks)),
+                                         fp(&lupine_stub_return_zero_2),
+                                         fp(&lupine_stub_static_buffer<1024>),
+                                         fp(&lupine_stub_return_zero_2),
+                                         fp(&lupine_stub_return_zero_2),
+                                         fp(&lupine_stub_return_zero_2),
+                                         fp(&lupine_stub_static_buffer<14>)};
   static const void *kCtxStorage[4] = {fp(&lupine_context_local_storage_put),
                                        fp(&lupine_context_local_storage_delete),
                                        fp(&lupine_context_local_storage_get),
