@@ -2138,7 +2138,8 @@ void lupine_attribute_set(const lupine_kernel_attribute_key &key, int value,
   if (cache.find(key, cached) && cached == value) {
     return;
   }
-  cache.insert_or_assign(key, value);
+  // The set goes unanswered and may yet be rejected, so it is not an answer.
+  cache.erase(key);
   lupine_occupancy_cache_erase_function(
       key.route_id, reinterpret_cast<CUfunction>(key.kernel));
   // A kernel set changes functions without a function-level override.

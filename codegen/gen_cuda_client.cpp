@@ -1594,6 +1594,8 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
   lupine_route route = lupine_route_for_device(&dev);
   if (route.kind == LUPINE_ROUTE_UNKNOWN_DEVICE)
     return CUDA_ERROR_INVALID_DEVICE;
+  if (lupine_function_attribute_set_rejected(attrib, val))
+    return CUDA_ERROR_INVALID_VALUE;
   CUresult resolved = lupine_resolve_kernel_for_route(&kernel, route);
   if (resolved != CUDA_SUCCESS)
     return resolved;
@@ -1616,11 +1618,9 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
       rpc_write(conn, &attrib, sizeof(CUfunction_attribute)) < 0 ||
       rpc_write(conn, &val, sizeof(int)) < 0 ||
       rpc_write(conn, &kernel, sizeof(CUkernel)) < 0 ||
-      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 ||
-      rpc_wait_for_response(conn) < 0 ||
-      rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
-      rpc_read_end(conn) < 0)
+      rpc_write(conn, &dev, sizeof(CUdevice)) < 0 || rpc_write_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  return_value = CUDA_SUCCESS;
   if (return_value == CUDA_SUCCESS)
     lupine_attribute_set(
         lupine_kernel_attribute_key{lupine_route_identity(route), kernel,
@@ -4699,13 +4699,7 @@ CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
 CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
                             int value) {
   lupine_route route = lupine_route_for_function(hfunc);
-  // Unanswered, so what every driver rejects for any function is rejected
-  // here; other failures reach the next synchronize.
-  if (attrib < CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES ||
-      (attrib == CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES &&
-       value < 0) ||
-      (attrib == CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT &&
-       (value < -1 || value > 100)))
+  if (lupine_function_attribute_set_rejected(attrib, value))
     return CUDA_ERROR_INVALID_VALUE;
   lupine_function_attribute_key key{lupine_route_identity(route),
                                     lupine_translate_private_function(hfunc),

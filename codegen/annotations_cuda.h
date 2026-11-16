@@ -734,10 +734,11 @@ CUresult cuKernelGetAttribute(int *pi, CUfunction_attribute attrib,
  * @param val SEND_ONLY
  * @param kernel SEND_ONLY
  * @param dev SEND_ONLY
- * @blocking - callers act on a rejected attribute, such as too much dynamic shared memory
  */
 CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
                               CUkernel kernel, CUdevice dev) {
+  if (lupine_function_attribute_set_rejected(attrib, val))
+    return CUDA_ERROR_INVALID_VALUE;
   CUresult resolved = lupine_resolve_kernel_for_route(&kernel, route);
   if (resolved != CUDA_SUCCESS)
     return resolved;
@@ -2354,13 +2355,7 @@ CUresult cuFuncGetAttribute(int *pi, CUfunction_attribute attrib,
  */
 CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib,
                             int value) {
-  // Unanswered, so what every driver rejects for any function is rejected
-  // here; other failures reach the next synchronize.
-  if (attrib < CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES ||
-      (attrib == CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES &&
-       value < 0) ||
-      (attrib == CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT &&
-       (value < -1 || value > 100)))
+  if (lupine_function_attribute_set_rejected(attrib, value))
     return CUDA_ERROR_INVALID_VALUE;
   lupine_function_attribute_key key{lupine_route_identity(route),
                                     lupine_translate_private_function(hfunc),

@@ -62,6 +62,18 @@ void lupine_primary_ctx_state_cache_insert(conn_t *conn, CUdevice dev,
 // A successful set request need not equal the value the driver reports.
 enum class lupine_attribute_source { query, set };
 
+// Function and kernel attribute sets go unanswered, so what every driver
+// rejects for any function and device is rejected here; other failures reach
+// the next synchronize.
+inline bool lupine_function_attribute_set_rejected(CUfunction_attribute attrib,
+                                                   int value) {
+  return attrib < CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES ||
+         (attrib == CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES &&
+          value < 0) ||
+         (attrib == CU_FUNC_ATTRIBUTE_PREFERRED_SHARED_MEMORY_CARVEOUT &&
+          (value < -1 || value > 100));
+}
+
 bool lupine_attribute_get(
     const lupine_function_attribute_key &key, int &value,
     lupine_attribute_source source = lupine_attribute_source::query);
