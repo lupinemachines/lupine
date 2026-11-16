@@ -28,6 +28,19 @@
 typedef struct ncclDevComm ncclDevComm_t;
 typedef struct ncclDevCommRequirements ncclDevCommRequirements_t;
 
+// The generated code speaks the RPC core's vocabulary; the driver shim exports
+// it under its own prefix so both can be declared in one translation unit.
+#define rpc_write_start_request lupine_rpc_write_start_request
+#define rpc_write_start_request_on lupine_rpc_write_start_request_on
+#define rpc_write_start_request_on_stream                                      \
+  lupine_rpc_write_start_request_on_stream
+#define rpc_write lupine_rpc_write
+#define rpc_write_end lupine_rpc_write_end
+#define rpc_wait_for_response lupine_rpc_wait_for_response
+#define rpc_read lupine_rpc_read
+#define rpc_read_end lupine_rpc_read_end
+#define rpc_shutdown_transport_socket lupine_rpc_shutdown_transport_socket
+
 static ncclResult_t lupine_rpc_ncclGroupStart(conn_t *conn, bool submit_async);
 
 namespace {
@@ -44,33 +57,8 @@ ncclResult_t rpc_error() {
   return group.error != ncclSuccess ? group.error : ncclSystemError;
 }
 
-// The generated code speaks the RPC core's vocabulary; the driver shim exports
-// it under its own prefix so both can be declared in one translation unit.
-int rpc_write_start_request(conn_t *conn, int op) {
-  return lupine_rpc_write_start_request(conn, op);
-}
 // rpc.h's scope for a request on no object.
 constexpr uintptr_t RPC_SCOPE_NONE = 0;
-int rpc_write_start_request_on(conn_t *conn, int op, uintptr_t key) {
-  return lupine_rpc_write_start_request_on(conn, op, key);
-}
-int rpc_write_start_request_on_stream(conn_t *conn, int op, void *stream) {
-  return lupine_rpc_write_start_request_on_stream(conn, op, stream);
-}
-int rpc_write(conn_t *conn, const void *data, size_t size) {
-  return lupine_rpc_write(conn, data, size);
-}
-int rpc_write_end(conn_t *conn) { return lupine_rpc_write_end(conn); }
-int rpc_wait_for_response(conn_t *conn) {
-  return lupine_rpc_wait_for_response(conn);
-}
-int rpc_read(conn_t *conn, void *data, size_t size) {
-  return lupine_rpc_read(conn, data, size);
-}
-int rpc_read_end(conn_t *conn) { return lupine_rpc_read_end(conn); }
-void rpc_shutdown_transport_socket(conn_t *conn) {
-  lupine_rpc_shutdown_transport_socket(conn);
-}
 
 // ---------------------------------------------------------------------------
 // Groups
@@ -322,58 +310,36 @@ ncclResult_t read_strings(conn_t *conn, std::vector<std::string> *out) {
   if (rpc_wait_for_response(conn) < 0) {
     return ncclSystemError;
   }
-  if (rpc_read(conn, &status, sizeof(status)) < 0 ||
-      rpc_read(conn, &count, sizeof(count)) < 0 || count > kMaxText) {
+  auto malformed = [&] {
     rpc_shutdown_transport_socket(conn);
     (void)rpc_read_end(conn);
     return ncclSystemError;
+  };
+  if (rpc_read(conn, &status, sizeof(status)) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0 || count > kMaxText) {
+    return malformed();
   }
   out->assign(count, std::string());
   for (std::string &text : *out) {
     uint32_t length = 0;
     if (rpc_read(conn, &length, sizeof(length)) < 0 || length > kMaxText) {
-      rpc_shutdown_transport_socket(conn);
-      (void)rpc_read_end(conn);
-      return ncclSystemError;
+      return malformed();
     }
     text.resize(length);
     if (length != 0 && rpc_read(conn, &text[0], length) < 0) {
-      rpc_shutdown_transport_socket(conn);
-      (void)rpc_read_end(conn);
-      return ncclSystemError;
+      return malformed();
     }
   }
   return rpc_read_end(conn) < 0 ? ncclSystemError : status;
 }
 
 ncclResult_t finish_single_string(conn_t *conn, std::string *out) {
-  ncclResult_t status = ncclSystemError;
-  uint32_t count = 0;
-  if (rpc_wait_for_response(conn) < 0) {
-    return ncclSystemError;
+  std::vector<std::string> texts;
+  const ncclResult_t status = read_strings(conn, &texts);
+  if (status == ncclSuccess && texts.size() == 1) {
+    *out = std::move(texts[0]);
   }
-  if (rpc_read(conn, &status, sizeof(status)) < 0 ||
-      rpc_read(conn, &count, sizeof(count)) < 0 ||
-      (status == ncclSuccess ? count != 1 : count != 0)) {
-    rpc_shutdown_transport_socket(conn);
-    (void)rpc_read_end(conn);
-    return ncclSystemError;
-  }
-  if (count == 1) {
-    uint32_t length = 0;
-    if (rpc_read(conn, &length, sizeof(length)) < 0 || length > kMaxText) {
-      rpc_shutdown_transport_socket(conn);
-      (void)rpc_read_end(conn);
-      return ncclSystemError;
-    }
-    out->resize(length);
-    if (length != 0 && rpc_read(conn, &(*out)[0], length) < 0) {
-      rpc_shutdown_transport_socket(conn);
-      (void)rpc_read_end(conn);
-      return ncclSystemError;
-    }
-  }
-  return rpc_read_end(conn) < 0 ? ncclSystemError : status;
+  return status;
 }
 
 template <typename Arg>
