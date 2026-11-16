@@ -496,9 +496,18 @@ struct rpc_nested_write_frame {
   alignas(std::max_align_t) unsigned char write_copy_inline[256] = {};
 };
 
+// Bytes of the bound lane already taken from the transport, read before the
+// lane's next transport bytes. Only this thread reads its bound lane.
+struct rpc_read_ahead {
+  size_t offset = 0;
+  size_t size = 0;
+  unsigned char data[4096];
+};
+
 struct rpc_thread_io {
   conn_t *bound_conn = nullptr;
   int32_t bound_stream = -1;
+  rpc_read_ahead ahead;
   conn_t *read_conn = nullptr;
   rpc_read_frame read;
   conn_t *write_conn = nullptr;
@@ -562,6 +571,7 @@ int rpc_bind_http2_stream(conn_t *conn, int32_t stream_id) {
   }
   rpc_tls_io.bound_conn = conn;
   rpc_tls_io.bound_stream = stream_id;
+  rpc_tls_io.ahead.offset = rpc_tls_io.ahead.size = 0;
   return 0;
 }
 
@@ -569,7 +579,36 @@ void rpc_unbind_http2_stream(conn_t *conn) {
   if (rpc_tls_io.bound_conn == conn) {
     rpc_tls_io.bound_conn = nullptr;
     rpc_tls_io.bound_stream = -1;
+    rpc_tls_io.ahead.offset = rpc_tls_io.ahead.size = 0;
   }
+}
+
+static int rpc_read_stream(conn_t *conn, int32_t stream_id, void *data,
+                           size_t size) {
+  rpc_read_ahead &ahead = rpc_tls_io.ahead;
+  if (rpc_tls_io.bound_conn != conn || rpc_tls_io.bound_stream != stream_id) {
+    return rpc_http2_read_stream(conn, stream_id, data, size);
+  }
+  auto *out = static_cast<unsigned char *>(data);
+  size_t buffered = std::min(size, ahead.size - ahead.offset);
+  memcpy(out, ahead.data + ahead.offset, buffered);
+  ahead.offset += buffered;
+  if (buffered == size) {
+    return 0;
+  }
+  out += buffered;
+  size -= buffered;
+  if (size >= sizeof(ahead.data)) {
+    return rpc_http2_read_stream(conn, stream_id, out, size);
+  }
+  size_t extra = sizeof(ahead.data) - size;
+  int result = rpc_http2_read_stream(conn, stream_id, ahead.data, size, &extra);
+  if (result == 0) {
+    memcpy(out, ahead.data, size);
+    ahead.offset = size;
+    ahead.size = size + extra;
+  }
+  return result;
 }
 
 int32_t rpc_current_http2_stream(conn_t *conn) {
@@ -593,7 +632,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
   int header[2] = {};
   bool unsettled = false;
   for (;;) {
-    int result = rpc_http2_read_stream(conn, stream_id, header, sizeof(header));
+    int result = rpc_read_stream(conn, stream_id, header, sizeof(header));
     if (result != 0) {
       if (result != LUPINE_RPC_HTTP2_STREAM_END) {
         rpc_mark_connection_closed(conn);
@@ -609,7 +648,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
     // {0, 2, ticket} only checks.
     uint64_t value = 0;
     if (header[1] < 0 || header[1] > 2 ||
-        rpc_http2_read_stream(conn, stream_id, &value, sizeof(value)) != 0) {
+        rpc_read_stream(conn, stream_id, &value, sizeof(value)) != 0) {
       rpc_mark_connection_closed(conn);
       return -1;
     }
@@ -631,7 +670,7 @@ int rpc_dispatch(conn_t *conn, int parity) {
   // later requests from any lane wait for the call's submission.
   if (parity == 0) {
     uint64_t ticket = 0;
-    if (rpc_http2_read_stream(conn, stream_id, &ticket, sizeof(ticket)) != 0) {
+    if (rpc_read_stream(conn, stream_id, &ticket, sizeof(ticket)) != 0) {
       rpc_mark_connection_closed(conn);
       return -1;
     }
@@ -662,7 +701,7 @@ int rpc_read_start(conn_t *conn, int write_id) {
   }
   int32_t stream_id = rpc_tls_io.response.stream_id;
   int header[2] = {};
-  if (rpc_http2_read_stream(conn, stream_id, header, sizeof(header)) != 0 ||
+  if (rpc_read_stream(conn, stream_id, header, sizeof(header)) != 0 ||
       header[0] != write_id || header[1] != -1) {
     // An earlier request's answer means client and server disagree on whether
     // that call is answered: a handwritten side out of step with codegen.
@@ -744,8 +783,7 @@ int rpc_note_host_allocation_write(conn_t *conn, void *data, size_t written) {
 
 static int rpc_read_http2(conn_t *conn, void *data, size_t size) {
   int32_t stream_id = rpc_current_http2_stream(conn);
-  return stream_id < 0 ? -1
-                       : rpc_http2_read_stream(conn, stream_id, data, size);
+  return stream_id < 0 ? -1 : rpc_read_stream(conn, stream_id, data, size);
 }
 
 int rpc_read(conn_t *conn, void *data, size_t size) {
