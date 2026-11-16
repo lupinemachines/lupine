@@ -87,7 +87,6 @@ static std::string lupine_child_bulk_token;
 #ifndef _WIN32
 static volatile sig_atomic_t lupine_parent_termination_requested = 0;
 static volatile sig_atomic_t lupine_parent_child_exited = 0;
-static volatile sig_atomic_t lupine_child_connection_fd = -1;
 
 static void lupine_parent_sigterm_handler(int) {
   lupine_parent_termination_requested = 1;
@@ -95,14 +94,6 @@ static void lupine_parent_sigterm_handler(int) {
 
 static void lupine_parent_sigchld_handler(int) {
   lupine_parent_child_exited = 1;
-}
-
-static void lupine_child_sigterm_handler(int) {
-  int saved_errno = errno;
-  if (lupine_child_connection_fd >= 0) {
-    (void)shutdown(static_cast<int>(lupine_child_connection_fd), SHUT_RDWR);
-  }
-  errno = saved_errno;
 }
 
 static bool lupine_install_parent_signal_handlers() {
@@ -118,6 +109,17 @@ static bool lupine_install_parent_signal_handlers() {
          sigaction(SIGCHLD, &child_action, nullptr) == 0;
 }
 
+#ifndef LUPINE_BUILD_CUDA_BACKEND
+static volatile sig_atomic_t lupine_child_connection_fd = -1;
+
+static void lupine_child_sigterm_handler(int) {
+  int saved_errno = errno;
+  if (lupine_child_connection_fd >= 0) {
+    (void)shutdown(static_cast<int>(lupine_child_connection_fd), SHUT_RDWR);
+  }
+  errno = saved_errno;
+}
+
 static bool lupine_install_child_signal_handler(lupine_socket_t connection) {
   struct sigaction action = {};
   action.sa_handler = lupine_child_sigterm_handler;
@@ -125,6 +127,7 @@ static bool lupine_install_child_signal_handler(lupine_socket_t connection) {
   lupine_child_connection_fd = connection;
   return sigaction(SIGTERM, &action, nullptr) == 0;
 }
+#endif
 
 // A client may open extra "bulk" TCP connections for large transfers. The
 // parent routes each one to the child that owns the session by the token the
