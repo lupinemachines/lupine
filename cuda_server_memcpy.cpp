@@ -1333,7 +1333,8 @@ public:
       result = cuStreamCreate(&transfer_stream, CU_STREAM_NON_BLOCKING);
     }
     if (result == CUDA_SUCCESS) {
-      result = cuEventCreate(&ordering_event, CU_EVENT_DISABLE_TIMING);
+      result = cuEventCreate(&ordering_event,
+                             CU_EVENT_DISABLE_TIMING | CU_EVENT_BLOCKING_SYNC);
     }
     // Load and JIT the fatbin before graph capture can enqueue a copy that
     // needs one of its kernels.
@@ -2179,6 +2180,21 @@ static CUresult lupine_prepare_htod_copy(
   return CUDA_SUCCESS;
 }
 
+// A short pull is one round trip, and waking from a blocking wait would add
+// tens of microseconds to it; a long one runs at wire speed, so it is waited
+// for asleep instead of spinning a core for the whole transfer.
+static CUresult lupine_wait_for_pull(CUevent completion) {
+  auto spin_until =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
+  CUresult result;
+  while ((result = cuEventQuery(completion)) == CUDA_ERROR_NOT_READY) {
+    if (std::chrono::steady_clock::now() >= spin_until) {
+      return cuEventSynchronize(completion);
+    }
+  }
+  return result;
+}
+
 static CUresult lupine_enqueue_client_htod_copy(
     conn_t *conn, lupine_staging_state &state, const lupine_htod_copy &copy,
     CUcontext context, CUstream stream, bool blocking, bool wait_for_source) {
@@ -2279,7 +2295,7 @@ static CUresult lupine_enqueue_client_htod_copy(
   // this lane, whose tickets other lanes wait for. The transfer stream keeps
   // the ring's slot in order; a writer from the CPU drains it first.
   if (capture_id == 0) {
-    result = wait_for_source ? ring->synchronize() : CUDA_SUCCESS;
+    result = wait_for_source ? lupine_wait_for_pull(completion) : CUDA_SUCCESS;
     ring->release_execution();
     return result;
   }
