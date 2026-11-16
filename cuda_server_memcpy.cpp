@@ -2808,15 +2808,30 @@ int handle_cuMemcpyHtoD_v2(conn_t *conn) {
   return lupine_serve_memcpy_htod(conn, false);
 }
 
-// Chunks of one striped copy arrive on the bulk connections in any order and
-// only stage here; the device copy runs on the main lane, which keeps it FIFO
-// behind the client's earlier work on that lane.
-struct lupine_bulk_staging {
-  unsigned char *data = nullptr;
-  size_t total = 0;
-  size_t landed = 0;
+// The copy RPC reaches the caller's lane before any of its chunks and lends
+// the copy a few page-locked chunk buffers. Chunks land in them on the bulk
+// connections, in any order, and the copy RPC moves each one to the device as
+// it lands, so the copy stays FIFO behind the client's earlier work on that
+// lane. A chunk waits for a free buffer, which holds the bulk connections back
+// while the device falls behind.
+struct lupine_bulk_chunk {
+  size_t offset = 0;
+  size_t bytes = 0;
+  lupine_dtoh_staging buffer;
 };
 
+struct lupine_bulk_staging {
+  bool published = false;
+  // A host destination takes its chunks directly.
+  unsigned char *host = nullptr;
+  // A copy that failed before lending buffers discards its chunks.
+  bool discard = false;
+  std::vector<lupine_dtoh_staging> free;
+  std::deque<lupine_bulk_chunk> landed;
+  size_t received = 0;
+};
+
+static constexpr size_t kLupineBulkChunkBuffers = 8;
 static std::mutex lupine_bulk_staging_mutex;
 static std::condition_variable lupine_bulk_staging_progress;
 static std::unordered_map<uint64_t, lupine_bulk_staging> lupine_bulk_stagings;
@@ -2840,25 +2855,38 @@ int handle_lupineBulkChunk(conn_t *conn) {
     return -1;
   }
   unsigned char *destination = nullptr;
+  lupine_dtoh_staging buffer;
   {
-    std::lock_guard<std::mutex> lock(lupine_bulk_staging_mutex);
+    std::unique_lock<std::mutex> lock(lupine_bulk_staging_mutex);
     lupine_bulk_staging &staging = lupine_bulk_stagings[copy_id];
-    if (staging.data == nullptr) {
-      staging.data = static_cast<unsigned char *>(malloc(total));
-      if (staging.data == nullptr) {
-        std::abort();
-      }
-      staging.total = total;
+    lupine_bulk_staging_progress.wait(lock, [&] {
+      return lupine_bulk_connection_lost ||
+             (staging.published && (staging.host != nullptr ||
+                                    staging.discard || !staging.free.empty()));
+    });
+    if (lupine_bulk_connection_lost) {
+      return -1;
     }
-    destination = staging.data + offset;
+    if (staging.host != nullptr) {
+      destination = staging.host + offset;
+    } else if (!staging.discard) {
+      buffer = staging.free.back();
+      staging.free.pop_back();
+      destination = static_cast<unsigned char *>(buffer.host);
+    }
   }
-  if (rpc_read(conn, destination, bytes) < 0 || rpc_read_end(conn) < 0) {
+  if ((destination != nullptr ? rpc_read(conn, destination, bytes)
+                              : rpc_drain(conn, bytes)) < 0 ||
+      rpc_read_end(conn) < 0) {
     return -1;
   }
   std::lock_guard<std::mutex> lock(lupine_bulk_staging_mutex);
-  lupine_bulk_staging &staging = lupine_bulk_stagings[copy_id];
-  staging.landed += bytes;
-  if (staging.landed == staging.total) {
+  auto it = lupine_bulk_stagings.find(copy_id);
+  if (it != lupine_bulk_stagings.end()) {
+    it->second.received += bytes;
+    if (buffer.host != nullptr) {
+      it->second.landed.push_back({offset, bytes, buffer});
+    }
     lupine_bulk_staging_progress.notify_all();
   }
   return 0;
@@ -2880,34 +2908,60 @@ int handle_lupineMemcpyHtoDBulk(conn_t *conn) {
     return -1;
   }
 
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  unsigned char *data = nullptr;
-  {
-    std::unique_lock<std::mutex> lock(lupine_bulk_staging_mutex);
-    lupine_bulk_staging_progress.wait(lock, [&] {
-      auto it = lupine_bulk_stagings.find(copy_id);
-      return lupine_bulk_connection_lost ||
-             (it != lupine_bulk_stagings.end() &&
-              it->second.landed == it->second.total);
-    });
-    auto it = lupine_bulk_stagings.find(copy_id);
-    if (it != lupine_bulk_stagings.end()) {
-      if (it->second.landed == it->second.total) {
-        data = it->second.data;
-      } else {
-        free(it->second.data);
-      }
-      lupine_bulk_stagings.erase(it);
+  CUresult result = CUDA_SUCCESS;
+  std::vector<lupine_dtoh_staging> buffers;
+  if (to_host == 0) {
+    CUcontext context = nullptr;
+    result = cuCtxGetCurrent(&context);
+    if (result == CUDA_SUCCESS && context == nullptr) {
+      result = CUDA_ERROR_INVALID_CONTEXT;
+    }
+    size_t chunks = (bytes + LUPINE_RPC_TRANSFER_CHUNK_BYTES - 1) /
+                    LUPINE_RPC_TRANSFER_CHUNK_BYTES;
+    while (result == CUDA_SUCCESS &&
+           buffers.size() < std::min(kLupineBulkChunkBuffers, chunks)) {
+      buffers.push_back(lupine_take_dtoh_staging(
+          conn, CU_STREAM_LEGACY, LUPINE_RPC_TRANSFER_CHUNK_BYTES));
     }
   }
-  if (data != nullptr && to_host != 0) {
-    memcpy(reinterpret_cast<void *>(destination), data, bytes);
-    result = CUDA_SUCCESS;
-  } else if (data != nullptr) {
-    result =
-        cuMemcpyHtoD_v2(static_cast<CUdeviceptr>(destination), data, bytes);
+  std::unique_lock<std::mutex> lock(lupine_bulk_staging_mutex);
+  lupine_bulk_staging &staging = lupine_bulk_stagings[copy_id];
+  staging.published = true;
+  staging.host =
+      to_host != 0 ? reinterpret_cast<unsigned char *>(destination) : nullptr;
+  staging.discard = result != CUDA_SUCCESS;
+  staging.free = std::move(buffers);
+  lupine_bulk_staging_progress.notify_all();
+  while (true) {
+    lupine_bulk_staging_progress.wait(lock, [&] {
+      return lupine_bulk_connection_lost || !staging.landed.empty() ||
+             staging.received == bytes;
+    });
+    if (lupine_bulk_connection_lost || staging.landed.empty()) {
+      break;
+    }
+    lupine_bulk_chunk chunk = staging.landed.front();
+    staging.landed.pop_front();
+    lock.unlock();
+    if (result == CUDA_SUCCESS) {
+      result =
+          cuMemcpyHtoD_v2(static_cast<CUdeviceptr>(destination + chunk.offset),
+                          chunk.buffer.host, chunk.bytes);
+    }
+    lock.lock();
+    staging.free.push_back(chunk.buffer);
+    lupine_bulk_staging_progress.notify_all();
   }
-  free(data);
+  if (result == CUDA_SUCCESS && staging.received != bytes) {
+    result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+  }
+  // Buffers still out belong to chunks a lost connection left landing.
+  buffers = std::move(staging.free);
+  lupine_bulk_stagings.erase(copy_id);
+  lock.unlock();
+  for (const lupine_dtoh_staging &buffer : buffers) {
+    lupine_give_back_dtoh_staging(buffer);
+  }
   return lupine_write_lifecycle_response(conn, request_id, result);
 }
 
