@@ -151,13 +151,16 @@ lupine_apply_visible_devices(std::vector<lupine_device_entry> &devices) {
       spec, static_cast<int>(devices.size()), [&devices](int index) {
         const lupine_device_entry &entry = devices[static_cast<size_t>(index)];
         CUuuid uuid = {};
+        // The generated handler reads a null-output flag ahead of the device.
+        unsigned char request[1 + sizeof(CUdevice)] = {};
+        memcpy(request + 1, &entry.remote_device, sizeof(CUdevice));
         const CUresult result =
             entry.local ? lupine_call_real_cuda_fn("cuDeviceGetUuid_v2", &uuid,
                                                    entry.local_device)
                         : lupine_remote_device_query(
                               rpc_client_get_connection(entry.conn_index),
-                              RPC_cuDeviceGetUuid_v2, &entry.remote_device,
-                              sizeof(entry.remote_device), &uuid, 16);
+                              RPC_cuDeviceGetUuid_v2, request, sizeof(request),
+                              &uuid, 16);
         // A device that will not say what it is simply matches no UUID.
         return result == CUDA_SUCCESS ? lupine_uuid_hex(&uuid) : std::string();
       });
