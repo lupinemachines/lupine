@@ -154,10 +154,12 @@ struct h2_transport {
   // flushes them before each send, so every message queued while one send is
   // in flight shares a block instead of paying a block and a flush each.
   std::vector<int32_t> flush_pending;
-  // The stream whose encoder the write thread runs outside session_mutex.
-  // Nothing else touches that encoder until this is cleared.
+  // Owned by whichever thread set write_busy: the write thread, or a caller
+  // sending its own message while the writer sleeps. That thread runs
+  // `encoding`'s encoder outside session_mutex; nothing else touches it until
+  // this is cleared.
   h2_stream *encoding = nullptr;
-  // Write thread scratch, reused across flushes.
+  std::vector<unsigned char> sending;
   std::vector<int32_t> flushing;
   std::vector<unsigned char> encode_input;
   std::vector<unsigned char> encode_output;
@@ -165,6 +167,7 @@ struct h2_transport {
   // Protected by session_mutex. Record the first output arrival during an
   // idle wait so the polling policy does not learn scheduler wakeup latency.
   bool writer_idle = false;
+  bool writer_sleeping = false;
   std::chrono::steady_clock::time_point writer_output_ready;
   pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_cond_t session_progress = PTHREAD_COND_INITIALIZER;
@@ -301,6 +304,10 @@ void h2_queue_output(h2_transport *transport, const struct iovec *iov,
     const auto *data = static_cast<const unsigned char *>(iov[i].iov_base);
     transport->outbound.insert(transport->outbound.end(), data,
                                data + iov[i].iov_len);
+  }
+  // Whoever holds write_busy sends or hands off this output when it finishes.
+  if (transport->write_busy) {
+    return;
   }
   h2_note_output_ready_locked(transport);
   transport->output_generation.fetch_add(1, std::memory_order_release);
@@ -791,7 +798,7 @@ int h2_on_stream_close_callback(nghttp2_session *, int32_t stream_id, uint32_t,
   auto *transport = static_cast<h2_transport *>(user_data);
   h2_stream &stream = h2_get_stream(transport, stream_id);
   if (transport->encoding == &stream) {
-    stream.encoder = nullptr; // The write thread frees it.
+    stream.encoder = nullptr; // Its encoding thread frees it.
   }
   h2_release_codecs(stream);
   // The entry stays: lookup recreates missing streams, so a late reader would
@@ -1165,8 +1172,9 @@ int h2_compress_flush(ZSTD_CCtx *encoder, const std::vector<unsigned char> &in,
   return 0;
 }
 
-// The write thread's flush. Compression runs outside session_mutex, so request
-// writers keep staging input on the same stream instead of waiting for it.
+// The write_busy holder's flush. Compression runs outside session_mutex, so
+// request writers keep staging input on the same stream instead of waiting for
+// it.
 int h2_writer_flush_locked(h2_transport *transport) {
   std::vector<int32_t> &flushing = transport->flushing;
   flushing.clear();
@@ -1209,9 +1217,54 @@ int h2_writer_flush_locked(h2_transport *transport) {
   return result;
 }
 
+// Flushes pending encoders and sends what is queued, releasing session_mutex
+// for the socket write. The caller found write_busy clear.
+int h2_send_outbound_locked(h2_transport *transport) {
+  transport->write_busy = true;
+  int result = h2_writer_flush_locked(transport);
+  if (result == 0 && !transport->outbound.empty()) {
+    std::vector<unsigned char> &chunk = transport->sending;
+    chunk.clear();
+    bool pause = transport->pause_after_bytes != 0;
+    if (pause) {
+      auto end = transport->outbound.begin() + transport->pause_after_bytes;
+      chunk.assign(transport->outbound.begin(), end);
+      transport->outbound.erase(transport->outbound.begin(), end);
+      transport->pause_after_bytes = 0;
+      transport->writer_paused = true;
+    } else {
+      chunk.swap(transport->outbound);
+    }
+    // Writers blocked on the outbound limit compress the next batch while
+    // this one is on the wire.
+    pthread_cond_broadcast(&transport->outbound_progress);
+    pthread_mutex_unlock(&transport->session_mutex);
+    result = h2_write_socket(transport, chunk.data(), chunk.size());
+    pthread_mutex_lock(&transport->session_mutex);
+    pthread_cond_broadcast(&transport->session_progress);
+  }
+  transport->write_busy = false;
+  if (result < 0) {
+    transport->write_failed = true;
+    h2_fail_transport_locked(transport);
+  } else if (!transport->outbound.empty() ||
+             !transport->flush_pending.empty()) {
+    h2_note_output_ready_locked(transport);
+    transport->output_generation.fetch_add(1, std::memory_order_release);
+    pthread_cond_broadcast(&transport->writer_ready);
+  }
+  pthread_cond_broadcast(&transport->outbound_progress);
+  return result;
+}
+
+bool h2_writer_waits_locked(const h2_transport *transport) {
+  return ((transport->outbound.empty() && transport->flush_pending.empty()) ||
+          transport->write_busy) &&
+         !transport->write_stop;
+}
+
 void *h2_write_main(void *arg) {
   auto *transport = static_cast<h2_transport *>(arg);
-  std::vector<unsigned char> chunk;
   h2_writer_poll_policy poll_policy;
   pthread_mutex_lock(&transport->session_mutex);
   // transport_failed alone does not stop the drain: a rejected handshake
@@ -1220,8 +1273,7 @@ void *h2_write_main(void *arg) {
     while (transport->writer_paused && !transport->write_stop) {
       pthread_cond_wait(&transport->writer_ready, &transport->session_mutex);
     }
-    while (transport->outbound.empty() && transport->flush_pending.empty() &&
-           !transport->write_stop) {
+    while (h2_writer_waits_locked(transport)) {
       std::chrono::steady_clock::time_point idle_start;
       if (!transport->server) {
         idle_start = std::chrono::steady_clock::now();
@@ -1249,10 +1301,11 @@ void *h2_write_main(void *arg) {
         }
         pthread_mutex_lock(&transport->session_mutex);
       }
-      while (transport->outbound.empty() && transport->flush_pending.empty() &&
-             !transport->write_stop) {
+      transport->writer_sleeping = true;
+      while (h2_writer_waits_locked(transport)) {
         pthread_cond_wait(&transport->writer_ready, &transport->session_mutex);
       }
+      transport->writer_sleeping = false;
       transport->writer_idle = false;
       if (!transport->server && !transport->write_stop &&
           !transport->writer_paused &&
@@ -1269,37 +1322,9 @@ void *h2_write_main(void *arg) {
     if (transport->writer_paused) {
       continue;
     }
-    int result = h2_writer_flush_locked(transport);
-    if (result == 0 && !transport->outbound.empty()) {
-      chunk.clear();
-      bool pause = transport->pause_after_bytes != 0;
-      if (pause) {
-        auto end = transport->outbound.begin() + transport->pause_after_bytes;
-        chunk.assign(transport->outbound.begin(), end);
-        transport->outbound.erase(transport->outbound.begin(), end);
-        transport->pause_after_bytes = 0;
-      } else {
-        chunk.swap(transport->outbound);
-      }
-      transport->write_busy = true;
-      // Writers blocked on the outbound limit compress the next batch while
-      // this one is on the wire.
-      pthread_cond_broadcast(&transport->outbound_progress);
-      if (pause) {
-        transport->writer_paused = true;
-      }
-      pthread_mutex_unlock(&transport->session_mutex);
-      result = h2_write_socket(transport, chunk.data(), chunk.size());
-      pthread_mutex_lock(&transport->session_mutex);
-      transport->write_busy = false;
-      pthread_cond_broadcast(&transport->session_progress);
-    }
-    if (result < 0) {
-      transport->write_failed = true;
-      h2_fail_transport_locked(transport);
+    if (h2_send_outbound_locked(transport) < 0) {
       break;
     }
-    pthread_cond_broadcast(&transport->outbound_progress);
   }
   pthread_cond_broadcast(&transport->outbound_progress);
   pthread_mutex_unlock(&transport->session_mutex);
@@ -1762,12 +1787,27 @@ int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
 
   pthread_mutex_lock(&transport->session_mutex);
   int result = h2_write_stream_locked(transport, stream_id, cursors, count);
-  if (!transport->outbound.empty() || !transport->flush_pending.empty()) {
+  // A message someone is waiting for is sent by its caller rather than by
+  // waking a sleeping writer, unless it filled a block: the writer is already
+  // sending that, and the caller can encode its next chunk meanwhile.
+  // Unawaited requests stay queued for the writer so a burst shares one block
+  // and one send.
+  if (result == 0 && (transport->server || conn->write_awaited) &&
+      transport->writer_sleeping && transport->outbound.empty() &&
+      !transport->write_busy && !transport->writer_paused &&
+      transport->pause_after_bytes == 0 && !transport->socket_parked) {
+    result = h2_send_outbound_locked(transport);
+  }
+  bool pending = !transport->write_busy && (!transport->outbound.empty() ||
+                                            !transport->flush_pending.empty());
+  if (pending) {
     h2_note_output_ready_locked(transport);
   }
   pthread_mutex_unlock(&transport->session_mutex);
-  transport->output_generation.fetch_add(1, std::memory_order_release);
-  pthread_cond_broadcast(&transport->writer_ready);
+  if (pending) {
+    transport->output_generation.fetch_add(1, std::memory_order_release);
+    pthread_cond_broadcast(&transport->writer_ready);
+  }
   return result;
 }
 
