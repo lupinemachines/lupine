@@ -40,8 +40,6 @@ HERE = Path(__file__).resolve().parent
 CSRC = HERE / "csrc"
 SOURCES = [CSRC / "host.cpp", CSRC / "module.cpp"]
 MODULE = "lupine._backend._C"
-# csrc/backend.h: a storage's data pointer is its handle << HANDLE_SHIFT.
-HANDLE_SHIFT = 20
 
 
 def torch_version() -> str:
