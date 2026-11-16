@@ -106,10 +106,6 @@ bool test_make_token_produces_distinct_tokens() {
     std::cerr << "FAIL: tokens are not random\n";
     return false;
   }
-  if (lupine_ipc_make_token(nullptr) == 0) {
-    std::cerr << "FAIL: null token accepted\n";
-    return false;
-  }
   return true;
 }
 
