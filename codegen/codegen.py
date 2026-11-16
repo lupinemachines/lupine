@@ -674,6 +674,9 @@ def parse_annotation(
         if line.strip().startswith("@blocking"):
             metadata.blocking = True
             continue
+        if line.strip().startswith("@remotehelper"):
+            metadata.remote_helper = True
+            continue
         if line.strip().startswith("@synchronize"):
             parts = line.split()
             if parts[1:2] == ["DEVICEPTR"]:
@@ -1449,6 +1452,51 @@ def write_rpc_ids(
             write_rpc_define(f"LUPINE_RPC_{name}", name)
 
 
+def write_cuda_client_rpc(f, function, operations, metadata):
+    for operation in operations:
+        f.write(operation.client_declaration())
+
+    unanswered_call = unanswered(function, metadata, "CUresult")
+    f.write(
+        f"    if (lupine_prepare_rpc(conn) < 0 ||\n"
+        f"        {client_request_start(function, metadata)} < 0 ||\n"
+    )
+
+    for operation in operations:
+        operation.client_rpc_write(f)
+
+    if unanswered_call:
+        f.write("        rpc_write_end(conn) < 0)\n")
+    else:
+        f.write("        rpc_wait_for_response(conn) < 0 ||\n")
+        if metadata.synchronize:
+            f.write("        lupine_read_dtoh_watermark(conn) < 0 ||\n")
+        if metadata.synchronize and metadata.synchronize.stdout:
+            f.write("        lupine_forward_remote_stdout(conn) < 0 ||\n")
+        for operation in operations:
+            operation.client_rpc_read(f)
+        f.write(f"        rpc_read(conn, &return_value, sizeof({function.return_type.format()})) < 0 ||\n")
+        f.write("        rpc_read_end(conn) < 0)\n")
+    f.write(f"        return {result_code(function.return_type.format())};\n")
+    if unanswered_call:
+        f.write("    return_value = CUDA_SUCCESS;\n")
+
+
+def write_remote_helper(f, function, operations, metadata):
+    """The request on a resolved connection, shared by the public call and the
+    client code that builds the device table, so the two cannot disagree on
+    the wire."""
+    name = function.name.format()
+    if metadata.retains or metadata.routing_kind == "ALL":
+        raise RuntimeError(f"{name}: @remotehelper cannot retain or route ALL")
+    return_type = function.return_type.format()
+    params = ", ".join(["conn_t *conn"] + format_function_params(function))
+    f.write(f"{return_type} lupine_remote_{name}({params})\n{{\n")
+    f.write(f"    {return_type} return_value;\n")
+    write_cuda_client_rpc(f, function, operations, metadata)
+    f.write("    return return_value;\n}\n\n")
+
+
 def write_cuda_client(functions_with_annotations, legacy_abi_functions):
     with open("gen_cuda_client.cpp", "w") as f:
         f.write(
@@ -1504,11 +1552,18 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
         for function, annotation, operations, metadata in functions_with_annotations:
             # We don't generate client function definitions for client-disabled
             # functions; their RPC/server definitions may still be generated.
-            if metadata.disabled_client:
+            if metadata.disabled_client and not metadata.remote_helper:
                 continue
 
             if metadata.guard is not None:
                 f.write(f"#if {metadata.guard}\n")
+
+            if metadata.remote_helper:
+                write_remote_helper(f, function, operations, metadata)
+                if metadata.disabled_client:
+                    if metadata.guard is not None:
+                        f.write("#endif\n\n")
+                    continue
 
             if unsupported(function, metadata):
                 write_stub(f, CUDA, function)
@@ -1612,34 +1667,14 @@ def write_cuda_client(functions_with_annotations, legacy_abi_functions):
                 f.write("    if (lupine_route_is_local(route))\n")
                 f.write(f"        return {local_call};\n")
             f.write("    conn_t *conn = lupine_route_remote_conn(route);\n")
-
-            for operation in operations:
-                f.write(operation.client_declaration())
-
-            unanswered_call = unanswered(function, metadata, "CUresult")
-            f.write(
-                f"    if (lupine_prepare_rpc(conn) < 0 ||\n"
-                f"        {client_request_start(function, metadata)} < 0 ||\n"
-            )
-
-            for operation in operations:
-                operation.client_rpc_write(f)
-
-            if unanswered_call:
-                f.write("        rpc_write_end(conn) < 0)\n")
+            if metadata.remote_helper:
+                call_args = ", ".join(["conn"] + [p.name for p in function.parameters])
+                f.write(
+                    f"    return_value = lupine_remote_{function.name.format()}"
+                    f"({call_args});\n"
+                )
             else:
-                f.write("        rpc_wait_for_response(conn) < 0 ||\n")
-                if metadata.synchronize:
-                    f.write("        lupine_read_dtoh_watermark(conn) < 0 ||\n")
-                if metadata.synchronize and metadata.synchronize.stdout:
-                    f.write("        lupine_forward_remote_stdout(conn) < 0 ||\n")
-                for operation in operations:
-                    operation.client_rpc_read(f)
-                f.write(f"        rpc_read(conn, &return_value, sizeof({function.return_type.format()})) < 0 ||\n")
-                f.write("        rpc_read_end(conn) < 0)\n")
-            f.write(f"        return {result_code(function.return_type.format())};\n")
-            if unanswered_call:
-                f.write("    return_value = CUDA_SUCCESS;\n")
+                write_cuda_client_rpc(f, function, operations, metadata)
 
             for operation in operations:
                 if isinstance(operation, NullTerminatedOperation) and operation.recv:

@@ -123,19 +123,12 @@ lupine_route lupine_route_from_identity(int route_id) {
   return lupine_route{LUPINE_ROUTE_INVALID, nullptr};
 }
 
-static CUresult lupine_remote_device_query(conn_t *conn, int op,
-                                           const void *arg, size_t arg_size,
-                                           void *out, size_t out_size) {
-  CUresult result = CUDA_ERROR_DEVICE_UNAVAILABLE;
-  if (out == nullptr || lupine_prepare_rpc(conn) < 0 ||
-      rpc_write_start_request_on(conn, op, RPC_SCOPE_NONE) < 0 ||
-      (arg_size != 0 && rpc_write(conn, arg, arg_size) < 0) ||
-      rpc_wait_for_response(conn) < 0 || rpc_read(conn, out, out_size) < 0 ||
-      rpc_read(conn, &result, sizeof(result)) < 0 || rpc_read_end(conn) < 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
-  }
-  return result;
-}
+// Generated from the annotated calls (@remotehelper), so the device table is
+// built with the same requests the server's generated handlers read.
+CUresult lupine_remote_cuDeviceGet(conn_t *conn, CUdevice *device, int ordinal);
+CUresult lupine_remote_cuDeviceGetCount(conn_t *conn, int *count);
+CUresult lupine_remote_cuDeviceGetUuid_v2(conn_t *conn, CUuuid *uuid,
+                                          CUdevice dev);
 
 static std::string lupine_uuid_hex(const CUuuid &uuid) {
   static const char *digits = "0123456789abcdef";
@@ -165,10 +158,9 @@ lupine_apply_visible_devices(std::vector<lupine_device_entry> &devices) {
         const CUresult result =
             entry.local ? lupine_call_real_cuda_fn("cuDeviceGetUuid_v2", &uuid,
                                                    entry.local_device)
-                        : lupine_remote_device_query(
+                        : lupine_remote_cuDeviceGetUuid_v2(
                               rpc_client_get_connection(entry.conn_index),
-                              RPC_cuDeviceGetUuid_v2, &entry.remote_device,
-                              sizeof(entry.remote_device), &uuid, 16);
+                              &uuid, entry.remote_device);
         // A device that will not say what it is simply matches no UUID.
         return result == CUDA_SUCCESS ? lupine_uuid_hex(uuid) : std::string();
       });
@@ -212,18 +204,14 @@ static CUresult lupine_ensure_device_table() {
     for (int i = 0; i < connection_count; ++i) {
       conn_t *conn = rpc_client_get_connection(static_cast<unsigned int>(i));
       int remote_count = 0;
-      CUresult result =
-          lupine_remote_device_query(conn, RPC_cuDeviceGetCount, nullptr, 0,
-                                     &remote_count, sizeof(remote_count));
+      CUresult result = lupine_remote_cuDeviceGetCount(conn, &remote_count);
       if (result != CUDA_SUCCESS) {
         devices.clear();
         return result;
       }
       for (int ordinal = 0; ordinal < remote_count; ++ordinal) {
         CUdevice remote_device = 0;
-        result = lupine_remote_device_query(conn, RPC_cuDeviceGet, &ordinal,
-                                            sizeof(ordinal), &remote_device,
-                                            sizeof(remote_device));
+        result = lupine_remote_cuDeviceGet(conn, &remote_device, ordinal);
         if (result != CUDA_SUCCESS) {
           devices.clear();
           return result;
