@@ -281,13 +281,6 @@ bool raw_read_frame(lupine_socket_t socket,
   return ok;
 }
 
-ssize_t raw_h2_send_callback(nghttp2_session *, const uint8_t *data,
-                             size_t length, int, void *user_data) {
-  auto socket = *static_cast<lupine_socket_t *>(user_data);
-  return raw_write_all(socket, data, length) ? static_cast<ssize_t>(length)
-                                             : NGHTTP2_ERR_CALLBACK_FAILURE;
-}
-
 nghttp2_nv raw_h2_header(const char *name, const char *value) {
   return {reinterpret_cast<uint8_t *>(const_cast<char *>(name)),
           reinterpret_cast<uint8_t *>(const_cast<char *>(value)), strlen(name),

@@ -1,5 +1,6 @@
 #include "managed_advice.h"
 
+#undef NDEBUG
 #include <cassert>
 #include <limits>
 

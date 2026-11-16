@@ -1,5 +1,6 @@
 #include "visible_devices.h"
 
+#undef NDEBUG
 #include <cassert>
 #include <cctype>
 #include <cstdio>
