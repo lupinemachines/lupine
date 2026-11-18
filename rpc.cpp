@@ -533,7 +533,8 @@ void rpc_release_write_builder(rpc_write_builder *builder) {
 
 // Requests on a stream several threads write, the client's host-writes lane
 // and the server's dispatch stream, hold call_mutex from start until written,
-// so their order on the stream is their ticket order.
+// so their order on the stream is their ticket order, and through
+// rpc_read_end when awaited.
 bool rpc_request_shares_stream(const conn_t *conn,
                                const rpc_write_builder *builder) {
   return builder->write_op != -1 && (conn->local_request_parity == 1 ||
@@ -1245,10 +1246,10 @@ int rpc_write_end(conn_t *conn) {
       rpc_tls_io.response_conn = conn;
       rpc_tls_io.response = {write_id, write_stream_id};
     }
-    // Servers originate RPCs only on the dedicated server-to-client stream.
-    // Keep that stream's request/response exchange serialized so a caller can
-    // read its response directly without an application-level dispatcher.
-    if (result == 0 && conn->local_request_parity == 1) {
+    // On a shared stream the caller reads its own answer, so the exchange
+    // stays serialized until it has: server requests always wait for one.
+    if (result == 0 && shares_stream &&
+        (conn->local_request_parity == 1 || builder->write_awaited)) {
       rpc_tls_io.held_call_lock = conn;
     } else if (shares_stream) {
       pthread_mutex_unlock(&conn->call_mutex);
