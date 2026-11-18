@@ -667,8 +667,6 @@ struct lupine_module_snapshot {
 // CUDA_ERROR_FUNCTION_NOT_LOADED to every attribute query. A function that
 // will not load is left out of the snapshot entirely rather than reported with
 // answers that came from an unloaded function.
-//
-// Like a library's, this runs before the response takes the RPC write lock.
 static lupine_module_snapshot lupine_collect_module(CUmodule module) {
   lupine_internal_cuda_query probe;
   lupine_module_snapshot snapshot;
@@ -885,9 +883,6 @@ struct lupine_library_snapshot {
 #endif
 };
 
-// Resolving a kernel to a function can synchronize CUDA work, including a
-// pinned HtoD callback that needs the RPC write lock to fetch client bytes.
-// Finish every CUDA query before starting the response and taking that lock.
 static lupine_library_snapshot lupine_collect_library(CUlibrary library) {
   lupine_internal_cuda_query probe;
   lupine_library_snapshot snapshot;
