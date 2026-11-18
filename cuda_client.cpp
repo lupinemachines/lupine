@@ -4931,16 +4931,20 @@ static int lupine_write_kernel_params(conn_t *conn, void *const *params,
                                       const std::vector<size_t> &sizes,
                                       uint32_t *param_count) {
   *param_count = static_cast<uint32_t>(sizes.size());
-  if (rpc_write(conn, param_count, sizeof(*param_count)) < 0 ||
-      rpc_write(conn, sizes.data(), sizes.size() * sizeof(*sizes.data())) < 0) {
-    return -1;
-  }
+  rpc_write_cursor cursors[8] = {
+      {param_count, sizeof(*param_count)},
+      {sizes.data(), sizes.size() * sizeof(*sizes.data())}};
+  size_t count = 2;
   for (size_t i = 0; i < sizes.size(); ++i) {
-    if (rpc_write(conn, params[i], sizes[i]) < 0) {
-      return -1;
+    cursors[count++] = {params[i], sizes[i]};
+    if (count == std::size(cursors)) {
+      if (rpc_write_cursors(conn, cursors, count) < 0) {
+        return -1;
+      }
+      count = 0;
     }
   }
-  return 0;
+  return rpc_write_cursors(conn, cursors, count);
 }
 
 // The parameter-buffer launch form packs the arguments into one blob, but the
@@ -5139,17 +5143,18 @@ static CUresult lupine_launch_grid_kernel(
   }
   conn_t *conn = lupine_route_remote_conn(prepared.route);
   int rpc_id = cooperative ? RPC_cuLaunchCooperativeKernel : RPC_cuLaunchKernel;
+  rpc_write_cursor header[] = {{&f, sizeof(f)},
+                               {&gridDimX, sizeof(gridDimX)},
+                               {&gridDimY, sizeof(gridDimY)},
+                               {&gridDimZ, sizeof(gridDimZ)},
+                               {&blockDimX, sizeof(blockDimX)},
+                               {&blockDimY, sizeof(blockDimY)},
+                               {&blockDimZ, sizeof(blockDimZ)},
+                               {&sharedMemBytes, sizeof(sharedMemBytes)},
+                               {&hStream, sizeof(hStream)}};
   if (lupine_prepare_rpc(conn) < 0 ||
       lupine_rpc_start_on_stream(conn, rpc_id, hStream) < 0 ||
-      rpc_write(conn, &f, sizeof(f)) < 0 ||
-      rpc_write(conn, &gridDimX, sizeof(gridDimX)) < 0 ||
-      rpc_write(conn, &gridDimY, sizeof(gridDimY)) < 0 ||
-      rpc_write(conn, &gridDimZ, sizeof(gridDimZ)) < 0 ||
-      rpc_write(conn, &blockDimX, sizeof(blockDimX)) < 0 ||
-      rpc_write(conn, &blockDimY, sizeof(blockDimY)) < 0 ||
-      rpc_write(conn, &blockDimZ, sizeof(blockDimZ)) < 0 ||
-      rpc_write(conn, &sharedMemBytes, sizeof(sharedMemBytes)) < 0 ||
-      rpc_write(conn, &hStream, sizeof(hStream)) < 0 ||
+      rpc_write_cursors(conn, header, std::size(header)) < 0 ||
       lupine_write_kernel_params(conn, kernelParams,
                                  prepared.param_layout->sizes,
                                  &prepared.param_count) < 0 ||
