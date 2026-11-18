@@ -190,6 +190,10 @@ struct rpc_request_scope {
   bool publish_host_writes = false;
   bool soft = false;
   std::vector<uintptr_t> keys; // objects later requests order behind it on
+  // Objects it is ordered behind, in the order named, and where among them
+  // the retired scopes go. Resolved into waits when it is written.
+  std::vector<uintptr_t> after;
+  size_t after_retired_at = SIZE_MAX;
   std::vector<rpc_wait_marker> waits;
   // Retired scopes this request waits for, dropped once it publishes.
   size_t retired_count = 0;
@@ -203,8 +207,6 @@ struct rpc_write_builder {
   int write_id;
   int write_op;
   int32_t write_stream_id;
-  uint64_t write_dependency;
-  uint64_t write_ticket;
   bool write_awaited;
   rpc_request_scope write_scope;
   std::vector<rpc_write_cursor> write_queue;
