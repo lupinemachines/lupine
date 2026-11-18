@@ -455,6 +455,8 @@ extern int rpc_http2_write_stream(conn_t *conn, int32_t stream_id,
                                   rpc_write_cursor *cursors, size_t count,
                                   bool awaited = false);
 extern int32_t rpc_http2_dispatch_stream(conn_t *conn);
+// Received bytes of a stream no reader has taken yet. For tests.
+extern size_t rpc_http2_staged_bytes(conn_t *conn, int32_t stream_id);
 extern int32_t rpc_http2_lane_stream(conn_t *conn, uint64_t lane_id);
 extern int rpc_http2_end_stream(conn_t *conn, int32_t stream_id);
 extern int32_t rpc_http2_accept_stream(conn_t *conn);
