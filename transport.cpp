@@ -153,16 +153,25 @@ void free_tls(conn_t *conn) {
 #endif
 }
 
-bool resume_handshake(conn_t *conn, const std::string &checkpoint) {
+enum class resume_result { resumed, parked, failed };
+
+// While parked, the gateway holds each resume until the replica is woken (or a
+// short timeout), so between resumes a client without work only pauses this
+// long; a blocked CUDA call wakes it at once.
+constexpr int kParkedPollMs = 250;
+
+resume_result resume_handshake(conn_t *conn, const std::string &checkpoint,
+                               bool wake) {
   const char *session = getenv("LUPINE_SESSION");
   if (session == nullptr) {
-    return false;
+    return resume_result::failed;
   }
   std::string request = "POST /.well-known/lupine/resume HTTP/1.1\r\n"
                         "Host: lupine\r\nContent-Length: 0\r\n"
                         "x-lupine-session: " +
                         std::string(session) +
-                        "\r\nx-lupine-checkpoint: " + checkpoint + "\r\n\r\n";
+                        "\r\nx-lupine-checkpoint: " + checkpoint + "\r\n" +
+                        (wake ? "x-lupine-wake: 1\r\n" : "") + "\r\n";
   size_t offset = 0;
   while (offset < request.size()) {
     ssize_t written;
@@ -177,7 +186,7 @@ bool resume_handshake(conn_t *conn, const std::string &checkpoint) {
       written = lupine_socket_sendv(conn->connfd, &data, 1);
     }
     if (written <= 0) {
-      return false;
+      return resume_result::failed;
     }
     offset += static_cast<size_t>(written);
   }
@@ -196,16 +205,24 @@ bool resume_handshake(conn_t *conn, const std::string &checkpoint) {
       received = lupine_socket_recv(conn->connfd, &byte, 1);
     }
     if (received != 1) {
-      return false;
+      return resume_result::failed;
     }
     response.push_back(byte);
     if (response.size() >= 4 &&
         response.compare(response.size() - 4, 4, "\r\n\r\n") == 0) {
       constexpr char success[] = "HTTP/1.1 200 ";
-      return response.compare(0, sizeof(success) - 1, success) == 0;
+      constexpr char conflict[] = "HTTP/1.1 409 ";
+      if (response.compare(0, sizeof(success) - 1, success) == 0) {
+        return resume_result::resumed;
+      }
+      if (response.compare(0, sizeof(conflict) - 1, conflict) == 0 &&
+          response.find("\r\nX-Lupine-Parked: 1\r\n") != std::string::npos) {
+        return resume_result::parked;
+      }
+      return resume_result::failed;
     }
   }
-  return false;
+  return resume_result::failed;
 }
 
 bool valid_checkpoint(const std::string &checkpoint) {
@@ -233,6 +250,8 @@ bool reconnect_checkpoint(conn_t *conn, const std::string &checkpoint) {
   free_tls(conn);
   lupine_socket_close(__atomic_exchange_n(&conn->connfd, LUPINE_INVALID_SOCKET,
                                           __ATOMIC_ACQ_REL));
+  // A parked lease's GPU is released; wake it once a call needs the GPU.
+  bool wake = false;
   while (!conn->closed) {
     conn_t replacement = {};
     // Closing the client must interrupt the dial and then a pending TLS/resume
@@ -253,9 +272,12 @@ bool reconnect_checkpoint(conn_t *conn, const std::string &checkpoint) {
       }
       return false;
     }
-    bool ready = replacement.connfd != LUPINE_INVALID_SOCKET &&
-                 initialize_tls(&replacement, endpoint) == 0 &&
-                 resume_handshake(&replacement, checkpoint);
+    resume_result result = resume_result::failed;
+    if (replacement.connfd != LUPINE_INVALID_SOCKET &&
+        initialize_tls(&replacement, endpoint) == 0) {
+      result = resume_handshake(&replacement, checkpoint, wake);
+    }
+    bool ready = result == resume_result::resumed;
     pthread_mutex_lock(&state.mutex);
     if (ready && !state.shutting_down && !conn->closed) {
       conn->connfd = replacement.connfd;
@@ -270,7 +292,13 @@ bool reconnect_checkpoint(conn_t *conn, const std::string &checkpoint) {
     if (replacement.connfd != LUPINE_INVALID_SOCKET) {
       lupine_socket_close(replacement.connfd);
     }
+    if (result == resume_result::parked) {
+      wake = lupine_handoff_wait_for_demand(conn, kParkedPollMs);
+      continue;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    // Keep asking for a GPU while one is needed and none is free yet.
+    wake = wake || lupine_handoff_wait_for_demand(conn, 0);
   }
   return false;
 }

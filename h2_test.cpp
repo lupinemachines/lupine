@@ -2426,6 +2426,8 @@ void test_rpc_repeated_responses_on_lane() {
   require(request_id > 0, "repeated response request write failed");
   require(lupine_handoff_pause_requests(&pair.client) == 0,
           "checkpoint waited for replies held by the surviving client");
+  require(!lupine_handoff_wait_for_demand(&pair.client, 0),
+          "a paused client with no call reported demand");
   auto next_call = std::async(std::launch::async, [&] {
     int result = rpc_write_start_request(&pair.client, kOp);
     return result == 0 ? rpc_write_end(&pair.client) : -1;
@@ -2433,6 +2435,8 @@ void test_rpc_repeated_responses_on_lane() {
   require(next_call.wait_for(std::chrono::milliseconds(20)) ==
               std::future_status::timeout,
           "new client request entered while checkpointing");
+  require(lupine_handoff_wait_for_demand(&pair.client, 5000),
+          "a call blocked while paused did not report demand");
   for (int expected = 0; expected < kChunkCount; ++expected) {
     require(rpc_read_start(&pair.client, request_id) == 0,
             "repeated response read start failed");
@@ -2450,6 +2454,8 @@ void test_rpc_repeated_responses_on_lane() {
   lupine_handoff_resume_requests(&pair.client);
   require(next_call.get() > 0,
           "client request did not resume after checkpointing");
+  require(!lupine_handoff_wait_for_demand(&pair.client, 0),
+          "demand outlived the call that reported it");
   server.join();
 }
 

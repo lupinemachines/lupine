@@ -14,6 +14,9 @@ constexpr uint8_t LUPINE_HANDOFF_CONTROL_FRAME = 0xf0;
 // Callbacks and the drain request can proceed while normal requests wait.
 int lupine_handoff_request_begin(conn_t *conn, int op, bool callback);
 int lupine_handoff_pause_requests(conn_t *conn);
+// Waits up to timeout_ms for a call to block at the paused gate, returning
+// whether one is waiting: a parked connection's demand to wake its GPU.
+bool lupine_handoff_wait_for_demand(conn_t *conn, int timeout_ms);
 void lupine_handoff_resume_requests(conn_t *conn);
 void lupine_handoff_on_resume(conn_t *conn, void (*callback)());
 

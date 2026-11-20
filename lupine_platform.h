@@ -862,4 +862,29 @@ inline int lupine_socket_connect_with_timeout(
 #endif
 }
 
+// Waits on cond for at most timeout_ms; returns false once the time is up.
+#ifdef _WIN32
+inline bool lupine_cond_wait_ms(pthread_cond_t *cond, pthread_mutex_t *mutex,
+                                int timeout_ms) {
+  return SleepConditionVariableSRW(cond, mutex, static_cast<DWORD>(timeout_ms),
+                                   0) != 0;
+}
+#else
+#include <errno.h>
+#include <pthread.h>
+#include <time.h>
+inline bool lupine_cond_wait_ms(pthread_cond_t *cond, pthread_mutex_t *mutex,
+                                int timeout_ms) {
+  struct timespec deadline;
+  clock_gettime(CLOCK_REALTIME, &deadline);
+  deadline.tv_sec += timeout_ms / 1000;
+  deadline.tv_nsec += static_cast<long>(timeout_ms % 1000) * 1000000L;
+  if (deadline.tv_nsec >= 1000000000L) {
+    deadline.tv_sec += 1;
+    deadline.tv_nsec -= 1000000000L;
+  }
+  return pthread_cond_timedwait(cond, mutex, &deadline) != ETIMEDOUT;
+}
+#endif
+
 #endif

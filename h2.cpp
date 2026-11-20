@@ -188,6 +188,9 @@ struct h2_transport {
   bool read_stop = false;
   bool checkpoint_pending = false;
   std::atomic<bool> requests_paused{false};
+  // Calls blocked at the paused gate. A parked connection resumes as soon as
+  // one appears, so the first CUDA call after a park wakes its GPU.
+  std::atomic<int> requests_waiting{0};
   bool socket_parked = false;
   // OpenSSL does not allow concurrent calls on one SSL object, and the reader
   // and writer threads share the connection's. Every SSL call holds tls_mutex;
@@ -2196,10 +2199,13 @@ int lupine_handoff_request_begin(conn_t *conn, int op, bool callback) {
   while (transport->requests_paused.load(std::memory_order_acquire)) {
     pthread_mutex_unlock(&conn->call_mutex);
     pthread_mutex_lock(&conn->async_mutex);
+    transport->requests_waiting.fetch_add(1, std::memory_order_acq_rel);
+    pthread_cond_broadcast(&conn->async_cond);
     while (transport->requests_paused.load(std::memory_order_acquire) &&
            !conn->async_cancelled) {
       pthread_cond_wait(&conn->async_cond, &conn->async_mutex);
     }
+    transport->requests_waiting.fetch_sub(1, std::memory_order_acq_rel);
     bool cancelled = conn->async_cancelled;
     pthread_mutex_unlock(&conn->async_mutex);
     pthread_mutex_lock(&conn->call_mutex);
@@ -2208,6 +2214,30 @@ int lupine_handoff_request_begin(conn_t *conn, int op, bool callback) {
     }
   }
   return 0;
+}
+
+bool lupine_handoff_wait_for_demand(conn_t *conn, int timeout_ms) {
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  if (transport == nullptr) {
+    return false;
+  }
+  auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  pthread_mutex_lock(&conn->async_mutex);
+  while (transport->requests_waiting.load(std::memory_order_acquire) == 0 &&
+         !conn->async_cancelled && !conn->closed) {
+    auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - std::chrono::steady_clock::now())
+                    .count();
+    if (left <= 0) {
+      break;
+    }
+    lupine_cond_wait_ms(&conn->async_cond, &conn->async_mutex,
+                        static_cast<int>(left));
+  }
+  bool demand = transport->requests_waiting.load(std::memory_order_acquire) > 0;
+  pthread_mutex_unlock(&conn->async_mutex);
+  return demand;
 }
 
 int lupine_handoff_pause_requests(conn_t *conn) {
