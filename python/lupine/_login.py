@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from . import LupineError
-from ._credentials import save_token
+from ._credentials import profile_name, save_token
 
 DEFAULT_API_URL = "https://api.lupine.sh"
 DEFAULT_CONSOLE_URL = "https://console.lupine.sh"
@@ -85,6 +85,7 @@ def login(
     timeout: float = 300,
     open_browser: Callable[[str], bool] = webbrowser.open,
     output: Callable[[str], None] = print,
+    profile: str | None = None,
 ) -> LoginResult:
     """Authenticate in a browser and store the resulting bearer token."""
 
@@ -94,6 +95,7 @@ def login(
     console_url = (
         console_url or os.environ.get("LUPINE_CONSOLE_URL") or DEFAULT_CONSOLE_URL
     ).rstrip("/")
+    profile_name(profile)  # reject a bad name before opening the browser
     login_id = secrets.token_hex(24)
     callback_server, callback = _callback_server()
     callback_thread = threading.Thread(
@@ -133,7 +135,7 @@ def login(
                     email=str(user.get("email", "")),
                     name=str(user.get("name", "")),
                 )
-                save_token(api_url, result.token)
+                save_token(api_url, result.token, profile)
                 return result
             callback.wait(min(2, max(0, deadline - time.monotonic())))
             callback.clear()

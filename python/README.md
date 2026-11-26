@@ -266,6 +266,13 @@ with lupine.cloud(gpu_type="RTX_4090") as session:
 
 `lupine.cloud()` uses `LUPINE_API_TOKEN` first, then the credential stored by
 `lupine login`, and releases its process-owned lease when the context exits.
+
+The SDK shares the CLI's credential directory. The default profile uses
+`~/.lupine/credentials.json`. For a named profile, log in with
+`lupine login --profile work` and pass `profile="work"` to `lupine.cloud()`.
+The SDK reads `~/.lupine/profiles/work/credentials.json`. Profile names match
+`^[a-z0-9][a-z0-9-]{0,62}$`.
+
 The bearer token is used only for coordinator API calls. Bind returns the
 regional gateway used for bundle and native RPC traffic, which carry the lease
 ID in `LUPINE_SESSION`.
