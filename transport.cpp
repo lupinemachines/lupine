@@ -73,8 +73,20 @@ int parse_endpoints(const char *servers, bool strict,
       continue;
     }
 
-    size_t colon = token.find(':');
-    endpoint.host = token.substr(0, colon);
+    // An IPv6 literal carries a port only in brackets: "[::1]:14833". A bare
+    // one has too many colons for any of them to be the port separator.
+    size_t colon;
+    if (token.compare(0, 1, "[") == 0) {
+      size_t close = token.find(']');
+      endpoint.host = token.substr(1, close - 1);
+      colon = token.find(':', close);
+    } else {
+      colon = token.find(':');
+      if (colon != token.rfind(':')) {
+        colon = std::string::npos;
+      }
+      endpoint.host = token.substr(0, colon);
+    }
     if (colon != std::string::npos) {
       endpoint.port = token.substr(colon + 1);
     }
@@ -84,6 +96,9 @@ int parse_endpoints(const char *servers, bool strict,
     }
     endpoint.label = endpoint.host;
     if (endpoint.port != kDefaultPort) {
+      if (endpoint.host.find(':') != std::string::npos) {
+        endpoint.label = "[" + endpoint.host + "]";
+      }
       endpoint.label += ":" + endpoint.port;
     }
     endpoints->push_back(std::move(endpoint));

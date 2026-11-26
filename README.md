@@ -238,6 +238,9 @@ TLS-terminating proxy. Both CUDA applications and NVML tools such as
 system trust store. HTTPS defaults to port 443; plain and `http://` endpoints
 default to port 14833.
 
+The server listens on IPv4 and IPv6. Write an IPv6 address in brackets when it
+carries a port, as in `LUPINE_SERVER=[fd00::1]:14833`.
+
 For a specific CUDA version:
 
 ```bash

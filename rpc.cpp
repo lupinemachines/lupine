@@ -164,7 +164,7 @@ lupine_tcp_connect(const char *host, const char *port, unsigned int max_retries,
   for (int attempt = 0;; ++attempt) {
     addrinfo hints;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
+    hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     addrinfo *res = nullptr;
     int gai_status = getaddrinfo(host, port, &hints, &res);
@@ -201,9 +201,6 @@ lupine_tcp_connect(const char *host, const char *port, unsigned int max_retries,
           dialing(LUPINE_INVALID_SOCKET);
         }
         lupine_socket_close(sockfd);
-        if (max_retries == 0) {
-          break;
-        }
       }
       freeaddrinfo(res);
     }
