@@ -485,9 +485,41 @@ int lupine_server_serve_connection_v1(int fd) {
 }
 #endif
 
+// One IPv6 socket with IPV6_V6ONLY off takes IPv4 clients too; the IPv4 socket
+// is the fallback for hosts without IPv6.
+static lupine_socket_t lupine_bind_listener(int family, int port) {
+  lupine_socket_t sockfd = socket(family, SOCK_STREAM, 0);
+  if (sockfd == LUPINE_INVALID_SOCKET) {
+    return sockfd;
+  }
+  sockaddr_storage address = {};
+  socklen_t length = sizeof(sockaddr_in);
+  const int v6only = 0;
+  if (family == AF_INET6) {
+    auto *v6 = reinterpret_cast<sockaddr_in6 *>(&address);
+    v6->sin6_family = AF_INET6;
+    v6->sin6_addr = in6addr_any;
+    v6->sin6_port = htons(port);
+    length = sizeof(*v6);
+  } else {
+    auto *v4 = reinterpret_cast<sockaddr_in *>(&address);
+    v4->sin_family = AF_INET;
+    v4->sin_addr.s_addr = INADDR_ANY;
+    v4->sin_port = htons(port);
+  }
+  if ((family == AF_INET6 && setsockopt(sockfd, IPPROTO_IPV6, IPV6_V6ONLY,
+                                        reinterpret_cast<const char *>(&v6only),
+                                        sizeof(v6only)) != 0) ||
+      lupine_socket_set_reuseaddr(sockfd) < 0 ||
+      bind(sockfd, reinterpret_cast<sockaddr *>(&address), length) != 0) {
+    lupine_socket_close(sockfd);
+    return LUPINE_INVALID_SOCKET;
+  }
+  return sockfd;
+}
+
 int lupine_server_main() {
   int port = DEFAULT_PORT;
-  struct sockaddr_in servaddr, cli;
   if (lupine_socket_init() < 0) {
     LUPINE_LOG_ERROR("Socket initialization failed.");
     exit(EXIT_FAILURE);
@@ -507,12 +539,6 @@ int lupine_server_main() {
   }
 #endif
 
-  lupine_socket_t sockfd = socket(AF_INET, SOCK_STREAM, 0);
-  if (sockfd == LUPINE_INVALID_SOCKET) {
-    LUPINE_LOG_ERROR("Socket creation failed.");
-    exit(EXIT_FAILURE);
-  }
-
   char *p = getenv("LUPINE_PORT");
 
   if (p == NULL) {
@@ -530,18 +556,11 @@ int lupine_server_main() {
     port = static_cast<int>(parsed);
   }
 
-  // Bind the socket
-  memset(&servaddr, 0, sizeof(servaddr));
-  servaddr.sin_family = AF_INET;
-  servaddr.sin_addr.s_addr = INADDR_ANY;
-  servaddr.sin_port = htons(port);
-
-  if (lupine_socket_set_reuseaddr(sockfd) < 0) {
-    LUPINE_LOG_ERROR("Socket bind failed.");
-    exit(EXIT_FAILURE);
+  lupine_socket_t sockfd = lupine_bind_listener(AF_INET6, port);
+  if (sockfd == LUPINE_INVALID_SOCKET) {
+    sockfd = lupine_bind_listener(AF_INET, port);
   }
-
-  if (bind(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) != 0) {
+  if (sockfd == LUPINE_INVALID_SOCKET) {
     LUPINE_LOG_ERROR("Socket bind failed.");
     exit(EXIT_FAILURE);
   }
@@ -789,8 +808,7 @@ int lupine_server_main() {
       continue;
     }
 #endif
-    socklen_t len = sizeof(cli);
-    lupine_socket_t connfd = accept(sockfd, (struct sockaddr *)&cli, &len);
+    lupine_socket_t connfd = accept(sockfd, nullptr, nullptr);
 
     if (connfd == LUPINE_INVALID_SOCKET) {
 #ifndef _WIN32

@@ -52,5 +52,33 @@ int main() {
   pthread_mutex_destroy(&registry->registry_mutex);
   delete registry;
   registry = nullptr;
+
+  // An IPv4 client on the dual-stack listener keeps its IPv4 address label.
+  sockaddr_in6 any = {};
+  any.sin6_family = AF_INET6;
+  socklen_t length = sizeof(any);
+  const int v6only = 0;
+  int listener = socket(AF_INET6, SOCK_STREAM, 0);
+  if (listener >= 0 &&
+      setsockopt(listener, IPPROTO_IPV6, IPV6_V6ONLY, &v6only,
+                 sizeof(v6only)) == 0 &&
+      bind(listener, reinterpret_cast<sockaddr *>(&any), length) == 0 &&
+      listen(listener, 1) == 0) {
+    getsockname(listener, reinterpret_cast<sockaddr *>(&any), &length);
+    sockaddr_in loopback = {};
+    loopback.sin_family = AF_INET;
+    loopback.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    loopback.sin_port = any.sin6_port;
+    int client = socket(AF_INET, SOCK_STREAM, 0);
+    assert(connect(client, reinterpret_cast<sockaddr *>(&loopback),
+                   sizeof(loopback)) == 0);
+    int accepted = accept(listener, nullptr, nullptr);
+    assert(peer_address(accepted) == "127.0.0.1");
+    close(accepted);
+    close(client);
+  }
+  if (listener >= 0) {
+    close(listener);
+  }
   std::cout << "monitor_server_test: PASS\n";
 }

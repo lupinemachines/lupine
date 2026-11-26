@@ -147,7 +147,14 @@ std::string peer_address(lupine_socket_t socket) {
   if (address.ss_family == AF_INET) {
     source = &reinterpret_cast<const sockaddr_in *>(&address)->sin_addr;
   } else if (address.ss_family == AF_INET6) {
-    source = &reinterpret_cast<const sockaddr_in6 *>(&address)->sin6_addr;
+    // The dual-stack listener reports IPv4 clients as ::ffff:a.b.c.d.
+    const in6_addr *v6 =
+        &reinterpret_cast<const sockaddr_in6 *>(&address)->sin6_addr;
+    source = v6;
+    if (IN6_IS_ADDR_V4MAPPED(v6)) {
+      address.ss_family = AF_INET;
+      source = &v6->s6_addr[12];
+    }
   }
   if (source == nullptr ||
       inet_ntop(address.ss_family, source, text, sizeof(text)) == nullptr) {

@@ -35,19 +35,26 @@ struct listener {
   std::string port;
 };
 
-bool open_listener(listener *out, int backlog = 4) {
+bool open_listener(listener *out, int backlog = 4, int family = AF_INET) {
   if (lupine_socket_init() < 0) {
     return false;
   }
-  lupine_socket_t fd = socket(AF_INET, SOCK_STREAM, 0);
+  lupine_socket_t fd = socket(family, SOCK_STREAM, 0);
   if (fd == LUPINE_INVALID_SOCKET) {
     return false;
   }
-  sockaddr_in address = {};
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  address.sin_port = 0;
-  socklen_t length = sizeof(address);
+  sockaddr_storage address = {};
+  socklen_t length = sizeof(sockaddr_in);
+  auto *v4 = reinterpret_cast<sockaddr_in *>(&address);
+  auto *v6 = reinterpret_cast<sockaddr_in6 *>(&address);
+  if (family == AF_INET6) {
+    v6->sin6_family = AF_INET6;
+    v6->sin6_addr = in6addr_loopback;
+    length = sizeof(*v6);
+  } else {
+    v4->sin_family = AF_INET;
+    v4->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  }
   if (bind(fd, reinterpret_cast<sockaddr *>(&address), length) != 0 ||
       listen(fd, backlog) != 0 ||
       getsockname(fd, reinterpret_cast<sockaddr *>(&address), &length) != 0) {
@@ -55,7 +62,8 @@ bool open_listener(listener *out, int backlog = 4) {
     return false;
   }
   out->fd = fd;
-  out->port = std::to_string(ntohs(address.sin_port));
+  out->port =
+      std::to_string(ntohs(family == AF_INET6 ? v6->sin6_port : v4->sin_port));
   return true;
 }
 
@@ -219,9 +227,10 @@ struct mock_server {
   std::thread worker;
 
   explicit mock_server(const char *tok = nullptr,
-                       std::atomic<bool> *gate = nullptr) {
+                       std::atomic<bool> *gate = nullptr,
+                       int family = AF_INET) {
     meta.bulk_token = tok;
-    if (!open_listener(&sock, 16))
+    if (!open_listener(&sock, 16, family))
       return;
     worker = std::thread([this, gate]() {
       lupine_socket_t fd = accept(sock.fd, nullptr, nullptr);
@@ -349,6 +358,50 @@ void test_fleet_publication_and_bulk_lanes() {
   lupine_test_unsetenv("LUPINE_BULK_CONNECTIONS");
 }
 
+// LUPINE_SERVER=[::1]:port used to split at the first colon, and the dial only
+// ever asked the resolver for IPv4 addresses.
+void test_ipv6_endpoints() {
+  lupine_client_transport_config cfg;
+  cfg.dial_policy = lupine_client_dial_policy::single_attempt;
+  cfg.strict_endpoints = true;
+  lupine_test_setenv("LUPINE_BULK_CONNECTIONS", "2");
+  {
+    mock_server srv("0123456789abcdef0123456789abcdef", nullptr, AF_INET6);
+    if (srv.sock.fd == LUPINE_INVALID_SOCKET) {
+      printf("skip  no IPv6 loopback on this host\n");
+    } else {
+      const std::string label = "[::1]:" + srv.sock.port;
+      int rc = lupine_client_transport_open(cfg, label.c_str());
+      const lupine_client_endpoint *endpoint =
+          rc == 0 ? lupine_client_transport_endpoint(0) : nullptr;
+      check(endpoint != nullptr && endpoint->host == "::1" &&
+                endpoint->port == srv.sock.port && endpoint->label == label,
+            "bracketed IPv6 endpoint parses and connects");
+      auto *lanes = rc == 0 ? lupine_client_transport_bulk_lanes(
+                                  lupine_client_transport_connection(0))
+                            : nullptr;
+      check(lanes != nullptr && lanes->count == 2,
+            "bulk lanes dial an IPv6 endpoint");
+      lupine_client_transport_close();
+    }
+  }
+  lupine_test_unsetenv("LUPINE_BULK_CONNECTIONS");
+
+  // A name with both address families must still reach an IPv4-only listener
+  // on a one-shot dial, whichever family the resolver lists first.
+  listener v4;
+  if (open_listener(&v4)) {
+    lupine_socket_t dialed =
+        lupine_tcp_connect("localhost", v4.port.c_str(), 0);
+    check(dialed != LUPINE_INVALID_SOCKET,
+          "one-shot dial falls through to the next resolved address");
+    if (dialed != LUPINE_INVALID_SOCKET) {
+      lupine_socket_close(dialed);
+    }
+    lupine_socket_close(v4.fd);
+  }
+}
+
 } // namespace
 
 int main() {
@@ -358,6 +411,7 @@ int main() {
   test_close_interrupts_a_checkpoint_redial();
 #endif
   test_fleet_publication_and_bulk_lanes();
+  test_ipv6_endpoints();
   printf("\ntransport_test: %s\n", failures == 0 ? "PASS" : "FAIL");
   return failures == 0 ? 0 : 1;
 }
