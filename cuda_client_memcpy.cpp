@@ -1848,11 +1848,13 @@ static CUresult lupine_flush_dirty_host_pages_to_route(size_t route_id) {
       if (result == CUDA_SUCCESS) {
         result = lupine_bulk_push(conn, lanes, dst, source, bytes, true);
       }
-      if (result != CUDA_SUCCESS) {
+      if (result == CUDA_SUCCESS) {
+        continue;
+      }
+      if (result != CUDA_ERROR_NOT_READY) {
         release_ranges(true);
         return result;
       }
-      continue;
     }
     memcpy(headers[count].data(), &dst, sizeof(dst));
     memcpy(headers[count].data() + sizeof(dst), &bytes, sizeof(bytes));
@@ -4623,8 +4625,12 @@ static CUresult lupine_bulk_push(conn_t *conn, lupine_bulk_lanes *lanes,
                                  uint64_t destination, const void *source,
                                  size_t bytes, bool to_host) {
   static std::atomic<uint64_t> next_copy_id{1};
-  if (pthread_mutex_lock(&lanes->mutex) != 0) {
-    return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  // A flush to host memory may run in a host function's acknowledgement,
+  // which a copy holding the bulk connections can be waiting for behind the
+  // host function: it does not wait for them, and reports NOT_READY.
+  if (to_host ? pthread_mutex_trylock(&lanes->mutex) != 0
+              : pthread_mutex_lock(&lanes->mutex) != 0) {
+    return to_host ? CUDA_ERROR_NOT_READY : CUDA_ERROR_DEVICE_UNAVAILABLE;
   }
   uint64_t copy_id = next_copy_id.fetch_add(1);
   uint8_t host = to_host ? 1 : 0;

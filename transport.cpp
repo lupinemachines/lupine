@@ -606,7 +606,12 @@ lupine_bulk_lanes *lupine_client_transport_bulk_lanes(conn_t *conn) {
   }
   lupine_bulk_lanes *lanes = &state.bulk[index];
   pthread_mutex_unlock(&state.mutex);
-  pthread_mutex_lock(&lanes->mutex);
+  // A copy holding them may be waiting for a host function whose flush asks
+  // for them here, so a busy pool is returned without waiting: it was usable
+  // when that copy took it.
+  if (pthread_mutex_trylock(&lanes->mutex) != 0) {
+    return lanes;
+  }
   bool usable = lanes->count != 0 && !lanes->failed;
   pthread_mutex_unlock(&lanes->mutex);
   return usable ? lanes : nullptr;
