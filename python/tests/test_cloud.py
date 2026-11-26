@@ -144,7 +144,7 @@ def test_heartbeat_survives_non_lupine_exceptions(monkeypatch):
 
 
 def test_cloud_session_requires_login(monkeypatch, tmp_path):
-    monkeypatch.setenv("LUPINE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("LUPINE_API_TOKEN", raising=False)
 
     with pytest.raises(
@@ -174,3 +174,38 @@ def test_cloud_session_releases_lease_when_bind_omits_gateway(monkeypatch):
     assert [request[0] for request in state["requests"]].count("DELETE") == 1
     assert "LUPINE_SESSION" not in os.environ
     assert "LUPINE_SERVER" not in os.environ
+
+
+def test_cloud_session_uses_profile_credential(monkeypatch, tmp_path):
+    from lupine import _credentials
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("LUPINE_API_TOKEN", raising=False)
+    monkeypatch.delenv("LUPINE_SESSION", raising=False)
+    monkeypatch.delenv("LUPINE_SERVER", raising=False)
+    monkeypatch.setattr(lupine, "load_native", lambda *, missing_ok: {})
+
+    with cloud_server() as (api_url, _):
+        _credentials.save_token(api_url, "lup_default")
+        _credentials.save_token(api_url, "lup_test", profile="work")
+
+        with pytest.raises(lupine.LupineAuthenticationError):
+            lupine.cloud(api_url=api_url)
+
+        with lupine.cloud(api_url=api_url, profile="work") as session:
+            assert session.lease_id == "lease-python"
+
+
+@pytest.mark.parametrize("name", ["../evil", "Work", ""])
+def test_cloud_rejects_invalid_profile_with_explicit_token(monkeypatch, name):
+    monkeypatch.setenv("LUPINE_API_TOKEN", "lup_environment")
+    monkeypatch.setattr(
+        _cloud.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: pytest.fail("contacted the API"),
+    )
+
+    with pytest.raises(lupine.LupineError, match="invalid profile name"):
+        lupine.cloud(api_url="http://127.0.0.1:9", token="lup_test", profile=name)
+    with pytest.raises(lupine.LupineError, match="invalid profile name"):
+        lupine.cloud(api_url="http://127.0.0.1:9", profile=name)

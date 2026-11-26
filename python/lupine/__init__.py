@@ -247,12 +247,13 @@ def cloud(
     gpu_type: str | None = None,
     gpu_count: int | None = None,
     region: str | None = None,
+    profile: str | None = None,
 ) -> Any:
     """Acquire and activate an authenticated Lupine Cloud GPU.
 
     ``token`` defaults to ``LUPINE_API_TOKEN`` and then to the credential
-    stored by ``lupine login``. The lease is released when its context exits
-    or, when called without a context manager, at process shutdown.
+    stored by ``lupine login`` for ``profile`` (default: ``"default"``).
+    The lease is released at context exit or process shutdown.
     """
 
     from ._cloud import connect as connect_cloud
@@ -263,6 +264,7 @@ def cloud(
         gpu_type=gpu_type,
         gpu_count=gpu_count,
         region=region,
+        profile=profile,
     )
 
 

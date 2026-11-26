@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import LupineAuthenticationError, LupineError
-from ._credentials import token_for
+from ._credentials import profile_name, token_for
 from ._login import _USER_AGENT, DEFAULT_API_URL, DEFAULT_CONSOLE_URL
 
 LOGIN_HINT = (
@@ -113,6 +113,7 @@ class CloudSession:
     gpu_type: str | None = None
     gpu_count: int | None = None
     region: str | None = None
+    profile: str | None = None
     lease_id: str | None = field(default=None, init=False)
     gpu: dict[str, Any] = field(default_factory=dict, init=False)
     data_plane: dict[str, Any] = field(default_factory=dict, init=False)
@@ -133,8 +134,10 @@ class CloudSession:
 
         if self.lease_id is not None:
             return self
+        # Reject a bad profile even when token= makes it unused.
+        profile_name(self.profile)
         self.api_url = _api_url(self.api_url)
-        credential = self.token or token_for(self.api_url)
+        credential = self.token or token_for(self.api_url, self.profile)
         if not credential:
             raise LupineAuthenticationError(
                 "Lupine Cloud is not authenticated. " + LOGIN_HINT
@@ -283,6 +286,7 @@ def connect(
     gpu_type: str | None = None,
     gpu_count: int | None = None,
     region: str | None = None,
+    profile: str | None = None,
 ) -> CloudSession:
     """Acquire and activate an authenticated Lupine Cloud session."""
 
@@ -292,4 +296,5 @@ def connect(
         gpu_type=gpu_type,
         gpu_count=gpu_count,
         region=region,
+        profile=profile,
     ).start()
