@@ -2852,6 +2852,54 @@ void test_request_start_rejects_null_and_closed_conn() {
 // addresses itself. CUDA targets are not TSan-instrumented in this project.
 #if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__) &&           \
     !defined(_WIN32)
+// Threads that wait for answers on the shared host-writes lane each read
+// their own: a flush settle and a bulk copy to host memory can overlap.
+void test_rpc_host_writes_awaited_answers() {
+  h2_pair pair;
+  init_pair(&pair);
+  exchange_settings(&pair);
+  static constexpr int kThreads = 4;
+  static constexpr int kPerThread = 300;
+  std::thread server([&] {
+    bind_accepted_stream(&pair.server, "host-writes lane bind failed");
+    for (int i = 0; i < kThreads * kPerThread; ++i) {
+      int payload = 0;
+      require(rpc_dispatch(&pair.server, 0) == 106 &&
+                  rpc_read(&pair.server, &payload, sizeof(payload)) == 0,
+              "host-writes request read failed");
+      int request_id = rpc_read_end(&pair.server);
+      require(request_id > 0 &&
+                  rpc_write_start_response(&pair.server, request_id) == 0 &&
+                  rpc_write(&pair.server, &payload, sizeof(payload)) == 0 &&
+                  rpc_write_end(&pair.server) == request_id,
+              "host-writes answer failed");
+    }
+    rpc_unbind_http2_stream(&pair.server);
+  });
+  std::vector<std::thread> callers;
+  for (int t = 0; t < kThreads; ++t) {
+    callers.emplace_back([&pair, t] {
+      for (int i = 0; i < kPerThread; ++i) {
+        int payload = t * kPerThread + i;
+        int answer = -1;
+        require(rpc_write_start_request_on(&pair.client, 106,
+                                           RPC_SCOPE_HOST_WRITES) == 0 &&
+                    rpc_write(&pair.client, &payload, sizeof(payload)) == 0 &&
+                    rpc_wait_for_response(&pair.client) == 0 &&
+                    rpc_read(&pair.client, &answer, sizeof(answer)) == 0 &&
+                    rpc_read_end(&pair.client) > 0,
+                "a host-writes caller lost its answer");
+        require(answer == payload,
+                "a host-writes caller read another's answer");
+      }
+    });
+  }
+  for (auto &caller : callers) {
+    caller.join();
+  }
+  server.join();
+}
+
 void test_rpc_read_uses_w_offset() {
   long configured_page_size = sysconf(_SC_PAGESIZE);
   require(configured_page_size > 0, "page size lookup failed");
@@ -2966,6 +3014,7 @@ int main() {
   RUN_CASE(test_rpc_repeated_responses_on_lane());
   RUN_CASE(test_rpc_request_nested_in_response_builder());
   RUN_CASE(test_rpc_response_completed_hook());
+  RUN_CASE(test_rpc_host_writes_awaited_answers());
   RUN_CASE(test_process_control_preserves_queued_output());
   RUN_CASE(test_destroy_releases_a_parked_session());
   RUN_CASE(test_response_wait_sends_transport_heartbeat());
