@@ -4525,13 +4525,16 @@ static int lupine_read_library_load_response(
   return 0;
 }
 
-// One batch per process, for the route of the first remote load: the images
-// the previous run of this command line loaded, re-read from this process's
-// own mapping of their objects and requested in one round trip. Entries are
-// handed out once, so every handle cudart receives is distinct and
-// cuLibraryUnload keeps its native meaning.
+// The images the previous run of this command line loaded, for the route of
+// its first profiled load, re-read from this process's own mapping of their
+// objects. The first load of a profiled image not sent yet requests, in one
+// round trip, every such image whose object is mapped by then, so an object
+// mapped later, as cuDNN's engines are, brings its own images in with its
+// first load. Entries are handed out once, so every handle cudart receives is
+// distinct and cuLibraryUnload keeps its native meaning.
 struct lupine_library_batch_entry {
   lupine_library_reference ref;
+  // Set once sent.
   const unsigned char *image = nullptr;
   CUlibrary library = nullptr;
   CUresult result = CUDA_ERROR_UNKNOWN;
@@ -4539,9 +4542,7 @@ struct lupine_library_batch_entry {
 
 struct lupine_library_batch_state {
   std::mutex mutex;
-  std::condition_variable finished_cv;
-  bool started = false;
-  bool finished = true;
+  bool read = false;
   int route_id = -2;
   std::vector<lupine_library_batch_entry> entries;
   std::filesystem::path profile;
@@ -4601,14 +4602,15 @@ static void lupine_write_file_atomically(const std::filesystem::path &path,
   std::filesystem::remove(temp, ec);
 }
 
-// Runs on its own lane with the app's context current: the server loads under
-// it, and lupine_read_library keys its caches by the reading thread's context.
-static void lupine_library_batch_main(conn_t *conn, CUcontext context) {
-  auto &state = lupine_library_batch();
-  lupine_current_context = context;
+// The server loads under the caller's current context, and lupine_read_library
+// keys its caches by it. Called with the batch state's mutex held.
+static void lupine_library_batch_load(conn_t *conn,
+                                      lupine_library_batch_state &state) {
+  CUcontext context = lupine_current_context;
   std::vector<lupine_library_batch_entry *> sent;
   for (auto &entry : state.entries) {
-    if ((entry.image = lupine_mapped_fatbin(&entry.ref)) != nullptr) {
+    if (entry.image == nullptr &&
+        (entry.image = lupine_mapped_fatbin(&entry.ref)) != nullptr) {
       sent.push_back(&entry);
     }
   }
@@ -4645,56 +4647,46 @@ static void lupine_library_batch_main(conn_t *conn, CUcontext context) {
   LUPINE_TRACE_LOG("LUPINE library batch: "
                    << state.entries.size() << " profiled, " << count
                    << " sent, " << loaded << " loaded, ok=" << ok);
-  std::lock_guard<std::mutex> lock(state.mutex);
-  state.finished = true;
-  state.finished_cv.notify_all();
-}
-
-static void lupine_library_batch_start(lupine_route route) {
-  auto &state = lupine_library_batch();
-  std::lock_guard<std::mutex> lock(state.mutex);
-  if (state.started) {
-    return;
-  }
-  state.started = true;
-  state.route_id = lupine_route_identity(route);
-  state.profile = lupine_library_profile_path();
-  std::ifstream in(state.profile, std::ios::binary);
-  std::string data((std::istreambuf_iterator<char>(in)),
-                   std::istreambuf_iterator<char>());
-  for (size_t at = 0; at + 4 <= data.size() && state.entries.size() < 4096;) {
-    uint32_t size = 0;
-    std::memcpy(&size, &data[at], sizeof(size));
-    at += sizeof(size);
-    lupine_library_batch_entry entry;
-    if (size > data.size() - at ||
-        !lupine_library_reference_decode(data.substr(at, size), &entry.ref)) {
-      break;
-    }
-    at += size;
-    state.entries.push_back(std::move(entry));
-  }
-  if (!state.entries.empty()) {
-    state.finished = false;
-    std::thread(lupine_library_batch_main, lupine_route_remote_conn(route),
-                lupine_current_context)
-        .detach();
-  }
 }
 
 static bool lupine_library_batch_claim(lupine_route route,
                                        const lupine_library_reference &ref,
                                        CUlibrary *library) {
   auto &state = lupine_library_batch();
-  std::unique_lock<std::mutex> lock(state.mutex);
+  std::lock_guard<std::mutex> lock(state.mutex);
+  if (!state.read) {
+    state.read = true;
+    state.route_id = lupine_route_identity(route);
+    state.profile = lupine_library_profile_path();
+    std::ifstream in(state.profile, std::ios::binary);
+    std::string data((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    for (size_t at = 0; at + 4 <= data.size() && state.entries.size() < 4096;) {
+      uint32_t size = 0;
+      std::memcpy(&size, &data[at], sizeof(size));
+      at += sizeof(size);
+      lupine_library_batch_entry entry;
+      if (size > data.size() - at ||
+          !lupine_library_reference_decode(data.substr(at, size), &entry.ref)) {
+        break;
+      }
+      at += size;
+      state.entries.push_back(std::move(entry));
+    }
+  }
   if (lupine_route_identity(route) != state.route_id) {
     return false;
   }
-  state.finished_cv.wait(lock, [&] { return state.finished; });
   auto it = std::find_if(
       state.entries.begin(), state.entries.end(),
       [&](const auto &entry) { return entry.ref.record == ref.record; });
-  if (it == state.entries.end() || it->result != CUDA_SUCCESS) {
+  if (it == state.entries.end()) {
+    return false;
+  }
+  if (it->image == nullptr) {
+    lupine_library_batch_load(lupine_route_remote_conn(route), state);
+  }
+  if (it->result != CUDA_SUCCESS) {
     return false;
   }
   *library = it->library;
@@ -4766,7 +4758,6 @@ cuLibraryLoadData(CUlibrary *library, const void *code,
       lupine_locate_fatbin(image_data, &ref);
   lupine_library_reference_record(&ref, libraryOptions, libraryOptionValues,
                                   numLibraryOptions);
-  lupine_library_batch_start(route);
   CUresult return_value = CUDA_SUCCESS;
   const bool claimed =
       profiled && lupine_library_batch_claim(route, ref, library);
