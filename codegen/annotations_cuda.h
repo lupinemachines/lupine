@@ -742,12 +742,15 @@ CUresult cuKernelSetAttribute(CUfunction_attribute attrib, int val,
   CUresult resolved = lupine_resolve_kernel_for_route(&kernel, route);
   if (resolved != CUDA_SUCCESS)
     return resolved;
+  lupine_kernel_attribute_key key{lupine_route_identity(route), kernel,
+                                  (int)attrib, (int)dev};
+  int cached = 0;
+  if (lupine_attribute_get(key, cached, lupine_attribute_source::set) &&
+      cached == val)
+    return CUDA_SUCCESS;
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (return_value == CUDA_SUCCESS)
-    lupine_attribute_set(
-        lupine_kernel_attribute_key{lupine_route_identity(route), kernel,
-                                    (int)attrib, (int)dev},
-        val, lupine_attribute_source::set);
+    lupine_attribute_set(key, val, lupine_attribute_source::set);
   return return_value;
 }
 /**

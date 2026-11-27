@@ -343,7 +343,12 @@ struct lupine_occupancy_key {
   }
 };
 
-enum class lupine_attribute_cache { function, function_set, kernel };
+enum class lupine_attribute_cache {
+  function,
+  function_set,
+  kernel,
+  kernel_set
+};
 
 #if CUDA_VERSION >= 12000
 // Cache successful remote encodings by every input, including the route.
@@ -411,7 +416,8 @@ struct lupine_key_hash {
 };
 
 template <lupine_attribute_cache Kind> static auto &get_cache() {
-  using key = std::conditional_t<Kind == lupine_attribute_cache::kernel,
+  using key = std::conditional_t<Kind == lupine_attribute_cache::kernel ||
+                                     Kind == lupine_attribute_cache::kernel_set,
                                  lupine_kernel_attribute_key,
                                  lupine_function_attribute_key>;
   return lupine_leaked<lupine_conc_map<key, int, lupine_key_hash>>([] {});
@@ -2109,8 +2115,12 @@ bool lupine_attribute_get(const lupine_function_attribute_key &key, int &value,
   return cache.find(key, value);
 }
 
-bool lupine_attribute_get(const lupine_kernel_attribute_key &key, int &value) {
-  return get_cache<lupine_attribute_cache::kernel>().find(key, value);
+bool lupine_attribute_get(const lupine_kernel_attribute_key &key, int &value,
+                          lupine_attribute_source source) {
+  auto &cache = source == lupine_attribute_source::set
+                    ? get_cache<lupine_attribute_cache::kernel_set>()
+                    : get_cache<lupine_attribute_cache::kernel>();
+  return cache.find(key, value);
 }
 
 void lupine_attribute_set(const lupine_function_attribute_key &key, int value,
@@ -2135,6 +2145,7 @@ void lupine_attribute_set(const lupine_kernel_attribute_key &key, int value,
     cache.insert_or_assign(key, value);
     return;
   }
+  get_cache<lupine_attribute_cache::kernel_set>().insert_or_assign(key, value);
   if (cache.find(key, cached) && cached == value) {
     return;
   }
@@ -5039,6 +5050,7 @@ extern "C" void lupine_invalidate_function_caches() {
   }
   lupine_occupancy_cache().clear();
   get_cache<lupine_attribute_cache::kernel>().clear();
+  get_cache<lupine_attribute_cache::kernel_set>().clear();
   get_cache<lupine_attribute_cache::function>().clear();
   get_cache<lupine_attribute_cache::function_set>().clear();
 }
@@ -5321,6 +5333,8 @@ static void lupine_erase_unloaded_callable_caches(
     lupine_kernel_function_cache().erase_if(
         [&](const auto &key, const auto &) { return has_kern(key.kernel); });
     get_cache<lupine_attribute_cache::kernel>().erase_if(
+        [&](const auto &key, const auto &) { return has_kern(key.kernel); });
+    get_cache<lupine_attribute_cache::kernel_set>().erase_if(
         [&](const auto &key, const auto &) { return has_kern(key.kernel); });
   }
   if (!unloaded_functions.empty())

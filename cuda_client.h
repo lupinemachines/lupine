@@ -77,7 +77,9 @@ inline bool lupine_function_attribute_set_rejected(CUfunction_attribute attrib,
 bool lupine_attribute_get(
     const lupine_function_attribute_key &key, int &value,
     lupine_attribute_source source = lupine_attribute_source::query);
-bool lupine_attribute_get(const lupine_kernel_attribute_key &key, int &value);
+bool lupine_attribute_get(
+    const lupine_kernel_attribute_key &key, int &value,
+    lupine_attribute_source source = lupine_attribute_source::query);
 void lupine_attribute_set(
     const lupine_function_attribute_key &key, int value,
     lupine_attribute_source source = lupine_attribute_source::query);
