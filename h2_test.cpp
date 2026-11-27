@@ -2848,10 +2848,6 @@ void test_request_start_rejects_null_and_closed_conn() {
           "closed conn request start did not fail");
 }
 
-// TSan supports only narrow application VA bands and owns these fixed test
-// addresses itself. CUDA targets are not TSan-instrumented in this project.
-#if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__) &&           \
-    !defined(_WIN32)
 // Threads that wait for answers on the shared host-writes lane each read
 // their own: a flush settle and a bulk copy to host memory can overlap.
 void test_rpc_host_writes_awaited_answers() {
@@ -2900,6 +2896,10 @@ void test_rpc_host_writes_awaited_answers() {
   server.join();
 }
 
+// TSan supports only narrow application VA bands and owns these fixed test
+// addresses itself. CUDA targets are not TSan-instrumented in this project.
+#if defined(MAP_FIXED_NOREPLACE) && !defined(__SANITIZE_THREAD__) &&           \
+    !defined(_WIN32)
 void test_rpc_read_uses_w_offset() {
   long configured_page_size = sysconf(_SC_PAGESIZE);
   require(configured_page_size > 0, "page size lookup failed");
