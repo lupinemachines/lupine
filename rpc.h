@@ -218,7 +218,7 @@ struct conn_t : rpc_write_builder {
   int request_id;
 
   pthread_t read_thread;
-  pthread_mutex_t write_mutex, call_mutex, async_mutex;
+  pthread_mutex_t write_mutex, call_mutex, host_writes_mutex, async_mutex;
   pthread_cond_t async_cond;
   uint64_t issued_async_sequence; // tickets sent, under write_mutex
   uint64_t serving_async_sequence;

@@ -304,6 +304,7 @@ void rpc_conn_init(conn_t *conn, lupine_socket_t connfd, int request_id) {
   // Default-attribute initialization cannot fail on any supported platform.
   pthread_mutex_init(&conn->write_mutex, nullptr);
   pthread_mutex_init(&conn->call_mutex, nullptr);
+  pthread_mutex_init(&conn->host_writes_mutex, nullptr);
   pthread_mutex_init(&conn->async_mutex, nullptr);
   pthread_cond_init(&conn->async_cond, nullptr);
   conn->async_sync_initialized = 1;
@@ -412,6 +413,7 @@ void rpc_conn_destroy(conn_t *conn) {
   pthread_mutex_destroy(&conn->async_mutex);
   pthread_mutex_destroy(&conn->write_mutex);
   pthread_mutex_destroy(&conn->call_mutex);
+  pthread_mutex_destroy(&conn->host_writes_mutex);
 }
 
 namespace {
@@ -506,7 +508,7 @@ struct rpc_thread_io {
   rpc_nested_write_frame nested_write;
   conn_t *response_conn = nullptr;
   rpc_response_route response;
-  conn_t *held_call_lock = nullptr;
+  pthread_mutex_t *held_exchange_lock = nullptr;
 };
 
 static thread_local rpc_thread_io rpc_tls_io;
@@ -537,9 +539,10 @@ void rpc_release_write_builder(conn_t *conn, bool request_nested_in_response) {
 }
 
 void rpc_release_held_call_lock(conn_t *conn) {
-  if (rpc_tls_io.held_call_lock == conn) {
-    rpc_tls_io.held_call_lock = nullptr;
-    pthread_mutex_unlock(&conn->call_mutex);
+  pthread_mutex_t *held = rpc_tls_io.held_exchange_lock;
+  if (held == &conn->call_mutex || held == &conn->host_writes_mutex) {
+    rpc_tls_io.held_exchange_lock = nullptr;
+    pthread_mutex_unlock(held);
   }
 }
 
@@ -1196,7 +1199,17 @@ int rpc_write_end(conn_t *conn) {
   }
   bool request = conn->write_op != -1;
   bool request_nested_in_response = rpc_tls_io.nested_write.conn == conn;
-  if (conn->closed) {
+  // Every thread's host-writes requests share one stream, and each caller
+  // reads its own answer off it, so the awaited ones run one exchange at a
+  // time, through rpc_read_end. Nested in a response it does not wait, as for
+  // call_mutex.
+  bool awaited_host_write =
+      request && conn->write_awaited && conn->write_scope.publish_host_writes;
+  if (conn->closed ||
+      (awaited_host_write &&
+       (request_nested_in_response
+            ? pthread_mutex_trylock(&conn->host_writes_mutex)
+            : pthread_mutex_lock(&conn->host_writes_mutex)) != 0)) {
     rpc_release_write_builder(conn, request_nested_in_response);
     if (request) {
       pthread_mutex_unlock(&conn->call_mutex);
@@ -1273,9 +1286,14 @@ int rpc_write_end(conn_t *conn) {
     // Keep that stream's request/response exchange serialized so a caller can
     // read its response directly without an application-level dispatcher.
     if (result == 0 && conn->local_request_parity == 1) {
-      rpc_tls_io.held_call_lock = conn;
+      rpc_tls_io.held_exchange_lock = &conn->call_mutex;
     } else {
       pthread_mutex_unlock(&conn->call_mutex);
+    }
+    if (awaited_host_write && result == 0) {
+      rpc_tls_io.held_exchange_lock = &conn->host_writes_mutex;
+    } else if (awaited_host_write) {
+      pthread_mutex_unlock(&conn->host_writes_mutex);
     }
   }
   return result == 0 ? write_id : -1;
