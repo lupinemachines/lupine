@@ -3846,12 +3846,12 @@ static CUresult lupine_register_host(void *p, size_t bytesize,
     return result;
   }
 
-  std::lock_guard<std::mutex> lock(lupine_host_allocation_mutex());
+  std::unique_lock<std::mutex> lock(lupine_host_allocation_mutex());
   auto &allocations = lupine_mutable_host_allocations_locked();
   if (lupine_host_range_registered_locked(base, bytesize)) {
-    if (server_host != nullptr) {
-      (void)lupine_remote_cuMemFreeHost(server_host, route);
-    }
+    // The free's flush and its wait for pushed copies both take the mutex.
+    lock.unlock();
+    (void)lupine_remote_cuMemFreeHost(server_host, route);
     return CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED;
   }
   lupine_host_allocation allocation = lupine_make_host_allocation(
