@@ -842,6 +842,7 @@
 #define LUPINE_RPC_lupineStreamPoolInit 394532239
 #define LUPINE_RPC_lupineEventCreateBatch 178746252
 #define LUPINE_RPC_lupineEventNotify 1794198699
+#define LUPINE_RPC_lupineMemAllocBatch 1248794238
 #define LUPINE_RPC_lupineLibraryLoadBatch 1285236640
 #define LUPINE_RPC_lupineDeviceOpen 1273631741
 #define LUPINE_RPC_lupineDeviceClose 31060484

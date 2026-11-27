@@ -108,6 +108,14 @@ bool lupine_try_cached_kernel_library(CUkernel kernel, CUlibrary *pLib);
 // push the record's completion once its stream passes it.
 void lupine_event_recorded(lupine_route route, CUevent event, CUstream stream);
 
+// Answers a remote cuMemAlloc from an unclaimed earlier allocation of the same
+// size, or with a batch once the size repeats; false leaves it to the single
+// allocation. lupine_alloc_release_spares frees the route's unclaimed ones and
+// says whether there were any.
+bool lupine_alloc_from_pool(lupine_route route, size_t bytesize,
+                            CUdeviceptr *dptr, CUresult *result);
+bool lupine_alloc_release_spares(lupine_route route);
+
 bool lupine_try_cached_occupancy(lupine_route route, CUfunction func,
                                  int blockSize, size_t dynamicSMemSize,
                                  unsigned int flags, bool with_flags,

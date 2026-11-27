@@ -1722,10 +1722,21 @@ CUresult cuMemGetInfo_v2(size_t *free, size_t *total) {
 
 CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
   lupine_route route = lupine_route_for_current_context();
+  CUresult pooled = CUDA_SUCCESS;
+  if (dptr != nullptr && !lupine_route_is_local(route) &&
+      lupine_alloc_from_pool(route, bytesize, dptr, &pooled))
+    return pooled != CUDA_SUCCESS
+               ? pooled
+               : lupine_record_disjoint_allocation(dptr, bytesize, route, [&] {
+                   return cuMemAlloc_v2(dptr, bytesize);
+                 });
   CUresult return_value;
   if (lupine_route_is_local(route)) {
     return_value = lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuMemAlloc_v2"), dptr, bytesize);
+    if (return_value == CUDA_ERROR_OUT_OF_MEMORY &&
+        !lupine_route_is_local(route) && lupine_alloc_release_spares(route))
+      return cuMemAlloc_v2(dptr, bytesize);
     if (return_value == CUDA_SUCCESS && dptr != nullptr)
       return_value = lupine_record_disjoint_allocation(
           dptr, bytesize, route, [&] { return cuMemAlloc_v2(dptr, bytesize); });
@@ -1743,6 +1754,9 @@ CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
       rpc_read(conn, &return_value, sizeof(CUresult)) < 0 ||
       rpc_read_end(conn) < 0)
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
+  if (return_value == CUDA_ERROR_OUT_OF_MEMORY &&
+      !lupine_route_is_local(route) && lupine_alloc_release_spares(route))
+    return cuMemAlloc_v2(dptr, bytesize);
   if (return_value == CUDA_SUCCESS && dptr != nullptr)
     return_value = lupine_record_disjoint_allocation(
         dptr, bytesize, route, [&] { return cuMemAlloc_v2(dptr, bytesize); });

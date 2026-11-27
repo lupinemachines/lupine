@@ -787,7 +787,18 @@ CUresult cuMemGetInfo_v2(size_t *free, size_t *total);
  * @param bytesize SEND_ONLY
  */
 CUresult cuMemAlloc_v2(CUdeviceptr *dptr, size_t bytesize) {
+  CUresult pooled = CUDA_SUCCESS;
+  if (dptr != nullptr && !lupine_route_is_local(route) &&
+      lupine_alloc_from_pool(route, bytesize, dptr, &pooled))
+    return pooled != CUDA_SUCCESS
+               ? pooled
+               : lupine_record_disjoint_allocation(dptr, bytesize, route, [&] {
+                   return cuMemAlloc_v2(dptr, bytesize);
+                 });
   CUresult return_value = LUPINE_GENERATED_CALL();
+  if (return_value == CUDA_ERROR_OUT_OF_MEMORY &&
+      !lupine_route_is_local(route) && lupine_alloc_release_spares(route))
+    return cuMemAlloc_v2(dptr, bytesize);
   if (return_value == CUDA_SUCCESS && dptr != nullptr)
     return_value = lupine_record_disjoint_allocation(
         dptr, bytesize, route, [&] { return cuMemAlloc_v2(dptr, bytesize); });
@@ -3959,6 +3970,8 @@ void lupineStreamPoolInit();
 void lupineEventCreateBatch();
 /** @disabled */
 void lupineEventNotify();
+/** @disabled */
+void lupineMemAllocBatch();
 /** @disabled */
 void lupineLibraryLoadBatch();
 /** @disabled */

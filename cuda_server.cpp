@@ -3102,6 +3102,49 @@ int handle_cuCtxCreate_v2(conn_t *conn) {
 // The first event is the caller's allocation; later creations are speculative.
 // A failure stops the batch. If the first creation failed, report it without
 // modifying the caller's output; otherwise hand out only real, created events.
+// Allocates up to `count` blocks of one size in the client's context; the
+// client keeps the extras for later allocations of that size.
+int handle_lupineMemAllocBatch(conn_t *conn) {
+  constexpr uint32_t kBatchMax = 8;
+  CUcontext context = nullptr;
+  size_t bytesize = 0;
+  uint32_t count = 0;
+  if (rpc_read(conn, &context, sizeof(context)) < 0 ||
+      rpc_read(conn, &bytesize, sizeof(bytesize)) < 0 ||
+      rpc_read(conn, &count, sizeof(count)) < 0) {
+    return -1;
+  }
+  int request_id = rpc_read_end(conn);
+  if (request_id < 0) {
+    return -1;
+  }
+  CUdeviceptr pointers[kBatchMax];
+  CUdevice device = -1;
+  uint32_t got = 0;
+  CUresult result = cuCtxPushCurrent(context);
+  if (result == CUDA_SUCCESS) {
+    result = cuCtxGetDevice(&device);
+    while (result == CUDA_SUCCESS && got < std::min(count, kBatchMax)) {
+      result = cuMemAlloc_v2(&pointers[got], bytesize);
+      got += result == CUDA_SUCCESS;
+    }
+    CUcontext popped = nullptr;
+    cuCtxPopCurrent(&popped);
+  }
+  if (got != 0) {
+    result = CUDA_SUCCESS;
+  }
+  return rpc_write_start_response(conn, request_id) < 0 ||
+                 rpc_write(conn, &result, sizeof(result)) < 0 ||
+                 rpc_write(conn, &device, sizeof(device)) < 0 ||
+                 rpc_write(conn, &got, sizeof(got)) < 0 ||
+                 (got > 0 &&
+                  rpc_write(conn, pointers, got * sizeof(*pointers)) < 0) ||
+                 rpc_write_end(conn) < 0
+             ? -1
+             : 0;
+}
+
 int handle_lupineEventCreateBatch(conn_t *conn) {
   constexpr uint32_t kBatchSize = 32;
   CUcontext context = nullptr;

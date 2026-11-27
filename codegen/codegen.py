@@ -348,6 +348,7 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineStreamPoolInit",
     "lupineEventCreateBatch",
     "lupineEventNotify",
+    "lupineMemAllocBatch",
     "lupineLibraryLoadBatch",
     "lupineDeviceOpen",
     "lupineDeviceClose",

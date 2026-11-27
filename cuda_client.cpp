@@ -1740,6 +1740,8 @@ static void lupine_stream_pool_discard(int route_id, CUdevice dev,
                                        CUcontext ctx);
 static void lupine_event_pool_discard(int route_id, CUdevice remote_device,
                                       CUcontext ctx);
+static void lupine_alloc_pool_discard(int route_id, CUdevice remote_device,
+                                      CUcontext ctx);
 static void lupine_forget_context_local_storage(CUcontext ctx);
 
 // One forwarded retain keeps a device's primary context alive for every
@@ -1868,6 +1870,7 @@ extern "C" CUresult cuDevicePrimaryCtxRelease_v2(CUdevice dev) {
   // After the server teardown: a batch requested before it is discarded too.
   lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
   lupine_event_pool_discard(lupine_route_identity(route), remote_dev, nullptr);
+  lupine_alloc_pool_discard(lupine_route_identity(route), remote_dev, nullptr);
   return result;
 }
 
@@ -1901,6 +1904,7 @@ extern "C" CUresult cuDevicePrimaryCtxReset_v2(CUdevice dev) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   lupine_stream_pool_discard(lupine_route_identity(route), dev, nullptr);
   lupine_event_pool_discard(lupine_route_identity(route), remote_dev, nullptr);
+  lupine_alloc_pool_discard(lupine_route_identity(route), remote_dev, nullptr);
   if (return_value == CUDA_SUCCESS) {
     lupine_invalidate_current_context_cache();
     auto &retains = lupine_primary_ctx_retains();
@@ -3137,6 +3141,149 @@ static void lupine_event_pool_discard(int route_id, CUdevice remote_device,
   }
 }
 
+// A cuMemAlloc size seen before is allocated several at a time, and the extras
+// answer later requests of that size without a round trip. Each is the
+// driver's own allocation in the requesting context, so like an unclaimed
+// pooled event it dies with that context. A size's misses ask for 1, 2, 4 and
+// then kLupineAllocBatch allocations, while the route holds at most
+// kLupineAllocSpareBytes unclaimed; an allocation that fails frees them before
+// reporting the failure.
+static constexpr uint32_t kLupineAllocBatch = 8;
+static constexpr size_t kLupineAllocSpareBytes = 64ull << 20;
+
+struct lupine_alloc_pool {
+  CUdevice remote_device = -1;
+  uint32_t next = 1;
+  std::vector<CUdeviceptr> spares;
+};
+
+struct lupine_alloc_pools {
+  std::mutex mutex;
+  std::map<std::tuple<int, CUcontext, size_t>, lupine_alloc_pool> pools;
+  std::map<int, size_t> spare_bytes;
+  // Bumped by each discard, like the event pool's.
+  uint64_t generation = 0;
+};
+
+static lupine_alloc_pools &lupine_alloc_state() {
+  return lupine_leaked<lupine_alloc_pools>([] {});
+}
+
+static void lupine_alloc_pool_discard(int route_id, CUdevice remote_device,
+                                      CUcontext ctx) {
+  auto &state = lupine_alloc_state();
+  std::lock_guard<std::mutex> lock(state.mutex);
+  ++state.generation;
+  for (auto it = state.pools.begin(); it != state.pools.end();) {
+    const bool matches =
+        std::get<0>(it->first) == route_id &&
+        (ctx != nullptr ? std::get<1>(it->first) == ctx
+                        : it->second.remote_device == remote_device);
+    if (matches) {
+      state.spare_bytes[route_id] -=
+          it->second.spares.size() * std::get<2>(it->first);
+    }
+    it = matches ? state.pools.erase(it) : std::next(it);
+  }
+}
+
+bool lupine_alloc_from_pool(lupine_route route, size_t bytesize,
+                            CUdeviceptr *dptr, CUresult *result) {
+  CUcontext context = lupine_current_context_hint();
+  if (context == nullptr || bytesize == 0) {
+    return false;
+  }
+  const int route_id = lupine_route_identity(route);
+  const auto key = std::make_tuple(route_id, context, bytesize);
+  auto &state = lupine_alloc_state();
+  uint32_t count = 0;
+  uint64_t generation = 0;
+  {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    generation = state.generation;
+    auto &pool = state.pools[key];
+    size_t &held = state.spare_bytes[route_id];
+    if (!pool.spares.empty()) {
+      *dptr = pool.spares.back();
+      pool.spares.pop_back();
+      held -= bytesize;
+      *result = CUDA_SUCCESS;
+      return true;
+    }
+    size_t room = held < kLupineAllocSpareBytes
+                      ? (kLupineAllocSpareBytes - held) / bytesize
+                      : 0;
+    count = static_cast<uint32_t>(std::min<size_t>(pool.next, room + 1));
+    pool.next = std::min(pool.next * 2, kLupineAllocBatch);
+    if (count < 2) {
+      return false;
+    }
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  CUdeviceptr pointers[kLupineAllocBatch];
+  CUdevice device = -1;
+  uint32_t got = 0;
+  CUresult batch = CUDA_ERROR_UNKNOWN;
+  if (lupine_prepare_rpc(conn) < 0 ||
+      rpc_write_start_request_on(conn, LUPINE_RPC_lupineMemAllocBatch,
+                                 RPC_SCOPE_NONE) < 0 ||
+      rpc_write(conn, &context, sizeof(context)) < 0 ||
+      rpc_write(conn, &bytesize, sizeof(bytesize)) < 0 ||
+      rpc_write(conn, &count, sizeof(count)) < 0 ||
+      rpc_wait_for_response(conn) < 0 ||
+      rpc_read(conn, &batch, sizeof(batch)) < 0 ||
+      rpc_read(conn, &device, sizeof(device)) < 0 ||
+      rpc_read(conn, &got, sizeof(got)) < 0 || got > count ||
+      rpc_read(conn, pointers, got * sizeof(*pointers)) < 0 ||
+      rpc_read_end(conn) < 0) {
+    *result = CUDA_ERROR_DEVICE_UNAVAILABLE;
+    return true;
+  }
+  // The single allocation reports the driver's own failure.
+  if (got == 0) {
+    return false;
+  }
+  *dptr = pointers[0];
+  *result = CUDA_SUCCESS;
+  std::lock_guard<std::mutex> lock(state.mutex);
+  if (generation == state.generation) {
+    auto &pool = state.pools[key];
+    pool.remote_device = device;
+    pool.spares.insert(pool.spares.end(), pointers + 1, pointers + got);
+    state.spare_bytes[route_id] += (got - 1) * bytesize;
+  }
+  return true;
+}
+
+bool lupine_alloc_release_spares(lupine_route route) {
+  const int route_id = lupine_route_identity(route);
+  std::vector<CUdeviceptr> spares;
+  {
+    auto &state = lupine_alloc_state();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    for (auto &[key, pool] : state.pools) {
+      if (std::get<0>(key) == route_id) {
+        spares.insert(spares.end(), pool.spares.begin(), pool.spares.end());
+        pool.spares.clear();
+      }
+    }
+    state.spare_bytes[route_id] = 0;
+  }
+  conn_t *conn = lupine_route_remote_conn(route);
+  for (CUdeviceptr spare : spares) {
+    CUresult freed = CUDA_ERROR_UNKNOWN;
+    if (lupine_prepare_rpc(conn) < 0 ||
+        rpc_write_start_request_on(conn, RPC_cuMemFree_v2, RPC_SCOPE_NONE) <
+            0 ||
+        rpc_write(conn, &spare, sizeof(spare)) < 0 ||
+        rpc_wait_for_response(conn) < 0 ||
+        rpc_read(conn, &freed, sizeof(freed)) < 0 || rpc_read_end(conn) < 0) {
+      break;
+    }
+  }
+  return !spares.empty();
+}
+
 extern "C" CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags) {
   lupine_route route = lupine_route_for_current_context();
   if (lupine_route_is_local(route)) {
@@ -3271,6 +3418,8 @@ extern "C" void lupine_forget_destroyed_context(CUcontext ctx) {
   lupine_invalidate_function_caches();
   lupine_invalidate_current_context_cache();
   lupine_event_pool_discard(
+      lupine_route_identity(lupine_route_for_context(ctx)), -1, ctx);
+  lupine_alloc_pool_discard(
       lupine_route_identity(lupine_route_for_context(ctx)), -1, ctx);
   lupine_forget_context_owner(ctx);
   lupine_forget_context_local_storage(ctx);
