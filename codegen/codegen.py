@@ -347,6 +347,7 @@ PRIVATE_RPC_FUNCTIONS = [
     "lupineDtohPush",
     "lupineStreamPoolInit",
     "lupineEventCreateBatch",
+    "lupineEventNotify",
     "lupineLibraryLoadBatch",
     "lupineDeviceOpen",
     "lupineDeviceClose",

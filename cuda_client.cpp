@@ -3827,6 +3827,23 @@ extern "C" CUresult cuLinkDestroy(CUlinkState state) {
   return return_value;
 }
 
+void lupine_event_recorded(lupine_route route, CUevent event, CUstream stream) {
+  // A captured record does not run, so nothing would be pushed for it.
+  uint64_t record = lupine_event_invalidate_completion(
+      &lupine_events, event,
+      lupine_active_stream_captures.load(std::memory_order_relaxed) == 0);
+  conn_t *conn = lupine_route_remote_conn(route);
+  if (record == 0 || lupine_prepare_rpc(conn) < 0 ||
+      lupine_rpc_start_on_stream(conn, LUPINE_RPC_lupineEventNotify, stream) <
+          0 ||
+      rpc_write(conn, &event, sizeof(event)) < 0 ||
+      rpc_write(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_write(conn, &record, sizeof(record)) < 0) {
+    return;
+  }
+  (void)rpc_write_end(conn);
+}
+
 extern "C" CUresult cuEventQuery(CUevent hEvent) {
   lupine_route route = lupine_route_for_event(hEvent);
   if (lupine_route_is_local(route)) {
@@ -3844,9 +3861,12 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
   uint64_t records[kLupineEventQueryBatch + 1];
   uint64_t tickets[kLupineEventQueryBatch + 1];
   CUresult results[kLupineEventQueryBatch + 1];
-  if (!lupine_event_query_needed(&lupine_events, hEvent, &records[0])) {
-    return lupine_sync_mapped_device_to_host();
+  bool not_ready = false;
+  if (!lupine_event_query_needed(&lupine_events, hEvent, &records[0],
+                                 &not_ready)) {
+    return not_ready ? CUDA_ERROR_NOT_READY : lupine_refresh_mapped_host();
   }
+  lupine_event_watch(&lupine_events, hEvent);
   // Other pending events on this server ride along to warm the cache.
   uint32_t count = lupine_event_collect_query_batch(
       &lupine_events, hEvent, conn, lupine_rpc_conn_for_event, events + 1,
@@ -3876,8 +3896,13 @@ extern "C" CUresult cuEventQuery(CUevent hEvent) {
   }
   lupine_event_cache_completions(&lupine_events, events, records, results,
                                  count + 1);
-  return results[0] == CUDA_SUCCESS ? lupine_sync_mapped_device_to_host()
-                                    : results[0];
+  // A tracked record's completion covers only the records before it, and
+  // caching it noted that; an untracked event's could cover any.
+  if (results[0] != CUDA_SUCCESS) {
+    return results[0];
+  }
+  return records[0] != 0 ? lupine_refresh_mapped_host()
+                         : lupine_sync_mapped_device_to_host();
 }
 
 extern "C" CUresult cuCtxCreate_v2(CUcontext *pctx, unsigned int flags,

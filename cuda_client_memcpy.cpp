@@ -1319,6 +1319,9 @@ struct lupine_dtoh_receiver {
 // The copy id of a delivery that carries no bytes: its copy wrote the server's
 // copy of memory refreshed on access, which is marked stale instead.
 static constexpr uint64_t kLupineDtohInvalidate = ~uint64_t{0};
+// The copy id of an event record's completion: rows.dst names the event and
+// rows.pitch the record's stamp.
+static constexpr uint64_t kLupineDtohEventDone = ~uint64_t{1};
 
 static void lupine_mark_pushed_stale(conn_t *conn, void *host);
 
@@ -1417,6 +1420,13 @@ static int lupine_read_pushed_rows(conn_t *conn, lupine_dtoh_receiver *receiver,
   }
   if (copy_id == kLupineDtohInvalidate) {
     lupine_mark_pushed_stale(conn, rows.dst);
+    return 0;
+  }
+  if (copy_id == kLupineDtohEventDone) {
+    CUevent event = static_cast<CUevent>(rows.dst);
+    uint64_t record = rows.pitch;
+    CUresult done = CUDA_SUCCESS;
+    lupine_event_cache_completions(&lupine_events, &event, &record, &done, 1);
     return 0;
   }
   if (rows.width == 0 || rows.height == 0 || rows.depth == 0) {
@@ -2944,6 +2954,11 @@ extern "C" void lupine_retire_stale_fetch_stream(CUstream stream) {
 }
 
 extern "C" CUresult lupine_sync_mapped_device_to_host() {
+  lupine_event_observe_synchronize(&lupine_events);
+  return lupine_refresh_mapped_host();
+}
+
+CUresult lupine_refresh_mapped_host() {
   if (lupine_active_stream_captures.load(std::memory_order_relaxed) != 0) {
     return CUDA_SUCCESS;
   }

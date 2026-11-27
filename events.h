@@ -22,6 +22,12 @@
 #include "rpc.h"
 
 constexpr uint32_t kLupineEventQueryBatch = 16;
+// Events tracked at once. torch's page-locked allocator keeps one per copy in
+// flight, a few batches deep behind a DataLoader.
+constexpr uint32_t kLupineEventSlots = 64;
+// A record whose completion is being pushed still asks the server after this
+// many local answers, so a sticky error or a push that never comes surfaces.
+constexpr uint32_t kLupineEventLocalAnswers = 7;
 
 struct lupine_event_slot {
   CUevent event;
@@ -31,12 +37,21 @@ struct lupine_event_slot {
   // no longer matches and cannot be cached against the newer record.
   uint64_t record;
   bool complete;
+  // Queried over the wire once, so the server pushes its records' completions.
+  bool watched;
+  // The current record's completion is being pushed.
+  bool pushing;
+  // Queries of the current record answered NOT_READY here.
+  uint32_t local_answers;
 };
 
 struct lupine_event_table {
   std::mutex mutex;
-  lupine_event_slot slots[kLupineEventQueryBatch] = {};
+  lupine_event_slot slots[kLupineEventSlots] = {};
   std::atomic<uint64_t> record_seq{0};
+  // The newest record stamp something seen complete may cover: a synchronize
+  // covers every record before it, an event's record every record before it.
+  uint64_t observed = 0;
 };
 
 // The process-wide table.
@@ -45,9 +60,13 @@ extern lupine_event_table lupine_events;
 typedef conn_t *(*lupine_event_conn_resolver)(CUevent event);
 
 // A fresh record voids the cached completion, and starts tracking the event if
-// it was not tracked before.
-void lupine_event_invalidate_completion(lupine_event_table *table,
-                                        CUevent event);
+// it was not tracked before. With `push`, a watched event's record is marked
+// as having its completion pushed; returns its stamp then, or zero.
+uint64_t lupine_event_invalidate_completion(lupine_event_table *table,
+                                            CUevent event, bool push = false);
+
+// Marks the event watched: a query it costs is likely to be repeated.
+void lupine_event_watch(lupine_event_table *table, CUevent event);
 
 // Voids every cached completion, for work that records events it does not
 // name, such as a graph launch.
@@ -58,8 +77,15 @@ void lupine_event_forget(lupine_event_table *table, CUevent event);
 
 // True when the query has to reach the server. Writes the record stamp to hand
 // back to lupine_event_cache_completions, or zero if the event is not tracked.
+// Otherwise *not_ready, when given, says the answer is NOT_READY: a record
+// whose completion is still being pushed answers so while nothing seen
+// complete since could cover it, which is what the device would say a moment
+// earlier, except for every kLupineEventLocalAnswers + 1th query.
 bool lupine_event_query_needed(lupine_event_table *table, CUevent event,
-                               uint64_t *record);
+                               uint64_t *record, bool *not_ready = nullptr);
+
+// Every record made so far may now be complete.
+void lupine_event_observe_synchronize(lupine_event_table *table);
 
 // Fills events/records with other outstanding events on the same connection,
 // to warm the cache alongside a query that is already going out.

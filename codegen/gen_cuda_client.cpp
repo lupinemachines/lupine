@@ -4178,7 +4178,7 @@ CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
     return_value = lupine_call_real_cuda_fn(
         LUPINE_REAL_CUDA_SYMBOL("cuEventRecord"), hEvent, hStream);
     if (!lupine_route_is_local(route))
-      lupine_event_invalidate_completion(&lupine_events, hEvent);
+      lupine_event_recorded(route, hEvent, hStream);
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -4191,7 +4191,7 @@ CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return_value = CUDA_SUCCESS;
   if (!lupine_route_is_local(route))
-    lupine_event_invalidate_completion(&lupine_events, hEvent);
+    lupine_event_recorded(route, hEvent, hStream);
   return return_value;
 }
 
@@ -4205,7 +4205,7 @@ CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
         LUPINE_REAL_CUDA_SYMBOL("cuEventRecordWithFlags"), hEvent, hStream,
         flags);
     if (!lupine_route_is_local(route))
-      lupine_event_invalidate_completion(&lupine_events, hEvent);
+      lupine_event_recorded(route, hEvent, hStream);
     return return_value;
   }
   conn_t *conn = lupine_route_remote_conn(route);
@@ -4220,7 +4220,7 @@ CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
     return CUDA_ERROR_DEVICE_UNAVAILABLE;
   return_value = CUDA_SUCCESS;
   if (!lupine_route_is_local(route))
-    lupine_event_invalidate_completion(&lupine_events, hEvent);
+    lupine_event_recorded(route, hEvent, hStream);
   return return_value;
 }
 
