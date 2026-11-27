@@ -424,6 +424,9 @@ struct lupine_dtoh_staging {
 // A delivery's copy id when it carries no bytes: the copy wrote the server's
 // copy of memory the client refreshes on access, so the client marks it stale.
 static constexpr uint64_t kLupineDtohInvalidate = ~uint64_t{0};
+// The copy id of an event record's completion: client.dst names the event and
+// client.pitch the client's stamp for the record.
+static constexpr uint64_t kLupineDtohEventDone = ~uint64_t{1};
 
 // A device-to-host copy on its way to the client.
 struct lupine_dtoh_delivery {
@@ -433,6 +436,7 @@ struct lupine_dtoh_delivery {
   bool invalidate = false;
   // Staging capacity this delivery holds against kLupineDtohPushLimitBytes.
   size_t reserved = 0;
+  bool event = false;
 };
 
 // Staging held by queued copies, from submission until the bytes are sent.
@@ -664,6 +668,7 @@ struct lupine_dtoh_push_data {
   bool one_shot = true;
   size_t reserved = 0;
   CUgraph graph = nullptr;
+  bool event = false;
 };
 
 // Numbers the copy and hands it to the push lane. It runs in stream order, so
@@ -672,9 +677,9 @@ struct lupine_dtoh_push_data {
 // covers it.
 static void CUDA_CB lupine_dtoh_push_callback(void *opaque) {
   auto *data = static_cast<lupine_dtoh_push_data *>(opaque);
-  bool invalidate = data->source.host == nullptr;
-  lupine_dtoh_delivery delivery{0, data->client, data->source, invalidate,
-                                data->reserved};
+  bool invalidate = !data->event && data->source.host == nullptr;
+  lupine_dtoh_delivery delivery{0,          data->client,   data->source,
+                                invalidate, data->reserved, data->event};
   if (!data->one_shot && !invalidate) {
     size_t bytes = delivery.client.bytes();
     delivery.bytes = {std::malloc(bytes), 0, 0};
@@ -743,7 +748,8 @@ int handle_lupineDtohPush(conn_t *conn) {
     bool bulk = bulk_reader != 0 && !lupine_bulk_lost() &&
                 bytes >= kLupineDtohBulkBytes && delivery.client.height == 1 &&
                 delivery.client.depth == 1;
-    uint64_t copy_id = delivery.invalidate ? kLupineDtohInvalidate
+    uint64_t copy_id = delivery.event        ? kLupineDtohEventDone
+                       : delivery.invalidate ? kLupineDtohInvalidate
                        : bulk ? (uint64_t{1} << 62) | delivery.number
                               : 0;
     rpc_write_cursor cursors[] = {
@@ -776,6 +782,38 @@ int handle_lupineDtohPush(conn_t *conn) {
   lock.unlock();
   if (bulk_reader != 0) {
     lupine_close_push_bulk();
+  }
+  return 0;
+}
+
+// Pushes a watched event's record to the client once its stream passes it,
+// in delivery order behind every copy the record covers. A captured record
+// is left alone: the host function would join the graph.
+int handle_lupineEventNotify(conn_t *conn) {
+  CUevent event = nullptr;
+  CUstream stream = nullptr;
+  uint64_t record = 0;
+  if (rpc_read(conn, &event, sizeof(event)) < 0 ||
+      rpc_read(conn, &stream, sizeof(stream)) < 0 ||
+      rpc_read(conn, &record, sizeof(record)) < 0 || rpc_read_end(conn) < 0) {
+    return -1;
+  }
+  CUstreamCaptureStatus capture = CU_STREAM_CAPTURE_STATUS_NONE;
+  if (cuStreamIsCapturing(stream, &capture) != CUDA_SUCCESS ||
+      capture != CU_STREAM_CAPTURE_STATUS_NONE) {
+    return 0;
+  }
+  lupine_dtoh_push *push = lupine_dtoh_push_for(conn);
+  lupine_host_rows client;
+  client.dst = event;
+  client.pitch = record;
+  auto *data = new lupine_dtoh_push_data{push, client, {}, true, 0};
+  data->event = true;
+  push->queued.fetch_add(1, std::memory_order_acq_rel);
+  if (cuLaunchHostFunc(stream, lupine_dtoh_push_callback, data) !=
+      CUDA_SUCCESS) {
+    push->queued.fetch_sub(1, std::memory_order_acq_rel);
+    delete data;
   }
   return 0;
 }

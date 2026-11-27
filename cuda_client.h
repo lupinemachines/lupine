@@ -104,6 +104,10 @@ CUresult lupine_finish_kernel_get_function(CUresult return_value,
                                            CUkernel kernel, CUfunction function,
                                            CUfunction *pFunc);
 bool lupine_try_cached_kernel_library(CUkernel kernel, CUlibrary *pLib);
+// Voids the event's cached completion. A watched event also asks the server to
+// push the record's completion once its stream passes it.
+void lupine_event_recorded(lupine_route route, CUevent event, CUstream stream);
+
 bool lupine_try_cached_occupancy(lupine_route route, CUfunction func,
                                  int blockSize, size_t dynamicSMemSize,
                                  unsigned int flags, bool with_flags,

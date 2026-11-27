@@ -2179,7 +2179,7 @@ CUresult cuEventCreate(CUevent *phEvent, unsigned int Flags);
 CUresult cuEventRecord(CUevent hEvent, CUstream hStream) {
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (!lupine_route_is_local(route))
-    lupine_event_invalidate_completion(&lupine_events, hEvent);
+    lupine_event_recorded(route, hEvent, hStream);
   return return_value;
 }
 /**
@@ -2193,7 +2193,7 @@ CUresult cuEventRecordWithFlags(CUevent hEvent, CUstream hStream,
                                 unsigned int flags) {
   CUresult return_value = LUPINE_GENERATED_CALL();
   if (!lupine_route_is_local(route))
-    lupine_event_invalidate_completion(&lupine_events, hEvent);
+    lupine_event_recorded(route, hEvent, hStream);
   return return_value;
 }
 /**
@@ -3957,6 +3957,8 @@ void cuGraphAddNode_v2();
 void lupineStreamPoolInit();
 /** @disabled */
 void lupineEventCreateBatch();
+/** @disabled */
+void lupineEventNotify();
 /** @disabled */
 void lupineLibraryLoadBatch();
 /** @disabled */

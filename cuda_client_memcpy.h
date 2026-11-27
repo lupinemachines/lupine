@@ -56,6 +56,8 @@ void lupine_prepare_mapped_host_pointers(
 CUresult lupine_prepare_portable_host_allocations(lupine_route route,
                                                   bool expose_portable);
 extern "C" CUresult lupine_sync_mapped_device_to_host();
+// The refresh alone: an event query has observed only its own record.
+CUresult lupine_refresh_mapped_host();
 extern "C" void lupine_invalidate_launched_managed(CUdeviceptr pointer,
                                                    CUstream stream);
 extern "C" void lupine_adopt_managed_global(lupine_route route,

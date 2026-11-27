@@ -82,23 +82,14 @@ bool test_rerecord_forces_fresh_query() {
 
 bool test_eviction_is_oldest_recorded() {
   lupine_event_table table;
-  CUevent events[kLupineEventQueryBatch];
-  uint64_t recorded[kLupineEventQueryBatch];
-  for (uintptr_t i = 0; i < kLupineEventQueryBatch + 1; ++i) {
+  for (uintptr_t i = 0; i < kLupineEventSlots + 1; ++i) {
     lupine_event_invalidate_completion(&table, fake_event(i));
   }
   uint64_t newest_recorded = 0;
-  if (!lupine_event_query_needed(&table, fake_event(kLupineEventQueryBatch),
+  if (!lupine_event_query_needed(&table, fake_event(kLupineEventSlots),
                                  &newest_recorded) ||
-      newest_recorded != kLupineEventQueryBatch + 1) {
+      newest_recorded != kLupineEventSlots + 1) {
     std::cerr << "FAIL: newest event lost its slot\n";
-    return false;
-  }
-  uint32_t count = lupine_event_collect_query_batch(
-      &table, fake_event(kLupineEventQueryBatch), kConnA, resolve_all_to_a,
-      events, recorded);
-  if (batch_contains(events, count, fake_event(0))) {
-    std::cerr << "FAIL: oldest recorded event was not evicted\n";
     return false;
   }
   uint64_t untracked_recorded = 1;
@@ -184,6 +175,89 @@ bool test_destroyed_event_is_removed_from_prefetch() {
   return true;
 }
 
+// A watched record whose completion is being pushed answers NOT_READY here,
+// asking the server every so often; a pushed completion answers SUCCESS.
+bool test_pushed_record_answers_not_ready_once() {
+  lupine_event_table table;
+  CUevent event = fake_event(0);
+  uint64_t recorded = 0;
+  bool not_ready = false;
+  if (lupine_event_invalidate_completion(&table, event, true) != 0) {
+    std::cerr << "FAIL: an unwatched record asked for a push\n";
+    return false;
+  }
+  lupine_event_watch(&table, event);
+  uint64_t pushed = lupine_event_invalidate_completion(&table, event, true);
+  if (pushed == 0 ||
+      lupine_event_query_needed(&table, event, &recorded, &not_ready) ||
+      !not_ready) {
+    std::cerr << "FAIL: a pushed record did not answer NOT_READY locally\n";
+    return false;
+  }
+  for (uint32_t i = 1; i < kLupineEventLocalAnswers; ++i) {
+    not_ready = false;
+    if (lupine_event_query_needed(&table, event, &recorded, &not_ready) ||
+        !not_ready) {
+      std::cerr << "FAIL: a pushed record stopped answering locally early\n";
+      return false;
+    }
+  }
+  not_ready = false;
+  if (!lupine_event_query_needed(&table, event, &recorded, &not_ready) ||
+      not_ready) {
+    std::cerr << "FAIL: a pushed record never asked the server\n";
+    return false;
+  }
+  lupine_event_invalidate_completion(&table, event, true);
+  complete(&table, &event, &recorded, 1);
+  not_ready = false;
+  if (!lupine_event_query_needed(&table, event, &recorded, &not_ready) &&
+      !not_ready) {
+    std::cerr << "FAIL: a stale push answered the newer record\n";
+    return false;
+  }
+  pushed = lupine_event_invalidate_completion(&table, event, true);
+  complete(&table, &event, &pushed, 1);
+  not_ready = false;
+  if (lupine_event_query_needed(&table, event, &recorded, &not_ready) ||
+      not_ready) {
+    std::cerr << "FAIL: a pushed completion did not answer SUCCESS\n";
+    return false;
+  }
+  return true;
+}
+
+// Anything seen complete that may cover a record makes its query ask: a
+// synchronize covers every record before it, and a later record's completion
+// covers the earlier ones.
+bool test_observation_makes_pushed_record_ask() {
+  lupine_event_table table;
+  CUevent first = fake_event(0);
+  CUevent second = fake_event(1);
+  uint64_t recorded = 0;
+  bool not_ready = false;
+  lupine_event_invalidate_completion(&table, first);
+  lupine_event_invalidate_completion(&table, second);
+  lupine_event_watch(&table, first);
+  lupine_event_watch(&table, second);
+  lupine_event_invalidate_completion(&table, first, true);
+  lupine_event_observe_synchronize(&table);
+  if (!lupine_event_query_needed(&table, first, &recorded, &not_ready) ||
+      not_ready) {
+    std::cerr << "FAIL: a synchronize did not make the pushed record ask\n";
+    return false;
+  }
+  lupine_event_invalidate_completion(&table, first, true);
+  uint64_t later = lupine_event_invalidate_completion(&table, second, true);
+  complete(&table, &second, &later, 1);
+  if (!lupine_event_query_needed(&table, first, &recorded, &not_ready) ||
+      not_ready) {
+    std::cerr << "FAIL: a later completion did not make the record ask\n";
+    return false;
+  }
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -192,7 +266,9 @@ int main() {
       !test_eviction_is_oldest_recorded() ||
       !test_prefetch_batch_excludes_and_filters() ||
       !test_query_results_cache_only_successes() ||
-      !test_destroyed_event_is_removed_from_prefetch()) {
+      !test_destroyed_event_is_removed_from_prefetch() ||
+      !test_pushed_record_answers_not_ready_once() ||
+      !test_observation_makes_pushed_record_ask()) {
     return 1;
   }
   std::cout << "event completion tracking tests passed\n";
