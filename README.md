@@ -111,6 +111,12 @@ unkeyed connection, restore is skipped and checkpoint receives a null
 identifier. Providers own storage configuration, file layout, and any fallback
 policy for unkeyed connections; Lupine does not select a checkpoint directory.
 
+A client without `LUPINE_SESSION` sends `LUPINE_API_TOKEN` as a bearer token,
+and `LUPINE_GPU_TYPE`, for a server that starts the session itself. That server
+answers `307` with a `location` and an `x-lupine-session`. The client
+reconnects to the location and presents that session for the rest of the
+process.
+
 `LUPINE_CHECKPOINT_LIBRARY` can override the provider library path for a
 private deployment.
 

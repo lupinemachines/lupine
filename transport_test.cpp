@@ -12,10 +12,14 @@
 #include <atomic>
 #include <chrono>
 #include <future>
+#include <nghttp2/nghttp2.h>
 #include <stdio.h>
+#include <string.h>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -402,6 +406,152 @@ void test_ipv6_endpoints() {
   }
 }
 
+bool receive_all(lupine_socket_t fd, void *data, size_t size) {
+  auto *bytes = static_cast<char *>(data);
+  while (size > 0) {
+    ssize_t n = lupine_socket_recv(fd, bytes, size);
+    if (n <= 0) {
+      return false;
+    }
+    bytes += n;
+    size -= static_cast<size_t>(n);
+  }
+  return true;
+}
+
+bool send_frame(lupine_socket_t fd, uint8_t type, uint8_t flags,
+                uint32_t stream, const std::vector<uint8_t> &payload = {}) {
+  std::vector<uint8_t> frame = {static_cast<uint8_t>(payload.size() >> 16),
+                                static_cast<uint8_t>(payload.size() >> 8),
+                                static_cast<uint8_t>(payload.size()),
+                                type,
+                                flags,
+                                static_cast<uint8_t>(stream >> 24),
+                                static_cast<uint8_t>(stream >> 16),
+                                static_cast<uint8_t>(stream >> 8),
+                                static_cast<uint8_t>(stream)};
+  frame.insert(frame.end(), payload.begin(), payload.end());
+  return send(fd, reinterpret_cast<const char *>(frame.data()),
+              static_cast<int>(frame.size()),
+              0) == static_cast<ssize_t>(frame.size());
+}
+
+nghttp2_nv test_nv(const char *name, const std::string &value) {
+  return {reinterpret_cast<uint8_t *>(const_cast<char *>(name)),
+          reinterpret_cast<uint8_t *>(const_cast<char *>(value.c_str())),
+          strlen(name), value.size(), NGHTTP2_NV_FLAG_NONE};
+}
+
+// A server that starts sessions answers a client with none by naming where the
+// new session is served. The client sends its credential and GPU type there
+// instead of a session, then reconnects to the location with the session it
+// was given, and keeps that session for the rest of the process.
+void test_redirect_assigns_session() {
+  mock_server target;
+  listener entry;
+  if (target.sock.fd == LUPINE_INVALID_SOCKET || !open_listener(&entry)) {
+    check(false, "loopback listeners");
+    return;
+  }
+  lupine_test_unsetenv("LUPINE_SESSION");
+  lupine_test_setenv("LUPINE_API_TOKEN", "token-1");
+  lupine_test_setenv("LUPINE_GPU_TYPE", "h100");
+
+  std::unordered_map<std::string, std::string> request;
+  std::thread entry_server([&] {
+    lupine_socket_t fd = accept(entry.fd, nullptr, nullptr);
+    char preface[24];
+    if (fd == LUPINE_INVALID_SOCKET ||
+        !receive_all(fd, preface, sizeof(preface))) {
+      return;
+    }
+    nghttp2_hd_inflater *inflater = nullptr;
+    nghttp2_hd_inflate_new(&inflater);
+    for (bool headers = false; !headers;) {
+      uint8_t header[9];
+      if (!receive_all(fd, header, sizeof(header))) {
+        break;
+      }
+      std::vector<uint8_t> payload((header[0] << 16) | (header[1] << 8) |
+                                   header[2]);
+      if (!receive_all(fd, payload.data(), payload.size())) {
+        break;
+      }
+      headers = header[3] == NGHTTP2_HEADERS;
+      const uint8_t *in = payload.data();
+      size_t remaining = headers ? payload.size() : 0;
+      while (remaining > 0) {
+        nghttp2_nv nv;
+        int flags = 0;
+        ssize_t used =
+            nghttp2_hd_inflate_hd2(inflater, &nv, &flags, in, remaining, 1);
+        if (used < 0) {
+          break;
+        }
+        in += used;
+        remaining -= static_cast<size_t>(used);
+        if (flags & NGHTTP2_HD_INFLATE_EMIT) {
+          request[std::string(reinterpret_cast<char *>(nv.name), nv.namelen)] =
+              std::string(reinterpret_cast<char *>(nv.value), nv.valuelen);
+        }
+        if (flags & NGHTTP2_HD_INFLATE_FINAL) {
+          nghttp2_hd_inflate_end_headers(inflater);
+          break;
+        }
+      }
+    }
+    nghttp2_hd_inflate_del(inflater);
+
+    nghttp2_hd_deflater *deflater = nullptr;
+    nghttp2_hd_deflate_new(&deflater, 4096);
+    const std::string status = "307";
+    const std::string location = "http://127.0.0.1:" + target.sock.port;
+    const std::string session = "lease-7";
+    nghttp2_nv response[] = {test_nv(":status", status),
+                             test_nv("location", location),
+                             test_nv("x-lupine-session", session)};
+    std::vector<uint8_t> block(nghttp2_hd_deflate_bound(deflater, response, 3));
+    ssize_t length = nghttp2_hd_deflate_hd(deflater, block.data(), block.size(),
+                                           response, 3);
+    nghttp2_hd_deflate_del(deflater);
+    block.resize(length < 0 ? 0 : static_cast<size_t>(length));
+    send_frame(fd, NGHTTP2_SETTINGS, NGHTTP2_FLAG_NONE, 0);
+    send_frame(fd, NGHTTP2_SETTINGS, NGHTTP2_FLAG_ACK, 0);
+    send_frame(fd, NGHTTP2_HEADERS,
+               NGHTTP2_FLAG_END_STREAM | NGHTTP2_FLAG_END_HEADERS, 1, block);
+    // Until the client hangs up, so the response is not lost to a reset.
+    char drain[256];
+    while (lupine_socket_recv(fd, drain, sizeof(drain)) > 0) {
+    }
+    lupine_socket_close(fd);
+  });
+
+  lupine_client_transport_config cfg;
+  cfg.dial_policy = lupine_client_dial_policy::single_attempt;
+  cfg.strict_endpoints = true;
+  const std::string servers = "127.0.0.1:" + entry.port;
+  int rc = lupine_client_transport_open(cfg, servers.c_str());
+  entry_server.join();
+
+  check(request["authorization"] == "Bearer token-1" &&
+            request["x-lupine-gpu-type"] == "h100" &&
+            request.count("x-lupine-session") == 0,
+        "a client with no session sends its credential and GPU type");
+  const lupine_client_endpoint *endpoint =
+      rc == 0 ? lupine_client_transport_endpoint(0) : nullptr;
+  const char *session = rc == 0 ? rpc_http2_session_id(&target.peer) : nullptr;
+  check(endpoint != nullptr && endpoint->port == target.sock.port &&
+            session != nullptr && std::string(session) == "lease-7",
+        "a redirect reconnects to its location with the session it assigned");
+  check(rpc_http2_client_session() == "lease-7",
+        "the assigned session outlasts the connection that received it");
+  lupine_client_transport_close();
+  rpc_http2_client_assign_session("");
+  lupine_test_unsetenv("LUPINE_API_TOKEN");
+  lupine_test_unsetenv("LUPINE_GPU_TYPE");
+  lupine_socket_close(entry.fd);
+}
+
 } // namespace
 
 int main() {
@@ -412,6 +562,7 @@ int main() {
 #endif
   test_fleet_publication_and_bulk_lanes();
   test_ipv6_endpoints();
+  test_redirect_assigns_session();
   printf("\ntransport_test: %s\n", failures == 0 ? "PASS" : "FAIL");
   return failures == 0 ? 0 : 1;
 }

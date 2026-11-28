@@ -169,15 +169,15 @@ void free_tls(conn_t *conn) {
 }
 
 bool resume_handshake(conn_t *conn, const std::string &checkpoint) {
-  const char *session = getenv("LUPINE_SESSION");
-  if (session == nullptr) {
+  const std::string session = rpc_http2_client_session();
+  if (session.empty()) {
     return false;
   }
   std::string request = "POST /.well-known/lupine/resume HTTP/1.1\r\n"
                         "Host: lupine\r\nContent-Length: 0\r\n"
                         "x-lupine-session: " +
-                        std::string(session) +
-                        "\r\nx-lupine-checkpoint: " + checkpoint + "\r\n\r\n";
+                        session + "\r\nx-lupine-checkpoint: " + checkpoint +
+                        "\r\n\r\n";
   size_t offset = 0;
   while (offset < request.size()) {
     ssize_t written;
@@ -224,12 +224,11 @@ bool resume_handshake(conn_t *conn, const std::string &checkpoint) {
 }
 
 bool valid_checkpoint(const std::string &checkpoint) {
-  const char *session = getenv("LUPINE_SESSION");
-  if (session == nullptr || session[0] == '\0' || strchr(session, '\r') ||
-      strchr(session, '\n')) {
+  const std::string session = rpc_http2_client_session();
+  if (session.empty() || session.find_first_of("\r\n") != std::string::npos) {
     return false;
   }
-  std::string prefix = std::string(session) + ".";
+  std::string prefix = session + ".";
   if (checkpoint.compare(0, prefix.size(), prefix) != 0 ||
       checkpoint.size() <= prefix.size() || checkpoint[prefix.size()] == '0') {
     return false;
@@ -378,8 +377,8 @@ void *dispatch_connection(void *argument) {
 }
 
 int connect_endpoint(client_transport_state &state,
-                     const lupine_client_endpoint &endpoint,
-                     unsigned int index) {
+                     const lupine_client_endpoint &endpoint, unsigned int index,
+                     bool redirected = false) {
   conn_t *conn = &state.connections[index];
   unsigned int min_slot = 0;
   // Start optimistic with this host's window. A peer that hosts a different one
@@ -451,6 +450,27 @@ int connect_endpoint(client_transport_state &state,
         min_slot = slot + 1;
         continue;
       }
+    }
+    if (http2_result == LUPINE_RPC_HTTP2_REDIRECT && !redirected) {
+      // The server started a session for this client: reconnect where it is
+      // served, presenting it. One hop; a second redirect is an error.
+      std::string location;
+      std::string session;
+      std::vector<lupine_client_endpoint> targets;
+      bool valid = rpc_http2_client_redirect(conn, &location, &session) &&
+                   parse_endpoints(location.c_str(), true, &targets) == 0 &&
+                   targets.size() == 1;
+      lupine_va_release(conn);
+      reset_connection(conn);
+      if (!valid) {
+        LUPINE_LOG_ERROR(endpoint.label
+                         << " redirected to an invalid location: " << location);
+        return -1;
+      }
+      LUPINE_LOG_DEBUG(endpoint.label << " started a session; connecting to "
+                                      << targets[0].label);
+      rpc_http2_client_assign_session(session);
+      return connect_endpoint(state, targets[0], index, true);
     }
     if (http2_result < 0) {
       LUPINE_LOG_ERROR("Completing the HTTP/2 handshake with "
