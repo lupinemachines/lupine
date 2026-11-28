@@ -8,6 +8,7 @@
 #include <cstring>
 #include <deque>
 #include <stdint.h>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -451,6 +452,9 @@ constexpr int LUPINE_RPC_HTTP2_VA_CONFLICT = -3;
 // The selected native client object no longer matches the server. Retrying an
 // arena slot cannot help; the launcher must fetch the advertised bundle.
 constexpr int LUPINE_RPC_HTTP2_CLIENT_MISMATCH = -4;
+// The server answered 307 with a location and a session: it started a session
+// for this client, served at that location (rpc_http2_client_redirect).
+constexpr int LUPINE_RPC_HTTP2_REDIRECT = -5;
 // 0 once all `size` bytes arrived, else LUPINE_RPC_HTTP2_STREAM_END or -1.
 // With `ahead`, also takes up to *ahead already staged bytes into data + size
 // and sets *ahead to how many it took; it never waits for them.
@@ -470,9 +474,18 @@ extern int rpc_http2_client_retry_handshake(conn_t *conn);
 // settles the client-bundle check and, when one was requested, the arena
 // verdict. rpc_http2_client_init already does this when an arena was requested;
 // callers that requested none run it themselves, and a caller with no live peer
-// skips it. Returns 0, LUPINE_RPC_HTTP2_VA_CONFLICT, or
-// LUPINE_RPC_HTTP2_CLIENT_MISMATCH.
+// skips it. Returns 0, LUPINE_RPC_HTTP2_VA_CONFLICT,
+// LUPINE_RPC_HTTP2_CLIENT_MISMATCH, or LUPINE_RPC_HTTP2_REDIRECT.
 extern int rpc_http2_client_await_ready(conn_t *conn);
+// The location and session of a LUPINE_RPC_HTTP2_REDIRECT. False when the
+// response carried no redirect.
+extern bool rpc_http2_client_redirect(conn_t *conn, std::string *location,
+                                      std::string *session);
+// The session this client presents: the one a server assigned it, else
+// LUPINE_SESSION. Empty when it has neither; the handshake then sends
+// LUPINE_API_TOKEN and LUPINE_GPU_TYPE, for a server that starts a session.
+extern std::string rpc_http2_client_session();
+extern void rpc_http2_client_assign_session(const std::string &session);
 extern void rpc_http2_client_start_heartbeat(conn_t *conn);
 // Stop receiving and wake RPC waiters without closing the socket. Queued
 // output is drained when the transport is destroyed.

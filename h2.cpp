@@ -21,6 +21,7 @@
 #include <openssl/ssl.h>
 #endif
 #include <cstdio>
+#include <mutex>
 #include <stdint.h>
 #include <string.h>
 #include <string>
@@ -214,6 +215,12 @@ struct h2_transport {
   std::string server_version;
   std::string server_bulk_token;
   std::string session_id;
+  // Sent in place of a session: the caller's credential and the GPU it wants.
+  std::string authorization;
+  std::string gpu_type;
+  // A redirect's target and the session the server assigned with it.
+  std::string peer_location;
+  std::string peer_session;
   std::string peer_va_base;
   std::string peer_va_size;
   std::string local_va_base;
@@ -560,6 +567,9 @@ constexpr char kLupineClientEtagHeader[] = "x-lupine-client-etag";
 constexpr char kLupineClientPlatformHeader[] = "x-lupine-client-platform";
 constexpr char kLupineVaWindowBaseHeader[] = "x-lupine-va-window-base";
 constexpr char kLupineVaWindowSizeHeader[] = "x-lupine-va-window-size";
+constexpr char kLupineGpuTypeHeader[] = "x-lupine-gpu-type";
+constexpr char kAuthorizationHeader[] = "authorization";
+constexpr char kLocationHeader[] = "location";
 constexpr char kContentEncodingHeader[] = "content-encoding";
 constexpr char kAcceptEncodingHeader[] = "accept-encoding";
 constexpr char kZstdEncoding[] = "zstd";
@@ -897,6 +907,8 @@ int h2_on_header_callback(nghttp2_session *, const nghttp2_frame *frame,
   h2_store_header(header, text,
                   {{kLupineCudaVersionHeader, &transport->peer_cuda_version},
                    {kLupineClientEtagHeader, &transport->peer_client_etag},
+                   {kLupineSessionHeader, &transport->peer_session},
+                   {kLocationHeader, &transport->peer_location},
                    {kLupineBulkTokenHeader, &transport->peer_bulk_token},
                    {kLupineVaWindowBaseHeader, &transport->peer_window_base},
                    {kLupineVaWindowSizeHeader, &transport->peer_window_size},
@@ -1510,8 +1522,10 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
   transport->peer_va_size.clear();
   transport->peer_window_base.clear();
   transport->peer_window_size.clear();
+  transport->peer_location.clear();
+  transport->peer_session.clear();
 
-  std::array<nghttp2_nv, 11> headers;
+  std::array<nghttp2_nv, 13> headers;
   size_t count = 0;
   headers[count++] = h2_nv(":method", probe ? "HEAD" : "POST");
   headers[count++] = h2_nv(":scheme", h2_request_scheme(conn));
@@ -1521,12 +1535,11 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
     count += h2_encoding_headers(transport->send_encoding, &headers[count]);
     const char *client_etag = getenv("LUPINE_CLIENT_ETAG");
     const char *client_platform = getenv("LUPINE_CLIENT_PLATFORM");
-    const char *session_id = getenv("LUPINE_SESSION");
     transport->client_etag =
         client_etag == nullptr ? std::string() : client_etag;
     transport->client_platform =
         client_platform == nullptr ? std::string() : client_platform;
-    transport->session_id = session_id == nullptr ? std::string() : session_id;
+    transport->session_id = rpc_http2_client_session();
     if (!transport->client_etag.empty()) {
       headers[count++] =
           h2_nv(kLupineClientEtagHeader, transport->client_etag.c_str());
@@ -1538,6 +1551,25 @@ int32_t h2_submit_client_handshake(h2_transport *transport, conn_t *conn,
     if (!transport->session_id.empty()) {
       headers[count++] =
           h2_nv(kLupineSessionHeader, transport->session_id.c_str());
+    } else {
+      // No session yet: a server that starts one for the caller needs to know
+      // who it is and what it wants. The credential is never indexed, so it
+      // stays out of both ends' HPACK tables.
+      const char *token = getenv("LUPINE_API_TOKEN");
+      const char *gpu_type = getenv("LUPINE_GPU_TYPE");
+      transport->authorization = token == nullptr || token[0] == '\0'
+                                     ? std::string()
+                                     : std::string("Bearer ") + token;
+      transport->gpu_type = gpu_type == nullptr ? std::string() : gpu_type;
+      if (!transport->authorization.empty()) {
+        headers[count] =
+            h2_nv(kAuthorizationHeader, transport->authorization.c_str());
+        headers[count++].flags |= NGHTTP2_NV_FLAG_NO_INDEX;
+      }
+      if (!transport->gpu_type.empty()) {
+        headers[count++] =
+            h2_nv(kLupineGpuTypeHeader, transport->gpu_type.c_str());
+      }
     }
     if (conn->va_size != 0) {
       transport->local_va_base = h2_hex(conn->va_base);
@@ -1951,6 +1983,45 @@ const char *rpc_http2_session_id(conn_t *conn) {
                                        : transport->session_id.c_str();
 }
 
+namespace {
+
+// Kept in the process rather than written to its environment: setenv is not
+// safe while other threads may read the environment, which they can by the
+// time a CUDA or NVML call opens the transport.
+std::mutex assigned_session_mutex;
+std::string assigned_session;
+
+} // namespace
+
+std::string rpc_http2_client_session() {
+  {
+    std::lock_guard<std::mutex> lock(assigned_session_mutex);
+    if (!assigned_session.empty()) {
+      return assigned_session;
+    }
+  }
+  const char *session = getenv("LUPINE_SESSION");
+  return session == nullptr ? std::string() : session;
+}
+
+void rpc_http2_client_assign_session(const std::string &session) {
+  std::lock_guard<std::mutex> lock(assigned_session_mutex);
+  assigned_session = session;
+}
+
+bool rpc_http2_client_redirect(conn_t *conn, std::string *location,
+                               std::string *session) {
+  if (conn == nullptr || conn->http2 == nullptr) {
+    return false;
+  }
+  auto *transport = static_cast<h2_transport *>(conn->http2);
+  pthread_mutex_lock(&transport->session_mutex);
+  *location = transport->peer_location;
+  *session = transport->peer_session;
+  pthread_mutex_unlock(&transport->session_mutex);
+  return !location->empty() && !session->empty();
+}
+
 void rpc_http2_response_wait_begin(conn_t *conn) {
   if (conn == nullptr || conn->http2 == nullptr) {
     return;
@@ -2039,8 +2110,14 @@ int rpc_http2_client_await_ready(conn_t *conn) {
                        h2_parse_hex(transport->peer_va_size, &peer_size) &&
                        peer_base == conn->va_base && peer_size == conn->va_size;
   std::string expected_client_etag = transport->peer_client_etag;
+  bool redirected =
+      !transport->peer_location.empty() && !transport->peer_session.empty();
   pthread_mutex_unlock(&transport->session_mutex);
 
+  // A server that started a session for this client says where it is served.
+  if (responded && status == 307 && redirected) {
+    return LUPINE_RPC_HTTP2_REDIRECT;
+  }
   // The server can move to a new bundle between discovery and connect. Do not
   // misreport that as an arena conflict; the launcher needs to refetch and
   // restart the process before any CUDA state exists.
